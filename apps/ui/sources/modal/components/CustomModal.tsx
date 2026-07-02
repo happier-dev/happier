@@ -11,6 +11,20 @@ interface CustomModalProps {
     zIndexBase?: number;
 }
 
+function areViewportMarginsEqual(a: unknown, b: unknown): boolean {
+    if (a === b) return true;
+    if (a == null || b == null) return a == null && b == null;
+    if (typeof a === 'number' || typeof b === 'number') {
+        return typeof a === 'number' && typeof b === 'number' && a === b;
+    }
+    if (typeof a !== 'object' || typeof b !== 'object') return false;
+
+    const aRecord = a as Record<string, unknown>;
+    const bRecord = b as Record<string, unknown>;
+    return aRecord.horizontal === bRecord.horizontal
+        && aRecord.vertical === bRecord.vertical;
+}
+
 function areDimensionOptionsEqual(
     a: Record<string, unknown> | null | undefined,
     b: Record<string, unknown> | null | undefined,
@@ -19,7 +33,8 @@ function areDimensionOptionsEqual(
     if (!a || !b) return false;
     return a.size === b.size
         && a.width === b.width
-        && a.maxHeightRatio === b.maxHeightRatio;
+        && a.maxHeightRatio === b.maxHeightRatio
+        && areViewportMarginsEqual(a.viewportMargin, b.viewportMargin);
 }
 
 function areChromeConfigsEqual(
@@ -40,7 +55,7 @@ function areChromeConfigsEqual(
             && a.titleTestID === b.titleTestID
             && a.subtitleTestID === b.subtitleTestID
             && a.closeButtonTestID === b.closeButtonTestID
-            && a.layout === b.layout
+            && a.scrollHost === b.scrollHost
             && a.bodyScroll === b.bodyScroll
             && areDimensionOptionsEqual(
                 (a.dimensions ?? null) as Record<string, unknown> | null,
@@ -80,7 +95,7 @@ function mergeChromeConfig(
             titleTestID: override.titleTestID !== undefined ? override.titleTestID : base.titleTestID,
             subtitleTestID: override.subtitleTestID !== undefined ? override.subtitleTestID : base.subtitleTestID,
             closeButtonTestID: override.closeButtonTestID !== undefined ? override.closeButtonTestID : base.closeButtonTestID,
-            layout: override.layout !== undefined ? override.layout : base.layout,
+            scrollHost: override.scrollHost !== undefined ? override.scrollHost : base.scrollHost,
             bodyScroll: override.bodyScroll !== undefined ? override.bodyScroll : base.bodyScroll,
             dimensions: mergedDimensions,
         };
@@ -135,7 +150,7 @@ export function CustomModal({ config, onClose, showBackdrop = true, visible, zIn
                     titleTestID={chrome.titleTestID}
                     subtitleTestID={chrome.subtitleTestID}
                     closeButtonTestID={chrome.closeButtonTestID}
-                    layout={chrome.layout ?? 'fit'}
+                    scrollHost={chrome.scrollHost}
                     bodyScroll={chrome.bodyScroll ?? 'none'}
                     dimensions={chrome.dimensions}
                     onClose={handleClose}

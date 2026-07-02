@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import type { NormalizedMessage } from '@/sync/typesRaw';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { flushRealtimeFanoutTelemetry, resetRealtimeFanoutTelemetry } from '@/sync/runtime/performance/realtimeFanoutTelemetry';
 import { createSessionMessageApplyCoalescer } from './sessionMessageApplyCoalescer';
 
 function buildUserTextMessage(id: string, createdAt: number): NormalizedMessage {
@@ -28,6 +29,7 @@ describe('createSessionMessageApplyCoalescer', () => {
 
     afterEach(() => {
         vi.useRealTimers();
+        resetRealtimeFanoutTelemetry();
         syncPerformanceTelemetry.configure({ enabled: false });
         syncPerformanceTelemetry.reset();
     });
@@ -206,6 +208,62 @@ describe('createSessionMessageApplyCoalescer', () => {
         expect(findEvent('sync.socket.messages.coalesce.flush')).toMatchObject({
             count: 1,
             fields: { messages: 1, remaining: 0 },
+        });
+    });
+
+    it('summarizes coalescer queue depth for realtime fanout telemetry', async () => {
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 1_000_000,
+        });
+        syncPerformanceTelemetry.reset();
+        resetRealtimeFanoutTelemetry();
+
+        const coalescer = createSessionMessageApplyCoalescer({
+            getConfig: () => ({ enabled: true, windowMs: 16, maxBatchSize: 200 }),
+            applyBatch: vi.fn(),
+        });
+
+        coalescer.enqueue('s1', [buildUserTextMessage('m1', 1)], { deferLeadingBatch: true });
+        coalescer.enqueue('s1', [buildUserTextMessage('m2', 2)], { deferLeadingBatch: true });
+        flushRealtimeFanoutTelemetry();
+
+        expect(findEvent('sync.sessions.realtime.fanout.window')).toMatchObject({
+            count: 1,
+            fields: expect.objectContaining({
+                coalescerEnqueues: 2,
+                coalescerMessagesEnqueued: 2,
+                maxCoalescerQueueDepth: 2,
+            }),
+        });
+
+        await vi.runAllTimersAsync();
+    });
+
+    it('does not count coalescer drops for sessions with no queued messages', () => {
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 1_000_000,
+        });
+        syncPerformanceTelemetry.reset();
+        resetRealtimeFanoutTelemetry();
+
+        const coalescer = createSessionMessageApplyCoalescer({
+            getConfig: () => ({ enabled: true, windowMs: 16, maxBatchSize: 200 }),
+            applyBatch: vi.fn(),
+        });
+
+        coalescer.enqueue('s1', [buildUserTextMessage('m1', 1)]);
+        coalescer.dropSessionIds(['s1']);
+        flushRealtimeFanoutTelemetry();
+
+        expect(findEvent('sync.sessions.realtime.fanout.window')).toMatchObject({
+            fields: expect.objectContaining({
+                coalescerDrops: 0,
+                coalescerMessagesDropped: 0,
+            }),
         });
     });
 });

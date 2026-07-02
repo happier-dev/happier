@@ -26,13 +26,6 @@ export type ExistingSessionAutomationAvailability =
         eligibility: ExistingSessionAutomationEligibility & { eligible: true };
     }>;
 
-function resolveMachineId(session: ExistingSessionAutomationSession): string | null {
-    const raw = session?.metadata?.machineId;
-    if (typeof raw !== 'string') return null;
-    const trimmed = raw.trim();
-    return trimmed.length > 0 ? trimmed : null;
-}
-
 function normalizeMachineId(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
@@ -54,7 +47,7 @@ export function resolveExistingSessionAutomationAvailability(input: Readonly<{
         return { kind: 'blocked', reason: 'session_not_found' };
     }
 
-    const machineId = normalizeMachineId(input.machineIdOverride) ?? resolveMachineId(input.session);
+    const machineId = normalizeMachineId(input.machineIdOverride);
     if (!machineId) {
         return { kind: 'blocked', reason: 'machine_id_missing' };
     }

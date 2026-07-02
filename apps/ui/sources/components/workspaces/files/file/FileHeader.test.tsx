@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import { installSessionFileViewCommonModuleMocks } from './sessionFileViewTestHelpers';
 
 
@@ -36,13 +37,7 @@ vi.mock('@/constants/Typography', () => ({
 }));
 
 describe('FileHeader', () => {
-    const theme = {
-        colors: {
-            divider: '#ddd',
-            surfaceHigh: '#fff',
-            textSecondary: '#444',
-        },
-    };
+    const theme = createThemeFixture();
 
     it('falls back to fileName when filePathDir is empty', async () => {
         const { FileHeader } = await import('./FileHeader');

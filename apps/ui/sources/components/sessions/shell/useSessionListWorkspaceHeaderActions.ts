@@ -56,9 +56,7 @@ export function useSessionListWorkspaceHeaderActions(input: Readonly<{
         handleToggleCollapse: (collapseKey: string) => {
             const current = input.collapsedGroupKeys;
             if (current[collapseKey]) {
-                const next = { ...current };
-                delete next[collapseKey];
-                input.setCollapsedGroupKeys(next);
+                input.setCollapsedGroupKeys({ ...current, [collapseKey]: false });
                 return;
             }
             input.setCollapsedGroupKeys({ ...current, [collapseKey]: true });

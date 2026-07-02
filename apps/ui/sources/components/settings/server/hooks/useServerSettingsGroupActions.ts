@@ -3,7 +3,7 @@ import * as React from 'react';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { resolveServerProfileScopeId, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { ServerSelectionGroup } from '@/sync/domains/server/selection/serverSelectionTypes';
 import { promptSignedOutServerSwitchConfirmation } from '@/components/settings/server/modals/ServerSwitchAuthPrompt';
 
@@ -12,6 +12,13 @@ import type { ServerAuthStatus } from './useServerAuthStatusByServerId';
 function toGroupProfileId(rawName: string): string {
     const base = String(rawName ?? '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/-+/g, '-');
     return base || `group-${Date.now()}`;
+}
+
+function findServerProfileByScopeId(
+    profiles: ReadonlyArray<ServerProfile>,
+    id: string,
+): ServerProfile | null {
+    return profiles.find((server) => server.id === id || resolveServerProfileScopeId(server) === id) ?? null;
 }
 
 export function useServerSettingsGroupActions(params: Readonly<{
@@ -42,7 +49,7 @@ export function useServerSettingsGroupActions(params: Readonly<{
         const nextServerId = nextServerIds.includes(params.activeServerId) ? params.activeServerId : nextServerIds[0]!;
         let authStatus: ServerAuthStatus = params.authStatusByServerId[nextServerId] ?? 'unknown';
         if (authStatus === 'unknown') {
-            const nextProfile = params.servers.find((server) => server.id === nextServerId) ?? null;
+            const nextProfile = findServerProfileByScopeId(params.servers, nextServerId);
             if (nextProfile) {
                 try {
                     const creds = await TokenStorage.getCredentialsForServerUrl(nextProfile.serverUrl, { serverId: nextProfile.id });
@@ -117,7 +124,7 @@ export function useServerSettingsGroupActions(params: Readonly<{
         }
 
         const nextServerId = nextServerIds.includes(params.activeServerId) ? params.activeServerId : nextServerIds[0]!;
-        const nextProfile = params.servers.find((srv) => srv.id === nextServerId) ?? null;
+        const nextProfile = findServerProfileByScopeId(params.servers, nextServerId);
         let authStatus: ServerAuthStatus = params.authStatusByServerId[nextServerId] ?? 'unknown';
         if (authStatus === 'unknown' && nextProfile) {
             try {

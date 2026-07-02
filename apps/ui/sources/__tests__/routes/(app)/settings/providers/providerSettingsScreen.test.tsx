@@ -194,9 +194,36 @@ installSessionSettingsEntryModuleMocks({
                     if (key === 'serverSelectionActiveTargetId') return 'server1';
                     return undefined;
                 },
+                useProfile: () => ({
+                    id: 'profile-1',
+                    timestamp: 0,
+                    firstName: null,
+                    lastName: null,
+                    username: null,
+                    avatar: null,
+                    linkedProviders: [],
+                    connectedServices: [],
+                    connectedServicesV2: [
+                        {
+                            serviceId: 'anthropic',
+                            profiles: [{
+                                profileId: 'work',
+                                status: 'needs_reauth',
+                                providerEmail: null,
+                                providerAccountId: null,
+                                kind: 'token',
+                                expiresAt: null,
+                                lastUsedAt: null,
+                                health: null,
+                            }],
+                            groups: [],
+                        },
+                    ],
+                }),
                 useMachine: () => null,
             },
         }),
+    featureEnabled: () => true,
 });
 
 vi.mock('@expo/vector-icons', () => createExpoVectorIconsMock());
@@ -233,6 +260,10 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
             : null;
         return React.createElement('DropdownMenu', props, itemTriggerNode ?? triggerNode ?? null);
     },
+}));
+
+vi.mock('@/components/settings/connectedServices/ConnectedServicesDefaultAuthRow', () => ({
+    ConnectedServicesDefaultAuthRow: (props: any) => React.createElement('ConnectedServicesDefaultAuthRow', props),
 }));
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -316,6 +347,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
                     detectKey: agentId,
                     installBanner: { installKind: 'installer', installCommand: null, guideUrl: null },
                 },
+                connectedServices: { supportedServiceIds: ['anthropic'] },
                 uiConnectedService: { serviceId: null, label: 'cloud', connectRoute: null },
                 localControl: { supported: false },
                 ui: { agentPickerIconName: 'sparkles-outline' },
@@ -348,6 +380,9 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
                 detectKey: agentId,
                 installBanner: { installKind: 'installer', installCommand: null, guideUrl: null },
             },
+            connectedServices: agentId === 'codex'
+                ? { supportedServiceIds: ['anthropic'] }
+                : undefined,
             uiConnectedService: {
                 serviceId: null,
                 label: agentId === 'customAcp' ? 'Custom ACP' : 'cloud',
@@ -365,7 +400,7 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
     };
 });
 
-vi.mock('@/agents/providers/catalog/providerSettingsCatalog', () => ({
+vi.mock('@/agents/catalog/providerSettingsCatalog', () => ({
     PROVIDER_SETTINGS_DESCRIPTORS: [],
     PROVIDER_SETTINGS_PLUGINS: [],
     getProviderSettingsDescriptor: (providerId: string) => mockProviderSettingsDescriptor(providerId),
@@ -422,7 +457,7 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
     return {
         ...actual,
         getAgentAdvancedModeCapabilities: () => ({ supportsRuntimeModeSwitch: false }),
-        getProviderCliRuntimeSpec: () => ({
+        getAgentCliRuntimeSpec: () => ({
             id: 'codex',
             binaryName: 'codex',
             sourcePreferenceDefault: 'system-first',
@@ -790,12 +825,12 @@ describe('ProviderSettingsScreen', () => {
         expect(installer.props.installability).toMatchObject({ kind: 'installable' });
     });
 
-    it('hides the desktop-only provider install and auth actions on web while keeping status rows', async () => {
+    it('keeps provider CLI install available on web while hiding desktop-only auth actions', async () => {
         tauriDesktopState.value = false;
 
         const screen = await renderProviderSettingsScreen();
 
-        expect(screen.findAllByType('ProviderCliInstallItem' as any)).toHaveLength(0);
+        expect(screen.findAllByType('ProviderCliInstallItem' as any)).toHaveLength(1);
         expect(screen.findAllByType('ProviderAuthenticationTerminalPane' as any)).toHaveLength(0);
         expect(screen.findByTestId('settings-provider-auth-status')).toBeTruthy();
         expect(screen.findByTestId('settings-provider-auth-check-now')).toBeNull();
@@ -1276,6 +1311,19 @@ describe('ProviderSettingsScreen', () => {
 
         const screen = await renderProviderSettingsScreen();
         expect(screen.findByType('RuntimeSections' as any)).toBeTruthy();
+    });
+
+    it('routes provider default-auth recovery rows to the service-specific settings route', async () => {
+        const screen = await renderProviderSettingsScreen();
+
+        screen
+            .findByType('ConnectedServicesDefaultAuthRow' as any)
+            .props.onOpenConnectedServicesSettings('anthropic');
+
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/(app)/settings/connected-services/[serviceId]',
+            params: { serviceId: 'anthropic' },
+        });
     });
 });
 const settingsState = {

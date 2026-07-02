@@ -10,17 +10,20 @@ describe('chatListHarness', () => {
         const createFlashListChatListModuleMock = Reflect.get(harnessModule, 'createFlashListChatListModuleMock');
         const requireCapturedFlashListProps = Reflect.get(harnessModule, 'requireCapturedFlashListProps');
         const triggerFlashListChatListInitialFill = Reflect.get(harnessModule, 'triggerFlashListChatListInitialFill');
+        const triggerFlashListChatListLoad = Reflect.get(harnessModule, 'triggerFlashListChatListLoad');
 
         expect(typeof resetFlashListChatListHarness).toBe('function');
         expect(typeof createFlashListChatListModuleMock).toBe('function');
         expect(typeof requireCapturedFlashListProps).toBe('function');
         expect(typeof triggerFlashListChatListInitialFill).toBe('function');
+        expect(typeof triggerFlashListChatListLoad).toBe('function');
 
         if (
             typeof resetFlashListChatListHarness !== 'function' ||
             typeof createFlashListChatListModuleMock !== 'function' ||
             typeof requireCapturedFlashListProps !== 'function' ||
-            typeof triggerFlashListChatListInitialFill !== 'function'
+            typeof triggerFlashListChatListInitialFill !== 'function' ||
+            typeof triggerFlashListChatListLoad !== 'function'
         ) {
             return;
         }
@@ -65,6 +68,51 @@ describe('chatListHarness', () => {
             },
         });
         expect(onContentSizeChange).toHaveBeenCalledWith(400, 960);
+    });
+
+    it('provides FlashList v2 hook mocks and an onLoad trigger for transcript mount tests', async () => {
+        const harnessModule = await import('./chatListHarness');
+        const resetFlashListChatListHarness = Reflect.get(harnessModule, 'resetFlashListChatListHarness');
+        const createFlashListChatListModuleMock = Reflect.get(harnessModule, 'createFlashListChatListModuleMock');
+        const triggerFlashListChatListLoad = Reflect.get(harnessModule, 'triggerFlashListChatListLoad');
+
+        expect(typeof resetFlashListChatListHarness).toBe('function');
+        expect(typeof createFlashListChatListModuleMock).toBe('function');
+        expect(typeof triggerFlashListChatListLoad).toBe('function');
+        if (
+            typeof resetFlashListChatListHarness !== 'function' ||
+            typeof createFlashListChatListModuleMock !== 'function' ||
+            typeof triggerFlashListChatListLoad !== 'function'
+        ) {
+            return;
+        }
+
+        resetFlashListChatListHarness();
+        const flashListModule = await createFlashListChatListModuleMock();
+        const onLoad = vi.fn();
+        const ref = React.createRef<unknown>();
+        const FlashListComponent = flashListModule.FlashList as any;
+
+        expect(typeof flashListModule.LayoutCommitObserver).toBe('function');
+        expect(typeof flashListModule.useLayoutState).toBe('function');
+        expect(typeof flashListModule.useMappingHelper).toBe('function');
+        expect(typeof flashListModule.useRecyclingState).toBe('function');
+        expect(flashListModule.useMappingHelper().getMappingKey('message-id', 4)).toBe(4);
+
+        await act(async () => {
+            FlashListComponent.render?.(
+                {
+                    ref,
+                    data: [],
+                    onLoad,
+                },
+                ref,
+            );
+        });
+
+        await triggerFlashListChatListLoad(42);
+
+        expect(onLoad).toHaveBeenCalledWith({ elapsedTimeInMs: 42 });
     });
 
     it('creates reusable fake web elements for transcript DOM anchoring scenarios', async () => {

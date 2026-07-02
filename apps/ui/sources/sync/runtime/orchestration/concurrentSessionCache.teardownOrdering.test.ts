@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createServerProfilesModuleMock } from '@/dev/testkit';
+
 const reportServerUnreachableSpy = vi.fn<(...args: any[]) => void>();
 const startServerReachabilitySupervisorSpy = vi.fn<(...args: any[]) => Promise<void>>(async () => {});
 const stopServerReachabilitySupervisorSpy = vi.fn<(...args: any[]) => Promise<void>>(async () => {});
@@ -68,8 +70,8 @@ describe('concurrentSessionCache teardown ordering', () => {
             isLegacyAuthCredentials: () => true,
         }));
 
-        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
-            listServerProfiles: () => [
+        vi.doMock('@/sync/domains/server/serverProfiles', () => createServerProfilesModuleMock({
+            profiles: [
                 { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
                 { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
             ],

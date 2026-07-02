@@ -8,6 +8,10 @@ import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDa
 import { buildSafeWorkspaceLabel } from '@/utils/worktree/workspaceHandles';
 import { resolveCanonicalMachineId } from '@/sync/domains/machines/identity/resolveCanonicalMachineId';
 import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
+import {
+  resolveMachineTargetForSessionFromState,
+  type SessionMachineTargetState,
+} from '@/sync/ops/sessionMachineTarget';
 
 import { normalizeNonEmptyString, resolveVoiceMachineLabel } from './shared';
 import { postprocessSpawnedSession } from './spawnSessionPostProcess';
@@ -22,6 +26,14 @@ function resolveSpawnTarget(state: any): { machineId: string; directory: string 
     .filter(Boolean) as string[];
 
   for (const sid of candidates) {
+    const resolvedTarget = resolveMachineTargetForSessionFromState(state as SessionMachineTargetState, sid);
+    if (resolvedTarget) {
+      return {
+        machineId: resolvedTarget.machineId,
+        directory: resolvedTarget.basePath,
+      };
+    }
+
     const metadata = resolveSessionListPreferredSessionMetadataFromState(state, sid);
     const machineId = normalizeNonEmptyString(metadata?.machineId);
     const directory = normalizeNonEmptyString(metadata?.path);
@@ -34,6 +46,14 @@ function resolveSpawnTarget(state: any): { machineId: string; directory: string 
   if (machineId && directory) return { machineId, directory };
 
   for (const sid of Object.keys(sessionsObj)) {
+    const resolvedTarget = resolveMachineTargetForSessionFromState(state as SessionMachineTargetState, sid);
+    if (resolvedTarget) {
+      return {
+        machineId: resolvedTarget.machineId,
+        directory: resolvedTarget.basePath,
+      };
+    }
+
     const metadata = resolveSessionListPreferredSessionMetadataFromState(state, sid);
     const metadataMachineId = normalizeNonEmptyString(metadata?.machineId);
     const fallbackDirectory = normalizeNonEmptyString(metadata?.path);
@@ -58,20 +78,20 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
   const machinesObj: any = state?.machines ?? {};
   const fallbackTarget = resolveSpawnTarget(state);
   const machines = Object.values(machinesObj as any);
-  const canonical = resolveCanonicalMachineId(fallbackTarget?.machineId ?? null, machines as any);
-  const targetMachineId = canonical?.machineId ?? fallbackTarget?.machineId ?? null;
+  let requestedHostMachineId: string | null = null;
   if (requestedHost) {
     const hostMatches = machines.filter((machine: any) => normalizeNonEmptyString(machine?.metadata?.host) === requestedHost);
-    if (hostMatches.length === 0 || !targetMachineId) {
+    if (hostMatches.length === 0) {
       return { type: 'error', errorCode: 'host_not_found', errorMessage: 'host_not_found', host: requestedHost };
     }
     if (hostMatches.length > 1) {
       return { type: 'error', errorCode: 'host_ambiguous', errorMessage: 'host_ambiguous', host: requestedHost };
     }
-    if (normalizeNonEmptyString((hostMatches[0] as any)?.id) !== targetMachineId) {
-      return { type: 'error', errorCode: 'host_not_found', errorMessage: 'host_not_found', host: requestedHost };
-    }
+    requestedHostMachineId = normalizeNonEmptyString((hostMatches[0] as any)?.id);
   }
+  const preferredMachineId = requestedHostMachineId ?? fallbackTarget?.machineId ?? null;
+  const canonical = resolveCanonicalMachineId(preferredMachineId, machines as any);
+  const targetMachineId = canonical?.machineId ?? preferredMachineId;
 
   const machineId = normalizeNonEmptyString(targetMachineId);
   const directory = normalizeNonEmptyString(params.path) ?? fallbackTarget?.directory ?? null;

@@ -1,4 +1,5 @@
 import { invokeTauri, isTauriDesktop, listenTauriEvent } from '@/utils/platform/tauri';
+import type { PetCompanionActivityState } from '@/components/pets/state/buildPetCompanionActivityState';
 
 export const DESKTOP_PET_OVERLAY_COMMANDS = {
     readWindowState: 'desktop_pet_overlay_read_window_state',
@@ -65,6 +66,8 @@ export type DesktopPetOverlaySyncPayload = Readonly<{
     visible: boolean;
     expanded: boolean;
     window: DesktopPetOverlaySize;
+    nativeMouseTrackingEnabled: boolean;
+    activity: PetCompanionActivityState;
     policy: DesktopPetOverlayPolicy;
 }>;
 
@@ -81,6 +84,7 @@ export type DesktopPetOverlayWindowStatePayload = Readonly<{
     logicalSize: DesktopPetOverlaySize;
     scaleFactor: number;
     lastPlacementRecoveryCode: string | null;
+    activity?: PetCompanionActivityState | null;
     layout?: DesktopPetOverlayLayoutPayload | null;
 }>;
 

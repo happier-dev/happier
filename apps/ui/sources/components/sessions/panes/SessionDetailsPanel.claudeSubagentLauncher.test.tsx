@@ -84,8 +84,13 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 const launcherViewSpy = vi.fn();
 let SessionDetailsPanel: typeof import('./SessionDetailsPanel').SessionDetailsPanel;
 
-vi.mock('@/agents/providers/claude/sessionSubagents/SessionClaudeSubagentLauncherView', () => ({
-    SessionClaudeSubagentLauncherView: (props: any) => {
+vi.mock('@/agents/registry/components/sessionSubagents/claude/SessionClaudeSubagentLauncherView', () => ({
+    SessionClaudeSubagentLauncherView: (props: Readonly<{
+        sessionId: string;
+        mode: string;
+        initialTeamId?: string | null;
+        presentation?: string;
+    }>) => {
         launcherViewSpy(props);
         return React.createElement('SessionClaudeSubagentLauncherView');
     },

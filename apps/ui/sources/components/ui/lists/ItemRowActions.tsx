@@ -127,13 +127,14 @@ export function ItemRowActions(props: ItemRowActionsProps) {
                 typeof action.icon === 'string'
                     ? <Ionicons name={action.icon} size={18} color={color} />
                     : action.icon;
+            const onPress = action.onPress;
             return {
                 id: action.id,
                 testID: action.id,
                 label: action.title,
                 subtitle: action.subtitle,
                 icon: iconNode,
-                onPress: () => closeThen(action.onPress),
+                onPress: onPress ? () => closeThen(onPress) : undefined,
                 disabled: action.disabled,
             };
         });
@@ -179,11 +180,12 @@ export function ItemRowActions(props: ItemRowActionsProps) {
             <Pressable
                 key={action.id}
                 testID={action.inlineTestID}
+                disabled={action.disabled || !action.onPress}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 onPressIn={() => props.onActionPressIn?.()}
                 onPress={(e: GestureResponderEvent) => {
                     e?.stopPropagation?.();
-                    action.onPress();
+                    action.onPress?.();
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={action.title}

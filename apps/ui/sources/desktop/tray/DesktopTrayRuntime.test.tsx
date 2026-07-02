@@ -26,6 +26,8 @@ const relayDriftBannerState = vi.hoisted(() => ({
     },
 }));
 const applyTauriTrayState = vi.hoisted(() => vi.fn(async () => {}));
+const useConnectionHealthSpy = vi.hoisted(() => vi.fn(() => connectionHealthState.value));
+const useRelayDriftBannerSpy = vi.hoisted(() => vi.fn(() => relayDriftBannerState.value));
 
 vi.mock('@/utils/platform/tauri', async () => {
     const actual = await vi.importActual<typeof import('@/utils/platform/tauri')>('@/utils/platform/tauri');
@@ -36,11 +38,11 @@ vi.mock('@/utils/platform/tauri', async () => {
 });
 
 vi.mock('@/components/navigation/connectionStatus/useConnectionHealth', () => ({
-    useConnectionHealth: () => connectionHealthState.value,
+    useConnectionHealth: () => useConnectionHealthSpy(),
 }));
 
 vi.mock('@/components/settings/server/useRelayDriftBanner', () => ({
-    useRelayDriftBanner: () => relayDriftBannerState.value,
+    useRelayDriftBanner: () => useRelayDriftBannerSpy(),
 }));
 
 vi.mock('@/text', async () => {
@@ -64,6 +66,8 @@ describe('DesktopTrayRuntime', () => {
         };
         relayDriftBannerState.value = null;
         applyTauriTrayState.mockClear();
+        useConnectionHealthSpy.mockClear();
+        useRelayDriftBannerSpy.mockClear();
     });
 
     it('pushes the canonical connection health state into the desktop tray bridge when running in Tauri', async () => {
@@ -95,6 +99,18 @@ describe('DesktopTrayRuntime', () => {
         let tree = (await renderScreen(<DesktopTrayRuntime />)).tree;
 
         expect(applyTauriTrayState).not.toHaveBeenCalled();
+
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
+    it('does not subscribe to tray state inputs outside the Tauri desktop shell', async () => {
+        const { DesktopTrayRuntime } = await import('./DesktopTrayRuntime');
+        let tree = (await renderScreen(<DesktopTrayRuntime />)).tree;
+
+        expect(useConnectionHealthSpy).not.toHaveBeenCalled();
+        expect(useRelayDriftBannerSpy).not.toHaveBeenCalled();
 
         await act(async () => {
             tree.unmount();

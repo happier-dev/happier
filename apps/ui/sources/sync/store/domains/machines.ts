@@ -11,6 +11,7 @@ import { resolveMachineSessionListIndexImpact } from './machineSessionListIndexI
 import { normalizeNonEmptyString } from '@/utils/strings/normalizeNonEmptyString';
 import { buildActiveServerSessionListIndex } from '../sessionListIndex/buildSessionListIndexWithServerScope';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
+import { areServerProfileIdentifiersEquivalent } from '../../domains/server/serverProfiles';
 import { projectManager } from '../../runtime/orchestration/projectManager';
 import { invalidateCachedTransferRoutesForMachine } from '../../domains/transfers/runtime/transferRouteCache';
 import {
@@ -118,7 +119,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
             set((state) => {
                 const activeServerId = normalizeMachineServerId(getActiveServerSnapshot().serverId);
                 const sourceServerId = normalizeMachineServerId(options?.sourceServerId) || activeServerId;
-                const shouldUpdateActiveProjection = !sourceServerId || sourceServerId === activeServerId;
+                const shouldUpdateActiveProjection = !sourceServerId || areServerProfileIdentifiersEquivalent(sourceServerId, activeServerId);
                 const machineListByServerId = sourceServerId
                     ? {
                         ...state.machineListByServerId,
@@ -182,6 +183,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                             groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
                             activeGroupingV1: state.settings.sessionListActiveGroupingV1,
                             inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                            sectionModeV1: state.settings.sessionListSectionModeV1,
                         }),
                     });
                     if (machineImpact.needsSessionListIndexRebuild) {
@@ -201,6 +203,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
                         activeGroupingV1: state.settings.sessionListActiveGroupingV1,
                         inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                        sectionModeV1: state.settings.sessionListSectionModeV1,
                         getProjectForSession: state.getProjectForSession,
                         previousIndex: previousActiveIndex,
                     })
@@ -245,7 +248,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
             set((state) => {
                 const activeServerId = normalizeMachineServerId(getActiveServerSnapshot().serverId);
                 const sourceServerId = normalizeMachineServerId(options?.sourceServerId) || activeServerId;
-                if (sourceServerId && sourceServerId !== activeServerId) {
+                if (sourceServerId && !areServerProfileIdentifiersEquivalent(sourceServerId, activeServerId)) {
                     return state;
                 }
 
@@ -262,6 +265,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
                         activeGroupingV1: state.settings.sessionListActiveGroupingV1,
                         inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                        sectionModeV1: state.settings.sessionListSectionModeV1,
                         getProjectForSession: state.getProjectForSession,
                         previousIndex: previousActiveIndex,
                     })

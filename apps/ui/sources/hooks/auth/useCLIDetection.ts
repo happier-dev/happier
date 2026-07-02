@@ -1,19 +1,19 @@
 import { useCallback, useMemo, useRef } from 'react';
-import { useMachine } from '@/sync/domains/state/storage';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { useMachineCliDetectionTarget } from '@/sync/domains/state/storage';
 import { useDaemonScopedMachineCapabilitiesCache } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 import type { CapabilityDetectResult, CliAuthStatusData, CliCapabilityData, TmuxCapabilityData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import {
-    CANONICAL_AGENT_IDS,
+    AGENT_PROVIDER_IDS,
     getAgentLocalCliConfig,
     type AgentId,
+    type AgentProviderId,
     type CanonicalAgentId,
     isAgentAuthProbeSafeForBackgroundChecks,
 } from '@happier-dev/agents';
 import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
-const CLI_PROBE_AGENT_IDS: readonly CanonicalAgentId[] = CANONICAL_AGENT_IDS;
+const CLI_PROBE_AGENT_IDS: readonly AgentProviderId[] = AGENT_PROVIDER_IDS;
 
 export type CLIAvailability = Readonly<{
     available: Readonly<Record<AgentId, boolean | null>>; // null = unknown/loading, true = installed, false = not installed
@@ -171,11 +171,8 @@ function readTmuxAvailable(result: CapabilityDetectResult | undefined): boolean 
 }
 
 export function useCLIDetection(machineId: string | null, options?: UseCLIDetectionOptions): CLIAvailability {
-    const machine = useMachine(machineId ?? '');
-    const isOnline = useMemo(() => {
-        if (!machineId || !machine) return false;
-        return isMachineOnline(machine);
-    }, [machine, machineId]);
+    const machineTarget = useMachineCliDetectionTarget(machineId);
+    const isOnline = machineId ? machineTarget.isOnline : false;
 
     const includeLoginStatusForAgentIdsKey = stableJsonStringify(options?.includeLoginStatusForAgentIds ?? null);
     const agentIdsKey = stableJsonStringify(options?.agentIds ?? null);
@@ -195,7 +192,7 @@ export function useCLIDetection(machineId: string | null, options?: UseCLIDetect
     const { state: cached, refresh } = useDaemonScopedMachineCapabilitiesCache({
         machineId,
         serverId,
-        daemonStateVersion: machine?.daemonStateVersion ?? 0,
+        daemonStateVersion: machineTarget.daemonStateVersion,
         enabled: isOnline && options?.autoDetect !== false,
         request,
         staleMs: automaticLoginStatusAgentIds.length > 0 ? 5 * 60_000 : undefined,

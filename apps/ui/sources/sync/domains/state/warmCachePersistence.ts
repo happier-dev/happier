@@ -1,4 +1,5 @@
 import { MMKV } from 'react-native-mmkv';
+import { PrimaryTurnStatusV1Schema, SessionRuntimeIssueV1Schema } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
@@ -33,6 +34,7 @@ export const SessionListCacheEntryV1Schema = z.object({
     metadataVersion: z.number().int().nonnegative(),
     agentStateVersion: z.number().int().nonnegative(),
     updatedAt: z.number(),
+    meaningfulActivityAt: z.number().nullable().optional(),
     createdAt: z.number(),
     active: z.boolean(),
     activeAt: z.number(),
@@ -40,6 +42,13 @@ export const SessionListCacheEntryV1Schema = z.object({
     lastViewedSessionSeq: z.number().int().nonnegative().nullable().optional(),
     pendingCount: z.number().int().nonnegative().optional(),
     pendingVersion: z.number().int().nonnegative().optional(),
+    latestTurnStatus: PrimaryTurnStatusV1Schema.nullable().optional(),
+    latestTurnStatusObservedAt: z.number().int().nonnegative().nullable().optional(),
+    lastRuntimeIssue: SessionRuntimeIssueV1Schema.nullable().optional(),
+    rollbackEligibleTurnStarts: z.array(z.number().int().nonnegative()).optional(),
+    latestReadyEventSeq: z.number().int().nonnegative().nullable().optional(),
+    latestReadyEventAt: z.number().int().nonnegative().nullable().optional(),
+    pendingRequestObservedAt: z.number().int().nonnegative().nullable().optional(),
     accessLevel: z.enum(['view', 'edit', 'admin']).optional(),
     canApprovePermissions: z.boolean().optional(),
     name: z.string().optional(),

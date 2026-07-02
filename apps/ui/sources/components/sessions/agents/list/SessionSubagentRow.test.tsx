@@ -168,6 +168,9 @@ describe('SessionSubagentRow', () => {
                     }),
                 },
             }),
+            expect.objectContaining({
+                bypassPendingQueueReason: 'subagent_command',
+            }),
         );
     });
 });

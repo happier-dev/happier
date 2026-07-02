@@ -282,6 +282,38 @@ function createMultiFileSnapshot(): ScmWorkingSnapshot {
     };
 }
 
+function createLargeChangedFilesSnapshot(count = 30): ScmWorkingSnapshot {
+    const base = createSnapshot();
+    return {
+        ...base,
+        entries: Array.from({ length: count }, (_, index) => ({
+            path: `src/file-${index}.ts`,
+            previousPath: null,
+            kind: 'modified',
+            includeStatus: '',
+            pendingStatus: '',
+            hasIncludedDelta: false,
+            hasPendingDelta: true,
+            stats: {
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 1,
+                pendingRemoved: 0,
+                isBinary: false,
+            },
+        })),
+        totals: {
+            includedFiles: 0,
+            pendingFiles: count,
+            untrackedFiles: 0,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: count,
+            pendingRemoved: 0,
+        },
+    };
+}
+
 describe('WorkspaceSourceControlView', () => {
     beforeEach(() => {
         markWorkspaceScmCommitSelectionPathsSpy.mockClear();
@@ -327,6 +359,31 @@ describe('WorkspaceSourceControlView', () => {
         expect(tree.findAllByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.fetch' })).toHaveLength(0);
         expect(tree.findAllByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.pull' })).toHaveLength(0);
         expect(tree.findAllByProps({ accessibilityLabel: 'files.sourceControlOperations.actions.push' })).toHaveLength(0);
+    });
+
+    it('keeps changed-file list initial rendering bounded on large repositories', async () => {
+        workspaceSnapshotMock = createLargeChangedFilesSnapshot();
+        commitSelectionPaths = [];
+        commitSelectionPatches = [];
+        scmCommitStrategySetting = 'atomic';
+
+        const { WorkspaceSourceControlView } = await import('./WorkspaceSourceControlView');
+
+        const tree = (await renderScreen(
+            <WorkspaceSourceControlView
+                serverId="server"
+                machineId="m1"
+                rootPath="/repo"
+                onOpenFile={() => {}}
+                onOpenReviewAllChanges={() => {}}
+            />
+        )).tree;
+
+        const changedFilesList = tree.findByType('FlatList');
+
+        expect(changedFilesList.props.initialNumToRender).toBe(12);
+        expect(changedFilesList.props.maxToRenderPerBatch).toBe(12);
+        expect(changedFilesList.props.windowSize).toBe(5);
     });
 
     it('opens the workspace review surface from the shared toolbar action', async () => {

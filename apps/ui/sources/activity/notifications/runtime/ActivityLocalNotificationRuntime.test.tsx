@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { renderScreen } from '@/dev/testkit';
+import { localSettingsParse } from '@/sync/domains/settings/localSettings';
 import {
     createActivityNotificationTextModuleMock,
     installActivityNotificationRuntimeCommonModuleMocks,
@@ -61,6 +62,8 @@ installActivityNotificationRuntimeCommonModuleMocks({
         return createStorageModuleStub({
             useSettings: () => accountSettingsValue,
             useLocalSettings: () => localSettingsValue,
+            useSetting: (key: keyof typeof accountSettingsValue) => accountSettingsValue[key],
+            useLocalSetting: (key: keyof ReturnType<typeof localSettingsParse>) => localSettingsParse(localSettingsValue)[key],
             storage: {
                 getState: () => ({
                     sessions: sessionsByIdValue,

@@ -65,7 +65,9 @@ describe('settings', () => {
             expect((settings as any).sessionListDensity).toBe('narrow');
             expect((settings as any).sessionListIdentityDisplay).toBe('agentLogo');
             expect((settings as any).sessionListOrderingModeV1).toBe('custom');
+            expect((settings as any).sessionListFolderSortModeV1).toBe('foldersFirst');
             expect((settings as any).sessionListAttentionPromotionModeV1).toBe('off');
+            expect((settings as any).sessionListWorkingPlacementModeV1).toBe('off');
             expect((settings as any).compactSessionView).toBe(true);
             expect((settings as any).compactSessionViewMinimal).toBe(true);
             expect((settings as any).sessionListActiveColorModeV1).toBe('activityAndAttention');
@@ -116,7 +118,7 @@ describe('settings', () => {
             const settings = settingsParse({});
             expect((settings as any).codingPromptBehaviorV1).toEqual({
                 v: 1,
-                sessionTitleUpdates: 'agent',
+                sessionTitleUpdates: 'ongoing',
                 responseOptions: 'agent',
             });
         });
@@ -330,12 +332,12 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).featureToggles?.['files.editor']).toBeUndefined();
-            expect((parsed as any).schemaVersion).toBe(6);
+            expect((parsed as any).schemaVersion).toBe(7);
         });
 
         it('keeps explicit disable for files.editor when schemaVersion matches current (user intent)', () => {
             const parsed = settingsParse({
-                schemaVersion: 6,
+                schemaVersion: 7,
                 experiments: false,
                 featureToggles: {
                     'files.editor': false,
@@ -343,7 +345,7 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).featureToggles?.['files.editor']).toBe(false);
-            expect((parsed as any).schemaVersion).toBe(6);
+            expect((parsed as any).schemaVersion).toBe(7);
         });
 
         it('migrates legacy filesDiffPresentationStyle=split to unified (new default) for old schema versions', () => {
@@ -353,17 +355,17 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).filesDiffPresentationStyle).toBe('unified');
-            expect((parsed as any).schemaVersion).toBe(6);
+            expect((parsed as any).schemaVersion).toBe(7);
         });
 
         it('keeps explicit filesDiffPresentationStyle=split when schemaVersion matches current (user intent)', () => {
             const parsed = settingsParse({
-                schemaVersion: 6,
+                schemaVersion: 7,
                 filesDiffPresentationStyle: 'split',
             } as any);
 
             expect((parsed as any).filesDiffPresentationStyle).toBe('split');
-            expect((parsed as any).schemaVersion).toBe(6);
+            expect((parsed as any).schemaVersion).toBe(7);
         });
 
         it('migrates legacy sessionListDensity=compact to cozy', () => {
@@ -388,6 +390,33 @@ describe('settings', () => {
             expect(settingsParse({
                 compactSessionView: false,
             } as any).sessionListDensity).toBe('detailed');
+        });
+
+        it('migrates missing session identity display to avatar for non-narrow session lists', () => {
+            expect(settingsParse({
+                compactSessionView: true,
+                compactSessionViewMinimal: false,
+            } as any).sessionListIdentityDisplay).toBe('avatar');
+
+            expect(settingsParse({
+                compactSessionView: false,
+            } as any).sessionListIdentityDisplay).toBe('avatar');
+
+            expect(settingsParse({
+                sessionListDensity: 'cozy',
+            } as any).sessionListIdentityDisplay).toBe('avatar');
+        });
+
+        it('preserves narrow and explicit session identity display during identity migration', () => {
+            expect(settingsParse({
+                compactSessionView: true,
+                compactSessionViewMinimal: true,
+            } as any).sessionListIdentityDisplay).toBe('agentLogo');
+
+            expect(settingsParse({
+                sessionListDensity: 'detailed',
+                sessionListIdentityDisplay: 'agentLogo',
+            } as any).sessionListIdentityDisplay).toBe('agentLogo');
         });
 
         it('migrates featureToggles inbox.friends to social.friends (hard cutover)', () => {
@@ -475,6 +504,41 @@ describe('settings', () => {
                         disabledSurfaces: [],
                         disabledPlacements: [],
                         approvalRequiredSurfaces: [],
+                        toolExposureModes: {},
+                    },
+                },
+            });
+        });
+
+        it('keeps valid sparse action tool exposure overrides', () => {
+            const parsed = settingsParse({
+                actionsSettingsV1: {
+                    v: 1,
+                    actions: {
+                        'review.start': {
+                            toolExposureModes: {
+                                session_agent: 'direct',
+                                mcp: 'discoverable_only',
+                                cli: 'invalid',
+                                voice: 'direct',
+                            },
+                        },
+                    },
+                },
+            } as any);
+
+            expect((parsed as any).actionsSettingsV1).toEqual({
+                v: 1,
+                actions: {
+                    'review.start': {
+                        enabledPlacements: [],
+                        disabledSurfaces: [],
+                        disabledPlacements: [],
+                        approvalRequiredSurfaces: [],
+                        toolExposureModes: {
+                            session_agent: 'direct',
+                            mcp: 'discoverable_only',
+                        },
                     },
                 },
             });
@@ -498,6 +562,7 @@ describe('settings', () => {
                         disabledSurfaces: ['cli'],
                         disabledPlacements: [],
                         approvalRequiredSurfaces: [],
+                        toolExposureModes: {},
                     },
                 },
             });
@@ -510,6 +575,9 @@ describe('settings', () => {
             expect((parsed as any).filesDiffPresentationStyle).toBe('unified');
             expect((parsed as any).filesDiffFileListVirtualizationMinFiles).toBeGreaterThan(0);
             expect((parsed as any).filesDiffInlineVirtualizationLineThreshold).toBeGreaterThan(0);
+            expect((parsed as any).filesDiffReviewCommentsInlineVirtualizationLineThreshold).toBeGreaterThan(0);
+            expect((parsed as any).filesDiffReviewCommentsInlineVirtualizationLineThreshold)
+                .toBeLessThanOrEqual((parsed as any).filesDiffInlineVirtualizationLineThreshold);
             expect((parsed as any).filesChangedFilesRowDensity).toBe('comfortable');
             expect((parsed as any).filesDiffFoldingEnabled).toBe(true);
             expect((parsed as any).filesDiffFoldingContextThreshold).toBeGreaterThan(0);
@@ -549,6 +617,7 @@ describe('settings', () => {
         it('defaults session message sending to server pending queue mode', () => {
             const parsed = settingsParse({} as any);
             expect((parsed as any).sessionMessageSendMode).toBe('server_pending');
+            expect((parsed as any).sessionPendingQueueDrainMode).toBe('one_at_a_time');
         });
 
 	        it('defaults voice settings', () => {
@@ -690,6 +759,20 @@ describe('settings', () => {
             expect((parsed as any).sessionListInactiveGroupingV1).toBe('project');
         });
 
+        it('defaults the session list section mode to activity grouping', () => {
+            const parsed = settingsParse({});
+
+            expect((parsed as any).sessionListSectionModeV1).toBe('activity');
+        });
+
+        it('parses the unified session list section mode', () => {
+            const parsed = settingsParse({
+                sessionListSectionModeV1: 'single',
+            } as any);
+
+            expect((parsed as any).sessionListSectionModeV1).toBe('single');
+        });
+
         it('parses the session list active color mode setting', () => {
             const parsed = settingsParse({
                 sessionListActiveColorModeV1: 'attentionOnly',
@@ -707,6 +790,17 @@ describe('settings', () => {
             expect((settingsParse({
                 sessionListAttentionPromotionModeV1: 'invalid',
             } as any) as any).sessionListAttentionPromotionModeV1).toBe('off');
+        });
+
+        it('parses the session list working placement mode setting', () => {
+            const parsed = settingsParse({
+                sessionListWorkingPlacementModeV1: 'global',
+            } as any);
+
+            expect((parsed as any).sessionListWorkingPlacementModeV1).toBe('global');
+            expect((settingsParse({
+                sessionListWorkingPlacementModeV1: 'invalid',
+            } as any) as any).sessionListWorkingPlacementModeV1).toBe('off');
         });
 
         it('parses new-session persistence defaults', () => {
@@ -804,11 +898,35 @@ describe('settings', () => {
             expect((parsed as any).transcriptGroupingMode).toBe('turns');
             expect((parsed as any).transcriptGroupToolCalls).toBe(true);
             expect((parsed as any).transcriptTurnToolCallsGroupStrategy).toBe('consecutive_tools');
-            expect((parsed as any).transcriptToolCallsCollapsedPreviewCount).toBe(5);
+            expect((parsed as any).transcriptToolCallsCollapsedPreviewCount).toBe(3);
             expect((parsed as any).transcriptToolCallsGroupShowBackground).toBe(true);
+            expect((parsed as any).transcriptMessageTimestampDisplayMode).toBe('hover_web_hidden_mobile');
+            expect((parsed as any).transcriptMessageTimestampsEnabled).toBeUndefined();
             expect((parsed as any).transcriptTurnGroupToolCalls).toBeUndefined();
             expect((parsed as any).transcriptTurnToolCallsCollapsedPreviewCount).toBeUndefined();
             expect((parsed as any).transcriptTurnToolCallsGroupShowBackground).toBeUndefined();
+        });
+
+        it('preserves consecutive tool-call grouping across schema migrations', () => {
+            expect((settingsParse({
+                schemaVersion: 6,
+                transcriptTurnToolCallsGroupStrategy: 'consecutive_tools',
+            }) as any).transcriptTurnToolCallsGroupStrategy).toBe('consecutive_tools');
+
+            expect((settingsParse({
+                transcriptTurnToolCallsGroupStrategy: 'consecutive_tools',
+            }) as any).transcriptTurnToolCallsGroupStrategy).toBe('consecutive_tools');
+
+            expect((settingsParse({
+                schemaVersion: 7,
+                transcriptTurnToolCallsGroupStrategy: 'consecutive_tools',
+            }) as any).transcriptTurnToolCallsGroupStrategy).toBe('consecutive_tools');
+        });
+
+        it('migrates the legacy transcript timestamp toggle to the display mode setting', () => {
+            expect((settingsParse({ transcriptMessageTimestampsEnabled: true }) as any).transcriptMessageTimestampDisplayMode).toBe('always');
+            expect((settingsParse({ transcriptMessageTimestampsEnabled: false }) as any).transcriptMessageTimestampDisplayMode).toBe('hover_web_hidden_mobile');
+            expect((settingsParse({ transcriptMessageTimestampDisplayMode: 'never', transcriptMessageTimestampsEnabled: true }) as any).transcriptMessageTimestampDisplayMode).toBe('never');
         });
 
         it('defaults thinking to inline (summary)', () => {
@@ -874,12 +992,44 @@ describe('settings', () => {
             expect((parsed as any).transcriptScrollAutoFollowWhenPinned).toBe(true);
             expect((parsed as any).transcriptScrollJumpToBottomEnabled).toBe(true);
             expect((parsed as any).transcriptScrollJumpToBottomMinNewCount).toBe(1);
+            expect((parsed as any).transcriptScrollJumpToBottomRevealViewportRatio).toBe(0.75);
             expect((parsed as any).transcriptScrollJumpToBottomAnimateScroll).toBe(true);
         });
 
         it('defaults permission prompt surface settings', () => {
             const parsed = settingsParse({});
             expect((parsed as any).permissionPromptSurface).toBe('composer');
+        });
+
+        it('parses favorite backend targets and the last new-session picker view', () => {
+            const codexTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' });
+            const claudeTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' });
+            const parsed = settingsParse({
+                favoriteBackendTargetKeysV1: [
+                    codexTargetKey,
+                    claudeTargetKey,
+                    codexTargetKey,
+                    '',
+                    42,
+                ],
+                lastNewSessionAgentPickerViewV1: {
+                    kind: 'backend',
+                    backendTargetKey: codexTargetKey,
+                },
+            } as any);
+
+            expect((parsed as any).favoriteBackendTargetKeysV1).toEqual([
+                codexTargetKey,
+                claudeTargetKey,
+            ]);
+            expect((parsed as any).lastNewSessionAgentPickerViewV1).toEqual({
+                kind: 'backend',
+                backendTargetKey: codexTargetKey,
+            });
+
+            expect(settingsParse({
+                lastNewSessionAgentPickerViewV1: { kind: 'favoriteModels' },
+            } as any).lastNewSessionAgentPickerViewV1).toEqual({ kind: 'favoriteModels' });
         });
 
         it('parses remembered engine selections and drops invalid entries', () => {
@@ -1011,7 +1161,7 @@ describe('settings', () => {
 
         describe('settingsDefaults', () => {
             it('should have correct default values', () => {
-            expect(settingsDefaults.schemaVersion).toBe(6);
+            expect(settingsDefaults.schemaVersion).toBe(7);
             expect(settingsDefaults.experiments).toBe(false);
             expect(settingsDefaults.backendEnabledByTargetKey).toMatchObject({
                 [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]: true,
@@ -1023,10 +1173,12 @@ describe('settings', () => {
                 [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'kimi' })]: true,
                 [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'kilo' })]: true,
             });
+            expect((settingsDefaults as any).profileEnabledById).toEqual({});
             expect((settingsDefaults as any).backendCliSourcePreferenceByTargetKey).toEqual({});
             expect(settingsDefaults.codexBackendMode).toBe('appServer');
             expect(settingsDefaults.sessionReplayMaxSeedChars).toBe(120_000);
             expect(settingsDefaults.sessionMessageSendMode).toBe('server_pending');
+            expect((settingsDefaults as any).sessionPendingQueueDrainMode).toBe('one_at_a_time');
             expect(settingsDefaults.sessionDefaultPermissionModeByTargetKey).toMatchObject({
                 [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' })]: 'default',
                 [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' })]: 'default',
@@ -1047,6 +1199,7 @@ describe('settings', () => {
             expect((settingsDefaults as any).pinnedSessionKeysV1).toEqual([]);
             expect((settingsDefaults as any).sessionListGroupOrderV1).toEqual({});
             expect((settingsDefaults as any).sessionListOrderingModeV1).toBe('custom');
+            expect((settingsDefaults as any).sessionListFolderSortModeV1).toBe('foldersFirst');
             expect((settingsDefaults as any).notificationsSettingsV1).toEqual({
                 v: 1,
                 pushEnabled: true,
@@ -1055,6 +1208,9 @@ describe('settings', () => {
                 foregroundBehavior: 'full',
                 permissionRequest: true,
                 userActionRequest: true,
+                connectedServiceAccountSwitch: true,
+                connectedServiceQuotaBlocked: true,
+                connectedServiceQuotaRecovered: true,
             });
             expect((settingsDefaults as any).notificationChannelsV1).toEqual([
                 {
@@ -1066,6 +1222,9 @@ describe('settings', () => {
                         ready: true,
                         permissionRequest: true,
                         userActionRequest: true,
+                        connectedServiceAccountSwitch: true,
+                        connectedServiceQuotaBlocked: true,
+                        connectedServiceQuotaRecovered: true,
                     },
                     readyIncludeMessageText: true,
                 },
@@ -1136,10 +1295,10 @@ describe('settings', () => {
             expect(parsed).toEqual(parsedSettingsDefaults);
         });
 
-        it('preserves legacy Codex backend mode when upgrading a pre-v6 payload', () => {
+        it('canonicalizes legacy Codex backend mode when upgrading a pre-v6 payload', () => {
             const parsed = settingsParse({ schemaVersion: 5, codexBackendMode: 'mcp' } as any);
-            expect(parsed.schemaVersion).toBe(6);
-            expect((parsed as any).codexBackendMode).toBe('mcp');
+            expect(parsed.schemaVersion).toBe(7);
+            expect((parsed as any).codexBackendMode).toBe('appServer');
         });
 
         it('keeps valid backend CLI source preferences when parsing forward-compatible settings', () => {

@@ -5,7 +5,6 @@
  * - Functions with typed object parameters for dynamic text
  */
 
-import type { TranslationStructure } from '../_types';
 import { zhHans } from './zh-Hans';
 
 const mcpServersUxTranslationExtension = {
@@ -254,6 +253,7 @@ const settingsAppearanceTranslationExtension = {
       text: 'Text',
       state: 'State',
       control: 'Controls',
+      composer: 'Composer',
       message: 'Messages',
       syntax: 'Syntax',
       versionControl: 'Version control',
@@ -565,8 +565,8 @@ const settingsSessionHandoffTranslationExtensions = {
       groupFooter: '僅在來源工作階段目前為直接模式時適用。',
       keepDirectTitle: '保持直接模式',
       keepDirectSubtitle: '當供應商支援時，將目標恢復為直接工作階段。',
-      convertToPersistedTitle: '轉換為已同步',
-      convertToPersistedSubtitle: '匯入逐字稿並以已同步的 Happier 工作階段繼續。',
+      convertToPersistedTitle: '轉換為 Happier',
+      convertToPersistedSubtitle: '匯入逐字稿並以 Happier 工作階段繼續。',
     },
   },
 } as const;
@@ -574,12 +574,14 @@ const settingsSessionHandoffTranslationExtensions = {
 type DeepPartial<T> = {
     [K in keyof T]?: T[K] extends (...args: infer Args) => infer Return
         ? (...args: Args) => Return
-        : T[K] extends readonly unknown[]
-            ? T[K]
-            : T[K] extends object
-                ? DeepPartial<T[K]>
-                : T[K];
-};
+        : T[K] extends string
+            ? string
+            : T[K] extends readonly unknown[]
+                ? T[K]
+                : T[K] extends object
+                    ? DeepPartial<T[K]>
+                    : T[K];
+} & { readonly [key: string]: unknown };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -609,7 +611,7 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
     return count === 1 ? singular : plural;
 }
 
-const zhHantOverrides: DeepPartial<TranslationStructure> = {
+const zhHantOverrides: DeepPartial<typeof zhHans> = {
   settingsKeyboard: {
       title: 'Keyboard shortcuts',
       entrySubtitle: 'Discover and control app shortcuts',
@@ -637,6 +639,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           composerAbortConfirm: '確認中止',
           composerFocus: '聚焦輸入框',
           composerSendImmediate: '立即傳送',
+          composerSendPending: '傳送到待處理佇列',
           commandPaletteOpen: '開啟命令面板',
           modeCycle: '切換模式',
           shortcutsHelpOpen: '開啟快捷鍵說明',
@@ -649,7 +652,16 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           sessionsRowMoveDown: 'Move selected row down',
           sessionsRowMoveToFolder: 'Move selected row to folder',
           sessionsRowMoveToWorkspaceRoot: 'Move selected row to workspace root',
+          sessionsSelectionToggleFocused: 'Select focused session',
+          sessionsSelectionExtendUp: 'Extend session selection up',
+          sessionsSelectionExtendDown: 'Extend session selection down',
+          sessionsSelectionSelectAll: 'Select all visible sessions',
+          sessionsSelectionClear: 'Clear session selection',
           settingsOpen: '開啟設定',
+          transcriptSelectionCancel: 'Cancel transcript selection',
+          transcriptSelectionCopy: 'Copy selected transcript messages',
+          transcriptSelectionSelectAll: 'Select all transcript messages',
+          transcriptSelectionSendToSession: 'Send selected transcript messages to session',
           transcriptScrollBottom: '捲動到轉錄底部',
           transcriptScrollPageDown: '轉錄向下翻頁',
           transcriptScrollPageUp: '轉錄向上翻頁',
@@ -737,7 +749,77 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         friends: '好友',
         sessions: '工作階段',
         settings: '設定',
+
+        projects: '專案',},
+
+    transcript: {
+
+      selection: {
+
+        enterA11y: '進入選取模式',
+
+        exitA11y: '退出選取模式',
+
+        rowA11y: ({ role, preview }: { role: string; preview: string }) => `${role}: ${preview}`,
+
+        selectedCount: ({ count }: { count: number }) => count === 1 ? '1 message selected' : `${count} messages selected`,
+
+        selectAll: '全選',
+
+        deselectAll: '取消全選',
+
+        cancel: '取消',
+
+        copy: '複製',
+
+        copyA11y: ({ count }: { count: number }) => count === 1 ? 'Copy 1 message' : `Copy ${count} messages`,
+
+        send: '傳送',
+
+        sendA11y: ({ count }: { count: number }) => count === 1 ? 'Send 1 message to another session' : `Send ${count} messages to another session`,
+
+        copySuccess: '已複製',
+
+        copyFailed: '複製失敗',
+
+        sendTo: {
+
+          modalTitle: '傳送到工作階段',
+
+          modalSubtitle: '將選取的訊息附加到另一個工作階段草稿',
+
+          newSession: '新工作階段',
+
+          newSessionSubtitle: '附加到新工作階段草稿',
+
+          searchPlaceholder: 'Search sessions...',
+
+          noResults: '沒有相符的工作階段',
+
+          currentExcluded: '目前工作階段未顯示',
+
+          preview: '預覽',
+
+          previewNote: '這會顯示在目標輸入區中',
+
+          addNote: '加入備註（選填）',
+
+          addNotePlaceholder: 'Type a note to prepend...',
+
+          send: '傳送',
+
+          cancel: '取消',
+
+          sendFailed: '傳送失敗',
+
+          sendSuccessNavigating: '已傳送 — 正在開啟工作階段',
+
+        },
+
+      },
+
     },
+
 
     inbox: {
         // Inbox screen
@@ -762,10 +844,16 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             title: '本機索引狀態',
             diskUsageTitle: '磁碟用量',
             disabled: '此機器上的本機記憶搜尋已停用',
+            empty: '本機記憶搜尋已啟用，但尚未索引任何可搜尋內容',
+            indexing: '本機記憶搜尋正在索引轉錄內容',
+            waiting: '本機記憶搜尋正在等待下一次索引執行',
+            error: '本機記憶搜尋需要處理',
             readyLight: '此機器上的輕量索引已就緒',
             readyDeep: '此機器上的深度索引已就緒',
             unavailableLight: '此機器上的輕量索引尚未就緒',
             unavailableDeep: '此機器上的深度索引尚未就緒',
+            diskUsage: ({ lightMb, deepMb }: { lightMb: number; deepMb: number }) => `輕量 ${lightMb} MB · 深度 ${deepMb} MB`,
+            diskUsageFormatted: ({ light, deep }: { light: string; deep: string }) => `輕量 ${light} · 深度 ${deep}`,
             diskUsageUnavailable: '無法取得磁碟用量',
             embeddingsTitle: '嵌入執行階段',
             embeddingsProviderTitle: '嵌入提供者',
@@ -778,6 +866,54 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             embeddingsError: '嵌入初始化失敗',
             embeddingsProviderLocal: '本機模型',
             embeddingsProviderOpenAiCompatible: 'OpenAI 相容端點',
+        },
+        indexContents: {
+            groupTitle: '索引內容',
+            title: '可搜尋內容',
+            subtitle: ({ sessions, lightShards, deepChunks }: { sessions: number; lightShards: number; deepChunks: number }) =>
+                `${sessions} 個工作階段 · ${lightShards} 個輕量分片 · ${deepChunks} 個深度區塊`,
+        },
+        queue: {
+            groupTitle: '回填與佇列',
+            title: '索引佇列',
+            subtitle: ({ selected, queued, indexing, indexed, empty, failed, waiting }: { selected: number; queued: number; indexing: number; indexed: number; empty: number; failed: number; waiting: number }) =>
+                `${selected} 已選取 · ${queued} 佇列中 · ${indexing} 索引中 · ${indexed} 已索引 · ${empty} 空白 · ${failed} 失敗 · ${waiting} 等待`,
+            workerPhase: ({ phase }: { phase: string }) => `目前階段：${phase}`,
+        },
+        lastRun: {
+            groupTitle: '最近一次索引',
+            title: '最近執行',
+            subtitle: ({ considered, processed, semanticRows, failures }: { considered: number; processed: number; semanticRows: number; failures: number }) =>
+                `${considered} 已考慮 · ${processed} 已處理 · ${semanticRows} 個語意列 · ${failures} 個失敗`,
+        },
+        coverage: {
+            title: '內容涵蓋範圍',
+            footer: '控制在所選工作階段中索引哪些語意轉錄內容。',
+            triggerTitle: '涵蓋範圍',
+            options: {
+                fullTitle: '所有選取的歷史',
+                fullSubtitle: '索引所有選取的使用者與助理訊息',
+                latestMessagesTitle: '最新訊息',
+                latestMessagesSubtitle: '依工作階段索引有限數量的最新語意訊息',
+                latestDaysTitle: '最近天數',
+                latestDaysSubtitle: '索引最近天數範圍中的語意訊息',
+                sinceEnabledTitle: '啟用後',
+                sinceEnabledSubtitle: '索引啟用本機記憶後建立的內容',
+            },
+        },
+        contentPolicy: {
+            title: '已索引內容',
+            footer: '預設索引使用者與助理訊息。敏感的提供者細節會保持關閉，除非明確啟用。',
+            userMessagesTitle: '使用者訊息',
+            userMessagesSubtitle: '包含你撰寫的提示與回覆',
+            assistantMessagesTitle: '助理訊息',
+            assistantMessagesSubtitle: '包含助理的最終回覆',
+            reasoningTitle: '推理',
+            reasoningSubtitle: '僅在 daemon 支援時包含推理摘要',
+            toolSummariesTitle: '工具摘要',
+            toolSummariesSubtitle: '包含已清理的工具活動摘要',
+            toolOutputsTitle: '原始工具輸出',
+            toolOutputsSubtitle: '除非你有意讓本機索引包含原始工具輸出文字，否則請保持關閉',
         },
         embeddings: {
             modelTitle: '嵌入模型',
@@ -858,7 +994,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 	            clearActivity: '清除語音活動',
 	            bargeIn: '插話',
 	            cancelTurn: '取消回覆',
-	        },
+
+	            mute: '麥克風靜音',
+	            unmute: '取消麥克風靜音',},
 	    },
 
     voiceActivity: {
@@ -907,7 +1045,23 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
       transcriptEmpty: "尚無 QA 轉錄。",
       activityTitle: "語音活動",
       activityEmpty: "目前的 QA 工作階段尚未擷取到語音活動。",
-    },
+
+      recordedAudio: {
+        title: "錄音音訊 STT QA",
+        uriLabel: "錄音音訊 URI",
+        uriPlaceholder: "file:///recording.wav 或選擇 Web 檔案",
+        daemonPackIdLabel: "daemon STT 套件 ID 覆寫",
+        daemonPackIdPlaceholder: "選用：轉錄前套用 local_neural daemon STT QA 設定",
+        daemonMachineIdLabel: "daemon 裝置 ID 覆寫",
+        daemonMachineIdPlaceholder: "選用：為錄音音訊工作階段 ID 預先設定裝置目標",
+        daemonBasePathLabel: "daemon 基礎路徑覆寫",
+        daemonBasePathPlaceholder: "選用：為 daemon STT 預先設定裝置基礎路徑",
+        chooseFile: "選擇錄音音訊",
+        noFileSelected: "未選擇錄音音訊",
+        transcribe: "轉錄錄音音訊",
+        statusLabel: "狀態",
+        noResult: "沒有轉錄結果",
+      },},
 
     runs: {
         title: '執行',
@@ -1031,8 +1185,186 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             anthropic: 'Anthropic API 金鑰',
             gemini: 'Google Gemini（Google）',
             github: 'GitHub',
-        },
+
+            bitbucket: 'Bitbucket',},
         title: '已連線服務',
+        authChip: {
+            label: '認證',
+            labelWithCount: ({ count }: { count: number }) => `認證：${count}`,
+            nativeLabel: '本機',
+            connectedCountLabel: ({ count }: { count: number }) => `${count} 個已連線`,
+        },
+        authSwitch: {
+            switchFailed: '無法為此工作階段切換認證。',
+            confirmAction: '切換認證',
+            errors: {
+                groupGenerationConflict: '帳號群組在切換完成前已變更。請重新整理帳號清單後再試一次。',
+                providerStateSharingRequired: 'Provider state sharing must be enabled before this account can be used for the running session.',
+                notGroupSelection: 'Choose an account group so Happier can switch away from an exhausted account automatically.',
+                connectedServiceRequired: 'Choose a connected account before using this recovery action for the session.',
+                profileActionRequired: 'The selected connected account needs attention before it can be used.',
+                providerStateSharingUnavailable: '無法在此機器上檢查供應商狀態分享設定。請重新整理 daemon 連線後再試一次。',
+                profileDisconnected: '選取的已連線帳號需要重新驗證後才能使用。',
+                profileMissing: '選取的已連線帳號已無法使用。請重新整理帳號清單並選擇其他帳號。',
+                groupMissing: '選取的帳號群組已無法使用。請重新整理帳號清單並選擇其他群組。',
+                metadataUpdateFailed: '工作階段無法儲存新的驗證選擇。請在同步完成後再試一次。',
+                restartFailed: '無法使用新的驗證選擇重新啟動工作階段。請停止工作階段後再試一次。',
+                hotApplyFailed: '執行中的工作階段拒絕了新的驗證選擇。請重新啟動工作階段後再試一次。',
+                agentMismatch: '此驗證選擇與工作階段後端不相符。',
+                sessionNotFound: '此工作階段在選取的機器上已無法使用。',
+                unsupportedService: '此後端不支援選取的已連線服務。',
+            },
+            status: {
+                restarting: '正在重新啟動工作階段',
+                appliesOnNextResume: '下次恢復時套用',
+                retry: 'Authentication switch needs retry',
+                partialApplication: '身分驗證已部分切換',
+                partialApplicationServiceFailed: ({ service }: { service: string }) => `${service} 身分驗證失敗`,
+                partialApplicationServiceNotApplied: ({ service }: { service: string }) => `${service} 身分驗證未套用`,
+            },
+        },
+        errors: {
+            credentialReferencedByGroup: '此連線帳號正由帳號群組使用。中斷連線會將它從這些群組移除，並在需要時清除其作用中狀態。',
+            runtimeCooldown: ({ time }: { time: string }) => `This account is cooling down until ${time}.`,
+            runtimeCooldownOverrideTitle: '切換到冷卻中的帳號？',
+            runtimeCooldownOverrideBody: ({ time }: { time: string }) =>
+                `This account is cooling down until ${time}. Switch manually anyway?`,
+            runtimeCooldownOverrideConfirm: '仍然切換',
+            unknownResetTime: '未知時間',
+            generationConflict: '此帳號群組在動作完成前已變更。請重新整理帳號清單後再試。',
+            generationConflictWithGeneration: ({ generation }: { generation: number }) =>
+                `This account group changed before the action completed. Refresh the account list and try again. Current generation: ${generation}.`,
+            generationRequired: '此動作需要最新的帳號群組版本。請重新整理帳號清單後再試。',
+            groupNotFound: '此帳號群組已不存在。請重新整理帳號清單後再試。',
+            groupMemberNotFound: '此帳號已不再是群組成員。請重新整理帳號清單後再試。',
+            profileNotFound: '此連線帳號已不存在。請重新整理帳號清單後再試。',
+            activeProfileNotMember: '只有已啟用的群組成員才能設為作用中。',
+            fallbackDisabled: '此伺服器已停用帳號備援。',
+            duplicateMember: '此帳號已在群組中。',
+            groupAlreadyExists: '已存在使用此 id 的帳號群組。',
+            invalidGroup: '此帳號群組無效。請檢查設定後再試。',
+            requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
+            generic: '連線服務動作失敗。請重新整理後再試。',
+        },
+        diagnostics: {
+            title: {
+                provider_session_state_unavailable_for_resume: '切換無法使用',
+                connected_service_materialization_identity_missing: '缺少已連線服務身分',
+                resume_reachability_inputs_missing: '無法驗證工作階段恢復',
+                metadata_update_failed: '驗證選擇未儲存',
+                no_eligible_group_member: '沒有可用的備援帳號',
+                recovery_retry_scheduled: '已安排提供者復原',
+                recovery_dead_lettered: '提供者復原需要處理',
+                provider_account_adoption_mismatch: '提供者未切換帳號',
+                post_switch_verification_failed: '無法驗證提供者帳號',
+                connected_service_credential_reconnect_required: '已連線的帳戶需要重新連線',
+                claude_subscription_missing_claude_code_scope: 'Claude Code 存取需要重新連線',
+                claude_subscription_native_auth_materialization_failed: '無法準備 Claude Code 憑證',
+                claude_subscription_setup_token_not_supported_for_unified: 'Claude 設定權杖無法啟動 Unified 模式',
+            },
+            status: {
+                providerSessionStateUnavailableForResume: '無法移轉工作階段狀態',
+                providerAccountAdoptionMismatch: '提供者仍停留在另一個帳號',
+                postSwitchVerificationFailed: '無法驗證提供者帳號',
+                recoveryRetryScheduled: '已安排提供者復原重試',
+                metadataUpdateFailed: '無法儲存驗證選擇',
+                noEligibleGroupMember: '沒有可用的備援帳號',
+                provider_session_state_unavailable_for_resume: '無法帶入工作階段狀態',
+                connected_service_materialization_identity_missing: '缺少已連線服務身分',
+                resume_reachability_inputs_missing: '無法驗證工作階段恢復',
+                metadata_update_failed: '無法儲存工作階段驗證選擇',
+                no_eligible_group_member: '沒有符合條件的備援帳號',
+                recovery_retry_scheduled: '已安排提供者復原重試',
+                recovery_dead_lettered: '提供者復原已達重試上限',
+                provider_account_adoption_mismatch: '提供者停留在其他帳號',
+                post_switch_verification_failed: '無法驗證提供者帳號',
+                connected_service_credential_reconnect_required: '已連線的帳戶需要重新連線',
+                claude_subscription_missing_claude_code_scope: '為 Claude Code 重新連線 Claude 訂閱',
+                claude_subscription_native_auth_materialization_failed: '無法準備 Claude Code 原生認證',
+                claude_subscription_setup_token_not_supported_for_unified: '為 Unified 模式使用 OAuth 重新連線 Claude',
+            },
+            body: {
+                default: '檢查已連線帳號後再試一次。',
+                provider_session_state_unavailable_for_resume: ({ reason, agentId }: { reason: string; agentId: string }) =>
+                    `請檢查已連線帳號，然後使用所選帳號重新開始，或繼續使用目前帳號。${agentId}: ${reason}。`,
+                connected_service_materialization_identity_missing: '此工作階段缺少重用已生成提供者狀態所需的已連線服務身分。請使用所選帳號重新開始，或繼續使用目前帳號。',
+                resume_reachability_inputs_missing: ({ reason, agentId }: { reason: string; agentId: string }) =>
+                    `背景程式無法驗證提供者復原狀態，因為缺少必要的復原輸入。${agentId}: ${reason}。`,
+                metadata_update_failed: '工作階段無法儲存新的驗證選擇。請在工作階段完成同步後再試一次。',
+                no_eligible_group_member: '此群組目前沒有符合備援條件的帳號。請檢查已連線帳號，必要時重新連線設定檔。',
+                recovery_retry_scheduled: 'Happier 已安排提供者復原重試。你可以立即重試或檢查已連線帳號。',
+                recovery_dead_lettered: 'Happier 已用盡自動提供者復原重試。請檢查已連線帳號或重新連線所選設定檔。',
+                provider_account_adoption_mismatch: '切換後提供者仍停留在其他帳號。請檢查已連線帳號或重試切換。',
+                post_switch_verification_failed: 'Happier 無法驗證提供者是否採用了所選帳號。請檢查已連線帳號或重試切換。',
+                connected_service_credential_reconnect_required: '恢復此工作階段前，需要重新連線所選的已連線帳戶。請重新連線該設定檔，然後重試。',
+                claude_subscription_missing_claude_code_scope: '此 Claude 設定檔是在授予 Claude Code 範圍之前連線的。請重新連線，然後重試工作階段或帳號群組切換。',
+                claude_subscription_native_auth_materialization_failed: 'Happier 無法為此設定檔建立 Claude Code 原生憑證檔案。請重新連線該設定檔，或選擇帳號群組中的其他成員。',
+                claude_subscription_setup_token_not_supported_for_unified: 'Claude Unified 模式必須使用原生 OAuth 憑證啟動 Claude CLI。請使用 OAuth 重新連線此設定檔，而不是設定權杖。',
+            },
+            actions: {
+                viewLatestFork: '查看最新分支',
+                viewNativeFork: '查看原生分支',
+            },
+        },
+        reconnect: {
+            identityMismatchTitle: '偵測到不同的提供者帳號',
+            identityMismatchBody: '此憑證似乎屬於另一個提供者帳號。只有在你想取代此設定檔儲存的身分時才繼續。',
+            identityMismatchConfirm: '取代身分',
+        },
+        defaultAuth: {
+            title: '預設後端設定',
+            footer: '選擇每個後端在新工作階段開始時要使用的已連線帳戶。',
+            agentDetailTitle: '預設認證',
+            agentDetailFooter: '這會寫入與「已連線服務」設定中相同的預設值。',
+            rowDetail: '預設',
+            warning: {
+                connected_profile_unavailable: '預設已連線帳戶無法使用；將使用原生認證。',
+                connected_group_unavailable: '預設已連線群組無法使用；將使用原生認證。',
+                connected_group_disabled: '此處已停用已連線群組；將使用原生認證。',
+                connected_service_unsupported: '此後端不支援該已連線服務；將使用原生認證。',
+            },
+        },
+        providerStateSharing: {
+            title: '提供者狀態共享',
+            footer: '已連線服務的驗證保持隔離。只有在提供者安全支援時，才會共享設定和工作階段狀態。',
+            configTitle: '共享提供者設定',
+            agentConfigTitle: ({ agent }: { agent: string }) => `${agent} 設定共享`,
+            configLinkedTitle: '連結即時設定',
+            configLinkedSubtitle: '在支援時使用連結，讓已連線服務工作階段讀取目前提供者設定。',
+            configCopiedTitle: '複製設定快照',
+            configCopiedSubtitle: '每次具體化驗證時複製提供者設定。',
+            configIsolatedTitle: '保持設定隔離',
+            configIsolatedSubtitle: '不要將原生提供者設定共享到已連線服務主目錄。',
+            stateTitle: '共享提供者工作階段與狀態',
+            agentStateTitle: ({ agent }: { agent: string }) => `${agent} 工作階段與狀態共享`,
+            stateEnabledSubtitle: '允許支援的提供者在原生驗證與已連線服務驗證之間恢復同一工作階段。',
+            stateDisabledSubtitle: '除非提供者專用流程啟用共享，否則保持提供者工作階段和本機狀態分離。',
+            sharedStatePrivacyTitle: '共享提供者狀態',
+            sharedStatePrivacyBody: ({ agent }: { agent: string }) =>
+                `${agent} 可能會從已連線服務主目錄讀取本機提供者工作階段檔案。請只對你願意連結的帳戶啟用。`,
+            unavailable: {
+                notImplemented: '此提供者尚不支援共享。',
+                dynamicDiagnosticsRequired: '共享需要先進行執行階段可用性檢查，之後才能啟用。',
+            },
+        },
+        quota: {
+            loading: '載入中…',
+            error: ({ message }: { message: string }) => `錯誤：${message}`,
+            lastUpdated: ({ time }: { time: string }) => `上次更新：${time}`,
+            lastUpdatedStale: ({ time }: { time: string }) => `上次更新：${time} • 已過期`,
+            noData: '尚無配額資料',
+            planLabel: ({ plan }: { plan: string }) => `方案：${plan}`,
+            remaining: ({ percent }: { percent: string }) => `剩餘 ${percent}`,
+            remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) => `剩餘 ${percent} · ${reset} 後重設`,
+            usageCount: ({ used, limit }: { used: number; limit: number }) => `已用 ${used}/${limit}`,
+            duration: {
+                now: '現在',
+                daysHours: ({ days, hours }: { days: number; hours: number }) => `${days}天 ${hours}小時`,
+                hoursMinutes: ({ hours, minutes }: { hours: number; minutes: number }) => `${hours}小時 ${minutes}分鐘`,
+                hours: ({ hours }: { hours: number }) => `${hours}小時`,
+                minutes: ({ minutes }: { minutes: number }) => `${minutes}分鐘`,
+            },
+        },
         oauthPaste: {
             invalidConfig: '已連線服務設定無效。',
             connectWebGroupTitle: '連線（網頁）',
@@ -1131,6 +1463,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             connectAccessTokenSubtitle: '貼上 GitHub personal access token',
             openGithubTokenTemplateTitle: '建立 GitHub 權杖',
             openGithubTokenTemplateSubtitle: '開啟 GitHub，並預先填入 Happier 需要的權限',
+            disconnectGroupCleanupConfirmBody: ({ service, profileId, groups }: { service: string; profileId: string; groups: string }) =>
+                `斷開 ${service}（${profileId}）並從 ${groups} 中移除？`,
             prompts: {
                 apiKeyTitle: 'API 金鑰',
                 apiKeyBody: '貼上你的 Anthropic API 金鑰。',
@@ -1141,11 +1475,135 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 accessTokenTitle: '存取權杖',
                 accessTokenBody: '貼上你的 GitHub personal access token。請使用將 Contents、Pull requests 和 Administration 設為讀寫的 fine-grained token，讓 PR 與儲存庫發布流程可以執行。',
                 accessTokenPlaceholder: 'github_pat_…',
-            },
+
+                personalAccessTokenTitle: '個人存取權杖',
+                personalAccessTokenBody: '貼上你的 GitHub 細粒度個人存取權杖。',
+                personalAccessTokenPlaceholder: 'github_pat_…',
+                apiTokenTitle: 'API 權杖',
+                apiTokenBody: '貼上提供者 API 權杖或 app 密碼。',
+                apiTokenPlaceholder: 'API 權杖',},
             alerts: {
                 failedToOpenTokenSetupUrl: '無法開啟 GitHub 權杖設定。',
             },
-        },
+            groups: {
+                title: '帳戶群組',
+                empty: '尚未有帳戶群組。',
+                subtitle: ({ count }: { count: number }) => `${count} 個帳戶`,
+                subtitleWithActive: ({ profileId, count }: { profileId: string; count: number }) =>
+                    `啟用中：${profileId} • ${count} 個帳戶`,
+                actionsTitle: '帳戶群組操作',
+                createTitle: '建立帳戶群組',
+                createSubtitle: '將已連線的設定檔分組，以便進行後援復原。',
+                noProfilesTitle: '沒有已連線的設定檔',
+                noProfilesBody: '建立帳戶群組前，請先至少連線一個設定檔。',
+                invalidGroupTitle: '無效的群組 ID',
+                invalidGroupBody: '請使用字母、數字、句點、連字號或底線（最多 64 個字元）。',
+                statusReady: '就緒',
+                statusSwitching: '切換中',
+                statusExhausted: '已耗盡',
+                statusError: '錯誤',
+                statusUnknown: '未知',
+                statusNeedsMembers: '需要啟用的成員',
+                activeMember: ({ profileId }: { profileId: string }) => `啟用中：${profileId}`,
+                enabledMembers: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} 已啟用`,
+                autoFallbackEnabled: '自動備援開啟',
+                autoFallbackDisabled: '自動備援關閉',
+                strategyPriority: '優先順序',
+                strategyLeastLimited: '最少受限優先',
+                strategyManual: '手動切換',
+                priority: ({ priority }: { priority: string }) => `優先順序 ${priority}`,
+                cooldown: ({ time }: { time: string }) => `冷卻至 ${time}`,
+                memberActive: '使用中成員',
+                memberEnabled: '已啟用',
+                memberDisabled: '已停用',
+                memberPriority: ({ priority }: { priority: number }) => `優先順序 ${priority}`,
+                memberExhaustedUntil: ({ time }: { time: string }) => `耗盡至 ${time}`,
+                memberQuotaExhaustedUntil: ({ time }: { time: string }) => `用量受限至 ${time}`,
+                memberRateLimitedUntil: ({ time }: { time: string }) => `頻率受限至 ${time}`,
+                memberCapacityLimitedUntil: ({ time }: { time: string }) => `容量受限至 ${time}`,
+                memberAuthInvalidUntil: ({ time }: { time: string }) => `認證無效至 ${time}`,
+                memberPlanUnavailableUntil: ({ time }: { time: string }) => `方案不可用至 ${time}`,
+                memberValidationBlockedUntil: ({ time }: { time: string }) => `驗證被封鎖至 ${time}`,
+                memberLastFailure: ({ reason }: { reason: string }) => `上次問題：${reason}`,
+                warningNoEnabledMembers: '沒有可用於備援的已啟用成員。',
+                warningNoFallbackMember: '請先新增或啟用另一位成員，自動備援才能切換帳號。',
+                deleteTitle: '刪除帳戶群組？',
+                deleteBody: ({ groupId }: { groupId: string }) => `刪除「${groupId}」？設定檔仍會保持連線。`,
+                prompts: {
+                    groupIdTitle: '群組 ID',
+                    groupIdBody: '請使用 team、work 或 fallback 之類的短標籤。',
+                    groupIdPlaceholder: 'tuandui',
+                },
+            },
+            groupActions: {
+                editTitle: '編輯群組',
+                searchMembersPlaceholder: '搜尋設定檔',
+                noProfilesAvailable: '沒有可用的已連線設定檔。',
+                membersTitle: '成員',
+                membersSubtitle: '勾選要包含在此群組中的設定檔。',
+                accountFallbackDisabled: '此伺服器已停用自動備援。',
+                enableFallback: '啟用自動備援',
+                disableFallback: '停用自動備援',
+                makeActive: '設為使用中',
+                useManualStrategy: '使用手動切換',
+                usePriorityStrategy: '使用優先順序',
+                activeMember: '使用中成員',
+                enableMember: '啟用成員',
+                disableMember: '停用成員',
+                editPriority: '編輯優先順序',
+                priorityTitle: '成員優先順序',
+                priorityBody: '先嘗試較小的數字。',
+                invalidPriorityTitle: '無效的優先順序',
+                invalidPriorityBody: '請輸入整數。',
+                removeMember: '移除成員',
+                removeMemberConfirmTitle: '移除成員',
+                removeMemberConfirmBody: ({ profileId }: { profileId: string }) => `從此群組移除「${profileId}」？`,
+            },
+            groupDetail: {
+                routeTitle: '群組',
+                nameTitle: '群組名稱',
+                namePromptBody: '選擇會顯示在設定與驗證選擇器中的名稱。',
+                groupIdTitle: '群組 ID',
+                membersTitle: '成員',
+                membersSubtitle: ({ enabled, total }: { enabled: number; total: number }) => `${enabled}/${total} 已啟用`,
+                optionsTitle: '選項',
+                autoSwitchTitle: '自動備援',
+                autoSwitchEnabledSubtitle: '當目前帳號需要復原時切換到另一位成員。',
+                autoSwitchDisabledSubtitle: '繼續使用目前成員，直到你手動切換。',
+                strategyTitle: '選擇策略',
+                strategyPriorityTitle: '優先順序',
+                strategyPrioritySubtitle: '先嘗試較低的優先順序數字。',
+                strategyLeastLimitedTitle: '限制較少優先',
+                strategyLeastLimitedSubtitle: '優先使用可用配額最多的成員。',
+                strategyManualTitle: '手動切換',
+                strategyManualSubtitle: '只使用目前成員，直到手動變更。',
+                softSwitchThresholdTitle: '軟切換閾值',
+                softSwitchThresholdSubtitle: ({ percent }: { percent: string }) => `當有更安全的成員可用時，在剩餘低於 ${percent}% 時切換。`,
+                softSwitchThresholdPromptTitle: '軟切換閾值',
+                softSwitchThresholdPromptBody: '輸入剩餘百分比，Happier 會在該值以下優先選擇更安全的帳號。使用 0 可關閉軟切換。',
+                invalidSoftSwitchThresholdTitle: '閾值無效',
+                invalidSoftSwitchThresholdBody: '請輸入 0 到 100 之間的數字。',
+                staleProbeTitle: '配額資料過期後重新檢查',
+                staleProbeSubtitle: ({ minutes }: { minutes: string }) => `當配額資料早於 ${minutes} 分鐘時再次檢查。`,
+                staleProbePromptTitle: '配額資料過期後重新檢查',
+                staleProbePromptBody: '輸入配額資料可重複使用的分鐘數，超過後 Happier 會重新檢查。',
+                invalidStaleProbeTitle: '檢查間隔無效',
+                invalidStaleProbeBody: '請輸入至少 1 分鐘。',
+                recoveryPromptTitle: '恢復提示',
+                recoveryPromptSubtitle: '對此群組使用標準恢復和繼續提示。',
+                missingTitle: '找不到群組',
+                missingBody: ({ service, groupId }: { service: string; groupId: string }) =>
+                    `${service} 中不存在名為「${groupId}」的群組。`,
+            },
+
+            connectPersonalAccessTokenTitle: '連線個人存取權杖',
+            connectPersonalAccessTokenSubtitle: '貼上細粒度個人存取權杖',
+            connectApiTokenTitle: '連線 API 權杖',
+            connectApiTokenSubtitle: '貼上提供者 API 權杖或 app 密碼',
+            openTokenSetupTitle: '開啟權杖設定',
+            openTokenSetupSubtitle: '開啟提供者設定頁面',
+            openPersonalAccessTokenSetupTitle: '建立個人存取權杖',
+            openPersonalAccessTokenSetupSubtitle: '開啟 GitHub 細粒度權杖設定',},
         profile: {
             profileId: '設定檔 ID',
             status: '狀態',
@@ -1160,9 +1618,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         authModal: {
             nativeAuthTitle: '後端原生驗證',
             nativeAuthSubtitle: '使用本機 CLI 登入 / API 金鑰',
+            groupSubtitle: '帳戶群組',
             connectedServicesTitle: '使用已連線服務',
             connectedServicesSubtitle: '從 Happier 雲端取得並生成',
-            notConnectedTitle: '未連線',
+            notConnectedTitle: '沒有已連線的服務',
             notConnectedSubtitle: '點按以開啟設定',
             profileLabel: '設定檔',
         },
@@ -1259,7 +1718,25 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         default: '預設',
         enabled: '已啟用',
           disabled: '已停用',
-      },
+
+          maximize: '最大化',
+          restore: '還原',
+          name: '名稱',
+          blocked: '已封鎖',
+          active: '活躍',
+          inactive: '非活躍',
+          more: '更多',
+          skip: '跳過',
+          login: '登入',
+          install: '安裝',
+          enable: '啟用',
+          disable: '停用',
+          details: '詳情',
+          tabs: '分頁',
+          logs: '日誌',
+          share: '分享',
+          unavailable: '不可用',
+          unreachable: '無法連線',},
 
       modelPickerOverlay: {
           refreshModelsA11y: '重新整理模型',
@@ -1315,6 +1792,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         minutesAgoShort: ({ count }: { count: number }) => `${count}分鐘前`,
         hoursAgoShort: ({ count }: { count: number }) => `${count}小時前`,
         daysAgoShort: ({ count }: { count: number }) => `${count}天前`,
+    },
+
+    commandMenu: {
+        empty: '沒有結果',
     },
 
     selectionList: {
@@ -2316,6 +2797,27 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         editorFooter: '設定檔案編輯器的行為。',
         editorAutoSave: '自動儲存',
         editorAutoSaveDescription: '編輯後自動儲存檔案。',
+        markdownEditMode: {
+            title: '預設 Markdown 編輯模式',
+            footer: '選擇 Markdown 檔案以何種方式開啟進行編輯。豐富模式提供所見即所得 (WYSIWYG) 編輯器；原始模式直接編輯 Markdown 原始碼。無法安全雙向轉換的檔案一律以原始模式開啟。',
+            options: {
+                rich: {
+                    title: '豐富 (WYSIWYG)',
+                    subtitle: '透過即時格式化視覺化編輯 Markdown。',
+                },
+                raw: {
+                    title: '原始文字',
+                    subtitle: '直接編輯 Markdown 原始碼。',
+                },
+            },
+            disabledReason: {
+                mdx: '由於這是 MDX 檔案，正在以原始文字編輯。',
+                tooLarge: '由於此檔案對於豐富編輯器來說過大，正在以原始文字編輯。',
+                referenceLinks: '由於此檔案包含參照樣式連結，正在以原始文字編輯。',
+                footnotes: '由於此檔案包含註腳，正在以原始文字編輯。',
+                htmlOrJsx: '由於此檔案包含 HTML 或 JSX，正在以原始文字編輯。',
+            },
+        },
         commitStrategy: {
             title: '提交策略',
             footer: '原子提交可避免多代理對索引的干擾。Git 暫存支援互動式 include/exclude 工作流程。',
@@ -2595,6 +3097,22 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             enabledSubtitle: '允許此帳戶接收推播通知',
             troubleshootTitle: '疑難排解',
             troubleshootSubtitle: '查看權限與已註冊裝置',
+        },
+        connectedServices: {
+            title: '提供者復原',
+            footer: '控制帳戶切換與配額復原通知。',
+            accountSwitch: {
+                title: '帳戶切換',
+                subtitle: '當 Happier 自動將提供者切換到另一個已連接帳戶時通知',
+            },
+            quotaBlocked: {
+                title: '配額受阻',
+                subtitle: '當提供者因配額耗盡而無法繼續時通知',
+            },
+            quotaRecovered: {
+                title: '配額已復原',
+                subtitle: '當受阻的提供者可以再次繼續時通知',
+            },
         },
         pushTroubleshooting: {
             status: {
@@ -2887,6 +3405,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                         title: "Claude Code 實驗功能",
                         footer: "這些設定同時適用於由 Happier 啟動的 Claude 本機工作階段（終端）與遠端工作階段（Agent SDK）。"
                     },
+                    claudeUnifiedTerminal: {
+                        title: "Claude 統一終端",
+                        footer: "在終端託管工作階段中執行 Claude Code，並允許 Happier 透過終端主機傳送支援的提示。"
+                    },
                     claudeRemoteSdk: {
                         title: "Claude Agent SDK（遠端模式）",
                         footer: "遠端模式會在你的機器上執行 Claude，但由 Happier UI 控制。本機模式則是終端中的 Claude Code TUI。這些設定僅影響遠端模式。"
@@ -2896,6 +3418,28 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "強制啟用 Agent Teams",
                         subtitle: "在所有由 Happier 啟動的 Claude 工作階段中啟用 Claude Code 的實驗性 Agent Teams（代理群）功能。"
+                    },
+                    claudeUnifiedTerminalEnabled: {
+                        title: "使用統一終端模式",
+                        subtitle: "將 Claude Code 保持為標準終端工作階段，並把支援的 Happier 提示傳送到該工作階段。"
+                    },
+                    claudeUnifiedTerminalHost: {
+                        title: "終端主機",
+                        subtitle: "選擇 Happier 為統一 Claude 工作階段使用的終端多工器。",
+                        options: {
+                            auto: {
+                                title: "自動",
+                                subtitle: "優先使用此機器上支援情況最佳的主機。"
+                            },
+                            tmux: {
+                                title: "tmux",
+                                subtitle: "可用時使用 tmux。"
+                            },
+                            zellij: {
+                                title: 'zellij',
+                                subtitle: "可用且支援時使用 Zellij。"
+                            }
+                        }
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "使用 Agent SDK（遠端）",
@@ -3026,6 +3570,25 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             copilot: {
                 title: "Copilot"
             },
+            cursor: {
+                title: "Cursor",
+                sections: {
+                    cli: {
+                        title: 'Cursor 命令列',
+                        footer: "當自動偵測不足時，使用指定的 Cursor 二進位檔。Happier 優先使用 cursor-agent，並可在啟用時回退到 agent。"
+                    }
+                },
+                fields: {
+                    cursorBinaryPath: {
+                        title: "Cursor 二進位路徑",
+                        subtitle: "可選的 cursor-agent 或 agent 絕對路徑。"
+                    },
+                    cursorAgentFallbackEnabled: {
+                        title: "允許 agent 回退",
+                        subtitle: "當 cursor-agent 無法使用時使用 agent 命令。"
+                    }
+                }
+            },
             customAcp: {
                 title: "自訂 ACP"
             },
@@ -3036,7 +3599,29 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 title: "Kilo"
             },
             kimi: {
-                title: "Kimi"
+                title: "Kimi",
+                sections: {
+                    compatibility: {
+                        title: '相容性',
+                        footer: '僅在 Kimi ACP 啟動卡住的 Linux/容器環境中使用相容模式。'
+                    }
+                },
+                fields: {
+                    kimiAcpPythonSelector: {
+                        title: 'Python stdio 選擇器',
+                        subtitle: '選擇 Happier 如何啟動 Kimi ACP 的 Python stdio 迴圈。',
+                        options: {
+                            auto: {
+                                title: '自動',
+                                subtitle: '使用 Kimi 預設的 Python 選擇器。'
+                            },
+                            poll: {
+                                title: '相容模式',
+                                subtitle: '對 Kimi ACP stdio 使用 poll()，而不是 epoll()。'
+                            }
+                        }
+                    }
+                }
             },
             kiro: {
                 title: "Kiro"
@@ -3226,7 +3811,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         expSessionsDirect: '直接工作階段',
         expSessionsDirectSubtitle: '在側邊欄列出並開啟由供應商支援的直接工作階段',
         expSessionsFolders: '工作階段資料夾',
-        expSessionsFoldersSubtitle: '使用工作區資料夾整理已同步的側邊欄工作階段',
+        expSessionsFoldersSubtitle: '使用工作區資料夾整理 Happier 側邊欄工作階段',
         expPetsCompanion: '寵物',
         expPetsCompanionSubtitle: '啟用 Blink 夥伴介面與本機寵物選擇',
         expScmOperations: '版本控制操作',
@@ -3239,6 +3824,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         expFilesAdvancedSyntaxHighlightingSubtitle: '使用更重、更高保真的語法醒目提示（僅 Web，可能較慢）',
         expFilesEditor: '內嵌檔案編輯器',
         expFilesEditorSubtitle: '允許直接在檔案瀏覽器編輯檔案（Web/桌面使用 Monaco，原生使用 CodeMirror）',
+        expMarkdownRichEditor: '豐富 Markdown 編輯器',
+        expMarkdownRichEditorSubtitle: '在檔案編輯器中為 Markdown 檔案啟用豐富 (WYSIWYG) 編輯器，必要時回退到原始文字',
         expEmbeddedTerminal: '內嵌終端',
         expEmbeddedTerminalSubtitle: '在工作階段中開啟真實終端。',
         expZen: 'Zen 模式',
@@ -3248,11 +3835,11 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         enterToSendEnabled: '按 Enter 傳送（Shift+Enter 換行）',
         enterToSendDisabled: 'Enter 鍵插入換行',
         historyScope: '訊息歷史',
-        historyScopePerSession: '僅在此終端循環歷史',
-        historyScopeGlobal: '在所有終端循環歷史',
+        historyScopePerSession: '僅在此工作階段循環歷史',
+        historyScopeGlobal: '在所有工作階段循環歷史',
         historyScopeModalTitle: '訊息歷史',
-        historyScopeModalMessage: '選擇方向鍵上/下是僅在此終端送出的訊息間循環，或在所有終端間循環。',
-        historyScopePerSessionOption: '按終端',
+        historyScopeModalMessage: '選擇方向鍵上/下是僅在此工作階段送出的訊息間循環，或在所有工作階段間循環。',
+        historyScopePerSessionOption: '按工作階段',
         historyScopeGlobalOption: '全域',
           commandPalette: '命令面板',
           commandPaletteEnabled: '使用快捷鍵開啟',
@@ -3372,6 +3959,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         daemonRpcUnavailableTitle: '守護程序無法使用',
         daemonRpcUnavailableBody:
             'Happier 無法連線到此裝置上的守護程序。它可能離線、仍在啟動，或與伺服器中斷連線。',
+        connectedServiceSwitchUnavailable: {
+            title: '無法切換',
+            body: ({ reason, agentId }: { reason: string; agentId: string }) =>
+                `此工作階段無法在新帳戶下繼續，因為其先前的 ${agentId} 對話無法移轉（${reason}）。\n\n你可以改為在新帳戶下重新開始——這將開始一個不含先前歷史記錄的新對話。`,
+            startFreshAction: '在新帳戶下重新開始',
+        },
         noMachineSelected: '請選擇一台裝置以啟動工作階段',
         noPathSelected: '請選擇一個目錄以啟動工作階段',
         checkout: {
@@ -3510,6 +4103,30 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
       session: {
           inputPlaceholder: '輸入訊息...',
+          usageLimitRecovery: {
+            title: '已達到使用限制',
+            readyTitle: '使用限制已重設',
+            resetBody: ({ time }: { time: string }) => `此提供者要求工作階段等到 ${time} 後再繼續。`,
+            genericBody: '此提供者要求工作階段等待後再繼續。',
+            readyBody: '你現在可以恢復此工作階段。',
+            enableAction: '限制重置後恢復',
+            cancelAction: '停止等待',
+            checkNowAction: '立即檢查限制',
+            resumeNowAction: '立即恢復',
+            switchFallbackNowAction: '立即切換到備用帳號',
+            switchAccountNowAction: '立即切換帳號',
+            retryTemporaryThrottleAction: '立即重試',
+            rememberAction: '一律等待並恢復',
+            forgetAction: '每次詢問',
+            statusLimitReached: '已達到限制',
+            statusTemporaryThrottle: '暫時受限',
+            statusReady: '可恢復',
+            statusWaiting: '等待限制重設',
+            statusWaitingUntil: ({ time }: { time: string }) => `等待到 ${time}`,
+            statusChecking: '正在檢查限制',
+            statusPaused: '等待已暫停',
+            statusExhausted: '群組已耗盡',
+          },
           workState: {
             accessibilityLabel: '工作階段工作狀態',
             commandDescription: '設定或查看工作階段目標',
@@ -3523,6 +4140,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               goal: ({ title }: { title: string }) => `目標：${title}`,
               goalPaused: '目標已暫停',
               goalBlocked: '目標已阻塞',
+              goalBudgetLimited: '目標受預算限制',
               goalComplete: '目標已完成',
               item: ({ title }: { title: string }) => title,
             },
@@ -3541,6 +4159,22 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               clear: '清除',
               clearTitle: '清除目標？',
               clearBody: '這會從此工作階段中移除可編輯目標。',
+              statusActive: '進行中',
+              statusPaused: '已暫停',
+              statusComplete: '已完成',
+              statusBudgetLimited: '受預算限制',
+              timeUsed: '已用時間',
+              tokensUsed: '已用 token',
+              tokenBudget: 'Token 預算',
+              noTokenBudget: '無 token 預算',
+              budgetProgress: ({ used, budget }: { used: string; budget: string }) => `${used} / ${budget}`,
+              budgetToggle: '預算',
+              budgetPlaceholder: 'Token 限制',
+              clearBudget: '無限制',
+              invalidBudget: '請輸入正數 token 預算。',
+              errorUnsupportedResponse: '工作階段 RPC 傳回了不支援的回應',
+              errorUnknown: '未知錯誤',
+              errorCannotResume: '無法恢復工作階段以更新原生目標',
             },
           },
           rightPanel: {
@@ -3651,6 +4285,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 emptyHint: '從右側面板開啟檔案或差異。',
                 unsupportedTab: '不支援的詳細分頁。',
                 closeA11y: '關閉詳細資料',
+                openRightSidebarA11y: '開啟右側邊欄',
+                closeRightSidebarA11y: '關閉右側邊欄',
                 openTabA11y: ({ title }: { title: string }) => `開啟分頁 ${title}`,
                 pinTabA11y: '釘選分頁',
                 unpinTabA11y: '取消釘選分頁',
@@ -3672,6 +4308,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 	                empty: '沒有待傳送訊息。',
 	                decryptFailed: '無法解密這則待傳送訊息。',
 	                nonSteerableNotice: '目前回合在此次模式切換後無法再接受引導。它會在下一回合執行，或使用立即傳送來中斷。',
+	                steerBlockedTerminalDraftNotice: '等待中：終端機輸入框中的草稿阻擋了訊息送達。請在終端機清除草稿或中斷本回合。',
 	                actions: {
                     up: '上移',
                     down: '下移',
@@ -3907,13 +4544,16 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     sessionsList: {
         serverHeader: ({ server }: { server: string }) => `伺服器：${server}`,
-        storagePersistedTab: '已同步',
+        storagePersistedTab: 'Happier',
         storageDirectTab: '直接',
         renameWorkspace: '重新命名工作區',
         renameWorkspacePromptTitle: '重新命名工作區',
         renameWorkspacePromptPlaceholder: '輸入名稱...',
         resetWorkspaceName: '重設名稱',
         viewOptions: '檢視選項',
+        searchSessions: '搜尋工作階段',
+        searchSessionsPlaceholder: '搜尋工作階段...',
+        filterByTags: '依標籤篩選',
         folders: '資料夾',
         addFolder: '新增資料夾',
         addFolderPromptTitle: '新增資料夾',
@@ -3928,8 +4568,16 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         deleteFolderPromptDescription: '此資料夾中的工作階段會保留在工作區中。',
         newSessionInFolder: '在資料夾中新建工作階段',
         clearFolderFocus: '清除資料夾焦點',
+        folderVisibility: '資料夾可見性',
         folderViewTree: '資料夾檢視',
         folderViewOff: '隱藏資料夾',
+        folderSortMode: '資料夾順序',
+        folderSortFoldersFirst: '資料夾優先',
+        folderSortFoldersFirstDescription: '在每個群組中先顯示資料夾，再顯示工作階段。',
+        folderSortMixed: '與工作階段混排',
+        folderSortMixedDescription: '保留資料夾和工作階段的自訂順序。',
+        folderSortMixedDisabledInDateMode: '混合資料夾順序僅在自訂順序中可用。',
+        filters: '篩選器',
         moveToFolder: '移動到資料夾',
         moveToWorkspaceRoot: '工作區根目錄',
         sessionFallbackLabel: 'Session',
@@ -3956,9 +4604,43 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         dragA11yBlockedSamePosition: 'already in that position',
         dragA11yBlockedWorkspaceScope: 'destination is in another workspace',
         dragA11yBlockedNoTarget: 'no destination selected',
+        dragA11yBlockedDirectSession: 'direct sessions cannot be moved to folders',
+        dragA11yBlockedFeatureDisabled: 'session folders are not enabled',
+        dragA11yBlockedUnsupportedItem: 'this item cannot be moved to folders',
+        dragA11yBlockedDateOrderingMode: '工作階段順序由目前的日期排序控制。',
+        orderingMode: {
+            title: '工作階段順序',
+            description: '選擇手動順序或穩定的日期排序。',
+            custom: 'Custom order',
+            created: 'Sort by created date',
+            updated: 'Sort by last activity',
+        },
+        attentionSectionTitle: '需要注意',
+        workingSectionTitle: '正在工作',
+        selectionSelectedCount: ({ count }: { count: number }) => count === 1 ? '1 session selected' : `${count} sessions selected`,
+        selectionA11ySelectedCount: ({ count }: { count: number }) => count === 1 ? '1 session selected' : `${count} sessions selected`,
+        selectionCheckboxA11yLabel: 'Select session',
+        selectionSelectAction: 'Select',
+        selectionSelectAllVisible: 'Select all',
+        selectionSelectAllVisibleA11yLabel: '選取所有可見工作階段',
+        selectionMoveSheetSourceLabel: ({ count }: { count: number }) => count === 1 ? '1 selected session' : `${count} selected sessions`,
+        selectionAddTags: '新增標籤',
+        selectionRemoveTags: '移除標籤',
+        selectionSetTags: '設定標籤',
+        selectionAddTagsPromptTitle: '新增標籤',
+        selectionRemoveTagsPromptTitle: '移除標籤',
+        selectionSetTagsPromptTitle: '設定標籤',
+        selectionTagsPromptMessage: '以逗號分隔標籤。',
+        selectionTagsPlaceholder: '標籤一, 標籤二',
+        selectionCancelA11yLabel: '取消工作階段選取',
+        selectionProgress: ({ completed, total }: { completed: number; total: number }) => `${completed} of ${total} complete`,
+        selectionCancelRunningA11yLabel: '取消所選工作階段動作',
+        selectionResult: ({ succeeded, failed, skipped }: { succeeded: number; failed: number; skipped: number }) => `${succeeded} succeeded, ${failed} failed, ${skipped} skipped`,
+        selectionDismissResultA11yLabel: '關閉所選工作階段動作結果',
+        selectionConfirm: ({ action, count }: { action: string; count: number }) => `${action} ${count} selected ${count === 1 ? 'session' : 'sessions'}?`,
+        selectionConfirmA11yLabel: ({ action }: { action: string }) => `Confirm ${action}`,
         hideInactiveSessions: '隱藏非使用中工作階段',
         showInactiveSessions: '顯示非使用中工作階段',
-        attentionSectionTitle: '需要注意',
     },
 
     directSessions: {
@@ -3981,8 +4663,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         browseActivityRecent: "最近活躍",
         browseActivityIdle: "閒置",
         browseActivityUnknown: "未知",
-        browseSearchPlaceholder: "搜尋已載入的工作階段…",
-        browseNoSearchResults: "目前沒有已載入的工作階段符合此搜尋。",
+        browseSearchPlaceholder: "搜尋工作階段…",
+        browseNoSearchResults: "目前沒有工作階段符合此搜尋。",
         browseLoadMore: "載入更多工作階段",
         browseFailedToLoad: "載入提供者工作階段失敗。",
         browseLinkFailed: "連結所選提供者工作階段失敗。",
@@ -4031,6 +4713,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         failedToCopyClaudeCodeSessionId: '複製 Claude Code 工作階段 ID 失敗',
         copilotSessionId: 'Copilot 工作階段 ID',
         copilotSessionIdCopied: 'Copilot 工作階段 ID 已複製到剪貼簿',
+        cursorSessionId: 'Cursor 工作階段 ID',
+        cursorSessionIdCopied: 'Cursor 工作階段 ID 已複製到剪貼簿',
         metadataCopied: '中繼資料已複製到剪貼簿',
         failedToCopyMetadata: '複製中繼資料失敗',
         failedToKillSession: '終止工作階段失敗',
@@ -4097,6 +4781,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     },
 
+
     components: {
         emptyMainScreen: {
             // Used by SessionGettingStartedGuidance component
@@ -4109,7 +4794,32 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     agentInput: {
+        nonSteerableSend: {
+            title: '代理程式忙碌中',
+            modeChangeMessage: '權限模式變更無法套用到進行中的回合。',
+            providerConfigMessage: '此提供者設定變更無法套用到進行中的回合。',
+            specialCommandMessage: '此指令無法在進行中的回合執行。',
+            interruptAndSend: '中斷並立即傳送',
+            applySettingAndSteer: '套用設定並立即插入',
+            applyNamedSettingAndSteer: ({ setting, value }: { setting: string; value: string }) => `套用 ${setting} → ${value} 並立即插入`,
+            steerWithoutApplying: '立即插入但不套用（將在下一則訊息時套用）',
+            queueForAfterTurn: '排入佇列等回合結束',
+        },
         dropToAttach: '拖放以附加檔案',
+        providerUsage: {
+            title: '提供者使用量',
+            accessibilityLabel: ({ value }: { value: string }) => `提供者使用量：剩餘 ${value}`,
+            remaining: ({ percent }: { percent: string }) => `剩餘 ${percent}`,
+            remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) => `剩餘 ${percent} · ${reset} 後重設`,
+            usedCount: ({ used, limit }: { used: string; limit: string }) => `已用 ${used}/${limit}`,
+            duration: {
+                now: '現在',
+                daysHours: ({ days, hours }: { days: number; hours: number }) => `${days}天 ${hours}小時`,
+                hoursMinutes: ({ hours, minutes }: { hours: number; minutes: number }) => `${hours}小時 ${minutes}分鐘`,
+                hours: ({ hours }: { hours: number }) => `${hours}小時`,
+                minutes: ({ minutes }: { minutes: number }) => `${minutes}分鐘`,
+            },
+        },
         permissionMode: {
             title: '權限模式',
             default: '預設',
@@ -4125,10 +4835,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         agent: {
             claude: 'Claude',
             codex: 'Codex',
+            cursor: 'Cursor',
             customAcp: '自訂 ACP',
             gemini: 'Gemini',
             copilot: 'Copilot',
-        },
+
+            ohMyPi: 'oh-my-pi',},
           model: {
               title: '模型',
               useCliSettings: '使用 CLI 設定',
@@ -4202,6 +4914,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             startIn: ({ name }: { name: string }) => `開始於：${name}`,
             optionsSectionTitle: '選項',
             currentValue: ({ value }: { value: string }) => `目前：${value}`,
+            optionOverriddenBy: ({ name }: { name: string }) => `已被${name}覆寫`,
             pendingValue: ({ current, requested }: { current: string; requested: string }) => `待處理：${current} → ${requested}`,
         },
         noMachinesAvailable: '無裝置',
@@ -4570,8 +5283,14 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         repositoryChangedFiles: ({ count }: { count: number }) => `儲存庫變更檔案（${count}）`,
         sessionAttributedChanges: ({ count }: { count: number }) => `工作階段歸因的變更（${count}）`,
         latestTurnChanges: ({ count }: { count: number }) => `最近一輪變更（${count}）`,
+        agentReportedTurnChanges: ({ count }: { count: number }) => `Agent 回報的輪次變更（${count}）`,
+        checkpointTurnChanges: ({ count }: { count: number }) => `檢查點輪次變更（${count}）`,
         selectedForCommitChanges: ({ count }: { count: number }) => `已選取提交（${count}）`,
         latestTurnDescription: '來自最近一次已完成輪次的提供者變更。',
+        agentReportedTurnDescription: 'Agent 針對目前輪次明確回報的變更。',
+        checkpointUnavailable: '此輪次的檢查點內容無法使用。',
+        checkpointAttributionShared: '檢查點歸因與其他 worktree 活動共用。',
+        checkpointAttributionUnknown: '無法判定檢查點歸因。',
         otherRepositoryChanges: ({ count }: { count: number }) => `其他儲存庫變更（${count}）`,
         attributionReliabilityHigh: '歸因盡力而為。儲存庫檢視仍為最終依據。',
         attributionReliabilityLimited: '可靠性有限：此儲存庫有多個工作階段處於活動狀態。僅顯示直接歸因。',
@@ -4622,6 +5341,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         fileWriteFailed: '寫入檔案失敗',
         fileEditor: {
             experimentalHint: '編輯功能為實驗性。儲存以將變更寫回工作階段 worktree。',
+            frontmatterReadOnly: 'Frontmatter (唯讀)',
         },
         fileEditingUnsupported: '連線的守護程式不支援檔案編輯。請在該機器上更新 Happier 以啟用寫入操作。',
         fileChangedExternally: '你編輯時，此檔案已在磁碟上變更。草稿已保持不變；儲存前請查看最新檔案。',
@@ -4639,6 +5359,63 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             detachOrDiscardTitle: '移除審閱評論？',
             detachOrDiscardBody: '分離會保留評論，但不隨下一次提示傳送。丟棄會刪除這些評論。',
             detachFromPrompt: '從提示中分離',
+            durable: {
+                headerTitle: '審查評論',
+                count: ({ count }: { count: number }) => `${count}`,
+                empty: '還沒有審查評論',
+                directWriteGranted: '已啟用直接寫入',
+                directWriteMissing: '外掛會先建立提案，直到授予直接寫入權限。',
+                engine: '引擎',
+                stale: '陳舊',
+                outdated: '過時',
+                binarySnapshot: '二進位快照',
+                minified: '可能已壓縮',
+                submoduleSnapshot: '子模組快照',
+                symlinkSnapshot: '符號連結快照',
+                textSnapshot: '文字快照',
+                tooLargeSnapshot: '快照過大',
+                encryptedSnapshot: '加密快照',
+                truncated: '已截斷',
+                bidiControls: 'Bidi 控制符',
+                redacted: '已編輯',
+                contentUnavailable: '內容無法使用',
+                edit: '編輯',
+                resolve: '解決',
+                dismiss: '忽略',
+                reopen: '重新開啟',
+                redact: '遮蓋',
+                reply: '回覆',
+                replyUnavailable: '無法回覆',
+                bulkResolve: '解決可見項',
+                bulkDismiss: '忽略可見項',
+                bulkPartialFailure: '部分評論未更新',
+                bulkFailure: ({ commentId, errorCode }: { commentId: string; errorCode: string }) => `${commentId}: ${errorCode}`,
+                filtersTitle: '篩選',
+                showActive: '活動',
+                showHistory: '歷史',
+                refresh: '重新整理',
+                loadFailed: '無法載入審查評論',
+                transitionReason: '已從審查評論面板更新。',
+                bulkTransitionReason: '已從審查評論面板批次更新。',
+                editPromptTitle: '編輯審查評論',
+                editPromptBody: '更新已儲存評論的本文。',
+                replyPromptTitle: '回覆審查評論',
+                replyPromptBody: '向持久評論討論串新增回覆。',
+                states: {
+                    proposed: '已提議',
+                    open: '開啟',
+                    delegated: '已委派',
+                    pendingReview: '等待審查',
+                    resolved: '已解決',
+                    dismissed: '已忽略',
+                },
+                directWriteGrant: {
+                    title: '直接寫入審查評論',
+                    body: ({ pluginId }: { pluginId: string }) => `${pluginId} 正在請求直接寫入審查評論的權限。`,
+                    grant: '授予直接寫入',
+                    cancel: '暫不',
+                },
+            },
             errors: {
                 empty: '評論不能為空',
                 couldNotMapSelection: '無法將選取對應到差異行',
@@ -4727,7 +5504,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             review: '審閱',
             list: '清單',
             scm: 'Git',
-        },
+
+	            agentReportedTurnView: '代理回報輪次',
+	            checkpointTurnView: '檢查點輪次',},
         transfers: {
             preparingUpload: ({ count }: { count: number }) => `正在準備上傳（${count} 個檔案）…`,
             uploading: ({ completed, total, uploaded, totalBytes }: { completed: number; total: number; uploaded: string; totalBytes: string }) =>
@@ -4893,6 +5672,119 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                         stackedFailed: '無法完成拉取請求流程。',
                     },
                 },
+
+                pullRequest: {
+                    title: "拉取請求",
+                    existing: "現有拉取請求",
+                    ready: "可以建立拉取請求",
+                    branchPair: ({ head, base }: { head: string; base: string }) =>
+                        `${head} 到 ${base}`,
+                    open: "開啟拉取請求",
+                    create: "建立拉取請求",
+                    openCompose: "開啟建立頁面",
+                    unsafeUrl: "提供者傳回了儲存庫允許 URL 之外的連結。",
+                    defaultBranch: {
+                        confirmTitle: "建立功能分支？",
+                        confirmBody: "在為此預設分支變更開啟拉取請求前，先建立功能分支。",
+                        confirm: "建立分支",
+                    },
+                },
+                publish: {
+                    title: "發布儲存庫",
+                    description: "建立託管儲存庫並將其附加為遠端。",
+                    repositoryNameLabel: "儲存庫名稱",
+                    ownerLabel: "擁有者",
+                    visibilityLabel: "可見度",
+                    protocolLabel: "遠端 URL",
+                    pushCurrentBranch: "推送目前分支",
+                    commitRequired: "啟用分支推送發布前，請先建立提交。",
+                    submit: "發布儲存庫",
+                    unavailable: "此儲存庫無法發布。",
+                    unsafeUrl: "提供者傳回了允許 URL 之外的瀏覽器操作。",
+                    auth: {
+                        connectedAccountReady: "GitHub 連線服務可用。",
+                        providerCliReady: "已驗證的 GitHub CLI 可用。",
+                    },
+                    remediation: {
+                        connectGitHub: "連接 GitHub",
+                        installGh: "安裝 GitHub CLI",
+                        useManagedGh: "使用受管理的 GitHub CLI",
+                        authenticateGh: "驗證 GitHub CLI",
+                        openBrowser: "開啟瀏覽器",
+                    },
+                    visibility: {
+                        private: "私人",
+                        public: "公開",
+                        internal: "內部",
+                    },
+                    protocol: {
+                        https: "HTTPS",
+                        ssh: "SSH",
+                    },
+                    remoteConflict: {
+                        label: "現有 origin 遠端",
+                        fail: "保留現有 origin",
+                        setUrl: "取代 origin URL",
+                        remediation: "選擇保留現有 origin 遠端，或將其更新為新的託管儲存庫。",
+                    },
+                },},
+
+            repositoryInit: {
+                action: "初始化儲存庫",
+                confirmTitle: "要初始化儲存庫嗎？",
+                confirmBody: "為此資料夾建立原始碼控制中繼資料，以便追蹤變更。",
+                confirm: "初始化",
+                failed: "無法初始化儲存庫。",
+            },},
+
+        indexLockRecovery: {
+            title: '移除過期的 Git index lock？',
+            body: 'Happier 可以移除 Git 為此儲存庫解析出的 index.lock 檔案，並且只重試一次失敗的原始碼控制操作。這不會執行 reset、clean、restore 或任何廣泛修復。',
+            confirm: '移除鎖並重試',
+            failed: ({ error }: { error: string }) => `index lock 復原失敗：${error}`,
+        },
+        checkpointAttributionExclusive: '檢查點內容對此輪次區間是精確的，且此 worktree 專屬於此工作階段。',
+        noAgentReportedTurnChanges: '目前未偵測到此輪次的代理回報變更。',
+        noCheckpointTurnChanges: '目前未偵測到此輪次的檢查點變更。',},
+
+    localServices: {
+        inventory: {
+            title: 'Local services',
+            loadingTitle: 'Scanning local services',
+            emptyTitle: 'No local services detected',
+            errorTitle: 'Local service scan needs attention',
+            refreshing: 'Refreshing',
+            state: {
+                listening: '正在監聽',
+                stale: '已過期',
+                gone: '不可用',
+                unknown: '未知',
+            },
+            address: ({ value }: { value: string }) => `Address: ${value}`,
+            folder: ({ value }: { value: string }) => `Folder: ${value}`,
+            label: ({ value }: { value: string }) => `Label: ${value}`,
+            process: ({ value }: { value: string }) => `Process: ${value}`,
+            workspace: ({ value }: { value: string }) => `Workspace: ${value}`,
+            confidence: ({ value }: { value: string }) => `Confidence: ${value}`,
+            diagnostic: ({ value }: { value: string }) => `Diagnostic: ${value}`,
+        },
+        managed: {
+            title: 'Managed services',
+            emptyTitle: 'No managed services',
+            owner: ({ value }: { value: string }) => `Owner: ${value}`,
+            route: ({ value }: { value: string }) => `Route: ${value}`,
+            launchMode: ({ value }: { value: string }) => `Mode: ${value}`,
+            url: ({ value }: { value: string }) => `URL: ${value}`,
+            inventory: ({ value }: { value: string }) => `Inventory: ${value}`,
+            diagnostic: ({ value }: { value: string }) => `Diagnostic: ${value}`,
+            status: {
+                starting: '正在啟動',
+                detecting: '正在偵測',
+                running: '正在執行',
+                unhealthy: '狀態異常',
+                stopping: '正在停止',
+                stopped: '已停止',
+                failed: '失敗',
             },
         },
     },
@@ -4967,6 +5859,31 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         configureActionAccessibilityLabel: '設定操作',
         approvalHelpTitle: '核准模式',
         approvalHelpBody: '「先詢問」會在此操作從該介面執行前顯示確認。「允許」則讓此操作從該介面執行，而不需要核准提示。',
+        toolExposure: {
+            title: '工具公開',
+            footer: '控制符合條件的動作是顯示為直接工具，還是只可透過動作探索使用。',
+            subtitle: '控制此介面的直接工具註冊。',
+            disabledSubtitle: '請先開啟此介面，再變更工具公開方式。',
+            options: {
+                default: {
+                    subtitle: '遵循此介面的產品預設值。',
+                },
+                defaultDiscoverableOnly: {
+                    title: '使用預設值（僅可探索）',
+                },
+                defaultDirect: {
+                    title: '使用預設值（直接工具）',
+                },
+                discoverableOnly: {
+                    title: '僅可探索',
+                    subtitle: '可透過動作探索使用，而不會新增直接工具。',
+                },
+                direct: {
+                    title: '直接工具',
+                    subtitle: '將此動作註冊為可直接呼叫的工具。',
+                },
+            },
+        },
         status: {
             allowed: ({ count }: { count: number }) => `${count} 個允許`,
             askFirst: ({ count }: { count: number }) => `${count} 個先詢問`,
@@ -5056,7 +5973,11 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 title: '情境式 UI',
                 subtitle: '顯示在沒有專用位置的情境式 UI 介面中。',
             },
-        },
+
+            voice: {
+                title: '語音',
+                subtitle: '可供語音代理作為可呼叫表面使用。',
+            },},
     },
 
 settingsSession: {
@@ -5099,6 +6020,20 @@ settingsSession: {
 	              activeColorAttentionOnlySubtitle: '僅對需要你注意的工作階段使用作用中色彩。',
 	              activeColorAllActiveTitle: '所有作用中工作階段',
 	              activeColorAllActiveSubtitle: '對每個作用中且已連線的工作階段使用作用中色彩。',
+	              sectionModeTitle: '工作階段區段',
+	              sectionModeSubtitle: '選擇是否依活動狀態分開工作階段。',
+	              sectionModeActivitySelectedSubtitle: '分開活躍與非活躍工作階段',
+	              sectionModeSingleSelectedSubtitle: '顯示一個依工作區分組的工作階段區段',
+	              sectionModeActivityTitle: '活躍與非活躍',
+	              sectionModeActivitySubtitle: '先依活動狀態分開工作階段，再依工作區分組。',
+	              sectionModeSingleTitle: '所有工作階段合併',
+	              sectionModeSingleSubtitle: '使用一個工作階段區段，並保留每個工作階段的工作區分組。',
+	              menuSections: {
+	                  sortBy: '排序依據',
+	                  show: '顯示',
+	                  folderSortMode: '資料夾順序',
+
+	                  organize: '整理方式',},
 	              orderingTitle: '工作階段排序',
 	              orderingSubtitle: '選擇工作階段在各自分組內的排序方式。',
 	              orderingOptions: {
@@ -5106,14 +6041,29 @@ settingsSession: {
 	                  created: '建立時間',
 	                  updated: '更新時間',
 	              },
+	              folderSortModeTitle: '資料夾順序',
+	              folderSortModeSubtitle: '選擇資料夾和工作階段如何共用清單。',
+	              folderSortModeFoldersFirstTitle: '資料夾優先',
+	              folderSortModeFoldersFirstSubtitle: '在每個工作區或資料夾中，將資料夾分組顯示在工作階段上方。',
+	              folderSortModeMixedTitle: '混合',
+	              folderSortModeMixedSubtitle: '允許資料夾和工作階段保持精確的共用順序。',
+	              folderSortModeMixedDisabledInDateModeSubtitle: '混合資料夾順序可在自訂排序中使用。',
 	              attentionPromotionModeTitle: '需要注意的工作階段',
 	              attentionPromotionModeSubtitle: '選擇等待你處理或可供檢視的工作階段顯示位置',
 	              attentionPromotionModeOffTitle: '保留在一般位置',
 	              attentionPromotionModeOffSubtitle: '保持清單既有的分組與排序',
-	              attentionPromotionModeGlobalTitle: '在釘選工作階段下方分組',
+	              attentionPromotionModeGlobalTitle: '在頂部置頂分組',
 	              attentionPromotionModeGlobalSubtitle: '在其他工作階段上方顯示一個注意事項分組',
 	              attentionPromotionModeWithinGroupsTitle: '移到目前分組頂部',
 	              attentionPromotionModeWithinGroupsSubtitle: '將工作階段保留在其資料夾或工作區內',
+	              workingPlacementModeTitle: '正在工作的工作階段',
+	              workingPlacementModeSubtitle: '選擇目前正在工作的工作階段顯示位置',
+	              workingPlacementModeOffTitle: '保留在正常位置',
+	              workingPlacementModeOffSubtitle: '按目前分組和排序保留正在工作的工作階段',
+	              workingPlacementModeGlobalTitle: '分組到頂部',
+	              workingPlacementModeGlobalSubtitle: '在需要注意的工作階段下方顯示工作中區段',
+	              workingPlacementModeWithinGroupsTitle: '移到目前分組頂部',
+	              workingPlacementModeWithinGroupsSubtitle: '將正在工作的工作階段保留在其資料夾或工作區內',
 	              workspacePathDisplayTitle: '工作區名稱',
 	              workspacePathDisplayNameSelectedSubtitle: '預設顯示最後一層資料夾名稱',
 	              workspacePathDisplayPathSelectedSubtitle: '顯示完整工作區路徑',
@@ -5144,6 +6094,19 @@ settingsSession: {
 	            title: '輸入外觀',
 	            footer: '設定代理輸入列的外觀。',
 	        },
+        detailedBehavior: { title: '詳細工作階段行為', footer: '開啟輸入、提供者限制、恢復與終端機的專門設定頁。' },
+        rootGroups: {
+            launchDefaults: { title: '新工作階段預設值', footer: '選擇新工作階段如何開始，以及要記住哪些選擇。' },
+            listOrganization: { title: '工作階段列表組織', footer: '控制排序、分組、區段、非活躍工作階段和桌面窗格預設值。' },
+            rowDetails: { title: '工作階段列詳細資料', footer: '選擇每個工作階段列顯示哪些標籤和視覺詳細資料。' },
+            activitySignals: { title: '活動與狀態訊號', footer: '控制如何突出顯示活躍、執行中和需要注意的工作階段。' },
+            mobileLayout: { title: '行動版工作階段版面', footer: '選擇工作階段內使用的手機版面。' },
+            agentPersonalization: { title: '代理提示詞指示', footer: '控制要求代理命名工作階段並建議回覆的提示詞指示。' },
+        },
+        composer: { title: '輸入與傳送', entrySubtitle: 'Enter 傳送、歷史記錄、輸入列外觀，以及代理忙碌時的傳送行為。' },
+        providerLimits: { title: '提供者限制和用量', entrySubtitle: '用量限制恢復和輸入列旁的提供者用量指示器。' },
+        resume: { title: '恢復和交接', entrySubtitle: '透過 transcript 重放恢復，以及在機器之間移動工作階段的預設值。' },
+        runtime: { title: '執行環境和終端機', entrySubtitle: 'Tmux、Windows Terminal 視窗和 Terminal Connect 相容性。' },
         inputBehavior: {
             title: '輸入行為',
             footer: '設定按 Enter 傳送與訊息歷史行為。',
@@ -5161,6 +6124,14 @@ settingsSession: {
             interruptSubtitle: '中止目前回合，然後立即送出。',
             pendingTitle: '等待就緒後送出',
             pendingSubtitle: '將訊息保留在待處理佇列中；代理準備好後再拉取。',
+            pendingDrainModeTitle: '待處理佇列處理',
+            pendingDrainModeFooter: '選擇代理每次就緒時只處理一則訊息，或一次處理整個待處理佇列。',
+            pendingDrainMode: {
+                oneAtATimeTitle: '一次一則訊息',
+                oneAtATimeSubtitle: '代理每次就緒時，只處理下一則待處理訊息。',
+                drainAllTitle: '處理所有待處理訊息',
+                drainAllSubtitle: '在下一次就緒時一起處理佇列中的所有訊息（舊行為）。',
+            },
             busySteerPolicyTitle: '當代理忙碌時（支援導向）',
             busySteerPolicyFooter: '若代理支援進行中的導向，請選擇訊息要立即導向，或先進入待處理。',
             busySteerPolicy: {
@@ -5169,6 +6140,49 @@ settingsSession: {
                 queueForReviewTitle: '排入待處理',
                 queueForReviewSubtitle: '先把訊息放入待處理，之後再用「立即導向」送出。',
             },
+            nonSteerablePromptTitle: '當訊息無法引導目前回合時',
+            nonSteerablePromptFooter: '權限模式變更以及 /clear 或 /compact 無法在回合進行中套用。選擇代理程式忙碌時 Happier 如何處理此類訊息。',
+            nonSteerablePrompt: {
+                onTitle: '每次詢問',
+                onSubtitle: '提供「中斷並立即傳送」或「排入佇列等回合結束」。',
+                offTitle: '關閉（舊行為）',
+                offSubtitle: '照常傳送，即使變更無法在回合進行中套用。',
+            },
+        },
+        usageLimitRecovery: {
+            title: '使用限制恢復',
+            autoWaitTitle: '自動等待並恢復',
+            autoWaitEnabledSubtitle: '達到使用限制的工作階段可以等待重設並自動恢復。',
+            autoWaitDisabledSubtitle: '等待使用限制重設前先詢問。',
+            resumePromptTitle: '恢復提示',
+            resumePromptStandardTitle: '標準',
+            resumePromptStandardSubtitle: '當恢復流程恢復工作階段時，傳送一般的繼續提示。',
+            resumePromptOffTitle: '關閉',
+            resumePromptOffSubtitle: '恢復時不傳送額外的繼續提示。',
+            resumePromptCustomTitle: '傳送自訂提示',
+            resumePromptCustomSubtitle: '恢復後傳送你自己的繼續提示。',
+            customResumePromptTitle: '自訂繼續提示',
+            customResumePromptPlaceholder: '從你上次停下的地方繼續。',
+          },
+        providerUsageGauge: {
+            title: '提供者使用量',
+            footer: '當有可靠的提供者使用量資料時，控制輸入框旁顯示的配額儀表。',
+            visibilityTitle: '顯示提供者使用量儀表',
+            visibilityEnabledSubtitle: '可用時在輸入框旁顯示提供者剩餘配額。',
+            visibilityHiddenSubtitle: '在輸入框旁隱藏提供者配額。',
+            windowTitle: '儀表視窗',
+            windowMostConstrainedTitle: '最受限制',
+            windowMostConstrainedSubtitle: '顯示可靠配額視窗中剩餘最少的視窗。',
+            windowDailyTitle: '每日',
+            windowDailySubtitle: '優先使用每日配額視窗。',
+            windowWeeklyTitle: '每週',
+            windowWeeklySubtitle: '優先使用每週配額視窗。',
+            windowSessionTitle: '工作階段',
+            windowSessionSubtitle: '優先使用目前工作階段配額視窗。',
+            windowPrimaryTitle: '主要',
+            windowPrimarySubtitle: '優先使用提供者主要配額視窗。',
+            windowSecondaryTitle: '次要',
+            windowSecondarySubtitle: '優先使用提供者次要配額視窗。',
         },
         thinking: {
             title: '思考',
@@ -5233,6 +6247,42 @@ settingsSession: {
             layoutTitle: '版面',
             layoutFooter: '在簡單線性逐字稿與回合分組之間選擇。',
             layoutPickerTitle: '逐字稿版面',
+            messageTimestampsTitle: '在訊息下方顯示時間與日期',
+            messageTimestampsSubtitle: '在每則使用者與助理訊息下方顯示時間戳。',
+            messageTimestamps: {
+                hoverWebHiddenMobileTitle: '網頁懸停時顯示，行動裝置隱藏',
+                hoverWebHiddenMobileSubtitle: '在網頁與訊息動作一起顯示時間戳，並在行動裝置隱藏。',
+                hoverWebAlwaysMobileTitle: '網頁懸停時顯示，行動裝置永遠顯示',
+                hoverWebAlwaysMobileSubtitle: '在網頁與訊息動作一起顯示時間戳，並在行動裝置保持可見。',
+                alwaysTitle: '永遠顯示',
+                alwaysSubtitle: '永遠在逐字稿訊息下方顯示時間戳。',
+                neverTitle: '永不',
+                neverSubtitle: '隱藏逐字稿訊息下方的時間戳。',
+            },
+            messageActions: {
+              groupTitle: '訊息操作',
+              groupFooter: '設定逐字稿中的訊息選取與轉送操作。',
+              selectionEnabled: {
+                title: '啟用訊息選取',
+                subtitle: '在訊息下方顯示選取圖示，以便批次複製或轉送',
+              },
+              sendToSessionEnabled: {
+                title: '啟用傳送到工作階段',
+                subtitle: '顯示批次傳送操作，將選取的訊息附加到另一個工作階段草稿',
+              },
+              template: {
+                title: '傳送到工作階段範本',
+                subtitle: '使用 {{MESSAGES}}、{{SELECTED_COUNT}} 和 {{SOURCE_SESSION_NAME}} 作為佔位符',
+                placeholder: '{{MESSAGES}}',
+                warningMissingPlaceholder: '提示：加入 {{MESSAGES}} 可控制選取訊息出現的位置',
+              },
+              bulkCopyFormat: {
+                title: '複製格式',
+                subtitle: '如何格式化複製的訊息',
+                markdownLabeled: '含角色標籤的 Markdown（建議）',
+                plain: '純文字',
+              },
+            },
             layout: {
                 linearTitle: '線性',
                 linearSubtitle: '以平面列表顯示訊息。',
@@ -5420,9 +6470,16 @@ settingsSession: {
           promptPersonalization: {
               title: 'Prompt personalization',
               footer: 'Choose which built-in instructions Happier adds to new agent sessions. This does not hide options an agent already sends.',
-              askAgentToRenameSessionsTitle: 'Ask the agent to rename sessions',
-              askAgentToRenameSessionsEnabledSubtitle: 'The prompt asks agents to set short descriptive session titles.',
-              askAgentToRenameSessionsDisabledSubtitle: 'The prompt does not ask agents to set titles; manual renaming still works.',
+              askAgentToRenameSessionsTitle: 'Session title updates',
+              askAgentToRenameSessionsNeverTitle: 'Never',
+              askAgentToRenameSessionsNeverSubtitle: 'Do not prompt agents to set session titles.',
+              askAgentToRenameSessionsInitialTitle: 'At session start',
+              askAgentToRenameSessionsInitialSubtitle: 'Prompt agents to set a short title from the first user message.',
+              askAgentToRenameSessionsOngoingTitle: 'When the task changes',
+              askAgentToRenameSessionsOngoingSubtitle: 'Prompt agents to set titles at session start and when the task changes.',
+              askAgentToRenameSessionsInitialSelectedSubtitle: 'Agents are prompted to set a title at session start.',
+              askAgentToRenameSessionsOngoingSelectedSubtitle: 'Agents are prompted to update titles when the task changes.',
+              askAgentToRenameSessionsDisabledSubtitle: 'Agents are not prompted to set titles; manual renaming still works.',
               askAgentToSuggestReplyOptionsTitle: 'Ask the agent to suggest reply options',
               askAgentToSuggestReplyOptionsEnabledSubtitle: 'The prompt asks agents to propose quick reply options when useful.',
               askAgentToSuggestReplyOptionsDisabledSubtitle: 'The prompt does not ask agents to add quick reply options.',
@@ -5435,8 +6492,8 @@ settingsSession: {
               applyPermissionChangesNextPromptSubtitle: '僅於下一則訊息時套用。',
           },
           defaultStorage: {
-              title: '預設工作階段儲存方式',
-              footer: '選擇新工作階段要以同步的 Happier 工作階段，或直接由提供者支援的工作階段啟動。',
+              title: '預設工作階段類型',
+              footer: '選擇新工作階段要以 Happier 工作階段，或直接由提供者支援的工作階段啟動。',
               globalTitle: '全域預設',
               persistedSubtitle: '預設將新工作階段儲存在 Happier 中，並在裝置間同步。',
               directSubtitle: '在提供者支援時，啟動綁定機器的直接工作階段。',
@@ -5688,7 +6745,12 @@ settingsSession: {
                     updateFailedTitle: '更新失敗',
                     updateFailedBody: ({ message }: { message: string }) => `無法更新此模型包。\n\n${message}`,
                 },
-            },
+
+                provider: {
+                    title: '本機神經（測試版）',
+                    subtitle: 'Web 上使用 daemon 支援的 STT，在支援的環境中可選用原生 Sherpa 串流套件。',
+                    detail: 'Sherpa 引擎',
+                },},
             conversationMode: '對話模式',
             conversationModeSubtitle: '直接寫入工作階段，或使用中介並顯式提交',
             mediatorBackend: '中介後端',
@@ -5767,7 +6829,108 @@ settingsSession: {
             testTtsFailed: 'TTS 測試失敗。請檢查你的基礎 URL、API 金鑰、模型與聲音。',
             autoSpeak: '自動朗讀回覆',
             autoSpeakSubtitle: '送出語音訊息後朗讀下一則助理回覆',
+
+            localNeuralTts: {
+                provider: {
+                    title: '本機神經（測試版）',
+                    subtitle: 'Web 上使用 daemon 支援的神經 TTS；支援的平台可使用裝置端模型包。',
+                    detail: '本機神經',
+                },
+            },
+            kokoro: {
+                assetPack: {
+                    subtitleWeb: '選擇 daemon 模型包。Kokoro 表示模型家族，不是瀏覽器 runtime。',
+                },
+                model: {
+                    subtitleWeb: '由 voice-home daemon 的模型包服務管理。',
+                },
+                voice: {
+                    subtitleWeb: '選擇傳送給 daemon 用於回覆的 Kokoro 語音。',
+                },
+                web: {
+                    clearCache: {
+                        confirmTitle: '移除 daemon 模型檔案？',
+                        confirmBody: '這會移除此包已下載的 daemon 模型與語音檔案。',
+                    },
+                    cache: {
+                        title: 'daemon 模型檔案',
+                        subtitle: '管理此包已下載的 daemon 模型檔案。',
+                    },
+                },
+            },
+            deviceStt: '裝置 STT（實驗）',
+            deviceSttDetail: '裝置',
+            deviceSttSubtitle: '使用裝置端語音辨識，而不是 OpenAI 相容端點',
+            deviceTts: '裝置 TTS（實驗）',
+            deviceTtsDetail: '裝置',
+            deviceTtsSubtitle: '使用裝置端語音合成，而不是 OpenAI 相容端點',
+            openaiCompatStt: {
+                provider: {
+                    title: 'OpenAI 相容端點',
+                    subtitle: '使用你自己的 Whisper 相容轉寫伺服器。',
+                    detail: '端點',
+                },
+            },
+            openaiCompatTts: {
+                provider: {
+                    title: 'OpenAI 相容端點',
+                    subtitle: '使用你自己的本機或遠端 OpenAI 相容 TTS 伺服器。',
+                    detail: '端點',
+                },
+            },
+            ttsProviderSubtitle: '選擇裝置 TTS、OpenAI 相容端點，或 daemon 支援的本機神經 TTS',
+            daemonInference: {
+        execution: {
+          title: "本機神經執行",
+          subtitle: "選擇本機神經語音在裝置端還是在 daemon 上執行。",
+          options: { auto: "自動", device: "裝置", daemon: "daemon 端" },
+          optionSubtitles: {
+            auto: "優先使用此平台建議的執行路徑。",
+            device: "支援時直接在此裝置上執行本機神經語音。",
+            daemon: "透過你的 voice-home daemon 執行本機神經語音。",
+          },
         },
+        service: {
+          title: "daemon 推論服務",
+          subtitle: "voice-home daemon 推論服務的狀態。",
+        },
+        model: {
+          title: "daemon 模型包",
+          subtitleTts: "安裝並刷新 daemon TTS 模型包。",
+          subtitleStt: "安裝並刷新 daemon STT 模型包。",
+        },
+        remove: {
+          title: "移除 daemon 模型檔案",
+          subtitle: "刪除此包在 daemon 端的模型檔案。",
+          detailInstalled: "移除已安裝的 daemon 檔案",
+        },
+        states: {
+          machineUnreachable: "voice-home daemon 無法使用。",
+          unavailable: "daemon 推論無法使用。",
+          runtimeUnavailable: "daemon runtime 無法使用。",
+          warming: "正在預熱模型…",
+          ready: "就緒",
+          degraded: "已降級",
+          idle: "閒置",
+          installing: "正在安裝…",
+          installed: "已安裝",
+          installError: "安裝失敗",
+          notInstalled: "未安裝",
+          latencyDemoted: "延遲已降級；此對話將使用裝置語音。",
+          fallbackToDevice: "正在回退到裝置語音。",
+        },
+      },
+            machineErrors: {
+        mic_permission_denied: "麥克風權限遭拒。",
+        mic_ended: "麥克風輸入已結束。",
+        mic_plateau: "麥克風音訊停止變化。",
+        transport_disconnect: "語音連線已中斷。",
+        provider_error: "語音提供者發生錯誤。",
+        audio_context_suspended: "音訊輸出已暫停。",
+        stt_timeout: "開始聆聽已逾時。",
+        tts_failed: "語音合成失敗。",
+        turn_aborted: "語音輪次已取消。",
+      },},
         privacy: {
             title: '隱私',
             footer: '語音供應商會接收所選的工作階段內容。',
@@ -5876,6 +7039,7 @@ settingsSession: {
     },
 
     updateBanner: {
+        updateShort: '更新',
         updateAvailable: '有可用更新',
         pressToApply: '點擊套用更新',
         whatsNew: "更新內容",
@@ -5883,11 +7047,14 @@ settingsSession: {
         nativeUpdateAvailable: '應用程式更新可用',
         tapToUpdateAppStore: '點擊在 App Store 中更新',
         tapToUpdatePlayStore: '點擊在 Play Store 中更新',
-    },
+
+        checkNowTitle: '立即檢查',
+        checkNowSubtitle: '檢查是否有可用的應用程式更新。',
+        lastCheckedTitle: '上次檢查',},
 
     changelog: {
         // Used by the changelog screen
-        version: ({ version }: { version: number }) => `版本 ${version}`,
+        version: ({ version }: { version: string }) => `版本 ${version}`,
         noEntriesAvailable: '沒有可用的更新日誌條目。',
     },
 
@@ -5936,7 +7103,13 @@ settingsSession: {
                         "privacyBody": "你的工作階段保持私密。原始碼開放。一個指令即可自行託管。",
                         "petsTitle": "認識 Pets",
                         "petsBody": "長時間工作階段裡的小夥伴。有用嗎？也許。迷人嗎？當然。"
-                    },
+                    ,
+                        row1Title: '任何裝置上的工作階段',
+                        row1Body: '在手機、平板、網頁或桌面端繼續上次的工作。',
+                        row2Title: '更快推進,更早交付',
+                        row2Body: '即時同步讓終端機、代理和檔案保持一致。',
+                        row3Title: '預設私密',
+                        row3Body: '端對端加密,讓你的工作只屬於你。',},
                     "anywhere": {
                         "title": "隨時開始。到處繼續。",
                         "wideTitle": "隨時開始。\n到處繼續。",
@@ -5954,7 +7127,13 @@ settingsSession: {
                         "wideTitle": "你需要的一切。\n一點即達",
                         "body": "聊天、檔案、Git、編輯器、終端機。和代理互動，瀏覽並編輯檔案，檢視 diff，管理 Git 分支，開啟 PR，並開啟即時終端機。",
                         "alt": "行動 cockpit 的抽象佔位圖。"
-                    },
+                    ,
+                        row1Title: "Cockpit 模式",
+                        row1Body: "用專注的行動視圖跟進活躍代理。",
+                        row2Title: "一鍵切換",
+                        row2Body: "在聊天、檔案、Git、終端機和詳情之間切換，不需要桌面版配置。",
+                        row3Title: "快速送出",
+                        row3Body: "當代理需要一點推進時，直接從 cockpit 回覆。",},
                     "existingSessions": {
                         "title": "既有 Claude、Codex、OpenCode 工作階段？已經在那裡。",
                         "body": "瀏覽任何 Claude、Codex 或 OpenCode 工作階段，無論目前是否執行。",
@@ -5970,7 +7149,13 @@ settingsSession: {
                         "title": "檢視程式碼並留下評論",
                         "body": "瀏覽代理的修改和 diff。標記你想處理的精確行。把它們傳送給目前工作階段中的代理，或傳送到一個新工作階段。",
                         "alt": "檢視評論的抽象佔位圖。"
-                    },
+                    ,
+                        row1Title: "評論精確行",
+                        row1Body: "直接在檔案和 diff 行上留下回饋。",
+                        row2Title: "選擇要送出的內容",
+                        row2Body: "在提示代理前，審查、編輯、移除或包含評論。",
+                        row3Title: "保留結構化上下文",
+                        row3Body: "把結構化 review 上下文送到目前工作階段或新的工作階段。",},
                     "subagents": {
                         "title": "一個工作階段，多 provider subagents",
                         "body": "在任何工作階段中啟動 Codex、Claude 或其他 subagents。運用每一個的優勢，讓它們一起在同一個工作階段中工作。",
@@ -6013,8 +7198,58 @@ settingsSession: {
                         "wideTitle": "別再一個人撐著。\n認識 Pets。",
                         "body": "一個小夥伴，幫助你在多個工作階段之間保持節奏。有用嗎？也許。迷人嗎？當然。",
                         "alt": "Pets 的抽象佔位圖。"
-                    }
-                }
+                    ,
+                        row1Title: "一個小夥伴",
+                        row1Body: "幫助你在不同工作階段之間保持節奏。",
+                        row2Title: "跟隨活動",
+                        row2Body: "在桌面和行動端顯示工作階段活動。",
+                        row3Title: "有用？也許。",
+                        row3Body: "可愛？當然。",}
+                ,
+                    sourceControl: {
+                    title: "建置，然後發布",
+                    body: "無需離開 Happier，即可建立和發布分支、管理遠端、審查變更檔案並開啟 pull request。",
+                    alt: "原始碼控制抽象佔位圖。",
+                    row1Title: "分支和發布",
+                    row1Body: "無需離開 Happier，即可建立分支、管理遠端並推送修改。",
+                    row2Title: "開啟 pull request",
+                    row2Body: "重用既有 PR，或從工作階段建立新的 PR。",
+                    row3Title: "審查變更檔案",
+                    row3Body: "當變更集很大時，專注查看選定檔案。",
+                },
+                    markdown: {
+                    title: "更順滑的串流輸出，更豐富的 Markdown",
+                    body: "串流回應更順滑，更豐富的 Markdown 讓長回答、程式碼、清單和圖表更容易閱讀。",
+                    alt: "Markdown 顯示抽象佔位圖。",
+                    row1Title: "輸出跟得上",
+                    row1Body: "代理寫作時，串流回應感覺更順滑。",
+                    row2Title: "Markdown 更可靠",
+                    row2Body: "程式碼區塊、清單、表格和長回答顯示更穩定。",
+                    row3Title: "壓縮更清楚",
+                    row3Body: "轉錄中的生命週期事件更容易追蹤。",
+                },
+                    media: {
+                    title: "圖片直接進入轉錄",
+                    body: "讓 Codex 和支援的代理生成圖片，然後直接在 Happier 中預覽結果。",
+                    alt: "生成媒體抽象佔位圖。",
+                    row1Title: "生成圖片",
+                    row1Body: "讓 Codex 和支援的代理建立圖片。",
+                    row2Title: "內嵌預覽",
+                    row2Body: "生成的圖片直接出現在 Happier 對話中。",
+                    row3Title: "隨工作階段保存",
+                    row3Body: "媒體和你的工作使用同一套工作階段 pipeline。",
+                },
+                    desktop: {
+                    title: "更精緻的桌面應用程式",
+                    body: "更乾淨的桌面外殼，更精緻的 chrome，更安全的間距，以及放在合適位置的更新狀態。",
+                    alt: "桌面應用程式抽象佔位圖。",
+                    row1Title: "更乾淨的介面",
+                    row1Body: "側邊欄控制和更新狀態更自然。",
+                    row2Title: "更專注",
+                    row2Body: "視窗和工作階段介面更少打擾工作。",
+                    row3Title: "更安全的版面",
+                    row3Body: "桌面間距更好處理平台 chrome 和瀏海螢幕。",
+                },}
             },
     },
 
@@ -6072,7 +7307,8 @@ settingsSession: {
             invalidRequest: '無效的終端請求。',
             busy: '終端忙碌中。請再試一次。',
         },
-    },
+
+        openNewTabA11y: '開啟新的終端機分頁',},
 
     modals: {
         // Used across connect flows and settings
@@ -6131,6 +7367,75 @@ settingsSession: {
         serverIncompatibleTitle: 'Relay 不受支援',
         serverIncompatibleBody: ({ serverUrl }: { serverUrl: string }) =>
             `${serverUrl} 回傳了意外的回應。請更新該 Relay 或選擇其他 Relay 以繼續。`,
+
+        // Unified onboarding redesign — BrandPanel (left pane / mobile hero)
+        brandTaglineLine1: '隨處開始。',
+        brandTaglineLine2: '處處繼續。',
+        brandSubTagline: '為每一位編碼代理打造的控制中心 — 涵蓋你擁有的每一台裝置。',
+        brandTrustStrip: '端對端加密 · 開源 · 可自架',
+        providerMarkRowAccessibilityLabel: '支援的 AI 編碼代理',
+
+        // Unified onboarding redesign — welcome decision (right pane)
+        welcomeQuestionTitle: '歡迎。',
+        welcomeQuestionSubtitle: '第一次使用?',
+        welcomeQuestionBody: 'Happier 是你 AI 編碼代理的控制中心。無需電子郵件。你的帳戶是一把在本裝置上產生的私鑰。',
+
+        welcomePrimaryButton: '第一次使用 — 開始吧',
+        welcomePrimarySubtitle: '一次點擊。無需表單。你的金鑰就在這裡。',
+
+        welcomeSecondaryButton: '登入 — 我已在使用 Happier',
+        welcomeSecondarySubtitle: '掃描 QR 碼，或輸入你的密鑰',
+
+        // Unified onboarding redesign — returning-user copy variants.
+        // Shown when localSettings.hasCompletedAuthOnce === true, i.e. the
+        // user has already created an account or signed in at least once on
+        // this device. A returning user gets a warmer, more personal welcome
+        // than "First time here?".
+        //
+        // useReturningGreeting() picks ONE title and ONE subtitle from these
+        // pools at random — per-mount, locked via useRef so it doesn't change
+        // mid-render. Titles and subtitles are picked independently, so any
+        // (4 × 3) = 12 combinations are possible. The intent is to make the
+        // returning experience feel alive rather than canned.
+        //
+        // The title pool is "welcome"-style (greeting). Aim: fits on one
+        // line at 44px on a ~370px wide pane. The subtitle pool is
+        // "let's go"-style (inviting question or call-to-action). Aim: fits
+        // on one or two lines at 44px.
+        welcomeReturningTitle1: '歡迎回來。',
+        welcomeReturningTitle2: '很高興見到你。',
+        welcomeReturningTitle3: '很高興你來了。',
+        welcomeReturningTitle4: '歡迎回家。',
+        welcomeReturningSubtitle1: '繼續上次的工作吧。',
+        welcomeReturningSubtitle2: '準備好開始了嗎?',
+        welcomeReturningSubtitle3: '今天我們做點什麼?',
+
+        // Returning-user buttons. For returning users we invert the visual
+        // hierarchy: Login becomes the filled primary action (probability of
+        // intent is high), Start fresh becomes the bordered secondary action.
+        // "I already use Happier" is dropped from the login button title for
+        // returning users because — they obviously do already use Happier.
+        welcomeReturningLoginButton: '登入 — 繼續上次的工作',
+        welcomeReturningStartFreshButton: '重新開始 — 建立新帳戶',
+        welcomeReturningStartFreshSubtitle: '在本裝置上產生一把新金鑰。',
+
+        // Welcome step footer links
+        welcomeFooterRelay: '自架?',
+        welcomeFooterRelayAction: '使用自己的 Relay',
+        // Shown in place of welcomeFooterRelay when the active server is a
+        // custom (non-Happier-Cloud) relay. The action below the label is the
+        // relay's host (optionally with :port) followed by a small pencil
+        // icon so the user can tap to edit. Long hostnames are truncated with
+        // a tail-ellipsis to avoid colliding with the right-side Docs group.
+        welcomeFooterRelayActiveLabel: '你的 Relay:',
+        welcomeFooterRelayEditAccessibility: '變更 Relay',
+        welcomeFooterDocs: '需要協助?',
+        welcomeFooterDocsAction: '文件',
+        welcomeFooterGithubLabel: 'GitHub 儲存庫',
+        welcomeFooterDiscordLabel: 'Discord 社群',
+
+        // Mobile brand hero CTA
+        brandHeroGetStarted: '開始',
     },
 
         sessionGettingStarted: {
@@ -6270,32 +7575,169 @@ settingsSession: {
 
 
     setupOnboarding: {
-        screenTitle: '設定這台電腦',
+		        screenTitle: '設定這台電腦',
+		        welcomeTitle: '歡迎使用 Happier',
+			        welcomeBody: 'Happier 透過中繼連接你的手機與電腦，讓你的會話隨處可用。',
+			        welcomeBody2: '開源。端對端加密。零知識。',
+			        welcomeBody3: '由開發者打造，為開發者而生。',
+			        providersShowcaseLabel: '支援：',
+	        letsStart: '開始吧',
+	        scanQrCode: '掃描 QR Code',
+        relayDiagramPhoneLabel: '手機',
+        relayDiagramRelayLabel: '中繼',
+        relayDiagramThisComputerLabel: '這台電腦',
+        recommendedBadge: '推薦',
+	        relayCloudTitle: 'Happier 雲端',
+	        relayCloudSubtitle: '最容易上手的代管中繼',
+	        relayOnThisComputerTitle: '在這台電腦上',
+	        relayOnThisComputerSubtitle: '在這台電腦上本機執行中繼，並加入 Tailscale 供手機存取',
+	        relayOnYourComputerTitle: '在你的電腦上',
+	        relayOnYourComputerSubtitle: '在你的電腦上本機執行中繼，並加入 Tailscale 供手機存取',
+	        relayOnRemoteComputerTitle: '在遠端電腦上設定中繼',
+	        relayOnRemoteComputerSubtitle: '透過 SSH 在遠端電腦上託管中繼',
+	        remoteRelayHostInstallTitle: '在遠端電腦上託管 Relay',
+	        relayAccessWizardTitle: '你的手機應如何連線到此中繼？',
+	        relayAccessUrlTitle: '中繼 URL',
+	        relayAccessUrlSubtitle: '輸入一個你的手機可以存取的 URL。',
+	        relayAccessUrlBody: '可以是區域網路位址、自訂網域或通道 URL——只要你的手機能開啟它即可。',
+	        relayAccessCloudflareTitle: 'Cloudflare 隧道',
+	        relayAccessCloudflareSubtitle: '透過 Cloudflare 命名通道公開你的 Relay。',
+	        relayAccessCloudflareBody: '建立或選擇一個命名通道，然後我們會設定它把流量轉送到你的本機 Relay。',
+	        changeRelay: '變更中繼',
+	        relayCustomUrlTitle: '既有中繼',
+	        relayCustomUrlSubtitle: '使用你已經在執行的中繼 URL',
+        authRestoreTitle: '還原或新增此裝置',
+        authRestoreSubtitle: '使用 QR Code 或連結來連接此裝置',
+        authLostAccessTitle: '無法存取？',
+        authLostAccessSubtitle: '使用你的身分提供者重設帳號',
+        webRelayHostHandoffTitle: '在這台電腦上設定 Relay',
+        webRelayHostHandoffBody: '要在這台電腦上託管 Relay，請使用桌面 App 或 CLI。我們會引導你，然後你可以把 Relay URL 貼到這裡繼續。',
         webDesktopOnlyTitle: '需要桌面應用程式',
         webDesktopOnlyBody: '請在桌面應用程式中設定此電腦。網頁版可以顯示狀態，但無法安裝或設定背景服務。',
-        preAuthTitle: '登入前先選擇你的 Relay',
-        preAuthBody: '在建立、還原或登入帳戶之前，先選擇你想在這台電腦上使用的 Relay。',
-        preAuthContinueHint: '繼續後，Happier 會帶你返回到針對所選 Relay 的登入流程，然後再回到這裡完成設定。',
-        currentRelayTitle: '已選擇的 Relay',
-        currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `Selected Relay: ${relayUrl}`,
-        savedRelaysTitle: '已儲存的 Relay',
-        customRelayUrlLabel: 'Relay 位址',
-        relayNameLabel: 'Relay 名稱',
-        addAndUseRelay: '新增 Relay',
-        changeRelayAction: '使用其他 Relay URL',
-        continueToAuth: '使用已選擇的 Relay 繼續',
-        continueWithLocalRelayAction: '繼續使用這個本地 Relay',
+        webDesktopOnlyPrimary: '我有 Relay URL',
+        webDesktopOnlyDesktopAppTitle: '在桌面應用程式中繼續此設定',
+        webDesktopOnlyDesktopAppSubtitle: '下載並開啟 Happier，以引導流程設定這台電腦。',
+        webDesktopOnlyDesktopAppButton: '下載桌面應用程式',
+        webDesktopOnlyCliTitle: '在這台電腦上安裝 CLI',
+        webDesktopOnlyCliSubtitle: '在終端機中執行一次（不需要 Node）。',
+        handoffPlatformPosixLabel: 'macOS/Linux',
+        handoffPlatformMacosLabel: 'macOS',
+        handoffPlatformLinuxLabel: 'Linux',
+        handoffPlatformWindowsLabel: 'Windows',
+        orDividerLabel: '或',
+        webDesktopOnlySetupCommandTitle: '使用 CLI 設定這台電腦',
+        webDesktopOnlySetupCommandSubtitle: '執行一條指令即可設定 Relay、必要時登入，並安裝背景服務。',
+        webDesktopOnlySetupRemotePrereqsSubtitle: '在透過 SSH 設定遠端電腦之前，先執行一條指令來設定 Relay 並登入。',
+        webDesktopOnlyRelayInstallTitle: '在這台電腦上託管 Relay',
+        webDesktopOnlyRelayInstallSubtitle: '這會安裝並啟動 Relay 主機。然後把輸出的 Relay URL 貼到這裡。',
+        webDesktopOnlyRelayStatusTitle: '取得 Relay URL',
+        webDesktopOnlyRelayStatusSubtitle: '執行此命令查看 Relay URL，然後貼上到這裡。',
+        webDesktopOnlyOptionalNextTitle: '可選：安全存取與供應商',
+        webDesktopOnlyOptionalNextBody: '安裝 Happier 後，可在 設定 → 安全存取 (Tailscale) 連接手機，並在 設定 → 供應商 安裝你偏好的工具。',
+			        preAuthTitle: '你的中繼在哪裡？',
+	        preAuthBody: '你的中繼會在手機與電腦之間轉送訊息。選擇中繼的執行位置，之後也可以更改。',
+        preAuthContinueHint: '繼續後，Happier 會帶你回到所選中繼的登入流程，然後回到這裡完成設定。',
+		        currentRelayTitle: '目前伺服器',
+		        selectedRelayFooterLabel: '目前伺服器',
+		        selectedRelayFooterLine: ({ relay }: { relay: string }) => `目前伺服器：${relay}`,
+		        currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `目前中繼：${relayUrl}`,
+	        accountWillLiveOnRelay: ({ relayUrl }: { relayUrl: string }) => `你的帳號將位於 ${relayUrl}。`,
+	        savedRelaysTitle: '已儲存的中繼',
+        customRelayUrlLabel: '中繼 URL',
+        relayNameLabel: '中繼名稱',
+        addAndUseRelay: '新增並使用中繼',
+        changeRelayAction: '使用其他中繼 URL',
+        continueToAuth: '使用所選中繼繼續',
+        continueWithLocalRelayAction: '使用此本機中繼繼續',
         postAuthTitle: '完成這台電腦的設定',
-        postAuthBody: '你已登入。繼續本地設定流程，讓這台電腦為所選 Relay 做好準備。',
-        controlPanelTitle: '就緒摘要',
-        activeRelaySummaryTitle: '目前 Relay',
+        postAuthBody: '你已登入。繼續本機設定流程，讓這台電腦為所選中繼準備就緒。',
+        setupThisComputerTitle: '設定這台電腦',
+        controlPanelTitle: '準備狀態摘要',
+        activeRelaySummaryTitle: '目前中繼',
         thisComputerSummaryTitle: '這台電腦',
-        nextActionSummaryTitle: '下一步動作',
-        thisComputerReady: '已為此 Relay 就緒',
+        nextActionSummaryTitle: '下一步',
+        thisComputerReady: '已為此中繼準備就緒',
         nextActionReady: '建立你的第一個工作階段，或在下方新增另一台電腦。',
-        resumeIntentTitle: '繼續設定這台電腦',
-        resumeIntentBody: '登入或建立帳戶，以繼續為所選 Relay 設定這台電腦。',
+        thisComputerStages: {
+            installToolsTitle: '安裝 Happier 工具',
+            installToolsSubtitle: '安裝在此電腦上完成設定所需的本機 Happier 命令列工具。',
+            installToolsReadySubtitle: '本機 Happier 工具已可在此電腦上使用。',
+            installToolsDetails: '我們會確保本機設定所需的受管理 Happier 執行階段可用，並同步與此發佈頻道對應的終端機命令。',
+            installToolsChildTitle: '安裝本機 Happier 命令列工具',
+            useRelayTitle: '使用這個 Relay',
+            useRelayAccountMismatchSubtitle: '繼續之前，請切換到屬於此伺服器的帳戶。',
+            useRelayNeedsAuthSubtitle: '登入或建立帳戶以繼續設定此伺服器。',
+            useRelaySignedInSubtitle: '目前的帳戶已登入，並已準備好使用此伺服器。',
+            useRelayServerMismatchSubtitle: ({ activeRelayUrl, daemonRelayUrl }: { activeRelayUrl: string; daemonRelayUrl: string }) =>
+                `應用程式伺服器：${activeRelayUrl}。背景服務：${daemonRelayUrl}。`,
+            useRelayConnectedSubtitle: ({ relayUrl }: { relayUrl: string }) => `已連線到 ${relayUrl}。`,
+            useRelayMissingSubtitle: '選擇或新增伺服器以繼續。',
+            useRelayDetails: '在開始本機註冊之前，我們會確認這台電腦應使用哪個 Relay 與帳戶。',
+            backgroundServiceTitle: '背景服務',
+            backgroundServiceDecisionSubtitle: '選擇這台電腦應如何接管預設背景服務。',
+            backgroundServiceRunningSubtitle: '背景服務已安裝且正在執行。',
+            backgroundServiceInstalledSubtitle: '背景服務已安裝，但需要啟動。',
+            backgroundServiceSubtitle: '為這台電腦安裝並啟動背景服務。',
+            backgroundServiceDetails: '背景服務會讓這台電腦為之後的啟動保持就緒，並自動將其重新連線到所選 Relay。',
+            backgroundServiceReleaseChannelChildTitle: '解決發佈頻道歸屬',
+            backgroundServiceConflictChildTitle: '解決現有背景服務衝突',
+            registerComputerTitle: '註冊這台電腦',
+            registerComputerDoneSubtitle: '這台電腦已註冊到你的帳戶。',
+            registerComputerNeedsAuthSubtitle: '註冊這台電腦之前請先登入。',
+            registerComputerReconnectSubtitle: '更新伺服器設定後，請重新連線這台電腦。',
+            registerComputerSubtitle: '將這台電腦連線到所選伺服器上的你的帳戶。',
+            registerComputerDetails: '我們會將這台電腦註冊到你在所選 Relay 上的帳戶，讓本機工作階段與背景功能能正確識別這台機器。',
+            footerHint: '我們會替你處理底層設定步驟，只顯示需要你決定的事項。',
+        },
+        resumeIntentTitle: '繼續在這台電腦上設定',
+        resumeIntentBody: '登入或建立帳號，繼續為所選中繼設定這台電腦。',
         openSetupAction: '設定這台電腦',
+        openSetupWizardAction: '開啟設定精靈',
+        openSetupWizardSubtitle: '使用引導流程在你的電腦上設定 Happier。',
+        setupNewMachineAction: '設定一台新機器',
+        setupNewRelayAction: '設定一個新中繼',
+        remoteHosts: {
+            hostPickerTitle: '遠端主機',
+            hostPickerSubtitle: '重用已儲存的 SSH 設定，或新增主機。',
+            newHostOption: '新增主機…',
+            saveHostTitle: '儲存此主機',
+            saveHostSubtitle: '將此 SSH 設定儲存到你的帳戶。',
+            savePasswordTitle: '儲存密碼',
+            savePasswordSubtitle: '將 SSH 密碼以靜態加密方式儲存。',
+            savePrivateKeyTitle: '儲存私鑰',
+            savePrivateKeySubtitle: '將 SSH 私鑰以靜態加密方式儲存。',
+            privateKeyLabel: '私鑰',
+        },
+        remoteSshChecklist: {
+            planTitle: '檢視設定計畫',
+            planSubtitleMachine: '此計畫會在遠端機器上安裝 CLI、設定中繼，並安裝背景服務。',
+            planSubtitleRelayHost: '此計畫會在遠端機器上安裝 CLI、設定中繼，並安裝中繼執行環境。',
+            executionTitle: '正在設定遠端機器',
+            executionSubtitle: '遠端啟動流程執行時，下方清單會持續更新。',
+            completeTitle: '遠端機器已就緒',
+            completeSubtitleMachine: '遠端機器設定已成功完成。',
+            trustHostTitle: '信任 SSH 主機',
+            trustHostSubtitle: '連線前先驗證遠端機器指紋。',
+            trustHostDetails: '我們會驗證 SSH 主機金鑰，除非你明確信任，否則會拒絕意外的指紋。',
+            installCliTitle: '安裝 Happier CLI',
+            installCliSubtitle: '將 Happier CLI 複製到遠端機器。',
+            installCliDetails: '遠端機器需要 Happier CLI，才能執行後續的啟動步驟。',
+            configureRelayTitle: '設定中繼',
+            configureRelaySubtitle: '讓遠端機器指向目前使用的中繼與 Web 應用。',
+            configureRelayDetails: '遠端 CLI 會被設定為與目前使用的中繼通訊，並將此機器驗證到你的帳號。',
+            installDaemonTitle: '安裝背景服務',
+            installDaemonSubtitle: '讓 Happier 在遠端機器上於背景執行。',
+            installDaemonDetails: '背景服務會讓遠端機器保持連線，並為之後的工作階段做好準備。',
+            startFailed: '無法開始遠端 SSH 設定。',
+            continueFailed: '無法繼續遠端 SSH 設定。',
+        },
+        confirmSwitchRelayTitle: '切換中繼？',
+        confirmSwitchRelaySubtitle: '將此中繼設為目前使用的中繼。你可以稍後在「設定」中更改。',
+        confirmSwitchRelayKeepTitle: '保留目前中繼',
+        confirmSwitchRelayKeepSubtitle: '先不切換中繼並繼續',
+        confirmSwitchRelaySwitchTitle: '切換到此中繼',
+        confirmSwitchRelaySwitchSubtitle: '你可能需要在新中繼上再次登入',
+        confirmSwitchRelayWarning: '你可以稍後在「設定 → 中繼」中變更。',
     },
 
     review: {
@@ -6394,16 +7836,95 @@ settingsSession: {
             remoteSessionModeOverrideDisabledSubtitle: '這台機器會遵循你的全域 Windows 遠端工作階段模式。',
             windowsTerminalUnavailableSuffix: '這台機器未偵測到 Windows Terminal。',
         },
-    },
+
+        backgroundServiceModes: {
+            generic: '背景服務',
+            defaultFollowing: '預設背景服務',
+            legacyPinned: '舊版固定背景服務',
+        },
+        backgroundServicePrompt: {
+            targetServer: '目標伺服器',
+            targetReleaseChannel: '目標發佈通道',
+            existingServices: '現有服務：',
+            running: '執行中',
+        },
+        repairBackgroundServiceAction: '修復背景服務',
+        repairBackgroundServiceProgressTitle: '正在修復背景服務',
+        runtimeInventory: 'Happier 執行階段清單',
+        runtimeInventoryOverview: '總覽',
+        runtimeInventoryInstallations: '安裝項目',
+        runtimeInventoryServices: '服務',
+        runtimeInventoryWarnings: '警告',
+        doctorRepairSummary: '修復摘要',
+        doctorRepairFindingsSummary: ({ total, warning, error, actionable }: {
+            total: number;
+            warning: number;
+            error: number;
+            actionable: number;
+        }) => `${total} 個發現 • ${warning} 個警告 • ${error} 個錯誤 • ${actionable} 個可處理`,
+        localRelays: '本機 Relay',
+        runtimeSummary: ({ cliVersion, daemonVersion, daemonRing, installationCount, serviceCount, warningCount }: {
+            cliVersion: string;
+            daemonVersion: string;
+            daemonRing: string;
+            installationCount: number;
+            serviceCount: number;
+            warningCount: number;
+        }) => `CLI ${cliVersion} • daemon ${daemonVersion} (${daemonRing}) • ${installationCount} installations • ${serviceCount} services • ${warningCount} warnings`,
+        transferExposure: {
+            title: '傳輸暴露',
+            status: '傳輸暴露',
+            loopbackHttp: '回環（本機）',
+            lanHttp: '區域網路（HTTP）',
+            tailscaleServeHttps: 'Tailscale Serve（HTTPS）',
+            stateUnknown: '未知',
+            stateDisabled: '已停用',
+            stateUnconfigured: '未設定',
+            stateApprovalNeeded: '需要批准',
+            stateInactive: '已設定（未啟用）',
+            stateStale: '已設定（過期）',
+            stateActive: '已啟用',
+            stateUnavailable: '不可用',
+        },},
 
     message: {
         switchedToMode: ({ mode }: { mode: string }) => `已切換到 ${mode} 模式`,
         unknownEvent: '未知事件',
+        runtimeConfigOutcomeAppliesBeforeNextMessage: '將在你的下一則訊息前生效',
+        runtimeConfigOutcomeQueuedUntilReady: '已排入佇列，待就緒後套用',
+        runtimeConfigOutcomeAlreadySet: '已設定',
+        runtimeConfigOutcomeSessionMode: '工作階段模式',
+        runtimeConfigOutcomeKeyModel: '模型',
+        runtimeConfigOutcomeKeyFallbackModel: '備用模型',
+        runtimeConfigOutcomeKeyPermissionMode: '權限模式',
+        runtimeConfigOutcomeKeyReasoningEffort: '推理強度',
+        runtimeConfigOutcomeKeyMaxThinkingTokens: '思考預算',
+        runtimeConfigOutcomeKeyLaunchOption: '啟動選項',
+        runtimeConfigOutcomeRequiresRestart: '需要重新啟動',
+        runtimeConfigOutcomeRequiresInteractiveControl: '需要在終端機中操作',
+        runtimeConfigOutcomeUnsupported: '不支援',
+        runtimeConfigOutcomeFailed: '無法套用',
         contextCompactionStarted: '正在壓縮上下文...',
         contextCompactionCompleted: '上下文已壓縮',
         contextCompactionFailed: '上下文壓縮失敗',
         contextCompactionCancelled: '上下文壓縮已取消',
+        contextCompactionPaused: '上下文已壓縮；傳送訊息以繼續',
         usageLimitUntil: ({ time }: { time: string }) => `使用限制到 ${time}`,
+        connectedServiceAccountSwitch: ({ provider, from, to }: { provider: string; from: string; to: string }) =>
+            `${provider}帳戶已從 ${from} 切換到 ${to}`,
+        connectedServiceSwitchGroupEndpoint: ({ group, profile }: { group: string; profile: string }) =>
+            `群組 ${group} · ${profile}`,
+        connectedServiceSwitchProfileEndpoint: ({ profile }: { profile: string }) => `設定檔 ${profile}`,
+        connectedServiceSwitchDeferred: '帳戶切換已推遲至回合邊界',
+        connectedServiceSwitchDeferredIdle: '帳戶切換已推遲至工作階段閒置',
+        connectedServiceSwitchDeferralCompleted: '帳戶切換已就緒',
+        connectedServiceSwitchDeferralCancelled: '帳戶切換已取消',
+        connectedServiceSwitchDeferralSuperseded: '帳戶切換已被更新的切換取代',
+        providerStateSharingDegraded: '提供者狀態共用已部分套用',
+        providerQuotaWait: ({ time }: { time: string }) => `正在等待提供者配額於 ${time} 重設`,
+        providerQuotaRecovered: '提供者配額已復原',
+        connectedServiceRuntimeAuthRecoveryRecovered: '供應商驗證已復原',
+        connectedServiceRuntimeAuthRecoveryCancelled: '供應商驗證復原已取消',
         unknownTime: '未知時間',
     },
 
@@ -6417,21 +7938,23 @@ settingsSession: {
         directSessionTakeoverAvailable: "此直接工作階段可在你的機器上使用。可在 Happier 中接管它並在此控制。",
         directSessionMachineOffline: "此直接工作階段目前無法使用，因為機器已離線。",
         switchingToDirectTakeover: "正在接管此直接工作階段…",
-        switchingToPersistedTakeover: "正在接管並同步此工作階段…",
+        switchingToPersistedTakeover: "正在接管並匯入此工作階段…",
         takeOverDirect: "接管",
-        takeOverPersist: "接管並同步",
+        takeOverPersist: "接管並匯入",
         directTakeoverDialogTitle: "要在 Happier 中繼續此直接工作階段嗎？",
-        directTakeoverDialogBody: "選擇 Happier 應如何接管。直接模式會繼續使用提供者的逐字稿。同步會將逐字稿匯入 Happier。",
+        directTakeoverDialogBody: "選擇 Happier 應如何接管。直接模式會繼續使用提供者的逐字稿。匯入會將逐字稿帶入 Happier。",
         directTakeoverDialogDirectTitle: "接管",
-        directTakeoverDialogDirectBody: "在 Happier 中控制此工作階段，而不將逐字稿同步到 Happier。",
-        directTakeoverDialogPersistTitle: "接管並同步",
-        directTakeoverDialogPersistBody: "將逐字稿匯入 Happier，並繼續使用完整的已同步工作階段功能。",
+        directTakeoverDialogDirectBody: "在 Happier 中控制此工作階段，而不將逐字稿匯入 Happier。",
+        directTakeoverDialogPersistTitle: "接管並匯入",
+        directTakeoverDialogPersistBody: "將逐字稿匯入 Happier，並繼續使用完整的 Happier 工作階段功能。",
         directTakeoverDialogForceStopTitle: "先嘗試停止本機程序",
         directTakeoverDialogForceStopBody: "Happier 找到了此工作階段對應的可信本機程序。如果你希望 Happier 在接管前先停止它，請啟用此選項。",
         directTakeoverForceStopConfirmTitle: "先停止本機程序？",
         directTakeoverForceStopConfirmBody: "Happier 找到了此直接工作階段對應的可信本機程序。要在這裡接管前先停止它嗎？",
         directTakeoverForceStopConfirmAction: "停止並接管",
-    },
+
+        externalSessionTakeoverAvailable: "此直接工作階段可在你的機器上使用。可在 Happier 中接管它並在此控制。",
+        externalSessionMachineOffline: "此直接工作階段目前無法使用，因為機器已離線。",},
 
       codex: {
           // Codex permission dialog buttons
@@ -6470,6 +7993,49 @@ settingsSession: {
         mermaidRenderFailed: '渲染 mermaid 圖表失敗',
         diffLabel: '差異',
         codeLabel: '程式碼',
+
+        // Slash menu commands (Lane G)
+        slash: {
+            heading1: { label: '標題 1', description: '大標題' },
+            heading2: { label: '標題 2', description: '中標題' },
+            heading3: { label: '標題 3', description: '小標題' },
+            bulletList: { label: '無序清單', description: '項目符號清單' },
+            orderedList: { label: '有序清單', description: '編號清單' },
+            taskList: { label: '任務清單', description: '帶核取方塊的清單' },
+            blockquote: { label: '引用', description: '引用區塊' },
+            codeBlock: { label: '程式碼區塊', description: '程式碼區塊' },
+            horizontalRule: { label: '分隔線', description: '水平線' },
+            groups: { headings: '標題', lists: '清單', blocks: '區塊' },
+        },
+
+        // Link bubble (Lane H)
+        linkBubble: {
+            open: '開啟',
+            edit: '編輯',
+            unlink: '取消連結',
+            cancel: '取消',
+            save: '儲存',
+            inputPlaceholder: '貼上或輸入連結…',
+        },
+    },
+
+    // Accessibility labels for the rich markdown editor formatting toolbar.
+    markdownEditorToolbar: {
+        bold: '粗體',
+        italic: '斜體',
+        strikethrough: '刪除線',
+        code: '行內程式碼',
+        heading1: '標題 1',
+        heading2: '標題 2',
+        heading3: '標題 3',
+        bulletList: '項目符號清單',
+        orderedList: '編號清單',
+        taskList: '工作清單',
+        blockquote: '引用',
+        codeBlock: '程式碼區塊',
+        horizontalRule: '分隔線',
+        openLink: '開啟連結',
+        unlink: '移除連結',
     },
 
     artifacts: {
@@ -6586,7 +8152,50 @@ settingsSession: {
             notAuthenticated: '請先登入以查看使用情況。',
             failedToLoad: '無法載入使用情況。',
         },
-    },
+
+        lastYear: '過去 1 年',
+        costMode: '成本模式',
+        auto: '自動',
+        reported: '已回報',
+        estimated: '估算',
+        insights: '洞察',
+        activity: '活動',
+        timeline: "時間線",
+        leaders: '排行榜',
+        activeDays: '活躍天數',
+        modelsTried: '已嘗試的模型',
+        favoriteModelChanges: '常用模型變更',
+        busiestWindow: '最繁忙時段',
+        activityCalendarSubtitle: '日曆熱圖',
+        mostActiveMonths: '所選期間內最活躍的月份',
+        mostActiveWeekdays: '一週中最活躍的日子',
+        mostActiveHours: '一天中最活躍的時段',
+        events: '事件',
+        source: '來源',
+        sessionUsage: "工作階段用量",
+        summary: {
+            title: '使用摘要',
+            currentStreak: '目前連續活躍',
+            currentStreakSubtitle: ({ count }: { count: number }) => `${count} active days in the last 30`,
+            currentStreakSubtitleForPeriod: ({ count, period }: { count: number; period: string }) => `${count} active days · ${period}`,
+            thisWeek: '本週',
+            thisWeekSubtitle: '近期動能',
+            topModel: '常用模型',
+            engine: '引擎',
+            export: {
+                session: '工作階段',
+                period: '期間',
+                metric: '指標',
+                costMode: '成本模式',
+                totalTokens: '總 Token 數',
+                totalCost: '總成本',
+                activeDays: '活躍天數',
+                topModel: '常用模型',
+                topEngine: '主要引擎',
+                modelTimeline: '模型時間線',
+                engineTimeline: '引擎時間線',
+            },
+        },},
 
     feed: {
         // Feed notifications for friend requests and acceptances
@@ -6627,8 +8236,115 @@ settingsSession: {
         },
         aiBackend: {
             copilotSubtitleExperimental: 'GitHub Copilot CLI（實驗）',
+            cursorSubtitleExperimental: 'Cursor Agent CLI（實驗）',
+
+            ohMyPiSubtitleExperimental: 'oh-my-pi CLI（實驗）',},
+    },
+
+  projects: {
+        emptyTitle: '尚無專案',
+        emptyDescription: '專案讓你在不建立工作階段的情況下瀏覽與編輯機器上的檔案，並使用 Git。',
+        groups: {
+            pinned: '已釘選',
+            addFirst: '新增專案',
+        },
+        actions: {
+            addProjectToMachine: '將專案加入此機器',
+            addProject: '新增專案',
+            addProjectOnMachine: ({ machine }: { machine: string }) => `在${machine}上新增專案`,
+            chooseProjectFolderOnMachine: ({ machine }: { machine: string }) => `選擇${machine}上的資料夾`,
+            chooseProjectFolderSubtitle: '將它加入為專案，以瀏覽與編輯檔案，並使用 Git。',
+            pin: '釘選',
+            unpin: '取消釘選',
+            remove: '移除',
+        },
+        sourceControl: {
+            noSessionAvailableDetails: '在此資料夾中啟動工作階段，以在專案中啟用原始碼管理。',
+        },
+        details: {
+            emptyBody: '開啟「檔案」或「原始碼管理」即可在此預覽檔案與差異。',
+            placeholderFileBody: '「{title}」的檔案預覽會顯示在此處。',
+            placeholderScmReviewBody: '差異預覽會顯示在此處。',
+            placeholderCommitBody: '提交詳細資訊會顯示在此處。',
+            placeholderUnsupportedBody: '專案目前不支援此詳細分頁。',
+        },
+        detail: {
+            notFoundTitle: '找不到專案',
+            notFoundDescription: '此專案可能已被移除，或屬於其他伺服器。',
+            missingWorktreeRecovered: '所選 worktree 已不存在。已切回專案根目錄。',
+            groupTitle: '專案',
+            fields: {
+                name: '名稱',
+                machine: '機器',
+                path: '路徑',
+            },
+            comingSoonGroupTitle: '即將推出',
+            comingSoonFooter: '在下一階段的重構中，檔案、原始碼管理、差異與終端機將出現在這裡。',
+            comingSoon: {
+                filesAndScmTitle: '檔案與原始碼管理',
+                filesAndScmSubtitle: '此畫面將重用現有的側邊欄與詳細面板，但範圍將從工作階段改為工作區。',
+            },
         },
     },
-};
+  settingsPlugins: {
+    title: "外掛程式目錄",
+    subtitle: "瀏覽精選的外掛程式描述項，並管理此裝置上的已安裝外掛程式。",
+    catalogUrlLabel: "目錄 URL",
+    loadCatalog: "載入目錄",
+    emptySubtitle: "此目錄沒有回傳任何描述項。",
+    detailTitle: "外掛程式詳細資訊",
+    provenanceTitle: "來源與信任",
+    diagnosticsTitle: "外掛程式診斷",
+    registryDiagnosticsTitle: "登錄診斷",
+    contributionsTitle: "投影貢獻項",
+    generationLabel: "產生版本",
+    reloadAction: "重新載入",
+    reloadSubtitle: "重新載入此外掛程式並重新整理其投影描述項。",
+    unsupportedDescriptorField: "此版本的 Happier 不支援這個描述項欄位。",
+    noDescriptors: "此區段沒有投影任何由主機呈現的描述項。",
+  },
+  settingsScmDiffSummary: {
+        title: '差異摘要',
+        enabledTitle: '啟用差異摘要',
+        enabledSubtitle: '允許為原始碼控制差異產生 AI 摘要。',
+        prefetchTitle: '預先擷取摘要',
+        prefetchSubtitle: '只有在啟用此偏好設定時才會提前產生摘要。',
+        modelOverrideTitle: '摘要模型',
+        modelOverrideSubtitle: '用於差異摘要的選用已解析 runtime 設定檔。',
+        modelOverrideDefault: '使用 runtime 預設值',
+        cacheTitle: '摘要快取',
+        cacheSubtitle: 'Checkpoint 摘要會依收據重複使用；working tree 摘要會保持暫時狀態。',
+    },
+  externalSessions: {
+        browseTitle: "瀏覽提供者工作階段",
+        browseOpenExisting: "瀏覽提供者工作階段",
+        browseActionSubtitle: "選擇機器、提供者與工作階段，以便在這裡開啟。",
+        emptyStateTitle: "瀏覽現有工作階段",
+        emptyStateDescription: "從你已連線的機器開啟 Claude、Codex 與 OpenCode 工作階段。",
+        browseFiltersTitle: "選擇來源",
+        browseMachines: "機器",
+        browseProviders: "提供者",
+        browseSources: "來源",
+        browseSourceCodexUserHome: "我的 Codex 主目錄",
+        browseSourceCodexConnectedServices: ({ service }: { service: string }) => `${service} connected services`,
+        browseSourceClaudeDefault: "預設 Claude 設定",
+        browseSourceOpenCodeDefault: "預設 OpenCode 伺服器",
+        browseCandidates: "可用工作階段",
+        browseNoMachines: "目前尚無可用於直接工作階段的機器。",
+        browseNoCandidates: "找不到這台機器與提供者對應的工作階段。",
+        browseActivityRunning: "執行中",
+        browseActivityRunningNow: "正在執行",
+        browseActivityRecent: "最近活躍",
+        browseActivityIdle: "閒置",
+        browseActivityUnknown: "未知",
+        browseSearchPlaceholder: "搜尋已載入的工作階段…",
+        browseNoSearchResults: "目前沒有已載入的工作階段符合此搜尋。",
+        browseLoadMore: "載入更多工作階段",
+        browseFailedToLoad: "載入提供者工作階段失敗。",
+        browseLinkFailed: "連結所選提供者工作階段失敗。",
+    },
+  settingsSearch: {
+        placeholder: '搜尋設定',
+    },};
 
-export const zhHant: TranslationStructure = deepMerge(zhHans, zhHantOverrides);
+export const zhHant = deepMerge(zhHans, zhHantOverrides);

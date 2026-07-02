@@ -19,6 +19,7 @@ vi.mock('./sessionMachineTarget', async () => {
     return {
         ...actual,
         readMachineTargetForSession: readMachineTargetForSessionMock,
+        readMachineControlTargetForSession: readMachineTargetForSessionMock,
     };
 });
 
@@ -143,7 +144,7 @@ describe('sessions ops server-scoped routing', () => {
         }));
     });
 
-    it('passes connectedServices through resumeSession when requested', async () => {
+    it('passes connectedServices and freshness through resumeSession when requested', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({ type: 'success', sessionId: 'sess-1' });
         const { resumeSession } = await sessionsModulePromise;
         await resumeSession({
@@ -160,12 +161,14 @@ describe('sessions ops server-scoped routing', () => {
                     },
                 },
             },
+            connectedServicesUpdatedAt: 3456,
             serverId: 'server-b',
         } as any);
 
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             payload: expect.objectContaining({
                 connectedServices: expect.any(Object),
+                connectedServicesUpdatedAt: 3456,
             }),
         }));
     });

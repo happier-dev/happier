@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol';
 
@@ -97,6 +97,12 @@ const response: UsageAnalyticsQueryResponse = {
 };
 
 describe('usageAnalyticsExport', () => {
+    afterEach(() => {
+        vi.resetModules();
+        vi.clearAllMocks();
+        vi.unstubAllGlobals();
+    });
+
     it('includes recap card payloads in the analytics export payload', () => {
         const viewModel = buildUsageAnalyticsViewModel(response, {
             period: '30days',
@@ -187,5 +193,115 @@ describe('usageAnalyticsExport', () => {
         });
 
         expect(summaryText).toContain('Last year');
+    });
+
+    it('shares native summaries using a cache File instead of deprecated top-level writes', async () => {
+        const write = vi.fn();
+        const deleteFile = vi.fn();
+        const shareAsync = vi.fn(async () => undefined);
+
+        class File {
+            readonly uri: string;
+
+            constructor(parent: { uri: string } | string, name: string) {
+                const parentUri = typeof parent === 'string' ? parent : parent.uri;
+                this.uri = `${parentUri.replace(/\/+$/, '')}/${name}`;
+            }
+
+            write = write;
+            delete = deleteFile;
+        }
+
+        vi.doMock('react-native', () => ({
+            Platform: { OS: 'ios' },
+        }));
+        vi.doMock('expo-file-system', () => ({
+            Paths: { cache: { uri: 'file:///cache/' } },
+            File,
+            writeAsStringAsync: vi.fn(() => {
+                throw new Error('deprecated writeAsStringAsync must not be used');
+            }),
+            deleteAsync: vi.fn(() => {
+                throw new Error('deprecated deleteAsync must not be used');
+            }),
+        }));
+        vi.doMock('expo-sharing', () => ({
+            isAvailableAsync: vi.fn(async () => true),
+            shareAsync,
+        }));
+
+        const { shareUsageAnalyticsSummary } = await import('./usageAnalyticsExport');
+        const viewModel = buildUsageAnalyticsViewModel(response, {
+            period: '30days',
+            metric: 'tokens',
+            focus: null,
+            costMode: 'auto',
+        });
+
+        const shared = await shareUsageAnalyticsSummary({
+            viewModel,
+            filters: { period: '30days', metric: 'tokens', focus: null, costMode: 'auto' },
+            sessionId: 'session-a',
+        });
+
+        expect(shared).toBe(true);
+        expect(write).toHaveBeenCalledWith(expect.stringContaining('session-a'));
+        expect(shareAsync).toHaveBeenCalledWith(expect.stringMatching(/^file:\/\/\/cache\/usage-summary-.*\.txt$/));
+        expect(deleteFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('exports native JSON using a cache File instead of deprecated top-level writes', async () => {
+        const write = vi.fn();
+        const deleteFile = vi.fn();
+        const shareAsync = vi.fn(async () => undefined);
+
+        class File {
+            readonly uri: string;
+
+            constructor(parent: { uri: string } | string, name: string) {
+                const parentUri = typeof parent === 'string' ? parent : parent.uri;
+                this.uri = `${parentUri.replace(/\/+$/, '')}/${name}`;
+            }
+
+            write = write;
+            delete = deleteFile;
+        }
+
+        vi.doMock('react-native', () => ({
+            Platform: { OS: 'ios' },
+        }));
+        vi.doMock('expo-file-system', () => ({
+            Paths: { cache: { uri: 'file:///cache/' } },
+            File,
+            writeAsStringAsync: vi.fn(() => {
+                throw new Error('deprecated writeAsStringAsync must not be used');
+            }),
+            deleteAsync: vi.fn(() => {
+                throw new Error('deprecated deleteAsync must not be used');
+            }),
+        }));
+        vi.doMock('expo-sharing', () => ({
+            isAvailableAsync: vi.fn(async () => true),
+            shareAsync,
+        }));
+
+        const { exportUsageAnalyticsJson } = await import('./usageAnalyticsExport');
+        const viewModel = buildUsageAnalyticsViewModel(response, {
+            period: '30days',
+            metric: 'tokens',
+            focus: null,
+            costMode: 'auto',
+        });
+
+        const exported = await exportUsageAnalyticsJson({
+            viewModel,
+            filters: { period: '30days', metric: 'tokens', focus: null, costMode: 'auto' },
+            sessionId: 'session-a',
+        });
+
+        expect(exported).toBe(true);
+        expect(write).toHaveBeenCalledWith(expect.stringContaining('"sessionId": "session-a"'));
+        expect(shareAsync).toHaveBeenCalledWith(expect.stringMatching(/^file:\/\/\/cache\/usage-.*\.json$/));
+        expect(deleteFile).toHaveBeenCalledTimes(1);
     });
 });

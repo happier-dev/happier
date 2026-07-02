@@ -15,6 +15,7 @@
 
 // Characters that stop the active word search
 const STOP_CHARACTERS = ['\n', ',', '(', ')', '[', ']', '{', '}', '<', '>', ';', '!', '?', '.'];
+const ACTIVE_WORD_SCAN_LIMIT = 4096;
 
 interface Selection {
     start: number;
@@ -40,7 +41,9 @@ function findActiveWordStart(
     let foundPrefix = false;
     let prefixIndex = -1;
 
-    while (startIndex >= 0) {
+    const minStartIndex = Math.max(0, selection.start - ACTIVE_WORD_SCAN_LIMIT);
+
+    while (startIndex >= minStartIndex) {
         const char = content.charAt(startIndex);
 
         // Check if we hit a space
@@ -105,7 +108,8 @@ function findActiveWordEnd(
         isFilePath = content.charAt(wordStartPos) === '@';
     }
     
-    while (endIndex < content.length) {
+    const maxEndIndex = Math.min(content.length, cursorPos + ACTIVE_WORD_SCAN_LIMIT);
+    while (endIndex < maxEndIndex) {
         const char = content.charAt(endIndex);
         
         // For file paths starting with @, don't stop at / or .

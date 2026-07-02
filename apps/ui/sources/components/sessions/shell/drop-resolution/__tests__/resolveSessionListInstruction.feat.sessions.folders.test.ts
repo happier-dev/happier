@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { WindowBounds, WindowPointer } from '@/components/ui/treeDragDrop';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { PINNED_GROUP_KEY_V1 } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import type { SessionFolderWorkspaceRefV1 } from '@/sync/domains/session/folders';
 
 import { buildSessionListDragSource } from '../buildSessionListDragSource';
@@ -92,6 +93,30 @@ function mixedWorkspaceItems(): SessionListIndexItem[] {
         sessionItem({ id: 'root-a', groupKey: 'project-a', folderId: null, depth: 0, workspace: workspaceA }),
         projectHeader('project-b', workspaceB),
         folderHeader({ id: 'folder-c', groupKey: 'project-b:folder:folder-c', depth: 0, workspace: workspaceB }),
+    ];
+}
+
+function pinnedItems(): SessionListIndexItem[] {
+    return [
+        { type: 'header', title: 'Pinned', headerKind: 'pinned', groupKey: PINNED_GROUP_KEY_V1 },
+        {
+            type: 'session',
+            sessionId: 'pinned-a',
+            serverId: 'server-a',
+            storageKind: 'persisted',
+            groupKey: PINNED_GROUP_KEY_V1,
+            groupKind: 'pinned',
+            pinned: true,
+        },
+        {
+            type: 'session',
+            sessionId: 'pinned-b',
+            serverId: 'server-a',
+            storageKind: 'persisted',
+            groupKey: PINNED_GROUP_KEY_V1,
+            groupKind: 'pinned',
+            pinned: true,
+        },
     ];
 }
 
@@ -218,6 +243,112 @@ describe('resolveSessionListInstruction', () => {
             kind: 'move-to-root',
             containerId: treeRowId.workspaceRoot('project-a'),
             rootId: treeRowId.workspaceRoot('project-a'),
+            depth: 0,
+        });
+    });
+
+    it('resolves workspace-root whitespace using implicit production drop zones', () => {
+        const items = mixedWorkspaceItems();
+        const tree = buildSessionListTreeRows({
+            items,
+            rowBoundsById: new Map<string, WindowBounds>([
+                [treeRowId.workspaceRoot('project-a'), bounds(0)],
+                [treeRowId.folder('folder-a'), bounds(40)],
+                [treeRowId.session('server-a', 'inside-a'), bounds(80)],
+                [treeRowId.folder('child-a'), bounds(120)],
+                [treeRowId.folder('folder-b'), bounds(160)],
+                [treeRowId.session('server-a', 'root-a'), bounds(200)],
+                [treeRowId.workspaceRoot('project-b'), bounds(300)],
+                [treeRowId.folder('folder-c'), bounds(340)],
+            ]),
+        });
+
+        const result = resolveSessionListInstruction({
+            tree,
+            source: buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'inside-a') }),
+            pointer: pointer(250),
+            foldersFeatureEnabled: true,
+        });
+
+        expect(result.instruction).toEqual({
+            kind: 'move-to-root',
+            containerId: treeRowId.workspaceRoot('project-a'),
+            rootId: treeRowId.workspaceRoot('project-a'),
+            depth: 0,
+        });
+        expect(result.visual).toEqual({
+            kind: 'line',
+            targetId: treeRowId.workspaceRoot('project-a'),
+            edge: 'bottom',
+            depth: 0,
+            dropZoneRole: 'root-after-last',
+        });
+    });
+
+    it('resolves pinned session reordering within the pinned group', () => {
+        const tree = buildSessionListTreeRows({
+            items: pinnedItems(),
+            rowBoundsById: new Map<string, WindowBounds>([
+                [treeRowId.session('server-a', 'pinned-a'), bounds(40)],
+                [treeRowId.session('server-a', 'pinned-b'), bounds(80)],
+            ]),
+        });
+
+        const result = resolveSessionListInstruction({
+            tree,
+            source: buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'pinned-a') }),
+            pointer: pointer(82),
+            foldersFeatureEnabled: true,
+        });
+
+        expect(result.instruction).toEqual({
+            kind: 'reorder-before',
+            targetId: treeRowId.session('server-a', 'pinned-b'),
+            containerId: PINNED_GROUP_KEY_V1,
+            parentId: null,
+            depth: 0,
+        });
+        expect(result.visual).toEqual({
+            kind: 'line',
+            targetId: treeRowId.session('server-a', 'pinned-b'),
+            edge: 'top',
+            depth: 0,
+        });
+    });
+
+    it('resolves whitespace after an expanded folder subtree as a root sibling insertion', () => {
+        const tree = buildSessionListTreeRows({
+            items: mixedWorkspaceItems(),
+            rowBoundsById: new Map<string, WindowBounds>([
+                [treeRowId.workspaceRoot('project-a'), bounds(0)],
+                [treeRowId.folder('folder-a'), bounds(40)],
+                [treeRowId.session('server-a', 'inside-a'), bounds(80)],
+                [treeRowId.folder('child-a'), bounds(120)],
+                [treeRowId.folder('folder-b'), bounds(170)],
+                [treeRowId.session('server-a', 'root-a'), bounds(210)],
+                [treeRowId.workspaceRoot('project-b'), bounds(300)],
+                [treeRowId.folder('folder-c'), bounds(340)],
+            ]),
+        });
+
+        const result = resolveSessionListInstruction({
+            tree,
+            source: buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'inside-a') }),
+            pointer: pointer(165),
+            foldersFeatureEnabled: true,
+        });
+
+        expect(result.instruction).toEqual({
+            kind: 'reorder-before',
+            targetId: treeRowId.folder('folder-b'),
+            containerId: treeRowId.workspaceRoot('project-a'),
+            parentId: null,
+            depth: 0,
+        });
+        expect(result.visual).toEqual({
+            kind: 'line',
+            targetId: treeRowId.folder('folder-b'),
+            edge: 'top',
             depth: 0,
         });
     });

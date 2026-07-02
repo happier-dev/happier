@@ -5,6 +5,7 @@ import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/
 import {
     MoveSessionFolderAssignmentsResponseSchema,
     QuerySessionFolderSessionsResponseSchema,
+    SESSION_FOLDER_ASSIGNMENT_QUERY_MAX_SESSION_IDS,
     SessionFolderAssignmentListResponseSchema,
     SetSessionFolderAssignmentResponseSchema,
     type MoveSessionFolderAssignmentsResponse,
@@ -106,21 +107,27 @@ export async function fetchSessionFolderAssignmentsForSessions(params: Readonly<
     sessionIds: readonly string[];
 }>): Promise<SessionFolderAssignmentListResponse> {
     if (params.sessionIds.length === 0) return { assignments: [] };
-    const encoded = encodeURIComponent(params.sessionIds.join(','));
-    const response = await fetchSessionFolderAssignmentRoute({
-        credentials: params.credentials,
-        serverUrl: params.serverUrl,
-        path: `/v2/session-folder-assignments?sessionIds=${encoded}`,
-        init: { headers: authHeaders(params.credentials) },
-    });
-    const raw = await readJsonBody(response);
-    if (!response.ok) {
-        if (looksLikeMissingSessionFolderAssignmentsRoute(response.status, raw)) {
-            return { assignments: [] };
+
+    const assignments: SessionFolderAssignmentListResponse["assignments"] = [];
+    for (let index = 0; index < params.sessionIds.length; index += SESSION_FOLDER_ASSIGNMENT_QUERY_MAX_SESSION_IDS) {
+        const chunk = params.sessionIds.slice(index, index + SESSION_FOLDER_ASSIGNMENT_QUERY_MAX_SESSION_IDS);
+        const encoded = encodeURIComponent(chunk.join(','));
+        const response = await fetchSessionFolderAssignmentRoute({
+            credentials: params.credentials,
+            serverUrl: params.serverUrl,
+            path: `/v2/session-folder-assignments?sessionIds=${encoded}`,
+            init: { headers: authHeaders(params.credentials) },
+        });
+        const raw = await readJsonBody(response);
+        if (!response.ok) {
+            if (looksLikeMissingSessionFolderAssignmentsRoute(response.status, raw)) {
+                return { assignments: [] };
+            }
+            throw new HappyError(readErrorMessage(raw, 'Failed to fetch session folder assignments'), false);
         }
-        throw new HappyError(readErrorMessage(raw, 'Failed to fetch session folder assignments'), false);
+        assignments.push(...parseJsonBody(raw, SessionFolderAssignmentListResponseSchema, 'Failed to fetch session folder assignments').assignments);
     }
-    return parseJsonBody(raw, SessionFolderAssignmentListResponseSchema, 'Failed to fetch session folder assignments');
+    return { assignments };
 }
 
 export async function setSessionFolderAssignment(params: Readonly<{

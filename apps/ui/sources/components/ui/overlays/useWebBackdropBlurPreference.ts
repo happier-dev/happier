@@ -13,18 +13,20 @@ export function useWebBackdropBlurPreference(): void {
         if (typeof document === 'undefined') return;
 
         const root = document.documentElement;
+        const dataset = root?.dataset;
+        if (!dataset) return;
         const nextValue = enabled ? 'on' : 'off';
-        const previousValue = root.dataset[WEB_BACKDROP_DATASET_KEY];
+        const previousValue = dataset[WEB_BACKDROP_DATASET_KEY];
 
-        root.dataset[WEB_BACKDROP_DATASET_KEY] = nextValue;
+        dataset[WEB_BACKDROP_DATASET_KEY] = nextValue;
 
         return () => {
-            if (root.dataset[WEB_BACKDROP_DATASET_KEY] !== nextValue) return;
+            if (dataset[WEB_BACKDROP_DATASET_KEY] !== nextValue) return;
             if (previousValue == null) {
-                delete root.dataset[WEB_BACKDROP_DATASET_KEY];
+                delete dataset[WEB_BACKDROP_DATASET_KEY];
                 return;
             }
-            root.dataset[WEB_BACKDROP_DATASET_KEY] = previousValue;
+            dataset[WEB_BACKDROP_DATASET_KEY] = previousValue;
         };
     }, [enabled]);
 }

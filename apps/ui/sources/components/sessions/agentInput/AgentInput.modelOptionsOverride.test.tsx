@@ -149,6 +149,10 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 vi.mock('@/sync/domains/models/modelOptions', () => ({
+    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
+        options?.find?.((option: any) => option.value === effectiveModelId)
+            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
+            ?? null,
     getModelOptionsForSession: (_agentId: string, metadata: any) => {
         const state = metadata?.sessionModelsV1 ?? metadata?.acpSessionModelsV1 ?? null;
         const hasDynamic =

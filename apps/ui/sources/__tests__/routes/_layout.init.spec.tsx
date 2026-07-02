@@ -33,6 +33,9 @@ const shellChromeState = vi.hoisted(() => ({
 const desktopOverlayWindowState = vi.hoisted(() => ({
     value: false,
 }));
+const notificationNativeState = vi.hoisted(() => ({
+    unavailable: false,
+}));
 const desktopWindowBridgeState = vi.hoisted(() => ({
     getDesktopWindowChromePolicy: vi.fn<() => Promise<DesktopWindowChromePolicy>>(async () => ({ strategy: 'none' })),
     getDesktopWindowState: vi.fn<() => Promise<DesktopWindowState>>(async () => ({ isMaximized: false })),
@@ -118,12 +121,17 @@ vi.mock('expo-asset', () => ({
     },
 }));
 
-vi.mock('expo-notifications', () => ({
-    setNotificationHandler: vi.fn(),
-    setNotificationChannelAsync: vi.fn(async () => {}),
-    setNotificationCategoryAsync: vi.fn(async () => {}),
-    AndroidImportance: { MAX: 5 },
-}));
+vi.mock('expo-notifications', () => {
+    if (notificationNativeState.unavailable) {
+        throw new Error('expo-notifications native module unavailable');
+    }
+    return {
+        setNotificationHandler: vi.fn(),
+        setNotificationChannelAsync: vi.fn(async () => {}),
+        setNotificationCategoryAsync: vi.fn(async () => {}),
+        AndroidImportance: { HIGH: 4, MAX: 5 },
+    };
+});
 
 vi.mock('@expo/vector-icons', () => ({
     FontAwesome: { font: fontAwesomeFontMock },
@@ -273,6 +281,17 @@ vi.mock('@/auth/context/AuthContext', () => {
     const React = require('react');
     return {
         AuthProvider: ({ children }: { children: React.ReactNode }) => React.createElement('AuthProvider', null, children),
+        useAuth: () => {
+            const isAuthenticated = Boolean(bootCredentialsState.value);
+            return {
+                isAuthenticated,
+                credentials: isAuthenticated ? bootCredentialsState.value : null,
+                login: vi.fn(async () => {}),
+                loginWithCredentials: vi.fn(async () => {}),
+                logout: vi.fn(async () => {}),
+                refreshFromActiveServer: vi.fn(async () => {}),
+            };
+        },
     };
 });
 
@@ -290,15 +309,6 @@ vi.mock('react-native-keyboard-controller', () => {
     const React = require('react');
     return {
         KeyboardProvider: ({ children }: { children: React.ReactNode }) => React.createElement('KeyboardProvider', null, children),
-    };
-});
-
-vi.mock('react-native-safe-area-context', () => {
-    const React = require('react');
-    return {
-        initialWindowMetrics: {} as any,
-        SafeAreaProvider: ({ children }: { children: React.ReactNode }) => React.createElement('SafeAreaProvider', null, children),
-        useSafeAreaInsets: () => ({ left: 0, right: 0, top: 0, bottom: 0 }),
     };
 });
 
@@ -326,6 +336,17 @@ vi.mock('@/components/navigation/shell/SidebarNavigator', () => {
 
             return React.createElement('SidebarNavigator');
         },
+    };
+});
+
+vi.mock('@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface', () => {
+    const React = require('react');
+    return {
+        DesktopMainContentDragSurface: (props: Record<string, unknown>) =>
+            React.createElement('DesktopMainContentDragSurface', {
+                ...props,
+                testID: 'desktop-main-content-drag-surface',
+            }, props.children),
     };
 });
 
@@ -428,6 +449,7 @@ describe('app/_layout init resilience', () => {
         shellChromeState.isTauriDesktop = false;
         shellChromeState.isTablet = true;
         desktopOverlayWindowState.value = false;
+        notificationNativeState.unavailable = false;
         desktopWindowBridgeState.getDesktopWindowChromePolicy.mockReset();
         desktopWindowBridgeState.getDesktopWindowState.mockReset();
         desktopWindowBridgeState.listenDesktopWindowState.mockReset();
@@ -491,6 +513,13 @@ describe('app/_layout init resilience', () => {
         delete process.env.EXPO_PUBLIC_SENTRY_DSN;
         await import('@/app/_layout');
         expect(sentryWrapMock).toHaveBeenCalledTimes(0);
+    });
+
+    it('does not fail root layout import when expo notifications are unavailable on Android', async () => {
+        mockedPlatformOS = 'android';
+        notificationNativeState.unavailable = true;
+
+        await expect(import('@/app/_layout')).resolves.toHaveProperty('default');
     });
 
     it('provides the main app tab state to the root sidebar shell', async () => {
@@ -650,6 +679,16 @@ describe('app/_layout init resilience', () => {
         expect(screen.findByTestId('app-crash-recovery-boundary')).toBeTruthy();
     });
 
+    it('mounts favicon permission signaling inside AppCrashRecoveryBoundary for ordinary routes', async () => {
+        mockedPlatformOS = 'ios';
+        mockedPathname = '/';
+        const screen = await renderSettledRootLayout();
+
+        const boundary = screen.findByTestId('app-crash-recovery-boundary');
+        expect(boundary).toBeTruthy();
+        expect(boundary!.findAllByType('FaviconPermissionIndicator' as any)).toHaveLength(1);
+    });
+
     it('keeps the shell navigator mounted while hiding the shell update tag for terminal-connect routes', async () => {
         mockedPathname = '/terminal/connect';
         const screen = await renderSettledRootLayout();
@@ -677,6 +716,9 @@ describe('app/_layout init resilience', () => {
         expect(screen.findAllByType('AppUpdateStatusTag' as any)).toHaveLength(0);
         expect(screen.findAllByTestId('desktop-focus-mode-shell-chrome')).toHaveLength(0);
         expect(screen.findAllByTestId('desktop-narrow-shell-chrome')).toHaveLength(0);
+        const dragSurface = screen.findByTestId('desktop-main-content-drag-surface');
+        expect(dragSurface?.props.enabled).toBe(true);
+        expect(dragSurface?.props.leftOffsetPx).toBe(0);
     });
 
     it('keeps desktop shell chrome inside the sidebar host for authenticated wide desktop flows', async () => {
@@ -690,6 +732,7 @@ describe('app/_layout init resilience', () => {
 
         expect(screen.findAllByTestId('desktop-focus-mode-shell-chrome')).toHaveLength(0);
         expect(screen.findAllByTestId('desktop-narrow-shell-chrome')).toHaveLength(0);
+        expect(screen.findAllByTestId('desktop-main-content-drag-surface')).toHaveLength(0);
         expect(screen.findAllByType('SidebarNavigator' as any)).toHaveLength(1);
     });
 
@@ -705,6 +748,9 @@ describe('app/_layout init resilience', () => {
         expect(screen.findByTestId('desktop-narrow-shell-chrome')).toBeTruthy();
         expect(screen.findAllByTestId('desktop-focus-mode-shell-chrome')).toHaveLength(0);
         expect(screen.findByTestId('desktop-window-controls-slot')).toBeTruthy();
+        const dragSurface = screen.findByTestId('desktop-main-content-drag-surface');
+        expect(dragSurface?.props.enabled).toBe(true);
+        expect(dragSurface?.props.leftOffsetPx).toBe(0);
     });
 
     it('mounts the settings analytics runtime inside PostHogProvider when tracking is enabled', async () => {

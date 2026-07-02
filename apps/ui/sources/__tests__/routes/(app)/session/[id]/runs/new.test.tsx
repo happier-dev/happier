@@ -89,6 +89,7 @@ function buildSessionServerLookupState() {
         },
         sessions: {
             'session-1': {
+                ...sessionMock,
                 id: 'session-1',
                 serverId: sessionServerId,
             },
@@ -257,10 +258,18 @@ installSessionRouteCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/ui/layout/layout', () => ({ layout: { maxWidth: 999 } }));
+vi.mock('@/components/ui/layout/layout', () => ({
+    layout: { maxWidth: 999 },
+    useLayoutMaxWidth: () => 999,
+}));
+vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({
+    ActivitySpinner: (props: Record<string, unknown>) => React.createElement('ActivitySpinner', props),
+}));
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
-    useHydrateSessionForRoute: () => hydrateReady,
+    useHydrateSessionForRoute: (sessionId: string) => hydrateReady
+        ? { kind: 'available', sessionId }
+        : { kind: 'loading', sessionId, reason: 'store-miss' },
 }));
 
 vi.mock('@/sync/store/hooks', async (importOriginal) => {
@@ -422,7 +431,7 @@ describe('Session New Run Screen', () => {
         hydrateReady = false;
         localSearchParamsMock = { id: 'session-1', intent: 'review' };
         const screen = await renderNewRunScreen();
-        expect(screen.findAllByType('ActivityIndicator').length).toBeGreaterThan(0);
+        expect(screen.findAllByType('ActivitySpinner').length).toBeGreaterThan(0);
         hydrateReady = true;
     });
 
@@ -472,7 +481,7 @@ describe('Session New Run Screen', () => {
 
         const screen = await renderNewRunScreen();
 
-        expect(screen.findAllByType('ActivityIndicator').length).toBeGreaterThan(0);
+        expect(screen.findAllByType('ActivitySpinner').length).toBeGreaterThan(0);
         expect(screen.findAllByType('TextInput')).toHaveLength(0);
     });
 
@@ -484,7 +493,7 @@ describe('Session New Run Screen', () => {
 
         const screen = await renderNewRunScreen();
 
-        expect(screen.findAllByType('ActivityIndicator').length).toBeGreaterThan(0);
+        expect(screen.findAllByType('ActivitySpinner').length).toBeGreaterThan(0);
         expect(screen.findAllByType('TextInput')).toHaveLength(0);
     });
 

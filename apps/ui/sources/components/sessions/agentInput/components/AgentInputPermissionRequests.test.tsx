@@ -95,7 +95,7 @@ describe('AgentInputPermissionRequests', () => {
         expect(screen.findByTestId('agentInput.permissionRequests.divider:p2')).toBeTruthy();
     });
 
-    it('renders approval and explicit user action requests inside the same chrome', async () => {
+    it('renders approval requests and ignores explicit user action requests inside the composer chrome', async () => {
         const { AgentInputPermissionRequests } = await import('./AgentInputPermissionRequests');
         capturedPermissionPromptCardProps.length = 0;
         capturedApprovalPromptCardProps.length = 0;
@@ -147,9 +147,9 @@ describe('AgentInputPermissionRequests', () => {
         expect(screen.findByTestId('agentInput.permissionRequests.chrome')).toBeTruthy();
         expect(capturedPermissionPromptCardProps).toHaveLength(1);
         expect(capturedApprovalPromptCardProps).toHaveLength(1);
-        expect(capturedUserActionPromptCardProps).toHaveLength(1);
+        expect(capturedUserActionPromptCardProps).toHaveLength(0);
         expect(screen.findByTestId('agentInput.permissionRequests.divider:approval:approval-1')).toBeTruthy();
-        expect(screen.findByTestId('agentInput.permissionRequests.divider:userAction:u1')).toBeTruthy();
+        expect(screen.findByTestId('agentInput.permissionRequests.divider:userAction:u1')).toBeNull();
     });
 
     it('passes resolved tool locations to approval prompt cards', async () => {

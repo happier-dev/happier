@@ -39,6 +39,7 @@ type StreamingRevealRange = Readonly<{
 type WebEnrichedMarkdownTextModule = Readonly<{
     EnrichedMarkdownText: React.ComponentType<{
         markdown: string;
+        renderRawFallback?: boolean | 'hidden';
         streamingAnimation?: boolean;
     }>;
 }>;
@@ -118,6 +119,14 @@ async function loadPatchedWebParseMarkdown(): Promise<WebParseMarkdownModule> {
     return import(/* @vite-ignore */ moduleUrl) as Promise<WebParseMarkdownModule>;
 }
 
+async function loadPatchedWebSourceParseMarkdown(): Promise<WebParseMarkdownModule> {
+    const moduleUrl = new URL(
+        '../../../../node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts',
+        import.meta.url,
+    ).href;
+    return import(/* @vite-ignore */ moduleUrl) as Promise<WebParseMarkdownModule>;
+}
+
 async function loadPatchedInlineRenderers(): Promise<InlineRenderersModule> {
     const moduleUrl = new URL(
         '../../../../node_modules/react-native-enriched-markdown/src/web/renderers/InlineRenderers.tsx',
@@ -168,6 +177,28 @@ function countJsonNodesByType(node: TestRenderer.ReactTestRendererJSON | TestRen
             if (typeof child === 'string') return count;
             return count + countJsonNodesByType(child, type);
         }, 0);
+}
+
+function findFirstJsonNodeByType(
+    node: TestRenderer.ReactTestRendererJSON | TestRenderer.ReactTestRendererJSON[] | null,
+    type: string,
+): TestRenderer.ReactTestRendererJSON | null {
+    if (node === null) return null;
+    if (Array.isArray(node)) {
+        for (const child of node) {
+            const match = findFirstJsonNodeByType(child, type);
+            if (match) return match;
+        }
+        return null;
+    }
+
+    if (node.type === type) return node;
+    for (const child of node.children ?? []) {
+        if (typeof child === 'string') continue;
+        const match = findFirstJsonNodeByType(child, type);
+        if (match) return match;
+    }
+    return null;
 }
 
 describe('EnrichedMarkdownText web streaming reveal', () => {
@@ -417,6 +448,59 @@ describe('EnrichedMarkdownText web streaming reveal', () => {
         }
 
         expect(JSON.stringify(renderer.toJSON())).toContain('Immediate fallback text');
+        TestRenderer.act(() => {
+            renderer.unmount();
+        });
+    });
+
+    it('can hide the raw markdown fallback while the web parser is cold', async () => {
+        const { EnrichedMarkdownText } = await loadPatchedWebEnrichedMarkdownText();
+        const globalWithReact = globalThis as typeof globalThis & { React?: typeof React };
+        globalWithReact.React = React;
+        const rendererHolder: { current: TestRenderer.ReactTestRenderer | null } = { current: null };
+        TestRenderer.act(() => {
+            rendererHolder.current = TestRenderer.create(
+                <EnrichedMarkdownText
+                    markdown={['## Forensics', '', '`session-id` details'].join('\n')}
+                    renderRawFallback="hidden"
+                />,
+            );
+        });
+
+        const renderer = rendererHolder.current;
+        if (renderer === null) {
+            throw new Error('Expected EnrichedMarkdownText test renderer to be created');
+        }
+
+        const fallbackParagraph = findFirstJsonNodeByType(renderer.toJSON(), 'p');
+        expect(fallbackParagraph?.props.style.visibility).toBe('hidden');
+        expect(JSON.stringify(renderer.toJSON())).toContain('## Forensics');
+        TestRenderer.act(() => {
+            renderer.unmount();
+        });
+    });
+
+    it('uses the warmed web parser synchronously on first paint to avoid raw markdown layout flicker', async () => {
+        const parser = await loadPatchedWebSourceParseMarkdown();
+        await parser.preloadMarkdownRuntime();
+        const { EnrichedMarkdownText } = await loadPatchedWebEnrichedMarkdownText();
+        const globalWithReact = globalThis as typeof globalThis & { React?: typeof React };
+        globalWithReact.React = React;
+        const rendererHolder: { current: TestRenderer.ReactTestRenderer | null } = { current: null };
+        TestRenderer.act(() => {
+            rendererHolder.current = TestRenderer.create(
+                <EnrichedMarkdownText markdown={['## Forensics', '', '`session-id` details'].join('\n')} />,
+            );
+        });
+
+        const renderer = rendererHolder.current;
+        if (renderer === null) {
+            throw new Error('Expected EnrichedMarkdownText test renderer to be created');
+        }
+
+        const json = renderer.toJSON();
+        expect(JSON.stringify(json)).not.toContain('## Forensics');
+        expect(countJsonNodesByType(json, 'h2')).toBe(1);
         TestRenderer.act(() => {
             renderer.unmount();
         });

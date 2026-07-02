@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     buildSessionListRenderableFromSession,
     derivePendingRequestFlagsFromAgentState,
+    didSessionListRenderableReachabilityPeerFieldsChange,
     preserveSessionListRenderableStaleFields,
     preserveSessionListRenderableTransientState,
 } from './sessionListRenderable';
@@ -144,14 +145,203 @@ describe('preserveSessionListRenderableStaleFields', () => {
         expect(next.metadataVersion).toBe(4);
         expect((next as { metadataUnavailable?: boolean }).metadataUnavailable).not.toBe(true);
     });
+
+    it('preserves ready metadata and known unread across unread-unknown replacements', () => {
+        const previous = buildRenderable({
+            id: 's_ready',
+            seq: 10,
+            lastViewedSessionSeq: 8,
+            latestTurnStatus: 'in_progress',
+            latestReadyEventSeq: 9,
+            latestReadyEventAt: 9_000,
+            hasUnreadMessages: true,
+        });
+        const next = preserveSessionListRenderableStaleFields(
+            previous,
+            buildRenderable({
+                id: 's_ready',
+                seq: 10,
+                lastViewedSessionSeq: 8,
+                latestTurnStatus: 'in_progress',
+                latestReadyEventSeq: null,
+                latestReadyEventAt: null,
+                hasUnreadMessages: false,
+            }),
+        );
+
+        expect(next.latestReadyEventSeq).toBe(9);
+        expect(next.latestReadyEventAt).toBe(9_000);
+        expect(next.hasUnreadMessages).toBe(true);
+    });
 });
 
 describe('buildSessionListRenderableFromSession', () => {
+    it('does not use raw updatedAt as meaningful activity for inactive rows', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's_inactive_churn',
+            seq: 4,
+            lastViewedSessionSeq: 4,
+            createdAt: 1_000,
+            updatedAt: 50_000,
+            active: false,
+            activeAt: 0,
+            archivedAt: null,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: 1_000,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 0,
+        } satisfies Session);
+
+        expect(renderable.meaningfulActivityAt).toBe(1_000);
+    });
+
+    it('treats terminal turn projection as authoritative over legacy thinking in renderable state', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's_terminal_thinking',
+            seq: 4,
+            lastViewedSessionSeq: 4,
+            createdAt: 1,
+            updatedAt: 10_000,
+            meaningfulActivityAt: 9_500,
+            active: true,
+            activeAt: 10_000,
+            archivedAt: null,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: 9_500,
+            thinking: true,
+            thinkingAt: 10_000,
+            presence: 'online',
+        } as Session);
+
+        expect(renderable.thinking).toBe(false);
+        expect(renderable.thinkingAt).toBe(9_500);
+        expect(renderable.meaningfulActivityAt).toBe(9_500);
+        expect(renderable.latestTurnStatus).toBe('completed');
+    });
+
+    it('does not mark cache-only non-terminal rows unread from raw session seq when transcript activity is unavailable', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's_unhydrated_usage_tail',
+            seq: 946,
+            lastViewedSessionSeq: 945,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            archivedAt: null,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            latestTurnStatus: 'in_progress',
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any);
+
+        expect(renderable.hasUnreadMessages).toBe(false);
+    });
+
+    it('marks cache-only rows unread from ready metadata when ready seq is newer than the cursor', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's_ready_unread',
+            seq: 946,
+            lastViewedSessionSeq: 945,
+            latestReadyEventSeq: 946,
+            latestReadyEventAt: 2_000,
+            createdAt: 1,
+            updatedAt: 1,
+            active: false,
+            activeAt: 1,
+            archivedAt: null,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            latestTurnStatus: 'in_progress',
+            thinking: false,
+            thinkingAt: 0,
+            presence: 1,
+        } as any);
+
+        expect(renderable.hasUnreadMessages).toBe(true);
+    });
+
+    it('does not keep rows unread for trailing non-displayable session activity after visible messages are read', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's_read_usage_tail',
+            seq: 946,
+            lastViewedSessionSeq: 945,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            archivedAt: null,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            latestTurnStatus: 'in_progress',
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any, undefined, [{
+            id: 'm-visible',
+            kind: 'agent-text',
+            seq: 945,
+            localId: null,
+            createdAt: 1,
+            text: 'Visible final assistant message',
+        }]);
+
+        expect(renderable.hasUnreadMessages).toBe(false);
+    });
+
+    it('keeps rows unread when a displayable message is newer than the cursor', () => {
+        const renderable = buildSessionListRenderableFromSession({
+            id: 's_unread_visible',
+            seq: 946,
+            lastViewedSessionSeq: 944,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            archivedAt: null,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            latestTurnStatus: 'in_progress',
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any, undefined, [{
+            id: 'm-visible',
+            kind: 'agent-text',
+            seq: 945,
+            localId: null,
+            createdAt: 1,
+            text: 'Visible assistant message',
+        }]);
+
+        expect(renderable.hasUnreadMessages).toBe(true);
+    });
+
     it('keeps read-state actions derived from the projected session cursor', () => {
         const renderable = buildSessionListRenderableFromSession({
             id: 's_read',
             seq: 4,
             lastViewedSessionSeq: 4,
+            latestTurnStatus: 'completed',
             createdAt: 1,
             updatedAt: 1,
             active: false,
@@ -177,6 +367,7 @@ describe('buildSessionListRenderableFromSession', () => {
         const renderable = buildSessionListRenderableFromSession({
             id: 's_legacy_read',
             seq: 4,
+            latestTurnStatus: 'completed',
             createdAt: 1,
             updatedAt: 1,
             active: false,
@@ -760,5 +951,32 @@ describe('buildSessionListRenderableFromSession', () => {
         };
 
         expect(preserveSessionListRenderableTransientState(previous, next)).toBe(next);
+    });
+});
+
+describe('didSessionListRenderableReachabilityPeerFieldsChange', () => {
+    it('ignores active metadata-version-only updates when explicit reachability targets stay stable', () => {
+        const previous = buildRenderable({
+            id: 's_reachability_metadata_version',
+            metadataVersion: 1,
+            active: true,
+            metadata: {
+                machineId: 'machine-a',
+                host: 'host-a',
+                path: '/repo',
+                homeDir: '/home/alice',
+                name: 'Initial title',
+            } as any,
+        });
+
+        expect(didSessionListRenderableReachabilityPeerFieldsChange(previous, {
+            ...previous,
+            metadataVersion: 2,
+            metadata: {
+                ...previous.metadata,
+                name: 'Updated title',
+                summaryText: 'Updated non-reachability summary',
+            } as any,
+        })).toBe(false);
     });
 });

@@ -27,6 +27,14 @@ installPopoverCommonModuleMocks({
     },
 });
 
+function readStyleNumber(style: Record<string, unknown>, key: string): number {
+    const value = style[key];
+    if (typeof value !== 'number') {
+        throw new Error(`Expected numeric ${key} style`);
+    }
+    return value;
+}
+
 describe('Popover (native keyboard)', () => {
     it('treats measureInWindow coordinates as portal-relative when measureLayout is unavailable (prevents double offset in iOS drawers)', async () => {
         vi.useFakeTimers();
@@ -79,7 +87,7 @@ describe('Popover (native keyboard)', () => {
 
         const style = flattenStyle(contentView?.props?.style);
         // With portal-relative anchor coords (y=80), bottom placement should be y + height = 120.
-        expect(style.top).toBe(120);
+        expect(readStyleNumber(style, 'top') + readStyleNumber(style, 'paddingTop')).toBe(120);
 
         vi.useRealTimers();
     });
@@ -158,7 +166,7 @@ describe('Popover (native keyboard)', () => {
         expect(contentView).toBeTruthy();
 
         const before = flattenStyle(contentView?.props?.style);
-        expect(before.top).toBe(440); // (600 - 200) + 40
+        expect(readStyleNumber(before, 'top') + readStyleNumber(before, 'paddingTop')).toBe(440); // (600 - 200) + 40
 
         // Simulate the keyboard pushing the anchor upward (e.g. input bar moves).
         anchorY = 480;
@@ -168,7 +176,7 @@ describe('Popover (native keyboard)', () => {
 
         const afterView = findPopoverContentView(screen);
         const after = flattenStyle(afterView?.props?.style);
-        expect(after.top).toBe(320); // (480 - 200) + 40
+        expect(readStyleNumber(after, 'top') + readStyleNumber(after, 'paddingTop')).toBe(320); // (480 - 200) + 40
         vi.useRealTimers();
     });
 
@@ -314,6 +322,120 @@ describe('Popover (native keyboard)', () => {
 
         expect(latestRenderProps.placement).toBe('top');
         expect(latestRenderProps.maxHeight).toBe(200);
+
+        vi.useRealTimers();
+    });
+
+    it('pins top placement to the keyboard-safe boundary when the anchor is under the keyboard', async () => {
+        vi.useFakeTimers();
+
+        const { Popover } = await import('./Popover');
+        const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
+        const portalRootNode = {
+            measureInWindow: (cb: any) => cb(0, 0, 1000, 600),
+        } as any;
+
+        const anchorNode = {
+            measureInWindow: (cb: any) => cb(0, 520, 100, 40),
+            measureLayout: (_relativeTo: any, onSuccess: any) => onSuccess(0, 520, 100, 40),
+        } as any;
+
+        const anchorRef = { current: anchorNode } as any;
+        const portalTarget = {
+            rootRef: { current: portalRootNode },
+            layout: { width: 1000, height: 600 },
+        } as const;
+
+        const screen = await renderScreen(
+            <PopoverPortalTargetContextProvider value={portalTarget}>
+                <OverlayPortalProvider>
+                    <Popover
+                        open
+                        anchorRef={anchorRef}
+                        boundaryRef={null}
+                        portal={{ native: true }}
+                        placement="top"
+                        gap={0}
+                        maxHeightCap={200}
+                        keyboardBottomInset={220}
+                        onRequestClose={() => {}}
+                    >
+                        {() => React.createElement('PopoverChild')}
+                    </Popover>
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+        );
+
+        await flushHookEffects({ cycles: 4, turns: 10, frames: 6, advanceTimersMs: 120 });
+
+        const contentView = findPopoverContentView(screen);
+        expect(contentView).toBeTruthy();
+
+        const style = flattenStyle(contentView?.props?.style);
+        expect(readStyleNumber(style, 'bottom') + readStyleNumber(style, 'paddingBottom')).toBe(220);
+
+        vi.useRealTimers();
+    });
+
+    it('keeps top placement anchored to portal-local coordinates when the keyboard is open in an offset native portal', async () => {
+        vi.useFakeTimers();
+
+        const { Popover } = await import('./Popover');
+        const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPortal');
+        const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
+
+        const portalRootNode = {
+            measureInWindow: (cb: any) => cb(0, 116, 402, 758),
+        } as any;
+
+        const anchorNode = {
+            // Window-space anchor top is 425, so the portal-local top is 309.
+            measureInWindow: (cb: any) => cb(24, 425, 86, 32),
+            // Some native screen/keyboard combinations can report a plausible but wrong
+            // portal-local layout coordinate. Keyboard-open positioning should not let this
+            // pull the top popover down over the chip.
+            measureLayout: (_relativeTo: any, onSuccess: any) => onSuccess(24, 425, 86, 32),
+        } as any;
+
+        const anchorRef = { current: anchorNode } as any;
+        const portalTarget = {
+            rootRef: { current: portalRootNode },
+            layout: { width: 402, height: 758 },
+        } as const;
+
+        const screen = await renderScreen(
+            <PopoverPortalTargetContextProvider value={portalTarget}>
+                <OverlayPortalProvider>
+                    <Popover
+                        open
+                        anchorRef={anchorRef}
+                        boundaryRef={null}
+                        portal={{ native: true }}
+                        placement="top"
+                        gap={8}
+                        maxHeightCap={320}
+                        keyboardBottomInset={335}
+                        onRequestClose={() => {}}
+                    >
+                        {() => React.createElement('PopoverChild')}
+                    </Popover>
+                    <OverlayPortalHost />
+                </OverlayPortalProvider>
+            </PopoverPortalTargetContextProvider>,
+        );
+
+        await flushHookEffects({ cycles: 4, turns: 10, frames: 6, advanceTimersMs: 120 });
+
+        const contentView = findPopoverContentView(screen);
+        expect(contentView).toBeTruthy();
+
+        const style = flattenStyle(contentView?.props?.style);
+        // Correct portal-local anchor edge: 425 - 116 - 8 = 301.
+        // The native portal is 758pt tall, so pinning that bottom edge yields bottom=457.
+        expect(readStyleNumber(style, 'bottom') + readStyleNumber(style, 'paddingBottom')).toBe(457);
 
         vi.useRealTimers();
     });

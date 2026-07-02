@@ -9,6 +9,8 @@ import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMe
 import { Text } from '@/components/ui/text/Text';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { t } from '@/text';
+import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
+import { isSessionRouteHydrationPending } from '@/sync/domains/session/sessionRouteHydrationState';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { formatPathRelativeToHome, getSessionAvatarId, getSessionName } from '@/utils/sessions/sessionUtils';
@@ -36,6 +38,7 @@ export type SessionViewHeaderProps = Readonly<{
 
 type ResolveSessionViewHeaderPropsInput = Readonly<{
     isDataReady: boolean;
+    routeHydrationState?: SessionRouteHydrationState | null;
     session: Session | null;
     sessionId: string;
     sessionInfoHref: string;
@@ -143,6 +146,10 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
 }
 
 export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPropsInput): SessionViewHeaderProps {
+    if (!input.session && input.routeHydrationState && isSessionRouteHydrationPending(input.routeHydrationState)) {
+        return LOADING_HEADER_PROPS;
+    }
+
     if (!input.isDataReady && !input.session) {
         return LOADING_HEADER_PROPS;
     }

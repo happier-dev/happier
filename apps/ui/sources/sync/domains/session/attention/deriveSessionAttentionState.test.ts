@@ -12,23 +12,59 @@ const runtimeIssue = {
 } as const;
 
 describe('deriveSessionAttentionState', () => {
-    it('prioritizes failed primary-session attention over waiting, running, and review signals', async () => {
+    it('prioritizes failed primary-turn attention over waiting, running, and review signals', async () => {
         expect(deriveSessionAttentionState({
             latestTurnStatus: 'failed',
-            lastRuntimeIssue: runtimeIssue,
+            latestTurnStatusObservedAt: 1_000,
+            lastRuntimeIssue: null,
+            active: true,
+            presence: 'online',
+            pendingRequestObservedAt: 1_000,
             hasWaitingActivity: true,
             isRunning: true,
             hasReviewActivity: true,
+            nowMs: 1_001,
         })).toBe('failed');
     });
 
-    it('treats in-progress turns as running even when a previous runtime issue is present', async () => {
+    it('does not let stale waiting activity override review attention', async () => {
         expect(deriveSessionAttentionState({
             latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 1_000,
             lastRuntimeIssue: runtimeIssue,
             hasWaitingActivity: true,
             isRunning: false,
             hasReviewActivity: true,
+            nowMs: 121_001,
+        })).toBe('review');
+    });
+
+    it('treats fresh in-progress turns as running', async () => {
+        expect(deriveSessionAttentionState({
+            active: true,
+            presence: 'online',
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 1_000,
+            lastRuntimeIssue: runtimeIssue,
+            hasWaitingActivity: false,
+            isRunning: false,
+            hasReviewActivity: true,
+            nowMs: 2_000,
+        })).toBe('running');
+    });
+
+    it('keeps long-running in-progress turns running when the runtime heartbeat is fresh', async () => {
+        expect(deriveSessionAttentionState({
+            active: true,
+            activeAt: 121_000,
+            presence: 'online',
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 1_000,
+            lastRuntimeIssue: runtimeIssue,
+            hasWaitingActivity: false,
+            isRunning: false,
+            hasReviewActivity: true,
+            nowMs: 122_000,
         })).toBe('running');
     });
 
@@ -52,5 +88,13 @@ describe('deriveSessionAttentionState', () => {
             hasExecutionRunFailure: true,
             hasToolFailure: true,
         })).toBe('review');
+    });
+
+    it('clears running attention after a completed primary turn projection', async () => {
+        expect(deriveSessionAttentionState({
+            latestTurnStatus: 'completed',
+            lastRuntimeIssue: null,
+            isRunning: true,
+        })).toBe('idle');
     });
 });

@@ -5,8 +5,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
 import { FileIcon } from '@/components/ui/media/FileIcon';
-import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
 import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
+import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
+import { COMMAND_SUGGESTION_ROW_HEIGHT } from '@/components/autocomplete/commandSuggestionConstants';
 
 
 interface CommandSuggestionProps {
@@ -15,7 +16,7 @@ interface CommandSuggestionProps {
 }
 
 const COMMAND_PREFIX = '/';
-export const COMMAND_SUGGESTION_ROW_HEIGHT = 52;
+export { COMMAND_SUGGESTION_ROW_HEIGHT };
 
 export const CommandSuggestion = React.memo(({ command, description }: CommandSuggestionProps) => {
     return (
@@ -67,6 +68,56 @@ export const FileMentionSuggestion = React.memo(({ fileName, filePath, fileType 
     );
 });
 
+interface VendorPluginMentionSuggestionProps {
+    name: string;
+    displayName: string;
+    description?: string;
+    source?: string;
+}
+
+export const VendorPluginMentionSuggestion = React.memo((props: VendorPluginMentionSuggestionProps) => {
+    return (
+        <View style={styles.suggestionContainer}>
+            <View style={styles.leadingIcon}>
+                <Ionicons name="extension-puzzle-outline" size={16} color={styles.iconColor.color} />
+            </View>
+            <View style={styles.labelColumn}>
+                <Text style={styles.fileTitleText} numberOfLines={1}>
+                    {props.displayName}
+                </Text>
+                <Text style={styles.filePathText} numberOfLines={1}>
+                    {props.source ?? props.name}
+                </Text>
+            </View>
+        </View>
+    );
+});
+
+interface SkillMentionSuggestionProps {
+    name: string;
+    displayName: string;
+    description?: string;
+    source?: string;
+}
+
+export const SkillMentionSuggestion = React.memo((props: SkillMentionSuggestionProps) => {
+    return (
+        <View style={styles.suggestionContainer}>
+            <View style={styles.leadingIcon}>
+                <Ionicons name="sparkles-outline" size={16} color={styles.iconColor.color} />
+            </View>
+            <View style={styles.labelColumn}>
+                <Text style={styles.fileTitleText} numberOfLines={1}>
+                    {props.displayName}
+                </Text>
+                <Text style={styles.filePathText} numberOfLines={1}>
+                    {props.description ?? props.source ?? props.name}
+                </Text>
+            </View>
+        </View>
+    );
+});
+
 const styles = StyleSheet.create((theme) => ({
     commandSuggestionContainer: {
         flex: 1,
@@ -104,6 +155,10 @@ const styles = StyleSheet.create((theme) => ({
         justifyContent: 'center',
         marginRight: 8,
     },
+    labelColumn: {
+        flex: 1,
+        minWidth: 0,
+    },
     iconColor: {
         color: theme.colors.text.secondary,
     },
@@ -113,6 +168,8 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
     },
     filePathText: {
+        flex: 1,
+        minWidth: 0,
         fontSize: 12,
         color: theme.colors.text.secondary,
         ...Typography.default(),

@@ -40,7 +40,7 @@ describe('UI demo fixtures', () => {
             providerId: 'opencode',
             provider: {
                 backendMode: 'server',
-                vendorSessionId: sessionMetadata.opencodeSessionId,
+                providerSessionId: sessionMetadata.opencodeSessionId,
             },
         });
         expect(candidate).toMatchObject({

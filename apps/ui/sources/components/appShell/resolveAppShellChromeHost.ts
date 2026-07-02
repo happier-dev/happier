@@ -6,6 +6,7 @@ export type AppShellChromeHost =
 
 export type ResolveAppShellChromeHostParams = Readonly<{
     isAuthenticated: boolean;
+    isWeb: boolean;
     isTauriDesktop: boolean;
     isTablet: boolean;
     isTerminalConnectRoute: boolean;
@@ -18,8 +19,12 @@ export function resolveAppShellChromeHost(
         return 'none';
     }
 
-    if (!params.isTauriDesktop) {
+    if (!params.isTauriDesktop && params.isWeb) {
         return 'web-top-right';
+    }
+
+    if (!params.isTauriDesktop) {
+        return 'none';
     }
 
     if (!params.isAuthenticated) {

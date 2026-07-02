@@ -1,5 +1,6 @@
 import type { StorageState } from '@/sync/store/types';
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { LruMap } from '@/utils/cache/lruMap';
 
 export type ForkedTranscriptSegment = Readonly<{
@@ -28,9 +29,8 @@ type CacheEntry = Readonly<{
   snapshot: ForkedTranscriptSnapshot;
 }>;
 
-const FORKED_TRANSCRIPT_SNAPSHOT_CACHE_MAX_ENTRIES = 64;
 const cacheByChildSessionId = new LruMap<string, CacheEntry>({
-  maxEntries: FORKED_TRANSCRIPT_SNAPSHOT_CACHE_MAX_ENTRIES,
+  maxEntries: loadSyncTuning().transcriptForkedSnapshotCacheMaxSessions,
 });
 
 function normalizeSeq(seq: unknown): number | null {

@@ -159,8 +159,22 @@ function createMemoryStatusResponse(enabled: boolean) {
         enabled,
         indexMode: 'hints',
         hintsIndexReady: enabled,
+        hintsIndexHasContent: enabled,
         deepIndexReady: false,
+        deepIndexHasContent: false,
         activeIndexReady: enabled,
+        activeIndexSearchable: enabled,
+        indexContent: enabled
+            ? {
+                lightShardCount: 1,
+                lightTermCount: 12,
+                deepChunkCount: 0,
+                deepEmbeddingCount: 0,
+                searchableSessionCount: 1,
+                lastIndexedAtMs: 1,
+                latestIndexedMessageAtMs: 1,
+            }
+            : undefined,
         embeddingsEnabled: false,
         embeddingsMode: 'disabled',
         embeddingsPresetId: null,
@@ -172,6 +186,23 @@ function createMemoryStatusResponse(enabled: boolean) {
         deepDbPath: null,
         tier1DbBytes: enabled ? 1024 : null,
         deepDbBytes: null,
+    };
+}
+
+function createEmptyMemoryStatusResponse() {
+    return {
+        ...createMemoryStatusResponse(true),
+        activeIndexReady: true,
+        activeIndexSearchable: false,
+        indexContent: {
+            lightShardCount: 0,
+            lightTermCount: 0,
+            deepChunkCount: 0,
+            deepEmbeddingCount: 0,
+            searchableSessionCount: 0,
+            lastIndexedAtMs: null,
+            latestIndexedMessageAtMs: null,
+        },
     };
 }
 
@@ -332,5 +363,24 @@ describe('Memory search screen', () => {
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/settings/memory');
+    });
+
+    it('describes enabled empty indexes without offering the enable CTA', async () => {
+        machineRpcSpy.mockImplementation(async (params: any) => {
+            if (params?.method === 'daemon.memory.status') {
+                return createEmptyMemoryStatusResponse();
+            }
+            throw new Error('unexpected rpc');
+        });
+
+        const screen = await renderMemorySearchScreen();
+        await settleMemorySearchScreen();
+
+        const texts = screen.findAllByType('Text' as any).map((node) => node.props.children);
+        expect(texts).toContain('memorySearchSettings.status.empty');
+        const submit = findRequiredTestNode(screen, 'memory-search-submit');
+        expect(submit.props.disabled).toBe(true);
+        expect(submit.props.accessibilityState).toEqual({ disabled: true });
+        expect(screen.findAllByTestId('memory-search-enable')).toHaveLength(0);
     });
 });

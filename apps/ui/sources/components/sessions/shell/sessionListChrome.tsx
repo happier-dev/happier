@@ -1,11 +1,12 @@
 import React from 'react';
-import { View, Pressable, Platform, Image as ReactNativeImage } from 'react-native';
+import { Animated, Easing, View, Pressable, Platform, Image as ReactNativeImage, type TextStyle, type ViewStyle } from 'react-native';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
+import { UpdateBanner } from '@/components/ui/feedback/UpdateBanner';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Text } from '@/components/ui/text/Text';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { Eyebrow } from '@/components/ui/text/Eyebrow';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { t } from '@/text';
@@ -21,6 +22,7 @@ import { resolveProjectGroupHeaderMenuItems } from './resolveProjectGroupHeaderM
 import { resolveSessionsListHeaderMenuItems } from './resolveSessionsListHeaderMenuItems';
 import type { RegisterSessionFolderDropTarget } from './useSessionListViewState';
 import { useWorkspaceFavicon } from './useWorkspaceFavicon';
+import { resolveWorkspaceRootTreeRowId } from './drop-resolution/treeRowId';
 
 const ORDERING_MENU_IDS = {
     custom: 'custom',
@@ -30,9 +32,39 @@ const ORDERING_MENU_IDS = {
     activeGroupingDate: 'activeGroupingDate',
     inactiveGroupingProject: 'inactiveGroupingProject',
     inactiveGroupingDate: 'inactiveGroupingDate',
+    sectionModeActivity: 'sectionModeActivity',
+    sectionModeSingle: 'sectionModeSingle',
     hideInactiveSessions: 'hideInactiveSessions',
     sessionFolderViewModeTree: 'sessionFolderViewModeTree',
+    sessionListFolderSortModeFoldersFirst: 'sessionListFolderSortModeFoldersFirst',
+    sessionListFolderSortModeMixed: 'sessionListFolderSortModeMixed',
 } as const;
+
+const TAG_FILTER_ITEM_PREFIX = 'session-list-tag-filter:';
+const SEARCH_INPUT_EXPANDED_WIDTH = 188;
+const SEARCH_INPUT_COLLAPSED_WIDTH = 16;
+const SEARCH_INPUT_ANIMATION_MS = 170;
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+const WEB_NO_FOCUS_OUTLINE_STYLE = {
+    outline: 'none',
+    outlineStyle: 'none',
+    outlineWidth: 0,
+    outlineColor: 'transparent',
+    boxShadow: 'none',
+} as unknown as ViewStyle;
+const SEARCH_INPUT_CHROME_RESET_STYLE = {
+    outline: 'none',
+    outlineStyle: 'none',
+    outlineWidth: 0,
+    outlineColor: 'transparent',
+    outlineOffset: 0,
+    boxShadow: 'none',
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+    appearance: 'none',
+    WebkitAppearance: 'none',
+} as unknown as TextStyle;
 
 function stopPressEventPropagation(event: unknown): void {
     if (!event || typeof event !== 'object' || !('stopPropagation' in event)) {
@@ -42,6 +74,12 @@ function stopPressEventPropagation(event: unknown): void {
     if (typeof stopPropagation === 'function') {
         (event as { stopPropagation: () => void }).stopPropagation();
     }
+}
+
+function resolveTagFromItemId(itemId: string): string | null {
+    if (!itemId.startsWith(TAG_FILTER_ITEM_PREFIX)) return null;
+    const tag = itemId.slice(TAG_FILTER_ITEM_PREFIX.length);
+    return tag.length > 0 ? tag : null;
 }
 
 type MeasuredSessionFolderDropTarget = Readonly<
@@ -114,24 +152,29 @@ const SessionListOrderingMenuButton = React.memo(function SessionListOrderingMen
     const styles = sessionListStyles;
     const { theme } = useUnistyles();
     const [orderingMode, setOrderingMode] = useSettingMutable('sessionListOrderingModeV1');
+    const [sessionListSectionModeV1, setSessionListSectionModeV1] = useSettingMutable('sessionListSectionModeV1');
     const [sessionListActiveGroupingV1, setSessionListActiveGroupingV1] = useSettingMutable('sessionListActiveGroupingV1');
     const [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1] = useSettingMutable('sessionListInactiveGroupingV1');
     const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
     const [sessionFolderViewModeV1, setSessionFolderViewModeV1] = useSettingMutable('sessionFolderViewModeV1');
+    const [sessionListFolderSortModeV1, setSessionListFolderSortModeV1] = useSettingMutable('sessionListFolderSortModeV1');
     const sessionFoldersFeatureEnabled = useFeatureEnabled('sessions.folders');
     const [menuOpen, setMenuOpen] = React.useState(false);
     const actionIconColor = theme.colors.text.secondary;
+    const sectionMode = sessionListSectionModeV1 === 'single' ? 'single' : 'activity';
     const activeGrouping = sessionListActiveGroupingV1 === 'date' ? 'date' : 'project';
     const inactiveGrouping = sessionListInactiveGroupingV1 === 'date' ? 'date' : 'project';
     const isHideInactiveSessionsEnabled = hideInactiveSessions === true;
 
     const menuItems = resolveSessionsListHeaderMenuItems({
         orderingMode,
+        sectionMode,
         activeGrouping,
         inactiveGrouping,
         isHideInactiveSessionsEnabled,
         showFolderViewMode: sessionFoldersFeatureEnabled,
         folderViewMode: sessionFolderViewModeV1 === 'tree' ? 'tree' : 'off',
+        folderSortMode: sessionListFolderSortModeV1 === 'mixed' ? 'mixed' : 'foldersFirst',
         actionIconColor,
     });
 
@@ -160,11 +203,29 @@ const SessionListOrderingMenuButton = React.memo(function SessionListOrderingMen
             setSessionListInactiveGroupingV1('date');
             return;
         }
+        if (itemId === ORDERING_MENU_IDS.sectionModeActivity) {
+            setSessionListSectionModeV1('activity');
+            return;
+        }
+        if (itemId === ORDERING_MENU_IDS.sectionModeSingle) {
+            setSessionListSectionModeV1('single');
+            return;
+        }
         if (itemId === ORDERING_MENU_IDS.hideInactiveSessions) {
             setHideInactiveSessions(!isHideInactiveSessionsEnabled);
         }
         if (sessionFoldersFeatureEnabled && itemId === ORDERING_MENU_IDS.sessionFolderViewModeTree) {
             setSessionFolderViewModeV1(sessionFolderViewModeV1 === 'tree' ? 'off' : 'tree');
+        }
+        if (sessionFoldersFeatureEnabled && itemId === ORDERING_MENU_IDS.sessionListFolderSortModeFoldersFirst) {
+            setSessionListFolderSortModeV1('foldersFirst');
+        }
+        if (
+            sessionFoldersFeatureEnabled
+            && itemId === ORDERING_MENU_IDS.sessionListFolderSortModeMixed
+            && orderingMode === 'custom'
+        ) {
+            setSessionListFolderSortModeV1('mixed');
         }
         setMenuOpen(false);
     }, [
@@ -173,9 +234,12 @@ const SessionListOrderingMenuButton = React.memo(function SessionListOrderingMen
         setOrderingMode,
         setSessionListActiveGroupingV1,
         setSessionListInactiveGroupingV1,
+        setSessionListSectionModeV1,
         sessionFoldersFeatureEnabled,
         sessionFolderViewModeV1,
         setSessionFolderViewModeV1,
+        setSessionListFolderSortModeV1,
+        orderingMode,
     ]);
 
     return (
@@ -215,12 +279,238 @@ const SessionListOrderingMenuButton = React.memo(function SessionListOrderingMen
     );
 });
 
+export const SessionListHeaderControls = React.memo(function SessionListHeaderControls(props: Readonly<{
+    allKnownTags: ReadonlyArray<string>;
+    selectedTags: ReadonlyArray<string>;
+    searchQuery: string;
+    searchOpen?: boolean;
+    searchTrailingAccessory?: React.ReactNode;
+    onSelectedTagsChange: (tags: string[]) => void;
+    onSearchQueryChange: (query: string) => void;
+    onSearchFocusChange?: (focused: boolean) => void;
+    onMenuOpenChange?: (open: boolean) => void;
+}>) {
+    const {
+        allKnownTags,
+        onMenuOpenChange,
+        onSearchQueryChange,
+        onSelectedTagsChange,
+        onSearchFocusChange,
+        searchOpen = false,
+        searchQuery,
+        searchTrailingAccessory,
+        selectedTags,
+    } = props;
+    const styles = sessionListStyles;
+    const { theme } = useUnistyles();
+    const inputRef = React.useRef<React.ElementRef<typeof TextInput> | null>(null);
+    const searchAnimation = React.useRef(new Animated.Value(searchQuery.trim().length > 0 ? 1 : 0)).current;
+    const [searchFocused, setSearchFocused] = React.useState(false);
+    // Keep a local input echo so native TextInput receives the typed value synchronously even if the virtualized header prop lags.
+    const [searchInputValue, setSearchInputValue] = React.useState(searchQuery);
+    const [tagMenuOpen, setTagMenuOpen] = React.useState(false);
+    const iconColor = theme.colors.text.secondary;
+    const activeIconColor = theme.colors.accent.blue;
+    const searchIsOpen = searchOpen || searchFocused || searchInputValue.trim().length > 0;
+    const selectedTagSet = React.useMemo(() => new Set(selectedTags), [selectedTags]);
+
+    React.useEffect(() => {
+        setSearchInputValue(searchQuery);
+    }, [searchQuery]);
+
+    React.useEffect(() => {
+        if (!searchIsOpen) return;
+        inputRef.current?.focus?.();
+    }, [searchIsOpen]);
+
+    React.useEffect(() => {
+        Animated.timing(searchAnimation, {
+            toValue: searchIsOpen ? 1 : 0,
+            duration: SEARCH_INPUT_ANIMATION_MS,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: false,
+        }).start();
+    }, [searchAnimation, searchIsOpen]);
+
+    const animatedSearchShellStyle = React.useMemo(() => ({
+        width: searchAnimation.interpolate({
+            inputRange: [0, 1],
+            outputRange: [SEARCH_INPUT_COLLAPSED_WIDTH, SEARCH_INPUT_EXPANDED_WIDTH],
+        }),
+    }), [searchAnimation]);
+    const animatedSearchChromeStyle = React.useMemo(() => ({
+        opacity: searchAnimation,
+    }), [searchAnimation]);
+
+    const handleOpenSearch = React.useCallback((event?: unknown) => {
+        stopPressEventPropagation(event);
+        onSearchFocusChange?.(true);
+        setSearchFocused(true);
+    }, [onSearchFocusChange]);
+
+    const handleSearchFocus = React.useCallback(() => {
+        onSearchFocusChange?.(true);
+        setSearchFocused(true);
+    }, [onSearchFocusChange]);
+
+    const handleSearchBlur = React.useCallback(() => {
+        onSearchFocusChange?.(false);
+        setSearchFocused(false);
+    }, [onSearchFocusChange]);
+
+    const handleSearchQueryChange = React.useCallback((query: string) => {
+        setSearchInputValue(query);
+        onSearchQueryChange(query);
+    }, [onSearchQueryChange]);
+
+    const handleSearchKeyPress = React.useCallback((event: { nativeEvent?: { key?: string } }) => {
+        if (event.nativeEvent?.key !== 'Escape') return;
+        setSearchInputValue('');
+        onSearchQueryChange('');
+        onSearchFocusChange?.(false);
+        setSearchFocused(false);
+    }, [onSearchFocusChange, onSearchQueryChange]);
+
+    const handleTagMenuOpenChange = React.useCallback((open: boolean) => {
+        setTagMenuOpen(open);
+        onMenuOpenChange?.(open);
+    }, [onMenuOpenChange]);
+
+    const tagItems = React.useMemo((): DropdownMenuItem[] => allKnownTags.map((tag) => {
+        const selected = selectedTagSet.has(tag);
+        return {
+            id: `${TAG_FILTER_ITEM_PREFIX}${tag}`,
+            title: tag,
+            icon: <Ionicons name="pricetag-outline" size={15} color={selected ? activeIconColor : iconColor} />,
+            rightElement: selected
+                ? <Ionicons name="checkmark" size={15} color={activeIconColor} />
+                : null,
+        };
+    }), [activeIconColor, allKnownTags, iconColor, selectedTagSet]);
+
+    const handleTagSelect = React.useCallback((itemId: string) => {
+        const tag = resolveTagFromItemId(itemId);
+        if (!tag) return;
+        const nextTags = selectedTagSet.has(tag)
+            ? selectedTags.filter((item) => item !== tag)
+            : [...selectedTags, tag];
+        onSelectedTagsChange(nextTags);
+    }, [onSelectedTagsChange, selectedTagSet, selectedTags]);
+
+    return (
+        <View style={styles.headerControls}>
+            <AnimatedPressable
+                testID="session-list-search-trigger"
+                accessibilityRole={searchIsOpen ? undefined : 'button'}
+                accessibilityLabel={searchIsOpen ? undefined : t('sessionsList.searchSessions')}
+                onPress={searchIsOpen ? undefined : handleOpenSearch}
+                hitSlop={searchIsOpen ? undefined : 8}
+                style={[
+                    styles.headerSearchShell,
+                    WEB_NO_FOCUS_OUTLINE_STYLE,
+                    animatedSearchShellStyle,
+                    searchIsOpen ? styles.headerSearchShellExpanded : null,
+                ]}
+            >
+                <Animated.View
+                    pointerEvents="none"
+                    style={[styles.headerSearchShellBackdrop, animatedSearchChromeStyle]}
+                />
+                <Animated.View
+                    pointerEvents="none"
+                    style={[styles.headerSearchShellBorder, animatedSearchChromeStyle]}
+                />
+                <Ionicons
+                    name="search"
+                    size={16}
+                    color={searchIsOpen ? activeIconColor : iconColor}
+                    style={styles.headerSearchIcon}
+                />
+                {searchIsOpen ? (
+                    <View style={styles.headerSearchInputContainer}>
+                        <TextInput
+                            ref={inputRef}
+                            testID="session-list-search-input"
+                            accessibilityLabel={t('sessionsList.searchSessions')}
+                            placeholder={t('sessionsList.searchSessionsPlaceholder')}
+                            placeholderTextColor={theme.colors.text.tertiary}
+                            value={searchInputValue}
+                            onChangeText={handleSearchQueryChange}
+                            onFocus={handleSearchFocus}
+                            onBlur={handleSearchBlur}
+                            onKeyPress={handleSearchKeyPress}
+                            autoFocus={true}
+                            returnKeyType="search"
+                            autoCorrect={false}
+                            style={[styles.headerSearchInput, SEARCH_INPUT_CHROME_RESET_STYLE]}
+                        />
+                    </View>
+                ) : null}
+                {searchIsOpen && searchTrailingAccessory !== undefined ? (
+                    <View
+                        testID="session-list-search-trailing-accessory"
+                        pointerEvents="none"
+                        accessibilityElementsHidden={true}
+                        importantForAccessibility="no-hide-descendants"
+                        style={styles.headerSearchTrailingAccessory}
+                    >
+                        {searchTrailingAccessory}
+                    </View>
+                ) : null}
+            </AnimatedPressable>
+            {allKnownTags.length > 0 ? (
+                <DropdownMenu
+                    open={tagMenuOpen}
+                    onOpenChange={handleTagMenuOpenChange}
+                    items={tagItems}
+                    onSelect={handleTagSelect}
+                    selectedId={selectedTags[0] ?? null}
+                    variant="slim"
+                    search={allKnownTags.length > 8}
+                    searchPlaceholder={t('sessionTags.searchOrAddPlaceholder')}
+                    closeOnSelect={false}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={false}
+                    maxWidthCap={220}
+                    popoverPortalWebTarget="body"
+                    placement="bottom"
+                    popoverAnchorAlign="end"
+                    trigger={({ toggle }) => (
+                        <Pressable
+                            testID="session-list-tag-filter-trigger"
+                            style={styles.headerActionButton}
+                            onPress={(event) => {
+                                stopPressEventPropagation(event);
+                                toggle();
+                            }}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('sessionsList.filterByTags')}
+                            hitSlop={8}
+                        >
+                            <Ionicons
+                                name="pricetag-outline"
+                                size={16}
+                                color={selectedTags.length > 0 ? activeIconColor : iconColor}
+                            />
+                        </Pressable>
+                    )}
+                />
+            ) : null}
+            <SessionListOrderingMenuButton
+                placement="bottom"
+                onMenuOpenChange={onMenuOpenChange}
+            />
+        </View>
+    );
+});
+
 export const SessionsListHeader = React.memo(function SessionsListHeader() {
     const styles = sessionListStyles;
 
     return (
         <View style={styles.listHeaderSection}>
             <RecoveryKeyReminderBanner />
+            <UpdateBanner />
         </View>
     );
 });
@@ -281,7 +571,6 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
     collapsed: boolean;
     onToggleCollapse: () => void;
     onRegisterDropTarget?: RegisterSessionFolderDropTarget;
-    activeDropTargetId?: string | null;
 }>) {
     const styles = sessionListStyles;
     const { theme } = useUnistyles();
@@ -294,6 +583,7 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
     const showHoverActions = !isWeb || isRowHovered || isActionsHovered || menuOpen;
     const showChevron = !isWeb || collapsed || showHoverActions;
     const menuEnabled = Boolean(item.workspaceScopeHint);
+    const reorderHandleKey = item.groupKey ?? item.workspaceKey ?? '';
     const actionIconColor = theme.colors.text.secondary;
     const canCreateSession = Boolean(item.workspaceScopeHint);
     const favicon = useWorkspaceFavicon({
@@ -311,12 +601,13 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
             serverId: item.serverId ?? workspace.serverId ?? null,
         };
     }, [item.serverId, workspace]);
+    const workspaceRootRowId = resolveWorkspaceRootTreeRowId(item, displayTitle);
+    const headerTestId = `session-list-project-header:${item.groupKey ?? item.title}`;
     const dropRegistration = useMeasuredDropTargetRegistration({
-        id: dropTarget ? `workspace-root:${item.groupKey ?? item.workspaceKey ?? displayTitle}` : null,
+        id: dropTarget ? workspaceRootRowId : null,
         target: dropTarget,
         onRegister: props.onRegisterDropTarget,
     });
-    const isActiveDropTarget = props.activeDropTargetId === `workspace-root:${item.groupKey ?? item.workspaceKey ?? displayTitle}`;
 
     const menuItems = resolveProjectGroupHeaderMenuItems({
         menuEnabled: Boolean(item.workspaceScopeHint),
@@ -331,7 +622,8 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
         <View style={styles.groupHeaderSection}>
             <View
                 ref={dropRegistration.ref}
-                style={[styles.groupHeaderRow, isActiveDropTarget ? styles.dropTargetActive : null]}
+                testID={headerTestId}
+                style={styles.groupHeaderRow}
                 onLayout={dropRegistration.onLayout}
                 onPointerEnter={isWeb ? () => setIsRowHovered(true) : undefined}
                 onPointerLeave={isWeb ? () => setIsRowHovered(false) : undefined}
@@ -380,6 +672,29 @@ export const ProjectGroupHeader = React.memo(function ProjectGroupHeader(props: 
                     ) : null}
                 </Pressable>
                 <View style={styles.groupHeaderTrailingActions}>
+                    {showHoverActions && reorderHandleKey ? (
+                        <Pressable
+                            style={styles.groupHeaderActionButton}
+                            testID={`session-workspace-reorder-handle:${reorderHandleKey}`}
+                            onPress={(event) => {
+                                stopPressEventPropagation(event);
+                            }}
+                            onHoverIn={isWeb ? () => setIsActionsHovered(true) : undefined}
+                            onHoverOut={isWeb ? () => setIsActionsHovered(false) : undefined}
+                            accessible={false}
+                            hitSlop={8}
+                        >
+                            <Ionicons
+                                name="reorder-three-outline"
+                                size={14}
+                                color={actionIconColor}
+                                style={[
+                                    styles.folderHeaderDragHandleIcon,
+                                    showHoverActions ? styles.folderHeaderDragHandleIconActive : null,
+                                ]}
+                            />
+                        </Pressable>
+                    ) : null}
                     {showHoverActions && menuEnabled ? (
                         <DropdownMenu
                             open={menuOpen}
@@ -446,6 +761,7 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
     collapsed: boolean;
     onPress: () => void;
     showOrderingMenu?: boolean;
+    headerControls?: Omit<React.ComponentProps<typeof SessionListHeaderControls>, 'onMenuOpenChange'>;
 }>) {
     const styles = sessionListStyles;
     const { theme } = useUnistyles();
@@ -479,11 +795,13 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
                         />
                     </View>
                 </View>
-                {showOrderingMenu ? (
-                    <SessionListOrderingMenuButton
-                        placement="bottom"
+                {showOrderingMenu && props.headerControls ? (
+                    <SessionListHeaderControls
+                        {...props.headerControls}
                         onMenuOpenChange={setIsOrderingMenuOpen}
                     />
+                ) : showOrderingMenu ? (
+                    <SessionListOrderingMenuButton placement="bottom" onMenuOpenChange={setIsOrderingMenuOpen} />
                 ) : null}
             </View>
         </Pressable>
@@ -506,7 +824,6 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
     onMoveDown?: () => void;
     item: Extract<SessionListIndexItem, { type: 'header' }>;
     onRegisterDropTarget?: RegisterSessionFolderDropTarget;
-    activeDropTargetId?: string | null;
     disabled?: boolean;
 }>) {
     const styles = sessionListStyles;
@@ -533,7 +850,6 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
         target: dropTarget,
         onRegister: props.onRegisterDropTarget,
     });
-    const isActiveDropTarget = dropTarget ? props.activeDropTargetId === `folder:${dropTarget.folderId}` : false;
     const menuItems = React.useMemo((): DropdownMenuItem[] => {
         const items: DropdownMenuItem[] = [{
             id: 'new-session',
@@ -632,7 +948,6 @@ export const FolderGroupHeader = React.memo(function FolderGroupHeader(props: Re
                 style={[
                     styles.folderHeaderRow,
                     { paddingLeft: indentation },
-                    isActiveDropTarget ? styles.dropTargetActive : null,
                 ]}
             >
                 <Pressable

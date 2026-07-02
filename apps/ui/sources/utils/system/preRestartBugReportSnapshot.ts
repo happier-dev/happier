@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import * as FileSystem from 'expo-file-system/legacy';
+import { File, Paths } from 'expo-file-system';
 
 import type { BugReportUserAction } from '@/utils/system/bugReportActionTrail';
 
@@ -64,32 +64,38 @@ function parseSnapshot(raw: string): PreRestartBugReportSnapshotV1 | null {
 
 async function readNativeFileSafe(): Promise<string | null> {
   try {
-    const base: string | null = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? null;
-    if (!base) return null;
-    const path = `${base}${SNAPSHOT_FILENAME}`;
-    const info = await FileSystem.getInfoAsync(path);
-    if (!info?.exists) return null;
-    return await FileSystem.readAsStringAsync(path, { encoding: FileSystem.EncodingType.UTF8 });
+    const file = getNativeFile();
+    if (!file?.exists) return null;
+    return await file.text();
   } catch {
     return null;
   }
 }
 
 async function writeNativeFileSafe(payload: string): Promise<void> {
-  const base: string | null = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? null;
-  if (!base) return;
-  const path = `${base}${SNAPSHOT_FILENAME}`;
-  await FileSystem.writeAsStringAsync(path, payload, { encoding: FileSystem.EncodingType.UTF8 });
+  const file = getNativeFile();
+  if (!file) return;
+  file.write(payload);
 }
 
 async function deleteNativeFileSafe(): Promise<void> {
   try {
-    const base: string | null = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? null;
-    if (!base) return;
-    const path = `${base}${SNAPSHOT_FILENAME}`;
-    await FileSystem.deleteAsync(path, { idempotent: true });
+    const file = getNativeFile();
+    if (file?.exists) file.delete();
   } catch {
     // ignore
+  }
+}
+
+function getNativeFile(): File | null {
+  try {
+    return new File(Paths.cache, SNAPSHOT_FILENAME);
+  } catch {
+    try {
+      return new File(Paths.document, SNAPSHOT_FILENAME);
+    } catch {
+      return null;
+    }
   }
 }
 

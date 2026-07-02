@@ -8,6 +8,7 @@ import {
     hasDynamicModelListForSession,
     isModelSelectableForSession,
 } from './modelOptions';
+import { findModelOptionForEffectiveModelId } from './modelOptions';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 function withMetadata(overrides: Partial<Metadata>): Metadata {
@@ -60,6 +61,20 @@ describe('modelOptions', () => {
         const values = options.map((o) => o.value);
         expect(values[0]).toBe('default');
         expect(values.length).toBeGreaterThan(1);
+        expect(options.find((option) => option.value === 'claude-opus-4-8')).toMatchObject({
+            value: 'claude-opus-4-8',
+            label: 'Opus 4.8',
+            description: expect.any(String),
+            modelOptions: expect.arrayContaining([
+                expect.objectContaining({
+                    id: 'reasoning_effort',
+                    currentValue: 'high',
+                    options: expect.arrayContaining([
+                        expect.objectContaining({ value: 'xhigh' }),
+                    ]),
+                }),
+            ]),
+        });
         expect(options.find((option) => option.value === 'claude-opus-4-7')).toMatchObject({
             value: 'claude-opus-4-7',
             label: 'Opus 4.7',
@@ -67,6 +82,7 @@ describe('modelOptions', () => {
             modelOptions: expect.arrayContaining([
                 expect.objectContaining({
                     id: 'reasoning_effort',
+                    currentValue: 'xhigh',
                     options: expect.arrayContaining([
                         expect.objectContaining({ value: 'xhigh' }),
                     ]),
@@ -332,5 +348,26 @@ describe('modelOptions', () => {
         );
 
         expect(out.map((o) => o.value)).toEqual(['default', 'model-a']);
+    });
+});
+
+describe('findModelOptionForEffectiveModelId', () => {
+    const options = [
+        { value: 'default', label: 'Default', description: '' },
+        { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6', description: 'Balanced' },
+        { value: 'claude-fable-5', label: 'Fable 5', description: 'Newest' },
+    ] as any;
+
+    it('matches an exact model id', () => {
+        expect(findModelOptionForEffectiveModelId(options, 'claude-fable-5')?.value).toBe('claude-fable-5');
+    });
+
+    it('matches a bracket variant id ([1m]) to its base model option', () => {
+        expect(findModelOptionForEffectiveModelId(options, 'claude-sonnet-4-6[1m]')?.value).toBe('claude-sonnet-4-6');
+    });
+
+    it('returns null when nothing matches', () => {
+        expect(findModelOptionForEffectiveModelId(options, 'gpt-5')).toBeNull();
+        expect(findModelOptionForEffectiveModelId(options, '')).toBeNull();
     });
 });

@@ -60,7 +60,7 @@ describe('sessionDeny', () => {
         const session = storage.getState().sessions[sessionId];
         expect(session?.thinking).toBe(false);
         expect(session?.optimisticThinkingAt ?? null).toBeNull();
-        expect(session?.thinkingGraceUntil ?? null).toBeNull();
+        expect(typeof session?.thinkingGraceUntil).toBe('number');
         expect(mockSessionRpcWithPreferredSessionScope).toHaveBeenCalledWith({
             sessionId,
             method: 'permission',

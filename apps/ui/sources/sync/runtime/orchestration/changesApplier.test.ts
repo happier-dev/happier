@@ -154,6 +154,34 @@ describe('changesApplier', () => {
         expect(invalidateScmStatusForSession).toHaveBeenCalledWith('s1');
     });
 
+    it('requires session-list hydration only for loaded catch-up sessions', async () => {
+        const invalidateSessions = vi.fn(async (_context: {
+            requiredHydrationSessionIds: readonly string[];
+            prioritizeSessionIds: readonly string[];
+        }) => {});
+
+        await applyPlannedChangeActions({
+            planned: buildPlanned({
+                sessionIdsToCatchUp: ['loaded', 'unloaded'],
+                invalidate: { sessions: true },
+            }),
+            credentials,
+            isSessionMessagesLoaded: (sessionId) => sessionId === 'loaded',
+            invalidate: {
+                sessions: invalidateSessions,
+            },
+            invalidateMessagesForSession: async () => {},
+            invalidateScmStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet: async () => ({ values: [] }),
+        });
+
+        expect(invalidateSessions).toHaveBeenCalledWith({
+            requiredHydrationSessionIds: ['loaded'],
+            prioritizeSessionIds: ['loaded'],
+        });
+    });
+
     it('refreshes session folder assignments without requiring message materialization', async () => {
         const invalidateSessionFolderAssignments = vi.fn(async () => {});
         const invalidateMessagesForSession = vi.fn(async () => {});

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, KeyboardAvoidingView, Platform } from 'react-native';
+import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
@@ -8,6 +8,7 @@ import { addTodo } from '@/sync/domains/todos/todoOps';
 import { useAuth } from '@/auth/context/AuthContext';
 import { t } from '@/text';
 import { TextInput } from '@/components/ui/text/Text';
+import { KeyboardAwareScreen } from '@/components/ui/keyboardAvoidance';
 
 
 export const ZenAdd = React.memo(() => {
@@ -25,8 +26,7 @@ export const ZenAdd = React.memo(() => {
     };
 
     return (
-        <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        <KeyboardAwareScreen
             style={styles.container}
         >
             <View style={[
@@ -52,7 +52,7 @@ export const ZenAdd = React.memo(() => {
                     blurOnSubmit={true}
                 />
             </View>
-        </KeyboardAvoidingView>
+        </KeyboardAwareScreen>
     );
 });
 

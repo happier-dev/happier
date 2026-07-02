@@ -2,53 +2,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
-import {
-    openAccountScopedBlobCiphertext,
-    sealAccountScopedBlobCiphertext,
-} from '@happier-dev/protocol';
-
-function createBaseAttentionDeliveryPolicyV1(): Record<string, unknown> {
-    return {
-        v: 1,
-        events: {},
-        channels: {
-            expo_push: { enabled: true, events: {}, quietHoursBehavior: 'suppress' },
-            local_notification: { enabled: true, events: {}, quietHoursBehavior: 'suppress' },
-            live_activity: { enabled: true, events: {}, quietHoursBehavior: 'silent' },
-        },
-        quietHours: {
-            enabled: false,
-            timezone: 'UTC',
-            windows: [],
-        },
-        foregroundBehavior: 'full',
-        privacy: {
-            defaultPreviewBehavior: 'include_preview',
-            surfaces: {},
-        },
-        sounds: {
-            defaultSoundId: 'default',
-            eventSoundIds: {},
-            volume: 1,
-        },
-        liveActivityRemoteUpdates: {
-            enabled: true,
-            preferredMode: 'local_only',
-            allowBackgroundWakeFallback: false,
-            defaultStaleAfterSeconds: 1800,
-            quietHoursBehavior: 'silent',
-        },
-    };
-}
+import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
 function createBaseMockSettings(): Record<string, unknown> {
     return {
         analyticsOptOut: false,
+        commandPaletteEnabled: false,
+        keyboardShortcutsV2Enabled: false,
+        keyboardSingleKeyShortcutsEnabled: false,
+        keyboardShortcutOverridesV1: {},
+        keyboardShortcutDisabledCommandIdsV1: [],
         claudeLocalPermissionBridgeEnabled: true,
         terminalConnectLegacySecretExportEnabled: false,
         crashReportsOptOut: false,
         experiments: true,
         sessionListDensity: 'comfortable',
+        usageLimitRecoverySettingsV1: { v: 1, mode: 'ask', promptMode: 'standard', resumePromptMode: 'standard' },
         notificationsSettingsV1: {
             v: 1,
             pushEnabled: true,
@@ -71,7 +40,24 @@ function createBaseMockSettings(): Record<string, unknown> {
                 readyIncludeMessageText: true,
             },
         ],
-        attentionDeliveryPolicyV1: createBaseAttentionDeliveryPolicyV1(),
+        attentionDeliveryPolicyV1: {
+            v: 1,
+            quietHours: {
+                enabled: false,
+                startHour: 22,
+                endHour: 8,
+                timezone: null,
+            },
+            foregroundBehavior: 'banner',
+            channels: {
+                expo_push: { enabled: true },
+                local_notification: { enabled: true },
+                live_activity: { enabled: true },
+            },
+            liveActivityRemoteUpdates: {
+                preferredMode: 'auto',
+            },
+        },
         sessionHandoffDefaultsV1: {
             v: 1,
             workspaceTransferEnabled: true,
@@ -194,7 +180,6 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     loadSessionLastViewed: () => ({}),
     loadSessionModelModes: () => ({}),
     loadSessionModelModeUpdatedAts: () => ({}),
-    loadWorkspaceReviewCommentsDrafts: () => ({}),
     loadSessionMaterializedMaxSeqById: () => ({}),
     loadChangesCursor: () => null,
     loadLastChangesCursorByAccountId: () => ({}),
@@ -205,7 +190,6 @@ vi.mock('@/sync/domains/state/persistence', () => ({
     saveProfile: vi.fn(),
     saveSessionDrafts: vi.fn(),
     saveSessionReviewCommentsDrafts: vi.fn(),
-    saveWorkspaceReviewCommentsDrafts: vi.fn(),
     saveSessionActionDrafts: vi.fn(),
     saveNewSessionDraft: vi.fn(),
     clearNewSessionDraft: vi.fn(),
@@ -531,13 +515,13 @@ describe('syncSettings local-only server-selection settings', () => {
                 }),
             )
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ success: true, version: 2 }), {
+                new Response(JSON.stringify({ content: null, version: 1 }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 }),
             )
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ content: null, version: 2 }), {
+                new Response(JSON.stringify({ success: true, version: 2 }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 }),
@@ -581,13 +565,13 @@ describe('syncSettings local-only server-selection settings', () => {
                 }),
             )
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ success: true, version: 11 }), {
+                new Response(JSON.stringify({ content: null, version: 10 }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 }),
             )
             .mockResolvedValueOnce(
-                new Response(JSON.stringify({ content: null, version: 11 }), {
+                new Response(JSON.stringify({ success: true, version: 11 }), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 }),
@@ -604,7 +588,7 @@ describe('syncSettings local-only server-selection settings', () => {
 
         expect(clearPendingSettings).toHaveBeenCalledTimes(1);
         expect(encryptionStub.encryptRaw).not.toHaveBeenCalled();
-        const body = JSON.parse(String((mocks.serverFetch.mock.calls[1]?.[1] as RequestInit | undefined)?.body ?? 'null')) as { content?: unknown } | null;
+        const body = JSON.parse(String((mocks.serverFetch.mock.calls[2]?.[1] as RequestInit | undefined)?.body ?? 'null')) as { content?: unknown } | null;
         expect(typeof (body as any)?.content?.c).toBe('string');
         const opened = openAccountScopedBlobCiphertext({
             kind: 'account_settings',
@@ -618,54 +602,6 @@ describe('syncSettings local-only server-selection settings', () => {
         expect(record.serverSelectionActiveTargetId).toBeUndefined();
         expect(record.terminalConnectLegacySecretExportEnabled).toBeUndefined();
         expect(record.featureToggles).toEqual({ 'zen.navigation': true });
-    });
-
-    it('preserves newer pending server deltas that were written while the POST was in flight', async () => {
-        const currentPendingSettings: Record<string, unknown> = {
-            analyticsOptOut: true,
-            crashReportsOptOut: true,
-        };
-        mocks.loadPendingAccountSettings.mockImplementation(() => ({ ...currentPendingSettings }));
-        mocks.storageState.settingsVersion = 10;
-        mocks.storageState.settingsScope = { serverId: 'server-a', accountId: 'account-a' };
-
-        mocks.serverFetch
-            .mockResolvedValueOnce(
-                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-            )
-            .mockResolvedValueOnce(
-                new Response(JSON.stringify({ success: true, version: 11 }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-            )
-            .mockResolvedValueOnce(
-                new Response(JSON.stringify({ content: null, version: 11 }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                }),
-            );
-
-        const persistPendingSettings = vi.fn((nextPendingSettings: Record<string, unknown>) => {
-            Object.keys(currentPendingSettings).forEach((key) => {
-                delete currentPendingSettings[key];
-            });
-            Object.assign(currentPendingSettings, nextPendingSettings);
-        });
-
-        await syncSettings({
-            credentials,
-            encryption: encryptionStub,
-            settingsScope: { serverId: 'server-a', accountId: 'account-a' },
-            pendingSettings: { analyticsOptOut: true },
-            clearPendingSettings: persistPendingSettings,
-        });
-
-        expect(persistPendingSettings).toHaveBeenCalledWith({ crashReportsOptOut: true });
-        expect(currentPendingSettings).toEqual({ crashReportsOptOut: true });
     });
 
     it('keeps local empty server-selection state when fetched server settings include legacy selection keys', async () => {
@@ -747,6 +683,119 @@ describe('syncSettings local-only server-selection settings', () => {
         expect(clearPendingSettings).toHaveBeenCalledTimes(1);
         expect(encryptionStub.encryptRaw).not.toHaveBeenCalled();
         expect(mocks.serverFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('clears only committed pending keys after a successful flush', async () => {
+        const serverCiphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+            payload: { analyticsOptOut: false },
+            randomBytes: () => new Uint8Array(24).fill(3),
+        });
+        mocks.loadPendingSettings.mockReturnValueOnce({
+            analyticsOptOut: true,
+            sessionListDensity: 'detailed',
+        } as Partial<ReturnType<typeof createBaseMockSettings>>);
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: { t: 'encrypted', c: serverCiphertext }, version: 4 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ success: true, version: 5 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+        const clearPendingSettings = vi.fn();
+
+        await syncSettings({
+            credentials,
+            encryption: encryptionStub,
+            pendingSettings: { analyticsOptOut: true },
+            clearPendingSettings,
+        });
+
+        expect(clearPendingSettings).toHaveBeenCalledWith({ sessionListDensity: 'detailed' });
+    });
+
+    it('keeps a same-key concurrent pending edit after a successful flush', async () => {
+        const serverCiphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: TEST_MACHINE_KEY },
+            payload: { analyticsOptOut: false },
+            randomBytes: () => new Uint8Array(24).fill(4),
+        });
+        mocks.loadPendingSettings.mockReturnValueOnce({
+            analyticsOptOut: false,
+        } as Partial<ReturnType<typeof createBaseMockSettings>>);
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: { t: 'encrypted', c: serverCiphertext }, version: 4 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ success: true, version: 5 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+        const clearPendingSettings = vi.fn();
+
+        await syncSettings({
+            credentials,
+            encryption: encryptionStub,
+            pendingSettings: { analyticsOptOut: true },
+            clearPendingSettings,
+        });
+
+        expect(clearPendingSettings).toHaveBeenCalledWith({ analyticsOptOut: false });
+    });
+
+    it('clears only matching local-only pending keys', async () => {
+        mocks.loadPendingSettings.mockReturnValueOnce({
+            lastUsedAgent: 'codex',
+            serverSelectionActiveTargetKind: 'server',
+        } as Partial<ReturnType<typeof createBaseMockSettings>>);
+        mocks.serverFetch
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ mode: 'e2ee', updatedAt: Date.now() }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            )
+            .mockResolvedValueOnce(
+                new Response(JSON.stringify({ content: null, version: 4 }), {
+                    status: 200,
+                    headers: { 'Content-Type': 'application/json' },
+                }),
+            );
+        const clearPendingSettings = vi.fn();
+
+        await syncSettings({
+            credentials,
+            encryption: encryptionStub,
+            pendingSettings: { lastUsedAgent: 'codex' },
+            clearPendingSettings,
+        });
+
+        expect(clearPendingSettings).toHaveBeenCalledWith({ serverSelectionActiveTargetKind: 'server' });
     });
 });
 
@@ -850,6 +899,29 @@ describe('applySettingsLocalDelta server-selection local-only keys', () => {
         expect(mocks.callSequence.indexOf('capture')).toBeLessThan(mocks.callSequence.indexOf('optOut'));
         expect(mocks.callSequence.indexOf('identify')).toBeLessThan(mocks.callSequence.indexOf('optOut'));
         expect(mocks.callSequence.indexOf('flush')).toBeLessThan(mocks.callSequence.indexOf('optOut'));
+    });
+
+    it('skips equal rebuilt object deltas without scheduling pending sync', () => {
+        mocks.storageState.settings = {
+            ...createBaseMockSettings(),
+            voice: { providerId: 'off' },
+        };
+        const setPendingSettings = vi.fn();
+        const schedulePendingSettingsFlush = vi.fn();
+
+        applySettingsLocalDelta({
+            delta: {
+                voice: { providerId: 'off' },
+            } as any,
+            settingsSecretsKey: null,
+            getPendingSettings: () => ({}),
+            setPendingSettings,
+            schedulePendingSettingsFlush,
+        });
+
+        expect(mocks.storageState.applySettingsLocal).not.toHaveBeenCalled();
+        expect(setPendingSettings).not.toHaveBeenCalled();
+        expect(schedulePendingSettingsFlush).not.toHaveBeenCalled();
     });
 
 });

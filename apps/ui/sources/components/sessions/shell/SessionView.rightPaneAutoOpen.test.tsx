@@ -6,7 +6,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
+import { createStorageModuleStub, createStorageStoreMock } from '@/dev/testkit/mocks/storage';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
@@ -14,6 +14,30 @@ import { settingsDefaults, type Settings } from '@/sync/domains/settings/setting
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+vi.mock('@/agents/registry/registryUiBehavior', () => ({
+    buildResumeCapabilityOptionsFromUiState: () => ({}),
+    buildNewSessionOptionsFromUiState: () => ({}),
+    canSelectAgentWithoutDetectedCli: () => false,
+    getNewSessionAgentInputExtraActionChips: () => [],
+    buildSpawnEnvironmentVariablesFromUiState: () => ({}),
+    buildResumeSessionExtrasFromUiState: () => null,
+    buildSpawnSessionExtrasFromUiState: () => null,
+    buildWakeResumeExtras: () => null,
+    getAgentResumeExperimentsFromSettings: () => null,
+    getNewSessionPreflightIssues: () => [],
+    getNewSessionRelevantInstallableDepKeys: () => [],
+    resolveAgentUiBehavior: () => ({}),
+    resolveAgentUiBehaviorFromFlavor: () => ({}),
+    supportsDetectedMcpConfigScan: () => false,
+    supportsEditableSessionGoals: () => false,
+}));
+vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
+    getResolvedBackendCatalogEntries: () => [],
+}));
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+    useDaemonMergedProjectionInputs: () => ({ inputs: null }),
+}));
 
 const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
 const openRightSpy = vi.hoisted(() => vi.fn());
@@ -54,6 +78,7 @@ let rightScopeState: any = null;
 let authCredentials: any = { token: 't', secret: 's' };
 let uiMultiPanePanelsEnabledSetting: any = true;
 let lastUrlSyncEnabled: boolean | null = null;
+let sessionScreenFocused = true;
 let mockPathname = '/session/s1';
 let pendingMessagesState: { messages: any[]; discarded: any[]; isLoaded: boolean } = {
     messages: [],
@@ -110,21 +135,21 @@ installSessionShellCommonModuleMocks({
             metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/tmp' },
             agentState: {},
         };
+        const storage = createStorageStoreMock({
+            sessions: { s1: session },
+            settings: settingsDefaults,
+            sessionListIndexByServerId: {},
+        });
 
         return createStorageModuleStub({
-            storage: {
-                getState: () => ({
-                    sessions: { s1: session },
-                    settings: {},
-                    concurrentSessionListCacheByServerId: {},
-                }),
-            } as any,
+            storage,
             useSession: () => session,
             useIsDataReady: () => true,
             useRealtimeStatus: () => 'connected',
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
             useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
             useSessionPendingMessages: () => pendingMessagesState,
+            useSessionSubagentSourceMessages: () => [],
             useSessionReviewCommentsDrafts: () => [],
             useSessionUsage: () => null,
             useLocalSetting: <K extends keyof LocalSettings>(key: K) => {
@@ -157,8 +182,6 @@ installSessionShellCommonModuleMocks({
             useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {} }),
             useAutomations: () => [],
             useMachine: () => null,
-            useServerScopedMachine: () => null,
-            useWorkspaceReviewCommentsDrafts: () => [],
         });
     },
 });
@@ -176,7 +199,7 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: () => {},
-    useIsFocused: () => true,
+    useIsFocused: () => sessionScreenFocused,
 }));
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: authCredentials }),
@@ -244,19 +267,25 @@ vi.mock('@/utils/platform/responsive', () => ({
     useIsLandscape: () => false,
     useIsTablet: () => true,
 }));
-vi.mock('@/hooks/session/useDraft', () => ({
-    useDraft: () => ({ clearDraft: vi.fn() }),
-}));
 vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
     getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true }),
 }));
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
     resolveSessionMachineReachability: () => true,
 }));
-vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-    useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
-    useSessionReachableMachineTarget: () => null,
-}));
+vi.mock(
+    '@/components/sessions/model/useSessionMachineReachability',
+    async (importOriginal) => {
+        const { createSessionMachineReachabilityModuleMock } = await import('@/dev/testkit/mocks/sessionMachineReachability');
+        return createSessionMachineReachabilityModuleMock({
+            importOriginal,
+            overrides: {
+                useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
+                useSessionReachableMachineTarget: () => ({ machineId: 'm1', basePath: '/tmp' }),
+            },
+        });
+    },
+);
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
     subscribeActiveServer: () => () => {},
@@ -315,7 +344,7 @@ vi.mock('@/sync/domains/input/slashCommands/resolveSessionComposerSend', () => (
 vi.mock('@/sync/domains/permissions/permissionModeApply', () => ({
     applyPermissionModeSelection: async () => {},
 }));
-vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
+vi.mock('@/sync/acp/sessionModeControl', () => ({
     supportsSessionModeOverrides: () => false,
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
@@ -355,6 +384,7 @@ describe('SessionView (right pane auto-open)', () => {
         authCredentials = { token: 't', secret: 's' };
         uiMultiPanePanelsEnabledSetting = true;
         lastUrlSyncEnabled = null;
+        sessionScreenFocused = true;
         mockPathname = '/session/s1';
         pendingMessagesState = {
             messages: [],

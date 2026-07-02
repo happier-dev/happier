@@ -9,6 +9,10 @@ import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelp
 
 installSessionHandoffCommonModuleMocks();
 
+function findProgressIndicators(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    return screen.findAll((node) => node.props?.accessibilityRole === 'progressbar');
+}
+
 describe('SessionHandoffProgressModal', () => {
     it('shows a spinner while the modal is waiting for the first status update', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
@@ -26,7 +30,7 @@ describe('SessionHandoffProgressModal', () => {
             }),
         );
         expect(screen.getTextContent()).toContain('sessionHandoff.progress.message');
-        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(1);
+        expect(findProgressIndicators(screen)).toHaveLength(1);
     });
 
     it('renders a full checkpoint timeline that matches the protocol checkpoint enum', async () => {
@@ -311,7 +315,7 @@ describe('SessionHandoffProgressModal', () => {
             }),
         );
         expect(screen.getTextContent()).toContain('sessionHandoff.failure.message');
-        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
+        expect(findProgressIndicators(screen)).toHaveLength(0);
     });
 
     it('surfaces the phase detail when the handoff is awaiting recovery', async () => {
@@ -355,7 +359,7 @@ describe('SessionHandoffProgressModal', () => {
         expect(screen.getTextContent()).toContain('daemon_restart_detected');
         expect(screen.findByTestId('session-handoff-progress-bar')).toBeNull();
         expect(screen.findByTestId('session-handoff-progress-percent')).toBeNull();
-        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
+        expect(findProgressIndicators(screen)).toHaveLength(0);
     });
 
     it('does not render a percent/progress bar when the checkpoint is import_session (even if byte counters are present)', async () => {

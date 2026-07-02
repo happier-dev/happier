@@ -6,7 +6,11 @@ import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const hydrateSessionSpy = vi.hoisted(() => vi.fn((sessionId: string, reason: string, options?: { serverId?: string }) => true));
+const hydrateSessionSpy = vi.hoisted(() => vi.fn((sessionId: string, reason: string, options?: { serverId?: string }) => ({
+    kind: 'available' as const,
+    sessionId,
+    serverId: options?.serverId,
+})));
 const sessionSplitCanvasScreenSpy = vi.hoisted(() => vi.fn((props: {
     sessionId: string;
     routeServerId?: string;

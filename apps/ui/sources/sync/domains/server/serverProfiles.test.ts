@@ -382,6 +382,142 @@ describe('serverProfiles', () => {
         expect(profiles.getActiveServerId()).toBe('manual-id');
     });
 
+    it('uses a stored server identity as the active durable scope id while preserving the profile id', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const profiles = await importFresh();
+        const created = profiles.upsertServerProfile({ serverUrl: 'https://relay.example.test', name: 'Relay' });
+        profiles.setActiveServerId(created.id, { scope: 'device' });
+
+        expect(profiles.getActiveServerSnapshot().serverId).toBe(created.id);
+
+        profiles.setServerProfileIdentityForUrl('https://relay.example.test', 'srv_identity_123');
+
+        expect(profiles.getActiveServerSnapshot()).toMatchObject({
+            serverId: 'srv_identity_123',
+            serverUrl: 'https://relay.example.test',
+        });
+        expect(profiles.getActiveServerId()).toBe('srv_identity_123');
+        expect(profiles.getDeviceDefaultServerScopeId()).toBe('srv_identity_123');
+        expect(profiles.resolveServerProfileScopeIdForIdentifier(created.id)).toBe('srv_identity_123');
+        expect(profiles.resolveServerProfileScopeIdForIdentifier('srv_identity_123')).toBe('srv_identity_123');
+        expect(profiles.areServerProfileIdentifiersEquivalent(created.id, 'srv_identity_123')).toBe(true);
+        expect(profiles.areServerProfileIdentifiersEquivalent(created.id, 'missing-server')).toBe(false);
+        expect(profiles.getServerProfileById('srv_identity_123')?.id).toBe(created.id);
+        expect(profiles.getServerProfileLegacyServerIds('srv_identity_123')).toContain(created.id);
+    });
+
+    it('preserves a previous server identity as a legacy alias when the same profile learns a new identity', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const profiles = await importFresh();
+        const created = profiles.upsertServerProfile({ serverUrl: 'https://relay.example.test', name: 'Relay' });
+        profiles.setActiveServerId(created.id, { scope: 'device' });
+
+        profiles.setServerProfileIdentityForUrl('https://relay.example.test', 'srv_old_identity');
+        profiles.setServerProfileIdentityForUrl('https://relay.example.test', 'srv_new_identity');
+
+        expect(profiles.getActiveServerSnapshot().serverId).toBe('srv_new_identity');
+        expect(profiles.resolveServerProfileScopeIdForIdentifier('srv_old_identity')).toBe('srv_new_identity');
+        expect(profiles.areServerProfileIdentifiersEquivalent(created.id, 'srv_old_identity')).toBe(true);
+        expect(profiles.areServerProfileIdentifiersEquivalent('srv_old_identity', 'srv_new_identity')).toBe(true);
+        expect(profiles.getServerProfileById('srv_old_identity')?.id).toBe(created.id);
+        expect(profiles.getServerProfileLegacyServerIds('srv_new_identity')).toEqual(
+            expect.arrayContaining([created.id, 'srv_old_identity']),
+        );
+    });
+
+    it('preserves non-selected identities as aliases when equivalent URL profiles are deduped', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const storage = new MMKV({ id: scopedStorageId('server-profiles', scope) });
+        const now = Date.now();
+        storage.set('server-state-v1', JSON.stringify({
+            activeServerId: 'new-profile',
+            servers: {
+                'old-profile': {
+                    id: 'old-profile',
+                    name: 'Old',
+                    serverUrl: 'https://relay.example.test',
+                    serverIdentityId: 'srv_old_identity',
+                    createdAt: now - 10,
+                    updatedAt: now - 10,
+                    lastUsedAt: now - 10,
+                },
+                'new-profile': {
+                    id: 'new-profile',
+                    name: 'New',
+                    serverUrl: 'https://relay.example.test/',
+                    serverIdentityId: 'srv_new_identity',
+                    createdAt: now,
+                    updatedAt: now,
+                    lastUsedAt: now,
+                },
+            },
+        }));
+
+        const profiles = await importFresh();
+        const active = profiles.getActiveServerSnapshot();
+
+        expect(active.serverId).toBe('srv_new_identity');
+        expect(profiles.getServerProfileById('srv_old_identity')?.serverIdentityId).toBe('srv_new_identity');
+        expect(profiles.getServerProfileLegacyServerIds('srv_new_identity')).toEqual(
+            expect.arrayContaining(['old-profile', 'new-profile', 'srv_old_identity']),
+        );
+    });
+
+    it('keeps host-derived active ids when no server identity is known', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const profiles = await importFresh();
+        const created = profiles.upsertServerProfile({ serverUrl: 'https://old-server.example.test', name: 'Old Relay' });
+        profiles.setActiveServerId(created.id, { scope: 'device' });
+
+        expect(profiles.getActiveServerId()).toBe(created.id);
+        expect(profiles.getActiveServerSnapshot().serverId).toBe(created.id);
+    });
+
+    it('ignores unsafe server identity ids from server payloads', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const profiles = await importFresh();
+        const created = profiles.upsertServerProfile({ serverUrl: 'https://relay.example.test', name: 'Relay' });
+        profiles.setActiveServerId(created.id, { scope: 'device' });
+
+        expect(profiles.setServerProfileIdentityForUrl('https://relay.example.test', 'relay.example.test')).toBeNull();
+
+        expect(profiles.getActiveServerSnapshot().serverId).toBe(created.id);
+        const profile = profiles.getServerProfileById(created.id);
+        expect(profile?.id).toBe(created.id);
+        expect(profile).not.toHaveProperty('serverIdentityId');
+        expect(profile).not.toHaveProperty('legacyServerIds');
+    });
+
+    it('dedupes profiles that learn the same server identity across different hostnames', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const profiles = await importFresh();
+        const lan = profiles.upsertServerProfile({ serverUrl: 'https://macbook.local:18829', name: 'LAN' });
+        const tunnel = profiles.upsertServerProfile({ serverUrl: 'https://public.example.test', name: 'Public' });
+
+        profiles.setServerProfileIdentityForUrl(lan.serverUrl, 'srv_shared_identity');
+        profiles.setServerProfileIdentityForUrl(tunnel.serverUrl, 'srv_shared_identity');
+
+        const all = profiles.listServerProfiles().filter((profile) => profile.serverIdentityId === 'srv_shared_identity');
+        expect(all).toHaveLength(1);
+        expect(profiles.getServerProfileLegacyServerIds('srv_shared_identity')).toEqual(
+            expect.arrayContaining([lan.id, tunnel.id]),
+        );
+        profiles.setActiveServerId(tunnel.id, { scope: 'device' });
+        expect(profiles.getActiveServerSnapshot().serverId).toBe('srv_shared_identity');
+    });
+
     it('seeds api.happier.dev on app.happier.dev web origin when no preconfigured env exists', async () => {
         const scope = randomScope();
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;

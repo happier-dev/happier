@@ -7,6 +7,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { scmBackendSettingsRegistry } from '@/scm/settings/scmBackendSettingsRegistry';
@@ -192,6 +193,26 @@ const FILES_CHANGED_FILES_DENSITY_OPTIONS: ReadonlyArray<{
     },
 ];
 
+const MARKDOWN_EDIT_MODE_OPTIONS: ReadonlyArray<{
+    id: 'rich' | 'raw';
+    titleKey: TranslationKey;
+    subtitleKey: TranslationKey;
+    iconName: IoniconName;
+}> = [
+    {
+        id: 'rich',
+        titleKey: 'settingsSourceControl.markdownEditMode.options.rich.title',
+        subtitleKey: 'settingsSourceControl.markdownEditMode.options.rich.subtitle',
+        iconName: 'document-text-outline',
+    },
+    {
+        id: 'raw',
+        titleKey: 'settingsSourceControl.markdownEditMode.options.raw.title',
+        subtitleKey: 'settingsSourceControl.markdownEditMode.options.raw.subtitle',
+        iconName: 'code-outline',
+    },
+];
+
 export const SourceControlSettingsView = React.memo(function SourceControlSettingsView() {
     const { theme } = useUnistyles();
     const [scmCommitStrategy, setScmCommitStrategy] = useSettingMutable('scmCommitStrategy');
@@ -211,6 +232,8 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [scmCommitMessageGeneratorInstructions, setScmCommitMessageGeneratorInstructions] = useSettingMutable('scmCommitMessageGeneratorInstructions');
     const [scmIncludeCoAuthoredBy, setScmIncludeCoAuthoredBy] = useSettingMutable('scmIncludeCoAuthoredBy');
     const [filesEditorAutoSave, setFilesEditorAutoSave] = useSettingMutable('filesEditorAutoSave');
+    const [markdownDefaultEditMode, setMarkdownDefaultEditMode] = useSettingMutable('markdownDefaultEditMode');
+    const markdownRichEditorEnabled = useFeatureEnabled('files.markdownRichEditor');
     const backendPlugins = scmBackendSettingsRegistry.listPlugins();
     const currentDiffModeByBackend = scmDefaultDiffModeByBackend ?? {};
     const effectiveFilesDiffSyntaxHighlightingMode = (filesDiffSyntaxHighlightingMode ?? 'off') as 'off' | 'simple' | 'advanced';
@@ -219,6 +242,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
         ? filesDiffPresentationStyle
         : (settingsDefaults.filesDiffPresentationStyle === 'split' ? 'split' : 'unified');
     const effectiveFilesChangedFilesRowDensity = filesChangedFilesRowDensity === 'compact' ? 'compact' : 'comfortable';
+    const effectiveMarkdownDefaultEditMode = markdownDefaultEditMode === 'raw' ? 'raw' : 'rich';
     const effectiveCommitMessageGeneratorEnabled = scmCommitMessageGeneratorEnabled === true;
     const effectiveCommitMessageGeneratorBackendId = typeof scmCommitMessageGeneratorBackendId === 'string' && scmCommitMessageGeneratorBackendId.trim()
         ? scmCommitMessageGeneratorBackendId.trim()
@@ -523,6 +547,24 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                     showChevron={false}
                 />
             </ItemGroup>
+            {markdownRichEditorEnabled ? (
+                <ItemGroup
+                    title={t('settingsSourceControl.markdownEditMode.title')}
+                    footer={t('settingsSourceControl.markdownEditMode.footer')}
+                >
+                    {MARKDOWN_EDIT_MODE_OPTIONS.map((option) => (
+                        <Item
+                            key={option.id}
+                            title={t(option.titleKey)}
+                            subtitle={t(option.subtitleKey)}
+                            icon={renderIcon(option.iconName)}
+                            rightElement={effectiveMarkdownDefaultEditMode === option.id ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                            onPress={() => setMarkdownDefaultEditMode(option.id)}
+                            showChevron={false}
+                        />
+                    ))}
+                </ItemGroup>
+            ) : null}
         </ItemList>
     );
 });

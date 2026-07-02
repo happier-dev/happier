@@ -96,6 +96,9 @@ const featureEnabledState = vi.hoisted(() => ({
     sessionsDirect: false,
 }));
 const featureEnabledCalls = vi.hoisted(() => [] as Array<Readonly<{ featureId: string; scope: unknown }>>);
+const chromeSafeAreaInsetsState = vi.hoisted(() => ({
+    value: { top: 0, bottom: 0, left: 0, right: 0 },
+}));
 const preflightModelOptionsByTargetKeyState = vi.hoisted(() => ({
     value: {} as Record<string, Array<{ value: string; label: string; description?: string }>>,
 }));
@@ -194,6 +197,9 @@ const machineCapabilitiesResultsState = vi.hoisted(() => ({
 const storageState = vi.hoisted(() => ({
     workspaceLocations: {} as Record<string, unknown>,
     workspaceCheckouts: {} as Record<string, unknown>,
+}));
+const routeParamsState = vi.hoisted(() => ({
+    value: {} as Record<string, string | string[] | undefined>,
 }));
 
 const getMockStorageState = vi.hoisted(() => () => ({
@@ -298,7 +304,7 @@ installNewSessionScreenModelCommonModuleMocks({
     },
     routerConfig: {
         router: { push: vi.fn(), replace: vi.fn(), back: vi.fn(), setParams: vi.fn() },
-        params: {},
+        params: () => routeParamsState.value,
         navigation: {},
         pathname: '/new',
     },
@@ -323,6 +329,10 @@ installNewSessionScreenModelCommonModuleMocks({
 
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+
+vi.mock('@/components/ui/layout/useChromeSafeAreaInsets', () => ({
+    useChromeSafeAreaInsets: () => chromeSafeAreaInsetsState.value,
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -379,9 +389,14 @@ const machineCapabilitiesInvoke = vi.hoisted(() =>
     vi.fn(async () => ({ supported: true, response: { ok: true, result: null } })),
 );
 const machineCapabilitiesCacheRefreshMock = vi.hoisted(() => vi.fn());
+const ensureAgentInstallablesBackgroundMock = vi.hoisted(() => vi.fn(async (_params?: unknown) => {}));
 
 vi.mock('@/sync/ops', () => ({
     machineCapabilitiesInvoke,
+}));
+
+vi.mock('@/capabilities/ensureAgentInstallablesBackground', () => ({
+    ensureAgentInstallablesBackground: (params: unknown) => ensureAgentInstallablesBackgroundMock(params),
 }));
 
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
@@ -493,6 +508,11 @@ vi.mock('@/sync/domains/profiles/profileUtils', () => ({
     getBuiltInProfile: () => null,
     DEFAULT_PROFILES: [],
     getProfilePrimaryCli: () => null,
+    isProfileEnabled: (profile: { id: string; defaultEnabled?: boolean }, profileEnabledById?: Record<string, boolean> | null) => {
+        const override = profileEnabledById?.[profile.id];
+        if (typeof override === 'boolean') return override;
+        return profile.defaultEnabled !== false;
+    },
     getProfileSupportedAgentIds: (profile: any) => profileCompatibilityState.getProfileSupportedAgentIds(profile),
     isProfileCompatibleWithAnyAgent: (profile: any, agentIds: readonly string[]) =>
         profileCompatibilityState.isProfileCompatibleWithAnyAgent(profile, agentIds),
@@ -603,6 +623,7 @@ describe('useNewSessionScreenModel (installables)', () => {
         applySettingsMock.mockClear();
         modalShowMock.mockClear();
         modalAlertMock.mockClear();
+        ensureAgentInstallablesBackgroundMock.mockClear();
         createSessionActionDraftMock.mockReset();
         handleCreateSessionMock.mockReset();
         agentInputActionChipActionIdsState.value = [];
@@ -664,11 +685,25 @@ describe('useNewSessionScreenModel (installables)', () => {
         preflightModelOptionsByTargetKeyState.value = {};
         preflightSessionModeOptionsByTargetKeyState.value = {};
         preflightConfigOptionsByTargetKeyState.value = {};
+        chromeSafeAreaInsetsState.value = { top: 0, bottom: 0, left: 0, right: 0 };
+        routeParamsState.value = {};
     });
 
     it('renders without throwing during initial new-session screen model setup', async () => {
         const hook = await renderNewSessionScreenModel();
         expect(hook.getCurrent()).toBeTruthy();
+    });
+
+    it('keeps simple composer padding visual while the scaffold owns the safe-area inset', async () => {
+        chromeSafeAreaInsetsState.value = { top: 12, bottom: 34, left: 0, right: 0 };
+
+        const hook = await renderNewSessionScreenModel();
+        const model = hook.getCurrent();
+
+        expect(model?.variant).toBe('simple');
+        expect(model?.simpleProps?.safeAreaTop).toBe(12);
+        expect(model?.simpleProps?.safeAreaBottom).toBe(34);
+        expect(model?.simpleProps?.newSessionBottomPadding).toBe(8);
     });
 
     it('reads sessions.direct in target-server spawn scope', async () => {
@@ -680,7 +715,8 @@ describe('useNewSessionScreenModel (installables)', () => {
         });
     });
 
-    it('triggers background codex-acp install even when codex CLI is not detected', async () => {
+    it('does not force a background codex-acp install side effect during initial model setup', async () => {
+        routeParamsState.value = { machineId: 'machine-1' };
         const hook = await renderNewSessionScreenModel();
         let model = hook.getCurrent();
 
@@ -689,11 +725,7 @@ describe('useNewSessionScreenModel (installables)', () => {
 
         expect(model).toBeTruthy();
         expect(model?.variant).toBe('simple');
-        expect(machineCapabilitiesInvoke).toHaveBeenCalledWith(
-            'machine-1',
-            expect.objectContaining({ id: 'dep.codex-acp', method: 'install' }),
-            expect.anything(),
-        );
+        expect(ensureAgentInstallablesBackgroundMock).not.toHaveBeenCalled();
     });
 
     it('falls back to default settings when settings are temporarily unavailable during startup', async () => {
@@ -1335,6 +1367,7 @@ describe('useNewSessionScreenModel (installables)', () => {
             },
             envVarRequirements: [],
             isBuiltIn: false,
+            defaultEnabled: true,
             createdAt: 0,
             updatedAt: 0,
             version: '1.0.0',
@@ -1465,8 +1498,13 @@ describe('useNewSessionScreenModel (installables)', () => {
         expect(storageChip?.collapsedOptionsPopover?.selectedOptionId).toBe('direct');
         expect(storageChip?.collapsedOptionsPopover?.presentation).toBe('list');
         const storageOptions = storageChip?.collapsedOptionsPopover?.presentation === 'list'
-            ? storageChip.collapsedOptionsPopover.rootStep.sections.flatMap((section) =>
-                section.kind === 'static' ? section.options.map((option) => option.id) : [])
+            ? storageChip.collapsedOptionsPopover.rootStep.sections.flatMap((
+                section: Readonly<{ kind: string; options?: ReadonlyArray<Readonly<{ id: string }>> }>,
+            ) => (
+                section.kind === 'static'
+                    ? (section.options ?? []).map((option) => option.id)
+                    : []
+            ))
             : [];
         expect(storageOptions).toEqual([
             'persisted',
@@ -1505,6 +1543,7 @@ describe('useNewSessionScreenModel (installables)', () => {
             compatibilityByTargetKey: {},
             envVarRequirements: [],
             isBuiltIn: false,
+            defaultEnabled: true,
             createdAt: 0,
             updatedAt: 0,
             version: '1.0.0',
@@ -1627,7 +1666,8 @@ describe('useNewSessionScreenModel (installables)', () => {
         await hook.unmount();
     });
 
-    it('shows a Windows session-mode chip on Windows machines through the canonical control and shared options popover', async () => {
+    it('does not surface a Windows session-mode chip in the simple panel action chip row', async () => {
+        routeParamsState.value = { machineId: 'machine-1' };
         machineState.value = [
             {
                 id: 'machine-1',
@@ -1640,7 +1680,7 @@ describe('useNewSessionScreenModel (installables)', () => {
                 },
             },
         ];
-        settingsState.sessionWindowsRemoteSessionLaunchMode = 'hidden';
+        settingsState.sessionWindowsRemoteSessionLaunchMode = 'console';
         machineCapabilitiesResultsState.value = {
             ...machineCapabilitiesResultsState.value,
             'tool.windowsTerminal': {
@@ -1658,51 +1698,7 @@ describe('useNewSessionScreenModel (installables)', () => {
 
         let chips = model?.simpleProps?.agentInputExtraActionChips ?? [];
         const windowsChip = chips.find((chip: { key: string }) => chip.key === 'new-session-windows-remote-session-launch-mode');
-        expect(windowsChip).toBeTruthy();
-        expect(windowsChip?.controlId).toBe('windowsRemoteSessionMode');
-        expect(windowsChip?.collapsedOptionsPopover).toEqual(expect.objectContaining({
-            title: 'machine.windows.remoteSessionModeTitle',
-            selectedOptionId: 'console',
-        }));
-
-        const chipScreen = await renderScreen(windowsChip.render({
-                chipStyle: () => null,
-                iconColor: '#000',
-                showLabel: true,
-                textStyle: {},
-                countTextStyle: {},
-                popoverAnchorRef: { current: null },
-            }));
-        expect(chipScreen.getTextContent()).toContain('windowsRemoteSessionLaunchMode.shortConsole');
-
-        const windowsModeOptions = windowsChip.collapsedOptionsPopover?.presentation === 'list'
-            ? windowsChip.collapsedOptionsPopover.rootStep.sections.flatMap((section) =>
-                section.kind === 'static' ? section.options : []
-            )
-            : [];
-        const hiddenModeOption = windowsModeOptions.find((option) => option.id === 'hidden');
-        expect(hiddenModeOption).toBeTruthy();
-
-        await invokeHookAction(() => hiddenModeOption?.onSelect?.());
-
-        model = hook.getCurrent();
-
-        chips = model?.simpleProps?.agentInputExtraActionChips ?? [];
-        const updatedChip = chips.find((chip: { key: string }) => chip.key === 'new-session-windows-remote-session-launch-mode');
-        expect(updatedChip).toBeTruthy();
-        expect(updatedChip?.collapsedOptionsPopover).toEqual(expect.objectContaining({
-            selectedOptionId: 'hidden',
-        }));
-
-        const updatedChipScreen = await renderScreen(updatedChip.render({
-                chipStyle: () => null,
-                iconColor: '#000',
-                showLabel: true,
-                textStyle: {},
-                countTextStyle: {},
-                popoverAnchorRef: { current: null },
-            }));
-        expect(updatedChipScreen.getTextContent()).toContain('windowsRemoteSessionLaunchMode.shortHidden');
+        expect(windowsChip).toBeUndefined();
     });
 
     it('enables slash autocomplete for provider-independent new-session commands', async () => {

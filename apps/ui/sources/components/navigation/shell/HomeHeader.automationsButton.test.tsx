@@ -69,6 +69,10 @@ vi.mock('@/components/navigation/Header', () => ({
         ),
 }));
 
+vi.mock('@/components/ui/feedback/AppUpdateStatusTag', () => ({
+    AppUpdateStatusTag: (props: Record<string, unknown>) => React.createElement('AppUpdateStatusTag', props),
+}));
+
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => ({ enabled: automationsSupportState.enabled }),
 }));
@@ -105,5 +109,15 @@ describe('HomeHeader automations button', () => {
         tree = (await renderScreen(<HomeHeader />)).tree;
 
         expect(() => findPressableByLabel(tree!, 'Open automations')).toThrow();
+    });
+
+    it('uses a compact update tag in the mobile logo slot', async () => {
+        const { HomeHeader } = await import('./HomeHeader');
+
+        const screen = await renderScreen(<HomeHeader />);
+        const updateTag = screen.tree.findByType('AppUpdateStatusTag' as never);
+
+        expect(updateTag.props.labelVariant).toBe('short');
+        expect(updateTag.props.fallback).toBeTruthy();
     });
 });

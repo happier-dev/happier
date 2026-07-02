@@ -21,6 +21,7 @@ const createDefaultActionExecutorSpy = vi.fn();
 let replayEnabled = true;
 let copyButtonsVisible = true;
 let sessionMetadata: any = { machineId: 'm1' };
+let useSessionCallCount = 0;
 let projectForSession: any = null;
 let machinesState: Record<string, any> = {};
 
@@ -127,22 +128,30 @@ installMessageViewCommonModuleMocks({
         if (key === 'toolViewTimelineChromeMode') return 'cards';
         return null;
       },
-      useSession: () => ({
-        id: 's1',
-        seq: 1,
-        createdAt: 0,
-        updatedAt: 0,
-        active: true,
-        activeAt: 0,
-        serverId: 'server-explicit',
+      useSession: () => {
+        useSessionCallCount += 1;
+        return {
+          id: 's1',
+          seq: 1,
+          createdAt: 0,
+          updatedAt: 0,
+          active: true,
+          activeAt: 0,
+          serverId: 'server-explicit',
+          metadata: sessionMetadata,
+          metadataVersion: 1,
+          agentState: null,
+          agentStateVersion: 1,
+          thinking: false,
+          thinkingAt: 0,
+          presence: 'online',
+        };
+      },
+      useSessionForkSupportSource: () => ({
         metadata: sessionMetadata,
-        metadataVersion: 1,
-        agentState: null,
-        agentStateVersion: 1,
-        thinking: false,
-        thinkingAt: 0,
-        presence: 'online',
+        serverId: 'server-explicit',
       }),
+      useSessionWorkspacePath: () => projectForSession?.key?.rootPath ?? sessionMetadata?.path ?? null,
       useSessionMessagesById: () => ({}),
       useSessionMessagesReducerState: () => ({} as any),
       storage: createStorageStoreMock({
@@ -270,6 +279,7 @@ describe('MessageView (fork button)', () => {
     replayEnabled = true;
     copyButtonsVisible = true;
     sessionMetadata = { machineId: 'm1' };
+    useSessionCallCount = 0;
     projectForSession = null;
     machinesState = {};
   });
@@ -301,7 +311,7 @@ describe('MessageView (fork button)', () => {
     const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
     const actionContainer = getActionContainer(screen, 'm2');
-    const rowContainer = findAncestor(actionContainer, (node: any) => typeof node.props?.onPointerEnter === 'function');
+    const rowContainer = findAncestor(actionContainer, (node: any) => typeof node.props?.onHoverIn === 'function');
     expect(rowContainer).toBeTruthy();
     expect(rowContainer?.props.pointerEvents).toBeUndefined();
   });
@@ -332,6 +342,17 @@ describe('MessageView (fork button)', () => {
     const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
     assertForkButtonPrecedesCopyButton(screen, 'm1');
+  });
+
+  it('renders fork controls without subscribing to the full session object', async () => {
+    const { MessageView } = await import('./MessageView');
+
+    const message: any = { kind: 'agent-text', id: 'm-narrow', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
+
+    const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+    expect(screen.findByTestId('transcript-message-fork:m-narrow')).toBeTruthy();
+    expect(useSessionCallCount).toBe(0);
   });
 
   it('renders fork button for user-text messages (left of copy)', async () => {
@@ -475,7 +496,7 @@ describe('MessageView (fork button)', () => {
 
     const forkButton = screen.findByTestId('transcript-message-fork:m1');
     expect(forkButton).toBeTruthy();
-    expect(screen.findAllByType('ActivityIndicator' as any)).toHaveLength(1);
+    expect(forkButton?.findAllByProps({ accessibilityRole: 'progressbar' }).length).toBeGreaterThan(0);
 
     await act(async () => {
       resolveFork?.({ ok: true, childSessionId: 'child-loading' });

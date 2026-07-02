@@ -1,5 +1,6 @@
 import React from 'react';
 import { afterEach } from 'vitest';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
@@ -43,6 +44,73 @@ describe('useMessagesByIds', () => {
             });
 
             const first = hook.getCurrent();
+            const second = await hook.rerender();
+            expect(second).toBe(first);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('keeps the selected array stable when an unrelated message changes', async () => {
+        const previousState = storage.getState();
+        try {
+            const messagesById = {
+                'm-1': { id: 'm-1', kind: 'tool-call', localId: null, createdAt: 1, tool: { id: 'tool-1', state: 'completed' }, children: [] } as any,
+                'm-2': { id: 'm-2', kind: 'tool-call', localId: null, createdAt: 2, tool: { id: 'tool-2', state: 'completed' }, children: [] } as any,
+                'm-3': { id: 'm-3', kind: 'agent-text', localId: null, createdAt: 3, text: 'before', isThinking: true } as any,
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-1': {
+                        messageIdsOldestFirst: ['m-1', 'm-2', 'm-3'],
+                        messagesById,
+                        messagesMap: messagesById,
+                        reducerState: {} as any,
+                        latestThinkingMessageId: 'm-3',
+                        latestThinkingMessageActivityAtMs: 1,
+                        messagesVersion: 1,
+                        isLoaded: true,
+                    },
+                },
+            }));
+
+            const ids = ['m-1', 'm-2'] as const;
+            const hook = await renderHook(() => useMessagesByIds('s-1', ids), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            const first = hook.getCurrent();
+
+            await act(async () => {
+                storage.setState((state) => {
+                    const session = state.sessionMessages['s-1']!;
+                    const nextMessagesById = {
+                        ...session.messagesById,
+                        'm-3': {
+                            ...session.messagesById['m-3'],
+                            text: 'after',
+                        } as any,
+                    };
+                    return {
+                        ...state,
+                        sessionMessages: {
+                            ...state.sessionMessages,
+                            's-1': {
+                                ...session,
+                                messagesById: nextMessagesById,
+                                messagesMap: nextMessagesById,
+                                messagesVersion: session.messagesVersion + 1,
+                            },
+                        },
+                    };
+                });
+            });
+
             const second = await hook.rerender();
             expect(second).toBe(first);
 

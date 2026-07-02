@@ -1,10 +1,17 @@
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
-import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import {
+  areServerProfileIdentifiersEquivalent,
+  getServerProfileById,
+  resolveServerProfileScopeIdForIdentifier,
+} from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 import type { ScopedRpcSessionEncryptionContext } from './serverScopedRpcTypes';
-import { normalizeServerId } from './normalizeServerId';
+
+function normalizeId(raw: unknown): string {
+  return String(raw ?? '').trim();
+}
 
 export type ResolvedServerSessionRpcContext =
   | Readonly<{ scope: 'active'; timeoutMs: number }>
@@ -43,14 +50,16 @@ export async function resolveServerScopedSessionContext(params: Readonly<{
   timeoutMs?: number;
   preferScoped?: boolean;
 }>): Promise<ResolvedServerSessionRpcContext> {
-  const targetServerId = normalizeServerId(params.serverId);
+  const targetServerId = normalizeId(params.serverId);
   const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 30_000;
   const activeSnapshot = getActiveServerSnapshot();
 
-  if (!targetServerId || targetServerId === normalizeServerId(activeSnapshot.serverId)) {
+  const activeServerId = normalizeId(activeSnapshot.serverId);
+  const targetsActiveServer = !targetServerId || areServerProfileIdentifiersEquivalent(targetServerId, activeServerId);
+  if (targetsActiveServer) {
     if (params.preferScoped === true) {
       return await buildScopedContext({
-        serverId: normalizeServerId(activeSnapshot.serverId) ?? '',
+        serverId: activeServerId,
         serverUrl: activeSnapshot.serverUrl,
         timeoutMs,
       });
@@ -58,14 +67,14 @@ export async function resolveServerScopedSessionContext(params: Readonly<{
     return { scope: 'active', timeoutMs };
   }
 
-  const profiles = listServerProfiles();
-  const targetProfile = profiles.find((profile) => normalizeServerId(profile.id) === targetServerId) ?? null;
+  const resolvedTargetServerId = resolveServerProfileScopeIdForIdentifier(targetServerId);
+  const targetProfile = getServerProfileById(resolvedTargetServerId);
   if (!targetProfile) {
-    throw new Error(`Target server profile not found for serverId "${targetServerId}"`);
+    throw new Error(`Target server profile not found for serverId "${resolvedTargetServerId}"`);
   }
 
   return await buildScopedContext({
-    serverId: targetServerId,
+    serverId: resolvedTargetServerId,
     serverUrl: targetProfile.serverUrl,
     timeoutMs,
   });

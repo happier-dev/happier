@@ -116,6 +116,12 @@ export const UI_FEATURE_REGISTRY = {
             icon: { ioniconName: 'analytics-outline', color: '#34C759' },
         },
     },
+    'connectedServices.accountGroups': {
+        settingsToggle: undefined,
+    },
+    'connectedServices.accountFallback': {
+        settingsToggle: undefined,
+    },
     channelBridges: {
         settingsToggle: {
             showInSettings: true,
@@ -157,8 +163,8 @@ export const UI_FEATURE_REGISTRY = {
     'sessions.folders': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: false,
+            isExperimental: false,
+            defaultEnabled: true,
             serverVisibilityScope: 'main_selection',
             titleKey: 'settingsFeatures.expSessionsFolders',
             subtitleKey: 'settingsFeatures.expSessionsFoldersSubtitle',
@@ -166,6 +172,9 @@ export const UI_FEATURE_REGISTRY = {
         },
     },
     'sessions.handoff': {
+        settingsToggle: undefined,
+    },
+    'sessions.usageLimitRecovery': {
         settingsToggle: undefined,
     },
     machines: {
@@ -204,6 +213,39 @@ export const UI_FEATURE_REGISTRY = {
     'machines.rpc.directPeer': {
         settingsToggle: undefined,
     },
+    localServices: {
+        settingsToggle: undefined,
+    },
+    'localServices.inventory': {
+        settingsToggle: undefined,
+    },
+    'localServices.managed': {
+        settingsToggle: undefined,
+    },
+    'localServices.preview': {
+        settingsToggle: undefined,
+    },
+    'localServices.publicPreview': {
+        settingsToggle: undefined,
+    },
+    browser: {
+        settingsToggle: undefined,
+    },
+    'browser.viewTargets': {
+        settingsToggle: undefined,
+    },
+    'browser.internal': {
+        settingsToggle: undefined,
+    },
+    'browser.sidecar': {
+        settingsToggle: undefined,
+    },
+    devices: {
+        settingsToggle: undefined,
+    },
+    'devices.simulatorPreview': {
+        settingsToggle: undefined,
+    },
     'social.friends': {
         settingsToggle: {
             showInSettings: true,
@@ -233,12 +275,30 @@ export const UI_FEATURE_REGISTRY = {
     'sessions.direct': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: false,
+            isExperimental: false,
+            defaultEnabled: true,
             titleKey: 'settingsFeatures.expSessionsDirect',
             subtitleKey: 'settingsFeatures.expSessionsDirectSubtitle',
             icon: { ioniconName: 'albums-outline', color: '#34C759' },
         },
+    },
+    'providers.claude.unifiedTerminal': {
+        settingsToggle: undefined,
+    },
+    'providers.claude.unifiedTerminal.tuiRuntimeControl': {
+        settingsToggle: undefined,
+    },
+    'providers.codex.appServer.goals': {
+        settingsToggle: undefined,
+    },
+    'providers.codex.appServer.plugins': {
+        settingsToggle: undefined,
+    },
+    'providers.codex.appServer.structuredInput': {
+        settingsToggle: undefined,
+    },
+    'providers.codex.appServer.permissionProfiles': {
+        settingsToggle: undefined,
     },
     'auth.recovery.providerReset': {
         settingsToggle: undefined,
@@ -325,8 +385,8 @@ export const UI_FEATURE_REGISTRY = {
     'files.reviewComments': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: false,
+            isExperimental: false,
+            defaultEnabled: true,
             titleKey: 'settingsFeatures.expFilesReviewComments',
             subtitleKey: 'settingsFeatures.expFilesReviewCommentsSubtitle',
             icon: { ioniconName: 'chatbox-ellipses-outline', color: '#34C759' },
@@ -345,8 +405,8 @@ export const UI_FEATURE_REGISTRY = {
     'files.syntaxHighlighting.advanced': {
         settingsToggle: {
             showInSettings: true,
-            isExperimental: true,
-            defaultEnabled: false,
+            isExperimental: false,
+            defaultEnabled: true,
             titleKey: 'settingsFeatures.expFilesAdvancedSyntaxHighlighting',
             subtitleKey: 'settingsFeatures.expFilesAdvancedSyntaxHighlightingSubtitle',
             icon: { ioniconName: 'sparkles-outline', color: '#AF52DE' },
@@ -383,6 +443,16 @@ export const UI_FEATURE_REGISTRY = {
             titleKey: 'settingsFeatures.expFilesEditor',
             subtitleKey: 'settingsFeatures.expFilesEditorSubtitle',
             icon: { ioniconName: 'create-outline', color: '#FF9500' },
+        },
+    },
+    'files.markdownRichEditor': {
+        settingsToggle: {
+            showInSettings: true,
+            isExperimental: true,
+            defaultEnabled: false,
+            titleKey: 'settingsFeatures.expMarkdownRichEditor',
+            subtitleKey: 'settingsFeatures.expMarkdownRichEditorSubtitle',
+            icon: { ioniconName: 'document-text-outline', color: '#AF52DE' },
         },
     },
     'zen.navigation': {

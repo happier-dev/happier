@@ -4,11 +4,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
+import { t } from '@/text';
 import { useAppUpdateStatus } from '@/updates/useAppUpdateStatus';
 
 import { AppUpdateStatusPopover } from './AppUpdateStatusPopover';
 
 export type AppUpdateStatusTagProps = Readonly<{
+    fallback?: React.ReactNode;
+    labelVariant?: 'full' | 'short';
     testID?: string;
 }>;
 
@@ -51,7 +54,7 @@ export function AppUpdateStatusTag(props: AppUpdateStatusTagProps) {
     const anchorRef = React.useRef<any>(null);
 
     if (!model.visible) {
-        return null;
+        return props.fallback ? <>{props.fallback}</> : null;
     }
 
     const toneColor = resolveToneColor(theme, model.tone);
@@ -68,7 +71,7 @@ export function AppUpdateStatusTag(props: AppUpdateStatusTagProps) {
             >
                 <Ionicons name={model.iconName} size={14} color={toneColor} />
                 <Text style={[styles.label, { color: toneColor }]} numberOfLines={1}>
-                    {model.label}
+                    {props.labelVariant === 'short' ? t('updateBanner.updateShort') : model.label}
                 </Text>
             </Pressable>
             <AppUpdateStatusPopover

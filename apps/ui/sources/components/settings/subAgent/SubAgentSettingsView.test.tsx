@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createProviderSettingsRoute } from '@/agents/providers/shared/providerSettingsRoutes';
 import { renderSettingsView } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
@@ -238,7 +239,7 @@ describe('SubAgentSettingsView', () => {
                     id: 'claude-team-settings',
                     title: 'Agent Teams',
                     subtitle: 'Open Claude provider settings',
-                    route: '/(app)/settings/providers/claude',
+                    route: createProviderSettingsRoute('claude'),
                     iconIonName: 'people-outline',
                 }],
             },
@@ -252,6 +253,6 @@ describe('SubAgentSettingsView', () => {
 
         screen.pressRowByTitle('Agent Teams');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/providers/claude');
+        expect(routerPushSpy).toHaveBeenCalledWith(createProviderSettingsRoute('claude'));
     });
 });

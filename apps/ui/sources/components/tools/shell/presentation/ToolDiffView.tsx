@@ -5,6 +5,7 @@ import { useSetting, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/sta
 import { resolveInlineDiffVirtualization } from '@/components/ui/code/diff/resolveInlineDiffVirtualization';
 import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
 import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
+import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
@@ -82,7 +83,7 @@ export const ToolDiffView = React.memo<ToolDiffViewProps>(({
     });
 
     return (
-        <View style={[{ flex: 1, ...(style ?? null) }, virtualized ? { maxHeight: maxVirtualizedHeight } : null]}>
+        <View style={[style, virtualized ? resolveInlineDiffVirtualizedViewportStyle(maxVirtualizedHeight) : null]}>
             <DiffViewer
                 mode="text"
                 filePath={filePath}

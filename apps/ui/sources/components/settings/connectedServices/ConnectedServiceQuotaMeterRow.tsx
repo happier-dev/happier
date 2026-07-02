@@ -5,25 +5,29 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import type { ConnectedServiceQuotaMeterV1 } from '@happier-dev/protocol';
 
 import { clampQuotaPct, deriveQuotaUtilizationPct } from '@/sync/domains/connectedServices/deriveQuotaUtilizationPct';
+import { t } from '@/text';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
 function formatResetCountdown(nowMs: number, resetsAtMs: number | null): string | null {
   if (!resetsAtMs) return null;
   const delta = resetsAtMs - nowMs;
-  if (!Number.isFinite(delta) || delta <= 0) return 'now';
+  if (!Number.isFinite(delta) || delta <= 0) return t('connectedServices.quota.duration.now');
 
   const totalMinutes = Math.floor(delta / 60000);
   const days = Math.floor(totalMinutes / (60 * 24));
   const hours = Math.floor((totalMinutes - days * 60 * 24) / 60);
   const minutes = totalMinutes - days * 60 * 24 - hours * 60;
 
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
+  if (days > 0) return t('connectedServices.quota.duration.daysHours', { days, hours });
+  if (hours > 0) return minutes > 0
+    ? t('connectedServices.quota.duration.hoursMinutes', { hours, minutes })
+    : t('connectedServices.quota.duration.hours', { hours });
+  return t('connectedServices.quota.duration.minutes', { minutes });
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -46,15 +50,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.state.success.foreground,
   },
   subtitleText: {
-    fontSize: 12,
-    lineHeight: 16,
+    ...Typography.rowMeta(),
     color: theme.colors.text.secondary,
   },
   rightText: {
     minWidth: 74,
     textAlign: 'right',
-    fontSize: 12,
-    lineHeight: 16,
+    ...Typography.rowMeta(),
+    ...Typography.tabular(),
     color: theme.colors.text.secondary,
   },
 }));
@@ -69,21 +72,27 @@ export const ConnectedServiceQuotaMeterRow = React.memo(function ConnectedServic
   const styles = stylesheet;
 
   const utilization = deriveQuotaUtilizationPct(props.meter);
-  const remaining = utilization === null ? null : clampQuotaPct(100 - utilization);
+  const remaining = typeof props.meter.remainingPct === 'number' && Number.isFinite(props.meter.remainingPct)
+    ? clampQuotaPct(props.meter.remainingPct)
+    : utilization === null ? null : clampQuotaPct(100 - utilization);
   const remainingText = remaining === null ? '—' : `${Math.round(remaining)}%`;
-  const resetText = formatResetCountdown(props.nowMs, props.meter.resetsAt);
-  const right = resetText ? `${remainingText}  ${resetText}` : remainingText;
+  const resetText = formatResetCountdown(props.nowMs, props.meter.resetAtMs ?? props.meter.resetsAt);
+  const right = remaining === null
+    ? remainingText
+    : resetText
+      ? t('connectedServices.quota.remainingWithReset', { percent: remainingText, reset: resetText })
+      : t('connectedServices.quota.remaining', { percent: remainingText });
 
   const usageText =
     typeof props.meter.used === 'number' && typeof props.meter.limit === 'number'
-      ? `${props.meter.used}/${props.meter.limit}`
+      ? t('connectedServices.quota.usageCount', { used: props.meter.used, limit: props.meter.limit })
       : null;
 
   const subtitle = (
     <View>
       <View style={styles.subtitleRow}>
         <View style={styles.barOuter}>
-          <View style={[styles.barInner, { width: `${utilization ?? 0}%` }]} />
+          <View style={[styles.barInner, { width: `${remaining ?? 0}%` }]} />
         </View>
         <Text style={styles.rightText}>{right}</Text>
       </View>

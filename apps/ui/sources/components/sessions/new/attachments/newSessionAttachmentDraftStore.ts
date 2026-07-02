@@ -1,14 +1,12 @@
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
+import {
+    clearAttachmentDraftsForKey,
+    clearAttachmentDraftsForKeyPrefix,
+    readAttachmentDraftsForKey,
+    writeAttachmentDraftsForKey,
+} from '@/components/sessions/attachments/attachmentDraftMemoryStore';
 
-type NewSessionAttachmentDraftStoreEntry = Readonly<{
-    drafts: readonly AttachmentDraft[];
-    updatedAt: number;
-}>;
-
-const NEW_SESSION_ATTACHMENT_DRAFT_MAX_AGE_MS = 10 * 60 * 1000;
-const NEW_SESSION_ATTACHMENT_DRAFT_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
-
-const newSessionAttachmentDraftStore = new Map<string, NewSessionAttachmentDraftStoreEntry>();
+const NEW_SESSION_ATTACHMENT_DRAFT_KEY_PREFIX = 'new-session:';
 
 function normalizeFlowId(flowId: string | null | undefined): string | null {
     if (typeof flowId !== 'string') return null;
@@ -16,28 +14,15 @@ function normalizeFlowId(flowId: string | null | undefined): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
-function cloneDrafts(drafts: readonly AttachmentDraft[]): readonly AttachmentDraft[] {
-    return drafts.map((draft) => ({ ...draft }));
+function newSessionAttachmentDraftKey(flowId: string): string {
+    return `${NEW_SESSION_ATTACHMENT_DRAFT_KEY_PREFIX}${flowId}`;
 }
-
-function cleanupStaleEntries(now: number = Date.now()): void {
-    for (const [flowId, entry] of newSessionAttachmentDraftStore.entries()) {
-        if (now - entry.updatedAt <= NEW_SESSION_ATTACHMENT_DRAFT_MAX_AGE_MS) continue;
-        newSessionAttachmentDraftStore.delete(flowId);
-    }
-}
-
-setInterval(() => {
-    cleanupStaleEntries();
-}, NEW_SESSION_ATTACHMENT_DRAFT_CLEANUP_INTERVAL_MS);
 
 export function readNewSessionAttachmentDrafts(flowId: string | null | undefined): readonly AttachmentDraft[] {
     const normalizedFlowId = normalizeFlowId(flowId);
     if (!normalizedFlowId) return [];
 
-    cleanupStaleEntries();
-    const entry = newSessionAttachmentDraftStore.get(normalizedFlowId);
-    return entry ? cloneDrafts(entry.drafts) : [];
+    return readAttachmentDraftsForKey(newSessionAttachmentDraftKey(normalizedFlowId));
 }
 
 export function writeNewSessionAttachmentDrafts(
@@ -47,23 +32,15 @@ export function writeNewSessionAttachmentDrafts(
     const normalizedFlowId = normalizeFlowId(flowId);
     if (!normalizedFlowId) return;
 
-    if (drafts.length === 0) {
-        newSessionAttachmentDraftStore.delete(normalizedFlowId);
-        return;
-    }
-
-    newSessionAttachmentDraftStore.set(normalizedFlowId, {
-        drafts: cloneDrafts(drafts),
-        updatedAt: Date.now(),
-    });
+    writeAttachmentDraftsForKey(newSessionAttachmentDraftKey(normalizedFlowId), drafts);
 }
 
 export function clearNewSessionAttachmentDrafts(flowId: string | null | undefined): void {
     const normalizedFlowId = normalizeFlowId(flowId);
     if (!normalizedFlowId) return;
-    newSessionAttachmentDraftStore.delete(normalizedFlowId);
+    clearAttachmentDraftsForKey(newSessionAttachmentDraftKey(normalizedFlowId));
 }
 
 export function clearAllNewSessionAttachmentDrafts(): void {
-    newSessionAttachmentDraftStore.clear();
+    clearAttachmentDraftsForKeyPrefix(NEW_SESSION_ATTACHMENT_DRAFT_KEY_PREFIX);
 }

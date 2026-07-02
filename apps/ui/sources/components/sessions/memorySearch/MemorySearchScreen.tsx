@@ -6,15 +6,15 @@ import { useRouter } from 'expo-router';
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { useAllSessions } from '@/sync/store/hooks';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { fetchDaemonMemoryStatus } from '@/sync/domains/memory/fetchDaemonMemoryStatus';
 import { getDaemonMemoryStatusStateTranslationKey } from '@/sync/domains/memory/getDaemonMemoryStatusStateTranslationKey';
 import { isDaemonMemorySearchUsable } from '@/sync/domains/memory/isDaemonMemorySearchUsable';
 import { presentDaemonMemoryStatus } from '@/sync/domains/memory/presentDaemonMemoryStatus';
+import { searchDaemonMemory } from '@/sync/domains/memory/searchDaemonMemory';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 
-import { MemorySearchResultV1Schema, RPC_METHODS, type MemorySearchHitV1, type MemoryStatusV1 } from '@happier-dev/protocol';
+import { type MemorySearchHitV1, type MemoryStatusV1 } from '@happier-dev/protocol';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
@@ -96,7 +96,7 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
     const memorySearchUsable = React.useMemo(() => isDaemonMemorySearchUsable(memoryStatus), [memoryStatus]);
     const showEnableCta =
         memoryStatusLoading !== true
-        && ((status === 'error' && errorCode === 'memory_disabled') || (memoryStatus?.enabled === false) || (statusPresentation != null && memorySearchUsable !== true));
+        && ((status === 'error' && errorCode === 'memory_disabled') || (memoryStatus?.enabled === false));
     const statusText = React.useMemo(() => {
         if (memoryStatusLoading && !statusPresentation) return t('common.loading');
         return t(getDaemonMemoryStatusStateTranslationKey(statusPresentation));
@@ -113,19 +113,14 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
         setStatus('loading');
         setErrorCode(null);
         try {
-            const raw = await machineRpcWithServerScope<unknown, unknown>({
+            const parsed = await searchDaemonMemory({
                 machineId,
                 serverId,
-                method: RPC_METHODS.DAEMON_MEMORY_SEARCH,
-                payload: {
-                    v: 1,
-                    query: q,
-                    scope: { type: 'global' },
-                    mode: 'auto',
-                    maxResults: 20,
-                },
+                query: q,
+                scope: { type: 'global' },
+                mode: 'auto',
+                maxResults: 20,
             });
-            const parsed = MemorySearchResultV1Schema.parse(raw);
             if (parsed.ok) {
                 setHits(parsed.hits);
                 setStatus('ready');
@@ -206,6 +201,8 @@ export const MemorySearchScreen = React.memo(function MemorySearchScreen() {
                 />
                 <Pressable
                     testID="memory-search-submit"
+                    disabled={!memorySearchUsable}
+                    accessibilityState={{ disabled: !memorySearchUsable }}
                     onPress={() => { void runSearch(); }}
                     style={{
                         paddingHorizontal: 12,

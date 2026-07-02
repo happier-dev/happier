@@ -6,6 +6,11 @@ import {
   installSessionActionsCommonModuleMocks,
   resetSessionActionsCommonModuleMockState,
 } from './sessionActionsTestHelpers';
+import {
+  SESSION_ACTION_MARK_READ_ID,
+  SESSION_ACTION_MARK_UNREAD_ID,
+} from './sessionActionIds';
+import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -413,6 +418,108 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(dropdownRenderCount.current).toBe(initialRenderCount);
   });
 
+  it('keeps the closed trigger stable when metadata only changes freshness timestamps', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+      sessionId="sess_1"
+      session={{
+        id: 'sess_1',
+        seq: 10,
+        metadata: {
+          machineId: 'machine_source',
+          flavor: 'claude',
+          summary: { text: 'same summary', updatedAt: 100 },
+          sessionModesV1: {
+            v: 1,
+            provider: 'claude',
+            updatedAt: 100,
+            currentModeId: 'default',
+            availableModes: [{ id: 'default', name: 'Default' }],
+          },
+          sessionModelsV1: {
+            v: 1,
+            provider: 'claude',
+            updatedAt: 100,
+            currentModelId: 'model-a',
+            availableModels: [{ id: 'model-a', name: 'Model A' }],
+          },
+        },
+      } as any}
+    />);
+
+    const initialRenderCount = dropdownRenderCount.current;
+    expect(initialRenderCount).toBeGreaterThan(0);
+
+    await screen.update(<SessionHeaderActionMenu
+      sessionId="sess_1"
+      session={{
+        id: 'sess_1',
+        seq: 10,
+        metadata: {
+          machineId: 'machine_source',
+          flavor: 'claude',
+          summary: { text: 'same summary', updatedAt: 200 },
+          sessionModesV1: {
+            v: 1,
+            provider: 'claude',
+            updatedAt: 200,
+            currentModeId: 'default',
+            availableModes: [{ id: 'default', name: 'Default' }],
+          },
+          sessionModelsV1: {
+            v: 1,
+            provider: 'claude',
+            updatedAt: 200,
+            currentModelId: 'model-a',
+            availableModels: [{ id: 'model-a', name: 'Model A' }],
+          },
+        },
+      } as any}
+    />);
+
+    expect(dropdownRenderCount.current).toBe(initialRenderCount);
+  });
+
+  it('refreshes closed menu props when active or owner changes action availability', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+      sessionId="sess_1"
+      session={{
+        id: 'sess_1',
+        seq: 10,
+        active: true,
+        owner: 'user_1',
+        accessLevel: undefined,
+        metadata: {
+          machineId: 'machine_source',
+          flavor: 'claude',
+        },
+      } as any}
+    />);
+
+    const initialRenderCount = dropdownRenderCount.current;
+    expect(initialRenderCount).toBeGreaterThan(0);
+
+    await screen.update(<SessionHeaderActionMenu
+      sessionId="sess_1"
+      session={{
+        id: 'sess_1',
+        seq: 10,
+        active: false,
+        owner: 'user_2',
+        accessLevel: undefined,
+        metadata: {
+          machineId: 'machine_source',
+          flavor: 'claude',
+        },
+      } as any}
+    />);
+
+    expect(dropdownRenderCount.current).toBeGreaterThan(initialRenderCount);
+  });
+
   it('prefers the reachable source machine id for handoff gating and flow context when session metadata is stale', async () => {
     reachableMachineTargetState.current = {
       machineId: 'machine_rebound',
@@ -489,6 +596,112 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(trigger.props.accessibilityLabel).toBe('session.actionMenu.openA11y');
   });
 
+  it('surfaces descriptor-backed plugin header actions and dispatches openSurface targets through the host', async () => {
+    const openPluginSurface = vi.fn();
+    const pluginUiProjection = {
+      ...EMPTY_PLUGIN_UI_PROJECTION,
+      translationsByPluginId: {
+        'acme.preview': {
+          id: 'translations:acme.preview',
+          pluginId: 'acme.preview',
+          contributionKind: 'translations',
+          locales: ['en'],
+          bundles: {
+            en: {
+              title: 'Preview',
+            },
+          },
+        },
+      },
+      sessionHeaderActionsById: {
+        'sessionHeaderAction:acme.preview:open-preview': {
+          id: 'sessionHeaderAction:acme.preview:open-preview',
+          pluginId: 'acme.preview',
+          contributionKind: 'sessionHeaderAction',
+          descriptorId: 'open-preview',
+          action: {
+            id: 'open-preview',
+            kind: 'openSurface',
+            labelKey: 'title',
+            target: { surfaceId: 'preview-pane' },
+          },
+          display: { titleKey: 'title', iconToken: 'preview' },
+        },
+        'sessionHeaderAction:acme.preview:hidden-preview': {
+          id: 'sessionHeaderAction:acme.preview:hidden-preview',
+          pluginId: 'acme.preview',
+          contributionKind: 'sessionHeaderAction',
+          descriptorId: 'hidden-preview',
+          action: {
+            id: 'hidden-preview',
+            kind: 'openSurface',
+            labelKey: 'title',
+            target: { surfaceId: 'hidden-pane' },
+          },
+          display: { titleKey: 'title', iconToken: 'preview' },
+          visibility: { operand: 'platform.is', value: 'web' },
+        },
+        'sessionHeaderAction:acme.preview:execute-preview': {
+          id: 'sessionHeaderAction:acme.preview:execute-preview',
+          pluginId: 'acme.preview',
+          contributionKind: 'sessionHeaderAction',
+          descriptorId: 'execute-preview',
+          action: {
+            id: 'execute-preview',
+            kind: 'executeAction',
+            labelKey: 'title',
+            target: { actionId: 'acme.preview.run' },
+          },
+          display: { titleKey: 'title', iconToken: 'action' },
+        },
+      },
+    };
+
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+      sessionId="sess_1"
+      session={{
+        id: 'sess_1',
+        metadata: {
+          machineId: 'machine_source',
+          flavor: 'claude',
+        },
+      } as any}
+      {...({ pluginUiProjection, onOpenPluginSurface: openPluginSurface } as any)}
+    />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'plugin-ui:sessionHeaderAction:acme.preview:open-preview',
+          title: 'Preview',
+        }),
+      ]),
+    );
+    expect(dropdown.props.items).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'plugin-ui:sessionHeaderAction:acme.preview:hidden-preview',
+        }),
+      ]),
+    );
+    expect(dropdown.props.items).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'plugin-ui:sessionHeaderAction:acme.preview:execute-preview',
+        }),
+      ]),
+    );
+
+    await act(async () => {
+      dropdown.props.onSelect('plugin-ui:sessionHeaderAction:acme.preview:open-preview');
+    });
+
+    expect(openPluginSurface).toHaveBeenCalledWith('preview-pane');
+  });
+
   it('surfaces manual mark-unread for read sessions and sends it through the selected server scope', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
@@ -498,6 +711,7 @@ describe('SessionHeaderActionMenu handoff', () => {
             id: 'sess_read_header',
             seq: 4,
             lastViewedSessionSeq: 4,
+            latestTurnStatus: 'completed',
             serverId: 'server-header',
             metadata: {
               machineId: 'machine_source',
@@ -507,10 +721,10 @@ describe('SessionHeaderActionMenu handoff', () => {
         />);
 
     const dropdown = screen.findByType('DropdownMenu' as any);
-    expect(dropdown.props.items.some((item: any) => item?.id === 'session.mark-unread')).toBe(true);
+    expect(dropdown.props.items.some((item: any) => item?.id === SESSION_ACTION_MARK_UNREAD_ID)).toBe(true);
 
     await act(async () => {
-      dropdown.props.onSelect('session.mark-unread');
+      dropdown.props.onSelect(SESSION_ACTION_MARK_UNREAD_ID);
     });
 
     expect(sessionSetManualReadStateWithServerScopeMock).toHaveBeenCalledWith(
@@ -518,6 +732,28 @@ describe('SessionHeaderActionMenu handoff', () => {
       'unread',
       { serverId: 'server_a' },
     );
+  });
+
+  it('does not surface manual read-state actions from non-terminal raw seq in the header menu', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+
+    const screen = await renderScreen(<SessionHeaderActionMenu
+          sessionId="sess_raw_seq_header"
+          session={{
+            id: 'sess_raw_seq_header',
+            seq: 5,
+            lastViewedSessionSeq: 4,
+            latestTurnStatus: 'in_progress',
+            serverId: 'server-header',
+            metadata: {
+              machineId: 'machine_source',
+              flavor: 'claude',
+            },
+          } as any}
+        />);
+
+    const dropdown = screen.findByType('DropdownMenu' as any);
+    expect(dropdown.props.items.some((item: any) => item?.id === SESSION_ACTION_MARK_UNREAD_ID || item?.id === SESSION_ACTION_MARK_READ_ID)).toBe(false);
   });
 
   it('hides manual read-state actions for archived sessions in the header menu', async () => {
@@ -538,7 +774,7 @@ describe('SessionHeaderActionMenu handoff', () => {
         />);
 
     const dropdown = screen.findByType('DropdownMenu' as any);
-    expect(dropdown.props.items.some((item: any) => item?.id === 'session.mark-unread' || item?.id === 'session.mark-read')).toBe(false);
+    expect(dropdown.props.items.some((item: any) => item?.id === SESSION_ACTION_MARK_UNREAD_ID || item?.id === SESSION_ACTION_MARK_READ_ID)).toBe(false);
   });
 
   it('threads the preferred session server id into the default action executor server lookup', async () => {
@@ -571,7 +807,7 @@ describe('SessionHeaderActionMenu handoff', () => {
           sessionId="sess_1"
           session={{
             id: 'sess_1',
-            serverId: 'server-explicit',
+            serverId: 'server-explicit-rerender',
             metadata: {
               machineId: 'machine_source',
               flavor: 'claude',

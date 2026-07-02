@@ -18,6 +18,10 @@ function normalizeTrimmedString(value: unknown): string | null {
     return trimmed || null;
 }
 
+function normalizeCodexHome(value: unknown): 'user' | 'connectedService' | undefined {
+    return value === 'user' || value === 'connectedService' ? value : undefined;
+}
+
 function resolveCodexRuntimeSourceAffinity(
     targetDirectSource: ExternalSessionsSource | Record<string, unknown>,
 ): Readonly<{
@@ -53,12 +57,12 @@ function buildCodexRuntimeDescriptor(input: Readonly<{
     const importedRuntimeDescriptor = readCanonicalRuntimeDescriptorV1ForProvider(input.targetRuntimeDescriptor, 'codex');
     if (importedRuntimeDescriptor) {
         return buildCodexAgentRuntimeDescriptor({
-            backendMode: importedRuntimeDescriptor.backendMode ?? 'appServer',
-            vendorSessionId: importedRuntimeDescriptor.vendorSessionId,
-            home: importedRuntimeDescriptor.home,
-            connectedServiceId: importedRuntimeDescriptor.connectedServiceId,
-            connectedServiceProfileId: importedRuntimeDescriptor.connectedServiceProfileId,
-            homePath: importedRuntimeDescriptor.homePath,
+            backendMode: normalizeCodexBackendMode(importedRuntimeDescriptor.backendMode) ?? 'appServer',
+            providerSessionId: normalizeTrimmedString(importedRuntimeDescriptor.providerSessionId),
+            home: normalizeCodexHome(importedRuntimeDescriptor.home),
+            connectedServiceId: normalizeTrimmedString(importedRuntimeDescriptor.connectedServiceId),
+            connectedServiceProfileId: normalizeTrimmedString(importedRuntimeDescriptor.connectedServiceProfileId),
+            homePath: normalizeTrimmedString(importedRuntimeDescriptor.homePath),
         });
     }
 
@@ -66,7 +70,7 @@ function buildCodexRuntimeDescriptor(input: Readonly<{
     if (!backendMode) return null;
     return buildCodexAgentRuntimeDescriptor({
         backendMode,
-        vendorSessionId: input.targetRemoteSessionId,
+        providerSessionId: input.targetRemoteSessionId,
         ...resolveCodexRuntimeSourceAffinity(input.targetDirectSource),
     });
 }

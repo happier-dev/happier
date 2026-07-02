@@ -304,7 +304,6 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
         </View>
     );
 
-    if (layout.kind === 'single') return mainRegion;
     const detailsDocked =
         layout.details === 'docked' && detailsPresence.present ? (
             <Animated.View
@@ -406,6 +405,8 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
     return (
         <View style={{ flex: 1, flexDirection: 'row' }}>
             {[
+                // Keep the main region under the same keyed parent for single and multi-pane
+                // layouts so opening or closing a docked pane does not remount the transcript.
                 shouldHideDockedMainRegion ? null : <React.Fragment key="main">{mainRegion}</React.Fragment>,
                 detailsDocked ? <React.Fragment key="details">{detailsDocked}</React.Fragment> : null,
                 rightDocked ? <React.Fragment key="right">{rightDocked}</React.Fragment> : null,

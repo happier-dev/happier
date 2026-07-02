@@ -1,28 +1,31 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
-const mockMachineRPC = vi.fn();
-const mockSessionRPC = vi.fn();
-const getStateSpy = vi.fn();
+const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
+const getStateSpy = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        machineRPC: mockMachineRPC,
-        sessionRPC: mockSessionRPC,
-    },
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-    storage: {
-        getState: () => getStateSpy(),
-    },
-});
+        storage: {
+            getState: getStateSpy,
+        },
+    });
 });
 
 describe('sessionScm (rpc timeouts)', () => {
+    afterEach(() => {
+        getStateSpy.mockReset();
+        machineRpcWithServerScopeMock.mockReset();
+    });
+
     it('uses an extended machine RPC timeout for commit diffs', async () => {
         const { sessionScmDiffCommit } = await import('./sessionScm');
 
@@ -31,28 +34,36 @@ describe('sessionScm (rpc timeouts)', () => {
                 scmGitRepoPreferredBackend: null,
             },
             sessions: {
-                s1: {
+                s1: createSessionFixture({
+                    id: 's1',
+                    active: true,
                     metadata: {
                         machineId: 'm1',
                         path: '/repo',
+                        host: 'tester.local',
                     },
-                },
+                }),
+            },
+            machines: {
+                m1: createMachineFixture({ id: 'm1' }),
             },
         });
 
-        mockMachineRPC.mockResolvedValue({
+        machineRpcWithServerScopeMock.mockResolvedValue({
             success: true,
             diff: 'diff --git a/a.txt b/a.txt',
         });
 
         await sessionScmDiffCommit('s1', { cwd: '.', commit: 'abc' });
 
-        expect(mockMachineRPC).toHaveBeenCalledWith(
-            'm1',
-            RPC_METHODS.SCM_DIFF_COMMIT,
-            expect.any(Object),
-            expect.objectContaining({ timeoutMs: expect.any(Number) }),
-        );
-        expect(mockMachineRPC.mock.calls[0]?.[3]?.timeoutMs).toBeGreaterThanOrEqual(60_000);
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
+            machineId: 'm1',
+            method: RPC_METHODS.SCM_DIFF_COMMIT,
+            payload: {
+                cwd: '/repo',
+                commit: 'abc',
+            },
+            timeoutMs: 120_000,
+        });
     });
 });

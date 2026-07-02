@@ -18,12 +18,16 @@ import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
 import { ActionSettingsTargetModeControl } from './ActionSettingsTargetModeControl';
+import { ActionSettingsToolExposureControl } from './ActionSettingsToolExposureControl';
 import {
     applyActionSettingsTargetControlState,
     resolveActionSettingsTargetControlState,
+    resolveActionSettingsToolExposureState,
     setActionEnabled,
+    setActionSettingsToolExposureMode,
     type ActionSettingsApprovalControlValue,
     type ActionSettingsBooleanControlValue,
+    type ActionSettingsToolExposureControlValue,
     type ActionSettingsTargetCategory,
 } from './actionSettingsTargets';
 import {
@@ -162,6 +166,24 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
         entry?.targets.filter((target) => targetMatchesSearch(target, searchQuery)) ?? []
     ), [entry?.targets, searchQuery]);
     const targetSections = React.useMemo(() => groupTargetsByCategory(filteredTargets), [filteredTargets]);
+    const toolExposureTargets = React.useMemo(() => (
+        filteredTargets
+            .map((target) => {
+                const available = target.state !== 'unavailable';
+                const exposureState = entry
+                    ? resolveActionSettingsToolExposureState({
+                        settings,
+                        actionId: entry.actionId,
+                        targetId: target.id,
+                        available,
+                    })
+                    : { kind: 'hidden' as const };
+                return exposureState.kind === 'visible'
+                    ? { target, available, exposureState }
+                    : null;
+            })
+            .filter((target): target is NonNullable<typeof target> => target !== null)
+    ), [entry, filteredTargets, settings]);
 
     const commitSettings = React.useCallback((next: unknown) => {
         setRawSettings(normalizeActionsSettings(next));
@@ -180,6 +202,18 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
         value: ActionSettingsApprovalControlValue | ActionSettingsBooleanControlValue,
     ) => {
         commitSettings(applyActionSettingsTargetControlState({
+            settings,
+            actionId: props.actionId,
+            targetId: target.id,
+            value,
+        }));
+    }, [commitSettings, props.actionId, settings]);
+
+    const handleToolExposureChange = React.useCallback((
+        target: ActionSettingsTargetEntry,
+        value: ActionSettingsToolExposureControlValue,
+    ) => {
+        commitSettings(setActionSettingsToolExposureMode({
             settings,
             actionId: props.actionId,
             targetId: target.id,
@@ -290,6 +324,27 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                         })}
                     </ItemGroup>
                 ))}
+
+                {toolExposureTargets.length > 0 ? (
+                    <ItemGroup
+                        title={t('settingsActions.toolExposure.title')}
+                        footer={t('settingsActions.toolExposure.footer')}
+                    >
+                        {toolExposureTargets.map(({ target, available, exposureState }) => {
+                            const exposureTestIDPrefix = `settings-actions:action:${entry.actionId}:target:${target.id}:tool-exposure`;
+                            return (
+                                <ActionSettingsToolExposureControl
+                                    key={target.id}
+                                    testIDPrefix={exposureTestIDPrefix}
+                                    surfaceTitle={t(target.titleKey)}
+                                    state={exposureState}
+                                    disabled={!entry.enabled || !available}
+                                    onChange={(value) => handleToolExposureChange(target, value)}
+                                />
+                            );
+                        })}
+                    </ItemGroup>
+                ) : null}
             </ItemList>
         </View>
     );
@@ -301,15 +356,25 @@ export const ActionSettingsDetailView = React.memo(function ActionSettingsDetail
     const actionTitle = actionId
         ? listActionSpecs().find((spec) => spec.id === actionId)?.title
         : null;
+    const invalidActionTitle = t('settingsActions.invalidActionTitle');
+    const fallbackActionTitle = t('common.actions');
+    const invalidActionScreenOptions = React.useMemo(
+        () => ({ headerTitle: invalidActionTitle }),
+        [invalidActionTitle],
+    );
+    const actionScreenOptions = React.useMemo(
+        () => ({ headerTitle: actionTitle ?? fallbackActionTitle }),
+        [actionTitle, fallbackActionTitle],
+    );
 
     if (!actionId) {
         return (
             <>
-                <Stack.Screen options={{ headerTitle: t('settingsActions.invalidActionTitle') }} />
+                <Stack.Screen options={invalidActionScreenOptions} />
                 <ItemList>
                     <ItemGroup>
                         <Item
-                            title={t('settingsActions.invalidActionTitle')}
+                            title={invalidActionTitle}
                             subtitle={t('settingsActions.invalidActionSubtitle')}
                             mode="info"
                             showChevron={false}
@@ -322,7 +387,7 @@ export const ActionSettingsDetailView = React.memo(function ActionSettingsDetail
 
     return (
         <>
-            <Stack.Screen options={{ headerTitle: actionTitle ?? t('common.actions') }} />
+            <Stack.Screen options={actionScreenOptions} />
             <ActionSettingsDetailContent actionId={actionId} />
         </>
     );

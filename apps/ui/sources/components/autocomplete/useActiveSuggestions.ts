@@ -1,16 +1,6 @@
 import { ValueSync } from '@/utils/sessions/sync';
 import * as React from 'react';
-import type { PromptInvocationSuggestionMetadata } from '@/sync/domains/input/slashCommands/promptInvocationSuggestion';
-
-type AutocompleteSuggestion = {
-    key: string;
-    text: string;
-    label?: string;
-    description?: string;
-    component?: React.ElementType;
-    rowHeight?: number;
-    promptInvocation?: PromptInvocationSuggestionMetadata;
-};
+import type { AutocompleteSuggestion } from './autocompleteTypes';
 
 interface SuggestionOptions {
     clampSelection?: boolean;  // If true, clamp instead of preserving exact position

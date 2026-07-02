@@ -35,6 +35,18 @@ function isDefaultSnapshot(snapshot: VoiceSessionSnapshot): boolean {
   return isVoiceSessionSnapshotEqual(snapshot, DEFAULT_SNAPSHOT);
 }
 
+function normalizeVoiceSessionSnapshot(snapshot: VoiceSessionSnapshot): VoiceSessionSnapshot {
+  return {
+    ...snapshot,
+    adapterId: normalizeNonEmptyString(snapshot.adapterId),
+    sessionId: normalizeNonEmptyString(snapshot.sessionId),
+    micMuted: snapshot.micMuted === true ? true : undefined,
+    // Ensure optional error fields clear when omitted from a later snapshot.
+    errorCode: snapshot.errorCode,
+    errorMessage: snapshot.errorMessage,
+  };
+}
+
 function readPublishedSnapshot(): VoiceSessionSnapshot {
   const { setSnapshot: _ignore, ...snapshot } = useVoiceSessionStore.getState();
   return snapshot;
@@ -51,15 +63,13 @@ function finalizeCanonicalSnapshot(nextSnapshot: VoiceSessionSnapshot): VoiceSes
 export const useVoiceSessionStore = create<VoiceSessionState>((set) => ({
   ...DEFAULT_SNAPSHOT,
   setSnapshot: (snapshot) =>
-    set(() => ({
-      ...snapshot,
-      adapterId: normalizeNonEmptyString(snapshot.adapterId),
-      sessionId: normalizeNonEmptyString(snapshot.sessionId),
-      ...(snapshot.micMuted === true ? { micMuted: true } : {}),
-      // Ensure optional error fields clear when omitted from a later snapshot.
-      errorCode: snapshot.errorCode,
-      errorMessage: snapshot.errorMessage,
-    })),
+    set((state) => {
+      const nextSnapshot = normalizeVoiceSessionSnapshot(snapshot);
+      if (isVoiceSessionSnapshotEqual(state, nextSnapshot)) {
+        return state;
+      }
+      return nextSnapshot;
+    }),
 }));
 
 export function getVoiceSessionSnapshot(): VoiceSessionSnapshot {

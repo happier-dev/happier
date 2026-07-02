@@ -78,6 +78,7 @@ export function useAgentInputSelectionOverlayController(params: Readonly<{
     hasEnvVarsPopover: boolean;
     hasAgentPickerOptions: boolean;
     extraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
+    retainKeyboardLift?: () => () => void;
 }>): Readonly<{
     activeSelectionOverlay: AgentInputSelectionOverlayState | null;
     isSelectionOverlayOpen: (id: AgentInputSelectionOverlayId) => boolean;
@@ -97,6 +98,18 @@ export function useAgentInputSelectionOverlayController(params: Readonly<{
     activeExtraCollapsedPopoverChip: AgentInputExtraActionChip | null;
 }> {
     const [activeSelectionOverlay, setActiveSelectionOverlay] = React.useState<AgentInputSelectionOverlayState | null>(null);
+    const releaseKeyboardLiftRef = React.useRef<(() => void) | null>(null);
+
+    const retainKeyboardLift = React.useCallback(() => {
+        if (releaseKeyboardLiftRef.current) return;
+        releaseKeyboardLiftRef.current = params.retainKeyboardLift?.() ?? null;
+    }, [params.retainKeyboardLift]);
+
+    const releaseKeyboardLift = React.useCallback(() => {
+        const release = releaseKeyboardLiftRef.current;
+        releaseKeyboardLiftRef.current = null;
+        release?.();
+    }, []);
 
     const activeExtraCollapsedPopoverChip = React.useMemo(() => {
         if (!isCollapsedExtraOverlay(activeSelectionOverlay)) return null;
@@ -127,6 +140,16 @@ export function useAgentInputSelectionOverlayController(params: Readonly<{
         params.shouldRenderSessionModeChip,
     ]);
 
+    React.useEffect(() => {
+        if (activeSelectionOverlay) {
+            retainKeyboardLift();
+            return;
+        }
+        releaseKeyboardLift();
+    }, [activeSelectionOverlay, releaseKeyboardLift, retainKeyboardLift]);
+
+    React.useEffect(() => releaseKeyboardLift, [releaseKeyboardLift]);
+
     const isSelectionOverlayOpen = React.useCallback((id: AgentInputSelectionOverlayId) => {
         return activeSelectionOverlay?.id === id;
     }, [activeSelectionOverlay]);
@@ -138,20 +161,24 @@ export function useAgentInputSelectionOverlayController(params: Readonly<{
     ) => {
         if (id === 'collapsedExtra') {
             if (!chipKey || chipKey.length === 0) {
+                releaseKeyboardLift();
                 setActiveSelectionOverlay(null);
                 return;
             }
+            retainKeyboardLift();
             setActiveSelectionOverlay({ id, anchor, chipKey });
             return;
         }
+        retainKeyboardLift();
         setActiveSelectionOverlay({ id, anchor });
-    }, []);
+    }, [releaseKeyboardLift, retainKeyboardLift]);
 
     const toggleSelectionOverlay = React.useCallback((
         id: AgentInputSelectionOverlayId,
         anchor: AgentInputPopoverAnchor,
         chipKey?: string,
     ) => {
+        retainKeyboardLift();
         setActiveSelectionOverlay((current) => {
             const collapsedChipKey = current?.id === 'collapsedExtra' ? current.chipKey : null;
             const matchesRequestedOverlay = current?.id === id
@@ -166,7 +193,7 @@ export function useAgentInputSelectionOverlayController(params: Readonly<{
             }
             return { id, anchor };
         });
-    }, []);
+    }, [retainKeyboardLift]);
 
     const closeSelectionOverlay = React.useCallback((id?: AgentInputSelectionOverlayId) => {
         setActiveSelectionOverlay((current) => {
@@ -179,8 +206,9 @@ export function useAgentInputSelectionOverlayController(params: Readonly<{
     }, []);
 
     const resetSelectionOverlays = React.useCallback(() => {
+        releaseKeyboardLift();
         setActiveSelectionOverlay(null);
-    }, []);
+    }, [releaseKeyboardLift]);
 
     return {
         activeSelectionOverlay,

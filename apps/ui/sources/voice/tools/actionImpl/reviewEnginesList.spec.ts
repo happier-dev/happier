@@ -59,6 +59,19 @@ describe('review engine voice tool', () => {
     state.settings.backendEnabledByTargetKey = {
       [buildBackendTargetKey({ kind: 'builtInAgent', agentId: 'gemini' })]: false,
     };
+    state.sessions = {
+      s1: {
+        id: 's1',
+        metadata: {
+          machineId: 'm1',
+        },
+      },
+    };
+    state.machines = {};
+    state.sessionListRenderables = {};
+    state.sessionListIndexByServerId = {};
+    state.concurrentSessionListCacheByServerId = {};
+    state.getProjectForSession = undefined;
     getMachineCapabilitiesSnapshot.mockReset();
     machineContributionRegistryProjectionDescribeMock.mockReset();
     machineContributionRegistryProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'not-supported' });
@@ -201,6 +214,57 @@ describe('review engine voice tool', () => {
     await listReviewEnginesForVoiceTool({ sessionId: 's1' });
 
     expect(getMachineCapabilitiesSnapshot).toHaveBeenCalledWith('lookup-machine', 'server-a');
+  });
+
+  it('loads review engine capabilities from the resolved session machine target before visible metadata', async () => {
+    state.sessions.s1 = {
+      id: 's1',
+      active: false,
+      metadata: {
+        machineId: 'm-old',
+        path: '/workspace/stale-repo',
+      },
+    };
+    state.sessionListRenderables = {
+      s1: {
+        id: 's1',
+        updatedAt: 321,
+        metadata: {
+          machineId: 'lookup-machine',
+          path: '/tmp/lookup',
+        },
+      },
+    };
+    state.sessionListIndexByServerId = {
+      'server-a': [
+        { type: 'session', sessionId: 's1', serverId: 'server-a', serverName: 'Server A' },
+      ],
+    };
+    state.machines = {
+      'm-old': {
+        id: 'm-old',
+        active: false,
+        activeAt: 1,
+        replacedByMachineId: 'm-target',
+        replacedAt: 2,
+        metadata: { host: 'old.local' },
+      },
+      'm-target': {
+        id: 'm-target',
+        active: true,
+        activeAt: 3,
+        metadata: { host: 'target.local' },
+      },
+    };
+    state.getProjectForSession = (sessionId: string) =>
+      sessionId === 's1'
+        ? { key: { machineId: 'm-target', rootPath: '/workspace/live-repo' } }
+        : null;
+
+    const { listReviewEnginesForVoiceTool } = await import('./reviewEnginesList');
+    await listReviewEnginesForVoiceTool({ sessionId: 's1' });
+
+    expect(getMachineCapabilitiesSnapshot).toHaveBeenCalledWith('m-target', 'server-a');
   });
 
   it('uses the owning server of the target session instead of the active server when resolving review engines', async () => {

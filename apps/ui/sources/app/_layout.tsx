@@ -4,7 +4,6 @@ import * as React from 'react';
 import * as SplashScreen from 'expo-splash-screen';
 import * as Fonts from 'expo-font';
 import { Asset } from 'expo-asset';
-import * as Notifications from 'expo-notifications';
 import { FontAwesome, Ionicons } from '@expo/vector-icons';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import {
@@ -25,7 +24,10 @@ import { tracking } from '@/track/tracking';
 import { SettingsAnalyticsRuntime } from '@/track/settingsAnalytics/SettingsAnalyticsRuntime';
 import { syncRestore } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
-import { isSessionSurfaceVisible } from '@/sync/domains/session/sessionSurfaceVisibility';
+import {
+    clearSessionSurfaceVisibilityForNonSessionRoute,
+    isSessionSurfaceVisible,
+} from '@/sync/domains/session/sessionSurfaceVisibility';
 import { NotificationsSettingsV1Schema } from '@happier-dev/protocol';
 import { useTrackScreens } from '@/track/useTrackScreens';
 import { RealtimeProvider } from '@/realtime/RealtimeProvider';
@@ -64,6 +66,8 @@ import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShell
 import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
 import { ThemePreferenceTransitionHost } from '@/components/settings/appearance/ThemePreferenceTransitionHost';
 import { OnboardingShowcaseAutoShowMount } from '@/onboarding/showcase';
+import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
+import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
 
 initializeSentryOnce();
 installTauriMcpBridgeOnce();
@@ -286,10 +290,10 @@ function installReactNativeViewRenderUnexpectedTextNodeCaptureOnce() {
     }
 }
 
-// Configure notification handler for foreground notifications.
-// Suppresses same-session notifications and respects the foregroundBehavior setting.
-Notifications.setNotificationHandler({
-    handleNotification: async (notification) => {
+function configureForegroundNotificationHandler(Notifications: ExpoNotificationsModule): void {
+    // Suppresses same-session notifications and respects the foregroundBehavior setting.
+    Notifications.setNotificationHandler({
+        handleNotification: async (notification) => {
         const { data } = notification.request.content;
         const notifSessionId = typeof data?.sessionId === 'string' ? data.sessionId : null;
 
@@ -313,11 +317,13 @@ Notifications.setNotificationHandler({
             default:
                 return { shouldPlaySound: true, shouldSetBadge: true, shouldShowBanner: true, shouldShowList: true };
         }
-    },
-});
+        },
+    });
+}
 
-// Setup Android notification channel (required for Android 8.0+)
-if (Platform.OS === 'android') {
+function configureAndroidNotificationChannels(Notifications: ExpoNotificationsModule): void {
+    if (Platform.OS !== 'android') return;
+
     const channelConfigs = [
         {
             id: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.defaultV1,
@@ -403,11 +409,11 @@ if (Platform.OS === 'android') {
     }
 }
 
-// Register interactive notification actions.
-//
-// Note: Expo docs recommend avoiding ':' and '-' in category identifiers.
-// Our category ids live in `@happier-dev/protocol` so the CLI push payload and app registration stay in sync.
-if (Platform.OS !== 'web') {
+function configureNotificationCategories(Notifications: ExpoNotificationsModule): void {
+    if (Platform.OS === 'web') return;
+
+    // Expo docs recommend avoiding ':' and '-' in category identifiers.
+    // Our category ids live in `@happier-dev/protocol` so the CLI push payload and app registration stay in sync.
     void Notifications.setNotificationCategoryAsync(PUSH_NOTIFICATION_CATEGORY_IDS.permissionRequestV1, [
         {
             identifier: PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1,
@@ -429,6 +435,17 @@ if (Platform.OS !== 'web') {
         },
     ]).catch(() => {});
 }
+
+void (async () => {
+    try {
+        const Notifications = await loadExpoNotifications();
+        configureForegroundNotificationHandler(Notifications);
+        configureAndroidNotificationChannels(Notifications);
+        configureNotificationCategories(Notifications);
+    } catch {
+        // Native notification modules are optional in local dev clients; startup must still render.
+    }
+})();
 
 export {
     // Catch any errors thrown by the Layout component.
@@ -729,6 +746,10 @@ function AppBoot(props: {
     const isTerminalConnectRoute = isTerminalConnectWebPathname(pathname);
 
     React.useEffect(() => {
+        clearSessionSurfaceVisibilityForNonSessionRoute(pathname);
+    }, [pathname]);
+
+    React.useEffect(() => {
         let cancelled = false;
         (async () => {
             let credentials: AuthCredentials | null = null;
@@ -808,13 +829,18 @@ function AppBoot(props: {
     // Boot
     //
 
+    const tauriDesktop = isTauriDesktop();
     const appShellChromeHost = resolveAppShellChromeHost({
         isAuthenticated: initState.credentials != null,
-        isTauriDesktop: isTauriDesktop(),
+        isWeb: Platform.OS === 'web',
+        isTauriDesktop: tauriDesktop,
         isTablet,
         isTerminalConnectRoute,
     });
     const effectiveAppShellChromeHost = isDesktopOverlayWindow ? 'none' : appShellChromeHost;
+    const shouldUseRootDesktopDragSurface =
+        effectiveAppShellChromeHost === 'unauth-shell'
+        || effectiveAppShellChromeHost === 'narrow-desktop-fallback';
 
     const appShell = (
         <View style={{ flex: 1, position: 'relative' }}>
@@ -841,6 +867,15 @@ function AppBoot(props: {
             </View>
         </View>
     );
+    const appShellWithRootDesktopDragSurface = shouldUseRootDesktopDragSurface ? (
+        <DesktopMainContentDragSurface
+            enabled={Platform.OS === 'web' && tauriDesktop}
+            leftOffsetPx={0}
+            style={{ flex: 1 }}
+        >
+            {appShell}
+        </DesktopMainContentDragSurface>
+    ) : appShell;
 
     let providers = (
         <SafeAreaProvider initialMetrics={initialWindowMetrics}>
@@ -855,7 +890,7 @@ function AppBoot(props: {
                                         <ThemePreferenceTransitionHost>
                                             <HorizontalSafeAreaWrapper>
                                                 <MainAppTabStateProvider>
-                                                    {appShell}
+                                                    {appShellWithRootDesktopDragSurface}
                                                 </MainAppTabStateProvider>
                                             </HorizontalSafeAreaWrapper>
                                         </ThemePreferenceTransitionHost>
@@ -878,21 +913,19 @@ function AppBoot(props: {
     }
 
     return (
-        <>
+        <AppCrashRecoveryBoundary
+            onRestart={props.onRestart}
+            onError={(error) => {
+                try {
+                    (Sentry as any).captureException?.(error);
+                } catch {
+                    // ignore
+                }
+            }}
+        >
             {!isTerminalConnectRoute ? <FaviconPermissionIndicator /> : null}
-            <AppCrashRecoveryBoundary
-                onRestart={props.onRestart}
-                onError={(error) => {
-                    try {
-                        (Sentry as any).captureException?.(error);
-                    } catch {
-                        // ignore
-                    }
-                }}
-            >
-                {providers}
-            </AppCrashRecoveryBoundary>
-        </>
+            {providers}
+        </AppCrashRecoveryBoundary>
     );
 }
 

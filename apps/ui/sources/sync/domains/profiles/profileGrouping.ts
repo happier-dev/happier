@@ -2,6 +2,7 @@ import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibil
 import { DEFAULT_PROFILES, getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import type { AgentId } from '@/agents/catalog/catalog';
 import { getProfileCompatibleAgentIds } from '@/sync/domains/profiles/profileUtils';
+import { isProfileEnabled, type ProfileEnabledById } from '@/sync/domains/profiles/profileEnablement';
 
 export interface ProfileGroups {
     favoriteProfiles: AIBackendProfile[];
@@ -35,16 +36,21 @@ export function buildProfileGroups({
     customProfiles,
     favoriteProfileIds,
     enabledAgentIds,
+    profileEnabledById,
+    includeDisabledProfiles = false,
 }: {
     customProfiles: AIBackendProfile[];
     favoriteProfileIds: string[];
     enabledAgentIds?: readonly AgentId[];
+    profileEnabledById?: ProfileEnabledById | null;
+    includeDisabledProfiles?: boolean;
 }): ProfileGroups {
     const builtInIds = new Set(DEFAULT_PROFILES.map((profile) => profile.id));
 
     const customById = new Map(customProfiles.map((profile) => [profile.id, profile] as const));
 
     const isVisible = (profile: AIBackendProfile): boolean => {
+        if (!includeDisabledProfiles && !isProfileEnabled(profile, profileEnabledById)) return false;
         if (!enabledAgentIds) return true;
         return getProfileCompatibleAgentIds(profile, enabledAgentIds).length > 0;
     };

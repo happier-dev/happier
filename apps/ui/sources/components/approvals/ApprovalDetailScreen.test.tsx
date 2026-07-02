@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import {
+    collectRenderedTestIds,
     createMachineFixture,
     createSessionFixture,
     renderScreen,
@@ -102,7 +103,7 @@ function createSessionFixtures() {
                 host: 'tester.local',
                 path: '/Users/leeroy/repo',
                 homeDir: '/Users/leeroy',
-                machineId: 'machine-stale',
+                machineId: 'machine-target',
             },
         }),
     } satisfies Record<string, Session>;
@@ -132,7 +133,7 @@ function createStorageState() {
                 active: false,
                 metadata: {
                     host: 'tester.local',
-                    machineId: 'machine-stale',
+                    machineId: 'machine-target',
                     path: '/Users/leeroy/repo',
                     homeDir: '/Users/leeroy',
                 } as Session['metadata'],
@@ -317,6 +318,18 @@ describe('ApprovalDetailScreen', () => {
         });
 
         expect(pushSpy).toHaveBeenCalledWith('/session/session-1');
+    });
+
+    it('places the primary approve action before the reject action', async () => {
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
+
+        const testIdOrder = collectRenderedTestIds(screen.tree.toJSON());
+
+        expect(testIdOrder.indexOf('approvals.approve')).toBeGreaterThanOrEqual(0);
+        expect(testIdOrder.indexOf('approvals.reject')).toBeGreaterThanOrEqual(0);
+        expect(testIdOrder.indexOf('approvals.approve')).toBeLessThan(testIdOrder.indexOf('approvals.reject'));
     });
 
     it('fetches the artifact body when the route opens without a cached artifact', async () => {

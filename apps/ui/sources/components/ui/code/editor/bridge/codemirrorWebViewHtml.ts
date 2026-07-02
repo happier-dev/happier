@@ -462,10 +462,12 @@ export function buildCodeMirrorWebViewHtml(params: Readonly<{
 
         function setDoc(nextDoc) {
           if (!view) return;
+          const normalizedDoc = nextDoc || '';
+          if (view.state.doc.toString() === normalizedDoc) return;
           applyingRemote = true;
           try {
             view.dispatch({
-              changes: { from: 0, to: view.state.doc.length, insert: nextDoc || '' },
+              changes: { from: 0, to: view.state.doc.length, insert: normalizedDoc },
             });
           } finally {
             applyingRemote = false;

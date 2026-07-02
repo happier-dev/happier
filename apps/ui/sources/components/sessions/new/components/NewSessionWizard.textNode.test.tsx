@@ -27,8 +27,11 @@ installNewSessionComponentsCommonModuleMocks({
 });
 
 vi.mock('react-native-keyboard-controller', () => ({
-    KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('KeyboardAvoidingView', props, props.children),
+    useKeyboardHandler: () => {},
+    useReanimatedKeyboardAnimation: () => ({
+        height: { value: 0 },
+        progress: { value: 0 },
+    }),
 }));
 
 vi.mock('expo-linear-gradient', () => ({
@@ -398,7 +401,7 @@ describe('NewSessionWizard', () => {
                 } as any}
             />);
 
-            expect(screen.findAllByType('KeyboardAvoidingView')).toHaveLength(0);
+            expect(screen.findByProps({ testID: 'new-session-wizard-composer-keyboard-host' })).toBeTruthy();
             expect(screen.findAllByType('View').some((node) => flattenStyle(node.props.style).flex === 0)).toBe(true);
         } finally {
             mockEnv.windowWidth = 800;
@@ -778,9 +781,9 @@ describe('NewSessionWizard', () => {
                         />);
 
             const allViews = screen.findAllByType('View');
-            expect(screen.findAllByType('KeyboardAvoidingView')).toHaveLength(0);
+            expect(screen.findByProps({ testID: 'new-session-wizard-composer-keyboard-host' })).toBeTruthy();
             expect(allViews.some((node) => flattenStyle(node.props.style).justifyContent === 'flex-end')).toBe(true);
-            expect(allViews.some((node) => flattenStyle(node.props.style).paddingTop === 12 && flattenStyle(node.props.style).paddingBottom === 56)).toBe(true);
+            expect(allViews.some((node) => flattenStyle(node.props.style).paddingTop === 12 && flattenStyle(node.props.style).paddingBottom === 8)).toBe(true);
         } finally {
             mockEnv.windowWidth = 800;
         }
@@ -1246,7 +1249,7 @@ describe('NewSessionWizard', () => {
         expect(refreshButton?.props.disabled).toBe(true);
         expect(refreshButton?.props.onPress).toBeUndefined();
         expect(modelSelectionPropsRef.current?.modelOptions).toEqual([]);
-        expect(screen.findAllByType('ActivityIndicator' as any).length).toBeGreaterThan(0);
+        expect(screen.tree.root.findAllByProps({ accessibilityRole: 'progressbar' }).length).toBeGreaterThan(0);
     });
 
     it('applies forced dropdown presentation to wizard machine, path, model, and permission sections', async () => {

@@ -65,7 +65,7 @@ describe('voiceAgentRunMetadata', () => {
 	      runId: 'run_1',
 	      backendTarget: claudeTarget,
 	      backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeTarget, vendorSessionId: 'vs_1' },
+      resumeHandle: { kind: 'provider_session.v1', backendTarget: claudeTarget, providerSessionId: 'vs_1' },
       updatedAtMs: 123,
     };
 
@@ -101,7 +101,7 @@ describe('voiceAgentRunMetadata', () => {
       runId: 'run_2',
       backendTarget: codexTarget,
       backendId: 'codex',
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: codexBackendTarget, vendorSessionId: 'vs_2' },
+      resumeHandle: { kind: 'provider_session.v1', backendTarget: codexBackendTarget, providerSessionId: 'vs_2' },
       streamId: 'stream_2',
       updatedAtMs: 999,
       welcomedEpoch: 4,
@@ -125,7 +125,7 @@ describe('voiceAgentRunMetadata', () => {
       runId: 'run_prev',
       backendTarget: claudeTarget,
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeBackendTarget, vendorSessionId: 'vs_prev' },
+      resumeHandle: { kind: 'provider_session.v1', backendTarget: claudeBackendTarget, providerSessionId: 'vs_prev' },
       streamId: 'stream_prev',
       updatedAtMs: 10,
     };
@@ -150,7 +150,7 @@ describe('voiceAgentRunMetadata', () => {
       runId: 'run_fresh',
       backendTarget: claudeTarget,
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeBackendTarget, vendorSessionId: 'vs_fresh' },
+      resumeHandle: { kind: 'provider_session.v1', backendTarget: claudeBackendTarget, providerSessionId: 'vs_fresh' },
       updatedAtMs: 20,
     });
 
@@ -166,7 +166,7 @@ describe('voiceAgentRunMetadata', () => {
 	      runId: 'run_1',
 	      backendTarget: claudeTarget,
 	      backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeBackendTarget, vendorSessionId: 'vs_1' },
+      resumeHandle: { kind: 'provider_session.v1', backendTarget: claudeBackendTarget, providerSessionId: 'vs_1' },
       updatedAtMs: 123,
     };
 
@@ -218,7 +218,7 @@ describe('voiceAgentRunMetadata', () => {
       runId: 'run_session',
       backendTarget: claudeTarget,
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeBackendTarget, vendorSessionId: 'vs_session' },
+      resumeHandle: { kind: 'provider_session.v1', backendTarget: claudeBackendTarget, providerSessionId: 'vs_session' },
       updatedAtMs: 456,
       welcomedEpoch: 3,
     });
@@ -242,7 +242,7 @@ describe('voiceAgentRunMetadata', () => {
       runId: 'run_raw',
       backendTarget: claudeTarget,
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeBackendTarget, vendorSessionId: 'vs_raw' },
+      resumeHandle: { kind: 'provider_session.v1', backendTarget: claudeBackendTarget, providerSessionId: 'vs_raw' },
       updatedAtMs: 111,
     };
     stateRef.current = {
@@ -259,7 +259,7 @@ describe('voiceAgentRunMetadata', () => {
                         runId: 'run_cached',
                         backendTarget: claudeTarget,
                         backendId: 'claude',
-                        resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeBackendTarget, vendorSessionId: 'vs_cached' },
+                        resumeHandle: { kind: 'provider_session.v1', backendTarget: claudeBackendTarget, providerSessionId: 'vs_cached' },
                         updatedAtMs: 222,
                     },
                 },
@@ -280,7 +280,7 @@ describe('voiceAgentRunMetadata', () => {
       runId: 'run_1',
       backendTarget: claudeTarget,
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: claudeBackendTarget, vendorSessionId: 'vs_1' },
+      resumeHandle: { kind: 'provider_session.v1', backendTarget: claudeBackendTarget, providerSessionId: 'vs_1' },
       updatedAtMs: 123,
       welcomedEpoch: 9,
     };

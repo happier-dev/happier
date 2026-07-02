@@ -3,8 +3,12 @@ import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
+import {
+    useEnsureSidechainsLoaded,
+    type SidechainHydrationStatus,
+} from '@/hooks/session/useEnsureSidechainsLoaded';
 import { useSessionSubagents } from '@/hooks/session/useSessionSubagents';
-import { useSession } from '@/sync/domains/state/storage';
+import { useSession, useSetting } from '@/sync/domains/state/storage';
 import { useSessionMessages, useSessionMessagesReducerState } from '@/sync/store/hooks';
 import { deriveSessionActiveSubagents } from '@/sync/domains/session/subagents/deriveSessionActiveSubagents';
 import { deriveSessionRecentSubagents } from '@/sync/domains/session/subagents/deriveSessionRecentSubagents';
@@ -24,6 +28,7 @@ import { resolveSessionSubagentFullRoute } from '@/components/sessions/agents/na
 import { resolveSessionSubagentAdvancedRoute } from '@/components/sessions/agents/navigation/resolveSessionSubagentAdvancedRoute';
 import { SessionSubagentList } from '@/components/sessions/agents/list/SessionSubagentList';
 import { SessionSubagentLaunchSection } from '@/components/sessions/agents/launch/SessionSubagentLaunchSection';
+import { resolveTranscriptToolCallsCollapsedPreviewCount } from '@/sync/domains/settings/transcriptToolCallsCollapsedPreviewCount';
 
 const stylesheet = StyleSheet.create(() => ({
     container: {
@@ -43,6 +48,34 @@ const stylesheet = StyleSheet.create(() => ({
     },
 }));
 
+function deriveRightPanelPreviewSidechainIds(params: Readonly<{
+    activeSubagents: readonly SessionSubagent[];
+    recentSubagents: readonly SessionSubagent[];
+    previewLimit: number;
+}>): readonly string[] {
+    if (params.previewLimit <= 0) return [];
+
+    const sidechainIds = new Set<string>();
+    const append = (subagent: SessionSubagent) => {
+        if (sidechainIds.size >= params.previewLimit) return;
+        const sidechainId = typeof subagent.transcript.sidechainId === 'string'
+            ? subagent.transcript.sidechainId.trim()
+            : '';
+        if (!sidechainId) return;
+        sidechainIds.add(sidechainId);
+    };
+
+    for (const subagent of params.activeSubagents) append(subagent);
+    for (const subagent of params.recentSubagents) append(subagent);
+    return [...sidechainIds];
+}
+
+function resolveRightPanelPreviewFallback(status: SidechainHydrationStatus | undefined): string | null {
+    if (status === 'loaded') return null;
+    if (status === 'error' || status === 'not_ready') return t('common.unavailable');
+    return t('common.loading');
+}
+
 export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ sessionId: string; scopeId: string }>) => {
     const styles = stylesheet;
     const router = useRouter();
@@ -51,6 +84,7 @@ export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ session
     const session = useSession(props.sessionId);
     const { messages } = useSessionMessages(props.sessionId);
     const reducerState = useSessionMessagesReducerState(props.sessionId);
+    const transcriptToolCallsCollapsedPreviewCount = useSetting('transcriptToolCallsCollapsedPreviewCount');
     const { subagents } = useSessionSubagents({
         sessionId: props.sessionId,
         session,
@@ -59,6 +93,19 @@ export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ session
 
     const activeSubagents = React.useMemo(() => deriveSessionActiveSubagents(subagents), [subagents]);
     const recentSubagents = React.useMemo(() => deriveSessionRecentSubagents(subagents), [subagents]);
+    const previewSidechainIds = React.useMemo(() => {
+        return deriveRightPanelPreviewSidechainIds({
+            activeSubagents,
+            recentSubagents,
+            previewLimit: resolveTranscriptToolCallsCollapsedPreviewCount(transcriptToolCallsCollapsedPreviewCount),
+        });
+    }, [activeSubagents, recentSubagents, transcriptToolCallsCollapsedPreviewCount]);
+    const previewSidechainIdsSet = React.useMemo(() => new Set(previewSidechainIds), [previewSidechainIds]);
+    const sidechainHydration = useEnsureSidechainsLoaded({
+        enabled: previewSidechainIds.length > 0,
+        sessionId: props.sessionId,
+        sidechainIds: previewSidechainIds,
+    });
     const activityPreviewById = React.useMemo(() => {
         const previews = new Map<string, string>();
         for (const subagent of subagents) {
@@ -66,11 +113,19 @@ export const SessionRightPanelAgentsView = React.memo((props: Readonly<{ session
                 subagent,
                 reducerState,
             });
-            if (!preview) continue;
-            previews.set(subagent.id, preview);
+            if (preview) {
+                previews.set(subagent.id, preview);
+                continue;
+            }
+            const sidechainId = typeof subagent.transcript.sidechainId === 'string'
+                ? subagent.transcript.sidechainId.trim()
+                : '';
+            if (!previewSidechainIdsSet.has(sidechainId)) continue;
+            const fallback = resolveRightPanelPreviewFallback(sidechainHydration.bySidechainId[sidechainId]?.status);
+            if (fallback) previews.set(subagent.id, fallback);
         }
         return previews;
-    }, [reducerState, subagents]);
+    }, [previewSidechainIdsSet, reducerState, sidechainHydration.bySidechainId, subagents]);
     const pendingPermissionById = React.useMemo(() => {
         const pending = new Map<string, boolean>();
         for (const subagent of subagents) {

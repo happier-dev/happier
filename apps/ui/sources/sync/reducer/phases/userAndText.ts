@@ -4,7 +4,6 @@ import type { ReducerState } from '../reducer';
 import type { ToolCall } from '../../domains/messages/messageTypes';
 import { clearAllMainMergeCursors, setStreamMergeCursor, setThinkingMergeCursor } from '../helpers/mergeCursors';
 import { mergeThinkingText, normalizeThinkingChunk } from '../helpers/thinkingText';
-import { cancelRunningTools } from '../helpers/cancelRunningApprovedTools';
 import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
 import { readStreamSegmentMetaV1 } from '../helpers/streamSegmentMeta';
 import { upsertStreamSegmentSnapshotMessage } from '../helpers/upsertStreamSegmentSnapshotMessage';
@@ -173,14 +172,6 @@ export function runUserAndTextPhase(params: Readonly<{
                         continue;
                     }
 
-                    if (c.text.trim() === 'No response requested.') {
-                        cancelRunningTools({
-                            state,
-                            changed,
-                            completedAt: msg.createdAt,
-                            reason: 'Request interrupted',
-                        });
-                    }
                     let mid = allocateId();
                     state.messages.set(mid, {
                         id: mid,

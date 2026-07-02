@@ -2,16 +2,54 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol';
+import {
+  buildProviderAccountUsageRecordId,
+  buildSystemSessionMetadataV1,
+} from '@happier-dev/protocol';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import {
+  computeExistingSessionComposerInputMaxHeight,
+  computeExistingSessionComposerPanelMaxHeight,
+} from '@/components/sessions/agentInput/inputMaxHeight';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
+import {
+  clearSessionDraftValuesForSession,
+  flushSessionDraftValues,
+  readSessionDraftValue,
+  resetSessionDraftValueCachesForTests,
+  writeSessionDraftValue,
+} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
+
+vi.mock('@/agents/registry/registryUiBehavior', () => ({
+  buildResumeCapabilityOptionsFromUiState: () => ({}),
+  buildNewSessionOptionsFromUiState: () => ({}),
+  canSelectAgentWithoutDetectedCli: () => false,
+  getNewSessionAgentInputExtraActionChips: () => [],
+  buildSpawnEnvironmentVariablesFromUiState: () => ({}),
+  buildResumeSessionExtrasFromUiState: () => null,
+  buildSpawnSessionExtrasFromUiState: () => null,
+  buildWakeResumeExtras: () => null,
+  getAgentResumeExperimentsFromSettings: () => null,
+  getNewSessionPreflightIssues: () => [],
+  getNewSessionRelevantInstallableDepKeys: () => [],
+  resolveAgentUiBehavior: () => ({}),
+  resolveAgentUiBehaviorFromFlavor: () => ({}),
+  supportsDetectedMcpConfigScan: () => false,
+  supportsEditableSessionGoals: () => false,
+}));
+vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
+  getResolvedBackendCatalogEntries: () => [],
+}));
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+  useDaemonMergedProjectionInputs: () => ({ inputs: null }),
+}));
 
 const machineExternalSessionStatusGetSpy = vi.hoisted(() => vi.fn());
 const machineExternalSessionAttachSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true, leaseId: 'lease-1', expiresAtMs: Date.now() + 60_000 })));
@@ -57,6 +95,14 @@ const resolveVoiceSessionComposerRoutingSpy = vi.hoisted(() => vi.fn((_params: a
 const featureEnabledState = vi.hoisted(() => ({ voice: false, 'files.reviewComments': false }));
 const settingsState = vi.hoisted(() => ({ current: {} as any }));
 const settingByKeyState = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
+const connectedServiceQuotaSnapshotsState = vi.hoisted(() => ({
+  current: {} as Record<string, unknown>,
+}));
+const useConnectedServiceQuotaSnapshotsSpy = vi.hoisted(() => vi.fn());
+const providerAccountUsageSnapshotsState = vi.hoisted(() => ({
+  current: {} as Record<string, unknown>,
+}));
+const useProviderAccountUsageSnapshotsSpy = vi.hoisted(() => vi.fn());
 const sessionUsageState = vi.hoisted(() => ({ current: null as null | {
   inputTokens: number;
   outputTokens: number;
@@ -71,6 +117,11 @@ const reviewCommentDraftsState = vi.hoisted(() => ({ current: [] as any[] }));
 const sessionMessagesState = vi.hoisted(() => ({ current: [] as any[] }));
 const focusState = vi.hoisted(() => ({ current: true }));
 const pathnameState = vi.hoisted(() => ({ current: '/session/s1' }));
+const windowDimensionsState = vi.hoisted(() => ({ current: { width: 1200, height: 800 } }));
+const composerKeyboardState = vi.hoisted(() => ({
+  availablePanelHeight: undefined as number | undefined,
+  keyboardHeight: 0,
+}));
 const storageState = vi.hoisted(() => ({
   sessions: {
     s1: {
@@ -100,6 +151,9 @@ const storageState = vi.hoisted(() => ({
     } as any,
   },
   artifacts: {} as Record<string, any>,
+  profile: {
+    connectedServicesV2: [],
+  } as any,
   settings: {} as Record<string, unknown>,
   concurrentSessionListCacheByServerId: {} as Record<string, unknown>,
 }));
@@ -107,6 +161,7 @@ const recipientStateState = vi.hoisted(() => ({
   current: {
     recipient: null as any,
     setManualRecipient: vi.fn(),
+    clearPersistedManualRecipient: vi.fn(),
     executionRunDelivery: 'steer_if_supported',
     setExecutionRunDelivery: vi.fn(),
   },
@@ -166,7 +221,7 @@ installSessionShellCommonModuleMocks({
       Text: 'Text',
       Pressable: 'Pressable',
       ActivityIndicator: 'ActivityIndicator',
-      useWindowDimensions: () => ({ width: 1200, height: 800 }),
+      useWindowDimensions: () => windowDimensionsState.current,
     });
   },
   unistyles: async () => {
@@ -226,6 +281,7 @@ installSessionShellCommonModuleMocks({
         useWorkspaceReviewCommentsDrafts: () => reviewCommentDraftsState.current,
         useSessionReviewCommentsDrafts: () => reviewCommentDraftsState.current,
         useSessionUsage: () => sessionUsageState.current,
+        useProfile: () => storageState.profile,
         useLocalSetting: readLocalSetting,
         useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [readLocalSetting(key), vi.fn<(value: LocalSettings[K]) => void>()],
         useSetting: readSetting,
@@ -316,15 +372,32 @@ vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: (featureId: string) => featureEnabledState[featureId as keyof typeof featureEnabledState] ?? false,
 }));
+vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots', () => ({
+  useConnectedServiceQuotaSnapshots: (profiles: unknown) => {
+    useConnectedServiceQuotaSnapshotsSpy(profiles);
+    return {
+      snapshotsByKey: connectedServiceQuotaSnapshotsState.current,
+      loadingByKey: {},
+    };
+  },
+}));
+vi.mock('@/hooks/server/connectedServices/useProviderAccountUsageSnapshots', () => ({
+  useProviderAccountUsageSnapshots: (recordIds: unknown) => {
+    useProviderAccountUsageSnapshotsSpy(recordIds);
+    return {
+      snapshotsByRecordId: providerAccountUsageSnapshotsState.current,
+      loadingByRecordId: {},
+      stateByRecordId: {},
+      connectedServiceSnapshotsByKey: {},
+    };
+  },
+}));
 vi.mock('@/utils/platform/responsive', () => ({
   getDeviceType: () => 'tablet',
   useDeviceType: () => 'tablet',
   useHeaderHeight: () => 0,
   useIsLandscape: () => false,
   useIsTablet: () => true,
-}));
-vi.mock('@/hooks/session/useDraft', () => ({
-  useDraft: () => ({ clearDraft: vi.fn() }),
 }));
 vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
   getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true }),
@@ -366,8 +439,9 @@ vi.mock('@/sync/sync', () => ({
     publishSessionModelOverrideToMetadata: async () => {},
     refreshSessions: async () => {},
     refreshSessionMessages: syncRefreshSessionMessagesSpy,
+    markSessionLiveTailIntent: () => {},
     onSessionVisible: () => {},
-    sendMessage: async () => {},
+    sendMessage: syncSubmitMessageSpy,
     enqueuePendingMessage: async () => {},
     submitMessage: syncSubmitMessageSpy,
     encryption: { getMachineEncryption: () => null },
@@ -398,6 +472,20 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 vi.mock('@/components/sessions/agentInput', () => ({
   AgentInput: (props: any) => React.createElement('AgentInput', { testID: 'session-agent-input', ...props }),
 }));
+vi.mock('@/components/sessions/keyboardAvoidance', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/sessions/keyboardAvoidance')>();
+  return {
+    ...actual,
+    useComposerAvailablePanelHeight: () => composerKeyboardState.availablePanelHeight,
+    useComposerKeyboardLayoutContext: () => ({
+      getKeyboardHeight: () => composerKeyboardState.keyboardHeight,
+      subscribeKeyboardHeight: (listener: (height: number) => void) => {
+        listener(composerKeyboardState.keyboardHeight);
+        return () => {};
+      },
+    }),
+  };
+});
 vi.mock('@/components/sessions/external/takeover/showExternalSessionTakeoverDialog', () => ({
   showExternalSessionTakeoverDialog: showExternalSessionTakeoverDialogSpy,
 }));
@@ -465,6 +553,14 @@ describe('SessionView (direct sessions)', () => {
     return screen.findByTestId('session-agent-input') as any;
   }
 
+  function expectDirectSendProjectionOptions() {
+    return expect.objectContaining({
+      localId: undefined,
+      onLocalPendingProjectionCreated: expect.any(Function),
+      profileId: undefined,
+    });
+  }
+
   beforeEach(() => {
     createDefaultActionExecutorMock.mockReset();
     chatListPropsSpy.mockReset();
@@ -472,11 +568,24 @@ describe('SessionView (direct sessions)', () => {
     voiceSurfacePropsSpy.mockReset();
     featureEnabledState.voice = false;
     featureEnabledState['files.reviewComments'] = false;
+    delete (featureEnabledState as Record<string, boolean>)['connectedServices.quotas'];
     settingsState.current = {};
     settingByKeyState.current = {};
+    connectedServiceQuotaSnapshotsState.current = {};
+    providerAccountUsageSnapshotsState.current = {};
+    composerKeyboardState.availablePanelHeight = undefined;
+    composerKeyboardState.keyboardHeight = 0;
+    useConnectedServiceQuotaSnapshotsSpy.mockReset();
+    useProviderAccountUsageSnapshotsSpy.mockReset();
     modalAlertSpy.mockReset();
     syncRefreshSessionMessagesSpy.mockReset();
     syncSubmitMessageSpy.mockReset();
+    syncSubmitMessageSpy.mockImplementation(async (...args: unknown[]) => {
+      const options = args[4] as
+        | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
+        | undefined;
+      options?.onLocalPendingProjectionCreated?.({ localId: 'direct-local-id' });
+    });
     deleteWorkspaceReviewCommentDraftSpy.mockReset();
     clearWorkspaceReviewCommentDraftsSpy.mockReset();
     setWorkspaceReviewCommentDraftIncludedSpy.mockReset();
@@ -494,6 +603,7 @@ describe('SessionView (direct sessions)', () => {
     resolveSessionViewRuntimeDisplayStateSpy.mockReset();
     participantTargetsState.current = [];
     sessionMessagesState.current = [];
+    windowDimensionsState.current = { width: 1200, height: 800 };
     sessionUsageState.current = null;
     reviewCommentDraftsState.current = [];
     focusState.current = true;
@@ -526,6 +636,9 @@ describe('SessionView (direct sessions)', () => {
     };
     storageState.settings = settingsState.current;
     storageState.artifacts = {};
+    storageState.profile = {
+      connectedServicesV2: [],
+    };
     storageState.concurrentSessionListCacheByServerId = {};
     delete (storageState as any).sessionListRenderables;
     delete (storageState as any).machines;
@@ -535,9 +648,11 @@ describe('SessionView (direct sessions)', () => {
     recipientStateState.current = {
       recipient: null,
       setManualRecipient: vi.fn(),
+      clearPersistedManualRecipient: vi.fn(),
       executionRunDelivery: 'steer_if_supported',
       setExecutionRunDelivery: vi.fn(),
     };
+    resetSessionDraftValueCachesForTests();
     showExternalSessionTakeoverDialogSpy.mockResolvedValue({ action: null, forceStop: false });
     machineExternalSessionStatusGetSpy.mockResolvedValue({
       ok: true,
@@ -590,6 +705,46 @@ describe('SessionView (direct sessions)', () => {
     }));
     expect(rerenderedChatListProps?.directControlFooter).not.toBe(latestChatListProps?.directControlFooter);
 
+  });
+
+  it('uses the existing-session panel-height contract for tall viewports', async () => {
+    windowDimensionsState.current = { width: 1200, height: 900 };
+
+    const screen = await renderSessionViewAndSettle();
+
+    expect(findAgentInput(screen).props.maxPanelHeight).toBe(computeExistingSessionComposerPanelMaxHeight({
+      availablePanelHeight: 900,
+      viewportHeight: 900,
+    }));
+  });
+
+  it('uses the existing-session panel-height contract for compact viewports', async () => {
+    windowDimensionsState.current = { width: 390, height: 384 };
+
+    const screen = await renderSessionViewAndSettle();
+
+    expect(findAgentInput(screen).props.maxPanelHeight).toBe(computeExistingSessionComposerPanelMaxHeight({
+      availablePanelHeight: 384,
+      viewportHeight: 384,
+    }));
+  });
+
+  it('uses the composer keyboard scaffold budget for existing-session composer caps', async () => {
+    windowDimensionsState.current = { width: 390, height: 900 };
+    composerKeyboardState.availablePanelHeight = 500;
+    composerKeyboardState.keyboardHeight = 320;
+
+    const screen = await renderSessionViewAndSettle();
+
+    expect(findAgentInput(screen).props.maxPanelHeight).toBe(computeExistingSessionComposerPanelMaxHeight({
+      availablePanelHeight: 500,
+      viewportHeight: 900,
+    }));
+    expect(findAgentInput(screen).props.inputMaxHeight).toBe(computeExistingSessionComposerInputMaxHeight({
+      availablePanelHeight: 500,
+      keyboardHeight: 320,
+      viewportHeight: 900,
+    }));
   });
 
   it('does not attach a direct-session lease while the session screen is unfocused', async () => {
@@ -960,6 +1115,203 @@ describe('SessionView (direct sessions)', () => {
     }));
   });
 
+  it('passes connected-service quota snapshots through to AgentInput provider usage gauge', async () => {
+    (featureEnabledState as Record<string, boolean>)['connectedServices.quotas'] = true;
+    storageState.sessions.s1.metadata = {
+      ...storageState.sessions.s1.metadata,
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': { source: 'connected', profileId: 'work' },
+        },
+      },
+    };
+    connectedServiceQuotaSnapshotsState.current = {
+      'openai-codex/work': {
+        v: 1,
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        fetchedAt: 1,
+        staleAfterMs: 60_000,
+        planLabel: null,
+        accountLabel: null,
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: 88,
+          limit: 100,
+          unit: 'count',
+          utilizationPct: null,
+          resetsAt: null,
+          status: 'ok',
+          details: {},
+        }],
+      },
+    };
+
+    const screen = await renderSessionViewAndSettle();
+
+    expect(useConnectedServiceQuotaSnapshotsSpy).toHaveBeenCalledWith([
+      { serviceId: 'openai-codex', profileId: 'work' },
+    ]);
+    expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
+      remainingPct: 12,
+      ringValueLabel: '12',
+    }));
+  });
+
+  it('passes native runtime quota evidence through to AgentInput without connected-service selection', async () => {
+    (featureEnabledState as Record<string, boolean>)['connectedServices.quotas'] = true;
+    storageState.sessions.s1.lastRuntimeIssue = {
+      v: 1,
+      scope: 'primary_session',
+      status: 'failed',
+      code: 'usage_limit',
+      source: 'usage_limit',
+      occurredAt: 1_000,
+      provider: 'claude',
+      usageLimit: {
+        v: 1,
+        resetAtMs: 3_000,
+        retryAfterMs: null,
+        quotaScope: 'account',
+        recoverability: 'wait',
+        limitCategory: 'usage_limit',
+        effectiveMeterId: 'five_hour',
+        effectiveRemainingPct: 12,
+      },
+    };
+
+    const screen = await renderSessionViewAndSettle();
+
+    expect(useConnectedServiceQuotaSnapshotsSpy).toHaveBeenCalledWith([]);
+    expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
+      remainingPct: 12,
+      ringValueLabel: '12',
+    }));
+  });
+
+  it('passes canonical provider-account usage snapshots through to AgentInput without connected-service selection', async () => {
+    (featureEnabledState as Record<string, boolean>)['connectedServices.quotas'] = true;
+    const recordKey = {
+      providerId: 'codex',
+      accountSubjectId: 'acct_native',
+      subjectKind: 'account',
+      quotaScope: 'account',
+    } as const;
+    const recordId = buildProviderAccountUsageRecordId(recordKey);
+    storageState.sessions.s1.metadata = {
+      ...storageState.sessions.s1.metadata,
+      providerAccountUsageRefsV1: {
+        v: 1,
+        recordIds: [recordId],
+        updatedAtMs: 2_000,
+      },
+    };
+    providerAccountUsageSnapshotsState.current = {
+      [recordId]: {
+        v: 1,
+        recordId,
+        recordKey,
+        providerId: 'codex',
+        accountSubject: { kind: 'providerSubject', id: 'acct_native' },
+        aliases: [{
+          kind: 'appServerNative',
+          providerId: 'codex',
+          accountSubjectId: 'acct_native',
+        }],
+        observedAtMs: 2_000,
+        fetchedAtMs: 2_000,
+        staleAfterMs: 60_000,
+        source: 'runtimeSignal',
+        confidence: 'confirmed',
+        state: 'loaded_data',
+        planLabel: 'Plus',
+        accountLabel: 'native@example.com',
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: 41,
+          limit: 100,
+          unit: 'count',
+          utilizationPct: null,
+          resetsAt: null,
+          status: 'ok',
+          details: {},
+        }],
+      },
+    };
+
+    const screen = await renderSessionViewAndSettle();
+
+    expect(useConnectedServiceQuotaSnapshotsSpy).toHaveBeenCalledWith([]);
+    expect(useProviderAccountUsageSnapshotsSpy).toHaveBeenCalledWith([recordId]);
+    expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
+      remainingPct: 59,
+      ringValueLabel: '59',
+      activeAccountDisplayLabel: 'native@example.com',
+    }));
+  });
+
+  it('uses the active group profile for provider usage when the binding stores only a group id', async () => {
+    (featureEnabledState as Record<string, boolean>)['connectedServices.quotas'] = true;
+    storageState.profile = {
+      connectedServicesV2: [{
+        serviceId: 'openai-codex',
+        profiles: [
+          { profileId: 'active-profile', status: 'connected' },
+          { profileId: 'backup-profile', status: 'connected' },
+        ],
+        groups: [{
+          groupId: 'happier',
+          activeProfileId: 'active-profile',
+          memberProfileIds: ['active-profile', 'backup-profile'],
+        }],
+      }],
+    };
+    storageState.sessions.s1.metadata = {
+      ...storageState.sessions.s1.metadata,
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': { source: 'connected', selection: 'group', groupId: 'happier' },
+        },
+      },
+    };
+    connectedServiceQuotaSnapshotsState.current = {
+      'openai-codex/active-profile': {
+        v: 1,
+        serviceId: 'openai-codex',
+        profileId: 'active-profile',
+        fetchedAt: 1,
+        staleAfterMs: 60_000,
+        planLabel: null,
+        accountLabel: null,
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: 35,
+          limit: 100,
+          unit: 'count',
+          utilizationPct: null,
+          resetsAt: null,
+          status: 'ok',
+          details: {},
+        }],
+      },
+    };
+
+    const screen = await renderSessionViewAndSettle();
+
+    expect(useConnectedServiceQuotaSnapshotsSpy).toHaveBeenCalledWith([
+      { serviceId: 'openai-codex', profileId: 'active-profile' },
+    ]);
+    expect(findAgentInput(screen).props.providerUsageGauge).toEqual(expect.objectContaining({
+      remainingPct: 65,
+      ringValueLabel: '65',
+    }));
+  });
+
   it('prefers the shared live authoring snapshot overrides for permission and model composer props', async () => {
     const session = (await import('@/sync/domains/state/storage')).storage.getState().sessions.s1 as any;
     session.permissionMode = 'acceptEdits';
@@ -1002,6 +1354,7 @@ describe('SessionView (direct sessions)', () => {
     recipientStateState.current = {
       recipient: { kind: 'execution_run', runId: 'run-1' },
       setManualRecipient: vi.fn(),
+      clearPersistedManualRecipient: vi.fn(),
       executionRunDelivery: 'interrupt',
       setExecutionRunDelivery: vi.fn(),
     };
@@ -1112,6 +1465,7 @@ describe('SessionView (direct sessions)', () => {
     await act(async () => {
       await agentInput.props.onSend();
     });
+    await settleExternalSessionView();
 
     expect(syncSubmitMessageSpy).toHaveBeenCalledWith(
       's1',
@@ -1127,6 +1481,7 @@ describe('SessionView (direct sessions)', () => {
           }),
         }),
       }),
+      expectDirectSendProjectionOptions(),
     );
     expect(syncSubmitMessageSpy.mock.calls[0]?.[1]).not.toContain('Keep this comment for later.');
     expect(deleteWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith(expect.any(String), 'included-draft');
@@ -1152,6 +1507,7 @@ describe('SessionView (direct sessions)', () => {
     recipientStateState.current = {
       recipient: { kind: 'execution_run', runId: 'run-1' },
       setManualRecipient: vi.fn(),
+      clearPersistedManualRecipient: vi.fn(),
       executionRunDelivery: 'interrupt',
       setExecutionRunDelivery: vi.fn(),
     };
@@ -1174,6 +1530,7 @@ describe('SessionView (direct sessions)', () => {
     recipientStateState.current = {
       recipient: { kind: 'execution_run', runId: 'run-1' },
       setManualRecipient: vi.fn(),
+      clearPersistedManualRecipient: vi.fn(),
       executionRunDelivery: 'interrupt',
       setExecutionRunDelivery: vi.fn(),
     };
@@ -1248,16 +1605,27 @@ describe('SessionView (direct sessions)', () => {
 
   it('prompts for takeover on send and submits after taking over the direct session', async () => {
     showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
+    writeSessionDraftValue(null, 's1', 'routing.recipient', { kind: 'execution_run', runId: 'run-1' });
+    writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'interrupt');
+    flushSessionDraftValues(null);
     const screen = await renderSessionView();
 
     const agentInput = findAgentInput(screen);
     await act(async () => {
       agentInput.props.onChangeText('continue this session');
+      agentInput.props.onStructuredInputMentionsChange?.([{
+        kind: 'skill',
+        tokenText: 'continue',
+        start: 0,
+        end: 8,
+        name: 'continue',
+      }]);
     });
 
     await act(async () => {
       await agentInput.props.onSend();
     });
+    await settleExternalSessionView();
 
     expect(showExternalSessionTakeoverDialogSpy).toHaveBeenCalledWith({
       canTakeOverDirect: true,
@@ -1268,17 +1636,36 @@ describe('SessionView (direct sessions)', () => {
       machineId: 'machine-1',
       sessionId: 's1',
     }, { serverId: 'server-canonical' });
-    expect(syncSubmitMessageSpy).toHaveBeenCalledWith('s1', 'continue this session', undefined, undefined);
+    expect(syncSubmitMessageSpy).toHaveBeenCalledWith(
+      's1',
+      'continue this session',
+      undefined,
+      undefined,
+      expectDirectSendProjectionOptions(),
+    );
+    expect(readSessionDraftValue(null, 's1', 'routing.recipient')).toBeUndefined();
+    expect(readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBeUndefined();
+    expect(readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toBeUndefined();
 
   });
 
   it('keeps the composer text when direct takeover is cancelled from the send prompt', async () => {
     showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: null, forceStop: false });
+    writeSessionDraftValue(null, 's1', 'routing.recipient', { kind: 'execution_run', runId: 'run-1' });
+    writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'interrupt');
+    flushSessionDraftValues(null);
     const screen = await renderSessionView();
 
     let agentInput = findAgentInput(screen);
     await act(async () => {
       agentInput.props.onChangeText('draft stays here');
+      agentInput.props.onStructuredInputMentionsChange?.([{
+        kind: 'skill',
+        tokenText: 'draft',
+        start: 0,
+        end: 5,
+        name: 'draft',
+      }]);
     });
 
     await act(async () => {
@@ -1291,10 +1678,95 @@ describe('SessionView (direct sessions)', () => {
 
     agentInput = findAgentInput(screen);
     expect(agentInput.props.value).toBe('draft stays here');
+    expect(readSessionDraftValue(null, 's1', 'routing.recipient')).toEqual({ kind: 'execution_run', runId: 'run-1' });
+    expect(readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBe('interrupt');
+    expect(readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toEqual([{
+      kind: 'skill',
+      tokenText: 'draft',
+      start: 0,
+      end: 5,
+      name: 'draft',
+    }]);
 
   });
 
-  it('clears the composer immediately while a direct takeover send prompt is still pending', async () => {
+  it('does not restore old semantic choices over a newer draft after direct handoff failure', async () => {
+    const oldRecipient = { kind: 'execution_run' as const, runId: 'run-old' };
+    const newRecipient = { kind: 'execution_run' as const, runId: 'run-new' };
+    const oldMention = {
+      kind: 'skill' as const,
+      tokenText: '$old',
+      start: 8,
+      end: 12,
+      name: 'old',
+    };
+    const newMention = {
+      kind: 'skill' as const,
+      tokenText: '$new',
+      start: 8,
+      end: 12,
+      name: 'new',
+    };
+    let rejectSubmit!: (error: Error) => void;
+
+    clearSessionDraftValuesForSession(null, 's1', { reason: 'sessionDelete' });
+    writeSessionDraftValue(null, 's1', 'routing.recipient', oldRecipient);
+    writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'interrupt');
+    writeSessionDraftValue(null, 's1', 'structuredInput.mentions', [oldMention]);
+    flushSessionDraftValues(null);
+
+    syncSubmitMessageSpy.mockImplementationOnce(async (...args: unknown[]) => {
+      const options = args[4] as
+        | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
+        | undefined;
+      options?.onLocalPendingProjectionCreated?.({ localId: 'direct-local-id' });
+      return new Promise<void>((_resolve, reject) => {
+        rejectSubmit = reject;
+      });
+    });
+    showExternalSessionTakeoverDialogSpy.mockResolvedValueOnce({ action: 'direct', forceStop: false });
+
+    try {
+      const screen = await renderSessionView();
+      let agentInput = findAgentInput(screen);
+      await act(async () => {
+        agentInput.props.onChangeText('send to old target');
+      });
+
+      let sendPromise: Promise<void> | undefined;
+      await act(async () => {
+        sendPromise = agentInput.props.onSend();
+      });
+      await flushHookEffects({ cycles: 1, turns: 1 });
+
+      expect(readSessionDraftValue(null, 's1', 'routing.recipient')).toBeUndefined();
+      expect(readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBeUndefined();
+      expect(readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toBeUndefined();
+
+      writeSessionDraftValue(null, 's1', 'routing.recipient', newRecipient);
+      writeSessionDraftValue(null, 's1', 'routing.executionRunDelivery', 'prompt');
+      writeSessionDraftValue(null, 's1', 'structuredInput.mentions', [newMention]);
+
+      await act(async () => {
+        rejectSubmit(new Error('direct send rejected'));
+        await sendPromise;
+      });
+      await settleExternalSessionView();
+
+      agentInput = findAgentInput(screen);
+      expect(agentInput.props.value).toBe('');
+      expect(readSessionDraftValue(null, 's1', 'routing.recipient')).toEqual(newRecipient);
+      expect(readSessionDraftValue(null, 's1', 'routing.executionRunDelivery')).toBe('prompt');
+      expect(readSessionDraftValue(null, 's1', 'structuredInput.mentions')).toEqual([newMention]);
+      expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'direct send rejected');
+    } finally {
+      clearSessionDraftValuesForSession(null, 's1', { reason: 'sessionDelete' });
+      flushSessionDraftValues(null);
+      resetSessionDraftValueCachesForTests();
+    }
+  });
+
+  it('keeps the composer text while a direct takeover send prompt is still pending', async () => {
     showExternalSessionTakeoverDialogSpy.mockImplementationOnce(
       () => new Promise<{ action: 'direct' | 'persisted' | null; forceStop: boolean }>(() => {}),
     );
@@ -1310,7 +1782,7 @@ describe('SessionView (direct sessions)', () => {
     });
 
     agentInput = findAgentInput(screen);
-    expect(agentInput.props.value).toBe('');
+    expect(agentInput.props.value).toBe('clear me immediately');
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
 
   });
@@ -1337,13 +1809,20 @@ describe('SessionView (direct sessions)', () => {
     await act(async () => {
       await agentInput.props.onSend();
     });
+    await settleExternalSessionView();
 
     expect(machineExternalSessionTakeoverPersistSpy).toHaveBeenCalledWith({
       machineId: 'machine-1',
       sessionId: 's1',
       forceStop: true,
     }, { serverId: 'server-canonical' });
-    expect(syncSubmitMessageSpy).toHaveBeenCalledWith('s1', 'persist this', undefined, undefined);
+    expect(syncSubmitMessageSpy).toHaveBeenCalledWith(
+      's1',
+      'persist this',
+      undefined,
+      undefined,
+      expectDirectSendProjectionOptions(),
+    );
 
   });
 

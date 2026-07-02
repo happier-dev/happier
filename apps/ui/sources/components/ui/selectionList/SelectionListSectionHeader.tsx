@@ -44,15 +44,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         // divider — section grouping comes from typography + vertical rhythm.
         ...(Platform.select({
             web: {
-                paddingHorizontal: 12,
+                paddingHorizontal: 16,
                 paddingTop: 10,
                 paddingBottom: 4,
             },
             default: {
-                // Native keeps the iOS eyebrow padding the user is used to.
-                paddingHorizontal: Platform.select({ ios: 32, default: 24 }),
-                paddingTop: Platform.select({ ios: 26, default: 20 }),
-                paddingBottom: Platform.select({ ios: 8, default: 8 }),
+                paddingHorizontal: 16,
+                paddingTop: Platform.select({ ios: 16, default: 14 }),
+                paddingBottom: Platform.select({ ios: 6, default: 6 }),
             },
         }) as object),
     },

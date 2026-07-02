@@ -1,6 +1,6 @@
 import React from 'react';
 import { Platform, View } from 'react-native';
-import { Redirect, useLocalSearchParams } from 'expo-router';
+import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
@@ -26,7 +26,7 @@ import {
 } from '@/agents/backendCatalog/providerCatalogProjection';
 import type { ProviderSettingFieldDef, TranslatableText } from '@/agents/providers/shared/providerSettingsPlugin';
 import { t } from '@/text';
-import { getAgentSessionModeDescriptor, getAgentStaticModels, getProviderCliRuntimeSpec, isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
+import { getAgentCliRuntimeSpec, getAgentSessionModeDescriptor, getAgentStaticModels, isAgentAuthProbeSafeForBackgroundChecks } from '@happier-dev/agents';
 import {
     buildCatalogModelList,
     classifySessionModeDescriptor,
@@ -44,11 +44,23 @@ import { useProviderAuthenticationState } from '@/components/settings/providers/
 import { resolveEffectiveConfiguredRuntimeControlSurface } from '@/sync/domains/session/control/effectiveRuntimeControlSurface';
 import { buildProviderSettingsFieldPatch, readProviderSettingsFieldValue } from '@/components/settings/providers/providerSettingsFieldBinding';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useProfile } from '@/sync/store/hooks';
 import { ContextBar } from '@/components/contextBar/ContextBar';
 import { useContextBarSelection } from '@/components/contextBar/useContextBarSelection';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
+import {
+    ConnectedServicesProviderStateSharingSettingsV1Schema,
+    type ConnectedServicesDefaultAuthByAgentIdV1,
+    type ConnectedServicesProviderStateSharingSettingsV1,
+} from '@happier-dev/protocol';
+import { ConnectedServicesDefaultAuthRow } from '@/components/settings/connectedServices/ConnectedServicesDefaultAuthRow';
+import {
+    ConnectedServicesProviderStateSharingBackendGroups,
+    resolveProviderStateSharingAgentIds,
+} from '@/components/settings/connectedServices/ConnectedServicesProviderStateSharingSettings';
 
 const Ionicons = SafeIonicons;
 
@@ -332,6 +344,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
     setSelectedMachineId: (machineId: string | null) => void;
 }>) {
     const { theme } = useUnistyles();
+    const router = useRouter();
     const supportsDesktopControls = isTauriDesktop();
     const {
         providerId,
@@ -348,6 +361,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
         setSelectedMachineId,
     } = props;
     const providerIconName = resolveProjectionIconName(projection);
+    const profile = useProfile();
     const settings = useSettings();
     const paneScopeId = React.useMemo(
         () => `settings:provider:${providerId}`,
@@ -355,6 +369,8 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
     );
     const pane = useAppPaneScope(paneScopeId);
     const applySettings = useApplySettings();
+    const connectedServicesEnabled = useFeatureEnabled('connectedServices');
+    const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
 
     const popoverBoundaryRef = React.useRef<any>(null);
     const [openMenu, setOpenMenu] = React.useState<null | string>(null);
@@ -365,7 +381,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
     }, [applySettings]);
 
     const sessionModeDescriptor = runtimeProviderId ? getAgentSessionModeDescriptor(runtimeProviderId) : null;
-    const providerCliRuntimeSpec = runtimeProviderId ? getProviderCliRuntimeSpec(runtimeProviderId) : null;
+    const agentCliRuntimeSpec = runtimeProviderId ? getAgentCliRuntimeSpec(runtimeProviderId) : null;
     const providerTargetKey = projection.backendTargetKey;
     const backendEnabledByTargetKey = settings.backendEnabledByTargetKey;
     const backendEnabled = providerTargetKey ? backendEnabledByTargetKey?.[providerTargetKey] !== false : null;
@@ -391,10 +407,36 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
         });
     };
 
+    const setDefaultAuthSettings = React.useCallback((next: ConnectedServicesDefaultAuthByAgentIdV1) => {
+        applySettings({
+            connectedServicesDefaultAuthByAgentIdV1: next,
+        } as Partial<typeof settings>);
+    }, [applySettings]);
+
+    const normalizedProviderStateSharingSettings = React.useMemo(
+        () => ConnectedServicesProviderStateSharingSettingsV1Schema.parse(settings.connectedServicesProviderStateSharingSettingsV1),
+        [settings.connectedServicesProviderStateSharingSettingsV1],
+    );
+
+    const setProviderStateSharingSettings = React.useCallback((next: ConnectedServicesProviderStateSharingSettingsV1) => {
+        applySettings({
+            connectedServicesProviderStateSharingSettingsV1: next,
+        } as Partial<typeof settings>);
+    }, [applySettings]);
+
+    const supportsConnectedServicesDefaultAuth =
+        connectedServicesEnabled
+        && runtimeProviderId != null
+        && (core?.connectedServices?.supportedServiceIds ?? []).length > 0;
+    const supportsProviderStateSharingSettings =
+        connectedServicesEnabled
+        && runtimeProviderId != null
+        && resolveProviderStateSharingAgentIds([runtimeProviderId]).length > 0;
+
     const backendCliSourcePreferenceByTargetKey = settings.backendCliSourcePreferenceByTargetKey;
     const providerCliSourcePreference =
-        providerTargetKey && providerCliRuntimeSpec
-            ? backendCliSourcePreferenceByTargetKey?.[providerTargetKey] ?? providerCliRuntimeSpec.sourcePreferenceDefault
+        providerTargetKey && agentCliRuntimeSpec
+            ? backendCliSourcePreferenceByTargetKey?.[providerTargetKey] ?? agentCliRuntimeSpec.sourcePreferenceDefault
             : 'system-first';
     const setProviderCliSourcePreference = (next: 'system-first' | 'managed-first') => {
         if (!providerTargetKey) return;
@@ -679,6 +721,40 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                         }}
                     />
                     </ItemGroup>
+                ) : null}
+
+                {supportsConnectedServicesDefaultAuth && runtimeProviderId && core ? (
+                    <ItemGroup
+                        title={t('connectedServices.defaultAuth.agentDetailTitle')}
+                        footer={t('connectedServices.defaultAuth.agentDetailFooter')}
+                    >
+                        <ConnectedServicesDefaultAuthRow
+                            agentId={runtimeProviderId}
+                            agentTitle={t(core.displayNameKey)}
+                            agentCore={core}
+                            connectedServicesEnabled={connectedServicesEnabled}
+                            accountGroupsEnabled={accountGroupsEnabled}
+                            accountProfileConnectedServicesV2={profile.connectedServicesV2 ?? []}
+                            settings={{
+                                connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey ?? {},
+                                connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId ?? {},
+                                connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
+                            }}
+                            setDefaultAuthSettings={setDefaultAuthSettings}
+                            onOpenConnectedServicesSettings={(serviceId) => router.push({
+                                pathname: '/(app)/settings/connected-services/[serviceId]',
+                                params: { serviceId },
+                            } as any)}
+                        />
+                    </ItemGroup>
+                ) : null}
+
+                {supportsProviderStateSharingSettings && runtimeProviderId ? (
+                    <ConnectedServicesProviderStateSharingBackendGroups
+                        settings={normalizedProviderStateSharingSettings}
+                        setSettings={setProviderStateSharingSettings}
+                        agentIds={[runtimeProviderId]}
+                    />
                 ) : null}
 
                     <ProviderAuthenticationCard
@@ -974,7 +1050,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                         icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.text.secondary} />}
                         mode="info"
                     />
-                    {supportsDesktopControls && core ? (
+                    {core ? (
                         <ProviderCliInstallItem
                             machineId={primaryMachine?.id ?? null}
                             serverId={capabilityServerId}
@@ -985,7 +1061,7 @@ const ProviderSettingsScreenInner = React.memo(function ProviderSettingsScreenIn
                             installability={cliInstallability}
                         />
                     ) : null}
-                    {supportsDesktopControls && providerCliRuntimeSpec?.managedInstall ? (
+                    {supportsDesktopControls && agentCliRuntimeSpec?.managedInstall ? (
                         <DropdownMenu
                             open={openMenu === 'cliSourcePreference'}
                             onOpenChange={(next) => setOpenMenu(next ? 'cliSourcePreference' : null)}

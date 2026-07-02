@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
-import type { SelectionListProps, SelectionListStep } from '../_types';
+import type { SelectionListOption, SelectionListProps, SelectionListStep } from '../_types';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -89,5 +89,33 @@ describe('SelectionList accessibility contract (Phase 2.10)', () => {
         const innerItem = screen.findByTestId('sl:root:option:opt-a');
         expect(innerItem).not.toBeNull();
         expect(innerItem!.props.role).not.toBe('button');
+    });
+
+    it('applies option accessibility labels to plain option wrappers', async () => {
+        const { SelectionList } = await import('../SelectionList');
+        const screen = await renderScreen(
+            <SelectionList
+                {...defaultProps({
+                    rootStep: {
+                        id: 'root',
+                        inputPlaceholder: 'Search',
+                        sections: [{
+                            kind: 'static',
+                            id: 'section-a',
+                            options: [{
+                                id: 'native',
+                                label: 'Backend native auth',
+                                accessibilityLabel: 'Anthropic · Backend native auth',
+                            } as unknown as SelectionListOption],
+                        }],
+                    },
+                })}
+            />,
+        );
+
+        const wrapper = screen.findByTestId('sl:root:option-wrapper:native');
+
+        expect(wrapper?.props.accessibilityLabel).toBe('Anthropic · Backend native auth');
+        expect(wrapper?.props['aria-label']).toBe('Anthropic · Backend native auth');
     });
 });

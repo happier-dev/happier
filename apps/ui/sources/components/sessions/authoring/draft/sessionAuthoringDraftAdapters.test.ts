@@ -1168,6 +1168,111 @@ describe('sessionAuthoringDraftAdapters', () => {
         });
     });
 
+    it('persists new-session target server and Windows launch override alongside authoring state', () => {
+        const draft = buildNewSessionAuthoringDraft({
+            directory: '/tmp/project',
+            checkoutCreationDraft: null,
+            prompt: 'Open the workspace',
+            displayText: 'Open the workspace',
+            agentId: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'codex' },
+            transcriptStorage: 'persisted',
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: null,
+            permissionMode: 'default',
+            permissionModeUpdatedAt: null,
+            modelId: null,
+            modelUpdatedAt: null,
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: null,
+            windowsRemoteSessionLaunchMode: 'console',
+            windowsRemoteSessionConsole: null,
+            windowsTerminalWindowName: null,
+            experimentalCodexAcp: null,
+            codexBackendMode: null,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            automation: null,
+        });
+
+        const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
+            draft,
+            machineId: 'machine-1',
+            selectedSecretId: null,
+            selectedSecretIdByProfileIdByEnvVarName: null,
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
+            backendNewSessionOptionStateByTargetKey: null,
+            targetServerId: '  server-b  ',
+            windowsRemoteSessionLaunchModeOverride: {
+                machineId: 'machine-1',
+                mode: 'console',
+            },
+            updatedAt: 987,
+        });
+
+        expect(persistedDraft).toEqual(expect.objectContaining({
+            targetServerId: 'server-b',
+            windowsRemoteSessionLaunchModeOverride: {
+                machineId: 'machine-1',
+                mode: 'console',
+            },
+        }));
+    });
+
+    it('omits blank new-session target server and Windows launch override payloads', () => {
+        const draft = buildNewSessionAuthoringDraft({
+            directory: '/tmp/project',
+            checkoutCreationDraft: null,
+            prompt: 'Open the workspace',
+            displayText: 'Open the workspace',
+            agentId: 'codex',
+            backendTarget: { kind: 'backend', backendId: 'codex' },
+            transcriptStorage: 'persisted',
+            profileId: null,
+            environmentVariables: null,
+            resumeSessionId: null,
+            permissionMode: 'default',
+            permissionModeUpdatedAt: null,
+            modelId: null,
+            modelUpdatedAt: null,
+            mcpSelection: null,
+            connectedServices: null,
+            terminal: null,
+            windowsRemoteSessionLaunchMode: null,
+            windowsRemoteSessionConsole: null,
+            windowsTerminalWindowName: null,
+            experimentalCodexAcp: null,
+            codexBackendMode: null,
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
+            automation: null,
+        });
+
+        const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
+            draft,
+            machineId: 'machine-1',
+            selectedSecretId: null,
+            selectedSecretIdByProfileIdByEnvVarName: null,
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: null,
+            backendNewSessionOptionStateByTargetKey: null,
+            targetServerId: '   ',
+            windowsRemoteSessionLaunchModeOverride: {
+                machineId: '   ',
+                mode: 'console',
+            },
+            updatedAt: 987,
+        });
+
+        expect(persistedDraft).not.toEqual(expect.objectContaining({
+            targetServerId: expect.anything(),
+        }));
+        expect(persistedDraft).not.toEqual(expect.objectContaining({
+            windowsRemoteSessionLaunchModeOverride: expect.anything(),
+        }));
+    });
+
     it('hydrates temp new-session data into the shared authoring draft including automation and connected services', () => {
         const sourceDraft = buildNewSessionAuthoringDraft({
             directory: '/tmp/project',

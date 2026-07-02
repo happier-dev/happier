@@ -26,6 +26,19 @@ import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionW
 
 type InvalidationSource = 'unknown' | 'mutation';
 
+const DEFAULT_SCM_AUTO_REFRESH_PROJECT_MIN_INTERVAL_MS = 30_000;
+const MAX_SCM_AUTO_REFRESH_PROJECT_MIN_INTERVAL_MS = 300_000;
+
+function readScmAutoRefreshProjectMinIntervalMs(): number {
+    const raw = String(process.env.EXPO_PUBLIC_HAPPIER_SCM_AUTO_REFRESH_PROJECT_MIN_INTERVAL_MS ?? '').trim();
+    if (raw === '0') return 0;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+        return DEFAULT_SCM_AUTO_REFRESH_PROJECT_MIN_INTERVAL_MS;
+    }
+    return Math.min(MAX_SCM_AUTO_REFRESH_PROJECT_MIN_INTERVAL_MS, parsed);
+}
+
 export { ATTRIBUTION_INVALIDATION_WINDOW_MS, shouldAttributeChangedPaths } from './sync/attribution';
 export { isSessionPathWithinRepoRoot } from './sync/paths';
 export { collectChangedPaths } from './sync/snapshotDiff';
@@ -41,6 +54,8 @@ export class ScmStatusSync {
     private projectFastPollUntil = new Map<string, number>();
     // Projects that should skip automatic refresh attempts until a user-initiated refresh occurs.
     private projectAutoRefreshSuspended = new Set<string>();
+    // Last automatic refresh lease per project. Prevents multiple mounted views from hammering full snapshots.
+    private projectLastAutoRefreshAt = new Map<string, number>();
     // Snapshot signatures per project to detect file tree changes
     private projectSnapshotSignature = new Map<string, string>();
     // Last snapshot per project to compute changed path attribution
@@ -71,6 +86,18 @@ export class ScmStatusSync {
             if (candidate === sync) return projectKey;
         }
         return null;
+    }
+
+    private shouldSkipAutoRefreshForProject(projectKey: string): boolean {
+        const minIntervalMs = readScmAutoRefreshProjectMinIntervalMs();
+        if (minIntervalMs <= 0) return false;
+        const lastAutoRefreshAt = this.projectLastAutoRefreshAt.get(projectKey);
+        if (typeof lastAutoRefreshAt !== 'number') return false;
+        return Date.now() - lastAutoRefreshAt < minIntervalMs;
+    }
+
+    private markAutoRefreshForProject(projectKey: string): void {
+        this.projectLastAutoRefreshAt.set(projectKey, Date.now());
     }
 
     private getCachedSnapshotForSessionProject(
@@ -209,6 +236,10 @@ export class ScmStatusSync {
         if (this.projectAutoRefreshSuspended.has(projectKey)) {
             return;
         }
+        if (this.shouldSkipAutoRefreshForProject(projectKey)) {
+            return;
+        }
+        this.markAutoRefreshForProject(projectKey);
         this.invalidateWithSource(sessionId, 'unknown');
     }
 
@@ -218,6 +249,10 @@ export class ScmStatusSync {
         if (this.projectAutoRefreshSuspended.has(projectKey)) {
             return;
         }
+        if (this.shouldSkipAutoRefreshForProject(projectKey)) {
+            return;
+        }
+        this.markAutoRefreshForProject(projectKey);
         const sync = this.getSync(sessionId);
         await sync.invalidateAndAwait();
     }
@@ -299,6 +334,7 @@ export class ScmStatusSync {
         this.projectPollTimers.delete(projectKey);
         this.projectFastPollUntil.delete(projectKey);
         this.projectAutoRefreshSuspended.delete(projectKey);
+        this.projectLastAutoRefreshAt.delete(projectKey);
         this.projectSnapshotSignature.delete(projectKey);
         this.projectLastSnapshot.delete(projectKey);
         this.projectLastInvalidatedBySession.delete(projectKey);
@@ -352,6 +388,11 @@ export class ScmStatusSync {
                         toKey: activeProjectKey,
                         stateMaps: this.stateMaps,
                     });
+                    const lastAutoRefreshAt = this.projectLastAutoRefreshAt.get(projectKey);
+                    if (typeof lastAutoRefreshAt === 'number' && !this.projectLastAutoRefreshAt.has(activeProjectKey)) {
+                        this.projectLastAutoRefreshAt.set(activeProjectKey, lastAutoRefreshAt);
+                    }
+                    this.projectLastAutoRefreshAt.delete(projectKey);
                 }
 
                 const staleProjectKeys = collectStaleProjectKeysAfterReassign({

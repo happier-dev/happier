@@ -79,6 +79,7 @@ type TestDesktopPetOverlayWindowStatePayload = Readonly<{
     logicalSize: Readonly<{ width: number; height: number }>;
     scaleFactor: number;
     lastPlacementRecoveryCode: string | null;
+    activity?: unknown;
     layout?: unknown;
 }>;
 const serverFetchMock = vi.hoisted(() => vi.fn());
@@ -89,6 +90,9 @@ const releaseDesktopPetOverlayDragVelocityMock = vi.hoisted(() => vi.fn());
 const endDesktopPetOverlayDragSessionMock = vi.hoisted(() => vi.fn());
 const showMainWindowFromDesktopPetOverlayMock = vi.hoisted(() => vi.fn());
 const syncDesktopPetOverlayElementMetricsMock = vi.hoisted(() => vi.fn());
+const getDesktopPetOverlayWindowStateMock = vi.hoisted(() =>
+    vi.fn(async (): Promise<TestDesktopPetOverlayWindowStatePayload | null> => null),
+);
 const listenDesktopPetOverlayWindowStateMock = vi.hoisted(() =>
     vi.fn(async (_handler: (payload: TestDesktopPetOverlayWindowStatePayload) => void) => () => {}),
 );
@@ -177,6 +181,7 @@ vi.mock('@/components/pets/desktop/bridge/desktopPetOverlayBridge', async (impor
         endDesktopPetOverlayDragSession: endDesktopPetOverlayDragSessionMock,
         showMainWindowFromDesktopPetOverlay: showMainWindowFromDesktopPetOverlayMock,
         syncDesktopPetOverlayElementMetrics: syncDesktopPetOverlayElementMetricsMock,
+        getDesktopPetOverlayWindowState: getDesktopPetOverlayWindowStateMock,
         listenDesktopPetOverlayWindowState: listenDesktopPetOverlayWindowStateMock,
         listenDesktopPetOverlayNativeMouse: listenDesktopPetOverlayNativeMouseMock,
     };
@@ -406,6 +411,8 @@ describe('DesktopPetOverlayRoute selectors', () => {
         endDesktopPetOverlayDragSessionMock.mockReset();
         showMainWindowFromDesktopPetOverlayMock.mockReset();
         syncDesktopPetOverlayElementMetricsMock.mockReset();
+        getDesktopPetOverlayWindowStateMock.mockReset();
+        getDesktopPetOverlayWindowStateMock.mockResolvedValue(null);
         listenDesktopPetOverlayWindowStateMock.mockReset();
         listenDesktopPetOverlayWindowStateMock.mockResolvedValue(() => {});
         listenDesktopPetOverlayNativeMouseMock.mockReset();
@@ -445,6 +452,61 @@ describe('DesktopPetOverlayRoute selectors', () => {
 
         expect(screen.findByTestId('desktop-pet-overlay-root')).not.toBeNull();
         expect(screen.findByTestId('desktop-pet-overlay-sprite')).not.toBeNull();
+    });
+
+    it('can render tray activity from native window state without reading session activity locally', async () => {
+        sessionsState.current = [];
+        const nativeActivity = {
+            state: 'waiting',
+            reason: 'permission',
+            sessionId: 'session-native',
+            trayItems: [{
+                id: 'session-native:permission',
+                dismissKey: 'session-native:permission',
+                sessionId: 'session-native',
+                status: 'waiting',
+                priority: 100,
+                title: 'Native session',
+                subtitle: 'Waiting for approval',
+                activityAtMs: 12_000,
+                expiresAtMs: null,
+                actions: {
+                    primary: 'open',
+                    quickReply: false,
+                    dismiss: false,
+                },
+            }],
+        };
+        getDesktopPetOverlayWindowStateMock.mockResolvedValue({
+            visible: true,
+            inputLocked: false,
+            monitorId: 'monitor-1',
+            logicalPosition: { x: 0, y: 0 },
+            logicalSize: { width: 320, height: 280 },
+            scaleFactor: 1,
+            lastPlacementRecoveryCode: null,
+            activity: nativeActivity,
+        });
+        listenDesktopPetOverlayWindowStateMock.mockImplementation(async (handler) => {
+            handler({
+                visible: true,
+                inputLocked: false,
+                monitorId: 'monitor-1',
+                logicalPosition: { x: 0, y: 0 },
+                logicalSize: { width: 320, height: 280 },
+                scaleFactor: 1,
+                lastPlacementRecoveryCode: null,
+                activity: nativeActivity,
+            });
+            return () => {};
+        });
+        const { DesktopPetOverlayRoute } = await import('./DesktopPetOverlayRoute');
+
+        const screen = await renderScreen(<DesktopPetOverlayRoute activitySource="native" />);
+        await flushHookEffects();
+
+        expect(screen.findByTestId('pet-companion-state')?.props['data-pet-state']).toBe('waiting');
+        expect(screen.findByTestId('desktop-pet-overlay-tray-item-session-native')).not.toBeNull();
     });
 
     it('does not render fallback art when the companion selection is disabled', async () => {
@@ -535,6 +597,7 @@ describe('DesktopPetOverlayRoute selectors', () => {
             id: 'session-running',
             active: true,
             thinking: true,
+            thinkingAt: Date.now(),
             seq: 0,
         });
         sessionsState.current = [

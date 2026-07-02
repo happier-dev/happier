@@ -104,4 +104,25 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
         expect(upsertActivateAndSwitchServerMock).not.toHaveBeenCalled();
         expect(replaceMock).toHaveBeenCalledWith('/?server=http%3A%2F%2F127.0.0.1%3A43005');
     });
+
+    it('does not switch servers when the requested relay is loopback-equivalent to the active relay', async () => {
+        const Screen = (await import('@/app/(app)/terminal/connect')).default;
+        activeServerUrl = 'http://localhost:53288';
+        (globalThis as any).window.location = {
+            hash: '#key=abc123&server=http%3A%2F%2Fhappier-repo-dev-a1cc5e0671.localhost%3A53288',
+            pathname: '/terminal/connect',
+            search: '',
+            href: 'https://ui.example.test/terminal/connect#key=abc123&server=http%3A%2F%2Fhappier-repo-dev-a1cc5e0671.localhost%3A53288',
+        };
+
+        await renderScreen(<Screen />);
+        await act(async () => {});
+
+        expect(setPendingMock).toHaveBeenCalledWith({
+            publicKeyB64Url: 'abc123',
+            serverUrl: 'http://happier-repo-dev-a1cc5e0671.localhost:53288',
+        });
+        expect(upsertActivateAndSwitchServerMock).not.toHaveBeenCalled();
+        expect(replaceMock).toHaveBeenCalledWith('/?server=http%3A%2F%2Fhappier-repo-dev-a1cc5e0671.localhost%3A53288');
+    });
 });

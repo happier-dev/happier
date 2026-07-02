@@ -67,6 +67,7 @@ export type NativeCryptoWorkerQueueLifecycleTelemetryOptions = Readonly<{
 
 export type NativeCryptoWorkerQueueActiveOptions = NativeCryptoWorkerQueueLifecycleTelemetryOptions & Readonly<{
     capabilityStalenessMs?: number;
+    revalidationTimeoutMs?: number;
     revalidateCapabilities?: () => Promise<void>;
 }>;
 
@@ -149,6 +150,34 @@ function normalizeCapabilityStalenessMs(value: number | undefined): number {
         : 0;
 }
 
+function normalizeRevalidationTimeoutMs(value: number | undefined): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    return Math.max(1, Math.trunc(value));
+}
+
+async function runRevalidationWithOptionalTimeout(
+    revalidateCapabilities: () => Promise<void>,
+    timeoutMs: number | null,
+): Promise<void> {
+    if (timeoutMs === null) {
+        await revalidateCapabilities();
+        return;
+    }
+
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+        const revalidation = revalidateCapabilities().catch(() => undefined);
+        await Promise.race([
+            revalidation,
+            new Promise<void>((resolve) => {
+                timeout = setTimeout(resolve, timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timeout) clearTimeout(timeout);
+    }
+}
+
 function getAggregateQueueStats(): NativeCryptoWorkerQueueStats {
     let pending = 0;
     let inFlight = 0;
@@ -219,6 +248,7 @@ export async function markNativeCryptoWorkerQueueActive(
         && elapsedQuiescentMs >= capabilityStalenessMs;
     const queuedDuringQuiesceCount = lifecycleState.queuedDuringQuiesceCount;
     const staleScopeDropsOnResume = lifecycleState.staleScopeDropsOnResume;
+    const revalidationTimeoutMs = normalizeRevalidationTimeoutMs(options.revalidationTimeoutMs);
 
     lifecycleState.quiescent = false;
     lifecycleState.resumeBlocked = shouldRevalidate;
@@ -228,7 +258,10 @@ export async function markNativeCryptoWorkerQueueActive(
         if (shouldRevalidate) {
             const revalidateStartedAtMs = readLifecycleNow(options);
             try {
-                await options.revalidateCapabilities?.();
+                const revalidateCapabilities = options.revalidateCapabilities;
+                if (revalidateCapabilities) {
+                    await runRevalidationWithOptionalTimeout(revalidateCapabilities, revalidationTimeoutMs);
+                }
             } catch {
                 // Resume dispatch even if the bounded probe fails; normal routing still handles capability failures.
             } finally {

@@ -69,6 +69,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
         expect(body?.content?.t).toBe('plain');
         expect(body?.content?.v?.kind).toBe('token');
         expect(body?.content?.v?.serviceId).toBe('github');
+        expect(body?.reconnect).toEqual({ allowProviderIdentityChange: true });
         return new Response(JSON.stringify({ success: true }), { status: 200 });
       }
       return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
@@ -80,7 +81,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
       serviceId: 'github',
       profileId: 'work',
       record: sampleRecord(),
-    });
+    }, { allowProviderIdentityChange: true });
 
     const urls = fetchMock.mock.calls.map((call) => String(call[0]));
     expect(urls.some((u) => u.includes('/v3/connect/github/profiles/work/credential'))).toBe(true);
@@ -105,6 +106,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
         expect(body?.sealed?.format).toBe('account_scoped_v1');
         expect(typeof body?.sealed?.ciphertext).toBe('string');
         expect(body?.metadata?.kind).toBe('token');
+        expect(body?.reconnect).toEqual({ allowProviderIdentityChange: true });
         return new Response(JSON.stringify({ success: true }), { status: 200 });
       }
       return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
@@ -116,7 +118,7 @@ describe('storeConnectedServiceCredentialForAccount', () => {
       serviceId: 'github',
       profileId: 'work',
       record: sampleRecord(),
-    }, { randomBytes: (length) => new Uint8Array(length).fill(1) });
+    }, { allowProviderIdentityChange: true, randomBytes: (length) => new Uint8Array(length).fill(1) });
 
     const urls = fetchMock.mock.calls.map((call) => String(call[0]));
     expect(urls.some((u) => u.includes('/v2/connect/github/profiles/work/credential'))).toBe(true);

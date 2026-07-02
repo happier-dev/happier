@@ -1,19 +1,25 @@
 import React from 'react';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
 import { parseHappierMetaEnvelope } from './happierMetaEnvelope';
-import { findStructuredMessageRenderer, type StructuredMessageRendererParams } from './structuredMessageRegistry';
+import type { StructuredMessageRendererParams } from './structuredMessageRegistry';
+import { findStructuredMessageDescriptorEntry } from './descriptorRegistry';
 
 export function renderStructuredMessage(params: {
     message: Message;
     sessionId: string;
     onJumpToAnchor: StructuredMessageRendererParams['onJumpToAnchor'];
+    pluginUiProjection?: PluginUiProjectionModel | null;
 }): React.ReactElement | null {
     const envelope = parseHappierMetaEnvelope(params.message.meta);
     if (!envelope) return null;
 
-    const entry = findStructuredMessageRenderer(envelope.kind);
+    const entry = findStructuredMessageDescriptorEntry({
+        kind: envelope.kind,
+        pluginUiProjection: params.pluginUiProjection,
+    });
     if (!entry) return null;
 
     const parsed = entry.schema.safeParse(envelope.payload);
@@ -26,10 +32,11 @@ export function renderStructuredMessage(params: {
     });
 }
 
-export function StructuredMessageBlock(props: {
+export const StructuredMessageBlock = React.memo(function StructuredMessageBlock(props: {
     message: Message;
     sessionId: string;
     onJumpToAnchor: StructuredMessageRendererParams['onJumpToAnchor'];
+    pluginUiProjection?: PluginUiProjectionModel | null;
 }): React.ReactElement | null {
     return renderStructuredMessage(props);
-}
+});

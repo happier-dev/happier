@@ -1,68 +1,67 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-type LegacyFsState = {
-    cacheDirectory: string;
-    documentDirectory: string;
-    EncodingType: { UTF8: string };
-    getInfoAsync: ReturnType<typeof vi.fn>;
-    readAsStringAsync: ReturnType<typeof vi.fn>;
-    writeAsStringAsync: ReturnType<typeof vi.fn>;
-    deleteAsync: ReturnType<typeof vi.fn>;
+type ExpoFsState = {
+    Paths: { cache: string; document: string };
     files: Map<string, string>;
 };
 
-function createLegacyFsState(): LegacyFsState {
+function createExpoFsState(): ExpoFsState {
     const files = new Map<string, string>();
     return {
-        cacheDirectory: 'file:///cache/',
-        documentDirectory: 'file:///documents/',
-        EncodingType: { UTF8: 'utf8' },
+        Paths: { cache: 'file:///cache/', document: 'file:///documents/' },
         files,
-        getInfoAsync: vi.fn(async (path: string) => ({ exists: files.has(path) })),
-        readAsStringAsync: vi.fn(async (path: string) => {
-            const value = files.get(path);
-            if (typeof value !== 'string') {
-                throw new Error(`missing file: ${path}`);
-            }
+    };
+}
+
+function createExpoFileSystemMock(expoFs: ExpoFsState) {
+    const joinFileUri = (...segments: string[]): string => {
+        const [first = '', ...rest] = segments;
+        return rest.reduce((current, segment) => `${current.replace(/\/+$/, '')}/${segment.replace(/^\/+/, '')}`, first);
+    };
+    class ExpoFileMock {
+        readonly uri: string;
+        constructor(...segments: string[]) {
+            this.uri = joinFileUri(...segments);
+        }
+        get exists() {
+            return expoFs.files.has(this.uri);
+        }
+        async text() {
+            const value = expoFs.files.get(this.uri);
+            if (typeof value !== 'string') throw new Error(`missing file: ${this.uri}`);
             return value;
-        }),
-        writeAsStringAsync: vi.fn(async (path: string, payload: string) => {
-            files.set(path, payload);
-        }),
-        deleteAsync: vi.fn(async (path: string) => {
-            files.delete(path);
-        }),
+        }
+        write(payload: string) {
+            expoFs.files.set(this.uri, payload);
+        }
+        delete() {
+            expoFs.files.delete(this.uri);
+        }
+    }
+    return {
+        File: ExpoFileMock,
+        Paths: expoFs.Paths,
+        getInfoAsync: vi.fn(() => { throw new Error('legacy getInfoAsync should not be used'); }),
+        readAsStringAsync: vi.fn(() => { throw new Error('legacy readAsStringAsync should not be used'); }),
+        writeAsStringAsync: vi.fn(() => { throw new Error('legacy writeAsStringAsync should not be used'); }),
+        deleteAsync: vi.fn(() => { throw new Error('legacy deleteAsync should not be used'); }),
     };
 }
 
 async function loadModule(options?: { platformOs?: 'ios' | 'android' | 'web' }) {
     vi.resetModules();
 
-    const legacyFs = createLegacyFsState();
-    vi.doMock('expo-file-system', () => ({
-        cacheDirectory: legacyFs.cacheDirectory,
-        documentDirectory: legacyFs.documentDirectory,
-        EncodingType: legacyFs.EncodingType,
-        getInfoAsync: vi.fn(async () => {
-            throw new Error('top-level expo-file-system legacy API should not be used');
-        }),
-        readAsStringAsync: vi.fn(async () => {
-            throw new Error('top-level expo-file-system legacy API should not be used');
-        }),
-        writeAsStringAsync: vi.fn(async () => {
-            throw new Error('top-level expo-file-system legacy API should not be used');
-        }),
-        deleteAsync: vi.fn(async () => {
-            throw new Error('top-level expo-file-system legacy API should not be used');
-        }),
-    }));
-    vi.doMock('expo-file-system/legacy', () => legacyFs);
+    const expoFs = createExpoFsState();
+    vi.doMock('expo-file-system', () => createExpoFileSystemMock(expoFs));
+    vi.doMock('expo-file-system/legacy', () => {
+        throw new Error('expo-file-system/legacy should not be imported');
+    });
     vi.doMock('react-native', () => ({
         Platform: { OS: options?.platformOs ?? 'ios' },
     }));
 
     const module = await import('./restartBugReportIntent');
-    return { module, legacyFs };
+    return { module, expoFs };
 }
 
 afterEach(() => {
@@ -74,8 +73,8 @@ afterEach(() => {
 });
 
 describe('restartBugReportIntent native behavior', () => {
-    it('persists and consumes a native restart intent even when top-level expo-file-system legacy methods throw', async () => {
-        const { module, legacyFs } = await loadModule({ platformOs: 'android' });
+    it('persists and consumes a native restart intent through Expo File', async () => {
+        const { module, expoFs } = await loadModule({ platformOs: 'android' });
         const createdAtMs = Date.now() - 5_000;
 
         await module.persistRestartBugReportIntent({
@@ -87,6 +86,6 @@ describe('restartBugReportIntent native behavior', () => {
         await expect(module.consumeRestartBugReportIntent()).resolves.toBe(true);
         await expect(module.consumeRestartBugReportIntent()).resolves.toBe(false);
 
-        expect(legacyFs.files.size).toBe(0);
+        expect(expoFs.files.size).toBe(0);
     });
 });

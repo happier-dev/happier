@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { useSession, useIsDataReady } from '@/sync/domains/state/storage';
+import { useSession } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
@@ -38,6 +38,8 @@ import { createPublicShareWithClientToken } from '@/sync/domains/social/createPu
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
+import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
 
 
 function SharingManagementContent({ sessionId }: { sessionId: string }) {
@@ -373,17 +375,21 @@ export default memo(() => {
     const params = useLocalSearchParams<{ id: string; serverId?: string }>();
     const routeScope = React.useMemo(() => createSessionRouteServerScope(params), [params]);
     const { id } = params;
-    const isDataReady = useIsDataReady();
     const sessionId = normalizeSessionId(id);
-    const sessionHydrated = useHydrateSessionForRoute(
+    const routeHydrationState = useHydrateSessionForRoute(
         sessionId,
         'SessionSharingRoute.ensureSessionVisible',
         routeScope.hydrationOptions,
     );
+    const sessionHydrated = isSessionRouteHydrationAvailable(routeHydrationState);
     const headerTitle = t('session.sharing.title');
     const screenOptions = React.useMemo(() => ({ headerTitle }), [headerTitle]);
 
-    if (!isDataReady || !sessionHydrated) {
+    if (!sessionId || isSessionRouteHydrationMissing(routeHydrationState)) {
+        return <SessionInvalidLinkFallback />;
+    }
+
+    if (!sessionHydrated) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                 <ActivitySpinner size="small" color={theme.colors.text.secondary} />

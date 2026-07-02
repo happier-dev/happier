@@ -13,7 +13,23 @@ const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
 const shouldRenderChatTimelineForSessionMock = vi.fn((_args: any) => true);
 const realtimeStatusValue = vi.hoisted(() => ({ current: { status: 'connected' } as any }));
 const onSessionVisibleSpy = vi.hoisted(() => vi.fn());
+const markSessionLiveTailIntentSpy = vi.hoisted(() => vi.fn());
+const fetchPendingMessagesSpy = vi.hoisted(() => vi.fn(async (_sessionId: string) => undefined));
+const markSessionViewedSpy = vi.hoisted(() => vi.fn(async () => {}));
+const chatHeaderRenderSpy = vi.hoisted(() => vi.fn());
 const chatListRenderSpy = vi.hoisted(() => vi.fn());
+const appPaneScopeHostRenderSpy = vi.hoisted(() => vi.fn());
+const agentContentViewRenderSpy = vi.hoisted(() => vi.fn());
+const agentInputRenderSpy = vi.hoisted(() => vi.fn());
+const sessionScreenFocusState = vi.hoisted(() => ({ current: true }));
+const pendingMessagesHookSpy = vi.hoisted(() => vi.fn());
+const transcriptIdsHookSpy = vi.hoisted(() => vi.fn());
+const subagentSourceMessagesHookSpy = vi.hoisted(() => vi.fn());
+const sessionSubagentsHookSpy = vi.hoisted(() => vi.fn());
+const sessionExecutionRunsSupportedHookSpy = vi.hoisted(() => vi.fn());
+const selectSyncErrorForServerSpy = vi.hoisted(() => vi.fn((_syncError: unknown, _serverId: string | null) => null));
+const approvalArtifactsSpy = vi.hoisted(() => vi.fn());
+const routerPathnameState = vi.hoisted(() => ({ current: '/' }));
 const themeColors = vi.hoisted(() => ({
     text: '#000',
     textSecondary: '#666',
@@ -48,6 +64,52 @@ let committedMessagesState: any[] = [];
 let committedMessagesLoadedState = true;
 let transcriptIdsState: string[] = [];
 let transcriptIdsLoadedState = true;
+let transcriptIdsSnapshot: { ids: readonly string[]; isLoaded: boolean } = { ids: transcriptIdsState, isLoaded: transcriptIdsLoadedState };
+let concurrentSessionListCacheByServerIdState: Record<string, any> = {};
+const committedMessagesListeners = new Set<() => void>();
+const storageListeners = new Set<() => void>();
+
+function getStorageStateForTest() {
+    return {
+        sessions: sessionState ? { s1: sessionState } : {},
+        settings: {
+            sessionMessageSendMode: 'direct',
+            sessionBusySteerSendPolicy: 'steerImmediately',
+        },
+        concurrentSessionListCacheByServerId: concurrentSessionListCacheByServerIdState,
+    };
+}
+
+function getTranscriptIdsSnapshotForTest(): { ids: readonly string[]; isLoaded: boolean } {
+    if (transcriptIdsSnapshot.ids !== transcriptIdsState || transcriptIdsSnapshot.isLoaded !== transcriptIdsLoadedState) {
+        transcriptIdsSnapshot = { ids: transcriptIdsState, isLoaded: transcriptIdsLoadedState };
+    }
+    return transcriptIdsSnapshot;
+}
+
+function getVisibleReadSeqForTest(): number | null {
+    let latestSeq: number | null = null;
+    for (const message of committedMessagesState) {
+        const seq = typeof message?.seq === 'number' && Number.isFinite(message.seq)
+            ? Math.trunc(message.seq)
+            : null;
+        if (seq === null) continue;
+        latestSeq = latestSeq === null ? seq : Math.max(latestSeq, seq);
+    }
+    return latestSeq;
+}
+
+function emitCommittedMessagesChangeForTest(): void {
+    for (const listener of committedMessagesListeners) {
+        listener();
+    }
+}
+
+function emitStorageChangeForTest(): void {
+    for (const listener of storageListeners) {
+        listener();
+    }
+}
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
@@ -61,7 +123,7 @@ vi.mock('react-native-safe-area-context', () => ({
 }));
 vi.mock('@react-navigation/native', () => ({
     useFocusEffect: () => {},
-    useIsFocused: () => true,
+    useIsFocused: () => sessionScreenFocusState.current,
 }));
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: authCredentials }),
@@ -97,7 +159,7 @@ installSessionShellCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         return createExpoRouterMock({
-            pathname: '/',
+            pathname: () => routerPathnameState.current,
             router: {
                 push: vi.fn(),
                 back: vi.fn(),
@@ -111,16 +173,29 @@ installSessionShellCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                storage: {
-	                    getState: () => ({
-	                        sessions: sessionState ? { s1: sessionState } : {},
-	                        settings: {
-	                            sessionMessageSendMode: 'direct',
-	                            sessionBusySteerSendPolicy: 'steerImmediately',
-	                        },
-	                        concurrentSessionListCacheByServerId: {},
-	                    }),
-	                } as any,
+                storage: Object.assign(
+                    (selector?: (state: any) => unknown) => {
+                        const readSnapshot = () => {
+                            const state = getStorageStateForTest();
+                            return typeof selector === 'function' ? selector(state) : state;
+                        };
+                        return React.useSyncExternalStore(
+                            (listener) => {
+                                storageListeners.add(listener);
+                                return () => storageListeners.delete(listener);
+                            },
+                            readSnapshot,
+                            readSnapshot,
+                        );
+                    },
+                    {
+                        getState: getStorageStateForTest,
+                        subscribe: (listener: () => void) => {
+                            storageListeners.add(listener);
+                            return () => storageListeners.delete(listener);
+                        },
+                    },
+                ) as any,
 	                useSession: () => sessionState,
 	                __setSessionForTest: (next: any) => {
                     sessionState = next;
@@ -128,8 +203,33 @@ installSessionShellCommonModuleMocks({
                 useIsDataReady: () => true,
                 useRealtimeStatus: () => realtimeStatusValue.current,
                 useSessionMessages: () => ({ messages: committedMessagesState, isLoaded: committedMessagesLoadedState }),
-                useSessionTranscriptIds: () => ({ ids: transcriptIdsState, isLoaded: transcriptIdsLoadedState }),
-                useSessionPendingMessages: () => ({ messages: [] }),
+                useSessionTranscriptIds: (sessionId: string) => {
+                    transcriptIdsHookSpy(sessionId);
+                    return React.useSyncExternalStore(
+                        (listener) => {
+                            committedMessagesListeners.add(listener);
+                            return () => committedMessagesListeners.delete(listener);
+                        },
+                        getTranscriptIdsSnapshotForTest,
+                        getTranscriptIdsSnapshotForTest,
+                    );
+                },
+                useSessionVisibleReadSeq: () => React.useSyncExternalStore(
+                    (listener) => {
+                        committedMessagesListeners.add(listener);
+                        return () => committedMessagesListeners.delete(listener);
+                    },
+                    getVisibleReadSeqForTest,
+                    getVisibleReadSeqForTest,
+                ),
+                useSessionPendingMessages: (sessionId: string) => {
+                    pendingMessagesHookSpy(sessionId);
+                    return { messages: [] };
+                },
+                useSessionSubagentSourceMessages: (sessionId: string) => {
+                    subagentSourceMessagesHookSpy(sessionId);
+                    return [];
+                },
                 useSessionReviewCommentsDrafts: () => [],
                 useSessionUsage: () => null,
                 useLocalSetting: (key: string) => {
@@ -153,8 +253,9 @@ installSessionShellCommonModuleMocks({
 });
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
-    AgentContentView: (props: any) =>
-        React.createElement(
+    AgentContentView: (props: any) => {
+        agentContentViewRenderSpy(props);
+        return React.createElement(
             'AgentContentView',
             props,
             React.createElement(
@@ -164,10 +265,14 @@ vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
                 props.content ?? null,
                 props.input ?? null,
             ),
-        ),
+        );
+    },
 }));
 vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
-    AppPaneScopeHost: (props: any) => React.createElement('AppPaneScopeHost', props, props.main ?? null),
+    AppPaneScopeHost: (props: any) => {
+        appPaneScopeHostRenderSpy(props);
+        return React.createElement('AppPaneScopeHost', props, props.main ?? null);
+    },
 }));
 vi.mock('@/components/sessions/panes/useRegisterSessionPaneDriver', () => ({
     useRegisterSessionPaneDriver: () => 'pane-scope-test',
@@ -183,7 +288,10 @@ vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
     useSessionPaneUrlSync: () => {},
 }));
 vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
-    ChatHeaderView: () => null,
+    ChatHeaderView: (props: any) => {
+        chatHeaderRenderSpy(props);
+        return null;
+    },
 }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
     ChatList: (props: any) => {
@@ -213,9 +321,6 @@ vi.mock('@/utils/platform/responsive', () => ({
     useIsLandscape: () => false,
     useIsTablet: () => false,
 }));
-vi.mock('@/hooks/session/useDraft', () => ({
-    useDraft: () => ({ clearDraft: vi.fn() }),
-}));
 vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
     getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true }),
 }));
@@ -230,20 +335,24 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
     subscribeActiveServer: () => () => {},
 }));
+vi.mock('@/sync/runtime/connectivity/syncErrorScope', () => ({
+    selectSyncErrorForServer: (syncError: unknown, serverId: string | null) => selectSyncErrorForServerSpy(syncError, serverId),
+}));
 vi.mock('@/voice/session/voiceSession', () => ({
     useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
     voiceSessionManager: {},
 }));
 vi.mock('@/sync/sync', () => ({
     sync: {
-        markSessionViewed: async () => {},
-        fetchPendingMessages: async () => {},
+        markSessionViewed: markSessionViewedSpy,
+        fetchPendingMessages: fetchPendingMessagesSpy,
         publishSessionPermissionModeToMetadata: async () => {},
         publishSessionAcpSessionModeOverrideToMetadata: async () => {},
         publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
         publishSessionModelOverrideToMetadata: async () => {},
         refreshSessions: async () => {},
         onSessionVisible: onSessionVisibleSpy,
+        markSessionLiveTailIntent: markSessionLiveTailIntentSpy,
         sendMessage: async () => {},
         enqueuePendingMessage: async () => {},
         submitMessage: async () => {},
@@ -269,27 +378,31 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     createDefaultActionExecutor: () => ({ execute: vi.fn() }),
 }));
 vi.mock('@/components/sessions/agentInput', () => ({
-    AgentInput: () => null,
+    AgentInput: (props: any) => {
+        agentInputRenderSpy(props);
+        return React.createElement('AgentInput', props);
+    },
 }));
 vi.mock('@/utils/system/versionUtils', () => ({
     isVersionSupported: () => true,
     MINIMUM_CLI_VERSION: '0.0.0',
 }));
-vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        getAgentCore: () => ({
-            displayNameKey: 'agents.codex',
-            cli: { spawnAgent: 'codex' },
-            model: { defaultMode: 'default' },
-            resume: { vendorResumeIdField: null },
-            uiConnectedService: { serviceId: null, label: 'Codex', connectRoute: null },
-        }),
-        resolveAgentIdFromFlavor: () => 'codex',
-        DEFAULT_AGENT_ID: 'codex',
-    };
-});
+vi.mock('@/agents/catalog/catalog', () => ({
+    AGENT_IDS: ['codex'],
+    DEFAULT_AGENT_ID: 'codex',
+    buildResumeSessionExtrasFromUiState: () => null,
+    getAgentCore: () => ({
+        displayNameKey: 'agents.codex',
+        cli: { spawnAgent: 'codex' },
+        model: { defaultMode: 'default' },
+        resume: { vendorResumeIdField: null },
+        uiConnectedService: { serviceId: null, label: 'Codex', connectRoute: null },
+    }),
+    getAgentResumeExperimentsFromSettings: () => null,
+    getNewSessionRelevantInstallableDepKeys: () => [],
+    isAgentId: (value: unknown) => value === 'codex',
+    resolveAgentIdFromFlavor: () => 'codex',
+}));
 vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
     useResumeCapabilityOptions: () => ({ resumeCapabilityOptions: {} }),
 }));
@@ -315,6 +428,24 @@ vi.mock('@/platform/randomUUID', () => ({
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => ({ enabled: false }),
 }));
+vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
+    useSessionExecutionRunsSupported: (sessionId: string) => {
+        sessionExecutionRunsSupportedHookSpy(sessionId);
+        return false;
+    },
+}));
+vi.mock('@/hooks/session/useSessionSubagents', () => ({
+    useSessionSubagents: (input: unknown) => {
+        sessionSubagentsHookSpy(input);
+        return { subagents: [], participantTargets: [], sidechainIds: [] };
+    },
+}));
+vi.mock('@/sync/domains/artifacts/approvalArtifacts', () => ({
+    listOpenApprovalArtifactsForSession: (...args: unknown[]) => {
+        approvalArtifactsSpy(...args);
+        return [];
+    },
+}));
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: { run: async () => {}, invalidateFromAutoRefresh: () => {} },
 }));
@@ -322,7 +453,7 @@ vi.mock('@/sync/ops/actions/sessionActionExecutor', () => ({
     createSessionActionExecutor: () => ({ execute: vi.fn() }),
 }));
 vi.mock('@/sync/domains/input/slashCommands/resolveSessionComposerSend', () => ({
-    resolveSessionComposerSend: () => ({ kind: 'send', text: '' }),
+    resolveSessionComposerSend: (args: { input: string }) => ({ kind: 'send', text: args.input }),
 }));
 vi.mock('@/sync/domains/permissions/permissionModeApply', () => ({
     applyPermissionModeSelection: async () => {},
@@ -375,9 +506,28 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         committedMessagesLoadedState = true;
         transcriptIdsState = [];
         transcriptIdsLoadedState = true;
+        concurrentSessionListCacheByServerIdState = {};
+        committedMessagesListeners.clear();
+        storageListeners.clear();
         shouldRenderChatTimelineForSessionMock.mockClear();
         onSessionVisibleSpy.mockClear();
+        markSessionLiveTailIntentSpy.mockClear();
+        markSessionViewedSpy.mockClear();
+        fetchPendingMessagesSpy.mockClear();
+        chatHeaderRenderSpy.mockClear();
         chatListRenderSpy.mockClear();
+        agentContentViewRenderSpy.mockClear();
+        appPaneScopeHostRenderSpy.mockClear();
+        agentInputRenderSpy.mockClear();
+        pendingMessagesHookSpy.mockClear();
+        transcriptIdsHookSpy.mockClear();
+        subagentSourceMessagesHookSpy.mockClear();
+        sessionSubagentsHookSpy.mockClear();
+        sessionExecutionRunsSupportedHookSpy.mockClear();
+        selectSyncErrorForServerSpy.mockClear();
+        approvalArtifactsSpy.mockClear();
+        sessionScreenFocusState.current = true;
+        routerPathnameState.current = '/';
     });
 
     afterEach(() => {
@@ -398,6 +548,7 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
                 forceRenderFooter: true,
             }),
         );
+        expect(agentContentViewRenderSpy.mock.calls.at(-1)?.[0]?.placeholder).toBeNull();
 
         await screen.unmount();
     });
@@ -406,6 +557,19 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         const screen = await renderSessionView();
 
         expect(screen.findAllByType('ChatList')).toHaveLength(1);
+
+        await screen.unmount();
+    });
+
+    it('passes cached route hydration pending state to the transcript instead of remounting as blank content', async () => {
+        const screen = await renderSessionView({
+            routeHydrationState: { kind: 'loading', sessionId: 's1', reason: 'store-miss' },
+        });
+
+        expect(chatListRenderSpy).toHaveBeenCalled();
+        expect(chatListRenderSpy.mock.calls.at(-1)?.[0]).toMatchObject({
+            routeHydrationPending: true,
+        });
 
         await screen.unmount();
     });
@@ -460,14 +624,14 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
             const screen = await renderSessionView();
 
             expect(screen.findAllByType('ChatList')).toHaveLength(0);
-            expect(screen.findAllByType('ActivityIndicator')).toHaveLength(1);
+            expect(screen.tree.root.findAllByProps({ accessibilityRole: 'progressbar' })).toHaveLength(1);
 
             await act(async () => {
                 await vi.advanceTimersByTimeAsync(20);
             });
 
             expect(screen.findAllByType('ChatList')).toHaveLength(0);
-            expect(screen.findAllByType('ActivityIndicator')).toHaveLength(1);
+            expect(screen.tree.root.findAllByProps({ accessibilityRole: 'progressbar' })).toHaveLength(1);
 
             await screen.unmount();
         } finally {
@@ -541,6 +705,57 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         await screen.unmount();
     });
 
+    it('marks a visible route-anchor surface as visible even while navigation focus is false', async () => {
+        const { SessionView } = await import('./SessionView');
+
+        const screen = await renderScreen(
+            <SessionView
+                id="s1"
+                surfaceFocusedOverride={false}
+                surfaceVisibleOverride={true}
+                routeAnchorOverride={true}
+            />,
+            {
+                wrapper: AppPaneProviderWrapper,
+            },
+        );
+
+        expect(onSessionVisibleSpy).toHaveBeenCalledTimes(1);
+
+        await screen.unmount();
+    });
+
+    it('does not mount session chrome or transcript body when retained behind another route', async () => {
+        sessionScreenFocusState.current = false;
+
+        const screen = await renderSessionView();
+
+        expect(chatHeaderRenderSpy).not.toHaveBeenCalled();
+        expect(chatListRenderSpy).not.toHaveBeenCalled();
+        expect(agentInputRenderSpy).not.toHaveBeenCalled();
+        expect(onSessionVisibleSpy).not.toHaveBeenCalled();
+        expect(pendingMessagesHookSpy).not.toHaveBeenCalled();
+        expect(transcriptIdsHookSpy).not.toHaveBeenCalled();
+        expect(subagentSourceMessagesHookSpy).not.toHaveBeenCalled();
+        expect(sessionSubagentsHookSpy).not.toHaveBeenCalled();
+        expect(sessionExecutionRunsSupportedHookSpy).not.toHaveBeenCalled();
+        expect(approvalArtifactsSpy).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('keeps an owned session route painted while the navigation focus is transitioning', async () => {
+        sessionScreenFocusState.current = false;
+        routerPathnameState.current = '/session/s1/details';
+
+        const screen = await renderSessionView();
+
+        expect(chatHeaderRenderSpy).toHaveBeenCalled();
+        expect(chatListRenderSpy).toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
     it('does not render a restore prompt for encrypted sessions when credentials include dataKey material', async () => {
         authCredentials = { token: 't', encryption: { publicKey: 'pk', machineKey: 'mk' } };
 
@@ -589,6 +804,53 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         expect(syncPerformanceTelemetry.snapshot().events).toEqual([]);
 
         await screen.unmount();
+    });
+
+    it('does not mark a route-rejected scoped session as viewed', async () => {
+        vi.useFakeTimers();
+        try {
+            committedMessagesState = [{
+                id: 'm1',
+                kind: 'agent-text',
+                localId: null,
+                createdAt: 1,
+                seq: 25,
+                text: 'hello',
+            }];
+            transcriptIdsState = ['m1'];
+            sessionState = {
+                ...sessionState,
+                serverId: 'server-b',
+            };
+            concurrentSessionListCacheByServerIdState = {
+                'server-b': {
+                    serverName: 'Server B',
+                    sessions: {
+                        s1: { id: 's1' },
+                    },
+                },
+            };
+
+            const screen = await renderSessionView({ routeServerId: 'server-a' });
+
+            await act(async () => {
+                await vi.runOnlyPendingTimersAsync();
+                await Promise.resolve();
+            });
+
+            expect(screen.findAllByTestId('session-root-unavailable')).toHaveLength(1);
+            expect(onSessionVisibleSpy).not.toHaveBeenCalled();
+            expect(markSessionViewedSpy).not.toHaveBeenCalled();
+            expect(sessionExecutionRunsSupportedHookSpy).not.toHaveBeenCalledWith('s1');
+            expect(sessionSubagentsHookSpy).not.toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1' }));
+            const scopedServerIds = selectSyncErrorForServerSpy.mock.calls.map((call) => call[1]);
+            expect(scopedServerIds).toContain('server-a');
+            expect(scopedServerIds).not.toContain('server-b');
+
+            await screen.unmount();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('does not crash when the session is missing (e.g. deep link before hydration)', async () => {
@@ -674,6 +936,185 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         await screen.update(<SessionView id="s1" />);
 
         expect(chatListRenderSpy).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('keeps the session shell stable for committed-message-id-only updates while refreshing the transcript', async () => {
+        const screen = await renderSessionView();
+
+        await flushHookEffects({ cycles: 5, turns: 5 });
+        appPaneScopeHostRenderSpy.mockClear();
+        chatHeaderRenderSpy.mockClear();
+        agentInputRenderSpy.mockClear();
+        chatListRenderSpy.mockClear();
+
+        await act(async () => {
+            committedMessagesState = [{ id: 'm1', seq: 26, role: 'assistant', content: 'hello' }];
+            transcriptIdsState = ['m1'];
+            emitCommittedMessagesChangeForTest();
+            await Promise.resolve();
+        });
+        await flushHookEffects({ cycles: 2, turns: 1 });
+
+        expect(appPaneScopeHostRenderSpy).not.toHaveBeenCalled();
+        expect(chatHeaderRenderSpy).not.toHaveBeenCalled();
+        expect(agentInputRenderSpy).not.toHaveBeenCalled();
+        expect(chatListRenderSpy).toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('keeps the transcript host stable for pending-version-only updates while still refreshing pending messages', async () => {
+        vi.useFakeTimers();
+        try {
+            const screen = await renderSessionView();
+
+            await flushHookEffects({ cycles: 2, turns: 1 });
+            await act(async () => {
+                await vi.runOnlyPendingTimersAsync();
+            });
+            chatListRenderSpy.mockClear();
+            shouldRenderChatTimelineForSessionMock.mockClear();
+            fetchPendingMessagesSpy.mockClear();
+
+            await act(async () => {
+                sessionState = {
+                    ...sessionState,
+                    pendingVersion: 2,
+                    pendingCount: 1,
+                };
+                emitStorageChangeForTest();
+                await Promise.resolve();
+            });
+            await flushHookEffects({ cycles: 5, turns: 5 });
+            await act(async () => {
+                await vi.runOnlyPendingTimersAsync();
+            });
+
+            expect(chatListRenderSpy).not.toHaveBeenCalled();
+            expect(shouldRenderChatTimelineForSessionMock).not.toHaveBeenCalled();
+            expect(fetchPendingMessagesSpy).toHaveBeenCalledWith('s1');
+
+            await screen.unmount();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('keeps the transcript host stable for metadata freshness-only updates', async () => {
+        sessionState = {
+            ...sessionState,
+            metadata: {
+                ...sessionState.metadata,
+                summary: { text: 'Summary', updatedAt: 100 },
+                sessionModesV1: {
+                    v: 1,
+                    provider: 'codex',
+                    updatedAt: 100,
+                    currentModeId: 'default',
+                    availableModes: [{ id: 'default', name: 'Default' }],
+                },
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'codex',
+                    updatedAt: 100,
+                    currentModelId: 'model-a',
+                    availableModels: [{ id: 'model-a', name: 'Model A' }],
+                },
+            },
+        };
+
+        const screen = await renderSessionView();
+        const { SessionView } = await import('./SessionView');
+
+        await flushHookEffects({ cycles: 2, turns: 1 });
+        chatListRenderSpy.mockClear();
+
+        sessionState = {
+            ...sessionState,
+            metadataVersion: 2,
+            metadata: {
+                ...sessionState.metadata,
+                summary: { text: 'Summary', updatedAt: 200 },
+                sessionModesV1: {
+                    ...sessionState.metadata.sessionModesV1,
+                    updatedAt: 200,
+                },
+                sessionModelsV1: {
+                    ...sessionState.metadata.sessionModelsV1,
+                    updatedAt: 200,
+                },
+            },
+        };
+        await screen.update(<SessionView id="s1" />);
+
+        expect(chatListRenderSpy).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('keeps the session shell stable for visible-read sequence updates while viewing', async () => {
+        committedMessagesState = [{
+            id: 'm1',
+            kind: 'agent-text',
+            localId: null,
+            createdAt: 1,
+            seq: 25,
+            text: 'hello',
+            isThinking: true,
+        }];
+        transcriptIdsState = ['m1'];
+        const screen = await renderSessionView();
+
+        await flushHookEffects({ cycles: 2, turns: 1 });
+        chatHeaderRenderSpy.mockClear();
+        chatListRenderSpy.mockClear();
+        shouldRenderChatTimelineForSessionMock.mockClear();
+
+        await act(async () => {
+            committedMessagesState = [{
+                ...committedMessagesState[0],
+                seq: 26,
+                text: 'hello streaming update',
+            }];
+            emitCommittedMessagesChangeForTest();
+            await Promise.resolve();
+        });
+
+        expect(chatHeaderRenderSpy).not.toHaveBeenCalled();
+        expect(chatListRenderSpy).not.toHaveBeenCalled();
+        expect(shouldRenderChatTimelineForSessionMock).not.toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('re-arms transcript bottom follow when the user sends a message', async () => {
+        const screen = await renderSessionView();
+
+        const initialFollowBottomIntentKey = chatListRenderSpy.mock.calls.at(-1)?.[0]?.followBottomIntentKey;
+        let agentInput = screen.tree.root.findByType('AgentInput' as any);
+        expect(typeof agentInput.props?.onChangeText).toBe('function');
+
+        await act(async () => {
+            agentInput.props.onChangeText('hello from the composer');
+        });
+        await flushHookEffects({ cycles: 2, turns: 1 });
+
+        agentInput = screen.tree.root.findByType('AgentInput' as any);
+        expect(agentInput.props.value).toBe('hello from the composer');
+        expect(typeof agentInput.props?.onSend).toBe('function');
+
+        await act(async () => {
+            agentInput.props.onSend();
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+        await flushHookEffects({ cycles: 5, turns: 5 });
+
+        expect(markSessionLiveTailIntentSpy).toHaveBeenCalledWith('s1');
+        const nextFollowBottomIntentKey = chatListRenderSpy.mock.calls.at(-1)?.[0]?.followBottomIntentKey;
+        expect(nextFollowBottomIntentKey).not.toBe(initialFollowBottomIntentKey);
 
         await screen.unmount();
     });

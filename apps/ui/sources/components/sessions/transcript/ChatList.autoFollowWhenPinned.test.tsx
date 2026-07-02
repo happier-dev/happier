@@ -41,10 +41,17 @@ vi.mock('./ChatFooter', () => ({
 
 vi.mock('./MessageView', () => ({
   MessageView: () => React.createElement('MessageView'),
+  MessageViewWithSessionCommon: () => React.createElement('MessageView'),
 }));
 
 vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
   TurnView: () => React.createElement('TurnView'),
+  TurnViewWithSessionCommon: () => React.createElement('TurnView'),
+}));
+
+vi.mock('@/components/sessions/transcript/toolCalls/ToolCallsGroupRow', () => ({
+  ToolCallsGroupRow: () => React.createElement('ToolCallsGroupRow'),
+  ToolCallsGroupRowWithSessionCommon: () => React.createElement('ToolCallsGroupRow'),
 }));
 
 vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
@@ -95,6 +102,8 @@ vi.mock('@/sync/sync', () => ({
       transcriptWebHotTailItemCount: 2,
       transcriptWebInitialPinStabilizeMs: 0,
       transcriptWebInitialPinRetryIntervalMs: 16,
+      transcriptWebInitialPinRetryMilestonesMs: [16, 50, 100, 200, 400, 800],
+      transcriptOlderLoadSpinnerDelayMs: 300,
     }),
   },
 }));
@@ -151,7 +160,11 @@ describe('ChatList (auto-follow while pinned)', () => {
     };
 
     await act(async () => {
-      await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} />);
+      await screen.update(
+        // New committed activity bumps the session seq in production; the ChatList memo
+        // (buildTranscriptRenderSignature) needs a signature-relevant change to re-render.
+        <ChatList session={{ ...legacyChatListHarnessState.sessionState, seq: 1 }} />,
+      );
     });
 
     expect(scrollToOffsetSpy).toHaveBeenCalled();
@@ -198,7 +211,11 @@ describe('ChatList (auto-follow while pinned)', () => {
     };
 
     await act(async () => {
-      await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} />);
+      await screen.update(
+        // New committed activity bumps the session seq in production; the ChatList memo
+        // (buildTranscriptRenderSignature) needs a signature-relevant change to re-render.
+        <ChatList session={{ ...legacyChatListHarnessState.sessionState, seq: 1 }} />,
+      );
     });
 
     expect(scrollToOffsetSpy).toHaveBeenCalled();
@@ -239,7 +256,11 @@ describe('ChatList (auto-follow while pinned)', () => {
     };
 
     await act(async () => {
-      await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} />);
+      await screen.update(
+        // New committed activity bumps the session seq in production; the ChatList memo
+        // (buildTranscriptRenderSignature) needs a signature-relevant change to re-render.
+        <ChatList session={{ ...legacyChatListHarnessState.sessionState, seq: 1 }} />,
+      );
     });
 
     const event = syncPerformanceTelemetry
@@ -286,7 +307,11 @@ describe('ChatList (auto-follow while pinned)', () => {
     };
 
     await act(async () => {
-      await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} />);
+      await screen.update(
+        // New committed activity bumps the session seq in production; the ChatList memo
+        // (buildTranscriptRenderSignature) needs a signature-relevant change to re-render.
+        <ChatList session={{ ...legacyChatListHarnessState.sessionState, seq: 1 }} />,
+      );
     });
 
     expect(scrollToOffsetSpy).toHaveBeenCalled();
@@ -325,7 +350,11 @@ describe('ChatList (auto-follow while pinned)', () => {
     };
 
     await act(async () => {
-      await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} />);
+      await screen.update(
+        // New committed activity bumps the session seq in production; the ChatList memo
+        // (buildTranscriptRenderSignature) needs a signature-relevant change to re-render.
+        <ChatList session={{ ...legacyChatListHarnessState.sessionState, seq: 1 }} />,
+      );
     });
 
     expect(scrollToOffsetSpy).toHaveBeenCalled();

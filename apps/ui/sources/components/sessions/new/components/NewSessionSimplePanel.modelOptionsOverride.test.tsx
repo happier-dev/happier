@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
+import { computeNewSessionComposerPanelMaxHeight } from '@/components/sessions/agentInput/inputMaxHeight';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -48,8 +49,11 @@ installNewSessionComponentsCommonModuleMocks({
 });
 
 vi.mock('react-native-keyboard-controller', () => ({
-    KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('KeyboardAvoidingView', props, props.children),
+    useKeyboardHandler: () => {},
+    useReanimatedKeyboardAnimation: () => ({
+        height: { value: 0 },
+        progress: { value: 0 },
+    }),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({

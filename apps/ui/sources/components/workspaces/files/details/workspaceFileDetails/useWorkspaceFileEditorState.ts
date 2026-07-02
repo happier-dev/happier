@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
-import { workspaceWriteFile } from '@/sync/domains/workspaces/files/workspaceFileReadWrite';
+import { WORKSPACE_WRITE_FILE_TOO_LARGE_ERROR, workspaceWriteFile } from '@/sync/domains/workspaces/files/workspaceFileReadWrite';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { showDaemonUnavailableAlert, tryShowDaemonUnavailableAlertForRpcError } from '@/utils/errors/daemonUnavailableAlert';
@@ -12,6 +12,13 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { workspaceFileEditorDraftCache } from './workspaceFileEditorDraftCache';
 import type { FileDisplayMode } from '@/components/workspaces/files/file/FileActionToolbar';
+
+function isGuardedWriteConflictError(error: string | undefined): boolean {
+    if (!error) return false;
+    return error.startsWith('File hash mismatch.')
+        || error === 'File does not exist but hash was provided'
+        || error === 'File already exists but was expected to be new';
+}
 
 export type WorkspaceFileEditorState = Readonly<{
     editorSurfaceEnabled: boolean;
@@ -82,6 +89,7 @@ export function useWorkspaceFileEditorState(input: Readonly<{
     const editorOriginalTextRef = React.useRef('');
     const editorOriginalHashRef = React.useRef<string | null>(null);
     const isEditingFileRef = React.useRef(false);
+    const fileChangedExternallyRef = React.useRef(false);
     const persistDraftRef = React.useRef(input.persistDraft);
     const latestInputRef = React.useRef(input);
     latestInputRef.current = input;
@@ -101,6 +109,10 @@ export function useWorkspaceFileEditorState(input: Readonly<{
     React.useEffect(() => {
         isEditingFileRef.current = isEditingFile;
     }, [isEditingFile]);
+
+    React.useEffect(() => {
+        fileChangedExternallyRef.current = fileChangedExternally;
+    }, [fileChangedExternally]);
 
     React.useEffect(() => {
         persistDraftRef.current = input.persistDraft;
@@ -169,14 +181,28 @@ export function useWorkspaceFileEditorState(input: Readonly<{
             ?? input.persistedDraft;
         if (!draft) return;
         if (typeof draft.editorText !== 'string' || typeof draft.editorOriginalText !== 'string') return;
-        setIsEditingFile(Boolean(draft.isEditingFile));
+        const draftOriginalHash = typeof draft.editorOriginalHash === 'string' ? draft.editorOriginalHash : null;
+        const isEditingDraft = Boolean(draft.isEditingFile);
+        const externallyChanged = isEditingDraft
+            && typeof input.fileText === 'string'
+            && (
+                typeof draftOriginalHash === 'string' && typeof input.fileHash === 'string'
+                    ? draftOriginalHash !== input.fileHash
+                    : input.fileText !== draft.editorOriginalText
+            );
+        isEditingFileRef.current = isEditingDraft;
+        editorOriginalTextRef.current = draft.editorOriginalText;
+        editorOriginalHashRef.current = draftOriginalHash;
+        fileChangedExternallyRef.current = externallyChanged;
+        setIsEditingFile(isEditingDraft);
         setEditorOriginalText(draft.editorOriginalText);
-        setEditorOriginalHash(typeof draft.editorOriginalHash === 'string' ? draft.editorOriginalHash : input.fileHash);
+        setEditorOriginalHash(draftOriginalHash);
         setEditorSeedText(draft.editorText);
         editorTextRef.current = draft.editorText;
-        setEditorDirty(Boolean(draft.isEditingFile) && draft.editorText !== draft.editorOriginalText);
+        setEditorDirty(isEditingDraft && draft.editorText !== draft.editorOriginalText);
+        setFileChangedExternally(externallyChanged);
         setEditorResetKey((key) => key + 1);
-    }, [draftKey, input.fileHash, input.filePath, input.persistedDraft, workspaceCacheKey]);
+    }, [draftKey, input.fileHash, input.filePath, input.fileText, input.persistedDraft, workspaceCacheKey]);
 
     React.useEffect(() => {
         return () => {
@@ -307,20 +333,27 @@ export function useWorkspaceFileEditorState(input: Readonly<{
                 editorTextRef.current = latestText;
                 sizeAndPersistDebounce.flush();
                 if (latestText === editorOriginalTextRef.current) return;
+                if (fileChangedExternallyRef.current) {
+                    Modal.alert(t('common.error'), t('files.fileChangedExternally'));
+                    return;
+                }
 
+                const expectedHash = editorOriginalHashRef.current ?? undefined;
                 const response = await workspaceWriteFile({
                     scope: latestInput.scope,
                     path: latestInput.filePath,
                     content: latestText,
-                    expectedHash: editorOriginalHashRef.current ?? undefined,
+                    expectedHash,
                 });
 
                 if (!response.success) {
-                    if (editorOriginalHashRef.current !== null) {
+                    if (expectedHash !== undefined && isGuardedWriteConflictError(response.error)) {
                         setFileChangedExternally(true);
+                        Modal.alert(t('common.error'), t('files.fileChangedExternally'));
+                        return;
                     }
                     const code = response.errorCode;
-                    if (code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+                    if (code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE && response.error !== WORKSPACE_WRITE_FILE_TOO_LARGE_ERROR) {
                         showDaemonUnavailableAlert({
                             titleKey: 'errors.daemonUnavailableTitle',
                             bodyKey: 'errors.daemonUnavailableBody',

@@ -78,11 +78,54 @@ function resolveStringAlias<T extends string>(
     return fallback;
 }
 
+function hasOwnKey(settings: Readonly<Record<string, unknown>>, key: string): boolean {
+    return Object.prototype.hasOwnProperty.call(settings, key);
+}
+
+function syncBooleanAliasDelta(
+    settings: LocalSettingsRecord,
+    primaryKey: keyof LocalSettings,
+    legacyKey: keyof LocalSettings,
+    fallback: boolean,
+): void {
+    if (!hasOwnKey(settings, primaryKey) && !hasOwnKey(settings, legacyKey)) return;
+    const value = resolveBooleanAlias(settings[primaryKey], settings[legacyKey], fallback);
+    const mutableSettings = settings as Record<string, unknown>;
+    mutableSettings[primaryKey] = value;
+    mutableSettings[legacyKey] = value;
+}
+
+function syncStringAliasDelta<T extends string>(
+    settings: LocalSettingsRecord,
+    primaryKey: keyof LocalSettings,
+    legacyKey: keyof LocalSettings,
+    fallback: T,
+): void {
+    if (!hasOwnKey(settings, primaryKey) && !hasOwnKey(settings, legacyKey)) return;
+    const value = resolveStringAlias(settings[primaryKey], settings[legacyKey], fallback);
+    const mutableSettings = settings as Record<string, unknown>;
+    mutableSettings[primaryKey] = value;
+    mutableSettings[legacyKey] = value;
+}
+
 function migrateLegacyDesktopOverlayParseInput(
     settings: LocalSettingsParseRecord,
 ): LocalSettingsParseRecord {
     if (settings.desktopOverlayExpandedBehavior === 'shortcut_only') {
         settings.desktopOverlayExpandedBehavior = 'click';
+    }
+
+    return settings;
+}
+
+function normalizeActivitySurfaceLocalSettingsDelta(settings: LocalSettingsRecord): LocalSettingsRecord {
+    syncBooleanAliasDelta(settings, 'liveActivitiesEnabled', 'iosLiveActivitiesEnabled', true);
+    syncBooleanAliasDelta(settings, 'widgetsEnabled', 'iosWidgetsEnabled', true);
+    syncStringAliasDelta(settings, 'widgetsPresetMode', 'homeScreenWidgetsMode', 'summary');
+    syncBooleanAliasDelta(settings, 'widgetsShowPreviewText', 'homeScreenWidgetsShowPreviewText', true);
+    syncBooleanAliasDelta(settings, 'widgetsShowMachinePath', 'homeScreenWidgetsShowMachinePath', true);
+    if (settings.attentionDeviceOverridesV1 !== undefined) {
+        settings.attentionDeviceOverridesV1 = AttentionDeviceOverridesV1Schema.parse(settings.attentionDeviceOverridesV1);
     }
 
     return settings;
@@ -206,14 +249,23 @@ export function localSettingsParse(settings: unknown): LocalSettings {
 
 export function applyLocalSettings(settings: LocalSettings, delta: Partial<LocalSettings> | Readonly<Record<string, unknown>>): LocalSettings {
     const strippedDelta = stripDeprecatedLocalSettingsKeys({ ...delta });
+    const updatesAttentionDeviceOverrides =
+        strippedDelta.attentionDeviceOverridesV1 !== undefined
+        || hasLegacyAttentionDeviceOverrideFields(strippedDelta);
     if (strippedDelta.attentionDeviceOverridesV1 === undefined && hasLegacyAttentionDeviceOverrideFields(strippedDelta)) {
         strippedDelta.attentionDeviceOverridesV1 = deriveAttentionDeviceOverridesV1FromLegacyLocalSettings({
             legacy: strippedDelta,
             base: settings.attentionDeviceOverridesV1,
         });
     }
-    const normalizedDelta = normalizeActivitySurfaceLocalSettings(strippedDelta as LocalSettingsRecord);
+    const normalizedDelta = normalizeActivitySurfaceLocalSettingsDelta(strippedDelta as LocalSettingsRecord);
+    if (!updatesAttentionDeviceOverrides) {
+        delete (normalizedDelta as Record<string, unknown>).attentionDeviceOverridesV1;
+    }
     const next: LocalSettingsRecord = { ...localSettingsDefaults, ...settings, ...normalizedDelta };
     normalizeActivitySurfaceLocalSettings(next);
+    if (!updatesAttentionDeviceOverrides) {
+        next.attentionDeviceOverridesV1 = settings.attentionDeviceOverridesV1;
+    }
     return stripDeprecatedLocalSettingsKeys(next) as LocalSettings;
 }

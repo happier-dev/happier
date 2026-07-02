@@ -7,6 +7,8 @@ type ToolResultLike = Readonly<{
     error?: unknown;
 }> | null | undefined;
 
+export const REQUEST_INTERRUPTED_REASON = 'Request interrupted';
+
 function readResultError(result: ToolResultLike): string | null {
     if (!result || typeof result !== 'object') return null;
     return typeof result.error === 'string' ? result.error : null;
@@ -21,5 +23,5 @@ export function isRequestInterruptedPlaceholder(params: Readonly<{
         return false;
     }
 
-    return permission.reason === 'Request interrupted' || readResultError(params.result) === 'Request interrupted';
+    return permission.reason === REQUEST_INTERRUPTED_REASON || readResultError(params.result) === REQUEST_INTERRUPTED_REASON;
 }

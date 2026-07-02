@@ -1,11 +1,7 @@
 import React from 'react';
 import { View } from 'react-native';
 
-import type {
-    TreeDropMeasurableRef,
-    TreeInstructionVisual,
-} from '@/components/ui/treeDragDrop';
-import { SessionListDropIndicator } from './SessionListDropIndicator';
+import type { TreeDropMeasurableRef } from '@/components/ui/treeDragDrop';
 
 export type RegisterSessionListTreeRowBounds = (rowId: string, ref: TreeDropMeasurableRef | null) => void;
 export type UnregisterSessionListTreeRowBounds = (rowId: string) => void;
@@ -13,7 +9,6 @@ export type UnregisterSessionListTreeRowBounds = (rowId: string) => void;
 export const SessionListHeaderFrame = React.memo(function SessionListHeaderFrame(props: Readonly<{
     children: React.ReactNode;
     treeRowId: string;
-    activeDropVisual: TreeInstructionVisual;
     onRegisterTreeRowBounds: RegisterSessionListTreeRowBounds;
     onUnregisterTreeRowBounds: UnregisterSessionListTreeRowBounds;
 }>) {
@@ -30,10 +25,6 @@ export const SessionListHeaderFrame = React.memo(function SessionListHeaderFrame
             style={{ position: 'relative' }}
             onLayout={() => props.onRegisterTreeRowBounds(props.treeRowId, wrapperRef.current)}
         >
-            <SessionListDropIndicator
-                targetId={props.treeRowId}
-                visual={props.activeDropVisual}
-            />
             {props.children}
         </View>
     );

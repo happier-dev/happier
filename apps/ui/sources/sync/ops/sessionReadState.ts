@@ -14,6 +14,7 @@ import { computeManualUnreadReadStateV1 } from '@/sync/domains/state/readStateV1
 import { storage } from '@/sync/domains/state/storage';
 import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import {
     buildMachineDisplaysByIdFromMachineList,
     buildSessionListIndexWithServerScope,
@@ -183,7 +184,7 @@ function applyManualReadStateToLocalState(params: Readonly<{
     ownerServerId: string;
 }>): void {
     const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-    if (params.ownerServerId && activeServerId && params.ownerServerId !== activeServerId) {
+    if (params.ownerServerId && activeServerId && !areServerProfileIdentifiersEquivalent(params.ownerServerId, activeServerId)) {
         storage.setState((state) => {
             const previousEntry = state.concurrentSessionListCacheByServerId?.[params.ownerServerId];
             const previousRows = previousEntry?.sessions;
@@ -227,6 +228,7 @@ function applyManualReadStateToLocalState(params: Readonly<{
                 groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
                 activeGroupingV1: state.settings.sessionListActiveGroupingV1,
                 inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                sectionModeV1: state.settings.sessionListSectionModeV1,
                 serverScope: {
                     serverId: params.ownerServerId,
                     serverName: previousEntry.serverName ?? undefined,

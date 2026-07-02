@@ -1,66 +1,30 @@
 import { SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 
 import type { SessionListTreeModel } from '../drop-resolution/sessionListTreeTypes';
+import { buildOrderMapAfterMove } from './orderMapUpdate';
 
 type GroupOrderMap = Readonly<Record<string, ReadonlyArray<string> | undefined>>;
+export type SessionListGroupOrderChildKind = 'sessionsOnly' | 'foldersOnly' | 'mixed';
 
-function dedupeOrderKeys(keys: ReadonlyArray<string>): string[] {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const key of keys) {
-        const normalized = typeof key === 'string' ? key.trim() : '';
-        if (!normalized || seen.has(normalized)) continue;
-        seen.add(normalized);
-        out.push(normalized);
-    }
-    return out;
+function shouldIncludeOrderKey(
+    kind: SessionListGroupOrderChildKind,
+    rowKind: string,
+): boolean {
+    if (kind === 'mixed') return true;
+    if (kind === 'sessionsOnly') return rowKind === 'session';
+    return rowKind === 'folder';
 }
 
-function insertOrderKey(params: Readonly<{
-    keys: ReadonlyArray<string>;
-    movedKey: string;
-    beforeKey?: string | null;
-    afterKey?: string | null;
-}>): string[] {
-    const withoutMoved = params.keys.filter((key) => key !== params.movedKey);
-    if (params.beforeKey) {
-        const beforeIndex = withoutMoved.indexOf(params.beforeKey);
-        if (beforeIndex >= 0) {
-            return [
-                ...withoutMoved.slice(0, beforeIndex),
-                params.movedKey,
-                ...withoutMoved.slice(beforeIndex),
-            ];
-        }
-    }
-    if (params.afterKey) {
-        const afterIndex = withoutMoved.indexOf(params.afterKey);
-        if (afterIndex >= 0) {
-            return [
-                ...withoutMoved.slice(0, afterIndex + 1),
-                params.movedKey,
-                ...withoutMoved.slice(afterIndex + 1),
-            ];
-        }
-    }
-    return [params.movedKey, ...withoutMoved];
-}
-
-function copyOrderMapWithoutMovedKey(currentMap: GroupOrderMap, movedKey: string): Record<string, string[]> {
-    const out: Record<string, string[]> = {};
-    for (const [groupKey, keys] of Object.entries(currentMap)) {
-        if (!Array.isArray(keys)) continue;
-        const nextKeys = keys.filter((key) => key !== movedKey);
-        if (nextKeys.length > 0) out[groupKey] = nextKeys;
-    }
-    return out;
-}
-
-function collectDirectChildOrderKeys(tree: SessionListTreeModel, containerId: string): string[] {
+function collectDirectChildOrderKeys(
+    tree: SessionListTreeModel,
+    containerId: string,
+    childKind: SessionListGroupOrderChildKind,
+): string[] {
     const keys: string[] = [];
     for (const metadata of tree.rowMetadataById.values()) {
         if (metadata.containerId !== containerId) continue;
         if (metadata.kind === 'workspace-root') continue;
+        if (!shouldIncludeOrderKey(childKind, metadata.kind)) continue;
         if (metadata.orderKey) keys.push(metadata.orderKey);
     }
     return keys;
@@ -73,32 +37,40 @@ export function buildSessionListGroupOrderAfterTreeDrop(params: Readonly<{
     containerId: string;
     beforeRowId?: string | null;
     afterRowId?: string | null;
+    childKind?: SessionListGroupOrderChildKind;
 }>): Record<string, string[]> | null {
     const moved = params.tree.rowMetadataById.get(params.movedRowId);
     const container = params.tree.containerMetadataById.get(params.containerId);
     if (!moved?.orderKey || !container?.groupKey) return null;
+    const childKind = params.childKind ?? 'mixed';
 
     const beforeKey = params.beforeRowId
-        ? params.tree.rowMetadataById.get(params.beforeRowId)?.orderKey ?? null
+        ? (() => {
+            const before = params.tree.rowMetadataById.get(params.beforeRowId);
+            return before && shouldIncludeOrderKey(childKind, before.kind) ? before.orderKey : null;
+        })()
         : null;
     const afterKey = params.afterRowId
-        ? params.tree.rowMetadataById.get(params.afterRowId)?.orderKey ?? null
+        ? (() => {
+            const after = params.tree.rowMetadataById.get(params.afterRowId);
+            return after && shouldIncludeOrderKey(childKind, after.kind) ? after.orderKey : null;
+        })()
         : null;
 
-    const currentMap = copyOrderMapWithoutMovedKey(params.currentMap, moved.orderKey);
-    const directChildKeys = collectDirectChildOrderKeys(params.tree, params.containerId);
-    const existingKeys = currentMap[container.groupKey] ?? [];
-    const baseKeys = dedupeOrderKeys([...existingKeys, ...directChildKeys, moved.orderKey]);
-    const nextKeys = insertOrderKey({
-        keys: baseKeys,
+    const directChildKeys = collectDirectChildOrderKeys(params.tree, params.containerId, childKind);
+    const allowedKeys = new Set([...directChildKeys, moved.orderKey]);
+    const nextMap = buildOrderMapAfterMove({
+        currentMap: params.currentMap,
+        scopeKey: container.groupKey,
         movedKey: moved.orderKey,
+        directKeys: directChildKeys,
         beforeKey,
         afterKey,
-    }).slice(0, SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP);
-
+        maxKeys: SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP,
+    });
     return {
-        ...currentMap,
-        [container.groupKey]: nextKeys,
+        ...nextMap,
+        [container.groupKey]: (nextMap[container.groupKey] ?? []).filter((key) => allowedKeys.has(key)),
     };
 }
 
@@ -109,6 +81,7 @@ export function applyGroupOrderUpdate(params: Readonly<{
     containerId: string;
     beforeRowId?: string | null;
     afterRowId?: string | null;
+    childKind?: SessionListGroupOrderChildKind;
     setSessionListGroupOrderV1: (next: Record<string, string[]>) => void;
 }>): boolean {
     const next = buildSessionListGroupOrderAfterTreeDrop(params);

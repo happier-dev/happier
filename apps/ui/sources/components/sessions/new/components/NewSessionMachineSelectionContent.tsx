@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { resolvePopoverHeightStyle } from '@/components/ui/popover';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -39,7 +40,7 @@ export function NewSessionMachineSelectionContent(props: NewSessionMachineSelect
         ? { paddingTop: 0 }
         : {
             paddingTop: 0,
-            maxHeight: props.maxHeight,
+            ...resolvePopoverHeightStyle(props.maxHeight),
             minHeight: 0,
             flex: 0,
             flexGrow: 0,

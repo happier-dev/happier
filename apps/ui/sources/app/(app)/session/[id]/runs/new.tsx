@@ -10,6 +10,7 @@ import { resolveExecutionRunLauncherIntent } from '@/components/sessions/runs/la
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -21,7 +22,8 @@ export default function SessionNewRunScreen() {
     const params = useLocalSearchParams<{ id?: string | string[]; serverId?: string | string[]; intent?: string | string[] }>();
     const routeScope = React.useMemo(() => createSessionRouteServerScope(params as Record<string, unknown>), [params]);
     const sessionId = normalizeSessionId(params.id);
-    const hydrateReady = useHydrateSessionForRoute(sessionId, 'SessionNewRunScreen.hydrate', routeScope.hydrationOptions);
+    const routeHydrationState = useHydrateSessionForRoute(sessionId, 'SessionNewRunScreen.hydrate', routeScope.hydrationOptions);
+    const hydrateReady = isSessionRouteHydrationAvailable(routeHydrationState);
     const rawIntent = params.intent;
     const hasIntentParam = rawIntent !== undefined;
     const initialIntent = resolveExecutionRunLauncherIntent(rawIntent);
@@ -70,13 +72,14 @@ export default function SessionNewRunScreen() {
                     gap: 16,
                 }}
             >
-                {!sessionId ? (
+                {!sessionId || isSessionRouteHydrationMissing(routeHydrationState) ? (
                     <Text style={{ color: theme.colors.text.primary }}>{t('errors.sessionDeleted')}</Text>
                 ) : !hydrateReady ? (
                     <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                 ) : (
                     <SessionExecutionRunLauncherView
                         sessionId={sessionId}
+                        routeHydrationState={routeHydrationState}
                         initialIntent={launcherIntent}
                         presentation="screen"
                         onRequestClose={handleRequestClose}

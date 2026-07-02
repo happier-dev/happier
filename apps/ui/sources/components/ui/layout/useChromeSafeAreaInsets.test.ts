@@ -5,6 +5,9 @@ import { renderHook, standardCleanup } from '@/dev/testkit';
 describe('useChromeSafeAreaInsets helpers', () => {
     afterEach(() => {
         standardCleanup();
+        vi.doUnmock('react-native');
+        vi.doUnmock('react-native-safe-area-context');
+        vi.resetModules();
     });
 
     it('reads safe area insets from a CSS var probe element (so env(safe-area-inset-*) resolves)', async () => {
@@ -133,6 +136,38 @@ describe('useChromeSafeAreaInsets helpers', () => {
         const hook = await renderHook(() => useChromeSafeAreaInsets());
 
         expect(hook.getCurrent()).toEqual({ top: 50, bottom: 18, left: 0, right: 0 });
+    });
+
+    it('reuses the last native safe-area inset for a same-viewport zero-inset frame', async () => {
+        vi.resetModules();
+        const safeAreaState = {
+            dimensions: { width: 390, height: 844, scale: 1, fontScale: 1 },
+            initial: null as null | { insets: { top: number; bottom: number; left: number; right: number } },
+            insets: { top: 0, bottom: 34, left: 0, right: 0 },
+        };
+
+        vi.doMock('react-native', async () => {
+            const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+            return createReactNativeWebMock({
+                Platform: { OS: 'ios' },
+                useWindowDimensions: () => safeAreaState.dimensions,
+            });
+        });
+
+        vi.doMock('react-native-safe-area-context', () => ({
+            useSafeAreaInsets: () => safeAreaState.insets,
+            initialWindowMetrics: safeAreaState.initial,
+        }));
+
+        const { useChromeSafeAreaInsets } = await import('./useChromeSafeAreaInsets');
+        const hook = await renderHook(() => useChromeSafeAreaInsets());
+
+        expect(hook.getCurrent().bottom).toBe(34);
+
+        safeAreaState.insets = { top: 0, bottom: 0, left: 0, right: 0 };
+        await hook.rerender();
+
+        expect(hook.getCurrent().bottom).toBe(34);
     });
 
     it('does not crash when initialWindowMetrics is not exported by the safe-area mock (returns zeros)', async () => {

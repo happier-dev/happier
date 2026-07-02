@@ -110,6 +110,10 @@ export function AgentInputChipPickerPanel(
       : "stacked";
   const detailPaneStyle =
     detailedLayout === "split" ? styles.detailPaneSplit : null;
+  const detailContainerStyle =
+    detailedLayout === "split"
+      ? styles.detailScroll
+      : styles.detailStackedWithSelector;
   const railWidth = props.railWidth ?? styles.railScroll.width;
   const railMaxWidth = props.railMaxWidth ?? styles.railScroll.maxWidth;
 
@@ -191,7 +195,7 @@ export function AgentInputChipPickerPanel(
               </View>
             ) : null}
             {focusedOption ? (
-              <View style={detailedLayout === "split" ? styles.detailScroll : null}>
+              <View style={detailContainerStyle}>
                 <View style={[styles.detailPane, detailedLayout === "split" ? styles.detailScrollContent : null]}>
                   {props.detailPaneHeaderAccessory ? (
                     <View style={styles.detailPaneHeaderAccessoryRow}>
@@ -268,8 +272,8 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   bodyDetailedStacked: {
     flexDirection: "column",
-    padding: 10,
-    gap: 10,
+    padding: 0,
+    gap: 0,
     minHeight: 0,
   },
   railScroll: {
@@ -285,6 +289,11 @@ const stylesheet = StyleSheet.create((theme) => ({
   detailScroll: {
     flex: 1,
     backgroundColor: theme.colors.surface.base,
+  },
+  detailStackedWithSelector: {
+    width: "100%",
+    flexShrink: 1,
+    padding: 10,
   },
   detailScrollContent: {
     paddingHorizontal: 12,

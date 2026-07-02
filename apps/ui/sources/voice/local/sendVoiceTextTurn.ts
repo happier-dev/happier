@@ -244,7 +244,9 @@ export async function sendVoiceTextTurn(params: {
 
   voiceConversationRuntimeMachine.transitionToSending({ controlSessionId: sessionId });
   try {
-    await sync.sendMessage(sessionId, userText);
+    await sync.sendMessage(sessionId, userText, undefined, undefined, {
+      bypassPendingQueueReason: 'voice_turn',
+    });
   } catch (error) {
     transitionVoiceRuntimeToIdleIfCurrent({
       controlSessionId: sessionId,

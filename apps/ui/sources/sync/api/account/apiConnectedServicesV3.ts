@@ -2,6 +2,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
+import { throwConnectedServiceApiError } from './connectedServiceApiError';
 
 import {
   ConnectedServiceCredentialRecordV1Schema,
@@ -9,6 +10,10 @@ import {
   type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
+
+type ConnectedServiceReconnectInput = Readonly<{
+  allowProviderIdentityChange: true;
+}>;
 
 function extractErrorCode(json: unknown): string | null {
   if (!json || typeof json !== 'object') return null;
@@ -22,6 +27,7 @@ export async function registerConnectedServiceCredentialPlain(
     serviceId: ConnectedServiceId;
     profileId: string;
     record: ConnectedServiceCredentialRecordV1;
+    reconnect?: ConnectedServiceReconnectInput;
   }>,
 ): Promise<void> {
   await backoff(async () => {
@@ -35,6 +41,7 @@ export async function registerConnectedServiceCredentialPlain(
         },
         body: JSON.stringify({
           content: { t: 'plain', v: params.record },
+          ...(params.reconnect ? { reconnect: params.reconnect } : {}),
         }),
       },
       { includeAuth: false },
@@ -63,11 +70,12 @@ export async function registerConnectedServiceCredentialPlain(
 
 export async function deleteConnectedServiceCredentialV3(
   credentials: AuthCredentials,
-  params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
+  params: Readonly<{ serviceId: ConnectedServiceId; profileId: string; cleanupGroupReferences?: boolean }>,
 ): Promise<void> {
   await backoff(async () => {
+    const query = params.cleanupGroupReferences ? '?cleanupGroupReferences=true' : '';
     const response = await serverFetch(
-      `/v3/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/credential`,
+      `/v3/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/credential${query}`,
       {
         method: 'DELETE',
         headers: {
@@ -83,17 +91,7 @@ export async function deleteConnectedServiceCredentialV3(
     }
 
     if (!response.ok) {
-      if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
-        let message = 'connect_credential_not_found';
-        try {
-          const json = await response.json();
-          message = extractErrorCode(json) ?? message;
-        } catch {
-          // ignore
-        }
-        throw new HappyError(message, false, { status: response.status, kind: 'server' });
-      }
-      throw new Error(`Failed to disconnect ${params.serviceId}: ${response.status}`);
+      await throwConnectedServiceApiError(response);
     }
 
     const json = await response.json().catch(() => null);

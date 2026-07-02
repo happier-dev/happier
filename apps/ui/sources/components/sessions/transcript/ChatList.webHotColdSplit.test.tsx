@@ -35,6 +35,25 @@ vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
             footer,
         );
     }),
+    LayoutCommitObserver: ({ children, onCommitLayoutEffect }: any) => {
+        React.useLayoutEffect(() => {
+            onCommitLayoutEffect?.();
+        });
+        return React.createElement(React.Fragment, null, children);
+    },
+    useLayoutState: <T,>(initialValue: T) => React.useState(initialValue),
+    useMappingHelper: () => ({
+        getMappingKey: (_key: string | number, index: number) => index,
+    }),
+    useRecyclingState: <T,>(initialValue: T, dependencies: readonly unknown[], onReset?: () => void) => {
+        const [state, setState] = React.useState(initialValue);
+        React.useEffect(() => {
+            setState(initialValue);
+            onReset?.();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, dependencies);
+        return [state, setState] as const;
+    },
 }));
 
 installTranscriptCommonModuleMocks({
@@ -59,6 +78,11 @@ installTranscriptCommonModuleMocks({
                 sessionMessagesState.messages.find((message) => message.id === messageId) ?? null,
             useSession: () => sessionState,
             useSessionActionDrafts: () => [],
+            useSessionChatFooterState: () => ({
+                controlledByUser: false,
+                localControl: null,
+                permissionsInUiWhileLocal: false,
+            }),
             useSessionLatestThinkingMessageId: () => null,
             useSessionLatestThinkingMessageActivityAtMs: () => null,
             useSessionMessagesById: () =>
@@ -115,6 +139,7 @@ vi.mock('@/components/sessions/chatListItems', () => ({
 
 vi.mock('./MessageView', () => ({
     MessageView: ({ message }: any) => React.createElement('MessageView', { messageId: message?.id }),
+    MessageViewWithSessionCommon: ({ message }: any) => React.createElement('MessageView', { messageId: message?.id }),
 }));
 
 vi.mock('./ChatFooter', () => ({
@@ -146,6 +171,8 @@ vi.mock('@/sync/sync', () => ({
             transcriptWebHotTailItemCount: 2,
             transcriptWebInitialPinStabilizeMs: 0,
             transcriptWebInitialPinRetryIntervalMs: 16,
+            transcriptWebInitialPinRetryMilestonesMs: [16, 50, 100, 200, 400, 800],
+            transcriptOlderLoadSpinnerDelayMs: 300,
         }),
         loadOlderMessages: vi.fn(),
         loadOlderMessagesForkAware: vi.fn(),
@@ -172,10 +199,12 @@ vi.mock('@/components/sessions/transcript/turnGrouping/buildTranscriptTurns', ()
 
 vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
     TurnView: () => React.createElement('TurnView'),
+    TurnViewWithSessionCommon: () => React.createElement('TurnView'),
 }));
 
 vi.mock('@/components/sessions/transcript/toolCalls/ToolCallsGroupRow', () => ({
     ToolCallsGroupRow: () => React.createElement('ToolCallsGroupRow'),
+    ToolCallsGroupRowWithSessionCommon: () => React.createElement('ToolCallsGroupRow'),
 }));
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptMotionProvider', () => ({
@@ -196,10 +225,6 @@ vi.mock('@/components/sessions/transcript/scroll/JumpToBottomButton', () => ({
 
 vi.mock('@/components/sessions/transcript/scroll/transcriptScrollPinController', () => ({
     reduceTranscriptScrollPinState: (state: any) => state,
-}));
-
-vi.mock('@/components/sessions/transcript/scroll/shouldPrefetchOlderFromTop', () => ({
-    shouldPrefetchOlderFromTop: () => false,
 }));
 
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({

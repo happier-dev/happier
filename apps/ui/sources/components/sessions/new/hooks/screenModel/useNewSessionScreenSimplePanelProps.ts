@@ -58,6 +58,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
     > & Readonly<{
         selectedBackendTargetKey: string;
         selectedBackendEntryTargetKey?: string;
+        agentPickerSelectedOptionId?: string | null;
     }>;
     model: Pick<
         NewSessionSimplePanelProps,
@@ -96,7 +97,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
     targetServerId: NewSessionSimplePanelProps['targetServerId'];
     attachmentFlowId: NewSessionSimplePanelProps['attachmentFlowId'];
 }>): NewSessionSimplePanelProps {
-    const { selectedBackendEntryTargetKey, selectedBackendTargetKey, ...agentProps } = params.agent;
+    const { selectedBackendEntryTargetKey, selectedBackendTargetKey, agentPickerSelectedOptionId, ...agentProps } = params.agent;
     const { modelOptionsProbeState, ...modelProps } = params.model;
     const { acpSessionModeProbeState, acpConfigOptionsProbeState, ...acpProps } = params.acp;
     const { machineDisplayName, machineHost, ...machineAndResumeProps } = params.machineAndResume;
@@ -111,7 +112,7 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         ...params.profile,
         targetServerId: params.targetServerId,
         attachmentFlowId: params.attachmentFlowId,
-        agentPickerSelectedOptionId: selectedBackendEntryTargetKey ?? selectedBackendTargetKey,
+        agentPickerSelectedOptionId: agentPickerSelectedOptionId ?? selectedBackendEntryTargetKey ?? selectedBackendTargetKey,
         modelOptionsProbe: {
             phase: modelOptionsProbeState.phase,
             onRefresh: modelOptionsProbeState.onRefresh,

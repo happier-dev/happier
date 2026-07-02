@@ -4,6 +4,8 @@ import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
+import { EncryptionCache } from '@/sync/encryption/encryptionCache';
+import { SessionEncryption } from '@/sync/encryption/sessionEncryption';
 import {
     markSessionSurfaceVisible,
     resetSessionSurfaceVisibilityForTests,
@@ -97,22 +99,26 @@ function buildTranscriptStreamSegmentUpdate(sessionId: string, content: unknown,
 function buildPlainTranscriptStreamSegmentContent(text: string, localId = 'segment-1') {
     return {
         t: 'plain',
-        v: {
-            role: 'agent',
-            content: {
-                type: 'acp',
-                provider: 'codex',
-                data: { type: 'message', message: text },
-            },
-            meta: {
-                happierStreamSegmentV1: {
-                    v: 1,
-                    segmentKind: 'assistant',
-                    segmentLocalId: localId,
-                    segmentState: 'streaming',
-                    startedAtMs: 1_000,
-                    updatedAtMs: 1_010,
-                },
+        v: buildRawTranscriptStreamSegmentRecord(text, localId),
+    };
+}
+
+function buildRawTranscriptStreamSegmentRecord(text: string, localId = 'segment-1') {
+    return {
+        role: 'agent',
+        content: {
+            type: 'acp',
+            provider: 'codex',
+            data: { type: 'message', message: text },
+        },
+        meta: {
+            happierStreamSegmentV1: {
+                v: 1,
+                segmentKind: 'assistant',
+                segmentLocalId: localId,
+                segmentState: 'streaming',
+                startedAtMs: 1_000,
+                updatedAtMs: 1_010,
             },
         },
     };
@@ -372,6 +378,7 @@ describe('socket update handling: transcript-stream-segment ephemerals', () => {
 
     it('normalizes and applies live transcript stream snapshots', async () => {
         const applyMessages = vi.fn();
+        markSessionSurfaceVisible('s1');
 
         await handleEphemeralSocketUpdate(buildEphemeralParams({
             update: {
@@ -422,7 +429,7 @@ describe('socket update handling: transcript-stream-segment ephemerals', () => {
         );
     });
 
-    it('defers off-screen transcript stream segment applies until the coalescing window flushes', async () => {
+    it('drops off-screen transcript stream segment applies when the coalescing window flushes while hidden', async () => {
         vi.useFakeTimers();
         const sessionId = 'offscreen_stream_session';
         enableTranscriptStreamingCoalescingForTest();
@@ -444,12 +451,51 @@ describe('socket update handling: transcript-stream-segment ephemerals', () => {
 
         await vi.runAllTimersAsync();
 
-        expect(applyMessages).toHaveBeenCalledTimes(1);
-        expect(applyMessages.mock.calls[0]?.[1]?.[0]).toMatchObject({
-            localId: 'segment-offscreen',
-            role: 'agent',
-            content: [{ type: 'text', text: 'off-screen live' }],
+        expect(applyMessages).not.toHaveBeenCalled();
+    });
+
+    it('drops hidden encrypted transcript stream segments at flush time without decrypting', async () => {
+        vi.useFakeTimers();
+        const sessionId = 'hidden_encrypted_stream_session';
+        enableTranscriptStreamingCoalescingForTest();
+        storage.getState().applySessions([buildSession(sessionId, 'e2ee')]);
+
+        const decryptPayloads = vi.fn(async () => [
+            decryptPayloads.mock.calls.length === 1
+                ? buildRawTranscriptStreamSegmentRecord('hidden encrypted live', 'segment-hidden-encrypted')
+                : buildRawTranscriptStreamSegmentRecord('visible encrypted live', 'segment-visible-encrypted'),
+        ]);
+        const sessionEncryption = new SessionEncryption(
+            sessionId,
+            {
+                encrypt: async () => [],
+                decrypt: decryptPayloads,
+            },
+            new EncryptionCache(),
+        );
+        const applyMessages = vi.fn<(appliedSessionId: string, messages: NormalizedMessage[]) => void>();
+        const baseParams = buildEphemeralParams({
+            getSessionEncryption: () => sessionEncryption,
+            getSession: (id) => storage.getState().sessions[id],
+            applyMessages,
         });
+
+        await handleEphemeralSocketUpdate({
+            ...baseParams,
+            update: buildTranscriptStreamSegmentUpdate(
+                sessionId,
+                { t: 'encrypted', c: 'AA==' },
+                'segment-hidden-encrypted',
+            ),
+        });
+
+        expect(decryptPayloads).not.toHaveBeenCalled();
+        expect(applyMessages).not.toHaveBeenCalled();
+
+        await vi.runAllTimersAsync();
+
+        expect(decryptPayloads).not.toHaveBeenCalled();
+        expect(applyMessages).not.toHaveBeenCalled();
     });
 
     it('applies transcript stream segments immediately when the queued session becomes visible', async () => {
@@ -651,7 +697,7 @@ describe('flushMachineActivityUpdates', () => {
         ]);
         const applyMachines = vi.fn();
 
-        flushMachineActivityUpdates({ updates, applyMachines, sourceServerId: 'server-a' } as Parameters<typeof flushMachineActivityUpdates>[0] & { sourceServerId: string });
+        flushMachineActivityUpdates({ updates, applyMachines, sourceServerId: 'server-a' });
 
         expect(applyMachines).toHaveBeenCalledWith(
             [expect.objectContaining({ id: 'm_scoped' })],

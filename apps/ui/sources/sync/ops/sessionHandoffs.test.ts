@@ -20,6 +20,7 @@ vi.mock('../runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () =>
 
 vi.mock('./sessionMachineTarget', () => ({
     readMachineTargetForSession: readMachineTargetForSessionMock,
+    readMachineControlTargetForSession: readMachineTargetForSessionMock,
     shouldFallbackFromMachineRpc: (error: unknown) =>
         error instanceof Error
         && (
@@ -3649,7 +3650,7 @@ describe('sessionHandoffs ops', () => {
                     providerId: 'codex',
                     provider: {
                         backendMode: 'appServer',
-                        vendorSessionId: 'codex_session_runtime_descriptor',
+                        providerSessionId: 'codex_session_runtime_descriptor',
                     },
                 },
                 resume: {
@@ -3716,7 +3717,7 @@ describe('sessionHandoffs ops', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'codex_session_runtime_descriptor',
+                    providerSessionId: 'codex_session_runtime_descriptor',
                 },
             },
             attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
@@ -5002,7 +5003,7 @@ describe('sessionHandoffs ops', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'codex_session_prepare_legacy_runtime_descriptor',
+                    providerSessionId: 'codex_session_prepare_legacy_runtime_descriptor',
                 },
             },
             resume: {
@@ -6020,7 +6021,7 @@ describe('sessionHandoffs ops', () => {
                         providerId: 'codex',
                         provider: {
                             backendMode: 'appServer',
-                            vendorSessionId: 'codex_session_recover',
+                            providerSessionId: 'codex_session_recover',
                         },
                     },
                     environmentVariables: {
@@ -6046,7 +6047,7 @@ describe('sessionHandoffs ops', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'codex_session_recover',
+                    providerSessionId: 'codex_session_recover',
                 },
             },
             environmentVariables: {

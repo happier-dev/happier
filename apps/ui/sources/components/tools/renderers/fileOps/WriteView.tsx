@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native-unistyles';
 import { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { knownTools } from '@/components/tools/catalog';
@@ -34,7 +35,7 @@ export const WriteView = React.memo<ToolViewProps>(({ tool, detailLevel, session
     if (detailLevel === 'title') {
         return (
             <ToolSectionView>
-                <Text numberOfLines={1}>{truncateOneLine(contents, 80)}</Text>
+                <Text style={styles.summaryText} numberOfLines={1}>{truncateOneLine(contents, 80)}</Text>
             </ToolSectionView>
         );
     }
@@ -59,3 +60,10 @@ export const WriteView = React.memo<ToolViewProps>(({ tool, detailLevel, session
         </>
     );
 });
+
+const styles = StyleSheet.create((theme) => ({
+    summaryText: {
+        fontSize: 13,
+        color: theme.colors.text.secondary,
+    },
+}));

@@ -47,6 +47,7 @@ const profile: AIBackendProfile = {
     compatibility: {},
     envVarRequirements: [{ name: 'OPENAI_API_KEY', kind: 'secret', required: true }],
     isBuiltIn: false,
+    defaultEnabled: true,
     createdAt: 0,
     updatedAt: 0,
     version: '1.0.0',

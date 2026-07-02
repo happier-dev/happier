@@ -7,7 +7,10 @@ import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const hydrateSessionSpy = vi.hoisted(() => vi.fn<(sessionId: string, reason: string) => boolean>(() => true));
+const hydrateSessionSpy = vi.hoisted(() => vi.fn((sessionId: string, reason: string) => ({
+    kind: 'available' as const,
+    sessionId,
+})));
 const useSessionSpy = vi.hoisted(() => vi.fn<(sessionId: string) => unknown>());
 const runListSpy = vi.hoisted(() => vi.fn<(sessionId: string, options: unknown) => Promise<{ ok: true; runs: never[] }>>(async () => ({ ok: true, runs: [] })));
 

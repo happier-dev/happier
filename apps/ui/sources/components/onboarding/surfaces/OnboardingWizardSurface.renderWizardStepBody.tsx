@@ -26,6 +26,7 @@ import type { SystemTaskRunState } from '@/components/systemTasks/types';
 import { RestoreIndexEmbedded } from '@/components/onboarding/restore/RestoreIndexEmbedded';
 import { LostAccessEmbedded } from '@/components/onboarding/restore/LostAccessEmbedded';
 import { SecretKeyLoginEmbedded } from '@/components/onboarding/restore/SecretKeyLoginEmbedded';
+import { WelcomeDecisionPanel } from '../preAuth/WelcomeDecisionPanel';
 
 import type { RelayHostLocalChecklistRuntimeStatus } from '../checklists/relayHostLocal/types';
 import { RelayHostLocalChecklistStep } from '../checklists/relayHostLocal/RelayHostLocalChecklistStep';
@@ -33,7 +34,6 @@ import { RemoteSshChecklistStep } from '../checklists/remoteSsh/RemoteSshCheckli
 import type { RemoteSshChecklistMode } from '../checklists/remoteSsh/types';
 import type { WizardStepId } from '../state/wizardTypes';
 import { RelayDiagram } from '../ui/RelayDiagram';
-import { WelcomeProvidersShowcase } from '../preAuth/WelcomeProvidersShowcase';
 import { ConfirmSwitchRelayStep, type RelaySwitchDecision } from '../steps/ConfirmSwitchRelayStep';
 
 import type { OnboardingWizardSurfaceStyles } from './OnboardingWizardSurface.styles';
@@ -133,60 +133,17 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
 }>): React.ReactNode {
     if (params.stepId === 'welcome') {
         return (
-            <View testID="welcome-hero" style={params.styles.welcomeHero}>
-                <View testID={`${params.testIDPrefix}-welcome-auth`} style={params.styles.welcomeBody}>
-                    <View style={params.styles.labelContainer}>
-                        <Text style={params.styles.label}>{t('setupOnboarding.welcomeBody2')}</Text>
-                        <Text style={params.styles.label}>{t('setupOnboarding.welcomeBody3')}</Text>
-                    </View>
-                    <WelcomeProvidersShowcase
-                        testID={`${params.testIDPrefix}-welcome-showcase`}
-                        testIDPrefix={`${params.testIDPrefix}-welcome`}
-                    />
-                    {params.canScanQr ? (
-                        <View style={params.styles.scanCtaBlock}>
-                            <RoundButton
-                                testID={`${params.testIDPrefix}-scan`}
-                                size="normal"
-                                display="inverted"
-                                title={t('setupOnboarding.scanQrCode')}
-                                onPress={params.onStartScan}
-                            />
-                        </View>
-                    ) : null}
-                    {params.welcomeHasKnownRelay ? (
-                        <>
-                            <View style={params.styles.authEntryWrapper}>
-                                <AuthEntryView
-                                    layout={params.layout}
-                                    isDesktopShell={false}
-                                    options={params.authEntryOptions}
-                                    onOpenSetup={() => {}}
-                                    onChangeRelay={params.allowRelaySelection ? params.onOpenRelaySelectionFromWelcome : () => {}}
-                                    onRestore={params.onOpenRestore}
-                                    onCreateAccount={params.onCreateAccount}
-                                    onCreateAccountViaProvider={params.onCreateAccountViaProvider}
-                                    onLoginWithKeylessProvider={params.onLoginWithKeylessProvider}
-                                    onLoginWithMtls={params.onLoginWithMtls}
-                                />
-                            </View>
-                            {params.welcomeHasAuthActions && params.allowRelaySelection ? (
-                                <View style={params.styles.scanCtaBlock}>
-                                    <RoundButton
-                                        testID={`${params.testIDPrefix}-change-relay`}
-                                        size="small"
-                                        display="inverted"
-                                        title={t('setupOnboarding.changeRelayAction')}
-                                        onPress={() => {
-                                            params.onOpenRelaySelectionFromWelcome();
-                                        }}
-                                    />
-                                </View>
-                            ) : null}
-                        </>
-                    ) : null}
-                </View>
-            </View>
+            <WelcomeDecisionPanel
+                authEntryOptions={params.authEntryOptions}
+                onCreateAccount={params.onCreateAccount}
+                onCreateAccountViaProvider={params.onCreateAccountViaProvider}
+                onLoginWithKeylessProvider={params.onLoginWithKeylessProvider}
+                onLoginWithMtls={params.onLoginWithMtls}
+                onOpenRestore={params.onOpenRestore}
+                onChangeRelay={params.allowRelaySelection ? params.onOpenRelaySelectionFromWelcome : () => {}}
+                canScanQr={params.canScanQr}
+                onStartScan={params.onStartScan}
+            />
         );
     }
 
@@ -205,19 +162,24 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
 
     if (params.stepId === 'relay_select') {
         return (
-            <>
+            <View testID="relay-select-route-content" style={params.styles.relaySelectRouteContent}>
                 <View style={params.styles.diagramContainer}>
                     <RelayDiagram testID={`${params.testIDPrefix}-relay-diagram`} />
                 </View>
                 {params.relaySelectBody}
-            </>
+            </View>
         );
     }
 
     if (params.stepId === 'confirm_relay_lock') {
         return (
-            <View testID={`${params.testIDPrefix}-confirm-relay-lock`}>
-                <Text style={params.styles.urlHint}>{t('setupOnboarding.confirmSwitchRelayWarning')}</Text>
+            <View
+                testID={`${params.testIDPrefix}-confirm-relay-lock`}
+                style={params.styles.confirmRelayLockCard}
+            >
+                <Text style={params.styles.confirmRelayLockText}>
+                    {t('setupOnboarding.confirmSwitchRelayWarning')}
+                </Text>
             </View>
         );
     }
@@ -384,10 +346,12 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
 
     if (params.stepId === 'auth_restore') {
         return (
-            <RestoreIndexEmbedded
-                onBack={params.onRestoreBackToAuth}
-                onOpenSecretKeyLogin={params.onOpenSecretKeyLogin}
-            />
+            <View testID="restore-route-content">
+                <RestoreIndexEmbedded
+                    onBack={params.onRestoreBackToAuth}
+                    onOpenSecretKeyLogin={params.onOpenSecretKeyLogin}
+                />
+            </View>
         );
     }
 

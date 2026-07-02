@@ -62,7 +62,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             providerId: 'codex',
             provider: {
                 backendMode: 'acp',
-                vendorSessionId: 'thread_new',
+                providerSessionId: 'thread_new',
                 providerExtra: {
                     owner: 'codex',
                     schemaId: 'codex.agentRuntimeDescriptorExtra',
@@ -100,7 +100,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             providerId: 'codex',
             provider: {
                 backendMode: 'acp',
-                vendorSessionId: 'thread_new',
+                providerSessionId: 'thread_new',
             },
         });
         expect(updated).not.toHaveProperty('agentRuntimeDescriptorV1');
@@ -131,7 +131,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'thread_connected',
+                    providerSessionId: 'thread_connected',
                     home: 'connectedService',
                     connectedServiceId: 'openai-codex',
                 },
@@ -146,7 +146,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             providerId: 'codex',
             provider: {
                 backendMode: 'appServer',
-                vendorSessionId: 'thread_connected',
+                providerSessionId: 'thread_connected',
                 home: 'connectedService',
                 connectedServiceId: 'openai-codex',
             },
@@ -187,7 +187,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             providerId: 'codex',
             provider: {
                 backendMode: 'acp',
-                vendorSessionId: 'thread_connected',
+                providerSessionId: 'thread_connected',
                 home: 'connectedService',
                 connectedServiceId: 'openai-codex',
                 connectedServiceProfileId: 'work',
@@ -242,7 +242,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             providerId: 'opencode',
             provider: {
                 backendMode: 'server',
-                vendorSessionId: 'sess_new',
+                providerSessionId: 'sess_new',
                 serverBaseUrl: 'http://new.example',
                 serverBaseUrlExplicit: true,
                 providerExtra: {
@@ -280,7 +280,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 providerId: 'opencode',
                 provider: {
                     backendMode: 'server',
-                    vendorSessionId: 'sess_new',
+                    providerSessionId: 'sess_new',
                     serverBaseUrl: 'http://canonical.example',
                     serverBaseUrlExplicit: true,
                 },
@@ -294,7 +294,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             providerId: 'opencode',
             provider: {
                 backendMode: 'server',
-                vendorSessionId: 'sess_new',
+                providerSessionId: 'sess_new',
                 serverBaseUrl: 'http://canonical.example',
                 serverBaseUrlExplicit: true,
             },
@@ -342,7 +342,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                 agentRuntimeDescriptorV1: {
                     v: 1,
                     providerId: 'codex',
-                    provider: { backendMode: 'appServer', vendorSessionId: 'thread_old' },
+                    provider: { backendMode: 'appServer', providerSessionId: 'thread_old' },
                 },
             },
             providerId: 'claude',
@@ -445,7 +445,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             providerId: 'opencode',
             provider: {
                 backendMode: 'server',
-                vendorSessionId: 'sess_new',
+                providerSessionId: 'sess_new',
                 serverBaseUrl: 'http://new.example',
                 serverBaseUrlExplicit: true,
                 providerExtra: {

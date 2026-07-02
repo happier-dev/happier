@@ -30,7 +30,7 @@ import { isRpcMethodNotAvailableError, readRpcErrorCode } from '../runtime/rpcEr
 import { isSocketIoAckTimeoutError } from '../runtime/socketIoAckTimeout';
 
 import { resumeSession } from './sessions';
-import { readMachineTargetForSession, shouldFallbackFromMachineRpc } from './sessionMachineTarget';
+import { readMachineControlTargetForSession, shouldFallbackFromMachineRpc } from './sessionMachineTarget';
 import type { Metadata, Session } from '../domains/state/storageTypes';
 import { buildSessionHandoffRecoveryPlan, type SessionHandoffRecoveryPlan } from '../domains/sessionHandoff/recoveryPlan';
 import { waitForSessionHandoffTargetSessionActive } from '../domains/sessionHandoff/waitForSessionHandoffTargetSessionActive';
@@ -376,7 +376,7 @@ function resolveSourceMachineId(options: Readonly<{
     sourceMachineId?: string | null;
     targetMachineId: string;
 }>): string | null {
-    const sourceTarget = readMachineTargetForSession(options.sessionId);
+    const sourceTarget = readMachineControlTargetForSession(options.sessionId);
     const explicitSourceMachineId = normalizeId(options.sourceMachineId);
     const sourceMachineId = resolveCanonicalSessionHandoffSourceMachineId({
         reachableMachineId: sourceTarget?.machineId ?? null,
@@ -1218,7 +1218,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
                 reapplyOptimisticBinding();
             },
             readSession: () => readSessionHandoffSessionActivity(options.sessionId),
-            readTargetMachineId: () => readMachineTargetForSession(options.sessionId)?.machineId ?? null,
+            readTargetMachineId: () => readMachineControlTargetForSession(options.sessionId)?.machineId ?? null,
             targetMachineId: options.targetMachineId,
         });
     } catch (error) {
@@ -1285,7 +1285,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
 
     const stabilizedBinding = await stabilizeSessionHandoffTargetBinding({
         readSession: () => readSessionHandoffSessionActivity(options.sessionId),
-        readTargetMachineId: () => readMachineTargetForSession(options.sessionId)?.machineId ?? null,
+        readTargetMachineId: () => readMachineControlTargetForSession(options.sessionId)?.machineId ?? null,
         reapplyOptimisticBinding,
         targetMachineId: options.targetMachineId,
         timeoutMs: runtimeConfig.postCommitBindingStabilizationTimeoutMs,
@@ -1300,7 +1300,7 @@ export async function completeSessionHandoff(options: CompleteSessionHandoffOpti
     reapplyOptimisticBinding();
     const finalStabilizedBinding = await stabilizeSessionHandoffTargetBinding({
         readSession: () => readSessionHandoffSessionActivity(options.sessionId),
-        readTargetMachineId: () => readMachineTargetForSession(options.sessionId)?.machineId ?? null,
+        readTargetMachineId: () => readMachineControlTargetForSession(options.sessionId)?.machineId ?? null,
         reapplyOptimisticBinding,
         targetMachineId: options.targetMachineId,
         timeoutMs: runtimeConfig.postCommitBindingStabilizationTimeoutMs,

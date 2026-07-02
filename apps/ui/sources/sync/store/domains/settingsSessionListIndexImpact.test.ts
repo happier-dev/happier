@@ -7,6 +7,7 @@ const baseSettings: Settings = {
     groupInactiveSessionsByProject: false,
     sessionListActiveGroupingV1: 'date',
     sessionListInactiveGroupingV1: 'date',
+    sessionListSectionModeV1: 'activity',
     preferredLanguage: 'en',
 } as Settings;
 
@@ -19,6 +20,15 @@ describe('resolveSessionListIndexSettingsImpact', () => {
         const nextSettings = {
             ...baseSettings,
             sessionListInactiveGroupingV1: 'project' as const,
+        };
+
+        expect(resolveSessionListIndexSettingsImpact(baseSettings, nextSettings)).toBe(true);
+    });
+
+    it('rebuilds when session section mode changes', () => {
+        const nextSettings = {
+            ...baseSettings,
+            sessionListSectionModeV1: 'single' as const,
         };
 
         expect(resolveSessionListIndexSettingsImpact(baseSettings, nextSettings)).toBe(true);

@@ -1,5 +1,5 @@
 import type { AgentId } from '@/agents/catalog/catalog';
-import { getAgentLocalCliConfig, getProviderCliInstallGuideUrl, getProviderCliRuntimeSpec } from '@happier-dev/agents';
+import { getAgentCliRuntimeSpec, getAgentLocalCliConfig, getProviderCliInstallGuideUrl } from '@happier-dev/agents';
 
 import { createStaticProviderLocalAuthPlugin } from './createStaticProviderLocalAuthPlugin';
 import type { ProviderLocalAuthPlugin } from './providerLocalAuthPlugin';
@@ -15,7 +15,7 @@ function buildInitialCommand(params: Readonly<{
     const baseCommand = resolveProviderLocalAuthBaseCommand({
         resolvedPath: params.resolvedPath,
         resolvedCommand: params.resolvedCommand,
-        fallbackCommand: config.loginLaunch?.command ?? getProviderCliRuntimeSpec(params.providerId).binaryName ?? config.detectKey,
+        fallbackCommand: config.loginLaunch?.command ?? getAgentCliRuntimeSpec(params.providerId).binaryName ?? config.detectKey,
         platform: params.platform,
     });
     const args = config.loginLaunch?.args ?? [];

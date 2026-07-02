@@ -30,14 +30,9 @@ installPublicShareViewerCommonModuleMocks({
     },
 });
 
-vi.mock('@/sync/http/client', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/http/client')>();
-    serverFetchSpy.mockImplementation(actual.serverFetch);
-    return {
-        ...actual,
-        serverFetch: serverFetchSpy,
-    };
-});
+vi.mock('@/sync/http/client', () => ({
+    serverFetch: serverFetchSpy,
+}));
 
 vi.mock('@/sync/encryption/publicShareEncryption', () => ({
     decryptDataKeyFromPublicShare: decryptDataKeyFromPublicShareSpy,
@@ -56,6 +51,14 @@ vi.mock('@/components/sessions/transcript/TranscriptList', () => ({
         transcriptListSpy(props);
         return null;
     },
+}));
+
+vi.mock('@/utils/platform/responsive', () => ({
+    useHeaderHeight: () => 64,
+}));
+
+vi.mock('react-native-safe-area-context', () => ({
+    useSafeAreaInsets: () => ({ top: 20, bottom: 0, left: 0, right: 0 }),
 }));
 
 describe('PublicShareViewerScreen (e2ee)', () => {

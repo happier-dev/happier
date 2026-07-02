@@ -7,6 +7,7 @@ type OrderedListMarker = Readonly<{
 
 const orderedListMarkerPattern = /^( {0,3})(\d+\.)(\s+)(.*)$/;
 const openingCodeFencePattern = /^( {0,3})(`{3,}|~{3,})(.*)$/;
+const MAX_OUTLINE_MARKER_CONTENT_LENGTH = 96;
 
 type CodeFenceMarker = Readonly<{
     marker: '`' | '~';
@@ -73,22 +74,40 @@ function isExpectedNextOrderedMarker(current: OrderedListMarker, next: OrderedLi
     return next.number === current.number + 1 || next.number === 1;
 }
 
-function findNextOrderedMarkerIndex(
+function findLooseContinuationBoundaryIndex(
     lines: readonly string[],
     startIndex: number,
     marker: OrderedListMarker,
 ): number | null {
+    let openingFence: CodeFenceMarker | null = null;
+
     for (let index = startIndex; index < lines.length; index++) {
         const line = lines[index] ?? '';
+
+        if (openingFence) {
+            if (isClosingCodeFence(line, openingFence)) {
+                openingFence = null;
+            }
+            continue;
+        }
+
+        const nextOpeningFence = parseOpeningCodeFence(line);
+        if (nextOpeningFence) {
+            openingFence = nextOpeningFence;
+            continue;
+        }
+
         if (isBlankLine(line)) continue;
 
         const nextMarker = parseOrderedListMarker(line);
-        if (!nextMarker) return null;
+        if (nextMarker) {
+            return nextMarker.indent.length === marker.indent.length &&
+                isExpectedNextOrderedMarker(marker, nextMarker)
+                ? index
+                : null;
+        }
 
-        return nextMarker.indent.length === marker.indent.length &&
-            isExpectedNextOrderedMarker(marker, nextMarker)
-            ? index
-            : null;
+        if (isBlockBoundary(line)) return index;
     }
 
     return null;
@@ -99,9 +118,8 @@ function isOutlineStyleMarker(marker: OrderedListMarker): boolean {
     if (!content) return true;
     if (content.endsWith(':')) return true;
     if (/^(?:\*\*[^*\n]+\*\*|__[^_\n]+__)$/.test(content)) return true;
-    if (/[.!?]$/.test(content)) return false;
 
-    return content.length <= 96;
+    return content.length <= MAX_OUTLINE_MARKER_CONTENT_LENGTH;
 }
 
 function shouldNormalizeLooseContinuation(
@@ -117,7 +135,7 @@ function shouldNormalizeLooseContinuation(
     if (isBlockBoundary(firstContinuationLine)) return null;
     if (readLeadingSpaceCount(firstContinuationLine) > marker.indent.length) return null;
 
-    return findNextOrderedMarkerIndex(lines, continuationStartIndex + 1, marker);
+    return findLooseContinuationBoundaryIndex(lines, continuationStartIndex + 1, marker);
 }
 
 function indentLooseContinuationLine(line: string, continuationIndent: string): string {
@@ -165,15 +183,7 @@ export function normalizeLooseListContinuations(markdown: string): string {
         }
 
         const continuationIndent = `${marker.indent}${' '.repeat(marker.marker.length + 1)}`;
-        let continuationEndIndex = continuationStartIndex;
-        while (continuationEndIndex < nextMarkerIndex) {
-            const line = lines[continuationEndIndex] ?? '';
-            if (parseOrderedListMarker(line)) break;
-            if (isBlockBoundary(line)) break;
-            continuationEndIndex++;
-        }
-
-        for (let lineIndex = continuationStartIndex; lineIndex < continuationEndIndex; lineIndex++) {
+        for (let lineIndex = continuationStartIndex; lineIndex < nextMarkerIndex; lineIndex++) {
             const line = lines[lineIndex] ?? '';
             const indentedLine = indentLooseContinuationLine(line, continuationIndent);
             if (indentedLine !== line) {
@@ -182,7 +192,7 @@ export function normalizeLooseListContinuations(markdown: string): string {
             }
         }
 
-        index = continuationEndIndex - 1;
+        index = nextMarkerIndex - 1;
     }
 
     return changed ? lines.join('\n') : markdown;

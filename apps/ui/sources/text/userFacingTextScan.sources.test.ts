@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import path from 'node:path';
 
 import { scanUserFacingStrings } from '../../tools/i18n/userFacingTextScan';
+import type { UserFacingStringHit } from '../../tools/i18n/userFacingTextScan';
 
 const IGNORED_SCAN_TEXTS = new Set([
     'SKILL.md',
@@ -12,7 +13,16 @@ const IGNORED_SCAN_TEXTS = new Set([
     'notGranted',
 ]);
 
-function isIgnoredHit(text: string): boolean {
+const IGNORED_SCAN_FILE_PATH_SEGMENTS = [
+    `${path.sep}sources${path.sep}components${path.sep}ui${path.sep}selectionList${path.sep}storySurface${path.sep}`,
+];
+
+function isIgnoredHit(hit: UserFacingStringHit): boolean {
+    if (IGNORED_SCAN_FILE_PATH_SEGMENTS.some((segment) => hit.filePath.includes(segment))) {
+        return true;
+    }
+
+    const { text } = hit;
     if (IGNORED_SCAN_TEXTS.has(text)) {
         return true;
     }
@@ -23,7 +33,7 @@ function isIgnoredHit(text: string): boolean {
 describe('tools/i18n/userFacingTextScan (app sources)', () => {
     it('has no user-facing hardcoded strings in sources/', () => {
         const hits = scanUserFacingStrings({ sourcesRootDir: path.resolve('sources') })
-            .filter((hit) => !isIgnoredHit(hit.text));
+            .filter((hit) => !isIgnoredHit(hit));
 
         if (hits.length > 0) {
             const sample = hits

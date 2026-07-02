@@ -14,15 +14,22 @@ export async function storeConnectedServiceCredentialForAccount(
     profileId: string;
     record: ConnectedServiceCredentialRecordV1;
   }>,
-  opts?: Readonly<{ randomBytes?: (length: number) => Uint8Array }>,
+  opts?: Readonly<{
+    allowProviderIdentityChange?: boolean;
+    randomBytes?: (length: number) => Uint8Array;
+  }>,
 ): Promise<void> {
   const mode = await fetchAccountEncryptionMode(credentials);
+  const reconnect = opts?.allowProviderIdentityChange
+    ? { allowProviderIdentityChange: true as const }
+    : undefined;
 
   if (mode.mode === 'plain') {
     await registerConnectedServiceCredentialPlain(credentials, {
       serviceId: params.serviceId,
       profileId: params.profileId,
       record: params.record,
+      ...(reconnect ? { reconnect } : {}),
     });
     return;
   }
@@ -38,12 +45,13 @@ export async function storeConnectedServiceCredentialForAccount(
       providerAccountId: params.record.kind === 'oauth' ? params.record.oauth?.providerAccountId : params.record.token?.providerAccountId,
       expiresAt: params.record.expiresAt ?? null,
     },
+    ...(reconnect ? { reconnect } : {}),
   });
 }
 
 export async function deleteConnectedServiceCredentialForAccount(
   credentials: AuthCredentials,
-  params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
+  params: Readonly<{ serviceId: ConnectedServiceId; profileId: string; cleanupGroupReferences?: boolean }>,
 ): Promise<void> {
   const mode = await fetchAccountEncryptionMode(credentials);
   if (mode.mode === 'plain') {
@@ -52,4 +60,3 @@ export async function deleteConnectedServiceCredentialForAccount(
   }
   await deleteConnectedServiceCredentialV2(credentials, params);
 }
-

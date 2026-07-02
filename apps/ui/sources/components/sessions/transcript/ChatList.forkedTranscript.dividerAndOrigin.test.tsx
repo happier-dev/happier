@@ -115,6 +115,35 @@ vi.mock('@shopify/flash-list', async () => {
     return flashListMock.module;
 });
 
+vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () => {
+    const ReactMod = await import('react');
+    const { createCapturingFlashListMock } = await import('@/dev/testkit/mocks/flashList');
+    const flashListMock = createCapturingFlashListMock({ renderItems: true });
+    flashListRuntime.mock = flashListMock;
+    return {
+        FlashList: flashListMock.module.FlashList,
+        LayoutCommitObserver: ({ children, onCommitLayoutEffect }: any) => {
+            ReactMod.useLayoutEffect(() => {
+                onCommitLayoutEffect?.();
+            });
+            return ReactMod.createElement(ReactMod.Fragment, null, children);
+        },
+        useLayoutState: <T,>(initialValue: T) => ReactMod.useState<T>(initialValue),
+        useMappingHelper: () => ({
+            getMappingKey: (_key: string | number, index: number) => index,
+        }),
+        useRecyclingState: <T,>(initialValue: T, dependencies: readonly unknown[], onReset?: () => void) => {
+            const [state, setState] = ReactMod.useState<T>(initialValue);
+            ReactMod.useEffect(() => {
+                setState(initialValue);
+                onReset?.();
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+            }, dependencies);
+            return [state, setState] as const;
+        },
+    };
+});
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
@@ -191,6 +220,10 @@ vi.mock('./MessageView', () => ({
     capturedMessageViewProps.push(props);
     return React.createElement('MessageView');
   },
+  MessageViewWithSessionCommon: (props: any) => {
+    capturedMessageViewProps.push(props);
+    return React.createElement('MessageView');
+  },
 }));
 
 vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
@@ -203,6 +236,7 @@ vi.mock('@/components/sessions/actions/SessionActionDraftCard', () => ({
 
 vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
   TurnView: () => React.createElement('TurnView'),
+  TurnViewWithSessionCommon: () => React.createElement('TurnView'),
 }));
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptMotionProvider', () => ({
@@ -318,22 +352,19 @@ describe('ChatList (forked transcript)', () => {
         await screen.unmount();
     });
 
-    it('loads older messages via fork-aware paging when reaching the start of the list', async () => {
+    it('loads older messages via fork-aware paging when the transcript needs older pages', async () => {
         const syncMod = await import('@/sync/sync');
         const loadOlderForkAware = (syncMod as any).sync.loadOlderMessagesForkAware as ReturnType<typeof vi.fn>;
-        loadOlderForkAware.mockResolvedValueOnce({ loaded: 0, hasMore: true, status: 'loaded' });
+        loadOlderForkAware.mockResolvedValueOnce({ loaded: 0, hasMore: false, status: 'no_more' });
 
         const screen = await renderChatList();
 
+        // An under-filled viewport drives the initial-fill loop through ChatList.loadOlder,
+        // which must route through the fork-aware sync paging entrypoint.
         await act(async () => {
             flashListRuntime.mock.state.props?.onLayout?.({ nativeEvent: { layout: { height: 200 } } });
-            flashListRuntime.mock.state.props?.onContentSizeChange?.(0, 400);
-            await flushHookEffects({ cycles: 1, turns: 2 });
-        });
-
-        await act(async () => {
-            flashListRuntime.mock.state.props?.onStartReached?.();
-            await flushHookEffects({ cycles: 1, turns: 1 });
+            flashListRuntime.mock.state.props?.onContentSizeChange?.(0, 100);
+            await flushHookEffects({ cycles: 2, turns: 3 });
         });
 
         expect(loadOlderForkAware).toHaveBeenCalledWith('child-1');

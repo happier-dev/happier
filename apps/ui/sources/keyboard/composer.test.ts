@@ -6,6 +6,7 @@ import {
     isComposerPlatformModPressed,
     resolveComposerEnterAction,
     resolveComposerEscapeAction,
+    resolveComposerSendShortcutAction,
 } from './composer';
 
 describe('composer keyboard semantics', () => {
@@ -22,13 +23,28 @@ describe('composer keyboard semantics', () => {
         expect(isComposerPlatformModPressed({ key: 'Enter', metaKey: false, ctrlKey: true }, { platformOS: 'android' })).toBe(true);
     });
 
-    it('resolves Mod+Enter to immediate send before plain enter-to-send', () => {
+    it('resolves send shortcuts through the keyboard command dispatcher', () => {
+        const settings = {
+            keyboardShortcutsV2Enabled: true,
+            keyboardSingleKeyShortcutsEnabled: false,
+            keyboardShortcutDisabledCommandIdsV1: [],
+            keyboardShortcutOverridesV1: {},
+            hasSendableInput: true,
+            sendActionDisabled: false,
+            platformOS: 'ios',
+        } as const;
+
+        expect(resolveComposerSendShortcutAction({ key: 'Enter', metaKey: true }, settings)).toBe('sendImmediate');
+        expect(resolveComposerSendShortcutAction({ key: 'Enter', metaKey: true, shiftKey: true }, settings)).toBe('sendPending');
+    });
+
+    it('does not resolve Mod+Enter in the plain Enter-to-send path', () => {
         expect(resolveComposerEnterAction({ key: 'Enter', metaKey: true }, {
             enterToSendEnabled: true,
             hasSendableInput: true,
             sendActionDisabled: false,
             platformOS: 'ios',
-        })).toBe('sendImmediate');
+        })).toBeNull();
     });
 
     it('does not treat Ctrl+Enter as immediate send on Apple platforms', () => {

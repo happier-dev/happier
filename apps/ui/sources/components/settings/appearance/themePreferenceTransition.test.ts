@@ -153,7 +153,28 @@ describe('theme preference transitions', () => {
             unregister();
         }
 
-        expect(run).toHaveBeenCalledWith(mutation);
+        expect(run).toHaveBeenCalledOnce();
+        expect(mutation).toHaveBeenCalledOnce();
+    });
+
+    it('does not repeat the native mutation when the transition fails after applying it', async () => {
+        const mutation = vi.fn();
+        const run = vi.fn(async (update: () => void) => {
+            update();
+            throw new Error('native transition failed after mutation');
+        });
+
+        await runThemePreferenceChange({
+            currentPreference: 'light',
+            mutation,
+            nativeController: { run },
+            nextPreference: 'dark',
+            platform: 'ios',
+            reduceMotion: false,
+            systemTheme: 'light',
+        });
+
+        expect(run).toHaveBeenCalledOnce();
         expect(mutation).toHaveBeenCalledOnce();
     });
 

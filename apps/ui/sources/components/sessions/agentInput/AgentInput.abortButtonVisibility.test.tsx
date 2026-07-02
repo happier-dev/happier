@@ -101,6 +101,10 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 vi.mock('@/sync/domains/models/modelOptions', () => ({
+    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
+        options?.find?.((option: any) => option.value === effectiveModelId)
+            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
+            ?? null,
     getModelOptionsForSession: () => [{ value: 'default', label: 'Default' }],
     supportsFreeformModelSelectionForSession: () => false,
 }));
@@ -157,6 +161,7 @@ vi.mock('@/components/autocomplete/applySuggestion', () => ({
 vi.mock('@/components/ui/popover', () => ({
     Popover: () => null,
     PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS: { web: { target: 'body' }, native: true },
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({

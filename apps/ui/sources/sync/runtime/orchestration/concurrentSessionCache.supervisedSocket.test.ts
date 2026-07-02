@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createServerProfilesModuleMock } from '@/dev/testkit';
+
 const ioSpy = vi.fn();
 const getCredentialsForServerUrlSpy = vi.fn();
 const listServerProfilesSpy = vi.fn();
@@ -79,7 +81,7 @@ function mockConcurrentSessionCacheDeps() {
         isLegacyAuthCredentials: (credentials: unknown) =>
             Boolean(credentials && typeof credentials === 'object' && typeof (credentials as { secret?: unknown }).secret === 'string'),
     }));
-    vi.doMock('@/sync/domains/server/serverProfiles', () => ({
+    vi.doMock('@/sync/domains/server/serverProfiles', () => createServerProfilesModuleMock({
         listServerProfiles: () => listServerProfilesSpy(),
     }));
     vi.doMock('@/sync/domains/server/serverRuntime', () => ({

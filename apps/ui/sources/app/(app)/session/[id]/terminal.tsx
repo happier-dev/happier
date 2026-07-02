@@ -16,6 +16,7 @@ import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import { SessionFullscreenPaneSafeAreaView } from '@/components/sessions/panes/SessionFullscreenPaneSafeAreaView';
@@ -29,11 +30,12 @@ export default function TerminalScreenRoute() {
     const routeScope = React.useMemo(() => createSessionRouteServerScope(params), [params]);
     const { id: sessionIdParam } = params;
     const sessionId = normalizeSessionId(sessionIdParam);
-    const sessionHydrated = useHydrateSessionForRoute(
+    const routeHydrationState = useHydrateSessionForRoute(
         sessionId,
         'SessionTerminalRoute.ensureSessionVisible',
         routeScope.hydrationOptions,
     );
+    const sessionHydrated = isSessionRouteHydrationAvailable(routeHydrationState);
     const scopeId = `session:${sessionId}`;
     const pane = useAppPaneScope(scopeId);
     const openRight = pane.openRight;
@@ -102,7 +104,7 @@ export default function TerminalScreenRoute() {
         safeRouterBack({ router, navigation, fallbackHref: routeScope.buildHref(sessionId) });
     }, [closeRight, navigation, routeScope, router, sessionId]);
 
-    if (!sessionId) {
+    if (!sessionId || isSessionRouteHydrationMissing(routeHydrationState)) {
         return <SessionInvalidLinkFallback />;
     }
 
@@ -120,6 +122,7 @@ export default function TerminalScreenRoute() {
                         safeAreaPadding={false}
                         terminalTabAvailable={terminalTabAvailable}
                         routeServerId={routeScope.serverId}
+                        routeHydrationState={routeHydrationState}
                     />
                 ) : (
                     <SessionRightPanel

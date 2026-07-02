@@ -3,6 +3,10 @@ import { AccessibilityInfo, Platform } from 'react-native';
 
 import type { BlockedReason, TreeDropResult } from '@/components/ui/treeDragDrop';
 import { t } from '@/text';
+import type {
+    SessionListInstructionBlockReason,
+    SessionListTreeDropResult,
+} from '../drop-resolution/sessionListTreeTypes';
 
 export type SessionListA11yAnnouncementSubject = Readonly<{
     label: string;
@@ -10,13 +14,14 @@ export type SessionListA11yAnnouncementSubject = Readonly<{
 
 export type SessionListA11yDropAnnouncement = SessionListA11yAnnouncementSubject & Readonly<{
     destinationLabel?: string | null;
-    result: TreeDropResult;
+    result: TreeDropResult | SessionListTreeDropResult;
 }>;
 
 export type UseSessionListA11yAnnouncementsResult = Readonly<{
     announcePickedUp: (subject: SessionListA11yAnnouncementSubject) => void;
     announceCancelled: (subject: SessionListA11yAnnouncementSubject) => void;
     announceDropResult: (announcement: SessionListA11yDropAnnouncement) => void;
+    announceSelectionCount: (announcement: Readonly<{ count: number }>) => void;
 }>;
 
 function announce(message: string): void {
@@ -58,6 +63,18 @@ function formatBlockedReason(reason: BlockedReason): string {
     }
 }
 
+function formatSessionListBlockReason(reason: SessionListInstructionBlockReason): string {
+    switch (reason) {
+        case 'direct-session':
+            return t('sessionsList.dragA11yBlockedDirectSession');
+        case 'feature-disabled':
+            return t('sessionsList.dragA11yBlockedFeatureDisabled');
+        case 'unsupported-item':
+        default:
+            return t('sessionsList.dragA11yBlockedUnsupportedItem');
+    }
+}
+
 function formatDropAnnouncement(input: SessionListA11yDropAnnouncement): string {
     const destination = input.destinationLabel ?? '';
     switch (input.result.instruction.kind) {
@@ -80,7 +97,9 @@ function formatDropAnnouncement(input: SessionListA11yDropAnnouncement): string 
         case 'blocked':
             return t('sessionsList.dragA11yBlocked', {
                 item: input.label,
-                reason: formatBlockedReason(input.result.instruction.reason),
+                reason: 'sessionListBlockReason' in input.result && input.result.sessionListBlockReason
+                    ? formatSessionListBlockReason(input.result.sessionListBlockReason)
+                    : formatBlockedReason(input.result.instruction.reason),
             });
         case 'idle':
         default:
@@ -101,11 +120,16 @@ export function useSessionListA11yAnnouncements(): UseSessionListA11yAnnouncemen
         announce(formatDropAnnouncement(drop));
     }, []);
 
-    return {
+    const announceSelectionCount = React.useCallback((selection: Readonly<{ count: number }>) => {
+        announce(t('sessionsList.selectionA11ySelectedCount', { count: selection.count }));
+    }, []);
+
+    return React.useMemo(() => ({
         announcePickedUp,
         announceCancelled,
         announceDropResult,
-    };
+        announceSelectionCount,
+    }), [announceCancelled, announceDropResult, announcePickedUp, announceSelectionCount]);
 }
 
 function ensureWebLiveRegion(doc: Document): HTMLElement {

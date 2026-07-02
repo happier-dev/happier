@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { RestoreIndexEmbedded } from '@/components/onboarding/restore/RestoreIndexEmbedded';
@@ -14,16 +15,23 @@ export default function RestoreIndex() {
     }, [router]);
 
     return (
-        <WizardModalShell
-            testID="restore-wizard"
-            stepIndex={1}
-            stepCount={3}
-            title={t('setupOnboarding.authRestoreTitle')}
-            subtitle={t('setupOnboarding.authRestoreSubtitle')}
-            onBack={handleBack}
-            showSkip={false}
+        <View
+            testID="unauth-shell-route-restore"
+            style={{ flex: 1 }}
         >
-            <RestoreIndexEmbedded onBack={handleBack} />
-        </WizardModalShell>
+            <WizardModalShell
+                testID="restore-wizard"
+                stepIndex={1}
+                stepCount={3}
+                title={t('setupOnboarding.authRestoreTitle')}
+                subtitle={t('setupOnboarding.authRestoreSubtitle')}
+                onBack={handleBack}
+                showSkip={false}
+            >
+                <View testID="restore-route-content">
+                    <RestoreIndexEmbedded onBack={handleBack} />
+                </View>
+            </WizardModalShell>
+        </View>
     );
 }

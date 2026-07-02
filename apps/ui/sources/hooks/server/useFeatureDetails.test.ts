@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
+import { renderHook } from '@/dev/testkit';
 import { stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serverFeaturesTestUtils';
 import { renderHookAndCollectValues } from './serverFeatureHookHarness.testHelpers';
 
@@ -111,5 +113,50 @@ describe('useFeatureDetails', () => {
         );
 
         expect(seen.at(-1)).toBe(true);
+    }, 30_000);
+
+    it('does not rerender feature details for unrelated account settings', async () => {
+        vi.resetModules();
+        await stubServerFeaturesFetch({ automationsEnabled: true });
+
+        const { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
+
+        const { getStorage } = await import('@/sync/domains/state/storage');
+        getStorage().getState().applySettingsLocal({
+            experiments: true,
+            featureToggles: { automations: true },
+            analyticsOptOut: false,
+        });
+
+        await getServerFeaturesSnapshot({ force: true });
+
+        const { useFeatureDetails } = await import('./useFeatureDetails');
+        let renderCount = 0;
+        const hook = await renderHook(() => {
+            renderCount += 1;
+            return useFeatureDetails({
+                featureId: 'automations',
+                fallback: false,
+                select: (features) => Boolean(features.features.automations?.enabled),
+            });
+        });
+
+        expect(hook.getCurrent()).toBe(true);
+        const rendersAfterMount = renderCount;
+
+        await act(async () => {
+            getStorage().getState().applySettingsLocal({ analyticsOptOut: true });
+        });
+
+        expect(renderCount).toBe(rendersAfterMount);
+
+        await act(async () => {
+            getStorage().getState().applySettingsLocal({ experiments: false });
+        });
+
+        expect(renderCount).toBeGreaterThan(rendersAfterMount);
+
+        await hook.unmount();
     }, 30_000);
 });

@@ -1,5 +1,4 @@
 import { createFeatureDecision, type FeatureDecision, type FeatureId } from '@happier-dev/protocol';
-import type { Settings } from '@/sync/domains/settings/settings';
 
 import { storage } from '@/sync/domains/state/storage';
 import {
@@ -10,16 +9,17 @@ import {
     type ServerFeaturesRuntimeSnapshot,
 } from '@/sync/domains/features/featureDecisionRuntime';
 import { resolveFeatureDecisionSnapshotStrategy } from './featureDecisionProbeStrategy';
+import type { FeatureLocalPolicySettings } from './featureLocalPolicy';
 
 export type RuntimeFeatureDecisionInputs = Readonly<{
     featureId: FeatureId;
-    settings: Settings;
+    settings: FeatureLocalPolicySettings;
     snapshot: ServerFeaturesRuntimeSnapshot;
 }>;
 
 export type ResolveRuntimeFeatureDecisionParams = Readonly<{
     featureId: FeatureId;
-    settings?: Settings;
+    settings?: FeatureLocalPolicySettings;
     serverId?: string;
     timeoutMs?: number;
     force?: boolean;

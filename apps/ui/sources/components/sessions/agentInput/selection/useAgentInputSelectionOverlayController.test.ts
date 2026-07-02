@@ -1,5 +1,5 @@
 import { act } from 'react-test-renderer';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
 
@@ -75,6 +75,38 @@ describe('useAgentInputSelectionOverlayController', () => {
             id: 'path',
             anchor: 'chip',
         });
+
+        await hook.unmount();
+    });
+
+    it('retains keyboard lift while an overlay is open', async () => {
+        const releaseKeyboardLift = vi.fn();
+        const retainKeyboardLift = vi.fn(() => releaseKeyboardLift);
+        const hook = await renderHook(() => useAgentInputSelectionOverlayController({
+            shouldRenderSessionModeChip: true,
+            canChangePermission: true,
+            hasMachinePopover: true,
+            hasPathPopover: true,
+            hasResumePopover: true,
+            hasProfilePopover: true,
+            hasEnvVarsPopover: true,
+            hasAgentPickerOptions: true,
+            extraActionChips: [],
+            retainKeyboardLift,
+        }));
+
+        await act(async () => {
+            hook.getCurrent().openSelectionOverlay('agent', 'chip');
+        });
+
+        expect(retainKeyboardLift).toHaveBeenCalledTimes(1);
+        expect(releaseKeyboardLift).not.toHaveBeenCalled();
+
+        await act(async () => {
+            hook.getCurrent().closeSelectionOverlay('agent');
+        });
+
+        expect(releaseKeyboardLift).toHaveBeenCalledTimes(1);
 
         await hook.unmount();
     });

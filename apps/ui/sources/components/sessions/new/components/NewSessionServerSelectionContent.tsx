@@ -6,7 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemList } from '@/components/ui/lists/ItemList';
+import { ItemListStatic } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -36,9 +36,7 @@ export type NewSessionServerSelectionContentProps = Readonly<{
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
-        flex: 1,
         backgroundColor: theme.colors.background.canvas,
-        minHeight: 0,
     },
     header: {
         flexDirection: 'row',
@@ -65,8 +63,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         padding: 4,
     },
     list: {
-        flex: 1,
-        minHeight: 0,
+        width: '100%',
     },
     listContent: {
         paddingBottom: Platform.select({ ios: 16, default: 12 }),
@@ -212,7 +209,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
     }, [onClose]);
 
     return (
-        <View style={[styles.container, { maxHeight, height: maxHeight }]}>
+        <View style={[styles.container, { maxHeight }]}>
             <View style={styles.header}>
                 <View style={styles.headerTextBlock}>
                     <Text style={styles.headerTitle}>{t('server.switchToServer')}</Text>
@@ -235,7 +232,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
                 </Pressable>
             </View>
 
-            <ItemList
+            <ItemListStatic
                 style={styles.list}
                 containerStyle={styles.listContent}
             >
@@ -261,7 +258,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
                         );
                     })}
                 </ItemGroup>
-            </ItemList>
+            </ItemListStatic>
         </View>
     );
 }

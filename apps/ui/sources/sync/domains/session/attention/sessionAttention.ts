@@ -1,10 +1,15 @@
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
 import { deriveExternalSessionAttentionHasUnread } from '@/sync/domains/session/external/readExternalSessionAttention';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
-import { derivePendingRequestFlagsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
+import {
+    deriveLatestPendingRequestObservedAtFromSession,
+    derivePendingRequestFlagsFromSession,
+} from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
+import { resolveSessionListReadableSeq } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { deriveSessionAttentionState } from './deriveSessionAttentionState';
+import { deriveSessionRuntimePresentationState } from './runtimePresentation';
 export { deriveSessionAttentionState } from './deriveSessionAttentionState';
 export type { SessionAttentionState } from './types';
 
@@ -28,25 +33,43 @@ export function deriveSessionAttentionFlags(
 ): SessionAttentionFlags {
     const isSessionActive = session.active === true;
     const pendingFlags = derivePendingRequestFlagsFromSession(session);
-    const externalSessionHasUnread = readExternalSessionLink(session.metadata)
+    const hasExternalSessionLink = Boolean(readExternalSessionLink(session.metadata));
+    const externalSessionHasUnread = hasExternalSessionLink
         ? deriveExternalSessionAttentionHasUnread(session.metadata)
         : null;
 
     const hasUnread = options?.showUnread === false
         ? false
         : externalSessionHasUnread ?? computeHasUnreadActivity({
-            sessionSeq: session.seq ?? 0,
+            sessionSeq: hasExternalSessionLink
+                ? session.seq ?? 0
+                : resolveSessionListReadableSeq(session, undefined),
             pendingActivityAt: 0,
             lastViewedSessionSeq: resolveLastViewedSessionSeq(session),
             lastViewedPendingActivityAt: session.metadata?.readStateV1?.pendingActivityAt,
         });
 
+    const runtimePresentation = deriveSessionRuntimePresentationState({
+        active: session.active,
+        activeAt: session.activeAt,
+        presence: session.presence,
+        thinking: session.thinking,
+        thinkingAt: session.thinkingAt,
+        latestTurnStatus: session.latestTurnStatus ?? null,
+        latestTurnStatusObservedAt: session.latestTurnStatusObservedAt ?? null,
+        meaningfulActivityAt: session.meaningfulActivityAt ?? null,
+        lastRuntimeIssue: session.lastRuntimeIssue ?? null,
+        hasPendingPermissionRequests: pendingFlags.hasPendingPermissionRequests,
+        hasPendingUserActionRequests: pendingFlags.hasPendingUserActionRequests,
+        pendingRequestObservedAt: deriveLatestPendingRequestObservedAtFromSession(session),
+    });
+
     const hasPendingPermissionRequests = isSessionActive && options?.showPendingPermissionRequests !== false
-        ? pendingFlags.hasPendingPermissionRequests
+        ? runtimePresentation.freshPermissionRequired
         : false;
 
     const hasPendingUserActionRequests = isSessionActive && options?.showPendingUserActionRequests !== false
-        ? pendingFlags.hasPendingUserActionRequests
+        ? runtimePresentation.freshActionRequired
         : false;
 
     const hasQueuedUserInput = options?.showQueuedUserInput === false
@@ -64,12 +87,19 @@ export function deriveSessionAttentionFlags(
 export function hasSessionAttention(session: Session, options?: SessionAttentionOptions): boolean {
     const flags = deriveSessionAttentionFlags(session, options);
     const attentionState = deriveSessionAttentionState({
+        active: session.active,
+        presence: session.presence,
+        thinking: session.thinking,
+        thinkingAt: session.thinkingAt,
         latestTurnStatus: session.latestTurnStatus ?? null,
+        latestTurnStatusObservedAt: session.latestTurnStatusObservedAt ?? null,
+        meaningfulActivityAt: session.meaningfulActivityAt ?? null,
         lastRuntimeIssue: session.lastRuntimeIssue ?? null,
+        pendingRequestObservedAt: deriveLatestPendingRequestObservedAtFromSession(session),
         isRunning: session.active === true,
         hasWaitingActivity: flags.hasPendingPermissionRequests
-            || flags.hasPendingUserActionRequests
-            || flags.hasQueuedUserInput,
+            || flags.hasPendingUserActionRequests,
+        hasQueuedUserInput: flags.hasQueuedUserInput,
         hasReviewActivity: flags.hasUnread,
     });
     return (

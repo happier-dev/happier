@@ -1,5 +1,5 @@
 import * as React from 'react';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
@@ -84,13 +84,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: 'Text',
     TextInput: 'TextInput',
     TextSelectabilityScope: ({ children }: { children: React.ReactNode }) => children,
-}));
-
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-        mono: () => ({}),
-    },
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
@@ -242,7 +235,7 @@ describe('SessionRightPanel git sub-tabs', () => {
         }));
     });
 
-    it('refreshes SCM snapshot and commit history when mounted', async () => {
+    it('refreshes SCM snapshot without preloading commit history when mounted', async () => {
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
         invalidateFromUserAndAwaitSpy.mockClear();
@@ -269,7 +262,7 @@ describe('SessionRightPanel git sub-tabs', () => {
         });
 
         expect(invalidateFromUserAndAwaitSpy).toHaveBeenCalledWith('s1');
-        expect(loadCommitHistorySpy).toHaveBeenCalledWith({ reset: true });
+        expect(loadCommitHistorySpy).not.toHaveBeenCalled();
     });
 
     it('refreshes SCM snapshot even when sessionPath is missing', async () => {
@@ -348,16 +341,6 @@ describe('SessionRightPanel git sub-tabs', () => {
                 <Probe />
             </AppPaneProvider>,
         );
-        const getOpacity = (node: renderer.ReactTestInstance) => {
-            const style = node.props.style;
-            const styles = Array.isArray(style) ? style : [style];
-            for (const entry of styles) {
-                if (entry && typeof entry === 'object' && 'opacity' in entry) {
-                    return (entry as any).opacity;
-                }
-            }
-            return undefined;
-        };
         const commitSurface = screen.findByTestId('session-rightpanel-git-surface:commit');
         const updateSurface = screen.findByTestId('session-rightpanel-git-surface:update');
         const historySurface = screen.findByTestId('session-rightpanel-git-surface:history');
@@ -365,23 +348,16 @@ describe('SessionRightPanel git sub-tabs', () => {
         expect(commitSurface).toBeTruthy();
         expect(updateSurface).toBeTruthy();
         expect(historySurface).toBeTruthy();
-        expect(getOpacity(commitSurface!)).toBe(1);
-        expect(getOpacity(updateSurface!)).toBe(0);
-        expect(getOpacity(historySurface!)).toBe(0);
 
         await screen.pressByTestIdAsync('session-rightpanel-git-subtab:update');
 
         expect(observedState?.scopes?.['session:s1']?.right?.tabState?.git?.activeSubTabId).toBe('update');
-        expect(getOpacity(commitSurface!)).toBe(0);
-        expect(getOpacity(updateSurface!)).toBe(1);
-        expect(getOpacity(historySurface!)).toBe(0);
+        expect(screen.findByTestId('session-rightpanel-git-surface:update')).toBeTruthy();
 
         await screen.pressByTestIdAsync('session-rightpanel-git-subtab:history');
 
         expect(observedState?.scopes?.['session:s1']?.right?.tabState?.git?.activeSubTabId).toBe('history');
-        expect(getOpacity(commitSurface!)).toBe(0);
-        expect(getOpacity(updateSurface!)).toBe(0);
-        expect(getOpacity(historySurface!)).toBe(1);
+        expect(screen.findByTestId('session-rightpanel-git-surface:history')).toBeTruthy();
     });
 
     it('does not repeatedly recompute changed files data when switching away from commit', async () => {

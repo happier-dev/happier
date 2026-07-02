@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
     buildMachineDisplayCacheEntryFromRenderable,
     buildMachineDisplayCacheEntriesFromRenderables,
@@ -9,7 +10,7 @@ import {
 } from './warmCacheAdapters';
 
 describe('warmCacheAdapters', () => {
-    it('preserves previous session cache metadata and agent-state flags while a replacement renderable is still stale', () => {
+    it('preserves previous session cache metadata and agent-state projection while a replacement renderable is still stale', () => {
         const previousEntry = {
             sessionId: 's1',
             metadataVersion: 1,
@@ -27,6 +28,7 @@ describe('warmCacheAdapters', () => {
             machineId: 'm1',
             hasPendingPermissionRequests: true,
             hasPendingUserActionRequests: false,
+            pendingRequestObservedAt: 30,
         };
 
         const nextRenderable = {
@@ -62,6 +64,7 @@ describe('warmCacheAdapters', () => {
             machineId: 'm1',
             hasPendingPermissionRequests: true,
             hasPendingUserActionRequests: false,
+            pendingRequestObservedAt: 30,
         }));
     });
 
@@ -277,6 +280,75 @@ describe('warmCacheAdapters', () => {
             seq: 7,
             lastViewedSessionSeq: 4,
             hasUnreadMessages: true,
+        }));
+    });
+
+    it('roundtrips durable session status and attention projection through cache entries', () => {
+        const renderable = {
+            id: 's_attention',
+            seq: 12,
+            createdAt: 5,
+            updatedAt: 20,
+            meaningfulActivityAt: 20,
+            active: true,
+            activeAt: 20,
+            archivedAt: null,
+            pendingCount: 1,
+            pendingVersion: 4,
+            lastViewedSessionSeq: 10,
+            metadataVersion: 2,
+            agentStateVersion: 4,
+            metadata: {
+                name: 'Needs review',
+                path: '/home/u/repo',
+                homeDir: '/home/u',
+                host: 'mbp',
+                machineId: 'm1',
+                flavor: 'codex',
+                externalSessionV1: null,
+                hiddenSystemSession: false,
+            },
+            thinking: false,
+            thinkingAt: 500,
+            presence: 'online',
+            latestTurnStatus: 'failed',
+            latestTurnStatusObservedAt: 1_200,
+            lastRuntimeIssue: {
+                v: 1,
+                scope: 'primary_session',
+                status: 'failed',
+                code: 'auth_error',
+                source: 'auth_error',
+                occurredAt: 1_200,
+            },
+            latestReadyEventSeq: 11,
+            latestReadyEventAt: 1_100,
+            hasPendingPermissionRequests: true,
+            hasPendingUserActionRequests: false,
+            pendingRequestObservedAt: 1_000,
+            rollbackEligibleTurnStarts: [3, 9],
+            hasUnreadMessages: true,
+        } satisfies SessionListRenderableSession & { rollbackEligibleTurnStarts: readonly number[] };
+
+        const entry = buildSessionListCacheEntryFromRenderable(renderable);
+
+        expect(entry).toEqual(expect.objectContaining({
+            latestTurnStatus: 'failed',
+            latestTurnStatusObservedAt: 1_200,
+            lastRuntimeIssue: expect.objectContaining({ code: 'auth_error' }),
+            latestReadyEventSeq: 11,
+            latestReadyEventAt: 1_100,
+            pendingRequestObservedAt: 1_000,
+            rollbackEligibleTurnStarts: [3, 9],
+        }));
+        expect(buildSessionListRenderableFromCacheEntry(entry)).toEqual(expect.objectContaining({
+            latestTurnStatus: 'failed',
+            latestTurnStatusObservedAt: 1_200,
+            lastRuntimeIssue: expect.objectContaining({ code: 'auth_error' }),
+            latestReadyEventSeq: 11,
+            latestReadyEventAt: 1_100,
+            pendingRequestObservedAt: 1_000,
+            rollbackEligibleTurnStarts: [3, 9],
         }));
     });
 

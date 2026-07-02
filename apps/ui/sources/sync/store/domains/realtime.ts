@@ -1,4 +1,8 @@
 import type { StoreGet, StoreSet } from './_shared';
+import {
+  createAccountSettingsIdleStatus,
+  type AccountSettingsSyncStatus,
+} from '@/sync/domains/settings/accountSettingsSyncStatus';
 
 export type RealtimeStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 export type RealtimeMode = 'idle' | 'speaking';
@@ -37,6 +41,7 @@ export type RealtimeDomain = {
   socketLastError: string | null;
   socketLastErrorAt: number | null;
   syncError: SyncError;
+  accountSettingsSyncStatus: AccountSettingsSyncStatus;
   lastSyncAt: number | null;
   endpointStatus: EndpointConnectivityStatus;
   endpointReason: string | null;
@@ -54,6 +59,8 @@ export type RealtimeDomain = {
   setSocketError: (message: string | null) => void;
   setSyncError: (error: SyncError) => void;
   clearSyncError: () => void;
+  setAccountSettingsSyncStatus: (status: AccountSettingsSyncStatus) => void;
+  resetAccountSettingsSyncStatus: () => void;
   setLastSyncAt: (ts: number) => void;
   setEndpointConnectivity: (snapshot: EndpointConnectivitySnapshot) => void;
   resetEndpointConnectivity: () => void;
@@ -78,6 +85,7 @@ export function createRealtimeDomain<S extends RealtimeDomain>({
     socketLastError: null,
     socketLastErrorAt: null,
     syncError: null,
+    accountSettingsSyncStatus: createAccountSettingsIdleStatus(),
     lastSyncAt: null,
     endpointStatus: 'idle',
     endpointReason: null,
@@ -158,6 +166,8 @@ export function createRealtimeDomain<S extends RealtimeDomain>({
       }),
     setSyncError: (error) => set((state) => ({ ...state, syncError: error })),
     clearSyncError: () => set((state) => ({ ...state, syncError: null })),
+    setAccountSettingsSyncStatus: (status) => set((state) => ({ ...state, accountSettingsSyncStatus: status })),
+    resetAccountSettingsSyncStatus: () => set((state) => ({ ...state, accountSettingsSyncStatus: createAccountSettingsIdleStatus() })),
     setLastSyncAt: (ts) => set((state) => ({ ...state, lastSyncAt: ts })),
     setEndpointConnectivity: (snapshot) => set((state) => ({
       ...state,

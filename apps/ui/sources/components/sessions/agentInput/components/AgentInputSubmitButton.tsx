@@ -14,18 +14,22 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
     submitAccessibilityLabel?: string;
     disabled: boolean;
     isSending?: boolean;
+    isStopping?: boolean;
     hasSendableContent: boolean;
+    canStop?: boolean;
     micPressHandler?: (() => void) | undefined;
     micActive: boolean;
     onSend: () => void;
+    onStop?: () => void;
 }>) {
     const { theme } = useUnistyles();
+    const showStopWhenEmpty = !props.hasSendableContent && !props.micPressHandler && props.canStop === true;
 
     return (
         <PrimaryCircleIconButton
             testID={props.testID}
-            active={props.hasSendableContent || props.isSending || Boolean(props.micPressHandler)}
-            loading={props.isSending}
+            active={props.hasSendableContent || props.isSending || Boolean(props.micPressHandler) || showStopWhenEmpty}
+            loading={props.isSending || (showStopWhenEmpty && props.isStopping)}
             disabled={props.disabled}
             accessibilityLabel={
                 props.hasSendableContent
@@ -33,11 +37,13 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                     : (
                         props.micPressHandler
                             ? t('voiceAssistant.label')
+                            : showStopWhenEmpty
+                                ? t('runs.stop.stopRunA11y')
                             : (props.submitAccessibilityLabel ?? (props.sessionId ? t('common.send') : t('newSession.title')))
                     )
             }
             accessibilityHint={
-                (!props.hasSendableContent && !props.micPressHandler)
+                (!props.hasSendableContent && !props.micPressHandler && !showStopWhenEmpty)
                     ? t('session.inputPlaceholder')
                     : undefined
             }
@@ -50,7 +56,11 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                 if (props.hasSendableContent) {
                     props.onSend();
                 } else {
-                    props.micPressHandler?.();
+                    if (props.micPressHandler) {
+                        props.micPressHandler();
+                    } else if (showStopWhenEmpty) {
+                        props.onStop?.();
+                    }
                 }
             }}
             style={{ marginLeft: 8, marginRight: 8 }}
@@ -72,6 +82,8 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                         tintColor={theme.colors.button.primary.tint}
                     />
                 )
+            ) : showStopWhenEmpty ? (
+                <Ionicons name="stop" size={18} color={theme.colors.button.primary.tint} />
             ) : (
                 <Octicons
                     name="arrow-up"

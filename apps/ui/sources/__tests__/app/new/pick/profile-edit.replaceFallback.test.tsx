@@ -153,6 +153,10 @@ vi.mock('@/sync/domains/profiles/profileMutations', () => ({
 vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
     promptUnsavedChangesAlert: vi.fn(async () => 'keep'),
 }));
+vi.mock('@/components/ui/keyboardAvoidance', () => ({
+    KeyboardAwareScreen: ({ children, ...props }: any) =>
+        React.createElement('KeyboardAwareScreen', props, children),
+}));
 vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
     machineContributionRegistryProjectionDescribe: (...args: Parameters<MachineContributionRegistryProjectionDescribeFn>) =>
         machineContributionRegistryProjectionDescribe(...args),

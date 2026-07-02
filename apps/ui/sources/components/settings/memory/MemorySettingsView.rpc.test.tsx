@@ -16,14 +16,26 @@ const machinesState = [
     { id: 'm2', metadata: { displayName: 'Machine 2' } },
 ];
 
-function createReadyMemoryStatus(overrides: Partial<MemoryStatusV1> = {}): MemoryStatusV1 {
+function createReadyMemoryStatus(overrides: Record<string, unknown> = {}): MemoryStatusV1 {
     return {
         v: 1,
         enabled: true,
         indexMode: 'hints',
         hintsIndexReady: true,
+        hintsIndexHasContent: true,
         deepIndexReady: false,
+        deepIndexHasContent: false,
         activeIndexReady: true,
+        activeIndexSearchable: true,
+        indexContent: {
+            lightShardCount: 1,
+            lightTermCount: 12,
+            deepChunkCount: 0,
+            deepEmbeddingCount: 0,
+            searchableSessionCount: 1,
+            lastIndexedAtMs: 1,
+            latestIndexedMessageAtMs: 1,
+        },
         embeddingsEnabled: false,
         embeddingsMode: 'disabled',
         embeddingsPresetId: null,
@@ -35,8 +47,11 @@ function createReadyMemoryStatus(overrides: Partial<MemoryStatusV1> = {}): Memor
         deepDbPath: null,
         tier1DbBytes: 1024,
         deepDbBytes: null,
+        worker: null,
+        queue: null,
+        lastRun: null,
         ...overrides,
-    };
+    } as MemoryStatusV1;
 }
 
 function installMemoryRpc(handlers: Readonly<{
@@ -509,6 +524,119 @@ describe('MemorySettingsView', () => {
         const embeddingsStatusItem = screen.findByProps({ title: 'memorySearchSettings.status.embeddingsTitle' });
 
         expect(embeddingsStatusItem.props?.subtitle).toBe('memorySearchSettings.status.embeddingsFallback');
+    });
+
+    it('shows index content and queue status from daemon memory telemetry', async () => {
+        installMemoryRpc({
+            settingsGet: () => ({ v: 1, enabled: true, indexMode: 'hints' }),
+            status: () => createReadyMemoryStatus({
+                activeIndexSearchable: false,
+                indexContent: {
+                    lightShardCount: 0,
+                    lightTermCount: 0,
+                    deepChunkCount: 0,
+                    deepEmbeddingCount: 0,
+                    searchableSessionCount: 0,
+                    lastIndexedAtMs: null,
+                    latestIndexedMessageAtMs: null,
+                },
+                queue: {
+                    selectedSessionCount: 6,
+                    queuedSessionCount: 3,
+                    indexingSessionCount: 1,
+                    indexedSessionCount: 1,
+                    emptySessionCount: 1,
+                    failedSessionCount: 0,
+                    waitingSessionCount: 0,
+                    oldestQueuedAtMs: 123,
+                },
+                worker: {
+                    state: 'indexing',
+                    lastTickAtMs: 456,
+                    lastInventoryAtMs: 123,
+                    currentSessionId: 'sess_1',
+                    currentPhase: 'backfill',
+                },
+                lastRun: {
+                    startedAtMs: 1,
+                    finishedAtMs: null,
+                    sessionsConsidered: 6,
+                    sessionsProcessed: 2,
+                    rawRowsFetched: 40,
+                    semanticRowsFound: 3,
+                    lightShardsCreated: 0,
+                    deepChunksCreated: 0,
+                    failures: 0,
+                    skipReasons: { no_semantic_rows: 1 },
+                },
+            }),
+        });
+
+        const screen = await renderSettledMemorySettingsView();
+
+        expect(screen.findByProps({ title: 'memorySearchSettings.indexContents.title' })).toBeTruthy();
+        expect(screen.findByProps({ title: 'memorySearchSettings.queue.title' })).toBeTruthy();
+        expect(screen.findByProps({ title: 'memorySearchSettings.lastRun.title' })).toBeTruthy();
+        expect(screen.findByProps({ title: 'memorySearchSettings.status.title' }).props?.subtitle)
+            .toBe('memorySearchSettings.status.indexing');
+    });
+
+    it('writes coverage policy changes via daemon.memory.settings.set', async () => {
+        installMemoryRpc({
+            settingsGet: () => ({
+                v: 1,
+                enabled: true,
+                indexMode: 'hints',
+                coveragePolicy: { type: 'latest_messages', maxSemanticMessagesPerSession: 250 },
+            }),
+            settingsSet: (params: any) => params.payload,
+        });
+
+        const screen = await renderSettledMemorySettingsView();
+        const coverageMenu = findDropdownMenu(
+            screen,
+            (props) => Array.isArray(props.items) && props.items.some((item: any) => item.id === 'since_enabled'),
+        );
+        expect(coverageMenu).toBeTruthy();
+
+        await act(async () => {
+            coverageMenu!.props.onSelect?.('full');
+        });
+
+        const call = machineRpcSpy.mock.calls.find((c) => c?.[0]?.method === 'daemon.memory.settings.set');
+        expect(call?.[0]?.payload?.coveragePolicy).toEqual({ type: 'full' });
+    });
+
+    it('writes content policy toggle changes via daemon.memory.settings.set without exposing raw tool outputs', async () => {
+        installMemoryRpc({
+            settingsGet: () => ({
+                v: 1,
+                enabled: true,
+                indexMode: 'hints',
+                contentPolicy: {
+                    includeUserMessages: true,
+                    includeAssistantMessages: true,
+                    includeReasoning: false,
+                    includeToolSummaries: false,
+                    includeToolOutputs: false,
+                },
+            }),
+            settingsSet: (params: any) => params.payload,
+        });
+
+        const screen = await renderSettledMemorySettingsView();
+        const reasoningItem = screen.findByTestId('memory-settings-content-reasoning-item');
+        expect(reasoningItem).toBeTruthy();
+        const toggle = reasoningItem?.props?.rightElement;
+        expect(toggle?.props?.testID).toBe('memory-settings-content-reasoning');
+
+        await act(async () => {
+            toggle.props.onValueChange?.(true);
+        });
+
+        const call = machineRpcSpy.mock.calls.find((c) => c?.[0]?.method === 'daemon.memory.settings.set');
+        expect(call?.[0]?.payload?.contentPolicy?.includeReasoning).toBe(true);
+        expect(screen.findAllByTestId('memory-settings-content-tool-outputs-item')).toHaveLength(0);
     });
 
     it('writes budgets.maxDiskMbLight changes via daemon.memory.settings.set', async () => {

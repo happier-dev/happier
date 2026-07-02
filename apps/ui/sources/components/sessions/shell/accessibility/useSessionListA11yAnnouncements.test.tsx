@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
 import type { TreeDropResult } from '@/components/ui/treeDragDrop';
+import type { SessionListTreeDropResult } from '../drop-resolution/sessionListTreeTypes';
 
 import { useSessionListA11yAnnouncements } from './useSessionListA11yAnnouncements';
 
@@ -76,6 +77,39 @@ describe('useSessionListA11yAnnouncements', () => {
         );
         expect(announceForAccessibilitySpy).toHaveBeenCalledWith(
             expect.stringContaining('sessionsList.dragA11yBlockedDescendantCycle'),
+        );
+    });
+
+    it('announces session-list eligibility block reasons instead of the generic tree reason', async () => {
+        announceForAccessibilitySpy.mockClear();
+        const hook = await renderHook(() => useSessionListA11yAnnouncements());
+        const blockedResult: SessionListTreeDropResult = {
+            instruction: {
+                kind: 'blocked',
+                reason: 'workspace-scope-mismatch',
+            },
+            sessionListBlockReason: 'direct-session',
+            visual: { kind: 'none' },
+        };
+
+        hook.getCurrent().announceDropResult({
+            label: 'Direct session',
+            result: blockedResult,
+        });
+
+        expect(announceForAccessibilitySpy).toHaveBeenCalledWith(
+            expect.stringContaining('sessionsList.dragA11yBlockedDirectSession'),
+        );
+    });
+
+    it('announces selection count changes through the native announcer', async () => {
+        announceForAccessibilitySpy.mockClear();
+        const hook = await renderHook(() => useSessionListA11yAnnouncements());
+
+        hook.getCurrent().announceSelectionCount({ count: 3 });
+
+        expect(announceForAccessibilitySpy).toHaveBeenCalledWith(
+            expect.stringContaining('sessionsList.selectionA11ySelectedCount'),
         );
     });
 });

@@ -118,6 +118,11 @@ vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
     promptUnsavedChangesAlert: vi.fn(async () => 'keep'),
 }));
 
+vi.mock('@/components/ui/keyboardAvoidance', () => ({
+    KeyboardAwareScreen: ({ children, ...props }: any) =>
+        React.createElement('KeyboardAwareScreen', props, props.children ?? children),
+}));
+
 describe('ProfileEditScreen (header buttons)', () => {
     afterEach(() => {
         standardCleanup();
@@ -133,7 +138,10 @@ describe('ProfileEditScreen (header buttons)', () => {
 
     it('renders a header close button even when the form is pristine', async () => {
         const ProfileEditScreen = (await import('@/app/(app)/new/pick/profile-edit')).default;
-        await renderScreen(React.createElement(ProfileEditScreen));
+        const screen = await renderScreen(React.createElement(ProfileEditScreen));
+
+        expect(screen.findAllByType('KeyboardAwareScreen' as any)).toHaveLength(1);
+        expect(screen.findAllByType('KeyboardAvoidingView' as any)).toHaveLength(0);
 
         const options = stackOptionsCapture.getResolved();
         expect(typeof options?.headerLeft).toBe('function');

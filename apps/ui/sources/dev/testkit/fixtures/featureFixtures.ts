@@ -1,4 +1,6 @@
 import {
+    DEFAULT_BROWSER_CAPABILITIES,
+    DEFAULT_LOCAL_SERVICE_CAPABILITIES,
     DEFAULT_MACHINE_LIVE_STREAM_CAPABILITIES,
     DEFAULT_MACHINE_TUNNEL_CAPABILITIES,
     DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
@@ -17,6 +19,9 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
         | 'sharing'
         | 'sessions'
         | 'machines'
+        | 'localServices'
+        | 'browser'
+        | 'devices'
         | 'terminal'
         | 'voice'
         | 'social'
@@ -34,6 +39,9 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
             sharing?: Partial<RootLayoutFeatures['features']['sharing']>;
             sessions?: Partial<RootLayoutFeatures['features']['sessions']>;
             machines?: Partial<RootLayoutFeatures['features']['machines']>;
+            localServices?: Partial<RootLayoutFeatures['features']['localServices']>;
+            browser?: Partial<RootLayoutFeatures['features']['browser']>;
+            devices?: Partial<RootLayoutFeatures['features']['devices']>;
             terminal?: Partial<RootLayoutFeatures['features']['terminal']>;
             voice?: Partial<RootLayoutFeatures['features']['voice']>;
             social?: Partial<RootLayoutFeatures['features']['social']>;
@@ -44,7 +52,7 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
         }>;
     capabilities?: Omit<
         Partial<RootLayoutFeatures['capabilities']>,
-        'oauth' | 'social' | 'auth' | 'encryption' | 'liveActivities' | 'pets'
+        'oauth' | 'social' | 'auth' | 'encryption' | 'liveActivities' | 'pets' | 'localServices' | 'browser'
     > &
         Readonly<{
             oauth?: Partial<RootLayoutFeatures['capabilities']['oauth']>;
@@ -53,6 +61,8 @@ type RootLayoutFeaturesOverrides = Omit<Partial<RootLayoutFeatures>, 'features' 
             encryption?: Partial<RootLayoutFeatures['capabilities']['encryption']>;
             liveActivities?: Partial<RootLayoutFeatures['capabilities']['liveActivities']>;
             pets?: Partial<RootLayoutFeatures['capabilities']['pets']>;
+            localServices?: Partial<RootLayoutFeatures['capabilities']['localServices']>;
+            browser?: Partial<RootLayoutFeatures['capabilities']['browser']>;
         }>;
 }>;
 
@@ -87,6 +97,8 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         connectedServices: {
             enabled: true,
             quotas: { enabled: true },
+            accountGroups: { enabled: false },
+            accountFallback: { enabled: false },
         },
         updates: {
             ota: { enabled: true },
@@ -99,9 +111,11 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         },
         sessions: {
             enabled: false,
+            folders: { enabled: false },
             handoff: {
                 enabled: false,
             },
+            usageLimitRecovery: { enabled: false },
         },
         machines: {
             enabled: false,
@@ -128,6 +142,23 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
                 enabled: false,
                 directPeer: { enabled: false },
             },
+        },
+        localServices: {
+            enabled: false,
+            inventory: { enabled: false },
+            managed: { enabled: false },
+            preview: { enabled: false },
+            publicPreview: { enabled: false },
+        },
+        browser: {
+            enabled: false,
+            viewTargets: { enabled: false },
+            internal: { enabled: false },
+            sidecar: { enabled: false },
+        },
+        devices: {
+            enabled: false,
+            simulatorPreview: { enabled: false },
         },
         setup: {
             relay: {
@@ -204,7 +235,10 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
                 grantSigningKeys: [],
             },
         },
+        localServices: DEFAULT_LOCAL_SERVICE_CAPABILITIES,
+        browser: DEFAULT_BROWSER_CAPABILITIES,
         server: {},
+        serverIdentity: { serverIdentityId: null },
         social: {
             friends: {
                 allowUsername: false,
@@ -244,6 +278,7 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         },
         session: {
             state: {},
+            messages: { role: false },
         },
         liveActivities: {
             remoteUpdates: DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
@@ -261,6 +296,9 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
     const nextSharing: Partial<RootLayoutFeatures['features']['sharing']> = nextFeatures.sharing ?? {};
     const nextSessions: Partial<RootLayoutFeatures['features']['sessions']> = nextFeatures.sessions ?? {};
     const nextMachines: Partial<RootLayoutFeatures['features']['machines']> = nextFeatures.machines ?? {};
+    const nextLocalServices: Partial<RootLayoutFeatures['features']['localServices']> = nextFeatures.localServices ?? {};
+    const nextBrowser: Partial<RootLayoutFeatures['features']['browser']> = nextFeatures.browser ?? {};
+    const nextDevices: Partial<RootLayoutFeatures['features']['devices']> = nextFeatures.devices ?? {};
     const nextTerminal: Partial<RootLayoutFeatures['features']['terminal']> = nextFeatures.terminal ?? {};
     const nextAttachments: Partial<RootLayoutFeatures['features']['attachments']> = nextFeatures.attachments ?? {};
     const nextChannelBridges: Partial<RootLayoutFeatures['features']['channelBridges']> = nextFeatures.channelBridges ?? {};
@@ -280,6 +318,9 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
     const nextCapabilitiesLiveActivities: Partial<RootLayoutFeatures['capabilities']['liveActivities']> =
         nextCapabilities.liveActivities ?? {};
     const nextCapabilitiesPets: Partial<RootLayoutFeatures['capabilities']['pets']> = nextCapabilities.pets ?? {};
+    const nextCapabilitiesLocalServices: Partial<RootLayoutFeatures['capabilities']['localServices']> =
+        nextCapabilities.localServices ?? {};
+    const nextCapabilitiesBrowser: Partial<RootLayoutFeatures['capabilities']['browser']> = nextCapabilities.browser ?? {};
     const nextCapabilitiesAuthRecovery: Partial<RootLayoutFeatures['capabilities']['auth']['recovery']> =
         nextCapabilitiesAuth.recovery ?? {};
     const nextCapabilitiesAuthUi: Partial<RootLayoutFeatures['capabilities']['auth']['ui']> =
@@ -340,9 +381,17 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
             sessions: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.sessions,
                 ...nextSessions,
+                folders: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.sessions.folders,
+                    ...(nextSessions.folders ?? {}),
+                },
                 handoff: {
                     ...BASE_ROOT_LAYOUT_FEATURES.features.sessions.handoff,
                     ...(nextSessions.handoff ?? {}),
+                },
+                usageLimitRecovery: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.sessions.usageLimitRecovery,
+                    ...(nextSessions.usageLimitRecovery ?? {}),
                 },
             },
             machines: {
@@ -393,6 +442,50 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
                     },
                 },
             },
+            localServices: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.localServices,
+                ...nextLocalServices,
+                inventory: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.localServices.inventory,
+                    ...(nextLocalServices.inventory ?? {}),
+                },
+                managed: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.localServices.managed,
+                    ...(nextLocalServices.managed ?? {}),
+                },
+                preview: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.localServices.preview,
+                    ...(nextLocalServices.preview ?? {}),
+                },
+                publicPreview: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.localServices.publicPreview,
+                    ...(nextLocalServices.publicPreview ?? {}),
+                },
+            },
+            browser: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.browser,
+                ...nextBrowser,
+                viewTargets: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.browser.viewTargets,
+                    ...(nextBrowser.viewTargets ?? {}),
+                },
+                internal: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.browser.internal,
+                    ...(nextBrowser.internal ?? {}),
+                },
+                sidecar: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.browser.sidecar,
+                    ...(nextBrowser.sidecar ?? {}),
+                },
+            },
+            devices: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.devices,
+                ...nextDevices,
+                simulatorPreview: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.devices.simulatorPreview,
+                    ...(nextDevices.simulatorPreview ?? {}),
+                },
+            },
             terminal: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.terminal,
                 ...nextTerminal,
@@ -411,6 +504,14 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
                 quotas: {
                     ...BASE_ROOT_LAYOUT_FEATURES.features.connectedServices.quotas,
                     ...(nextConnectedServices.quotas ?? {}),
+                },
+                accountGroups: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.connectedServices.accountGroups,
+                    ...(nextConnectedServices.accountGroups ?? {}),
+                },
+                accountFallback: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.connectedServices.accountFallback,
+                    ...(nextConnectedServices.accountFallback ?? {}),
                 },
             },
             updates: {
@@ -475,6 +576,34 @@ export function createRootLayoutFeaturesResponse(overrides?: RootLayoutFeaturesO
                 limits: {
                     ...BASE_ROOT_LAYOUT_FEATURES.capabilities.pets.limits,
                     ...(nextCapabilitiesPets.limits ?? {}),
+                },
+            },
+            localServices: {
+                ...BASE_ROOT_LAYOUT_FEATURES.capabilities.localServices,
+                ...nextCapabilitiesLocalServices,
+                preview: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.localServices.preview,
+                    ...(nextCapabilitiesLocalServices.preview ?? {}),
+                },
+                publicPreview: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.localServices.publicPreview,
+                    ...(nextCapabilitiesLocalServices.publicPreview ?? {}),
+                },
+            },
+            browser: {
+                ...BASE_ROOT_LAYOUT_FEATURES.capabilities.browser,
+                ...nextCapabilitiesBrowser,
+                viewTargets: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.browser.viewTargets,
+                    ...(nextCapabilitiesBrowser.viewTargets ?? {}),
+                },
+                internal: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.browser.internal,
+                    ...(nextCapabilitiesBrowser.internal ?? {}),
+                },
+                sidecar: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.capabilities.browser.sidecar,
+                    ...(nextCapabilitiesBrowser.sidecar ?? {}),
                 },
             },
             social: {

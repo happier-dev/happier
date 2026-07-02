@@ -6,6 +6,20 @@ import { buildSessionListRenderableFromSession } from '@/sync/domains/session/li
 import { buildActivityOverviewFromSource, buildStableActivityOverviewFingerprint } from './buildActivityOverviewFromSource';
 import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
 
+function pendingAgentState(kind: 'permission' | 'user_action', createdAt = 950) {
+    return {
+        controlledByUser: null,
+        requests: {
+            request_1: {
+                tool: kind === 'permission' ? 'Bash' : 'Read',
+                kind,
+                arguments: {},
+                createdAt,
+            },
+        },
+    };
+}
+
 function createSource(params: Readonly<{
     sessions: ReadonlyArray<ReturnType<typeof createSessionFixture>>;
     isDataReady?: boolean;
@@ -55,21 +69,28 @@ describe('buildActivityOverviewFromSource', () => {
         const permission = createSessionFixture({
             id: 'permission',
             active: true,
+            presence: 'online',
             seq: 1,
             lastViewedSessionSeq: 1,
             pendingPermissionRequestCount: 1,
+            pendingRequestObservedAt: 950,
+            agentState: pendingAgentState('permission'),
             updatedAt: 20,
         });
         const thinking = createSessionFixture({
             id: 'thinking',
             seq: 2,
             lastViewedSessionSeq: 2,
+            active: true,
+            presence: 'online',
             thinking: true,
+            thinkingAt: 950,
             updatedAt: 30,
         });
         const unread = createSessionFixture({
             id: 'unread',
             seq: 12,
+            latestReadyEventSeq: 12,
             lastViewedSessionSeq: 1,
             updatedAt: 40,
         });
@@ -99,6 +120,7 @@ describe('buildActivityOverviewFromSource', () => {
                     createSessionFixture({
                         id: 'permission',
                         pendingPermissionRequestCount: 1,
+                        agentState: pendingAgentState('permission'),
                         serverId: 'server-b',
                         updatedAt: 20,
                     }),
@@ -209,10 +231,52 @@ describe('buildActivityOverviewFromSource', () => {
         });
     });
 
+    it('does not treat stale cached-row thinking as activity after a completed primary turn projection', () => {
+        const staleCompleted = buildSessionListRenderableFromSession(Object.assign(createSessionFixture({
+            id: 'stale-completed',
+            active: true,
+            presence: 'online',
+            thinking: true,
+            thinkingAt: 1_000,
+            seq: 2,
+            lastViewedSessionSeq: 2,
+        }), {
+            latestTurnStatus: 'completed' as const,
+            latestTurnStatusObservedAt: 2_000,
+        }));
+
+        const overview = buildActivityOverviewFromSource({
+            source: {
+                ...createSource({ sessions: [] }),
+                sessionsById: {},
+                sessionListRenderablesById: {},
+                sessionListIndexByServerId: {},
+                concurrentSessionListCacheByServerId: {
+                    'server-b': {
+                        serverName: 'Server B',
+                        sessions: {
+                            [staleCompleted.id]: staleCompleted,
+                        },
+                    },
+                },
+            },
+            nowMs: 2_100,
+        });
+
+        expect(overview.counts.thinking).toBe(0);
+        expect(overview.counts.totalAttention).toBe(0);
+        expect(overview.candidates[0]).toMatchObject({
+            sessionId: 'stale-completed',
+            attentionState: 'quiet',
+            hasAttention: false,
+        });
+    });
+
     it('excludes non-user-facing session rows from activity candidates', () => {
         const visible = createSessionFixture({
             id: 'visible-unread',
             seq: 4,
+            latestReadyEventSeq: 4,
             lastViewedSessionSeq: 1,
             updatedAt: 30,
         });
@@ -269,6 +333,7 @@ describe('buildActivityOverviewFromSource', () => {
                 createSessionFixture({
                     id: 'permission',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     updatedAt: 20,
                 }),
             ],

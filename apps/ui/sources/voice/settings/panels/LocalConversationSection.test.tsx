@@ -83,6 +83,10 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
 });
 
 vi.mock('@/sync/domains/models/modelOptions', () => ({
+    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
+        options?.find?.((option: any) => option.value === effectiveModelId)
+            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
+            ?? null,
   getModelOptionsForAgentType: () => [
     { value: 'default', label: 'Default', description: '' },
     { value: 'm1', label: 'Model 1', description: 'Fast' },

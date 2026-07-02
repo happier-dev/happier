@@ -25,7 +25,9 @@ export async function emitSessionMetadataUpdateWithServerScope(params: Readonly<
     };
 
     if (context.scope === 'active') {
-        return await apiSocket.emitWithAck<UpdateMetadataAck>('update-metadata', payload);
+        return await apiSocket.emitWithAck<UpdateMetadataAck>('update-metadata', payload, {
+            timeoutMs: context.timeoutMs,
+        });
     }
 
     const socket = await createEphemeralServerSocketClient({

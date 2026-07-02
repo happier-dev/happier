@@ -1,15 +1,28 @@
 import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import {
+    BUNDLED_SESSION_SUBAGENT_VISIBLE_MESSAGE_DESCRIPTORS,
+    BUNDLED_SESSION_SUBAGENT_VISIBLE_MESSAGE_REGISTRY,
+} from '@/agents/registry/generatedBundledPluginEntries.visibleMessageResolvers';
 
 import { deriveSessionSubagents } from '../deriveSessionSubagents';
 import { findMatchingSessionSubagentForTool } from '../findMatchingSessionSubagentForTool';
 import type { SessionSubagentActiveExecutionRunState } from '../types';
-import { filterClaudeSubagentVisibleMessages } from './providers/claude/filterClaudeSubagentVisibleMessages';
-import type { SessionSubagentVisibleMessagesResolver } from './types';
+import { createVisibleMessagesResolverFromDescriptor } from './visibleMessageDescriptors';
 
-const SESSION_SUBAGENT_VISIBLE_MESSAGE_RESOLVERS = [
-    filterClaudeSubagentVisibleMessages,
-] as const satisfies readonly SessionSubagentVisibleMessagesResolver[];
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function createVisibleMessageSessionDescriptor(descriptor: Readonly<Record<string, unknown>>): Record<string, unknown> {
+    if (descriptor.kind === 'session.visibleMessages.v1') {
+        return { visibleMessages: descriptor };
+    }
+    const descriptorId = typeof descriptor.descriptorId === 'string' && descriptor.descriptorId.trim().length > 0
+        ? descriptor.descriptorId
+        : null;
+    return descriptorId ? { visibleMessageFilterDescriptorId: descriptorId } : {};
+}
 
 export function resolveSessionSubagentVisibleMessages(params: Readonly<{
     session: Session;
@@ -30,13 +43,29 @@ export function resolveSessionSubagentVisibleMessages(params: Readonly<{
         subagents,
     });
 
-    for (const resolveVisibleMessages of SESSION_SUBAGENT_VISIBLE_MESSAGE_RESOLVERS) {
-        const visibleMessages = resolveVisibleMessages({
-            ...params,
-            focusedMessages: params.focusedMessages,
-            subagents,
-            subagent,
-        });
+    const descriptorEntries = BUNDLED_SESSION_SUBAGENT_VISIBLE_MESSAGE_DESCRIPTORS.map((entry) => ({
+        agentId: entry.agentId,
+        resolveVisibleMessages: createVisibleMessagesResolverFromDescriptor({
+            kind: 'plugin.ui.v1',
+            pluginId: entry.agentId,
+            agentId: entry.agentId,
+            version: 1,
+            session: isRecord(entry.descriptor) ? createVisibleMessageSessionDescriptor(entry.descriptor) : {},
+        }).resolveVisibleMessages,
+    }));
+
+    for (const entry of [...descriptorEntries, ...BUNDLED_SESSION_SUBAGENT_VISIBLE_MESSAGE_REGISTRY]) {
+        let visibleMessages: readonly Message[] | null = null;
+        try {
+            visibleMessages = entry.resolveVisibleMessages({
+                ...params,
+                focusedMessages: params.focusedMessages,
+                subagents,
+                subagent,
+            });
+        } catch {
+            visibleMessages = null;
+        }
         if (visibleMessages) return visibleMessages;
     }
 

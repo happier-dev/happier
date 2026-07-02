@@ -40,6 +40,39 @@ export function installLegacyChatListHarnessCommonModuleMocks(
         };
     });
 
+    vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () => {
+        const React = await import('react');
+        const activeOptions = legacyChatListHarnessModuleState.options;
+        const flashListModule = activeOptions.flashList
+            ? await activeOptions.flashList()
+            : { FlashList: () => null };
+        return {
+            ...(flashListModule && typeof flashListModule === 'object' ? flashListModule : {}),
+            LayoutCommitObserver: ({ children, onCommitLayoutEffect }: {
+                children?: React.ReactNode;
+                onCommitLayoutEffect?: () => void;
+            }) => {
+                React.useLayoutEffect(() => {
+                    onCommitLayoutEffect?.();
+                });
+                return React.createElement(React.Fragment, null, children);
+            },
+            useLayoutState: <T,>(initialValue: T) => React.useState<T>(initialValue),
+            useMappingHelper: () => ({
+                getMappingKey: (_key: string | number, index: number) => index,
+            }),
+            useRecyclingState: <T,>(initialValue: T, dependencies: readonly unknown[], onReset?: () => void) => {
+                const [state, setState] = React.useState<T>(initialValue);
+                React.useEffect(() => {
+                    setState(initialValue);
+                    onReset?.();
+                // eslint-disable-next-line react-hooks/exhaustive-deps
+                }, dependencies);
+                return [state, setState] as const;
+            },
+        };
+    });
+
     vi.mock('react-native', async () => {
         const activeOptions = legacyChatListHarnessModuleState.options;
         if (activeOptions.reactNative) {

@@ -23,6 +23,11 @@ type PendingRequestFlags = Readonly<{
     hasPendingUserActionRequests: boolean;
 }>;
 
+export type SessionPendingRequestLists = Readonly<{
+    permissionRequests: readonly SessionPendingRequest[];
+    userActionRequests: readonly SessionPendingRequest[];
+}>;
+
 type AgentRequestRecord = NonNullable<AgentState['requests']>;
 
 type TranscriptRequestState =
@@ -267,22 +272,19 @@ function shouldUseProjectedPendingRequestCounts(session: Session, transcriptStat
         return false;
     }
 
-    const hasPendingAgentRequests = Object.keys(session.agentState?.requests ?? {}).length > 0;
-    if (hasPendingAgentRequests) {
-        return false;
-    }
-
     let hasPendingTranscriptRequests = false;
+    let newestPendingTranscriptCreatedAt = 0;
     let newestTerminalTranscriptCreatedAt = 0;
     for (const state of transcriptStates.values()) {
         if (state.status === 'pending') {
             hasPendingTranscriptRequests = true;
-            break;
+            newestPendingTranscriptCreatedAt = Math.max(newestPendingTranscriptCreatedAt, state.createdAt);
+            continue;
         }
         newestTerminalTranscriptCreatedAt = Math.max(newestTerminalTranscriptCreatedAt, state.createdAt);
     }
     if (hasPendingTranscriptRequests) {
-        return false;
+        return session.updatedAt > newestPendingTranscriptCreatedAt;
     }
 
     if (newestTerminalTranscriptCreatedAt === 0) {
@@ -308,11 +310,43 @@ function readProjectedPendingRequestFlags(session: Session): PendingRequestFlags
     };
 }
 
+function readProjectedPendingRequestObservedAt(session: Session): number | null {
+    const value = session.pendingRequestObservedAt;
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0
+        ? Math.trunc(value)
+        : null;
+}
+
+function hasProjectedPendingRequests(session: Session): boolean {
+    return (session.pendingPermissionRequestCount ?? 0) > 0
+        || (session.pendingUserActionRequestCount ?? 0) > 0;
+}
+
+export function shouldReadTranscriptForPendingSessionRequests(session: Session): boolean {
+    if (session.active !== true) {
+        return false;
+    }
+
+    if (hasProjectedPendingRequestCounts(session)) {
+        return hasProjectedPendingRequests(session);
+    }
+
+    if (hasPendingAgentRequests(session)) {
+        return true;
+    }
+
+    return true;
+}
+
 export function listPendingSessionRequests(
     session: Session,
     messages?: ReadonlyArray<Message>,
 ): SessionPendingRequest[] {
     if (session.active !== true) {
+        return [];
+    }
+
+    if (!messages && !shouldReadTranscriptForPendingSessionRequests(session)) {
         return [];
     }
 
@@ -387,6 +421,57 @@ export function listPendingUserActionRequestsFromSession(
     return listPendingSessionRequests(session, messages).filter((request) => request.kind === 'user_action');
 }
 
+export function listPendingRequestListsFromSession(
+    session: Session,
+    messages?: ReadonlyArray<Message>,
+): SessionPendingRequestLists {
+    const requests = listPendingSessionRequests(session, messages);
+    if (requests.length === 0) {
+        return {
+            permissionRequests: [],
+            userActionRequests: [],
+        };
+    }
+
+    return {
+        permissionRequests: requests.filter((request) =>
+            shouldShowGenericPermissionPromptForRequest({ toolName: request.tool, requestKind: request.kind })
+        ),
+        userActionRequests: requests.filter((request) => request.kind === 'user_action'),
+    };
+}
+
+function latestPendingRequestCreatedAt(requests: readonly SessionPendingRequest[]): number | null {
+    let latest: number | null = null;
+    for (const request of requests) {
+        const createdAt = request.createdAt;
+        if (typeof createdAt !== 'number' || !Number.isFinite(createdAt) || createdAt < 0) continue;
+        latest = latest === null ? Math.trunc(createdAt) : Math.max(latest, Math.trunc(createdAt));
+    }
+    return latest;
+}
+
+export function deriveLatestPendingRequestObservedAtFromSession(
+    session: Session,
+    messages?: ReadonlyArray<Message>,
+): number | null {
+    if (session.active !== true) {
+        return null;
+    }
+
+    if (hasProjectedPendingRequestCounts(session)) {
+        const pendingFlags = derivePendingRequestFlagsFromSession(session, messages);
+        if (!pendingFlags.hasPendingPermissionRequests && !pendingFlags.hasPendingUserActionRequests) {
+            return null;
+        }
+        if (hasProjectedPendingRequests(session)) {
+            return readProjectedPendingRequestObservedAt(session);
+        }
+    }
+
+    return latestPendingRequestCreatedAt(listPendingSessionRequests(session, messages));
+}
+
 export function derivePendingRequestFlagsFromSession(
     session: Session,
     messages?: ReadonlyArray<Message>,
@@ -395,8 +480,20 @@ export function derivePendingRequestFlagsFromSession(
         return EMPTY_PENDING_REQUEST_FLAGS;
     }
 
-    if (hasProjectedPendingRequestCounts(session) && !hasPendingAgentRequests(session)) {
-        return readProjectedPendingRequestFlags(session);
+    if (hasProjectedPendingRequestCounts(session)) {
+        const transcriptStates = getTranscriptRequestStates(session, messages);
+        if (shouldUseProjectedPendingRequestCounts(session, transcriptStates)) {
+            return readProjectedPendingRequestFlags(session);
+        }
+        const pendingTranscriptRequests = Array.from(transcriptStates.values())
+            .flatMap((state) => (state.status === 'pending' ? [state.request] : []));
+        if (pendingTranscriptRequests.length === 0) {
+            return EMPTY_PENDING_REQUEST_FLAGS;
+        }
+        return {
+            hasPendingPermissionRequests: pendingTranscriptRequests.some((request) => request.kind !== 'user_action'),
+            hasPendingUserActionRequests: pendingTranscriptRequests.some((request) => request.kind === 'user_action'),
+        };
     }
 
     const transcriptStates = getTranscriptRequestStates(session, messages);

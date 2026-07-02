@@ -14,7 +14,8 @@ import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServe
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { Modal } from '@/modal';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
-import { useIsDataReady, useSession } from '@/sync/domains/state/storage';
+import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
+import { useSession } from '@/sync/domains/state/storage';
 import { machineReadSessionLogTail } from '@/sync/ops';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { t } from '@/text';
@@ -30,13 +31,13 @@ export default function SessionLogScreen() {
     const routeScope = React.useMemo(() => createSessionRouteServerScope(params as Record<string, unknown>), [params]);
     const { id } = params;
     const sessionId = normalizeSessionId(id);
-    const sessionHydrated = useHydrateSessionForRoute(
+    const routeHydrationState = useHydrateSessionForRoute(
         sessionId,
         'SessionLogRoute.ensureSessionVisible',
         routeScope.hydrationOptions,
     );
+    const sessionHydrated = isSessionRouteHydrationAvailable(routeHydrationState);
     const session = useSession(sessionId);
-    const isDataReady = useIsDataReady();
 
     const metadataLogPath = React.useMemo(() => {
         const raw = session?.metadata && typeof (session.metadata as any).sessionLogPath === 'string'
@@ -101,11 +102,11 @@ export default function SessionLogScreen() {
         void refreshTail();
     }, [metadataLogPath, refreshTail, session?.id, sessionHydrated]);
 
-    if (!sessionId) {
+    if (!sessionId || isSessionRouteHydrationMissing(routeHydrationState)) {
         return <SessionInvalidLinkFallback />;
     }
 
-    if (!isDataReady || !sessionHydrated) {
+    if (!sessionHydrated) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                 <Ionicons name="hourglass-outline" size={48} color={theme.colors.text.secondary} />

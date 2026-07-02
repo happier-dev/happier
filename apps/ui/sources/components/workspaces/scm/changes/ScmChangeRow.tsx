@@ -124,8 +124,8 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
 
     const containerStyle = React.useMemo(() => {
         const bg = props.highlighted
-            ? (theme.colors.surface.inset ?? theme.colors.surface.base ?? theme.colors.text.secondary)
-            : (theme.colors.surface.base ?? theme.colors.text.secondary);
+            ? (theme.colors.surface?.inset ?? theme.colors.surface?.base ?? theme.colors.text.secondary)
+            : (theme.colors.surface?.base ?? theme.colors.text.secondary);
         return {
             paddingHorizontal: 12,
             paddingVertical,
@@ -134,9 +134,9 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
             gap: 10,
             backgroundColor: bg,
             borderBottomWidth: props.showDivider ? Platform.select({ ios: 0.33, default: 1 }) : 0,
-            borderBottomColor: theme.colors.border.default ?? theme.colors.text.secondary,
+            borderBottomColor: theme.colors.border?.default ?? theme.colors.text.secondary,
         } as const;
-    }, [paddingVertical, props.highlighted, props.showDivider, theme.colors.border.default, theme.colors.surface.base, theme.colors.surface.inset, theme.colors.text.secondary]);
+    }, [paddingVertical, props.highlighted, props.showDivider, theme.colors.border?.default, theme.colors.surface?.base, theme.colors.surface?.inset, theme.colors.text.secondary]);
 
     const onKeyDown = React.useCallback((event: any) => {
         if (!isWeb) return;

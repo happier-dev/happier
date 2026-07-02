@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListAttentionRow } from '@/sync/domains/state/storage';
@@ -49,15 +49,19 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('buildInboxSessionState', () => {
-    it('deduplicates unread session rows by canonical session id', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('deduplicates unread session rows by scoped server and session id', () => {
         const firstRow: SessionListAttentionRow = {
             serverId: 'server-a',
             serverName: 'Server A',
             session: makeUnreadRenderable({ id: 'session-1', updatedAt: 20 }),
         };
         const duplicateRow: SessionListAttentionRow = {
-            serverId: 'server-b',
-            serverName: 'Server B',
+            serverId: 'server-a',
+            serverName: 'Server A',
             session: makeUnreadRenderable({ id: 'session-1', updatedAt: 10 }),
         };
 
@@ -70,8 +74,34 @@ describe('buildInboxSessionState', () => {
         expect(state.unreadSessions[0]).toEqual(firstRow);
     });
 
-    it('uses canonical unread state when a stale attention row says the hydrated session is read', () => {
-        const canonicalSession = makeSession({ id: 'session-1', seq: 4, lastViewedSessionSeq: 1 });
+    it('keeps unread session rows from different servers distinct when ids overlap', () => {
+        const serverARow: SessionListAttentionRow = {
+            serverId: 'server-a',
+            serverName: 'Server A',
+            session: makeUnreadRenderable({ id: 'session-1', updatedAt: 20 }),
+        };
+        const serverBRow: SessionListAttentionRow = {
+            serverId: 'server-b',
+            serverName: 'Server B',
+            session: makeUnreadRenderable({ id: 'session-1', updatedAt: 10 }),
+        };
+
+        const state = buildInboxSessionState({
+            sessions: [],
+            sessionRows: [serverARow, serverBRow],
+        });
+
+        expect(state.unreadSessions).toEqual([serverARow, serverBRow]);
+    });
+
+    it('uses canonical unread state when a same-server stale attention row says the hydrated session is read', () => {
+        const canonicalSession = makeSession({
+            id: 'session-1',
+            serverId: 'server-a',
+            seq: 4,
+            lastViewedSessionSeq: 1,
+            latestTurnStatus: 'completed',
+        });
         const staleRow: SessionListAttentionRow = {
             serverId: 'server-a',
             serverName: 'Server A',
@@ -94,8 +124,35 @@ describe('buildInboxSessionState', () => {
         }]);
     });
 
-    it('uses canonical read state when a stale attention row says the hydrated session is unread', () => {
-        const canonicalSession = makeSession({ id: 'session-1', seq: 4, lastViewedSessionSeq: 4 });
+    it('does not use active-server canonical read state for a different server row', () => {
+        const canonicalSession = makeSession({
+            id: 'session-1',
+            serverId: 'server-a',
+            seq: 4,
+            lastViewedSessionSeq: 4,
+            latestTurnStatus: 'completed',
+        });
+        const otherServerRow: SessionListAttentionRow = {
+            serverId: 'server-b',
+            serverName: 'Server B',
+            session: makeUnreadRenderable({
+                id: 'session-1',
+                seq: 4,
+                lastViewedSessionSeq: 1,
+                hasUnreadMessages: true,
+            }),
+        };
+
+        const state = buildInboxSessionState({
+            sessions: [canonicalSession],
+            sessionRows: [otherServerRow],
+        });
+
+        expect(state.unreadSessions).toContainEqual(otherServerRow);
+    });
+
+    it('uses canonical read state when a same-server stale attention row says the hydrated session is unread', () => {
+        const canonicalSession = makeSession({ id: 'session-1', serverId: 'server-a', seq: 4, lastViewedSessionSeq: 4 });
         const staleRow: SessionListAttentionRow = {
             serverId: 'server-a',
             serverName: 'Server A',
@@ -203,5 +260,61 @@ describe('buildInboxSessionState', () => {
             serverId: null,
             serverName: null,
         }]);
+    });
+
+    it('keeps fresh pending requests in actionable inbox attention', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        const session = makeSession({
+            active: true,
+            presence: 'online',
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    request_1: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: {},
+                        createdAt: 999_000,
+                    },
+                },
+            },
+        });
+
+        const state = buildInboxSessionState({
+            sessions: [session],
+            sessionRows: [],
+        });
+
+        expect(state.sessionsNeedingAttention.map((entry) => entry.session.id)).toEqual(['session-1']);
+    });
+
+    it('excludes stale terminal pending requests from actionable inbox attention', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        const session = makeSession({
+            active: true,
+            presence: 'online',
+            thinking: true,
+            thinkingAt: 880_000,
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: 999_000,
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    request_1: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: {},
+                        createdAt: 10,
+                    },
+                },
+            },
+        });
+
+        const state = buildInboxSessionState({
+            sessions: [session],
+            sessionRows: [],
+        });
+
+        expect(state.sessionsNeedingAttention).toEqual([]);
     });
 });

@@ -133,6 +133,7 @@ export const MarkdownCodeBlock = React.memo((props: Readonly<{
                     showLineNumbers={showLineNumbers}
                     showPrefix={showPrefix}
                     virtualizeFileList={virtualizeFileList}
+                    virtualizedListLayout="intrinsic"
                 />
             ) : (
                 <CodeBlockView

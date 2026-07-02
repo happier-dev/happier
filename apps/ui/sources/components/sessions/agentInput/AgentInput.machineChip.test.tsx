@@ -122,13 +122,46 @@ vi.mock('@/components/tools/shell/permissions/PermissionFooter', () => ({
     PermissionFooter: () => null,
 }));
 
-vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
-}));
+vi.mock('@/sync/domains/state/storageStore', () => {
+    const storage = Object.assign(
+        (selector?: (state: Record<string, unknown>) => unknown) => (
+            typeof selector === 'function'
+                ? selector({
+                    sessionMessages: {},
+                    localSettings: {
+                        uiContentWidthMode: 'default',
+                    },
+                })
+                : {
+                    sessionMessages: {},
+                    localSettings: {
+                        uiContentWidthMode: 'default',
+                    },
+                }
+        ),
+        {
+            getState: () => ({
+                sessionMessages: {},
+                localSettings: {
+                    uiContentWidthMode: 'default',
+                },
+            }),
+        },
+    );
+    return {
+        storage,
+        getStorage: () => storage,
+    };
+});
 
-vi.mock('@/sync/store/hooks', () => ({
-    useLocalSetting: () => 1,
-}));
+vi.mock('@/sync/store/hooks', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/store/hooks')>();
+    return {
+        ...actual,
+        useLocalSetting: () => 1,
+        useSessionServerId: () => null,
+    };
+});
 
 vi.mock('@/agents/catalog/catalog', () => ({
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
@@ -138,6 +171,10 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 vi.mock('@/sync/domains/models/modelOptions', () => ({
+    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
+        options?.find?.((option: any) => option.value === effectiveModelId)
+            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
+            ?? null,
     getModelOptionsForSession: () => [{ value: 'default', label: 'Default' }],
     supportsFreeformModelSelectionForSession: () => false,
 }));

@@ -1,5 +1,3 @@
-import { buildOpenCodeAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
-
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 
 import { createMachineFixture } from './machineFixtures';
@@ -10,7 +8,7 @@ const DEMO_MACHINE_HOST = 'macbook-pro';
 const DEMO_HOME_DIR = '/Users/demo';
 const DEMO_PROJECT_PATH = '/Users/demo/code/happier';
 const DEMO_SERVER_BASE_URL = 'http://127.0.0.1:4099';
-const DEMO_OPEN_CODE_VENDOR_SESSION_ID = 'sess_opencode_auth';
+const DEMO_OPEN_CODE_PROVIDER_SESSION_ID = 'sess_opencode_auth';
 const DEMO_NOW_MS = Date.parse('2026-04-24T12:00:00.000Z');
 
 export type CreateDemoMachineFixtureOptions = Partial<Machine>;
@@ -39,7 +37,7 @@ export type CreateDemoOpenCodeSessionFixtureOptions = Partial<Session> & Readonl
     machineId?: string;
     path?: string;
     title?: string;
-    vendorSessionId?: string;
+    providerSessionId?: string;
     serverBaseUrl?: string;
     nowMs?: number;
 }>;
@@ -49,18 +47,33 @@ export function createDemoOpenCodeSessionFixture(options: CreateDemoOpenCodeSess
         machineId = DEMO_MACHINE_ID,
         path = DEMO_PROJECT_PATH,
         title = 'Dashboard auth skeleton',
-        vendorSessionId = DEMO_OPEN_CODE_VENDOR_SESSION_ID,
+        providerSessionId = DEMO_OPEN_CODE_PROVIDER_SESSION_ID,
         serverBaseUrl = DEMO_SERVER_BASE_URL,
         nowMs = DEMO_NOW_MS,
         metadata: metadataOverrides,
         ...sessionOverrides
     } = options;
-    const runtimeDescriptorV1 = buildOpenCodeAgentRuntimeDescriptorV1({
-        backendMode: 'server',
-        vendorSessionId,
-        serverBaseUrl,
-        serverBaseUrlExplicit: true,
-    });
+    const runtimeDescriptorV1 = {
+        v: 1,
+        providerId: 'opencode',
+        provider: {
+            backendMode: 'server',
+            providerSessionId,
+            serverBaseUrl,
+            serverBaseUrlExplicit: true,
+            providerExtra: {
+                owner: 'opencode',
+                schemaId: 'opencode.agentRuntimeDescriptorExtra',
+                v: 1,
+                runtimeHandle: {
+                    backendMode: 'server',
+                    providerSessionId,
+                    serverBaseUrl,
+                    serverBaseUrlExplicit: true,
+                },
+            },
+        },
+    } as const;
 
     return createSessionFixture({
         id: 's-opencode-auth',
@@ -78,7 +91,7 @@ export function createDemoOpenCodeSessionFixture(options: CreateDemoOpenCodeSess
             name: title,
             machineId,
             summary: { text: title, updatedAt: nowMs },
-            opencodeSessionId: vendorSessionId,
+            opencodeSessionId: providerSessionId,
             opencodeBackendMode: 'server',
             opencodeServerBaseUrl: serverBaseUrl,
             opencodeServerBaseUrlExplicit: true,

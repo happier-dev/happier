@@ -7,8 +7,24 @@ import { generateAuthKeyPair } from './qrStart';
 import { authQRWait } from './qrWait';
 import { serverFetch } from '@/sync/http/client';
 
+const activeServerSnapshot = vi.hoisted(() => ({
+    serverId: 'relay-example',
+    serverUrl: 'https://relay.example.test',
+    generation: 0,
+}));
+
+const setServerProfileIdentityForUrlMock = vi.hoisted(() => vi.fn());
+
 vi.mock('@/sync/http/client', () => ({
     serverFetch: vi.fn(),
+}));
+
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => activeServerSnapshot,
+}));
+
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    setServerProfileIdentityForUrl: (...args: unknown[]) => setServerProfileIdentityForUrlMock(...args),
 }));
 
 type StubResponse = {
@@ -73,5 +89,32 @@ describe('authQRWait v2 fallback', () => {
             '/v1/auth/account/request',
         ]);
         expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('stores server identity from authorized auth responses', async () => {
+        const keypair = generateAuthKeyPair();
+        const expectedToken = 'tkn-test-identity';
+        const expectedSecret = new Uint8Array([4, 5, 6]);
+        const responseEncrypted = encodeBase64(encryptBox(expectedSecret, keypair.publicKey));
+
+        setServerProfileIdentityForUrlMock.mockClear();
+        const fetchMock = vi.mocked(serverFetch);
+        fetchMock.mockReset();
+        fetchMock.mockResolvedValueOnce(
+            makeJsonResponse(200, {
+                state: 'authorized',
+                token: expectedToken,
+                response: responseEncrypted,
+                serverIdentityId: 'srv_auth_identity',
+            }) as any,
+        );
+
+        const out = await authQRWait(keypair);
+
+        expect(out?.token).toBe(expectedToken);
+        expect(setServerProfileIdentityForUrlMock).toHaveBeenCalledWith(
+            'https://relay.example.test',
+            'srv_auth_identity',
+        );
     });
 });

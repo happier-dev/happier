@@ -1,5 +1,5 @@
 import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGE_CODES, SUPPORTED_LANGUAGES, getLanguageEnglishName, getLanguageNativeName, type SupportedLanguage } from './_all';
-import type { TranslationStructure, Translations } from './_types';
+import type { Translations } from './_types';
 import { getDeviceLocales } from './deviceLocales';
 import { ca } from './translations/ca';
 import { en } from './translations/en';
@@ -14,6 +14,10 @@ import { zhHant } from './translations/zh-Hant';
 
 export { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGE_CODES, SUPPORTED_LANGUAGES, getLanguageEnglishName, getLanguageNativeName, type SupportedLanguage };
 
+type TranslationFunction = (...args: any[]) => string;
+type TranslationLeaf = string | TranslationFunction;
+type TranslationNode = Record<string, unknown>;
+
 const TRANSLATIONS_BY_LANGUAGE = {
     en,
     ru,
@@ -25,11 +29,7 @@ const TRANSLATIONS_BY_LANGUAGE = {
     'zh-Hans': zhHans,
     'zh-Hant': zhHant,
     ja,
-} satisfies Record<SupportedLanguage, TranslationStructure>;
-
-type TranslationFunction = (...args: any[]) => string;
-type TranslationLeaf = string | TranslationFunction;
-type TranslationNode = Record<string, unknown>;
+} as const satisfies Record<SupportedLanguage, TranslationNode>;
 
 type JoinPath<Prefix extends string, Key extends string> = Prefix extends '' ? Key : `${Prefix}.${Key}`;
 
@@ -107,8 +107,8 @@ function resolveActiveLanguage(): SupportedLanguage {
     return preferredLanguageOverride ?? resolveLanguageFromDeviceLocales();
 }
 
-function getTranslationTree(language: SupportedLanguage): Translations {
-    return TRANSLATIONS_BY_LANGUAGE[language] ?? en;
+function getTranslationTree(language: SupportedLanguage): TranslationNode {
+    return (TRANSLATIONS_BY_LANGUAGE[language] ?? en) as TranslationNode;
 }
 
 function getValueAtPath(root: TranslationNode, key: string): unknown {

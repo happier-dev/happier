@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { WindowBounds } from '@/components/ui/treeDragDrop';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { PINNED_GROUP_KEY_V1 } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import type { SessionFolderWorkspaceRefV1, SessionFoldersV1 } from '@/sync/domains/session/folders';
 
 import { applySessionListTreeDropOperation } from '../applySessionListTreeDropOperation';
@@ -16,19 +17,31 @@ const workspaceA: SessionFolderWorkspaceRefV1 = {
     machineId: 'machine-a',
     rootPath: '/repo/a',
 };
+const workspaceB: SessionFolderWorkspaceRefV1 = {
+    t: 'workspaceScope',
+    serverId: 'server-a',
+    machineId: 'machine-a',
+    rootPath: '/repo/b',
+};
+const projectGroupKey = 'project-a';
+const projectBGroupKey = 'project-b';
+const rootFolderGroupKey = 'folder:server-a:workspaceScope:server-a:machine-a:/repo/a:root';
+const folderAGroupKey = 'folder:server-a:workspaceScope:server-a:machine-a:/repo/a:folder-a';
+const childAGroupKey = 'folder:server-a:workspaceScope:server-a:machine-a:/repo/a:child-a';
+const folderBGroupKey = 'folder:server-a:workspaceScope:server-a:machine-a:/repo/a:folder-b';
 
 function bounds(y: number): WindowBounds {
     return { x: 0, y, width: 320, height: 40 };
 }
 
-function projectHeader(groupKey: string): Extract<SessionListIndexItem, { type: 'header' }> {
+function projectHeader(groupKey: string, workspace: SessionFolderWorkspaceRefV1 = workspaceA): Extract<SessionListIndexItem, { type: 'header' }> {
     return {
         type: 'header',
         title: groupKey,
         headerKind: 'project',
         groupKey,
         workspaceKey: groupKey,
-        workspace: workspaceA,
+        workspace,
         serverId: 'server-a',
     };
 }
@@ -67,12 +80,20 @@ function sessionItem(params: Readonly<{
 
 function items(): SessionListIndexItem[] {
     return [
-        projectHeader('project-a'),
-        folderHeader({ id: 'folder-a', groupKey: 'project-a:folder:folder-a', depth: 0 }),
-        sessionItem({ id: 'inside-a', groupKey: 'project-a:folder:folder-a', folderId: 'folder-a', depth: 1 }),
-        folderHeader({ id: 'child-a', groupKey: 'project-a:folder:child-a', depth: 1 }),
-        folderHeader({ id: 'folder-b', groupKey: 'project-a:folder:folder-b', depth: 0 }),
-        sessionItem({ id: 'root-a', groupKey: 'project-a', folderId: null, depth: 0 }),
+        projectHeader(projectGroupKey),
+        folderHeader({ id: 'folder-a', groupKey: folderAGroupKey, depth: 0 }),
+        sessionItem({ id: 'inside-a', groupKey: folderAGroupKey, folderId: 'folder-a', depth: 1 }),
+        folderHeader({ id: 'child-a', groupKey: childAGroupKey, depth: 1 }),
+        folderHeader({ id: 'folder-b', groupKey: folderBGroupKey, depth: 0 }),
+        sessionItem({ id: 'root-a', groupKey: rootFolderGroupKey, folderId: null, depth: 0 }),
+    ];
+}
+
+function rootSessionItems(): SessionListIndexItem[] {
+    return [
+        projectHeader(projectGroupKey),
+        sessionItem({ id: 'root-a', groupKey: rootFolderGroupKey, folderId: null, depth: 0 }),
+        sessionItem({ id: 'root-b', groupKey: rootFolderGroupKey, folderId: null, depth: 0 }),
     ];
 }
 
@@ -91,7 +112,7 @@ function buildTree() {
     return buildSessionListTreeRows({
         items: items(),
         rowBoundsById: new Map([
-            [treeRowId.workspaceRoot('project-a'), bounds(0)],
+            [treeRowId.workspaceRoot(projectGroupKey), bounds(0)],
             [treeRowId.folder('folder-a'), bounds(40)],
             [treeRowId.session('server-a', 'inside-a'), bounds(80)],
             [treeRowId.folder('child-a'), bounds(120)],
@@ -100,11 +121,71 @@ function buildTree() {
         ]),
         dropZoneBounds: [
             {
-                containerId: treeRowId.workspaceRoot('project-a'),
+                containerId: treeRowId.workspaceRoot(projectGroupKey),
                 role: 'root-after-last',
                 bounds: { x: 0, y: 244, width: 320, height: 16 },
             },
         ],
+    });
+}
+
+function buildRootSessionTree() {
+    return buildSessionListTreeRows({
+        items: rootSessionItems(),
+        rowBoundsById: new Map([
+            [treeRowId.workspaceRoot(projectGroupKey), bounds(0)],
+            [treeRowId.session('server-a', 'root-a'), bounds(40)],
+            [treeRowId.session('server-a', 'root-b'), bounds(80)],
+        ]),
+    });
+}
+
+function buildTwoWorkspaceTree() {
+    return buildSessionListTreeRows({
+        items: [
+            projectHeader(projectGroupKey, workspaceA),
+            sessionItem({ id: 'root-a', groupKey: rootFolderGroupKey, folderId: null, depth: 0 }),
+            projectHeader(projectBGroupKey, workspaceB),
+        ],
+        rowBoundsById: new Map([
+            [treeRowId.workspaceRoot(projectGroupKey), bounds(0)],
+            [treeRowId.session('server-a', 'root-a'), bounds(40)],
+            [treeRowId.workspaceRoot(projectBGroupKey), bounds(100)],
+        ]),
+    });
+}
+
+function pinnedItems(): SessionListIndexItem[] {
+    return [
+        { type: 'header', title: 'Pinned', headerKind: 'pinned', groupKey: PINNED_GROUP_KEY_V1 },
+        {
+            type: 'session',
+            sessionId: 'pinned-a',
+            serverId: 'server-a',
+            storageKind: 'persisted',
+            groupKey: PINNED_GROUP_KEY_V1,
+            groupKind: 'pinned',
+            pinned: true,
+        },
+        {
+            type: 'session',
+            sessionId: 'pinned-b',
+            serverId: 'server-a',
+            storageKind: 'persisted',
+            groupKey: PINNED_GROUP_KEY_V1,
+            groupKind: 'pinned',
+            pinned: true,
+        },
+    ];
+}
+
+function buildPinnedTree() {
+    return buildSessionListTreeRows({
+        items: pinnedItems(),
+        rowBoundsById: new Map([
+            [treeRowId.session('server-a', 'pinned-a'), bounds(40)],
+            [treeRowId.session('server-a', 'pinned-b'), bounds(80)],
+        ]),
     });
 }
 
@@ -123,6 +204,38 @@ function resolveDrop(params: Readonly<{ sourceRowId: string; y: number }>) {
 }
 
 describe('applySessionListTreeDropOperation', () => {
+    it('blocks same-container session sibling reorder in updated mode without mutating order', async () => {
+        const tree = buildRootSessionTree();
+        const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'root-b') });
+        const result = resolveSessionListInstruction({
+            tree,
+            source,
+            pointer: { x: 160, y: 42 },
+            foldersFeatureEnabled: true,
+        });
+        const setSessionFolderAssignment = vi.fn(async () => undefined);
+        const setSessionListGroupOrderV1 = vi.fn();
+
+        const applied = await applySessionListTreeDropOperation({
+            tree,
+            source,
+            result,
+            context: {
+                sessionFoldersV1: folders(),
+                sessionListGroupOrderV1: { [rootFolderGroupKey]: ['server-a:root-a', 'server-a:root-b'] },
+                sessionListOrderingModeV1: 'updated',
+                now: () => 100,
+                setSessionFoldersV1: vi.fn(),
+                setSessionListGroupOrderV1,
+                setSessionFolderAssignment,
+            },
+        });
+
+        expect(applied).toEqual({ ok: false, reason: 'date-ordering-mode' });
+        expect(setSessionFolderAssignment).not.toHaveBeenCalled();
+        expect(setSessionListGroupOrderV1).not.toHaveBeenCalled();
+    });
+
     it('awaits session folder assignment before writing destination group order', async () => {
         const { tree, source, result } = resolveDrop({
             sourceRowId: treeRowId.session('server-a', 'inside-a'),
@@ -156,17 +269,19 @@ describe('applySessionListTreeDropOperation', () => {
 
         expect(applied).toEqual({ ok: true });
         expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
-            'project-a:folder:folder-b': ['server-a:inside-a'],
+            [folderBGroupKey]: ['server-a:inside-a'],
         });
     });
 
-    it('moves a session out to the workspace root and clears its folder assignment', async () => {
+    it('moves a session out to the workspace root session band by default', async () => {
         const { tree, source, result } = resolveDrop({
             sourceRowId: treeRowId.session('server-a', 'inside-a'),
             y: 250,
         });
         const setSessionFolderAssignment = vi.fn(async () => undefined);
         const setSessionListGroupOrderV1 = vi.fn();
+        expect(tree.containerMetadataById.get(treeRowId.workspaceRoot(projectGroupKey))?.groupKey)
+            .toBe(rootFolderGroupKey);
 
         await applySessionListTreeDropOperation({
             tree,
@@ -188,11 +303,76 @@ describe('applySessionListTreeDropOperation', () => {
             folderId: null,
         });
         expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
-            'project-a': ['server-a:inside-a', 'folder:folder-a', 'folder:folder-b', 'server-a:root-a'],
+            [rootFolderGroupKey]: ['server-a:root-a', 'server-a:inside-a'],
         });
     });
 
-    it('moves a folder around root sessions through the same operation path', async () => {
+    it('moves a session out to exact mixed sibling position when mixed folder sort is selected', async () => {
+        const { tree, source, result } = resolveDrop({
+            sourceRowId: treeRowId.session('server-a', 'inside-a'),
+            y: 250,
+        });
+        const setSessionFolderAssignment = vi.fn(async () => undefined);
+        const setSessionListGroupOrderV1 = vi.fn();
+
+        await applySessionListTreeDropOperation({
+            tree,
+            source,
+            result,
+            context: {
+                sessionFoldersV1: folders(),
+                sessionListGroupOrderV1: {},
+                sessionListFolderSortModeV1: 'mixed',
+                now: () => 100,
+                setSessionFoldersV1: vi.fn(),
+                setSessionListGroupOrderV1,
+                setSessionFolderAssignment,
+            },
+        });
+
+        expect(setSessionFolderAssignment).toHaveBeenCalledWith({
+            serverId: 'server-a',
+            sessionId: 'inside-a',
+            folderId: null,
+        });
+        expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
+            [rootFolderGroupKey]: ['folder:folder-a', 'folder:folder-b', 'server-a:root-a', 'server-a:inside-a'],
+        });
+    });
+
+    it('commits pinned session reordering to the pinned group order without folder assignment', async () => {
+        const tree = buildPinnedTree();
+        const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'pinned-b') });
+        const result = resolveSessionListInstruction({
+            tree,
+            source,
+            pointer: { x: 160, y: 42 },
+            foldersFeatureEnabled: true,
+        });
+        const setSessionFolderAssignment = vi.fn(async () => undefined);
+        const setSessionListGroupOrderV1 = vi.fn();
+
+        await applySessionListTreeDropOperation({
+            tree,
+            source,
+            result,
+            context: {
+                sessionFoldersV1: folders(),
+                sessionListGroupOrderV1: {},
+                now: () => 100,
+                setSessionFoldersV1: vi.fn(),
+                setSessionListGroupOrderV1,
+                setSessionFolderAssignment,
+            },
+        });
+
+        expect(setSessionFolderAssignment).not.toHaveBeenCalled();
+        expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
+            [PINNED_GROUP_KEY_V1]: ['server-a:pinned-b', 'server-a:pinned-a'],
+        });
+    });
+
+    it('moves a folder within the root folder band by default', async () => {
         const tree = buildTree();
         const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.folder('folder-b') });
         const result = resolveSessionListInstruction({
@@ -221,7 +401,74 @@ describe('applySessionListTreeDropOperation', () => {
         expect(applied).toEqual({ ok: true });
         expect(setSessionFoldersV1).not.toHaveBeenCalled();
         expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
-            'project-a': ['folder:folder-a', 'folder:folder-b', 'server-a:root-a'],
+            [rootFolderGroupKey]: ['folder:folder-b', 'folder:folder-a'],
+        });
+    });
+
+    it('moves a folder around root sessions when mixed folder sort is selected', async () => {
+        const tree = buildTree();
+        const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.folder('folder-b') });
+        const result = resolveSessionListInstruction({
+            tree,
+            source,
+            pointer: { x: 160, y: 204 },
+            foldersFeatureEnabled: true,
+        });
+        const setSessionFoldersV1 = vi.fn();
+        const setSessionListGroupOrderV1 = vi.fn();
+
+        const applied = await applySessionListTreeDropOperation({
+            tree,
+            source,
+            result,
+            context: {
+                sessionFoldersV1: folders(),
+                sessionListGroupOrderV1: {},
+                sessionListFolderSortModeV1: 'mixed',
+                now: () => 100,
+                setSessionFoldersV1,
+                setSessionListGroupOrderV1,
+                setSessionFolderAssignment: vi.fn(async () => undefined),
+            },
+        });
+
+        expect(applied).toEqual({ ok: true });
+        expect(setSessionFoldersV1).not.toHaveBeenCalled();
+        expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
+            [rootFolderGroupKey]: ['folder:folder-a', 'folder:folder-b', 'server-a:root-a'],
+        });
+    });
+
+    it('uses folders-first structural order for folder moves when date ordering makes mixed dormant', async () => {
+        const tree = buildTree();
+        const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.folder('folder-b') });
+        const result = resolveSessionListInstruction({
+            tree,
+            source,
+            pointer: { x: 160, y: 204 },
+            foldersFeatureEnabled: true,
+        });
+        const setSessionListGroupOrderV1 = vi.fn();
+
+        const applied = await applySessionListTreeDropOperation({
+            tree,
+            source,
+            result,
+            context: {
+                sessionFoldersV1: folders(),
+                sessionListGroupOrderV1: {},
+                sessionListFolderSortModeV1: 'mixed',
+                sessionListOrderingModeV1: 'updated',
+                now: () => 100,
+                setSessionFoldersV1: vi.fn(),
+                setSessionListGroupOrderV1,
+                setSessionFolderAssignment: vi.fn(async () => undefined),
+            },
+        });
+
+        expect(applied).toEqual({ ok: true });
+        expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
+            [rootFolderGroupKey]: ['folder:folder-b', 'folder:folder-a'],
         });
     });
 
@@ -258,5 +505,38 @@ describe('applySessionListTreeDropOperation', () => {
         expect(setSessionFoldersV1).not.toHaveBeenCalled();
         expect(setSessionListGroupOrderV1).not.toHaveBeenCalled();
         expect(setSessionFolderAssignment).not.toHaveBeenCalled();
+    });
+
+    it('commits workspace header reordering into workspace order settings', async () => {
+        const tree = buildTwoWorkspaceTree();
+        const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.workspaceRoot(projectBGroupKey) });
+        const result = resolveSessionListInstruction({
+            tree,
+            source,
+            pointer: { x: 160, y: 4 },
+            foldersFeatureEnabled: true,
+        });
+        const setSessionWorkspaceOrderV1 = vi.fn();
+
+        const applied = await applySessionListTreeDropOperation({
+            tree,
+            source,
+            result,
+            context: {
+                sessionFoldersV1: folders(),
+                sessionListGroupOrderV1: {},
+                sessionWorkspaceOrderV1: {},
+                now: () => 100,
+                setSessionFoldersV1: vi.fn(),
+                setSessionListGroupOrderV1: vi.fn(),
+                setSessionWorkspaceOrderV1,
+                setSessionFolderAssignment: vi.fn(async () => undefined),
+            },
+        });
+
+        expect(applied).toEqual({ ok: true });
+        expect(setSessionWorkspaceOrderV1).toHaveBeenCalledWith({
+            'server:server-a:workspaces': ['workspace:project-b', 'workspace:project-a'],
+        });
     });
 });

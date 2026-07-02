@@ -2,12 +2,15 @@ import { asRecord, firstNonEmptyString } from './_shared';
 
 type TodoItem = { content?: string; status?: string; priority?: string; id?: string };
 
-function normalizeTodoStatus(value: unknown): 'pending' | 'in_progress' | 'completed' | null {
+function normalizeTodoStatus(value: unknown): 'pending' | 'in_progress' | 'completed' | 'cancelled' | null {
     if (typeof value !== 'string') return null;
     const s = value.trim().toLowerCase();
     if (s === 'pending' || s === 'todo') return 'pending';
     if (s === 'in_progress' || s === 'in-progress' || s === 'doing') return 'in_progress';
     if (s === 'completed' || s === 'done') return 'completed';
+    // Cursor's todo status enum includes a 4th value ('cancelled') absent from the ACP plan spec;
+    // preserve it (rendered struck-through) instead of silently coercing to pending.
+    if (s === 'cancelled' || s === 'canceled') return 'cancelled';
     return null;
 }
 

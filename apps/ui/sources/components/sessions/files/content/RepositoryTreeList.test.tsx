@@ -567,4 +567,55 @@ describe('RepositoryTreeList', () => {
         expect(after?.getItemLayout).toBe(before?.getItemLayout);
         expect(after?.extraData).toBe(before?.extraData);
     });
+
+    it('keeps rendered tree props stable when an equivalent download callback changes', async () => {
+        sessionListDirectorySpy.mockResolvedValue({
+            success: true,
+            entries: [{ name: 'README.md', type: 'file' }],
+        });
+
+        const { RepositoryTreeList } = await import('./RepositoryTreeList');
+
+        function Wrapper() {
+            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
+            const [version, setVersion] = React.useState(0);
+            const onRequestDownload = React.useCallback(async (_params: Readonly<{ path: string; asZip: boolean }>) => {
+                void version;
+                return { ok: true as const };
+            }, [version]);
+            return (
+                <>
+                    <RepositoryTreeList
+                        theme={theme}
+                        sessionId="session-1"
+                        expandedPaths={expandedPaths}
+                        onExpandedPathsChange={setExpandedPaths}
+                        onOpenFile={vi.fn()}
+                        onRequestDownload={onRequestDownload}
+                    />
+                    {React.createElement('Pressable' as any, {
+                        testID: 'rerender-parent',
+                        onPress: () => setVersion((value) => value + 1),
+                    })}
+                </>
+            );
+        }
+
+        const screen = await renderScreen(<Wrapper />);
+        await settleRepositoryTree();
+        const before = flatListRenderPropsLog.at(-1);
+
+        await act(async () => {
+            screen.pressByTestId('rerender-parent');
+        });
+        await settleRepositoryTree();
+        const after = flatListRenderPropsLog.at(-1);
+
+        expect(after?.renderItem).toBe(before?.renderItem);
+        expect(after?.keyExtractor).toBe(before?.keyExtractor);
+        expect(after?.style).toBe(before?.style);
+        expect(after?.contentContainerStyle).toBe(before?.contentContainerStyle);
+        expect(after?.getItemLayout).toBe(before?.getItemLayout);
+        expect(after?.extraData).toBe(before?.extraData);
+    });
 });

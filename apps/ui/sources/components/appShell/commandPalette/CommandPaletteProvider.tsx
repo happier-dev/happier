@@ -3,7 +3,6 @@ import { Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Modal } from '@/modal';
 import { CommandPalette } from './CommandPalette';
-import { Command } from './types';
 import { useAuth } from '@/auth/context/AuthContext';
 import { storage } from '@/sync/domains/state/storage';
 import { useShallow } from 'zustand/react/shallow';
@@ -49,7 +48,6 @@ export function CommandPaletteProvider({ children }: { children: React.ReactNode
 function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const { logout } = useAuth();
-    const sessions = storage(useShallow((state) => state.sessions));
     const {
         commandPaletteEnabled,
         keyboardSingleKeyShortcutsEnabled,
@@ -150,12 +148,11 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         };
     }, [applyLocalSettings, applySettings, router]);
 
-    // Define available commands
-    const commands = useMemo((): Command[] => {
+    const buildCommands = useCallback(() => {
         const activeSessionId = readActiveSessionIdFromSegments(segments);
 
         return buildCommandPaletteCommands({
-            sessionsById: sessions as any,
+            sessionsById: storage.getState().sessions,
             isDev: __DEV__ === true,
             activeSessionId,
             features: { executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled },
@@ -173,7 +170,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 await Modal.alertAsync(title, message);
             },
         });
-    }, [segments, sessions, executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled, shortcutLabels, petControls, router, navigateToSession, logout, actionExecutor]);
+    }, [segments, executionRunsEnabled, voiceEnabled, memorySearchEnabled, petsCompanionEnabled, shortcutLabels, petControls, router, navigateToSession, logout, actionExecutor]);
 
     const showCommandPalette = useCallback(() => {
         if (Platform.OS !== 'web' || !commandPaletteEnabled) return;
@@ -181,10 +178,10 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
         Modal.show({
             component: CommandPalette,
             props: {
-                commands,
+                commands: buildCommands(),
             }
         });
-    }, [commands, commandPaletteEnabled]);
+    }, [buildCommands, commandPaletteEnabled]);
 
     const keyboardHandlers = useMemo<KeyboardShortcutHandlers>(
         () => ({

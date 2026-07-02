@@ -25,7 +25,7 @@ import {
     resolveEndpointReachabilityRemediation,
     type EndpointReachabilityRemediation,
 } from '@/components/serverReachability/remediation';
-import { getProviderCliSetupSupportedIds, type AgentId } from '@happier-dev/agents';
+import { getAgentCliSetupSupportedIds, type AgentId } from '@happier-dev/agents';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
 
@@ -251,7 +251,7 @@ export function SetupWizardSurface(props: SetupWizardSurfaceProps) {
         identityFilePath: '',
         password: '',
     }));
-    const providerSelectionProviderIds = React.useMemo(() => getProviderCliSetupSupportedIds(), []);
+    const providerSelectionProviderIds = React.useMemo(() => getAgentCliSetupSupportedIds(), []);
     const [selectedProviderIds, setSelectedProviderIds] = React.useState<AgentId[]>([]);
     const {
         activePrimaryOverride: primaryOverride,

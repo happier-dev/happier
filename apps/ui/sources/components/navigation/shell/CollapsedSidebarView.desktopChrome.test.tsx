@@ -127,15 +127,9 @@ describe('CollapsedSidebarView desktop chrome', () => {
         expect(screen.findByTestId('desktop-window-controls-host')).toBeTruthy();
         expect(screen.findByTestId('desktop-window-controls-slot')).toBeTruthy();
         expect(screen.findByTestId('desktop-window-drag-region')).toBeTruthy();
-        expect(screen.findByTestId('desktop-update-indicator-host')).toBeTruthy();
         expect(screen.findByTestId('injected-collapsed-window-controls')).toBeTruthy();
         expect(screen.findByTestId('injected-collapsed-update-indicator')).toBeTruthy();
-        const homeButton = screen.findByTestId('collapsed-sidebar-home-button');
-        if (!homeButton) {
-            throw new Error('Expected collapsed sidebar home button to render.');
-        }
-        const logoImage = homeButton.findByType('Image' as never);
-        expect(styleListHasExplicitFallbackDimensions(logoImage.props.style, { width: 24, height: 24 })).toBe(true);
+        expect(screen.findAllByTestId('collapsed-sidebar-home-button')).toHaveLength(0);
 
         await act(async () => {
             await pressTestInstanceAsync(screen.findByTestId('sidebar-expand-button'));

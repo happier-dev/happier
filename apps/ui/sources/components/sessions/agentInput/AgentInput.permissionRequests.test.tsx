@@ -1,10 +1,13 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+const keyboardState = vi.hoisted(() => ({
+    height: 0,
+}));
 
 installAgentInputCommonModuleMocks({
     reactNative: async () => {
@@ -89,7 +92,12 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storageStore', () => ({
-    getStorage: () => (selector: any) => selector({ sessionMessages: {} }),
+    getStorage: () => (selector: any) => selector({
+        localSettings: {
+            uiBackdropBlurEnabled: true,
+        },
+        sessionMessages: {},
+    }),
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
@@ -100,6 +108,10 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 vi.mock('@/sync/domains/models/modelOptions', () => ({
+    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
+        options?.find?.((option: any) => option.value === effectiveModelId)
+            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
+            ?? null,
     getModelOptionsForSession: () => [{ value: 'default', label: 'Default' }],
     supportsFreeformModelSelectionForSession: () => false,
 }));
@@ -142,7 +154,7 @@ vi.mock('@/hooks/session/useUserMessageHistory', () => ({
 }));
 
 vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
-    useKeyboardHeight: () => 0,
+    useKeyboardHeight: () => keyboardState.height,
 }));
 
 vi.mock('@/components/sessions/sourceControl/status', () => ({
@@ -156,10 +168,6 @@ vi.mock('@/components/autocomplete/useActiveWord', () => ({
 
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
     useActiveSuggestions: () => [[], null, () => {}, () => {}],
-}));
-
-vi.mock('./components/AgentInputAutocomplete', () => ({
-    AgentInputAutocomplete: () => null,
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
@@ -298,6 +306,10 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('AgentInput (permission requests)', () => {
+    beforeEach(() => {
+        keyboardState.height = 0;
+    });
+
     it('renders PermissionFooter when pending permission requests are provided', async () => {
         const { AgentInput } = await import('./AgentInput');
 
@@ -307,6 +319,7 @@ describe('AgentInput (permission requests)', () => {
             onChangeText: () => {},
             sessionId: 's1',
             onSend: () => {},
+            maxPanelHeight: 80,
             autocompletePrefixes: [],
             autocompleteSuggestions: async () => [],
             permissionRequests: [
@@ -358,5 +371,28 @@ describe('AgentInput (permission requests)', () => {
         const style = flattenStyle(scroll?.props.style);
         expect(style.maxHeight).toBeGreaterThan(0);
         expect(style.height).toBeUndefined();
+    });
+
+    it('does not clamp permission requests above the visible keyboard-open area', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(React.createElement(AgentInput as any, {
+            value: '',
+            placeholder: 'Type',
+            onChangeText: () => {},
+            sessionId: 's1',
+            onSend: () => {},
+            maxPanelHeight: 80,
+            autocompletePrefixes: [],
+            autocompleteSuggestions: async () => [],
+            permissionRequests: [
+                { id: 'req1', tool: 'Bash', arguments: { command: 'ls' }, createdAt: 123 },
+                { id: 'req2', tool: 'Bash', arguments: { command: 'pwd' }, createdAt: 124 },
+            ],
+        }));
+
+        const scroll = screen.findByTestId('agentInput.permissionRequests.scroll');
+        const style = flattenStyle(scroll?.props.style);
+        expect(style.maxHeight).toBeLessThanOrEqual(80);
     });
 });

@@ -21,7 +21,9 @@ let hydrateReady = true;
 const hydrateSpy = vi.fn((sessionId: string, tag: string) => {
     void sessionId;
     void tag;
-    return hydrateReady;
+    return hydrateReady
+        ? { kind: 'available' as const, sessionId }
+        : { kind: 'loading' as const, sessionId, reason: 'store-miss' as const };
 });
 const useSessionSpy = vi.fn<(sessionId: string) => Session | null>(() => null);
 const useExecutionRunsBackendsForSessionSpy = vi.fn<(sessionId: string) => Record<string, { available?: boolean; intents?: string[] }> | null>(() => executionRunsBackendsMock);

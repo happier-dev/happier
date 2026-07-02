@@ -247,6 +247,7 @@ export type SelectionListSectionRenderContext = Readonly<{
     focusedOptionId: string | null;
     onSelect: (id: string, option: SelectionListOption) => void;
     onPushStep: (step: SelectionListStep) => void;
+    showsVerticalScrollIndicator: boolean;
     /** FR3-1 / FR3-8 — identity-free measure rendering. */
     measureMode: boolean;
 }>;
@@ -457,6 +458,7 @@ function renderSelectionListSectionElement(
                 focusedOptionId={ctx.focusedOptionId}
                 onSelectOption={handleVirtualizedSelect}
                 virtualization={sectionPlan.virtualization}
+                showsVerticalScrollIndicator={ctx.showsVerticalScrollIndicator}
             />
         );
         // FR3-9: when the virtualized section advertises a `transitionKey`

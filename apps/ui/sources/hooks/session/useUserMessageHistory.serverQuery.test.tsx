@@ -2,19 +2,43 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
+import type { FetchUserMessageHistoryPageResult } from '@/sync/engine/sessions/fetchUserMessageHistoryPage';
 import { storage } from '@/sync/domains/state/storageStore';
 
 import { useUserMessageHistory } from './useUserMessageHistory';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const fetchUserMessageHistoryPageMock = vi.hoisted(() => vi.fn());
+type FetchUserMessageHistoryPageForTest = (
+    sessionId: string,
+    opts?: { beforeSeq?: number | null; limit?: number },
+) => Promise<FetchUserMessageHistoryPageResult>;
+
+const fetchUserMessageHistoryPageMock = vi.hoisted(() =>
+    vi.fn<FetchUserMessageHistoryPageForTest>(async (_sessionId, _opts) => ({
+        status: 'unsupported' as const,
+    })),
+);
 const roleQuerySupportedState = vi.hoisted(() => ({ supported: true }));
 
 vi.mock('@/sync/sync', () => ({
     sync: {
-        fetchUserMessageHistoryPage: (...args: unknown[]) => fetchUserMessageHistoryPageMock(...args),
+        fetchUserMessageHistoryPage: (
+            sessionId: string,
+            opts?: { beforeSeq?: number | null; limit?: number },
+        ) => fetchUserMessageHistoryPageMock(sessionId, opts),
     },
+}));
+
+vi.mock('@/agents/catalog/catalog', () => ({
+    isAgentId: (value: unknown) => value === 'codex',
+}));
+
+vi.mock('@/agents/registry/registryUiBehavior', () => ({
+    resolveAgentUiBehavior: () => ({}),
+    resolveAgentUiBehaviorFromFlavor: () => ({}),
+    supportsDetectedMcpConfigScan: () => false,
+    supportsEditableSessionGoals: () => false,
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({

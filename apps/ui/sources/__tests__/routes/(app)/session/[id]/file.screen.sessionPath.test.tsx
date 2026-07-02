@@ -172,7 +172,7 @@ describe('FileScreen session path hydration', () => {
         expect(setRightTabSpy).not.toHaveBeenCalled();
     });
 
-    it('redirects to panes when details routes should be in the right panel', async () => {
+    it('opens file details without opening the right pane when details routes are handled by panes', async () => {
         const { default: FileScreen } = await import('@/app/(app)/session/[id]/file');
         shouldRedirectToPanes = true;
         mockFilePathParam = 'a.txt';
@@ -183,8 +183,8 @@ describe('FileScreen session path hydration', () => {
         await renderScreen(React.createElement(FileScreen));
         await flushHookEffects();
 
-        expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'files' });
-        expect(setRightTabSpy).toHaveBeenCalledWith('files');
+        expect(openRightSpy).not.toHaveBeenCalled();
+        expect(setRightTabSpy).not.toHaveBeenCalled();
         expect(openDetailsTabSpy).toHaveBeenCalledTimes(1);
         expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
         expect(routerReplaceSpy).toHaveBeenLastCalledWith({ pathname: '/session/[id]', params: { id: 'session-1' } });
@@ -218,8 +218,8 @@ describe('FileScreen session path hydration', () => {
         const screen = await renderScreen(React.createElement(FileScreen));
         await flushHookEffects();
 
-        expect(openRightSpy).toHaveBeenCalledWith({ tabId: 'files' });
-        expect(setRightTabSpy).toHaveBeenCalledWith('files');
+        expect(openRightSpy).not.toHaveBeenCalled();
+        expect(setRightTabSpy).not.toHaveBeenCalled();
         expect(openDetailsTabSpy).toHaveBeenCalledTimes(1);
         expect(routerReplaceSpy).toHaveBeenCalledTimes(1);
 
@@ -228,8 +228,8 @@ describe('FileScreen session path hydration', () => {
         await screen.update(React.createElement(FileScreen));
         await flushHookEffects();
 
-        expect(openRightSpy).toHaveBeenCalledTimes(2);
-        expect(setRightTabSpy).toHaveBeenCalledTimes(2);
+        expect(openRightSpy).not.toHaveBeenCalled();
+        expect(setRightTabSpy).not.toHaveBeenCalled();
         expect(openDetailsTabSpy).toHaveBeenCalledTimes(2);
         expect(routerReplaceSpy).toHaveBeenCalledTimes(2);
         expect(routerReplaceSpy).toHaveBeenNthCalledWith(1, {

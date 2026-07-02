@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import type { ScrollView } from 'react-native';
 import type { ExternalSessionsProviderId, ExternalSessionsSource } from '@happier-dev/protocol';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -10,6 +10,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { PopoverScope } from '@/components/ui/popover';
 import { Modal } from '@/modal';
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { machineExternalSessionLinkEnsure } from '@/sync/ops/machineExternalSessions';
@@ -21,15 +22,17 @@ import { readExternalSessionBrowseCandidatePath } from './buildExternalSessionBr
 import { getPreferredExternalSessionBrowseProviderId } from './getPreferredExternalSessionBrowseProviderId';
 import {
     listExternalSessionBrowseProviderIds,
+    resolveExternalSessionBrowseCompatibleLinkSource,
     resolveExternalSessionBrowseLinkEnsureRequestExtras,
     resolveExternalSessionBrowseSourceOptions,
 } from './resolveExternalSessionBrowseSourceOptions';
-import { resolveCompatibleExternalSessionBrowseLinkSource } from './resolveCompatibleExternalSessionBrowseLinkSource';
 import { ExternalSessionBrowseCandidatesList } from './ExternalSessionBrowseCandidatesList';
 import { useExternalSessionBrowseCandidates, type ExternalSessionBrowseCandidate } from './useExternalSessionBrowseCandidates';
 
 type ExternalSessionBrowseProviderId = ExternalSessionsProviderId;
 type AppTheme = Theme;
+
+const EXTERNAL_SESSION_BROWSE_SEARCH_DEBOUNCE_MS = 250;
 
 export type ExternalSessionsBrowseScopeLock = Readonly<{
     machineId: string;
@@ -119,6 +122,9 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const [machineMenuOpen, setMachineMenuOpen] = React.useState(false);
     const [providerMenuOpen, setProviderMenuOpen] = React.useState(false);
     const [sourceMenuOpen, setSourceMenuOpen] = React.useState(false);
+    const [searchQuery, setSearchQuery] = React.useState('');
+    const [candidateSearchTerm, setCandidateSearchTerm] = React.useState('');
+    const popoverBoundaryRef = React.useRef<ScrollView>(null);
     const effectiveSelectedMachineId = React.useMemo(() => {
         if (lockScope) return lockScope.machineId;
         return getPreferredMachineId(machines, selectedMachineId);
@@ -187,11 +193,28 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         return selectedItem?.title ?? null;
     }, []);
 
+    React.useEffect(() => {
+        const trimmedSearchQuery = searchQuery.trim();
+        if (!trimmedSearchQuery) {
+            setCandidateSearchTerm('');
+            return undefined;
+        }
+
+        const timeoutId = setTimeout(() => {
+            setCandidateSearchTerm(trimmedSearchQuery);
+        }, EXTERNAL_SESSION_BROWSE_SEARCH_DEBOUNCE_MS);
+
+        return () => {
+            clearTimeout(timeoutId);
+        };
+    }, [searchQuery]);
+
     const {
         candidates,
         nextCursor,
         loading,
         loadingMore,
+        searchAugmenting,
         error,
         loadMore,
     } = useExternalSessionBrowseCandidates({
@@ -199,6 +222,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         serverId: lockScope?.serverId ?? null,
         providerId: selectedProviderId,
         source: selectedSource,
+        searchTerm: candidateSearchTerm,
     });
 
     const handleOpenCandidate = React.useCallback(async (candidate: ExternalSessionBrowseCandidate) => {
@@ -217,7 +241,8 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             const candidateSource = linkEnsureExtras.source && typeof linkEnsureExtras.source === 'object'
                 ? (linkEnsureExtras.source as ExternalSessionsSource)
                 : undefined;
-            const effectiveSource = resolveCompatibleExternalSessionBrowseLinkSource({
+            const effectiveSource = resolveExternalSessionBrowseCompatibleLinkSource({
+                providerId: selectedProviderId,
                 selectedSource,
                 candidateSource,
             });
@@ -246,107 +271,115 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     }, [effectiveSelectedMachineId, interaction, lockScope?.serverId, props, router, selectedProviderId, selectedSource]);
 
     return (
-        <ItemList style={styles.list} testID="direct-sessions-browse-modal">
-            {!locked ? (
-                <ItemGroup
-                    style={styles.filtersGroup}
-                    title={t('externalSessions.browseFiltersTitle')}
-                    containerStyle={styles.filtersGroupContainer}
-                >
-                    {machines.length === 0 ? (
-                        <Item
-                            title={t('externalSessions.browseNoMachines')}
-                            mode="info"
-                        />
-                    ) : (
-                        <>
-                            <DropdownMenu
-                            open={machineMenuOpen}
-                            onOpenChange={setMachineMenuOpen}
-                            items={machineMenuItems}
-                            selectedId={effectiveSelectedMachineId}
-                            onSelect={(itemId) => {
-                                setSelectedMachineId(itemId);
-                                setMachineMenuOpen(false);
-                            }}
-                            showCategoryTitles={false}
-                            variant="selectable"
-                            rowKind="item"
-                            matchTriggerWidth={true}
-                            connectToTrigger={true}
-                            itemTrigger={{
-                                title: t('externalSessions.browseMachines'),
-                                icon: <Ionicons name="desktop-outline" size={18} color={theme.colors.text.secondary} />,
-                                subtitleFormatter: formatMachineTriggerSubtitle,
-                                showSelectedDetail: false,
-                                itemProps: {
-                                    testID: 'direct-session-machine-picker-trigger',
-                                },
-                            }}
-                        />
-                            <DropdownMenu
-                            open={providerMenuOpen}
-                            onOpenChange={setProviderMenuOpen}
-                            items={providerMenuItems}
-                            selectedId={selectedProviderId}
-                            onSelect={(itemId) => {
-                                setSelectedProviderId(itemId as ExternalSessionBrowseProviderId);
-                                setProviderMenuOpen(false);
-                            }}
-                            showCategoryTitles={false}
-                            variant="selectable"
-                            rowKind="item"
-                            matchTriggerWidth={true}
-                            connectToTrigger={true}
-                            itemTrigger={{
-                                title: t('externalSessions.browseProviders'),
-                                icon: <Ionicons name="hardware-chip-outline" size={18} color={theme.colors.text.secondary} />,
-                                subtitleFormatter: formatSelectedTitleSubtitle,
-                                showSelectedDetail: false,
-                                itemProps: {
-                                    testID: 'direct-session-provider-picker-trigger',
-                                },
-                            }}
-                        />
-                            <DropdownMenu
-                            open={sourceMenuOpen}
-                            onOpenChange={setSourceMenuOpen}
-                            items={sourceMenuItems}
-                            selectedId={selectedSourceKey}
-                            onSelect={(itemId) => {
-                                setSelectedSourceKey(itemId);
-                                setSourceMenuOpen(false);
-                            }}
-                            showCategoryTitles={false}
-                            variant="selectable"
-                            rowKind="item"
-                            matchTriggerWidth={true}
-                            connectToTrigger={true}
-                            itemTrigger={{
-                                title: t('externalSessions.browseSources'),
-                                icon: <Ionicons name="folder-open-outline" size={18} color={theme.colors.text.secondary} />,
-                                subtitleFormatter: formatSelectedTitleSubtitle,
-                                showSelectedDetail: false,
-                                itemProps: {
-                                    testID: 'direct-session-source-picker-trigger',
-                                },
-                            }}
-                        />
-                        </>
-                    )}
-                </ItemGroup>
-            ) : null}
+        <PopoverScope boundaryRef={popoverBoundaryRef}>
+            <ItemList ref={popoverBoundaryRef} style={styles.list} testID="direct-sessions-browse-modal">
+                {!locked ? (
+                    <ItemGroup
+                        style={styles.filtersGroup}
+                        title={t('externalSessions.browseFiltersTitle')}
+                        containerStyle={styles.filtersGroupContainer}
+                    >
+                        {machines.length === 0 ? (
+                            <Item
+                                title={t('externalSessions.browseNoMachines')}
+                                mode="info"
+                            />
+                        ) : (
+                            <>
+                                <DropdownMenu
+                                    open={machineMenuOpen}
+                                    onOpenChange={setMachineMenuOpen}
+                                    items={machineMenuItems}
+                                    selectedId={effectiveSelectedMachineId}
+                                    onSelect={(itemId) => {
+                                        setSelectedMachineId(itemId);
+                                        setMachineMenuOpen(false);
+                                    }}
+                                    showCategoryTitles={false}
+                                    variant="selectable"
+                                    rowKind="item"
+                                    matchTriggerWidth={true}
+                                    connectToTrigger={true}
+                                    popoverBoundaryRef={popoverBoundaryRef}
+                                    itemTrigger={{
+                                        title: t('externalSessions.browseMachines'),
+                                        icon: <Ionicons name="desktop-outline" size={18} color={theme.colors.text.secondary} />,
+                                        subtitleFormatter: formatMachineTriggerSubtitle,
+                                        showSelectedDetail: false,
+                                        itemProps: {
+                                            testID: 'direct-session-machine-picker-trigger',
+                                        },
+                                    }}
+                                />
+                                <DropdownMenu
+                                    open={providerMenuOpen}
+                                    onOpenChange={setProviderMenuOpen}
+                                    items={providerMenuItems}
+                                    selectedId={selectedProviderId}
+                                    onSelect={(itemId) => {
+                                        setSelectedProviderId(itemId as ExternalSessionBrowseProviderId);
+                                        setProviderMenuOpen(false);
+                                    }}
+                                    showCategoryTitles={false}
+                                    variant="selectable"
+                                    rowKind="item"
+                                    matchTriggerWidth={true}
+                                    connectToTrigger={true}
+                                    popoverBoundaryRef={popoverBoundaryRef}
+                                    itemTrigger={{
+                                        title: t('externalSessions.browseProviders'),
+                                        icon: <Ionicons name="hardware-chip-outline" size={18} color={theme.colors.text.secondary} />,
+                                        subtitleFormatter: formatSelectedTitleSubtitle,
+                                        showSelectedDetail: false,
+                                        itemProps: {
+                                            testID: 'direct-session-provider-picker-trigger',
+                                        },
+                                    }}
+                                />
+                                <DropdownMenu
+                                    open={sourceMenuOpen}
+                                    onOpenChange={setSourceMenuOpen}
+                                    items={sourceMenuItems}
+                                    selectedId={selectedSourceKey}
+                                    onSelect={(itemId) => {
+                                        setSelectedSourceKey(itemId);
+                                        setSourceMenuOpen(false);
+                                    }}
+                                    showCategoryTitles={false}
+                                    variant="selectable"
+                                    rowKind="item"
+                                    matchTriggerWidth={true}
+                                    connectToTrigger={true}
+                                    popoverBoundaryRef={popoverBoundaryRef}
+                                    itemTrigger={{
+                                        title: t('externalSessions.browseSources'),
+                                        icon: <Ionicons name="folder-open-outline" size={18} color={theme.colors.text.secondary} />,
+                                        subtitleFormatter: formatSelectedTitleSubtitle,
+                                        showSelectedDetail: false,
+                                        itemProps: {
+                                            testID: 'direct-session-source-picker-trigger',
+                                        },
+                                    }}
+                                />
+                            </>
+                        )}
+                    </ItemGroup>
+                ) : null}
 
-            <ExternalSessionBrowseCandidatesList
-                candidates={candidates}
-                loading={loading}
-                error={error}
-                nextCursor={nextCursor}
-                loadingMore={loadingMore}
-                linkingSessionId={linkingSessionId}
-                onSelectCandidate={(candidate) => { void handleOpenCandidate(candidate); }}
-                onLoadMore={() => { void loadMore(); }}
-            />
-        </ItemList>
+                <ExternalSessionBrowseCandidatesList
+                    candidates={candidates}
+                    loading={loading}
+                    error={error}
+                    nextCursor={nextCursor}
+                    loadingMore={loadingMore}
+                    searchAugmenting={searchAugmenting}
+                    linkingSessionId={linkingSessionId}
+                    searchQuery={searchQuery}
+                    onSearchQueryChange={setSearchQuery}
+                    onSelectCandidate={(candidate) => { void handleOpenCandidate(candidate); }}
+                    onLoadMore={() => { void loadMore(); }}
+                />
+            </ItemList>
+        </PopoverScope>
     );
 });

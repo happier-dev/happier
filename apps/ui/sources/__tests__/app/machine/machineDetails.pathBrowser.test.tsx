@@ -133,7 +133,10 @@ vi.mock('@/hooks/ui/useMountedShouldContinue', () => ({
     useMountedShouldContinue: () => () => true,
 }));
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({ useMachineCapabilitiesCache: () => ({ state: { status: 'idle' }, refresh: vi.fn() }) }));
-vi.mock('@/sync/domains/server/serverProfiles', () => ({ getActiveServerId: () => mockState.activeServerIdRef.current }));
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
+    getActiveServerId: () => mockState.activeServerIdRef.current,
+}));
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({ setActiveServerAndSwitch: vi.fn(async () => true) }));
 vi.mock('@/sync/sync', () => ({ sync: { refreshMachinesThrottled: vi.fn(), refreshMachines: vi.fn(), retryNow: vi.fn() } }));
 vi.mock('@/utils/system/fireAndForget', () => ({

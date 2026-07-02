@@ -158,17 +158,17 @@ describe('SelectionList non-virtualized body scroll wrapper (R9 blocker 1)', () 
         const screen = await renderScreen(
             <SelectionList {...defaultProps(root, { maxHeight: 300, keyboardHintsEnabled: true })} />,
         );
-        // The content host MUST be flex: 1, minHeight: 0 so the body owns
-        // a bounded scrollable area (the alternative — natural height —
-        // pushes the footer off-screen as soon as the list grows).
-        const content = screen.findByTestId('sl:content') as any;
-        expect(content).not.toBeNull();
-        const styleProp = content?.props?.style;
+        // The scroll frame, not the outer content-sized popover frame, must
+        // own the bounded body area so the persistent footer stays outside
+        // the scrollable rows.
+        const scrollHost = screen.findByTestId('sl:bodyScroll:fadeHost') as any;
+        expect(scrollHost).not.toBeNull();
+        const styleProp = scrollHost?.props?.style;
         const flatStyle = Array.isArray(styleProp)
             ? Object.assign({}, ...styleProp.filter(Boolean))
             : (styleProp ?? {});
-        expect(flatStyle.flex).toBe(1);
-        expect(flatStyle.minHeight).toBe(0);
+        expect(flatStyle.flexGrow).toBe(1);
+        expect(flatStyle.flexShrink).toBe(1);
     });
 
     it('does not mount the ScrollView wrapper when only a virtualized section is present (FlashList owns scroll)', async () => {

@@ -6,8 +6,11 @@ pub(crate) mod storage;
 pub(crate) mod window_lifecycle;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(target_os = "macos")]
+use std::sync::Condvar;
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "macos")]
 use std::time::Duration;
@@ -59,7 +62,71 @@ const PET_OVERLAY_NATIVE_MOUSE_POLL_INTERVAL_MS: u64 = 50;
 const MAIN_WINDOW_LABEL: &str = "main";
 
 #[derive(Clone)]
-pub struct DesktopPetOverlayState(Arc<Mutex<DesktopPetOverlayRuntimeState>>);
+pub struct DesktopPetOverlayState(
+    Arc<Mutex<DesktopPetOverlayRuntimeState>>,
+    #[cfg(target_os = "macos")] Arc<NativeMousePollController>,
+);
+
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+struct NativeMousePollController {
+    gate: Mutex<NativeMousePollGateState>,
+    condvar: Condvar,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+struct NativeMousePollGateState {
+    enabled: bool,
+    started: bool,
+}
+
+#[cfg(target_os = "macos")]
+impl NativeMousePollController {
+    fn mark_started(&self) -> bool {
+        let Ok(mut gate) = self.gate.lock() else {
+            return false;
+        };
+        if gate.started {
+            return false;
+        }
+        gate.started = true;
+        true
+    }
+
+    fn set_enabled(&self, enabled: bool) {
+        let Ok(mut gate) = self.gate.lock() else {
+            return;
+        };
+        if gate.enabled == enabled {
+            return;
+        }
+        gate.enabled = enabled;
+        if enabled {
+            self.condvar.notify_one();
+        }
+    }
+
+    fn wait_until_enabled(&self) -> bool {
+        let Ok(mut gate) = self.gate.lock() else {
+            return false;
+        };
+        while !gate.enabled {
+            let Ok(next_gate) = self.condvar.wait(gate) else {
+                return false;
+            };
+            gate = next_gate;
+        }
+        true
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.gate
+            .lock()
+            .map(|gate| gate.enabled)
+            .unwrap_or(false)
+    }
+}
 
 #[derive(Clone, Debug, Default)]
 struct DesktopPetOverlayRuntimeState {
@@ -81,13 +148,52 @@ struct AppliedDesktopPetOverlayPayload {
 
 impl Default for DesktopPetOverlayState {
     fn default() -> Self {
-        Self(Arc::new(Mutex::new(DesktopPetOverlayRuntimeState::default())))
+        Self(
+            Arc::new(Mutex::new(
+                DesktopPetOverlayRuntimeState::default(),
+            )),
+            #[cfg(target_os = "macos")]
+            Arc::new(NativeMousePollController::default()),
+        )
     }
 }
 
 pub fn register<R: Runtime + 'static>(app: &mut App<R>) -> tauri::Result<()> {
-    start_pet_overlay_native_mouse_poll_loop(app.handle().clone(), app.state::<DesktopPetOverlayState>().inner().clone());
+    let _ = app;
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn configure_pet_overlay_native_mouse_polling<R: Runtime + 'static>(
+    app: AppHandle<R>,
+    state: &DesktopPetOverlayState,
+    enabled: bool,
+) {
+    state.1.set_enabled(enabled);
+    if enabled {
+        start_pet_overlay_native_mouse_poll_loop(app, state.clone());
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn configure_pet_overlay_native_mouse_polling<R: Runtime + 'static>(
+    _app: AppHandle<R>,
+    _state: &DesktopPetOverlayState,
+    _enabled: bool,
+) {
+}
+
+fn should_enable_pet_overlay_native_mouse_polling(
+    payload: Option<&DesktopPetOverlaySyncPayload>,
+) -> bool {
+    payload
+        .map(|payload| {
+            payload.visible
+                && payload.policy.enabled
+                && !payload.policy.input_locked
+                && payload.native_mouse_tracking_enabled
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(target_os = "macos")]
@@ -95,9 +201,20 @@ fn start_pet_overlay_native_mouse_poll_loop<R: Runtime + 'static>(
     app: AppHandle<R>,
     state: DesktopPetOverlayState,
 ) {
+    if !state.1.mark_started() {
+        return;
+    }
     let pending = std::sync::Arc::new(AtomicBool::new(false));
     std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_millis(PET_OVERLAY_NATIVE_MOUSE_POLL_INTERVAL_MS));
+        if !state.1.wait_until_enabled() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(
+            PET_OVERLAY_NATIVE_MOUSE_POLL_INTERVAL_MS,
+        ));
+        if !state.1.is_enabled() {
+            continue;
+        }
         if pending.swap(true, Ordering::AcqRel) {
             continue;
         }
@@ -141,8 +258,12 @@ fn publish_pet_overlay_native_mouse_payload<R: Runtime>(
         }
     };
     if should_emit {
-        app.emit_to(PET_OVERLAY_WINDOW_LABEL, PET_OVERLAY_NATIVE_MOUSE_EVENT, payload)
-            .map_err(|error| error.to_string())?;
+        app.emit_to(
+            PET_OVERLAY_WINDOW_LABEL,
+            PET_OVERLAY_NATIVE_MOUSE_EVENT,
+            payload,
+        )
+        .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -219,6 +340,10 @@ pub struct DesktopPetOverlaySyncPayload {
     pub visible: bool,
     pub expanded: bool,
     pub window: DesktopPetOverlaySizePayload,
+    #[serde(default)]
+    pub native_mouse_tracking_enabled: bool,
+    #[serde(default)]
+    pub activity: Option<Value>,
     pub policy: DesktopPetOverlayPolicyPayload,
 }
 
@@ -233,6 +358,7 @@ pub struct DesktopPetOverlayWindowStatePayload {
     pub scale_factor: f64,
     pub last_placement_recovery_code: Option<String>,
     pub placement_diagnostics: Option<DesktopPetOverlayPlacementDiagnosticsPayload>,
+    pub activity: Option<Value>,
     pub layout: Option<DesktopPetOverlayMeasuredLayoutPayload>,
 }
 
@@ -384,6 +510,11 @@ pub fn sync_desktop_pet_overlay_state<R: Runtime>(
             .map_err(|_| "DesktopPetOverlayState poisoned".to_string())?;
         apply_runtime_overlay_payload_result(&app, &mut guard, applied)
     };
+    configure_pet_overlay_native_mouse_polling(
+        app.clone(),
+        state.inner(),
+        should_enable_pet_overlay_native_mouse_polling(Some(&payload)),
+    );
 
     app.emit(PET_OVERLAY_STATE_EVENT, window_state)
         .map_err(|error| error.to_string())
@@ -449,6 +580,11 @@ pub fn desktop_pet_overlay_sync_element_metrics<R: Runtime>(
             .map_err(|_| "DesktopPetOverlayState poisoned".to_string())?;
         apply_runtime_overlay_payload_result(&app, &mut guard, applied)
     };
+    configure_pet_overlay_native_mouse_polling(
+        app.clone(),
+        state.inner(),
+        should_enable_pet_overlay_native_mouse_polling(Some(&sync_payload)),
+    );
     app.emit(PET_OVERLAY_STATE_EVENT, window_state)
         .map_err(|error| error.to_string())
 }
@@ -465,25 +601,29 @@ pub fn desktop_pet_overlay_set_input_locked<R: Runtime>(
         caller_window.label(),
     )?;
 
-    let mut guard = state
-        .0
-        .lock()
-        .map_err(|_| "DesktopPetOverlayState poisoned".to_string())?;
-    require_visible_enabled_overlay_state(&guard)?;
-    if let Some(window_state) = guard.window_state.as_mut() {
-        window_state.input_locked = input.locked;
-    }
-    if let Some(payload) = guard.last_sync_payload.as_mut() {
-        payload.policy.input_locked = input.locked;
-    }
-    if input.locked {
-        guard.active_pointer_id = None;
-        guard.momentum_generation = guard.momentum_generation.wrapping_add(1);
-    }
+    let native_mouse_polling_enabled = {
+        let mut guard = state
+            .0
+            .lock()
+            .map_err(|_| "DesktopPetOverlayState poisoned".to_string())?;
+        require_visible_enabled_overlay_state(&guard)?;
+        if let Some(window_state) = guard.window_state.as_mut() {
+            window_state.input_locked = input.locked;
+        }
+        if let Some(payload) = guard.last_sync_payload.as_mut() {
+            payload.policy.input_locked = input.locked;
+        }
+        if input.locked {
+            guard.active_pointer_id = None;
+            guard.momentum_generation = guard.momentum_generation.wrapping_add(1);
+        }
+        should_enable_pet_overlay_native_mouse_polling(guard.last_sync_payload.as_ref())
+    };
     if let Some(window) = app.get_webview_window(PET_OVERLAY_WINDOW_LABEL) {
         let _ =
             window.set_ignore_cursor_events(resolve_pet_overlay_ignore_cursor_events(input.locked));
     }
+    configure_pet_overlay_native_mouse_polling(app, state.inner(), native_mouse_polling_enabled);
     Ok(())
 }
 
@@ -993,6 +1133,7 @@ fn apply_desktop_pet_overlay_payload<R: Runtime>(
                 scale_factor: 1.0,
                 last_placement_recovery_code: None,
                 placement_diagnostics: None,
+                activity: payload.activity.clone(),
                 layout: None,
             },
         });
@@ -1114,6 +1255,7 @@ fn apply_desktop_pet_overlay_payload<R: Runtime>(
                 payload.policy.anchor,
                 position,
             )),
+            activity: payload.activity.clone(),
             layout,
         },
     })
@@ -1316,6 +1458,8 @@ mod tests {
                 width: 192.0,
                 height: 208.0,
             },
+            native_mouse_tracking_enabled: false,
+            activity: None,
             policy: DesktopPetOverlayPolicyPayload {
                 enabled: true,
                 always_on_top: true,
@@ -1334,6 +1478,8 @@ mod tests {
                 width: 192.0,
                 height: 208.0,
             },
+            native_mouse_tracking_enabled: false,
+            activity: None,
             policy: DesktopPetOverlayPolicyPayload {
                 enabled: true,
                 always_on_top: true,
@@ -1713,6 +1859,8 @@ mod tests {
                 width: 192.0,
                 height: 208.0,
             },
+            native_mouse_tracking_enabled: false,
+            activity: None,
             policy: DesktopPetOverlayPolicyPayload {
                 enabled: true,
                 always_on_top: true,
@@ -1732,6 +1880,8 @@ mod tests {
                 width: 192.0,
                 height: 208.0,
             },
+            native_mouse_tracking_enabled: false,
+            activity: None,
             policy: DesktopPetOverlayPolicyPayload {
                 enabled: false,
                 always_on_top: true,
@@ -1751,6 +1901,8 @@ mod tests {
                 width: 192.0,
                 height: 208.0,
             },
+            native_mouse_tracking_enabled: false,
+            activity: None,
             policy: DesktopPetOverlayPolicyPayload {
                 enabled: true,
                 always_on_top: true,
@@ -1759,6 +1911,21 @@ mod tests {
             },
         });
         assert_eq!(require_enabled_overlay_interaction(&runtime_state), Ok(()));
+    }
+
+    #[test]
+    fn native_mouse_polling_is_not_started_from_registration() {
+        let source = include_str!("pet_overlay.rs");
+        let register_body = source
+            .split("pub fn register")
+            .nth(1)
+            .and_then(|tail| tail.split("#[cfg(target_os = \"macos\")]").next())
+            .unwrap_or_default();
+
+        assert!(
+            !register_body.contains("start_pet_overlay_native_mouse_poll_loop"),
+            "native mouse polling should start only when a visible interactive overlay needs hover data",
+        );
     }
 
     #[test]
@@ -1776,6 +1943,7 @@ mod tests {
             scale_factor: 1.0,
             last_placement_recovery_code: None,
             placement_diagnostics: None,
+            activity: None,
             layout: None,
         };
         let monitors = vec![

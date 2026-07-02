@@ -7,10 +7,10 @@ describe('UI testkit mock factories', () => {
         const { createToolSectionViewModuleMock } = await import('./toolSectionView');
         const ToolSectionSpacingProvider = ({ children }: { children?: React.ReactNode }) =>
             React.createElement('ToolSectionSpacingProvider', null, children);
-        const actual = {
+        const actual: typeof import('@/components/tools/shell/presentation/ToolSectionView') = {
             ToolSectionSpacingProvider,
-            ToolSectionView: () => null,
-        } as typeof import('@/components/tools/shell/presentation/ToolSectionView');
+            ToolSectionView: React.memo(() => null),
+        };
 
         const moduleMock = await createToolSectionViewModuleMock({
             importOriginal: async <T,>() => actual as T,
@@ -19,15 +19,12 @@ describe('UI testkit mock factories', () => {
 
         expect(moduleMock.ToolSectionSpacingProvider).toBe(ToolSectionSpacingProvider);
 
-        let screen: ReturnType<typeof renderer.create> | null = null;
+        let screen!: ReturnType<typeof renderer.create>;
         await act(async () => {
             screen = renderer.create(
-                React.createElement(moduleMock.ToolSectionView, { title: 'Input', fullWidth: true }, 'Body'),
+                React.createElement(moduleMock.ToolSectionView, { title: 'Input', fullWidth: true, children: 'Body' }),
             );
         });
-        if (!screen) {
-            throw new Error('Expected ToolSectionView mock to render');
-        }
         const section = screen.root.findByType('ToolSectionView');
 
         expect(section.props.title).toBe('Input');
@@ -35,7 +32,7 @@ describe('UI testkit mock factories', () => {
         expect(section.children).toEqual(['Body']);
 
         await act(async () => {
-            screen?.unmount();
+            screen.unmount();
         });
     });
 
@@ -116,7 +113,9 @@ describe('UI testkit mock factories', () => {
         const moduleMock = await createUnistylesMock({
             theme: {
                 colors: {
-                    text: '#123456',
+                    text: {
+                        primary: '#123456',
+                    },
                 },
             },
             rt: {
@@ -128,7 +127,7 @@ describe('UI testkit mock factories', () => {
             rt: { breakpoint: string };
         };
 
-        expect((unistyles.theme as { colors: { text: string } }).colors.text.primary).toBe('#123456');
+        expect((unistyles.theme as { colors: { text: { primary: string } } }).colors.text.primary).toBe('#123456');
         expect(unistyles.rt.breakpoint).toBe('md');
         expect(
             moduleMock.StyleSheet.create((theme: any, runtime: any) => ({
@@ -505,6 +504,9 @@ describe('UI testkit mock factories', () => {
         expect(mock.useSettingMutable('activeServerId')).toEqual(['stub-value', expect.any(Function)]);
         expect(mock.useLocalSettingMutable('uiMultiPanePanelsEnabled')).toEqual([expect.anything(), expect.any(Function)]);
         expect(mock.useArtifacts()).toEqual([]);
+        const reducerState = mock.useSessionMessagesReducerState('session-a');
+        expect(reducerState.messages).toBeInstanceOf(Map);
+        expect(mock.useSessionMessagesReducerState('session-a')).toBe(reducerState);
         expect(mock.useMachineListByServerId()).toEqual({});
         expect(mock.useMachine('machine-a')).toBeNull();
         expect(mock.useSocketStatus()).toEqual({

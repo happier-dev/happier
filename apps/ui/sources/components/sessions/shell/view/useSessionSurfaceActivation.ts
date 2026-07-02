@@ -13,6 +13,7 @@ import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
 export type UseSessionSurfaceActivationInput = Readonly<{
     sessionId: string;
+    serverId?: string | null;
     surfaceFocused: boolean;
     surfaceVisible: boolean;
     routeAnchor: boolean;
@@ -33,11 +34,11 @@ export function useSessionSurfaceActivation(
         if (!input.surfaceVisible) {
             return;
         }
-        markSessionSurfaceVisible(normalizedSessionId);
+        markSessionSurfaceVisible(normalizedSessionId, input.serverId);
         return () => {
-            markSessionSurfaceHidden(normalizedSessionId);
+            markSessionSurfaceHidden(normalizedSessionId, input.serverId);
         };
-    }, [input.surfaceVisible, normalizedSessionId]);
+    }, [input.serverId, input.surfaceVisible, normalizedSessionId]);
 
     React.useLayoutEffect(() => {
         if (!normalizedSessionId) return;

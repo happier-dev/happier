@@ -5,7 +5,11 @@ import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import type { PermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { deriveSessionRuntimePresentationState } from '@/sync/domains/session/attention/runtimePresentation';
+import {
+    deriveLatestPendingRequestObservedAtFromSession,
+} from '@/sync/domains/session/pending/listPendingSessionRequests';
 
 export type PendingQueueWakeResumeOptions = ResumeSessionOptions;
 
@@ -18,6 +22,12 @@ function normalizeNonEmptyString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
+}
+
+function resolvePendingQueueWakeCursor(session: Session): number | null {
+    const seq = session.seq;
+    if (typeof seq !== 'number' || !Number.isFinite(seq) || seq < 0) return null;
+    return Math.trunc(seq);
 }
 
 export function getPendingQueueWakeResumeOptions(opts: {
@@ -35,20 +45,35 @@ export function getPendingQueueWakeResumeOptions(opts: {
     // Only gate waking on "idle" when the session is actively running.
     // For inactive/archived sessions, `thinking` / `agentState.requests` can be stale; blocking wake would
     // strand pending-queue messages until the user sends another message (or the state refreshes).
-    const isSessionActive = session.presence === 'online';
+    const isSessionActive = session.active === true && session.presence === 'online';
     if (isSessionActive) {
-        if (session.thinking === true) return null;
         const requests = session.agentState?.requests;
-        if (requests && Object.keys(requests).length > 0) return null;
+        const hasRuntimeRequests = Boolean(requests && Object.keys(requests).length > 0);
+        const runtimePresentation = deriveSessionRuntimePresentationState({
+            active: session.active,
+            activeAt: session.activeAt,
+            presence: session.presence,
+            thinking: session.thinking,
+            thinkingAt: session.thinkingAt,
+            latestTurnStatus: session.latestTurnStatus,
+            latestTurnStatusObservedAt: session.latestTurnStatusObservedAt,
+            meaningfulActivityAt: session.meaningfulActivityAt,
+            hasPendingPermissionRequests: hasRuntimeRequests,
+            hasPendingUserActionRequests: hasRuntimeRequests,
+            pendingRequestObservedAt: deriveLatestPendingRequestObservedAtFromSession(session),
+        });
+        if (
+            runtimePresentation.working
+            || runtimePresentation.freshPermissionRequired
+            || runtimePresentation.freshActionRequired
+        ) return null;
     }
 
-    const reachableTarget = readMachineTargetForSession(sessionId);
+    const reachableTarget = readMachineControlTargetForSession(sessionId);
     const machineId = normalizeNonEmptyString(resumeTargetOverride?.machineId)
-        ?? normalizeNonEmptyString(reachableTarget?.machineId)
-        ?? normalizeNonEmptyString(session.metadata?.machineId);
+        ?? normalizeNonEmptyString(reachableTarget?.machineId);
     const directory = normalizeNonEmptyString(resumeTargetOverride?.directory)
-        ?? normalizeNonEmptyString(reachableTarget?.basePath)
-        ?? normalizeNonEmptyString(session.metadata?.path);
+        ?? normalizeNonEmptyString(reachableTarget?.basePath);
     if (!machineId || !directory) return null;
     if (canWakeMachineId && canWakeMachineId(machineId) === false) return null;
 
@@ -61,9 +86,17 @@ export function getPendingQueueWakeResumeOptions(opts: {
     });
     if (!base) return null;
 
-    const backendTarget = base.backendTarget;
+    const initialTranscriptAfterSeq = resolvePendingQueueWakeCursor(session);
+    const baseWithCursor = initialTranscriptAfterSeq === null
+        ? base
+        : {
+            ...base,
+            initialTranscriptAfterSeq,
+        };
+
+    const backendTarget = baseWithCursor.backendTarget;
     if (typeof backendTarget === 'object' && backendTarget !== null && 'kind' in backendTarget && backendTarget.kind === 'configuredAcpBackend') {
-        return base;
+        return baseWithCursor;
     }
 
     const agentId = resolveAgentIdFromSessionMetadata(session.metadata)
@@ -71,11 +104,11 @@ export function getPendingQueueWakeResumeOptions(opts: {
         ?? (typeof backendTarget === 'object' && backendTarget !== null && 'kind' in backendTarget && backendTarget.kind === 'builtInAgent'
             ? backendTarget.agentId
             : null);
-    if (!agentId) return base;
-    if (!isAgentId(agentId)) return base;
+    if (!agentId) return baseWithCursor;
+    if (!isAgentId(agentId)) return baseWithCursor;
 
     return {
-        ...base,
+        ...baseWithCursor,
         ...buildWakeResumeExtras({ agentId, resumeCapabilityOptions, session }),
     };
 }

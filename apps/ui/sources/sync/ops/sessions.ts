@@ -28,6 +28,7 @@ import type {
     SessionAttachMetadataIdentityPolicy,
     SessionContinueWithReplayRpcResult,
     SessionAuthoringValueV1,
+    SessionInitialGoalRequestV1,
     SessionForkPoint,
     SessionForkRpcResult,
     SessionForkStrategy,
@@ -50,7 +51,7 @@ import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/
 import { normalizeSpawnSessionResult } from './_shared';
 import { isAccountSettingsScopeChangedDuringSpawnPreparationError } from '@/sync/engine/settings/accountSettingsSpawnPreparationError';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
-import { readMachineTargetForSession } from './sessionMachineTarget';
+import { readMachineControlTargetForSession } from './sessionMachineTarget';
 import { stopSessionUsingCanonicalStrategy } from './sessionStopStrategy';
 export {
     sessionScmBranchCheckout,
@@ -192,6 +193,7 @@ export interface ResumeSessionOptions {
     resume?: string;
     environmentVariables?: Record<string, string>;
     connectedServices?: unknown;
+    connectedServicesUpdatedAt?: number;
     transcriptStorage?: 'direct' | 'persisted';
     attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy;
     /** Optional explicit server scope for resume spawn routing. */
@@ -223,6 +225,7 @@ export interface ResumeSessionOptions {
      * consumed without replaying older turns.
      */
     initialTranscriptAfterSeq?: number;
+    initialGoal?: SessionInitialGoalRequestV1;
     /**
      * Internal daemon freshness barrier. Resume callers should normally omit this and let
      * `resumeSession` capture a freshly flushed account-settings version at the RPC boundary.
@@ -256,6 +259,7 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             resume,
             environmentVariables,
             connectedServices,
+            connectedServicesUpdatedAt,
             transcriptStorage,
             attachMetadataIdentityPolicy,
             permissionMode,
@@ -267,13 +271,14 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             runtimeDescriptorV1,
             accountSettingsVersionHint,
             initialTranscriptAfterSeq,
+            initialGoal,
             preferRequestedMachineTarget,
             preferScopedMachineRpc,
         } = options;
         const preparation = await prepareAccountSettingsForDaemonSpawnIfNeeded(options.accountSettingsVersionHint);
         const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
 
-        const machineTarget = readMachineTargetForSession(sessionId);
+        const machineTarget = readMachineControlTargetForSession(sessionId);
         const machineId = preferRequestedMachineTarget ? rawMachineId.trim() : machineTarget?.machineId ?? rawMachineId.trim();
         const directory = preferRequestedMachineTarget ? rawDirectory.trim() : machineTarget?.basePath ?? rawDirectory.trim();
         if (!machineId || !directory) {
@@ -296,6 +301,9 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             ...(resume ? { resume } : {}),
             ...(environmentVariables ? { environmentVariables } : {}),
             ...(parsedConnectedServices !== undefined ? { connectedServices: parsedConnectedServices } : {}),
+            ...(parsedConnectedServices !== undefined && typeof connectedServicesUpdatedAt === 'number' && Number.isFinite(connectedServicesUpdatedAt)
+                ? { connectedServicesUpdatedAt }
+                : {}),
             ...(transcriptStorage ? { transcriptStorage } : {}),
             ...(attachMetadataIdentityPolicy ? { attachMetadataIdentityPolicy } : {}),
             ...(permissionMode ? { permissionMode } : {}),
@@ -304,6 +312,7 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             ...(typeof modelUpdatedAt === 'number' ? { modelUpdatedAt } : {}),
             ...(typeof accountSettingsVersionHint === 'number' ? { accountSettingsVersionHint } : {}),
             ...(typeof initialTranscriptAfterSeq === 'number' ? { initialTranscriptAfterSeq } : {}),
+            ...(initialGoal ? { initialGoal } : {}),
             ...preparation,
             experimentalCodexAcp,
             codexBackendMode,
@@ -374,7 +383,7 @@ export type ContinueSessionWithReplayOptions = Readonly<{
 
 export async function continueSessionWithReplay(options: ContinueSessionWithReplayOptions): Promise<SessionContinueWithReplayRpcResult> {
     const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
-    const replayTarget = readMachineTargetForSession(options.replay.previousSessionId);
+    const replayTarget = readMachineControlTargetForSession(options.replay.previousSessionId);
     const machineId = replayTarget?.machineId ?? options.machineId;
     const directory = replayTarget?.basePath ?? options.directory;
     const canonicalAgent = isLegacyCompatAgentType(options.agent) ? undefined : options.agent;
@@ -445,7 +454,7 @@ export type ForkSessionOptions = Readonly<{
 
 export async function forkSession(options: ForkSessionOptions): Promise<SessionForkRpcResult> {
     const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
-    const parentTarget = readMachineTargetForSession(options.parentSessionId);
+    const parentTarget = readMachineControlTargetForSession(options.parentSessionId);
     const explicitMachineId = typeof options.machineId === 'string' ? options.machineId.trim() : '';
     const machineId = parentTarget?.machineId ?? explicitMachineId;
     if (!machineId) {

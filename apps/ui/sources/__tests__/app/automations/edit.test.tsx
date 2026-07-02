@@ -109,7 +109,9 @@ vi.mock('@/components/automations/shared/ExistingSessionAutomationUnavailableNot
 }));
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
-    useHydrateSessionForRoute: () => hydrateReadyState.ready,
+    useHydrateSessionForRoute: (sessionId: string) => hydrateReadyState.ready
+        ? { kind: 'available', sessionId }
+        : { kind: 'loading', sessionId, reason: 'store-miss' },
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -156,13 +158,24 @@ installAutomationAppRouteCommonModuleMocks({
     },
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const readSnapshot = () => getStateSpy();
         return createStorageModuleStub({
             useAutomation: () => automationState.value,
             useSession: () => sessionState.value,
             useSettings: () => ({}),
-            storage: {
-                getState: () => getStateSpy(),
-            },
+            storage: Object.assign(
+                ((selector?: (value: ReturnType<typeof readSnapshot>) => unknown) => {
+                    const snapshot = readSnapshot();
+                    return typeof selector === 'function' ? selector(snapshot) : snapshot;
+                }),
+                {
+                    getState: readSnapshot,
+                    getInitialState: readSnapshot,
+                    setState: () => undefined,
+                    subscribe: () => () => undefined,
+                    destroy: () => undefined,
+                },
+            ),
         });
     },
     text: async () => {
@@ -223,6 +236,28 @@ describe('AutomationEditScreen route', () => {
                 s1: sessionState.value,
                 'session-1': sessionState.value,
             } : {},
+            machines: {
+                'machine-1': {
+                    id: 'machine-1',
+                    active: true,
+                    metadata: {},
+                },
+                m1: {
+                    id: 'm1',
+                    active: true,
+                    metadata: {},
+                },
+                'm-target': {
+                    id: 'm-target',
+                    active: true,
+                    metadata: {},
+                },
+                'm-stale': {
+                    id: 'm-stale',
+                    active: true,
+                    metadata: {},
+                },
+            },
             getProjectForSession: () => null,
         }));
     });
@@ -341,13 +376,14 @@ describe('AutomationEditScreen route', () => {
         };
         sessionState.value = {
             id: 'session-1',
+            active: true,
             encryptionMode: 'plain',
             permissionMode: 'default',
             permissionModeUpdatedAt: 999,
             modelMode: 'default',
             modelModeUpdatedAt: 111,
             metadata: {
-                machineId: 'm-stale',
+                machineId: 'm-target',
                 path: '/repo/project',
                 homeDir: '/repo',
                 flavor: 'acp:review-bot',
@@ -417,7 +453,7 @@ describe('AutomationEditScreen route', () => {
         }));
     });
 
-    it('preserves configured ACP automation temp-data fields when redirecting new-session automations into the shared composer', async () => {
+    it('preserves configured ACP backend targets when redirecting new-session automations into the shared composer', async () => {
         const transport = await import('@/sync/domains/automations/automationTemplateTransport');
         const codec = await import('@/sync/domains/automations/automationTemplateCodec');
         vi.mocked(transport.tryDecodeAutomationTemplateEnvelope).mockReturnValue({
@@ -429,13 +465,6 @@ describe('AutomationEditScreen route', () => {
             prompt: 'Run nightly checks',
             displayText: 'Run nightly checks',
             backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-            sessionConfigOptionOverrides: {
-                v: 1,
-                updatedAt: 456,
-                overrides: {
-                    speed: { updatedAt: 456, value: 'fast' },
-                },
-            },
             transcriptStorage: 'direct',
             permissionMode: 'acceptEdits',
             modelId: 'gpt-5',
@@ -448,13 +477,6 @@ describe('AutomationEditScreen route', () => {
 
         expect(storeTempDataSpy).toHaveBeenCalledWith(expect.objectContaining({
             backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-            sessionConfigOptionOverrides: {
-                v: 1,
-                updatedAt: 456,
-                overrides: {
-                    speed: { updatedAt: 456, value: 'fast' },
-                },
-            },
         }));
     });
 
@@ -582,11 +604,11 @@ describe('AutomationEditScreen route', () => {
                 existingSessionId: 's1',
             }),
             fallbackDraft: expect.objectContaining({
-                backendTarget: {
+                backendTarget: expect.objectContaining({
                     kind: 'backend',
                     backendId: 'review-bot',
                     configuredBackendId: 'review-bot',
-                },
+                }),
                 profileId: 'profile-1',
                 permissionMode: 'safe-yolo',
                 permissionModeUpdatedAt: 123,
@@ -661,9 +683,7 @@ describe('AutomationEditScreen route', () => {
         await renderScreen(React.createElement(EditRoute));
         await settle();
 
-        expect(latestAutomationSettingsFormProps.value).toEqual(expect.objectContaining({
-            variant: 'edit',
-        }));
+        expect(latestAutomationSettingsFormProps.value).toBeNull();
         expect(latestAgentInputProps.value).toEqual(expect.objectContaining({
             submitAccessibilityLabel: 'Save automation',
         }));

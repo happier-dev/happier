@@ -87,6 +87,7 @@ describe('getSessionActivityForVoiceTool', () => {
     });
 
     afterEach(() => {
+        vi.restoreAllMocks();
         storage.setState((current) => ({
             ...current,
             sessions: {},
@@ -103,6 +104,10 @@ describe('getSessionActivityForVoiceTool', () => {
             presence: 'online',
             active: true,
             thinking: false,
+            working: false,
+            blocked: false,
+            permissionRequired: false,
+            actionRequired: false,
             updatedAt: 123,
             permissionRequestIds: ['req_1'],
             messageCounts: {
@@ -170,6 +175,10 @@ describe('getSessionActivityForVoiceTool', () => {
             presence: 'online',
             active: false,
             thinking: false,
+            working: false,
+            blocked: false,
+            permissionRequired: false,
+            actionRequired: false,
             updatedAt: 456,
             permissionRequestIds: ['req_cached'],
             messageCounts: {
@@ -202,6 +211,49 @@ describe('getSessionActivityForVoiceTool', () => {
             errorCode: 'session_not_found',
             errorMessage: 'session_not_found',
             sessionId: 's_raw',
+        });
+    });
+
+    it('reports projected working and blocked activity state', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(10_000);
+        const { getSessionActivityForVoiceTool } = await import('./sessionActivity');
+
+        storage.setState((current) => ({
+            ...current,
+            sessions: {
+                s_projected: {
+                    ...createTestSession('s_projected'),
+                    thinking: false,
+                    latestTurnStatus: 'in_progress',
+                    latestTurnStatusObservedAt: 9_500,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 1,
+                    pendingRequestObservedAt: 9_800,
+                    agentState: {
+                        requests: {},
+                    },
+                },
+            },
+            sessionListIndexByServerId: {
+                'server-a': [
+                    { type: 'session', sessionId: 's_projected', serverId: 'server-a', serverName: 'Server A' },
+                ],
+            },
+            concurrentSessionListCacheByServerId: {},
+            sessionMessages: {
+                s_projected: createTestSessionMessages([]),
+            },
+        }));
+
+        await expect(getSessionActivityForVoiceTool({ sessionId: 's_projected' })).resolves.toMatchObject({
+            ok: true,
+            sessionId: 's_projected',
+            thinking: false,
+            working: true,
+            blocked: true,
+            permissionRequired: false,
+            actionRequired: true,
+            permissionRequestIds: [],
         });
     });
 });

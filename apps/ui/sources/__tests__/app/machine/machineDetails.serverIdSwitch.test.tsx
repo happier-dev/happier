@@ -102,6 +102,7 @@ vi.mock('@/hooks/ui/useMountedShouldContinue', () => ({
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({ useMachineCapabilitiesCache: () => ({ state: { status: 'idle' }, refresh: vi.fn() }) }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
     getActiveServerId: () => 'server-a',
 }));
 

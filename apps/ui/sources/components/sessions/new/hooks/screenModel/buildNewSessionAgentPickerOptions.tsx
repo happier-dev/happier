@@ -6,6 +6,8 @@ import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibil
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
+import { sortItemsByFavoriteTargetKey } from '@/sync/domains/session/authoring/favoriteBackendTargets';
 import type { NewSessionAgentPickerSelection } from './buildNewSessionAgentPickerDetailContent';
 import { buildNewSessionAgentPickerResolvedOptions } from './buildNewSessionAgentPickerResolvedOptions';
 import {
@@ -33,7 +35,12 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     settings: Settings;
     refreshProbe?: OptionPickerProbeState | null;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
-    onSelectFavoriteModel?: (entry: ResolvedBackendCatalogEntry, modelId: string) => void;
+    favoriteBackendTargetKeys?: ReadonlyArray<string>;
+    onSelectFavoriteModel?: (
+        entry: ResolvedBackendCatalogEntry,
+        modelId: string,
+        configOverrides?: Readonly<Record<string, string>>,
+    ) => void;
     onSelectFavoriteModelOptionValue?: (
         entry: ResolvedBackendCatalogEntry,
         modelId: string,
@@ -41,7 +48,9 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
         valueId: string,
     ) => void;
     onToggleFavoriteModel?: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
+    onToggleFavoriteBackendTarget?: (targetKey: string) => void;
     onRemoveFavoriteModelSelection?: (favorite: FavoriteModelSelectionV1) => void;
+    onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
 }>;
 
 export type NewSessionAgentPickerOptionsState = Readonly<{
@@ -75,7 +84,11 @@ export function buildNewSessionAgentPickerOptions(
     const resolved = buildNewSessionAgentPickerResolvedOptions({
         profileForAgentSelection,
         compatibleBackendTargetKeys,
-        resolvedBackendEntries: params.resolvedBackendEntries,
+        resolvedBackendEntries: sortItemsByFavoriteTargetKey(
+            params.resolvedBackendEntries,
+            params.favoriteBackendTargetKeys ?? [],
+            (entry) => entry.backendTargetKey,
+        ),
         isBackendEntrySelectable: params.isBackendEntrySelectable,
         getEngineSelectionForTargetKey: params.getEngineSelectionForTargetKey,
         selectEngineSelection: params.selectEngineSelection,
@@ -85,7 +98,10 @@ export function buildNewSessionAgentPickerOptions(
         settings: params.settings,
         refreshProbe: params.refreshProbe,
         favoriteModelSelections: params.favoriteModelSelections ?? [],
+        favoriteBackendTargetKeys: params.favoriteBackendTargetKeys ?? [],
         onToggleFavoriteModel: params.onToggleFavoriteModel,
+        onToggleFavoriteBackendTarget: params.onToggleFavoriteBackendTarget,
+        onRememberAgentPickerView: params.onRememberAgentPickerView,
     });
 
     const { available, muted, disabled } = partitionNewSessionAgentPickerOptions(resolved);
@@ -106,6 +122,7 @@ export function buildNewSessionAgentPickerOptions(
             onSelectFavoriteModelOptionValue: params.onSelectFavoriteModelOptionValue,
             onToggleFavoriteModel: params.onToggleFavoriteModel,
             onRemoveFavoriteModelSelection: params.onRemoveFavoriteModelSelection,
+            onRememberAgentPickerView: params.onRememberAgentPickerView,
         })
         : null;
 

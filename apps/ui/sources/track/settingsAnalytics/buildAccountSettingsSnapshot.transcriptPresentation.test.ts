@@ -17,6 +17,7 @@ describe('buildAccountSettingsSnapshot', () => {
             transcriptGroupToolCalls: false,
             transcriptTurnToolCallsGroupStrategy: 'all_tools_in_turn',
             transcriptToolCallsGroupShowBackground: false,
+            transcriptMessageTimestampDisplayMode: 'always',
             transcriptStreamingCoalesceEnabled: false,
             transcriptListImplementation: 'flatlist_legacy',
             toolViewTimelineChromeMode: 'cards',
@@ -42,6 +43,7 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__transcriptGroupToolCalls).toBe(false);
         expect(snapshot.properties.acct_setting__transcriptTurnToolCallsGroupStrategy).toBe('all_tools_in_turn');
         expect(snapshot.properties.acct_setting__transcriptToolCallsGroupShowBackground).toBe(false);
+        expect(snapshot.properties.acct_setting__transcriptMessageTimestampDisplayMode).toBe('always');
         expect(snapshot.properties.acct_setting__transcriptStreamingCoalesceEnabled).toBe(false);
         expect(snapshot.properties.acct_setting__transcriptListImplementation).toBe('flatlist_legacy');
         expect(snapshot.properties.acct_setting__toolViewTimelineChromeMode).toBe('cards');
@@ -84,4 +86,3 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__serverSelectionActiveTargetId).toBeUndefined();
     });
 });
-

@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
+import type { StorageState } from '@/sync/store/types';
 import { installActivityBadgeRuntimeCommonModuleMocks } from './activityBadgeRuntimeTestHelpers';
 
 
@@ -33,6 +35,9 @@ let localSettingsValue: Record<string, unknown> = {
 let accountSettingsValue = accountSettingsParse({});
 let updateAvailableValue = false;
 let changelogUnreadValue = false;
+let rejectBroadActivitySourceRead = false;
+let rejectBroadLocalSettingsRead = false;
+let rejectBroadAccountSettingsRead = false;
 
 const applyExpoNativeBadgeState = vi.hoisted(() => vi.fn(async () => {}));
 const applyTauriBadgeState = vi.hoisted(() => vi.fn(async () => {}));
@@ -67,6 +72,22 @@ function setActivitySessions(sessions: BadgeRuntimeSessionFixture[]): void {
     activityAttentionSourceValue = createActivityAttentionSource(sessions);
 }
 
+function createBadgeRuntimeStorageState(): StorageState {
+    const state = {
+        sessions: activityAttentionSourceValue.sessionsById,
+        machines: {},
+        sessionMessages: {},
+        sessionPending: {},
+        sessionListRenderables: activityAttentionSourceValue.sessionListRenderablesById,
+        sessionListIndexByServerId: activityAttentionSourceValue.sessionListIndexByServerId,
+        concurrentSessionListCacheByServerId: activityAttentionSourceValue.concurrentSessionListCacheByServerId,
+        isDataReady: activityAttentionSourceValue.isDataReady,
+        localSettings: localSettingsDefaults,
+    };
+    // Test storage only needs the badge selector slice; missing domain methods are never read here.
+    return state as unknown as StorageState;
+}
+
 installActivityBadgeRuntimeCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -80,11 +101,43 @@ installActivityBadgeRuntimeCommonModuleMocks({
     },
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const storage = Object.assign(
+            ((selector?: (state: StorageState) => unknown) => {
+                const state = createBadgeRuntimeStorageState();
+                return typeof selector === 'function' ? selector(state) : state;
+            }),
+            {
+                getState: createBadgeRuntimeStorageState,
+                getInitialState: createBadgeRuntimeStorageState,
+                setState: () => undefined,
+                subscribe: () => () => undefined,
+                destroy: () => undefined,
+            },
+        );
         return createStorageModuleStub({
+            storage,
             useAllSessions: () => sessionsValue,
             useFriendRequests: () => friendRequestsValue,
-            useLocalSettings: () => localSettingsValue,
-            useSettings: () => accountSettingsValue,
+            useLocalSetting: (key: string) => (
+                Object.prototype.hasOwnProperty.call(localSettingsValue, key)
+                    ? localSettingsValue[key]
+                    : key === 'attentionDeviceOverridesV1'
+                        ? undefined
+                    : localSettingsDefaults[key as keyof typeof localSettingsDefaults]
+            ),
+            useSetting: (key: string) => accountSettingsValue[key as keyof typeof accountSettingsValue],
+            useLocalSettings: () => {
+                if (rejectBroadLocalSettingsRead) {
+                    throw new Error('ActivityBadgeRuntime must not subscribe to all local settings');
+                }
+                return localSettingsValue;
+            },
+            useSettings: () => {
+                if (rejectBroadAccountSettingsRead) {
+                    throw new Error('ActivityBadgeRuntime must not subscribe to all account settings');
+                }
+                return accountSettingsValue;
+            },
         });
     },
 });
@@ -102,7 +155,12 @@ vi.mock('@/utils/platform/tauri', () => ({
 }));
 
 vi.mock('@/activity/source/useActivityAttentionSource', () => ({
-    useActivityAttentionSource: () => activityAttentionSourceValue,
+    useActivityAttentionSource: () => {
+        if (rejectBroadActivitySourceRead) {
+            throw new Error('ActivityBadgeRuntime must not subscribe to the broad activity source');
+        }
+        return activityAttentionSourceValue;
+    },
 }));
 
 vi.mock('./channels/applyExpoNativeBadgeState', () => ({
@@ -139,6 +197,9 @@ describe('ActivityBadgeRuntime', () => {
         accountSettingsValue = accountSettingsParse({});
         updateAvailableValue = false;
         changelogUnreadValue = false;
+        rejectBroadActivitySourceRead = false;
+        rejectBroadLocalSettingsRead = false;
+        rejectBroadAccountSettingsRead = false;
         applyExpoNativeBadgeState.mockClear();
         applyTauriBadgeState.mockClear();
         serverFetch.mockReset();
@@ -147,14 +208,20 @@ describe('ActivityBadgeRuntime', () => {
             serverUrl: 'https://api.example.test',
             generation: 1,
         };
+        vi.useRealTimers();
     });
 
     it('applies the native mobile badge count from session and inbox activity', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(1_000));
         setActivitySessions([
             {
                 id: 'session-1',
                 seq: 3,
                 lastViewedSessionSeq: 1,
+                presence: 'online',
+                active: true,
+                pendingRequestObservedAt: 1_000,
                 pendingPermissionRequestCount: 2,
                 pendingUserActionRequestCount: 0,
                 pendingCount: 1,
@@ -327,6 +394,60 @@ describe('ActivityBadgeRuntime', () => {
         });
     });
 
+    it('keeps friend request badges local while activity source data is bootstrapping', async () => {
+        activityAttentionSourceValue = {
+            ...createActivityAttentionSource([]),
+            isDataReady: false,
+        };
+        friendRequestsValue = [{ id: 'friend-1' }];
+        serverFetch.mockResolvedValue({
+            ok: true,
+            json: async () => ({ badgeCount: 4 }),
+        });
+
+        const { ActivityBadgeRuntime } = await import('./ActivityBadgeRuntime');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<ActivityBadgeRuntime />)).tree;
+        await flushHookEffects();
+
+        expect(applyExpoNativeBadgeState).toHaveBeenCalledWith({
+            count: 1,
+            showNonNumericDot: false,
+        });
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
+    it('keeps non-numeric inbox attention local while activity source data is bootstrapping', async () => {
+        activityAttentionSourceValue = {
+            ...createActivityAttentionSource([]),
+            isDataReady: false,
+        };
+        updateAvailableValue = true;
+        serverFetch.mockResolvedValue({
+            ok: true,
+            json: async () => ({ badgeCount: 4 }),
+        });
+
+        const { ActivityBadgeRuntime } = await import('./ActivityBadgeRuntime');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<ActivityBadgeRuntime />)).tree;
+        await flushHookEffects();
+
+        expect(applyExpoNativeBadgeState).toHaveBeenCalledWith({
+            count: 0,
+            showNonNumericDot: true,
+        });
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
     it('clears badge channels when badges are disabled on this device', async () => {
         setActivitySessions([
             {
@@ -454,6 +575,7 @@ describe('ActivityBadgeRuntime', () => {
                 'session-normalized': {
                     id: 'session-normalized',
                     seq: 4,
+                    latestReadyEventSeq: 4,
                     lastViewedSessionSeq: 1,
                     metadata: { path: '', host: '' },
                 },
@@ -462,6 +584,7 @@ describe('ActivityBadgeRuntime', () => {
                 'session-normalized': {
                     id: 'session-normalized',
                     seq: 4,
+                    latestReadyEventSeq: 4,
                     lastViewedSessionSeq: 1,
                     metadata: { path: '', host: '' },
                 },
@@ -499,6 +622,7 @@ describe('ActivityBadgeRuntime', () => {
             {
                 id: 'session-1',
                 seq: 4,
+                latestReadyEventSeq: 4,
                 lastViewedSessionSeq: 1,
                 updatedAt: 10,
                 metadata: null,
@@ -520,6 +644,7 @@ describe('ActivityBadgeRuntime', () => {
             {
                 id: 'session-1',
                 seq: 4,
+                latestReadyEventSeq: 4,
                 lastViewedSessionSeq: 1,
                 updatedAt: 11,
                 metadata: null,
@@ -545,6 +670,7 @@ describe('ActivityBadgeRuntime', () => {
                 'session-normalized': {
                     id: 'session-normalized',
                     seq: 4,
+                    latestReadyEventSeq: 4,
                     lastViewedSessionSeq: 1,
                     metadata: { path: '', host: '' },
                 },
@@ -627,6 +753,49 @@ describe('ActivityBadgeRuntime', () => {
 
         expect(applyExpoNativeBadgeState).toHaveBeenCalledWith({
             count: 0,
+            showNonNumericDot: false,
+        });
+
+        await act(async () => {
+            tree?.unmount();
+        });
+    });
+
+    it('uses focused storage and settings subscriptions instead of broad activity/settings hooks', async () => {
+        rejectBroadActivitySourceRead = true;
+        rejectBroadLocalSettingsRead = true;
+        rejectBroadAccountSettingsRead = true;
+        activityAttentionSourceValue = {
+            ...createActivityAttentionSource([]),
+            sessionsById: {
+                'session-normalized': {
+                    id: 'session-normalized',
+                    seq: 4,
+                    latestReadyEventSeq: 4,
+                    lastViewedSessionSeq: 1,
+                    metadata: { path: '', host: '' },
+                },
+            },
+            sessionListRenderablesById: {},
+            sessionListIndexByServerId: {
+                'server-1': [
+                    {
+                        type: 'session',
+                        sessionId: 'session-normalized',
+                        serverId: 'server-1',
+                        serverName: null,
+                    },
+                ],
+            },
+        };
+
+        const { ActivityBadgeRuntime } = await import('./ActivityBadgeRuntime');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        tree = (await renderScreen(<ActivityBadgeRuntime />)).tree;
+
+        expect(applyExpoNativeBadgeState).toHaveBeenCalledWith({
+            count: 1,
             showNonNumericDot: false,
         });
 

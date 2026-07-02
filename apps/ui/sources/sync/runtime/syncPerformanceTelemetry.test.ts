@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     createSyncPerformanceTelemetry,
     emitSyncPerformanceSummaryToConsole,
+    installSyncPerformanceTelemetryGlobal,
+    registerSyncPerformanceTelemetryGlobalLifecycleHooks,
 } from './syncPerformanceTelemetry';
 
 describe('sync performance telemetry', () => {
@@ -114,6 +116,229 @@ describe('sync performance telemetry', () => {
 
         expect(flushed?.events).toHaveLength(1);
         expect(telemetry.snapshot().events).toEqual([]);
+    });
+
+    it('exposes a global scenario marker for profiling run context', () => {
+        const target = globalThis as unknown as {
+            __HAPPIER_SYNC_PERFORMANCE__?: {
+                markScenario?: (name: string, fields?: Readonly<Record<string, unknown>>) => void;
+            };
+        };
+        const previousGlobal = target.__HAPPIER_SYNC_PERFORMANCE__;
+        const telemetry = createSyncPerformanceTelemetry({
+            enabled: true,
+            now: () => 0,
+        });
+
+        installSyncPerformanceTelemetryGlobal(telemetry);
+        target.__HAPPIER_SYNC_PERFORMANCE__?.markScenario?.('Session List: 10 streams', {
+            concurrentStreamingSessions: 10,
+            screenSessionList: 1,
+            ignoredLabel: 'not numeric',
+        });
+
+        expect(telemetry.snapshot().events).toEqual([
+            expect.objectContaining({
+                name: 'sync.performance.scenario.session-list-10-streams',
+                count: 1,
+                fields: {
+                    concurrentStreamingSessions: 10,
+                    screenSessionList: 1,
+                },
+            }),
+        ]);
+        target.__HAPPIER_SYNC_PERFORMANCE__ = previousGlobal;
+    });
+
+    it('lets global collection controls flush and reset extension telemetry', () => {
+        const target = globalThis as unknown as {
+            __HAPPIER_SYNC_PERFORMANCE__?: {
+                snapshot: () => ReturnType<ReturnType<typeof createSyncPerformanceTelemetry>['snapshot']>;
+                flush: () => ReturnType<ReturnType<typeof createSyncPerformanceTelemetry>['flushSummary']>;
+                reset: () => void;
+            };
+        };
+        const previousGlobal = target.__HAPPIER_SYNC_PERFORMANCE__;
+        const telemetry = createSyncPerformanceTelemetry({
+            enabled: true,
+            now: () => 0,
+        });
+        let pendingExtensionEvents = 0;
+        let resetCount = 0;
+        const unregister = registerSyncPerformanceTelemetryGlobalLifecycleHooks({
+            telemetry,
+            beforeCollect: () => {
+                if (pendingExtensionEvents === 0) return;
+                telemetry.count('sync.extension.pendingWindow', { pendingExtensionEvents });
+                pendingExtensionEvents = 0;
+            },
+            reset: () => {
+                pendingExtensionEvents = 0;
+                resetCount += 1;
+            },
+        });
+
+        installSyncPerformanceTelemetryGlobal(telemetry);
+        pendingExtensionEvents = 2;
+
+        expect(target.__HAPPIER_SYNC_PERFORMANCE__?.snapshot().events).toContainEqual(expect.objectContaining({
+            name: 'sync.extension.pendingWindow',
+            fields: { pendingExtensionEvents: 2 },
+        }));
+
+        pendingExtensionEvents = 1;
+        expect(target.__HAPPIER_SYNC_PERFORMANCE__?.flush()?.events).toContainEqual(expect.objectContaining({
+            name: 'sync.extension.pendingWindow',
+            fields: { pendingExtensionEvents: 3 },
+            fieldStats: {
+                pendingExtensionEvents: {
+                    sum: 3,
+                    min: 1,
+                    max: 2,
+                    last: 1,
+                },
+            },
+        }));
+        expect(resetCount).toBe(1);
+        expect(telemetry.snapshot().events).toEqual([]);
+
+        pendingExtensionEvents = 3;
+        target.__HAPPIER_SYNC_PERFORMANCE__?.reset();
+        expect(resetCount).toBe(2);
+        expect(target.__HAPPIER_SYNC_PERFORMANCE__?.snapshot().events).toEqual([]);
+
+        unregister();
+        target.__HAPPIER_SYNC_PERFORMANCE__ = previousGlobal;
+    });
+
+    it('lets dev QA enable sync performance telemetry in an already-running runtime', () => {
+        const target = globalThis as unknown as {
+            __HAPPIER_SYNC_PERFORMANCE__?: {
+                configure?: (options: { enabled?: boolean; slowThresholdMs?: number; flushIntervalMs?: number }) => void;
+                snapshot: () => ReturnType<ReturnType<typeof createSyncPerformanceTelemetry>['snapshot']>;
+            };
+        };
+        const previousGlobal = target.__HAPPIER_SYNC_PERFORMANCE__;
+        vi.stubGlobal('__DEV__', true);
+        const telemetry = createSyncPerformanceTelemetry({
+            enabled: false,
+            now: () => 0,
+        });
+
+        installSyncPerformanceTelemetryGlobal(telemetry);
+        target.__HAPPIER_SYNC_PERFORMANCE__?.configure?.({
+            enabled: true,
+            flushIntervalMs: 120_000,
+            slowThresholdMs: 16,
+        });
+        telemetry.recordDuration('ui.sessions.transcript.openToStablePaint', 24, {
+            native: 1,
+        });
+
+        expect(target.__HAPPIER_SYNC_PERFORMANCE__?.snapshot().events).toEqual([
+            expect.objectContaining({
+                name: 'ui.sessions.transcript.openToStablePaint',
+                slowCount: 1,
+                fields: { native: 1 },
+            }),
+        ]);
+
+        target.__HAPPIER_SYNC_PERFORMANCE__ = previousGlobal;
+        vi.unstubAllGlobals();
+    });
+
+    it('does not expose runtime telemetry configuration outside dev', () => {
+        const target = globalThis as unknown as {
+            __HAPPIER_SYNC_PERFORMANCE__?: {
+                configure?: (options: { enabled?: boolean }) => void;
+                snapshot: () => ReturnType<ReturnType<typeof createSyncPerformanceTelemetry>['snapshot']>;
+            };
+        };
+        const previousGlobal = target.__HAPPIER_SYNC_PERFORMANCE__;
+        vi.stubGlobal('__DEV__', false);
+        const telemetry = createSyncPerformanceTelemetry({
+            enabled: false,
+            now: () => 0,
+        });
+
+        installSyncPerformanceTelemetryGlobal(telemetry);
+        expect(target.__HAPPIER_SYNC_PERFORMANCE__?.configure).toBeUndefined();
+
+        target.__HAPPIER_SYNC_PERFORMANCE__ = previousGlobal;
+        vi.unstubAllGlobals();
+    });
+
+    it('collects per-instance extension telemetry during nested collection', () => {
+        const outerTelemetry = createSyncPerformanceTelemetry({
+            enabled: true,
+            now: () => 0,
+        });
+        const innerTelemetry = createSyncPerformanceTelemetry({
+            enabled: true,
+            now: () => 0,
+        });
+        const nestedSummaries: Array<ReturnType<typeof innerTelemetry.snapshot>> = [];
+        const unregisterInner = registerSyncPerformanceTelemetryGlobalLifecycleHooks({
+            telemetry: innerTelemetry,
+            beforeCollect: () => {
+                innerTelemetry.count('sync.extension.innerPendingWindow', { collected: 1 });
+            },
+        });
+        const unregisterOuter = registerSyncPerformanceTelemetryGlobalLifecycleHooks({
+            telemetry: outerTelemetry,
+            beforeCollect: () => {
+                nestedSummaries.push(innerTelemetry.snapshot());
+            },
+        });
+
+        outerTelemetry.snapshot();
+
+        expect(nestedSummaries[0]?.events).toContainEqual(expect.objectContaining({
+            name: 'sync.extension.innerPendingWindow',
+            fields: { collected: 1 },
+        }));
+
+        unregisterOuter();
+        unregisterInner();
+    });
+
+    it('collects extension telemetry from direct snapshot and flush calls', () => {
+        const telemetry = createSyncPerformanceTelemetry({
+            enabled: true,
+            now: () => 0,
+        });
+        let pendingExtensionEvents = 0;
+        const unregister = registerSyncPerformanceTelemetryGlobalLifecycleHooks({
+            telemetry,
+            beforeCollect: () => {
+                if (pendingExtensionEvents === 0) return;
+                telemetry.count('sync.extension.directPendingWindow', { pendingExtensionEvents });
+                pendingExtensionEvents = 0;
+            },
+        });
+
+        pendingExtensionEvents = 2;
+        expect(telemetry.snapshot().events).toContainEqual(expect.objectContaining({
+            name: 'sync.extension.directPendingWindow',
+            fields: { pendingExtensionEvents: 2 },
+        }));
+
+        pendingExtensionEvents = 1;
+        expect(telemetry.flushSummary()?.events).toContainEqual(expect.objectContaining({
+            name: 'sync.extension.directPendingWindow',
+            fields: { pendingExtensionEvents: 3 },
+            fieldStats: {
+                pendingExtensionEvents: {
+                    sum: 3,
+                    min: 1,
+                    max: 2,
+                    last: 1,
+                },
+            },
+        }));
+        expect(telemetry.snapshot().events).toEqual([]);
+
+        unregister();
     });
 
     it('flushes a pending burst on a timer without requiring another event', () => {

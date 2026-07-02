@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { Session } from '../../domains/state/storageTypes';
+
 afterEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
@@ -67,6 +69,10 @@ function mockSessionsDomainBoundaries() {
         },
     }));
     vi.doMock('@/sync/domains/models/modelOptions', () => ({
+    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
+        options?.find?.((option: any) => option.value === effectiveModelId)
+            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
+            ?? null,
         isModelSelectableForSession: vi.fn(() => true),
     }));
     vi.doMock('@/agents/registry/registryCore', () => ({
@@ -152,7 +158,7 @@ describe('sessions domain: thinking grace', () => {
                 thinking: true,
                 thinkingAt: t0,
                 presence: 'online',
-            } as any,
+            } satisfies Session,
         ]);
 
         expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBeNull();
@@ -175,7 +181,7 @@ describe('sessions domain: thinking grace', () => {
                 thinking: false,
                 thinkingAt: t1,
                 presence: 'online',
-            } as any,
+            } satisfies Session,
         ]);
 
         const graceUntil = get().sessions.s1?.thinkingGraceUntil ?? null;
@@ -190,5 +196,136 @@ describe('sessions domain: thinking grace', () => {
         expireThinkingGrace?.();
 
         expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBeNull();
+    });
+
+    it('clears optimistic thinking and grace when a terminal primary turn projection arrives', async () => {
+        mockSessionsDomainBoundaries();
+
+        const scheduledTimeouts = new Map<number, () => void>();
+        let nextTimeoutId = 1;
+        let nowMs = Date.parse('2026-02-05T00:00:00.000Z');
+
+        vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+        vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback: Parameters<typeof setTimeout>[0]) => {
+            const timeoutId = nextTimeoutId++;
+            if (typeof callback === 'function') {
+                scheduledTimeouts.set(timeoutId, callback as () => void);
+            }
+            return timeoutId as unknown as ReturnType<typeof setTimeout>;
+        });
+        vi.spyOn(globalThis, 'clearTimeout').mockImplementation((timeoutId: Parameters<typeof clearTimeout>[0]) => {
+            scheduledTimeouts.delete(timeoutId as unknown as number);
+        });
+
+        const { createReducer } = await import('../../reducer/reducer');
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain, createReducer);
+
+        const t0 = nowMs;
+        domain.applySessions([
+            {
+                id: 's1',
+                seq: 0,
+                createdAt: t0,
+                updatedAt: t0,
+                active: true,
+                activeAt: t0,
+                metadata: null,
+                metadataVersion: 0,
+                agentState: null,
+                agentStateVersion: 1,
+                latestTurnStatus: 'in_progress',
+                thinking: true,
+                thinkingAt: t0,
+                presence: 'online',
+            } satisfies Session,
+        ]);
+        domain.markSessionOptimisticThinking('s1');
+
+        expect(get().sessions.s1?.optimisticThinkingAt ?? null).not.toBeNull();
+
+        nowMs += 250;
+        domain.applySessions([
+            {
+                id: 's1',
+                seq: 0,
+                createdAt: t0,
+                updatedAt: nowMs,
+                active: true,
+                activeAt: nowMs,
+                metadata: null,
+                metadataVersion: 0,
+                agentState: null,
+                agentStateVersion: 1,
+                latestTurnStatus: 'completed',
+                thinking: false,
+                thinkingAt: nowMs,
+                presence: 'online',
+            } satisfies Session,
+        ]);
+
+        expect(get().sessions.s1?.latestTurnStatus).toBe('completed');
+        expect(get().sessions.s1?.thinking).toBe(false);
+        expect(get().sessions.s1?.optimisticThinkingAt ?? null).toBeNull();
+        expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBeNull();
+        expect(scheduledTimeouts.size).toBe(0);
+    });
+
+    it('does not keep legacy thinking or start grace after a terminal turn projection', async () => {
+        mockSessionsDomainBoundaries();
+
+        let nowMs = Date.parse('2026-02-05T00:00:00.000Z');
+        vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+        vi.spyOn(globalThis, 'setTimeout');
+
+        const { createReducer } = await import('../../reducer/reducer');
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain, createReducer);
+
+        domain.applySessions([
+            {
+                id: 's1',
+                seq: 0,
+                createdAt: nowMs,
+                updatedAt: nowMs,
+                active: true,
+                activeAt: nowMs,
+                metadata: null,
+                metadataVersion: 0,
+                agentState: null,
+                agentStateVersion: 1,
+                thinking: true,
+                thinkingAt: nowMs,
+                presence: 'online',
+            } satisfies Session,
+        ]);
+
+        nowMs += 250;
+        domain.applySessions([
+            {
+                id: 's1',
+                seq: 0,
+                createdAt: nowMs - 250,
+                updatedAt: nowMs,
+                active: true,
+                activeAt: nowMs,
+                metadata: null,
+                metadataVersion: 0,
+                agentState: null,
+                agentStateVersion: 1,
+                thinking: true,
+                thinkingAt: nowMs,
+                latestTurnStatus: 'completed',
+                latestTurnStatusObservedAt: nowMs - 10,
+                presence: 'online',
+            } satisfies Session,
+        ]);
+
+        expect(get().sessions.s1?.thinking).toBe(false);
+        expect(get().sessions.s1?.thinkingAt).toBe(nowMs - 10);
+        expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBeNull();
+        expect(get().sessionListRenderables.s1?.thinking).toBe(false);
+        expect(get().sessionListRenderables.s1?.thinkingGraceUntil ?? null).toBeNull();
+        expect(globalThis.setTimeout).toHaveBeenCalledTimes(0);
     });
 });

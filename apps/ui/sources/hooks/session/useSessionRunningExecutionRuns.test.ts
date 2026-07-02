@@ -116,6 +116,28 @@ describe('useSessionRunningExecutionRuns', () => {
         expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps the empty running-runs reference stable after an idle poll', async () => {
+        sessionExecutionRunListSpy.mockResolvedValueOnce({ runs: [] });
+
+        let renderCount = 0;
+        const hook = await renderHook(
+            ({ sessionId, enabled }: Readonly<{ sessionId: string; enabled: boolean }>) => {
+                renderCount += 1;
+                return useSessionRunningExecutionRuns({ sessionId, enabled });
+            },
+            {
+                initialProps: { sessionId: 's1', enabled: true },
+            },
+        );
+        const initial = hook.getCurrent();
+
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(sessionExecutionRunListSpy).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent()).toBe(initial);
+        expect(renderCount).toBe(1);
+    });
+
     it('clears running runs when disabled', async () => {
         sessionExecutionRunListSpy.mockResolvedValueOnce({ runs: [{ runId: 'run_1', status: 'running' }] });
 

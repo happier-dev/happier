@@ -102,6 +102,32 @@ describe('apiConnectedServicesV3', () => {
     expect((init.headers as Headers).get('Content-Type')).toBeNull();
   });
 
+  it('requests auth-group reference cleanup when disconnecting with the explicit cleanup flag', async () => {
+    mockServerConfig();
+    const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const { deleteConnectedServiceCredentialV3 } = await import('./apiConnectedServicesV3');
+    await deleteConnectedServiceCredentialV3(credentials, {
+      serviceId: 'anthropic',
+      profileId: 'work',
+      cleanupGroupReferences: true,
+    });
+
+    const init = resolveNonHealthCall(
+      fetchMock,
+      'https://api.example.test/v3/connect/anthropic/profiles/work/credential?cleanupGroupReferences=true',
+    );
+    expect(init.method).toBe('DELETE');
+    expect((init.headers as Headers).get('Content-Type')).toBeNull();
+  });
+
   it('reads a plaintext credential record from the v3 endpoint', async () => {
     mockServerConfig();
     const record = {

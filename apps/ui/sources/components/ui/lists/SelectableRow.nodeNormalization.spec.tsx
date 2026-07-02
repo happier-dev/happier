@@ -54,6 +54,11 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('SelectableRow node normalization', () => {
+  function flattenStyle(style: unknown): Array<Record<string, unknown>> {
+    if (!Array.isArray(style)) return style && typeof style === 'object' ? [style as Record<string, unknown>] : [];
+    return style.flatMap(flattenStyle);
+  }
+
   it('wraps primitive left and right content before placing it inside view slots', async () => {
     const { SelectableRow } = await import('./SelectableRow');
 
@@ -95,5 +100,24 @@ describe('SelectableRow node normalization', () => {
       badDotCount: 0,
       badParents: [],
     });
+  });
+
+  it('title-aligns left and right accessories when a subtitle is present', async () => {
+    const { SelectableRow } = await import('./SelectableRow');
+
+    const screen = await renderScreen(<SelectableRow
+          title="Row"
+          subtitle="Additional context"
+          left={<>{'.'}</>}
+          right={<>{'.'}</>}
+        />);
+
+    const alignedAccessorySlots = screen.findAllByType('View').filter((node: any) => (
+        flattenStyle(node.props?.style).some((style) => (
+            style.alignSelf === 'flex-start' && style.marginTop === 2
+        ))
+    ));
+
+    expect(alignedAccessorySlots).toHaveLength(2);
   });
 });

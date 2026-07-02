@@ -9,15 +9,31 @@ export function resolveDirectoryFavoriteComparisonKey(
     return normalizeFileSystemPath(resolvedPath) ?? resolvedPath;
 }
 
+export function normalizeDirectoryFavoritePaths(
+    storedFavorites: ReadonlyArray<unknown> | null | undefined,
+    homeDir: string | null | undefined,
+): ReadonlyArray<string> {
+    const sanitized = Array.isArray(storedFavorites)
+        ? storedFavorites.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+        : [];
+    const seenKeys = new Set<string>();
+    const normalized: string[] = [];
+    for (const entry of sanitized) {
+        const key = resolveDirectoryFavoriteComparisonKey(entry, homeDir);
+        if (seenKeys.has(key)) continue;
+        seenKeys.add(key);
+        normalized.push(entry);
+    }
+    return normalized;
+}
+
 export function toggleHomeAwareDirectoryFavorite(
     storedFavorites: ReadonlyArray<unknown> | null | undefined,
     target: string,
     homeDir: string | null | undefined,
 ): ReadonlyArray<string> {
     const targetKey = resolveDirectoryFavoriteComparisonKey(target, homeDir);
-    const sanitized = Array.isArray(storedFavorites)
-        ? storedFavorites.filter((entry): entry is string => typeof entry === 'string')
-        : [];
+    const sanitized = normalizeDirectoryFavoritePaths(storedFavorites, homeDir);
 
     const hasFavorite = sanitized.some(
         (entry) => resolveDirectoryFavoriteComparisonKey(entry, homeDir) === targetKey,

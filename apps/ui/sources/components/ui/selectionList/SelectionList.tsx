@@ -1,5 +1,12 @@
 import * as React from 'react';
-import { Platform, TextInput as RNTextInput, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+    Platform,
+    type LayoutChangeEvent,
+    TextInput as RNTextInput,
+    View,
+    type StyleProp,
+    type ViewStyle,
+} from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { SlideTransitionSwitch } from '@/components/ui/motion/SlideTransitionSwitch';
@@ -10,6 +17,7 @@ import { SelectionListAnimatedHeight } from './SelectionListAnimatedHeight';
 import { SelectionListBody } from './SelectionListBody';
 import { SelectionListFooter } from './SelectionListFooter';
 import { createSelectionListKeyPressHandler } from './SelectionListKeyboardInput';
+import { SelectionListMeasureHost } from './SelectionListMeasureHost';
 import { synthesizeSelectionListRenderPlan } from './SelectionListRenderPlan';
 import { activateSelectionListRow } from './SelectionListRowActivation';
 import { SelectionListSearchHeader } from './SelectionListSearchHeader';
@@ -24,6 +32,7 @@ import type {
 import { useSelectionListAutocomplete } from './useSelectionListAutocomplete';
 import { useSelectionListDynamicSections } from './useSelectionListDynamicSections';
 import { useSelectionListKeyboardNav } from './useSelectionListKeyboardNav';
+import { useSelectionListMeasuredPopoverHeight } from './useSelectionListMeasuredPopoverHeight';
 import { useSelectionListStepStack } from './useSelectionListStepStack';
 import { useHardwareKeyboard } from './useHardwareKeyboard';
 
@@ -44,9 +53,23 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         minHeight: 0,
     },
+    contentSized: {
+        flexDirection: 'column',
+        flexGrow: 0,
+        flexShrink: 1,
+        flexBasis: 'auto',
+        minHeight: 0,
+    },
+    contentSizedAnimatedHeight: {
+        flex: 0,
+        flexGrow: 0,
+        flexShrink: 1,
+        flexBasis: 'auto',
+    },
 }));
 
 const IS_WEB = Platform.OS === 'web';
+const STABILIZED_HEIGHT_SHRINK_DELAY_MS = 180;
 
 /**
  * SelectionList — top-level orchestrator with three-zone composition:
@@ -397,16 +420,119 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     }, [currentStep.footerHints, backHintAvailable]);
 
     const resolvedTestId = props.testID ?? 'selection-list';
-    const fixedHeight = props.heightBehavior === 'fixedToMaxHeight'
+
+    // RV-1 (routing-2): the search header is omitted entirely when the
+    // consumer's `rootStep` declares no `inputPlaceholder` (the documented
+    // "omit to disable input" contract per `_types.ts`) AND no `inputBehavior`
+    // adapter (path / value-mode adapters own backspace/walk-up semantics on
+    // the input row) AND `inputMode !== 'value'` (the input IS the candidate
+    // value, e.g. the path picker's value-mode where Enter commits the raw
+    // input). When omitted the SelectionList degrades to a plain section list
+    // — used by simple-mode pickers (session mode, transcript storage,
+    // recipient, delivery, Windows launch mode, etc.).
+    //
+    // Gate on `rootStep.inputPlaceholder` (consumer-level intent) rather than
+    // `currentStep.inputPlaceholder` so the header stays stable across step
+    // pushes — a sub-step that omits the placeholder must NOT cause the
+    // header to vanish mid-flow.
+    const showSearchHeader =
+        props.rootStep.inputPlaceholder !== undefined
+        || inputBehavior !== undefined
+        || inputMode === 'value';
+
+    const stabilizeHeight = props.heightBehavior === 'stabilizedContentHeight';
+    const stabilizedHeightReleaseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lastStabilizedHeightRef = React.useRef<number>(0);
+    const [stabilizedMinHeight, setStabilizedMinHeight] = React.useState<number | undefined>(undefined);
+    const clearStabilizedHeightTimer = React.useCallback(() => {
+        if (stabilizedHeightReleaseTimerRef.current === null) return;
+        clearTimeout(stabilizedHeightReleaseTimerRef.current);
+        stabilizedHeightReleaseTimerRef.current = null;
+    }, []);
+    const releaseStabilizedHeight = React.useCallback(() => {
+        stabilizedHeightReleaseTimerRef.current = null;
+        lastStabilizedHeightRef.current = 0;
+        setStabilizedMinHeight(undefined);
+    }, []);
+    const scheduleStabilizedHeightRelease = React.useCallback(() => {
+        clearStabilizedHeightTimer();
+        stabilizedHeightReleaseTimerRef.current = setTimeout(
+            releaseStabilizedHeight,
+            STABILIZED_HEIGHT_SHRINK_DELAY_MS,
+        );
+    }, [clearStabilizedHeightTimer, releaseStabilizedHeight]);
+    const handleContainerLayout = React.useCallback((event: LayoutChangeEvent) => {
+        if (!stabilizeHeight) return;
+        const measured = event.nativeEvent.layout.height;
+        if (!Number.isFinite(measured) || measured <= 0) return;
+        const capped = typeof props.maxHeight === 'number' && Number.isFinite(props.maxHeight)
+            ? Math.min(measured, props.maxHeight)
+            : measured;
+        const previous = lastStabilizedHeightRef.current;
+        if (previous <= 0 || capped > previous) {
+            clearStabilizedHeightTimer();
+            lastStabilizedHeightRef.current = capped;
+            setStabilizedMinHeight(capped);
+            return;
+        }
+        if (capped < previous) {
+            scheduleStabilizedHeightRelease();
+        }
+    }, [clearStabilizedHeightTimer, props.maxHeight, scheduleStabilizedHeightRelease, stabilizeHeight]);
+    const heightStabilityKey = React.useMemo(() => (
+        renderPlan
+            .map((sectionPlan) => [
+                sectionPlan.id,
+                sectionPlan.dynamicState ?? 'static',
+                sectionPlan.options.length,
+            ].join(':'))
+            .join('|')
+    ), [renderPlan]);
+    React.useEffect(() => {
+        if (!stabilizeHeight) {
+            clearStabilizedHeightTimer();
+            releaseStabilizedHeight();
+            return;
+        }
+        if (lastStabilizedHeightRef.current > 0) {
+            scheduleStabilizedHeightRelease();
+        }
+    }, [
+        heightStabilityKey,
+        inputValue,
+        clearStabilizedHeightTimer,
+        releaseStabilizedHeight,
+        scheduleStabilizedHeightRelease,
+        stabilizeHeight,
+    ]);
+    React.useEffect(() => () => {
+        clearStabilizedHeightTimer();
+    }, [clearStabilizedHeightTimer]);
+    const measureNativeHeight = props.heightBehavior === 'measuredToMaxHeight';
+    const measuredPopoverHeight = useSelectionListMeasuredPopoverHeight({
+        enabled: measureNativeHeight,
+        maxHeight: props.maxHeight,
+        headerExpected: showSearchHeader,
+        footerExpected: keyboardHintsEnabled,
+        shrinkDelayMs: STABILIZED_HEIGHT_SHRINK_DELAY_MS,
+    });
+    const fixedMaxHeight = props.heightBehavior === 'fixedToMaxHeight'
         && typeof props.maxHeight === 'number'
         && Number.isFinite(props.maxHeight)
         && props.maxHeight > 0
         ? props.maxHeight
         : undefined;
+    const fixedHeight = fixedMaxHeight ?? measuredPopoverHeight.height;
+    const useContentSizedFrame = fixedHeight === undefined;
     const containerStyle: StyleProp<ViewStyle> = [
         styles.container,
         props.maxHeight !== undefined ? { maxHeight: props.maxHeight } : null,
         fixedHeight !== undefined ? { height: fixedHeight } : null,
+        measuredPopoverHeight.hidden ? { opacity: 0 } : null,
+        measureNativeHeight && !measuredPopoverHeight.hidden ? { opacity: 1 } : null,
+        fixedHeight === undefined && stabilizedMinHeight !== undefined
+            ? { minHeight: stabilizedMinHeight }
+            : null,
     ];
 
     // Pick a direction that maps step-stack changes to SlideTransitionSwitch.
@@ -433,6 +559,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             listboxId={listboxId}
             onSelect={props.onSelect}
             onPushStep={handlePushStep}
+            showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
         />
     );
 
@@ -453,30 +580,11 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             listboxId={listboxId}
             onSelect={props.onSelect}
             onPushStep={handlePushStep}
+            showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
         />
     );
 
     const disableTransitions = props.disableTransitions === true || detectedReducedMotion;
-
-    // RV-1 (routing-2): the search header is omitted entirely when the
-    // consumer's `rootStep` declares no `inputPlaceholder` (the documented
-    // "omit to disable input" contract per `_types.ts`) AND no `inputBehavior`
-    // adapter (path / value-mode adapters own backspace/walk-up semantics on
-    // the input row) AND `inputMode !== 'value'` (the input IS the candidate
-    // value, e.g. the path picker's value-mode where Enter commits the raw
-    // input). When omitted the SelectionList degrades to a plain section list
-    // — used by simple-mode pickers (session mode, transcript storage,
-    // recipient, delivery, Windows launch mode) that have a single small
-    // section with no need for filtering.
-    //
-    // Gate on `rootStep.inputPlaceholder` (consumer-level intent) rather than
-    // `currentStep.inputPlaceholder` so the header stays stable across step
-    // pushes — a sub-step that omits the placeholder must NOT cause the
-    // header to vanish mid-flow.
-    const showSearchHeader =
-        props.rootStep.inputPlaceholder !== undefined
-        || inputBehavior !== undefined
-        || inputMode === 'value';
 
     React.useEffect(() => {
         if (!IS_WEB || props.autoFocusInputOnWeb !== true || !showSearchHeader) return;
@@ -502,31 +610,50 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         <View
             testID={resolvedTestId}
             style={containerStyle}
+            pointerEvents={measuredPopoverHeight.hidden ? 'none' : undefined}
+            onLayout={stabilizeHeight ? handleContainerLayout : undefined}
             {...headerlessKeyHandler}
         >
+            {measureNativeHeight ? (
+                <SelectionListMeasureHost
+                    rootTestID={resolvedTestId}
+                    onMeasureLayout={measuredPopoverHeight.onBodyLayout}
+                    measureMaxHeight={props.maxHeight}
+                    measureChildren={measureBody}
+                >
+                    {body}
+                </SelectionListMeasureHost>
+            ) : null}
             {showSearchHeader ? (
-                <SelectionListSearchHeader
-                    testID={selectionListTestId(resolvedTestId, 'header')}
-                    value={inputValue}
-                    onChangeText={setInputValue}
-                    placeholder={currentStep.inputPlaceholder ?? ''}
-                    canPop={stack.canPop}
-                    backLabel={currentStep.backLabel ?? props.rootStep.title}
-                    onPopStep={stack.popStep}
-                    onKeyPress={handleKeyPress}
-                    ghostSuffix={autocomplete.ghostSuffix}
-                    inputPrefix={props.inputPrefix}
-                    inputSuffix={props.inputSuffix}
-                    inputRef={searchInputRef}
-                    onCaretAtEndChange={setCaretAtEnd}
-                    onIsComposingChange={setIsComposing}
-                    listboxId={listboxId}
-                    activeDescendantId={activeDescendantId}
-                />
+                <View
+                    testID={selectionListTestId(resolvedTestId, 'headerFrame')}
+                    collapsable={false}
+                    onLayout={measureNativeHeight ? measuredPopoverHeight.onHeaderLayout : undefined}
+                >
+                    <SelectionListSearchHeader
+                        testID={selectionListTestId(resolvedTestId, 'header')}
+                        value={inputValue}
+                        onChangeText={setInputValue}
+                        placeholder={currentStep.inputPlaceholder ?? ''}
+                        canPop={stack.canPop}
+                        backLabel={currentStep.backLabel ?? props.rootStep.title}
+                        onPopStep={stack.popStep}
+                        onKeyPress={handleKeyPress}
+                        ghostSuffix={autocomplete.ghostSuffix}
+                        inputValueEllipsizeMode={props.inputValueEllipsizeMode}
+                        inputPrefix={props.inputPrefix}
+                        inputSuffix={props.inputSuffix}
+                        inputRef={searchInputRef}
+                        onCaretAtEndChange={setCaretAtEnd}
+                        onIsComposingChange={setIsComposing}
+                        listboxId={listboxId}
+                        activeDescendantId={activeDescendantId}
+                    />
+                </View>
             ) : null}
             <View
                 testID={selectionListTestId(resolvedTestId, 'content')}
-                style={styles.content}
+                style={useContentSizedFrame ? styles.contentSized : styles.content}
             >
                 {disableTransitions ? (
                     body
@@ -543,6 +670,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                     <SelectionListAnimatedHeight
                         stepKey={currentStep.id}
                         measureChildren={measureBody}
+                        style={useContentSizedFrame ? styles.contentSizedAnimatedHeight : undefined}
                         testID={selectionListTestId(resolvedTestId, 'animatedHeight')}
                     >
                         <SlideTransitionSwitch
@@ -558,11 +686,17 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                 )}
             </View>
             {keyboardHintsEnabled ? (
-                <SelectionListFooter
-                    testID={selectionListTestId(resolvedTestId, 'footer')}
-                    hints={footerHints}
-                    hardwareKeyboardAvailable={keyboardHintsEnabled}
-                />
+                <View
+                    testID={selectionListTestId(resolvedTestId, 'footerFrame')}
+                    collapsable={false}
+                    onLayout={measureNativeHeight ? measuredPopoverHeight.onFooterLayout : undefined}
+                >
+                    <SelectionListFooter
+                        testID={selectionListTestId(resolvedTestId, 'footer')}
+                        hints={footerHints}
+                        hardwareKeyboardAvailable={keyboardHintsEnabled}
+                    />
+                </View>
             ) : null}
         </View>
     );

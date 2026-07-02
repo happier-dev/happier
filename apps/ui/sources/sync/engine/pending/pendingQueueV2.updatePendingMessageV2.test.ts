@@ -75,6 +75,53 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
         expect(decrypted?.meta?.displayText).toBe('Old display');
     });
 
+    it('marks encrypted pending update payloads as user messages', async () => {
+        const sessionId = 's_test_update_message_role';
+        const encryption = await createPendingQueueEncryption({ sessionId });
+
+        storage.setState(
+            {
+                ...storage.getState(),
+                sessions: {
+                    ...storage.getState().sessions,
+                    [sessionId]: buildSession({ sessionId }) as Session,
+                },
+            },
+            true,
+        );
+
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: 'p1',
+            localId: 'p1',
+            createdAt: 1,
+            updatedAt: 1,
+            text: 'old',
+            rawRecord: {
+                role: 'user',
+                content: { type: 'text', text: 'old' },
+                meta: {},
+            },
+        });
+
+        const bodies: unknown[] = [];
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId: 'p1',
+            text: 'new text',
+            encryption,
+            request: async (_path, init) => {
+                bodies.push(JSON.parse(String(init?.body ?? 'null')));
+                return new Response('{}', { status: 200 });
+            },
+        });
+
+        expect(bodies).toHaveLength(1);
+        expect(bodies[0]).toEqual(expect.objectContaining({
+            ciphertext: expect.any(String),
+            messageRole: 'user',
+        }));
+    });
+
     it('rebuilds rawRecord when existing.rawRecord is not a RawRecord (decrypt-failed placeholder)', async () => {
         const sessionId = 's_test_decrypt_failed_update';
         const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 4 });
@@ -169,10 +216,9 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             },
         });
 
-        let capturedContent: any = null;
+        let capturedBody: unknown = null;
         const request = async (_path: string, init?: RequestInit) => {
-            const parsed = JSON.parse(String(init?.body ?? 'null'));
-            capturedContent = parsed?.content ?? null;
+            capturedBody = JSON.parse(String(init?.body ?? 'null'));
             return new Response('{}', { status: 200 });
         };
 
@@ -184,8 +230,12 @@ describe('pendingQueueV2 updatePendingMessageV2', () => {
             request,
         });
 
-        expect(capturedContent).toEqual(expect.objectContaining({ t: 'plain', v: expect.any(Object) }));
-        expect(capturedContent?.v?.content?.text).toBe('new text');
+        expect(capturedBody).toEqual(expect.objectContaining({
+            content: expect.objectContaining({ t: 'plain', v: expect.any(Object) }),
+            messageRole: 'user',
+        }));
+        const capturedRecord = capturedBody as { content?: { v?: { content?: { text?: unknown } } } } | null;
+        expect(capturedRecord?.content?.v?.content?.text).toBe('new text');
     });
 
     it('does not inject appendSystemPrompt even when execution-run guidance is enabled in settings', async () => {

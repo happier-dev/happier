@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { SessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 
 import type { SessionMobileSurface } from './sessionCockpitState';
 import { SessionCockpitTabNavigator } from './SessionCockpitTabNavigator';
@@ -16,6 +17,7 @@ type SessionCockpitShellProps = Readonly<{
     initialAttachmentDrafts?: readonly AttachmentDraft[] | null;
     terminalTabAvailable?: boolean;
     routeServerId?: string | null;
+    routeHydrationState?: SessionRouteHydrationState | null;
 }>;
 
 export const SessionCockpitShell = React.memo((props: SessionCockpitShellProps) => (
@@ -29,5 +31,6 @@ export const SessionCockpitShell = React.memo((props: SessionCockpitShellProps) 
         initialAttachmentDrafts={props.initialAttachmentDrafts}
         terminalTabAvailable={props.terminalTabAvailable}
         routeServerId={props.routeServerId}
+        routeHydrationState={props.routeHydrationState}
     />
 ));

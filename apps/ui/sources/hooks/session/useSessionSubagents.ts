@@ -18,23 +18,34 @@ function normalizeSessionId(sessionId: string): string {
     return String(sessionId ?? '').trim();
 }
 
+const sessionSubagentToolMessageSignatureCache = new WeakMap<Message, string>();
+
+function buildSessionSubagentToolMessageSignature(message: Message): string {
+    const cached = sessionSubagentToolMessageSignatureCache.get(message);
+    if (cached) return cached;
+
+    const tool = message.kind === 'tool-call' ? message.tool : null;
+    const signature = JSON.stringify({
+        id: message.id,
+        createdAt: message.createdAt ?? null,
+        toolId: tool?.id ?? null,
+        toolName: tool?.name ?? null,
+        toolState: tool?.state ?? null,
+        toolCreatedAt: tool?.createdAt ?? null,
+        toolStartedAt: tool?.startedAt ?? null,
+        toolCompletedAt: tool?.completedAt ?? null,
+        input: tool?.input ?? null,
+        result: tool?.result ?? null,
+    }) ?? 'null';
+    sessionSubagentToolMessageSignatureCache.set(message, signature);
+    return signature;
+}
+
 function buildSessionSubagentMessagesSignature(messages: readonly Message[]): string {
     const parts: string[] = [];
     for (const message of messages) {
         if (!message || message.kind !== 'tool-call') continue;
-        const tool = message.tool;
-        parts.push(JSON.stringify({
-            id: message.id,
-            createdAt: message.createdAt ?? null,
-            toolId: tool?.id ?? null,
-            toolName: tool?.name ?? null,
-            toolState: tool?.state ?? null,
-            toolCreatedAt: tool?.createdAt ?? null,
-            toolStartedAt: tool?.startedAt ?? null,
-            toolCompletedAt: tool?.completedAt ?? null,
-            input: tool?.input ?? null,
-            result: tool?.result ?? null,
-        }));
+        parts.push(buildSessionSubagentToolMessageSignature(message));
     }
     return parts.join('|');
 }

@@ -1,9 +1,12 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { deriveSessionAttentionState, deriveSessionAttentionFlags } from '@/sync/domains/session/attention/sessionAttention';
+import { deriveSessionRuntimePresentationState } from '@/sync/domains/session/attention/runtimePresentation';
+import { readStoredSessionMessagesFromStateLike } from '@/sync/domains/messages/readStoredSessionMessages';
 import { listPendingPermissionRequests, listPendingUserActionRequests, type PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListAttentionRow } from '@/sync/domains/state/storage';
+import type { StorageState } from '@/sync/store/types';
 
 export type InboxSessionAttentionEntry = Readonly<{
     session: Session;
@@ -30,11 +33,15 @@ type BuildInboxSessionStateInput =
     | Readonly<{
         sessions: readonly Session[];
         sessionRows?: readonly InboxUnreadSessionInput[];
+        sessionMessagesById?: StorageState['sessionMessages'];
+        nowMs?: number;
     }>;
 
 function normalizeBuildInboxSessionStateInput(input: BuildInboxSessionStateInput): Readonly<{
     sessions: readonly Session[];
     sessionRows: readonly InboxUnreadSessionRow[];
+    sessionMessagesById?: StorageState['sessionMessages'];
+    nowMs: number;
 }> {
     if ('sessions' in input) {
         return {
@@ -42,14 +49,32 @@ function normalizeBuildInboxSessionStateInput(input: BuildInboxSessionStateInput
             sessionRows: normalizeInboxUnreadSessionRows(
                 input.sessionRows && input.sessionRows.length > 0 ? input.sessionRows : input.sessions,
             ),
+            sessionMessagesById: input.sessionMessagesById,
+            nowMs: typeof input.nowMs === 'number' && Number.isFinite(input.nowMs) ? input.nowMs : Date.now(),
         };
     }
-    return { sessions: input, sessionRows: normalizeInboxUnreadSessionRows(input) };
+    return { sessions: input, sessionRows: normalizeInboxUnreadSessionRows(input), nowMs: Date.now() };
 }
 
 function normalizeOptionalString(value: string | null | undefined): string | null {
     const normalized = typeof value === 'string' ? value.trim() : '';
     return normalized ? normalized : null;
+}
+
+function buildInboxSessionScopeKey(serverId: string | null | undefined, sessionId: string): string {
+    return `${normalizeOptionalString(serverId) ?? 'local'}:${sessionId}`;
+}
+
+function getSessionServerId(session: InboxUnreadSession): string | null {
+    return normalizeOptionalString('serverId' in session ? session.serverId as string | null | undefined : null);
+}
+
+function getInboxRowScopeKey(row: InboxUnreadSessionRow): string {
+    return buildInboxSessionScopeKey(row.serverId, row.session.id);
+}
+
+function getSessionScopeKey(session: InboxUnreadSession): string {
+    return buildInboxSessionScopeKey(getSessionServerId(session), session.id);
 }
 
 function isSessionListAttentionRow(input: InboxUnreadSessionInput): input is SessionListAttentionRow {
@@ -98,20 +123,89 @@ function hasUnreadSessionAttention(session: InboxUnreadSession): boolean {
     }).hasUnread;
 }
 
+function readMessagesForInboxSession(
+    sessionMessagesById: StorageState['sessionMessages'] | undefined,
+    sessionId: string,
+) {
+    return readStoredSessionMessagesFromStateLike(sessionMessagesById?.[sessionId]);
+}
+
+function latestPendingRequestObservedAt(requests: readonly PendingPermissionRequest[]): number | null {
+    let latest: number | null = null;
+    for (const request of requests) {
+        const createdAt = request.createdAt;
+        if (typeof createdAt !== 'number' || !Number.isFinite(createdAt) || createdAt <= 0) continue;
+        latest = latest === null ? createdAt : Math.max(latest, createdAt);
+    }
+    return latest;
+}
+
+function hasFreshPendingInboxAttention(params: Readonly<{
+    session: Session;
+    pendingPermissions: readonly PendingPermissionRequest[];
+    pendingUserActions: readonly PendingPermissionRequest[];
+    nowMs: number;
+}>): boolean {
+    if (params.pendingPermissions.length === 0 && params.pendingUserActions.length === 0) return false;
+    const runtimePresentation = deriveSessionRuntimePresentationState({
+        active: params.session.active,
+        activeAt: params.session.activeAt,
+        presence: params.session.presence,
+        thinking: params.session.thinking,
+        thinkingAt: params.session.thinkingAt,
+        latestTurnStatus: params.session.latestTurnStatus ?? null,
+        latestTurnStatusObservedAt: params.session.latestTurnStatusObservedAt ?? null,
+        meaningfulActivityAt: params.session.meaningfulActivityAt ?? null,
+        lastRuntimeIssue: params.session.lastRuntimeIssue ?? null,
+        hasPendingPermissionRequests: params.pendingPermissions.length > 0,
+        hasPendingUserActionRequests: params.pendingUserActions.length > 0,
+        pendingRequestObservedAt: latestPendingRequestObservedAt([
+            ...params.pendingPermissions,
+            ...params.pendingUserActions,
+        ]),
+        nowMs: params.nowMs,
+    });
+    return runtimePresentation.freshPermissionRequired || runtimePresentation.freshActionRequired;
+}
+
+function resolveInboxRowSession(
+    row: InboxUnreadSessionRow,
+    sessionsById: ReadonlyMap<string, Session>,
+): InboxUnreadSession {
+    const canonicalSession = sessionsById.get(row.session.id);
+    if (!canonicalSession) return row.session;
+
+    const rowServerId = normalizeOptionalString(row.serverId);
+    const canonicalServerId = getSessionServerId(canonicalSession);
+    if (rowServerId !== canonicalServerId) return row.session;
+
+    return canonicalSession;
+}
+
 export function buildInboxSessionState(input: BuildInboxSessionStateInput): InboxSessionState {
-    const { sessions, sessionRows } = normalizeBuildInboxSessionStateInput(input);
+    const {
+        sessions,
+        sessionRows,
+        sessionMessagesById,
+        nowMs,
+    } = normalizeBuildInboxSessionStateInput(input);
     const sessionsById = new Map(sessions.map((session) => [session.id, session]));
     const sessionsNeedingAttention: InboxSessionAttentionEntry[] = [];
-    const attentionSessionIds = new Set<string>();
+    const attentionSessionKeys = new Set<string>();
 
     for (const session of sessions) {
         if (!isUserFacingSession(session)) continue;
-        if (session.presence !== 'online') continue;
-        const pendingPermissions = listPendingPermissionRequests(session);
-        const pendingUserActions = listPendingUserActionRequests(session);
-        if (pendingPermissions.length === 0 && pendingUserActions.length === 0) continue;
+        const messages = readMessagesForInboxSession(sessionMessagesById, session.id);
+        const pendingPermissions = listPendingPermissionRequests(session, messages);
+        const pendingUserActions = listPendingUserActionRequests(session, messages);
+        if (!hasFreshPendingInboxAttention({
+            session,
+            pendingPermissions,
+            pendingUserActions,
+            nowMs,
+        })) continue;
 
-        attentionSessionIds.add(session.id);
+        attentionSessionKeys.add(getSessionScopeKey(session));
         sessionsNeedingAttention.push({
             session,
             pendingPermissions,
@@ -120,35 +214,36 @@ export function buildInboxSessionState(input: BuildInboxSessionStateInput): Inbo
     }
 
     const unreadCandidates: InboxUnreadSessionRow[] = [];
-    const candidateSessionIds = new Set<string>();
+    const candidateSessionKeys = new Set<string>();
     for (const row of sessionRows) {
-        const sessionId = row.session.id;
-        if (candidateSessionIds.has(sessionId)) continue;
-        candidateSessionIds.add(sessionId);
+        const key = getInboxRowScopeKey(row);
+        if (candidateSessionKeys.has(key)) continue;
+        candidateSessionKeys.add(key);
         unreadCandidates.push({
             ...row,
-            session: sessionsById.get(sessionId) ?? row.session,
+            session: resolveInboxRowSession(row, sessionsById),
         });
     }
     for (const session of sessions) {
-        if (candidateSessionIds.has(session.id)) continue;
-        candidateSessionIds.add(session.id);
+        const key = getSessionScopeKey(session);
+        if (candidateSessionKeys.has(key)) continue;
+        candidateSessionKeys.add(key);
         unreadCandidates.push({
             session,
-            serverId: normalizeOptionalString('serverId' in session ? session.serverId as string | null | undefined : null),
+            serverId: getSessionServerId(session),
             serverName: null,
         });
     }
 
     const unreadSessions: InboxUnreadSessionRow[] = [];
-    const unreadSessionIds = new Set<string>();
+    const unreadSessionKeys = new Set<string>();
     for (const row of unreadCandidates) {
-        const sessionId = row.session.id;
+        const key = getInboxRowScopeKey(row);
         if (!isUserFacingSession(row.session)) continue;
-        if (attentionSessionIds.has(sessionId)) continue;
-        if (unreadSessionIds.has(sessionId)) continue;
+        if (attentionSessionKeys.has(key)) continue;
+        if (unreadSessionKeys.has(key)) continue;
         if (!hasUnreadSessionAttention(row.session)) continue;
-        unreadSessionIds.add(sessionId);
+        unreadSessionKeys.add(key);
         unreadSessions.push(row);
     }
 

@@ -1,10 +1,7 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { View } from 'react-native';
 
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { ReviewCommentDraft, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import {
@@ -19,6 +16,7 @@ import {
     formatReviewCommentCodeLineContent,
 } from './buildReviewCommentDraftFromCodeLine';
 import { ReviewCommentInlineComposer } from './ReviewCommentInlineComposer';
+import { ReviewCommentSavedDrafts } from './ReviewCommentSavedDrafts';
 
 function anchorKeyForDraft(draft: ReviewCommentDraft): string {
     if (draft.anchor.kind === 'fileLine') {
@@ -141,8 +139,6 @@ export function useCodeLinesReviewComments(params: {
     renderAfterLine: (line: CodeLine) => React.ReactNode;
     isCommentActive: (line: CodeLine) => boolean;
 } | null {
-    const { theme } = useUnistyles();
-
     const enabled = params.enabled;
     const filePath = params.filePath;
     const source = params.source;
@@ -221,59 +217,13 @@ export function useCodeLinesReviewComments(params: {
         return (
             <View>
                 {drafts.length > 0 && !isActive ? (
-                    <View
+                    <ReviewCommentSavedDrafts
+                        drafts={drafts}
+                        onEditDraft={(draft) => startEditingDraft(line, draft)}
+                        onDeleteDraft={onDeleteDraft}
                         style={{ marginLeft: 0, marginRight: 8, marginTop: 6, gap: 6 }}
                         testID={`review-comment-saved-drafts:${line.id}`}
-                    >
-                        {drafts.map((d) => (
-                            <View
-                                key={d.id}
-                                style={{
-                                    padding: 10,
-                                    borderRadius: 10,
-                                    borderWidth: 1,
-                                    borderColor: theme.colors.border.default,
-                                    backgroundColor: theme.colors.surface.elevated ?? theme.colors.surface.base,
-                                }}
-                            >
-                                <Text style={{ ...Typography.default(), fontSize: 13, color: theme.colors.text.primary }}>
-                                    {d.body}
-                                </Text>
-                                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 6, gap: 10 }}>
-                                    <Pressable
-                                        accessibilityRole="button"
-                                        onPress={() => startEditingDraft(line, d)}
-                                        testID={`review-comment-draft-edit:${d.id}`}
-                                    >
-                                        <Text
-                                            style={{
-                                                ...Typography.default('semiBold'),
-                                                fontSize: 12,
-                                                color: theme.colors.text.secondary,
-                                            }}
-                                        >
-                                            {t('common.edit')}
-                                        </Text>
-                                    </Pressable>
-                                    <Pressable
-                                        accessibilityRole="button"
-                                        onPress={() => onDeleteDraft?.(d.id)}
-                                        testID={`review-comment-draft-delete:${d.id}`}
-                                    >
-                                        <Text
-                                            style={{
-                                                ...Typography.default('semiBold'),
-                                                fontSize: 12,
-                                                color: theme.colors.state.danger.foreground ?? theme.colors.text.secondary,
-                                            }}
-                                        >
-                                            {t('common.delete')}
-                                        </Text>
-                                    </Pressable>
-                                </View>
-                            </View>
-                        ))}
-                    </View>
+                    />
                 ) : null}
 
                 {isActive ? (
@@ -344,12 +294,6 @@ export function useCodeLinesReviewComments(params: {
         onUpsertDraft,
         source,
         startEditingDraft,
-        theme.colors.border.default,
-        theme.colors.surface.base,
-        theme.colors.surface.elevated,
-        theme.colors.text.primary,
-        theme.colors.state.danger.foreground,
-        theme.colors.text.secondary,
     ]);
 
     if (!enabled) return null;

@@ -12,6 +12,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { socketEmitWithAckFallback } from '@/sync/engine/socket/socketEmitWithAckFallback';
 import { assertEndpointAuthenticatedWithProbe } from '@/sync/runtime/connectivity/assertEndpointAuthenticatedWithProbe';
 import { isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
+import type { SessionMessageDirectBypassReason } from '@/sync/domains/session/control/submitMode';
 
 import type { ResolvedServerSessionRpcContext } from './resolveServerScopedSessionContext';
 
@@ -46,6 +47,7 @@ type Deps = Readonly<{
     message: string,
     displayText?: string,
     metaOverrides?: Record<string, unknown>,
+    options?: Readonly<{ profileId?: string | null; localId?: string | null; bypassPendingQueueReason?: SessionMessageDirectBypassReason }>,
   ) => Promise<void>;
 }>;
 
@@ -88,6 +90,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
     displayText?: string | null;
     metaOverrides?: Record<string, unknown> | null;
     profileId?: string | null;
+    messageLocalId?: string | null;
   }>) => Promise<ServerScopedSessionSendMessageResult>;
 }> {
   const d: Deps = {
@@ -107,9 +110,19 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
     getScopedSessionEncryption: deps?.getScopedSessionEncryption ?? defaultGetScopedSessionEncryption,
     sendMessageActive:
       deps?.sendMessageActive ??
-      (async (sessionId, message, displayText, metaOverrides) => {
+      (async (sessionId, message, displayText, metaOverrides, options) => {
         const { sync } = await import('@/sync/sync');
-        await sync.sendMessage(sessionId, message, displayText, metaOverrides);
+        await sync.sendMessage(
+          sessionId,
+          message,
+          displayText,
+          metaOverrides,
+          {
+            profileId: options?.profileId,
+            localId: options?.localId,
+            bypassPendingQueueReason: options?.bypassPendingQueueReason ?? 'server_scoped_rpc',
+          },
+        );
       }),
   };
 
@@ -121,10 +134,12 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
     displayText?: string | null;
     metaOverrides?: Record<string, unknown> | null;
     profileId?: string | null;
+    messageLocalId?: string | null;
   }>): Promise<ServerScopedSessionSendMessageResult> => {
     const sessionId = normalizeId(args.sessionId);
     const message = String(args.message ?? '');
     const profileId = normalizeId(args.profileId);
+    const requestedMessageLocalId = normalizeId(args.messageLocalId);
     const displayText = typeof args.displayText === 'string' ? args.displayText : undefined;
     const metaOverrides = {
       ...(args.metaOverrides ?? {}),
@@ -138,7 +153,17 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
     const context = await d.resolveContext({ serverId: args.serverId, timeoutMs });
 
     if (context.scope === 'active') {
-      await d.sendMessageActive(sessionId, message, displayText, Object.keys(metaOverrides).length > 0 ? metaOverrides : undefined);
+      await d.sendMessageActive(
+        sessionId,
+        message,
+        displayText,
+        Object.keys(metaOverrides).length > 0 ? metaOverrides : undefined,
+        {
+          profileId: profileId || null,
+          localId: requestedMessageLocalId || null,
+          bypassPendingQueueReason: 'server_scoped_rpc',
+        },
+      );
       return { ok: true, ack: { ok: true } };
     }
 
@@ -182,7 +207,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
             const sessionEncryption = await d.getScopedSessionEncryption({ context, sessionId });
             return await sessionEncryption.encryptRawRecord(record);
           })();
-    const localId = randomUUID();
+    const localId = requestedMessageLocalId || randomUUID();
 
     const payload = {
       sid: sessionId,
@@ -190,6 +215,7 @@ export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Read
       localId,
       sentFrom,
       permissionMode: permissionMode || 'default',
+      messageRole: 'user' as const,
     };
 
     const socket = await d.createSocket({ serverUrl: context.targetServerUrl, token: context.token, timeoutMs: context.timeoutMs });

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { renderScreen } from '@/dev/testkit';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
@@ -26,6 +26,11 @@ const sessionState = vi.hoisted(() => ({
 }));
 
 const attachmentsTransferAvailableState = vi.hoisted(() => ({ value: true }));
+const attachmentsFeatureScopeState = vi.hoisted(() => ({ enabledForServerId: null as string | null }));
+const executeSessionComposerResolutionMock = vi.hoisted(() => vi.fn());
+const modalAlertSpy = vi.hoisted(() => vi.fn());
+const resolveSessionComposerSendMock = vi.hoisted(() => vi.fn(() => ({ kind: 'noop' })));
+const supportsEditableSessionGoalsMock = vi.hoisted(() => vi.fn(() => false));
 
 installSessionShellCommonModuleMocks({
   reactNative: async () =>
@@ -70,43 +75,12 @@ installSessionShellCommonModuleMocks({
       },
     }),
   unistyles: async () =>
-    createUnistylesMock({
-      theme: {
-        dark: false,
-        colors: {
-          text: '#000',
-          textSecondary: '#666',
-          textLink: '#00f',
-          surface: '#fff',
-          surfaceHigh: '#f5f5f5',
-          surfaceSelected: '#eef4ff',
-          divider: '#ddd',
-          border: '#ddd',
-          indigo: '#5856D6',
-          radio: { active: '#007AFF' },
-          accent: {
-            blue: '#007AFF',
-            green: '#34C759',
-            orange: '#FF9500',
-            yellow: '#FFCC00',
-            red: '#FF3B30',
-            indigo: '#5856D6',
-            purple: '#AF52DE',
-          },
-          modal: { border: '#ddd' },
-          input: { background: '#f5f5f5' },
-          header: { tint: '#000' },
-          status: { error: '#f00' },
-          shadow: { color: '#000', opacity: 0.2 },
-          groupped: { background: '#F5F5F5', chevron: '#C7C7CC', sectionTitle: '#8E8E93' },
-        },
-      },
-    }),
+    createUnistylesMock(),
   text: async () => createTextModuleMock({ translate: (key) => key }),
   modal: async () =>
     createModalModuleMock({
       spies: {
-        alert: vi.fn(),
+        alert: modalAlertSpy,
         confirm: vi.fn(),
         prompt: vi.fn(),
       },
@@ -116,13 +90,49 @@ installSessionShellCommonModuleMocks({
       router: { push: vi.fn(), back: vi.fn() },
       pathname: '/',
     }).module,
+  registryUiBehavior: async () => ({
+    buildResumeCapabilityOptionsFromUiState: () => ({}),
+    buildNewSessionOptionsFromUiState: () => ({}),
+    canSelectAgentWithoutDetectedCli: () => false,
+    getNewSessionAgentInputExtraActionChips: () => [],
+    buildSpawnEnvironmentVariablesFromUiState: () => ({}),
+    buildResumeSessionExtrasFromUiState: () => ({}),
+    buildSpawnSessionExtrasFromUiState: () => ({}),
+    buildWakeResumeExtras: () => ({}),
+    getAgentResumeExperimentsFromSettings: () => ({ enabled: true, switches: {} }),
+    getNewSessionPreflightIssues: () => [],
+    getNewSessionRelevantInstallableDepKeys: () => [],
+    resolveAgentUiBehavior: () => ({}),
+    resolveAgentUiBehaviorFromFlavor: () => ({}),
+    supportsDetectedMcpConfigScan: () => false,
+    supportsEditableSessionGoals: supportsEditableSessionGoalsMock,
+  }),
   storage: async () =>
     createStorageModuleStub({
-	      storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, concurrentSessionListCacheByServerId: {} }) },
-	      useSession: () => sessionState.session,
-	      useIsDataReady: () => true,
-	      useRealtimeStatus: () => ({ status: 'connected' }),
-	      useSessionMessages: () => ({ messages: [], isLoaded: true }),
+      storage: Object.assign(
+        (
+          selector?: (value: {
+            sessions: Record<string, unknown>;
+            settings: Record<string, unknown>;
+            sessionListIndexByServerId: Record<string, unknown>;
+          }) => unknown,
+        ) => {
+          const snapshot = { sessions: { s1: sessionState.session }, settings: {}, sessionListIndexByServerId: {} };
+          return typeof selector === 'function' ? selector(snapshot) : snapshot;
+        },
+        {
+          getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListIndexByServerId: {} }),
+          getInitialState: () => ({ sessions: { s1: sessionState.session }, settings: {}, sessionListIndexByServerId: {} }),
+          setState: () => undefined,
+          subscribe: () => () => undefined,
+          destroy: () => undefined,
+        },
+      ),
+      useSession: () => sessionState.session,
+      useIsDataReady: () => true,
+      useRealtimeStatus: () => ({ status: 'connected' }),
+      useSessionMessages: () => ({ messages: [], isLoaded: true }),
+      useSessionSubagentSourceMessages: () => [],
       useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
       useLocalSetting: (key: string) => {
         if (key === 'uiMultiPanePanelsEnabled') return false;
@@ -131,15 +141,6 @@ installSessionShellCommonModuleMocks({
       },
       useSessionPendingMessages: () => ({ messages: [] }),
       useSessionReviewCommentsDrafts: () => [],
-      useWorkspaceReviewCommentsDrafts: () => [{
-        id: 'workspace-draft',
-        filePath: 'src/a.ts',
-        source: 'diff',
-        anchor: { kind: 'diffLine', startLine: 1, side: 'after', oldLine: null, newLine: 1 },
-        snapshot: { selectedLines: [], beforeContext: [], afterContext: [] },
-        body: 'workspace',
-        createdAt: 1,
-      }],
       useSessionUsage: () => null,
       useSetting: () => null,
       useSettings: () => ({ experiments: true, featureToggles: {} }),
@@ -206,7 +207,12 @@ const featureEnabledState: Record<string, boolean> = {
   'attachments.uploads': false,
 };
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-  useFeatureEnabled: (featureId: string) => featureEnabledState[featureId] === true,
+  useFeatureEnabled: (featureId: string, scope?: { scopeKind?: string; serverId?: string | null }) => {
+    if (featureId === 'attachments.uploads' && attachmentsFeatureScopeState.enabledForServerId != null) {
+      return scope?.scopeKind === 'spawn' && scope.serverId === attachmentsFeatureScopeState.enabledForServerId;
+    }
+    return featureEnabledState[featureId] === true;
+  },
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -216,24 +222,25 @@ vi.mock('@/utils/platform/responsive', () => ({
   useIsLandscape: () => false,
   useIsTablet: () => false,
 }));
-vi.mock('@/hooks/session/useDraft', () => ({
-  useDraft: () => ({ clearDraft: vi.fn() }),
-}));
 vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
   getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true }),
 }));
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
   resolveSessionMachineReachability: () => true,
 }));
-vi.mock('@/components/sessions/model/useSessionMachineReachability', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/components/sessions/model/useSessionMachineReachability')>();
-
-  return {
-    ...actual,
-    useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
-    useSessionReachableMachineTarget: () => null,
-  };
-});
+vi.mock(
+  '@/components/sessions/model/useSessionMachineReachability',
+  async (importOriginal) => {
+    const { createSessionMachineReachabilityModuleMock } = await import('@/dev/testkit/mocks/sessionMachineReachability');
+    return createSessionMachineReachabilityModuleMock({
+      importOriginal,
+      overrides: {
+        useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
+        useSessionReachableMachineTarget: () => ({ machineId: 'm1', basePath: '/tmp' }),
+      },
+    });
+  },
+);
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
@@ -263,12 +270,18 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 
-vi.mock('@/sync/ops', () => ({
-  continueSessionWithReplay: vi.fn(),
-  sessionAbort: vi.fn(),
-  resumeSession: vi.fn(),
-  sessionAttachmentsUploadFile: vi.fn(),
-}));
+vi.mock('@/sync/ops', async (importOriginal) => {
+  const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
+  return createSyncOpsModuleMock({
+    importOriginal,
+    overrides: {
+      continueSessionWithReplay: vi.fn(),
+      sessionAbort: vi.fn(),
+      resumeSession: vi.fn(),
+      sessionAttachmentsUploadFile: vi.fn(),
+    },
+  });
+});
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   createDefaultActionExecutor: () => ({ execute: vi.fn() }),
@@ -287,21 +300,22 @@ vi.mock('@/utils/system/versionUtils', () => ({
   MINIMUM_CLI_VERSION: '0.0.0',
 }));
 
-vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
-  const actual = await importOriginal<any>();
-    return {
-      ...actual,
-      getAgentCore: () => ({
-        cli: { detectKey: 'codex' },
-        uiConnectedService: { serviceId: null, label: 'Codex', connectRoute: null },
-        model: { defaultMode: 'default' },
-        resume: { vendorResumeIdField: null },
-        sessionModes: { kind: 'none' },
-      }),
-      resolveAgentIdFromFlavor: () => 'codex',
-      DEFAULT_AGENT_ID: 'codex',
-    };
-});
+vi.mock('@/agents/catalog/catalog', () => ({
+  AGENT_IDS: ['codex'],
+  DEFAULT_AGENT_ID: 'codex',
+  buildResumeSessionExtrasFromUiState: () => null,
+  getAgentCore: () => ({
+    cli: { detectKey: 'codex' },
+    uiConnectedService: { serviceId: null, label: 'Codex', connectRoute: null },
+    model: { defaultMode: 'default' },
+    resume: { vendorResumeIdField: null },
+    sessionModes: { kind: 'none' },
+  }),
+  getAgentResumeExperimentsFromSettings: () => null,
+  getNewSessionRelevantInstallableDepKeys: () => [],
+  isAgentId: (value: unknown) => value === 'codex',
+  resolveAgentIdFromFlavor: () => 'codex',
+}));
 
 vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
   useResumeCapabilityOptions: () => ({}),
@@ -340,10 +354,10 @@ vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: (p: any) => void p,
 }));
 vi.mock('@/sync/domains/input/slashCommands/resolveSessionComposerSend', () => ({
-  resolveSessionComposerSend: async () => ({ kind: 'noop' }),
+  resolveSessionComposerSend: resolveSessionComposerSendMock,
 }));
 vi.mock('@/sync/domains/input/slashCommands/executeSessionComposerResolution', () => ({
-  executeSessionComposerResolution: vi.fn(),
+  executeSessionComposerResolution: executeSessionComposerResolutionMock,
 }));
 vi.mock('@/sync/domains/session/control/submitMode', () => ({
   chooseSubmitMode: () => 'direct',
@@ -366,7 +380,18 @@ vi.mock('@/sync/domains/automations/automationSessionLink', () => ({
 const { SessionView } = await import('./SessionView');
 
 describe('SessionView attachments gating', () => {
+  beforeEach(() => {
+    executeSessionComposerResolutionMock.mockReset();
+    modalAlertSpy.mockReset();
+    resolveSessionComposerSendMock.mockReset();
+    resolveSessionComposerSendMock.mockImplementation(() => ({ kind: 'noop' }));
+    supportsEditableSessionGoalsMock.mockReset();
+    supportsEditableSessionGoalsMock.mockReturnValue(false);
+    featureEnabledState['providers.codex.appServer.goals'] = false;
+  });
+
   it('does not wire drag/drop/paste attachments when attachments.uploads is disabled', async () => {
+    attachmentsFeatureScopeState.enabledForServerId = null;
     featureEnabledState['attachments.uploads'] = false;
     attachmentsTransferAvailableState.value = true;
 
@@ -379,20 +404,8 @@ describe('SessionView attachments gating', () => {
     expect(agentInput.props.onAttachmentsAdded).toBeUndefined();
   });
 
-  it('treats workspace-scoped review comment drafts as sendable attachments', async () => {
-    featureEnabledState['files.reviewComments'] = true;
-    featureEnabledState['attachments.uploads'] = false;
-
-    let tree!: renderer.ReactTestRenderer;
-    tree = (await renderScreen(<AppPaneProvider>
-          <SessionView id="s1" />
-        </AppPaneProvider>)).tree;
-
-    const agentInput = tree.findByType('AgentInput' as any);
-    expect(agentInput.props.hasSendableAttachments).toBe(true);
-  });
-
   it('fails closed when attachments.uploads is enabled but session file upload availability is false', async () => {
+    attachmentsFeatureScopeState.enabledForServerId = null;
     featureEnabledState['attachments.uploads'] = true;
     attachmentsTransferAvailableState.value = false;
 
@@ -403,5 +416,75 @@ describe('SessionView attachments gating', () => {
 
     const agentInput = tree.findByType('AgentInput' as any);
     expect(agentInput.props.onAttachmentsAdded).toBeUndefined();
+  });
+
+  it('keeps attachment handlers disabled when session-scoped uploads are not active for the viewed session', async () => {
+    attachmentsFeatureScopeState.enabledForServerId = 'server-1';
+    featureEnabledState['attachments.uploads'] = true;
+    attachmentsTransferAvailableState.value = true;
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<AppPaneProvider>
+          <SessionView id="s1" routeServerId="server-2" />
+        </AppPaneProvider>)).tree;
+
+    const agentInput = tree.findByType('AgentInput' as any);
+    expect(agentInput.props.onAttachmentsAdded).toBeUndefined();
+  });
+
+  it('preserves slash-command alert titles from the command executor', async () => {
+    resolveSessionComposerSendMock.mockReturnValue({ kind: 'goal', command: 'set', objective: 'Ship goal UI' } as any);
+    executeSessionComposerResolutionMock.mockImplementation(async (args: any) => {
+      args.modalAlert('Goal unavailable', 'This backend does not support editable session goals yet.');
+      return true;
+    });
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>)).tree;
+
+    let agentInput = tree.findByType('AgentInput' as any);
+    await renderer.act(async () => {
+      agentInput.props.onChangeText('/goal Ship goal UI');
+    });
+    agentInput = tree.findByType('AgentInput' as any);
+    expect(agentInput.props.value).toBe('/goal Ship goal UI');
+    await renderer.act(async () => {
+      agentInput.props.onSend();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(executeSessionComposerResolutionMock).toHaveBeenCalled();
+    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'This backend does not support editable session goals yet.');
+  });
+
+  it('passes native goal mutation callbacks to the command executor when editable goals are enabled', async () => {
+    featureEnabledState['providers.codex.appServer.goals'] = true;
+    supportsEditableSessionGoalsMock.mockReturnValue(true);
+    resolveSessionComposerSendMock.mockReturnValue({ kind: 'goal', command: 'set', objective: 'Ship goal UI' } as any);
+    executeSessionComposerResolutionMock.mockResolvedValue(true);
+
+    let tree!: renderer.ReactTestRenderer;
+    tree = (await renderScreen(<AppPaneProvider>
+          <SessionView id="s1" />
+        </AppPaneProvider>)).tree;
+
+    let agentInput = tree.findByType('AgentInput' as any);
+    await renderer.act(async () => {
+      agentInput.props.onChangeText('/goal Ship goal UI');
+    });
+    agentInput = tree.findByType('AgentInput' as any);
+    await renderer.act(async () => {
+      agentInput.props.onSend();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(executeSessionComposerResolutionMock).toHaveBeenCalledTimes(1);
+    const [resolutionArgs] = executeSessionComposerResolutionMock.mock.calls[0] as [any];
+    expect(typeof resolutionArgs.setSessionGoal).toBe('function');
+    expect(typeof resolutionArgs.clearSessionGoal).toBe('function');
   });
 });

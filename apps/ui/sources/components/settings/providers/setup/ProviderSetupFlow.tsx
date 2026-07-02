@@ -4,7 +4,7 @@ import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 
-import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
+import { getAgentCliRuntimeSpec } from '@happier-dev/agents';
 import { getProviderLocalAuthPlugin } from '@/agents/providers/catalog/providerLocalAuthCatalog';
 import { AGENT_IDS, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import {
@@ -41,7 +41,7 @@ import { useProviderCliInstallQueue, type ProviderCliInstallStatus } from './use
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 function supportsDirectProviderSetup(providerId: AgentId | null | undefined): providerId is AgentId {
-    return isAgentId(providerId) && Boolean(getProviderCliRuntimeSpec(providerId).binaryName);
+    return isAgentId(providerId) && Boolean(getAgentCliRuntimeSpec(providerId).binaryName);
 }
 
 const DEFAULT_PROVIDER_IDS = AGENT_IDS.filter((providerId) => supportsDirectProviderSetup(providerId));
@@ -211,6 +211,7 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
     onRequestAdvance?: (() => void) | null;
 }>) {
     const presentation = props.presentation ?? 'settings';
+    const supportsDesktopControls = isTauriDesktop();
     const providerEntries = React.useMemo(
         () => {
             const sourceEntries = props.providerEntries?.length
@@ -229,8 +230,7 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
         },
         [props.providerEntries, props.providerIds],
     );
-    if (!isTauriDesktop()) {
-        void presentation;
+    if (!supportsDesktopControls && presentation === 'wizard') {
         return <ProviderSetupFlowWizardWebHandoff providerEntries={providerEntries.length > 0 ? providerEntries : DEFAULT_PROVIDER_ENTRIES} />;
     }
 
@@ -504,6 +504,7 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                         providerId={activeEntry.providerId}
                         runtimeProviderId={activeSetupProviderId}
                         state={authState}
+                        showActions={supportsDesktopControls}
                         onCheckNow={() => {
                             if (!activeSetupProviderId) return;
                             cliAvailability.refresh({
@@ -512,10 +513,11 @@ export const ProviderSetupFlow = React.memo(function ProviderSetupFlow(props: Re
                             });
                         }}
                         onLaunchLogin={() => {
+                            if (!supportsDesktopControls) return;
                             setTerminalProviderId(activeProviderId);
                         }}
                     />
-                    {terminalProviderId === activeProviderId && authState.loginLaunch && activeSetupProviderId ? (
+                    {supportsDesktopControls && terminalProviderId === activeProviderId && authState.loginLaunch && activeSetupProviderId ? (
                         <View style={{ minHeight: 320 }}>
                             <ProviderAuthenticationTerminalPane
                                 providerId={activeSetupProviderId}

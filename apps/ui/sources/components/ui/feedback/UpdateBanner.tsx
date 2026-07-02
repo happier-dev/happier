@@ -1,7 +1,7 @@
 import * as React from 'react';
 
-import { AppUpdateStatusTag } from './AppUpdateStatusTag';
+import { AppUpdateStatusItemBanner } from './AppUpdateStatusItemBanner';
 
 export const UpdateBanner = React.memo(function UpdateBanner() {
-    return <AppUpdateStatusTag />;
+    return <AppUpdateStatusItemBanner />;
 });

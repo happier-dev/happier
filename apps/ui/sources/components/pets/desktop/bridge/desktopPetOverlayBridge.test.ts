@@ -27,6 +27,13 @@ describe('desktopPetOverlayBridge', () => {
             visible: true,
             expanded: false,
             window: { width: 192, height: 208 },
+            nativeMouseTrackingEnabled: true,
+            activity: {
+                state: 'waiting',
+                reason: 'waiting',
+                sessionId: 'session-native',
+                trayItems: [],
+            },
             policy: {
                 enabled: true,
                 alwaysOnTop: true,
@@ -39,6 +46,11 @@ describe('desktopPetOverlayBridge', () => {
             payload: expect.objectContaining({
                 visible: true,
                 window: { width: 192, height: 208 },
+                nativeMouseTrackingEnabled: true,
+                activity: expect.objectContaining({
+                    state: 'waiting',
+                    sessionId: 'session-native',
+                }),
                 policy: expect.objectContaining({
                     alwaysOnTop: true,
                     inputLocked: false,

@@ -1,5 +1,4 @@
 import React from 'react';
-import type { ZodSchema } from 'zod';
 
 import { ReviewCommentsV1Schema } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import { ReviewCommentsMessageCard } from '@/components/sessions/reviews/messages/ReviewCommentsMessageCard';
@@ -46,9 +45,17 @@ export type StructuredMessageRendererParams = Readonly<{
     onJumpToAnchor: (target: { filePath: string; source: ReviewCommentSource; anchor: ReviewCommentAnchor }) => void;
 }>;
 
+export type StructuredMessageSafeParseResult<T> =
+    | Readonly<{ success: true; data: T }>
+    | Readonly<{ success: false; error: unknown }>;
+
+export type StructuredMessageSchema<T> = Readonly<{
+    safeParse: (value: unknown) => StructuredMessageSafeParseResult<T>;
+}>;
+
 export type StructuredMessageRegistryEntry<T> = Readonly<{
-    kind: StructuredMessageKind;
-    schema: ZodSchema<T>;
+    kind: string;
+    schema: StructuredMessageSchema<T>;
     render: (payload: T, params: StructuredMessageRendererParams) => React.ReactElement | null;
 }>;
 

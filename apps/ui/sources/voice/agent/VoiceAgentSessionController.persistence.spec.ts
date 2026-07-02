@@ -186,7 +186,7 @@ const sessionExecutionRunGet = vi.fn(async (..._args: any[]): Promise<any> => ({
     runId: 'run_1',
     backendId: 'claude',
     transcript: { persistenceMode: 'persistent', epoch: 1 },
-    resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_1' },
+    resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_1' },
   },
 }));
 const sessionExecutionRunList = vi.fn(async (..._args: any[]): Promise<any> => ({
@@ -329,7 +329,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       v: 1,
       runId: 'run_1',
       backendId: 'claude',
-      resumeHandle: expect.objectContaining({ kind: 'vendor_session.v1', vendorSessionId: 'vs_1' }),
+      resumeHandle: expect.objectContaining({ kind: 'provider_session.v1', providerSessionId: 'vs_1' }),
       transcriptContractVersion: 2,
     });
   });
@@ -397,7 +397,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       v: 1,
       runId: 'run_1',
       backendId: 'claude',
-      resumeHandle: expect.objectContaining({ kind: 'vendor_session.v1', vendorSessionId: 'vs_1' }),
+      resumeHandle: expect.objectContaining({ kind: 'provider_session.v1', providerSessionId: 'vs_1' }),
       transcriptContractVersion: 2,
     });
   });
@@ -408,7 +408,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       v: 1,
       runId: 'run_legacy',
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_legacy' },
+      resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_legacy' },
       updatedAtMs: 1,
     };
     sessionExecutionRunList.mockResolvedValueOnce({
@@ -427,7 +427,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
         runId: 'run_legacy',
         backendId: 'claude',
         transcript: { persistenceMode: 'ephemeral', epoch: 1 },
-        resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_legacy' },
+        resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_legacy' },
       },
     });
 
@@ -455,7 +455,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       v: 1,
       runId: 'run_1',
       backendId: 'claude',
-      resumeHandle: expect.objectContaining({ kind: 'vendor_session.v1', vendorSessionId: 'vs_1' }),
+      resumeHandle: expect.objectContaining({ kind: 'provider_session.v1', providerSessionId: 'vs_1' }),
       transcriptContractVersion: 2,
     });
 
@@ -477,7 +477,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
         runId: 'run_1',
         backendId: 'claude',
         transcript: { persistenceMode: 'persistent', epoch: 1 },
-        resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_1' },
+        resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_1' },
       },
     });
 
@@ -494,7 +494,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       v: 1,
       runId: 'run_1',
       backendId: 'claude',
-      resumeHandle: expect.objectContaining({ kind: 'vendor_session.v1', vendorSessionId: 'vs_1' }),
+      resumeHandle: expect.objectContaining({ kind: 'provider_session.v1', providerSessionId: 'vs_1' }),
       transcriptContractVersion: 2,
     });
   });
@@ -504,7 +504,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       v: 1,
       runId: 'run_prev',
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_prev' },
+      resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_prev' },
       updatedAtMs: 1,
     };
 
@@ -522,7 +522,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       v: 1,
       runId: 'run_prev',
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_prev' },
+      resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_prev' },
       updatedAtMs: 1,
     };
     sessionExecutionRunList.mockResolvedValueOnce({
@@ -598,14 +598,14 @@ describe('VoiceAgentSessionController (persistence)', () => {
         run: {
           runId: 'run_new',
           backendId: 'claude',
-          resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_new' },
+          resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_new' },
         },
       })
       .mockResolvedValueOnce({
         run: {
           runId: 'run_new',
           backendId: 'claude',
-          resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_new' },
+          resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_new' },
         },
       });
 
@@ -624,7 +624,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
     );
     expect(state.sessions.s1.metadata.voiceAgentRunV1).toMatchObject({
       runId: 'run_new',
-      resumeHandle: expect.objectContaining({ vendorSessionId: 'vs_new' }),
+      resumeHandle: expect.objectContaining({ providerSessionId: 'vs_new' }),
     });
   });
 
@@ -718,7 +718,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       v: 1,
       runId: 'run_prev',
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_prev' },
+      resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_prev' },
       updatedAtMs: 1,
       transcriptContractVersion: 2,
     };
@@ -731,7 +731,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
           runId: 'run_prev',
           backendId: 'claude',
           transcript: { persistenceMode: 'persistent', epoch: 1 },
-          resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_prev' },
+          resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_prev' },
         },
       })
       .mockResolvedValueOnce({
@@ -739,7 +739,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
           runId: 'run_2',
           backendId: 'claude',
           transcript: { persistenceMode: 'persistent', epoch: 1 },
-          resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_2' },
+          resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_2' },
         },
       });
 
@@ -769,7 +769,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       v: 1,
       runId: 'run_prev',
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_prev' },
+      resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_prev' },
       updatedAtMs: 1,
       transcriptContractVersion: 2,
     };
@@ -780,7 +780,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
         runId: 'run_2',
         backendId: 'claude',
         transcript: { persistenceMode: 'persistent', epoch: 1 },
-        resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_2' },
+        resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_2' },
       },
     });
 
@@ -809,7 +809,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       v: 1,
       runId: 'run_prev',
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_prev' },
+      resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_prev' },
       updatedAtMs: 1,
       transcriptContractVersion: 2,
     };
@@ -828,7 +828,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
         sessionId: 'sys_voice',
         existingRunId: null,
         resumeWhenInactive: true,
-        resumeHandle: expect.objectContaining({ kind: 'vendor_session.v1', vendorSessionId: 'vs_prev' }),
+        resumeHandle: expect.objectContaining({ kind: 'provider_session.v1', providerSessionId: 'vs_prev' }),
       }),
     );
   });
@@ -840,7 +840,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       v: 1,
       runId: 'run_prev',
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_prev' },
+      resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_prev' },
       updatedAtMs: 1,
       transcriptContractVersion: 2,
     };
@@ -936,7 +936,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       v: 1,
       runId: 'run_prev',
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_prev' },
+      resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_prev' },
       updatedAtMs: 1,
       transcriptContractVersion: 2,
     };
@@ -948,7 +948,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
         runId: 'run_4',
         backendId: 'claude',
         transcript: { persistenceMode: 'persistent', epoch: 1 },
-        resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_4' },
+        resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_4' },
       },
     });
 
@@ -971,12 +971,12 @@ describe('VoiceAgentSessionController (persistence)', () => {
         sessionId: 'sys_voice',
         existingRunId: null,
         resumeWhenInactive: true,
-        resumeHandle: expect.objectContaining({ kind: 'vendor_session.v1', vendorSessionId: 'vs_prev' }),
+        resumeHandle: expect.objectContaining({ kind: 'provider_session.v1', providerSessionId: 'vs_prev' }),
       }),
     );
     expect(state.sessions.sys_voice.metadata.voiceAgentRunV1).toMatchObject({
       runId: 'run_4',
-      resumeHandle: expect.objectContaining({ vendorSessionId: 'vs_4' }),
+      resumeHandle: expect.objectContaining({ providerSessionId: 'vs_4' }),
     });
   });
 
@@ -986,7 +986,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
         ? {
             runId: 'run_1',
             backendId: 'claude',
-            resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_1' },
+            resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_1' },
           }
         : {
             runId: 'run_1',
@@ -994,8 +994,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
             resumeHandle: {
               kind: 'voice_agent_sessions.v1',
               backendId: 'claude',
-              chatVendorSessionId: 'vs_1',
-              commitVendorSessionId: 'vs_commit',
+              chatProviderSessionId: 'vs_1',
+              commitProviderSessionId: 'vs_commit',
             },
           },
     }));
@@ -1004,7 +1004,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
     const controller = createVoiceAgentSessionController();
 
     await controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello');
-    expect(state.sessions.sys_voice.metadata.voiceAgentRunV1?.resumeHandle?.kind).toBe('vendor_session.v1');
+    expect(state.sessions.sys_voice.metadata.voiceAgentRunV1?.resumeHandle?.kind).toBe('provider_session.v1');
 
     await controller.commit(VOICE_AGENT_GLOBAL_SESSION_ID);
 
@@ -1015,7 +1015,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       backendId: 'claude',
       resumeHandle: expect.objectContaining({
         kind: 'voice_agent_sessions.v1',
-        commitVendorSessionId: 'vs_commit',
+        commitProviderSessionId: 'vs_commit',
       }),
     });
   });
@@ -1044,7 +1044,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
       v: 1,
       runId: 'run_stale',
       backendId: 'claude',
-      resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_stale' },
+      resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_stale' },
       updatedAtMs: 1,
     };
     start.mockImplementation(async (params?: any) => ({ voiceAgentId: params?.existingRunId ?? 'run_fresh' }));
@@ -1056,7 +1056,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
         runId: params.runId,
         backendId: 'claude',
         transcript: { persistenceMode: 'persistent', epoch: 1 },
-        resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: `vs_${params.runId}` },
+        resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: `vs_${params.runId}` },
       },
     }));
 
@@ -1072,7 +1072,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
     expect(state.sessions.sys_voice.metadata.voiceAgentRunV1).toMatchObject({
       runId: 'run_fresh',
       backendId: 'claude',
-      resumeHandle: expect.objectContaining({ vendorSessionId: 'vs_run_fresh' }),
+      resumeHandle: expect.objectContaining({ providerSessionId: 'vs_run_fresh' }),
     });
   });
 

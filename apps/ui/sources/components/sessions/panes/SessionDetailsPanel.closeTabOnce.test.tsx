@@ -1,8 +1,10 @@
 import * as React from 'react';
+import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { pressTestInstanceAsync } from '@/dev/testkit/render/renderScreen';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,36 +18,18 @@ installSessionDetailsPanelCommonModuleMocks({
     unistyles: async () => {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
         return createUnistylesMock({
-            theme: {
-                colors: {
-                    surface: '#fff',
-                    surfaceHigh: '#f5f5f5',
-                    divider: '#eee',
-                    text: '#000',
-                    textSecondary: '#666',
-                    shadow: { color: '#000', opacity: 0.2 },
-                    accent: {
-                        indigo: '#5C6BC0',
-                        orange: '#FF9500',
-                    },
-                },
-            },
+            theme: createThemeFixture(),
         });
     },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock();
     },
-    storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
-                useLocalSetting: ((key: string) => {
-                    return null;
-                }) as any,
-                useLocalSettingMutable: (() => [false, vi.fn()]) as any,
-            },
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            useLocalSetting: () => null,
+            useLocalSettingMutable: () => [false, vi.fn()],
         });
     },
 });
@@ -54,20 +38,16 @@ vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
-vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({
-    SessionFileDetailsView: () => React.createElement('SessionFileDetailsView'),
-}));
-
-vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
-    SessionCommitDetailsView: () => React.createElement('SessionCommitDetailsView'),
-}));
-
-vi.mock('@/components/sessions/files/views/SessionScmReviewDetailsView', () => ({
-    SessionScmReviewDetailsView: () => React.createElement('SessionScmReviewDetailsView'),
-}));
-
 vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
     SessionEmbeddedTerminalPane: () => React.createElement('SessionEmbeddedTerminalPane'),
+}));
+
+vi.mock('./SessionDetailsPanelDetailViews', () => ({
+    SessionCommitDetailsViewForPanel: (props: any) => React.createElement('SessionCommitDetailsViewForPanel', props),
+    SessionFileDetailsViewForPanel: (props: any) => React.createElement('SessionFileDetailsViewForPanel', props),
+    SessionScmReviewDetailsViewForPanel: (props: any) => React.createElement('SessionScmReviewDetailsViewForPanel', props),
+    SessionScmStashDetailsViewForPanel: (props: any) => React.createElement('SessionScmStashDetailsViewForPanel', props),
+    SessionSubagentDetailsViewForPanel: (props: any) => React.createElement('SessionSubagentDetailsViewForPanel', props),
 }));
 
 let mockAppPaneScope: any = null;
@@ -96,11 +76,18 @@ describe('SessionDetailsPanel (close tab)', () => {
         };
 
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-
-        await screen.pressByTestIdAsync('session-details-tab-close-file_a');
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
+        });
+        const closeButton = tree!.root.findByProps({ testID: 'session-details-tab-close-file_a' });
+        await pressTestInstanceAsync(closeButton, 'session-details-tab-close-file_a');
 
         expect(closeDetailsTabSpy).toHaveBeenCalledTimes(1);
         expect(closeDetailsTabSpy).toHaveBeenCalledWith('file:a');
+
+        await act(async () => {
+            tree!.unmount();
+        });
     });
 });

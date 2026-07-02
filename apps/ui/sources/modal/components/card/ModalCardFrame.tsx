@@ -30,17 +30,24 @@ type ModalCardFrameProps = Readonly<{
     dimensions?: ModalCardDimensionOptions;
 }>;
 
+const MODAL_CARD_BORDER_RADIUS = 14;
+
 const stylesheet = StyleSheet.create((theme) => ({
-    container: {
+    shadowFrame: {
         backgroundColor: theme.colors.surface.base,
-        borderRadius: 14,
+        borderRadius: MODAL_CARD_BORDER_RADIUS,
+        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
+        alignSelf: 'center',
+        minHeight: 0,
+    },
+    clipSurface: {
+        backgroundColor: theme.colors.surface.base,
+        borderRadius: MODAL_CARD_BORDER_RADIUS,
         ...resolveThemeSurfaceBorderStyle({
             borderColor: theme.colors.border.surface,
             highlightColor: theme.colors.effect.surfaceHighlight,
         }),
         overflow: 'hidden',
-        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
-        alignSelf: 'center',
         flexDirection: 'column',
         minHeight: 0,
     },
@@ -82,7 +89,7 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                 ? ({ dataSet: { happyModalCardBoundary: 'true' } } as unknown as Record<string, unknown>)
                 : null)}
             style={[
-                styles.container,
+                styles.shadowFrame,
                 {
                     width: dimensions.width,
                     maxWidth: dimensions.width,
@@ -95,43 +102,48 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                 props.style,
             ]}
         >
-            {hasHeader ? (
-                <ModalCardHeader
-                    leading={props.leading}
-                    title={props.title}
-                    subtitle={props.subtitle}
-                    actions={props.actions}
-                    onClose={props.onClose}
-                    titleTestID={props.titleTestID}
-                    subtitleTestID={props.subtitleTestID}
-                    closeButtonTestID={props.closeButtonTestID}
-                    style={props.headerStyle}
-                />
-            ) : null}
+            <View style={[
+                styles.clipSurface,
+                scrollHost === 'body' ? { flex: 1 } : null,
+            ]}>
+                {hasHeader ? (
+                    <ModalCardHeader
+                        leading={props.leading}
+                        title={props.title}
+                        subtitle={props.subtitle}
+                        actions={props.actions}
+                        onClose={props.onClose}
+                        titleTestID={props.titleTestID}
+                        subtitleTestID={props.subtitleTestID}
+                        closeButtonTestID={props.closeButtonTestID}
+                        style={props.headerStyle}
+                    />
+                ) : null}
 
-            {bodyScroll === 'auto' ? (
-                <ScrollView
-                    testID="modal-card-body-scroll"
-                    style={styles.bodyScrollView}
-                    contentContainerStyle={styles.bodyScrollContent}
-                    keyboardShouldPersistTaps="handled"
-                    nestedScrollEnabled={true}
-                >
-                    <ModalCardBody fill={false} style={props.bodyStyle}>
+                {bodyScroll === 'auto' ? (
+                    <ScrollView
+                        testID="modal-card-body-scroll"
+                        style={styles.bodyScrollView}
+                        contentContainerStyle={styles.bodyScrollContent}
+                        keyboardShouldPersistTaps="handled"
+                        nestedScrollEnabled={true}
+                    >
+                        <ModalCardBody fill={false} style={props.bodyStyle}>
+                            {props.children}
+                        </ModalCardBody>
+                    </ScrollView>
+                ) : (
+                    <ModalCardBody style={props.bodyStyle}>
                         {props.children}
                     </ModalCardBody>
-                </ScrollView>
-            ) : (
-                <ModalCardBody style={props.bodyStyle}>
-                    {props.children}
-                </ModalCardBody>
-            )}
+                )}
 
-            {props.footer != null ? (
-                <View style={[styles.footer, props.footerStyle]}>
-                    {props.footer}
-                </View>
-            ) : null}
+                {props.footer != null ? (
+                    <View style={[styles.footer, props.footerStyle]}>
+                        {props.footer}
+                    </View>
+                ) : null}
+            </View>
         </View>
     );
 }

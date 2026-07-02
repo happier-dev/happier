@@ -1,5 +1,5 @@
 import React from 'react';
-import renderer from 'react-test-renderer';
+import renderer, { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installConnectedServicesCommonModuleMocks } from '../connectedServicesTestHelpers';
@@ -8,17 +8,31 @@ import { installConnectedServicesCommonModuleMocks } from '../connectedServicesT
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const applySettingsSpy = vi.fn(async () => {});
+const confirmSpy = vi.fn(async () => true);
+const alertSpy = vi.fn(async () => {});
 const routeParams = { serviceId: 'openai-codex', profileId: 'work' };
-const profileState = {
+const profileState: { connectedServicesV2: Array<Record<string, unknown>> } = {
   connectedServicesV2: [
     {
       serviceId: 'openai-codex',
       profiles: [{ profileId: 'work', status: 'connected', providerEmail: 'me@example.com', providerAccountId: 'acct-1' }],
+      groups: [],
     },
   ],
 };
 
-installConnectedServicesCommonModuleMocks({ searchParams: routeParams });
+installConnectedServicesCommonModuleMocks({
+  searchParams: routeParams,
+  modal: async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+      spies: {
+        alert: alertSpy,
+        confirm: confirmSpy,
+      },
+    }).module;
+  },
+});
 
 const stableCredentials = { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } as const;
 vi.mock('@/auth/context/AuthContext', () => ({
@@ -26,7 +40,10 @@ vi.mock('@/auth/context/AuthContext', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-  useFeatureEnabled: (featureId: string) => featureId === 'connectedServices.quotas' || featureId === 'connectedServices',
+  useFeatureEnabled: (featureId: string) =>
+    featureId === 'connectedServices.quotas'
+    || featureId === 'connectedServices.accountGroups'
+    || featureId === 'connectedServices',
 }));
 
 vi.mock('@/sync/store/hooks', async () => {
@@ -51,9 +68,10 @@ vi.mock('@/sync/store/settingsWriters', () => ({
   useApplySettings: () => applySettingsSpy,
 }));
 
+const deleteCredentialSpy = vi.fn(async () => {});
 vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount', () => ({
   storeConnectedServiceCredentialForAccount: vi.fn(async () => {}),
-  deleteConnectedServiceCredentialForAccount: vi.fn(async () => {}),
+  deleteConnectedServiceCredentialForAccount: deleteCredentialSpy,
 }));
 
 vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
@@ -81,7 +99,17 @@ describe('ConnectedServiceProfileDetailView', () => {
   beforeEach(() => {
     routeParams.serviceId = 'openai-codex';
     routeParams.profileId = 'work';
+    profileState.connectedServicesV2 = [
+      {
+        serviceId: 'openai-codex',
+        profiles: [{ profileId: 'work', status: 'connected', providerEmail: 'me@example.com', providerAccountId: 'acct-1' }],
+        groups: [],
+      },
+    ];
     applySettingsSpy.mockClear();
+    confirmSpy.mockClear();
+    alertSpy.mockClear();
+    deleteCredentialSpy.mockClear();
   });
 
     it('renders profile details and quota card when quotas are enabled', async () => {
@@ -117,4 +145,40 @@ describe('ConnectedServiceProfileDetailView', () => {
     expect(tree.findAll((n) => n.props?.title === t('connectedServices.detail.actionsGroupTitle'))).toHaveLength(0);
     expect(applySettingsSpy).not.toHaveBeenCalled();
   });
+
+    it('warns before disconnecting a profile that belongs to account groups', async () => {
+        profileState.connectedServicesV2 = [
+            {
+                serviceId: 'openai-codex',
+                profiles: [{ profileId: 'work', status: 'connected', providerEmail: 'me@example.com', providerAccountId: 'acct-1' }],
+                groups: [
+                    {
+                        groupId: 'primary',
+                        displayName: 'Primary Pool',
+                        memberProfileIds: ['work'],
+                    },
+                ],
+            },
+        ];
+        const { ConnectedServiceProfileDetailView } = await import('./ConnectedServiceProfileDetailView');
+
+        const tree = (await renderScreen(<ConnectedServiceProfileDetailView />)).tree;
+        const disconnectItem = tree.root
+            .findAll((node) => node.props?.title === 'modals.disconnect')
+            .find((node) => typeof node.props?.onPress === 'function');
+
+        await act(async () => {
+            disconnectItem?.props.onPress();
+        });
+
+        expect(confirmSpy).toHaveBeenCalledWith(
+            'modals.disconnect',
+            'connectedServices.detail.disconnectGroupCleanupConfirmBody',
+            expect.objectContaining({ confirmText: 'modals.disconnect' }),
+        );
+        expect(deleteCredentialSpy).toHaveBeenCalledWith(
+            expect.objectContaining({ token: 't' }),
+            { serviceId: 'openai-codex', profileId: 'work', cleanupGroupReferences: true },
+        );
+    });
 });

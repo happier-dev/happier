@@ -347,6 +347,68 @@ describe('spawnSessionForVoiceTool', () => {
     }));
   });
 
+  it('spawns from the resolved session machine target before visible metadata', async () => {
+    state.sessions = {
+      ...state.sessions,
+      s_spawn_target: {
+        id: 's_spawn_target',
+        active: false,
+        metadata: {
+          machineId: 'm_old',
+          path: '/Users/leeroy/projects/stale-target',
+        },
+      },
+    };
+    state.sessionListRenderables = {
+      ...state.sessionListRenderables,
+      s_spawn_target: {
+        id: 's_spawn_target',
+        updatedAt: 999,
+        metadata: {
+          machineId: 'm1',
+          path: '/Users/leeroy/projects/happier',
+        },
+      },
+    };
+    state.sessionListIndexByServerId = {
+      'server-a': [
+        { type: 'session', sessionId: 's_spawn_target', serverId: 'server-a', serverName: 'Server A' },
+      ],
+    };
+    state.machines = {
+      ...state.machines,
+      m_old: {
+        id: 'm_old',
+        active: false,
+        activeAt: 1,
+        replacedByMachineId: 'm_target',
+        replacedAt: 2,
+        metadata: { host: 'old.local' },
+      },
+      m_target: {
+        id: 'm_target',
+        active: true,
+        activeAt: Date.now(),
+        spawnReadinessStatus: 'ready',
+        metadata: { displayName: 'Target Mac', host: 'target.local' },
+      },
+    };
+    state.getProjectForSession = (sessionId: string) =>
+      sessionId === 's_spawn_target'
+        ? { key: { machineId: 'm_target', rootPath: '/Users/leeroy/projects/live-target' } }
+        : null;
+    voiceTargetState.primaryActionSessionId = 's_spawn_target';
+
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({});
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'm_target',
+      directory: '/Users/leeroy/projects/live-target',
+    }));
+  });
+
   it('fails when an explicit host cannot be resolved instead of falling back to another machine', async () => {
     const { spawnSessionForVoiceTool } = await import('./spawnSession');
 
@@ -401,7 +463,7 @@ describe('spawnSessionForVoiceTool', () => {
     });
   });
 
-  it('does not select a single host match when voice provides only host and path', async () => {
+  it('selects a unique host match when voice provides only host and path', async () => {
     state.machines = {
       m_voice: {
         id: 'm_voice',
@@ -420,12 +482,13 @@ describe('spawnSessionForVoiceTool', () => {
       path: '/Users/leeroy/projects/voice',
     });
 
-    expect(machineSpawnNewSession).not.toHaveBeenCalled();
-    expect(result).toEqual({
-      type: 'error',
-      errorCode: 'host_not_found',
-      errorMessage: 'host_not_found',
-      host: 'voice-host',
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'm_voice',
+      directory: '/Users/leeroy/projects/voice',
+    }));
+    expect(result).toMatchObject({
+      type: 'success',
+      target: { label: expect.any(String) },
     });
   });
 

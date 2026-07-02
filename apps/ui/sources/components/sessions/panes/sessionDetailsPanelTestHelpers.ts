@@ -82,6 +82,10 @@ export function installSessionDetailsPanelCommonModuleMocks(
         return createExpoRouterMock().module;
     });
 
+    vi.mock('@/components/ui/media/FileIcon', () => ({
+        FileIcon: 'FileIcon',
+    }));
+
     vi.mock('@/text', async () => {
         const activeOptions = sessionDetailsPanelModuleState.options;
         if (activeOptions.text) {

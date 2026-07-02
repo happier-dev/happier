@@ -6,6 +6,8 @@ import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibil
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
+import { toggleFavoriteBackendTargetKey } from '@/sync/domains/session/authoring/favoriteBackendTargets';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { RememberedEngineSelectionsByScopeV1 } from '@/sync/domains/session/authoring/rememberedEngineSelections';
 import {
@@ -48,10 +50,15 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     settings: Settings;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
     setFavoriteModelSelections?: (favorites: FavoriteModelSelectionV1[]) => void;
+    favoriteBackendTargetKeys?: ReadonlyArray<string>;
+    setFavoriteBackendTargetKeys?: (favorites: string[]) => void;
+    rememberedAgentPickerView?: NewSessionAgentPickerViewV1;
+    onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
     rememberEngineSelectionsEnabled?: boolean;
     rememberedEngineSelectionsByScope?: RememberedEngineSelectionsByScopeV1 | null;
     rememberedEngineSelectionServerId?: string | null;
     onRememberEngineSelection?: Parameters<typeof useNewSessionAgentPickerEngineSelectionState>[0]['onRememberEngineSelection'];
+    onExplicitBackendTargetSelection?: Parameters<typeof useNewSessionAgentPickerEngineSelectionState>[0]['onExplicitBackendTargetSelection'];
     /**
      * Optional probe surface to merge into the engine detail pane's refresh affordance.
      * This is used to make the model refresh button also refresh CLI detection.
@@ -59,6 +66,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     refreshProbe?: OptionPickerProbeState | null;
 }>): Readonly<{
     agentPickerOptions?: ReadonlyArray<AgentInputChipPickerOption>;
+    agentPickerSelectedOptionId?: string | null;
     handleAgentPickerSelect: (selectedId: string) => void;
     handleAgentClick: () => void;
 }> {
@@ -79,9 +87,21 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         rememberedEngineSelectionsByScope: params.rememberedEngineSelectionsByScope,
         rememberedEngineSelectionServerId: params.rememberedEngineSelectionServerId,
         onRememberEngineSelection: params.onRememberEngineSelection,
+        onExplicitBackendTargetSelection: params.onExplicitBackendTargetSelection,
     });
 
     const selectedBackendTargetKey = params.selectedBackendEntry?.backendTargetKey ?? params.selectedBackendTargetKey;
+
+    const handleToggleFavoriteBackendTarget = React.useCallback((targetKey: string) => {
+        if (!params.setFavoriteBackendTargetKeys) return;
+        params.setFavoriteBackendTargetKeys(toggleFavoriteBackendTargetKey(
+            params.favoriteBackendTargetKeys ?? [],
+            targetKey,
+        ));
+    }, [
+        params.favoriteBackendTargetKeys,
+        params.setFavoriteBackendTargetKeys,
+    ]);
 
     const handleToggleFavoriteModel = React.useCallback((
         entry: ResolvedBackendCatalogEntry,
@@ -101,10 +121,15 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         params.setFavoriteModelSelections,
     ]);
 
-    const handleSelectFavoriteModel = React.useCallback((entry: ResolvedBackendCatalogEntry, modelId: string) => {
+    const handleSelectFavoriteModel = React.useCallback((
+        entry: ResolvedBackendCatalogEntry,
+        modelId: string,
+        configOverrides?: Readonly<Record<string, string>>,
+    ) => {
         const nextSelection = {
             ...getEngineSelectionForTargetKey(entry.backendTargetKey),
             modelId,
+            ...(configOverrides ? { configOverrides } : {}),
         };
         selectEngineSelection(entry, nextSelection);
     }, [getEngineSelectionForTargetKey, selectEngineSelection]);
@@ -158,15 +183,19 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         settings: params.settings,
         refreshProbe: params.refreshProbe,
         favoriteModelSelections: params.favoriteModelSelections ?? [],
+        favoriteBackendTargetKeys: params.favoriteBackendTargetKeys ?? [],
         onSelectFavoriteModel: handleSelectFavoriteModel,
         selectedConfigOverrides: getEngineSelectionForTargetKey(selectedBackendTargetKey).configOverrides,
         onSelectFavoriteModelOptionValue: handleSelectFavoriteModelOptionValue,
         onToggleFavoriteModel: handleToggleFavoriteModel,
+        onToggleFavoriteBackendTarget: params.setFavoriteBackendTargetKeys ? handleToggleFavoriteBackendTarget : undefined,
         onRemoveFavoriteModelSelection: handleRemoveFavoriteModelSelection,
+        onRememberAgentPickerView: params.onRememberAgentPickerView,
     }), [
         getEngineSelectionForTargetKey,
         handleSelectFavoriteModelOptionValue,
         params.capabilityServerId,
+        params.favoriteBackendTargetKeys,
         params.favoriteModelSelections,
         params.getCompatibleProfileBackendEntries,
         params.isBackendEntrySelectable,
@@ -177,17 +206,45 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         params.selectedMachineId,
         params.selectedPath,
         params.selectedProfileId,
+        params.setFavoriteBackendTargetKeys,
         selectedBackendTargetKey,
         params.settings,
         params.useProfiles,
+        params.onRememberAgentPickerView,
         handleSelectFavoriteModel,
         handleRemoveFavoriteModelSelection,
+        handleToggleFavoriteBackendTarget,
         handleToggleFavoriteModel,
         selectEngineSelection,
     ]);
 
+    const agentPickerSelectedOptionId = React.useMemo(() => {
+        const fallbackOptionId = params.selectedBackendEntry?.backendTargetKey ?? params.selectedBackendTargetKey;
+        const pickerOptions = agentPickerOptions ?? [];
+        if (params.rememberedAgentPickerView?.kind === 'favoriteModels') {
+            const hasFavoriteModelsOption = pickerOptions.some((option) => option.id === FAVORITE_MODELS_AGENT_PICKER_OPTION_ID);
+            if (hasFavoriteModelsOption) {
+                return FAVORITE_MODELS_AGENT_PICKER_OPTION_ID;
+            }
+        }
+        const rememberedView = params.rememberedAgentPickerView;
+        if (rememberedView?.kind === 'backend') {
+            const hasRememberedBackendOption = pickerOptions.some((option) => option.id === rememberedView.backendTargetKey);
+            if (hasRememberedBackendOption) {
+                return rememberedView.backendTargetKey;
+            }
+        }
+        return fallbackOptionId;
+    }, [
+        agentPickerOptions,
+        params.rememberedAgentPickerView,
+        params.selectedBackendEntry?.backendTargetKey,
+        params.selectedBackendTargetKey,
+    ]);
+
     const handleAgentPickerSelect = React.useCallback((selectedId: string) => {
         if (selectedId === FAVORITE_MODELS_AGENT_PICKER_OPTION_ID) {
+            params.onRememberAgentPickerView?.({ kind: 'favoriteModels' });
             return;
         }
         const nextEntry = resolveNewSessionAgentPickerEntryByTargetKey({
@@ -195,10 +252,14 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
             selectedId,
         });
         if (nextEntry) {
+            params.onRememberAgentPickerView?.({
+                kind: 'backend',
+                backendTargetKey: nextEntry.backendTargetKey,
+            });
             const nextSelection = getEngineSelectionForTargetKey(nextEntry.backendTargetKey);
             selectEngineSelection(nextEntry, nextSelection);
         }
-    }, [getEngineSelectionForTargetKey, params.resolvedBackendEntries, selectEngineSelection]);
+    }, [getEngineSelectionForTargetKey, params.onRememberAgentPickerView, params.resolvedBackendEntries, selectEngineSelection]);
 
     const handleAgentClick = React.useCallback(() => {
         const nextEntry = resolveNewSessionAgentPickerSingleSelectFallbackEntry({
@@ -216,6 +277,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
 
     return {
         agentPickerOptions,
+        agentPickerSelectedOptionId,
         handleAgentPickerSelect,
         handleAgentClick,
     };

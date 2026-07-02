@@ -232,6 +232,72 @@ describe('useSessionPaneUrlSync', () => {
         });
     });
 
+    it('does not write stale session pane params into non-session routes', async () => {
+        const setParams = vi.fn();
+        const pane = {
+            openRight: vi.fn(),
+            closeRight: vi.fn(),
+            setRightTab: vi.fn(),
+            openBottom: vi.fn(),
+            closeBottom: vi.fn(),
+            setBottomTab: vi.fn(),
+            openDetailsTab: vi.fn(),
+            closeDetails: vi.fn(),
+        };
+        const windowStub = ensurePaneUrlSyncWindow();
+        const pushStateMock = vi.spyOn(windowStub.history, 'pushState');
+        windowStub.location.href = 'http://localhost:19364/settings/actions/session.list';
+
+        const closedScopeState = {
+            right: { isOpen: false, activeTabId: null, tabState: {} },
+            bottom: { isOpen: false, activeTabId: null, tabState: {} },
+            details: { isOpen: false, tabs: [], activeTabKey: null },
+        };
+        const fileDetailsScopeState = {
+            right: { isOpen: false, activeTabId: null, tabState: {} },
+            bottom: { isOpen: false, activeTabId: null, tabState: {} },
+            details: {
+                isOpen: true,
+                activeTabKey: 'file:README.md',
+                tabs: [
+                    {
+                        key: 'file:README.md',
+                        kind: 'file',
+                        resource: { kind: 'file', path: 'README.md' },
+                    },
+                ],
+            },
+        };
+
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<Harness
+                    enabled={true}
+                    scopeKey="session:test-session"
+                    scopeState={closedScopeState}
+                    urlState={null}
+                    pane={pane}
+                    setParams={setParams}
+                />)).tree;
+
+        await act(async () => {
+            tree.update(
+                <Harness
+                    enabled={true}
+                    scopeKey="session:test-session"
+                    scopeState={fileDetailsScopeState}
+                    urlState={null}
+                    pane={pane}
+                    setParams={setParams}
+                />
+            );
+        });
+
+        expect(pushStateMock).toHaveBeenCalledTimes(0);
+        expect(setParams).toHaveBeenCalledTimes(0);
+        expect(windowStub.location.href).toBe('http://localhost:19364/settings/actions/session.list');
+        windowStub.location.href = 'http://localhost:19364/session/test-session?server=http%3A%2F%2Flocalhost%3A53288';
+    });
+
     it('restores the last stored pane state when a session remounts without pane url params', async () => {
         clearSessionPaneTestStorage();
 
@@ -648,6 +714,7 @@ describe('useSessionPaneUrlSync', () => {
             closeDetails: vi.fn(),
         };
         const windowStub = ensurePaneUrlSyncWindow();
+        windowStub.location.href = 'http://localhost:19364/session/history?server=http%3A%2F%2Flocalhost%3A53288';
         windowStub.history.state = { id: 'history-entry' };
 
         const openScopeState = {
@@ -750,6 +817,7 @@ describe('useSessionPaneUrlSync', () => {
             closeDetails: vi.fn(),
         };
         const windowStub = ensurePaneUrlSyncWindow();
+        windowStub.location.href = 'http://localhost:19364/session/terminal-history?server=http%3A%2F%2Flocalhost%3A53288';
         windowStub.history.state = { id: 'history-entry' };
 
         const openScopeState = {

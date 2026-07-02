@@ -304,7 +304,7 @@ export function ReviewFindingsMessageCard(props: {
                     ...publishedFindings.map((finding) => `- [${finding.severity}/${finding.category}] ${finding.title}: ${finding.summary}`),
                 ].join('\n');
 
-                await sync.sendMessage(
+                await sync.submitMessage(
                     props.sessionId,
                     text,
                     t('session.reviewFindings.actions.applyAcceptedFindings'),
@@ -313,6 +313,9 @@ export function ReviewFindingsMessageCard(props: {
                             kind: 'review_publish_request.v1',
                             payload,
                         },
+                    },
+                    {
+                        callerSurface: 'review_findings_apply',
                     },
                 );
             } catch (e) {

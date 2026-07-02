@@ -40,6 +40,48 @@ describe('shouldRebuildSessionListIndexForRowStateChange', () => {
         expect(shouldRebuildSessionListIndexForRowStateChange(previous, next)).toBe(false);
     });
 
+    it('returns true when meaningful activity changes for an inactive date-grouped session', () => {
+        const previous: Record<string, SessionListRenderableSession> = {
+            s1: createRenderable('s1', { active: false, updatedAt: 1, meaningfulActivityAt: 10 }),
+        };
+        const next: Record<string, SessionListRenderableSession> = {
+            s1: createRenderable('s1', { active: false, updatedAt: 1, meaningfulActivityAt: 20 }),
+        };
+
+        expect(shouldRebuildSessionListIndexForRowStateChange(previous, next, {
+            groupInactiveSessionsByProject: false,
+            inactiveGroupingV1: 'date',
+        })).toBe(true);
+    });
+
+    it('returns false when raw updatedAt changes without meaningful activity for an inactive date-grouped session', () => {
+        const previous: Record<string, SessionListRenderableSession> = {
+            s1: createRenderable('s1', { active: false, updatedAt: 1, meaningfulActivityAt: 10 }),
+        };
+        const next: Record<string, SessionListRenderableSession> = {
+            s1: createRenderable('s1', { active: false, updatedAt: 2, meaningfulActivityAt: 10 }),
+        };
+
+        expect(shouldRebuildSessionListIndexForRowStateChange(previous, next, {
+            groupInactiveSessionsByProject: false,
+            inactiveGroupingV1: 'date',
+        })).toBe(false);
+    });
+
+    it('returns false when updatedAt changes for an inactive project-grouped session', () => {
+        const previous: Record<string, SessionListRenderableSession> = {
+            s1: createRenderable('s1', { active: false, updatedAt: 1 }),
+        };
+        const next: Record<string, SessionListRenderableSession> = {
+            s1: createRenderable('s1', { active: false, updatedAt: 2 }),
+        };
+
+        expect(shouldRebuildSessionListIndexForRowStateChange(previous, next, {
+            groupInactiveSessionsByProject: true,
+            inactiveGroupingV1: 'project',
+        })).toBe(false);
+    });
+
     it('returns true when a session is added', () => {
         const previous: Record<string, SessionListRenderableSession> = {
             s1: createRenderable('s1'),

@@ -40,6 +40,18 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Focused session folder navigation state for the local session list',
         storageScope: 'local',
     },
+    brandHeroSeenAt: {
+        schema: z.number().nullable().catch(null),
+        default: null,
+        description: 'Timestamp in ms since epoch when the user first dismissed the mobile brand hero',
+        storageScope: 'local',
+    },
+    hasCompletedAuthOnce: {
+        schema: z.boolean().catch(false),
+        default: false,
+        description: 'Flips true the first time the user reaches an authenticated state on this device. Never cleared on logout, so the welcome screen can greet returning users with a warmer copy variant ("Good to have you back").',
+        storageScope: 'local',
+    },
     themePreference: {
         schema: z.enum(['light', 'dark', 'adaptive']),
         default: 'adaptive',

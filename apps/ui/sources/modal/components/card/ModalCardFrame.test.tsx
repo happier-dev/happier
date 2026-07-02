@@ -8,6 +8,26 @@ const windowState = vi.hoisted(() => ({
     height: 768,
 }));
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (!style) return {};
+    if (Array.isArray(style)) {
+        return style.reduce<Record<string, unknown>>((acc, entry) => ({
+            ...acc,
+            ...flattenStyle(entry),
+        }), {});
+    }
+    if (typeof style === 'object') return style as Record<string, unknown>;
+    return {};
+}
+
+function hasShadow(style: Record<string, unknown>): boolean {
+    return style.boxShadow !== undefined
+        || style.shadowColor !== undefined
+        || style.shadowOpacity !== undefined
+        || style.shadowRadius !== undefined
+        || style.elevation !== undefined;
+}
+
 installModalComponentCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -29,6 +49,38 @@ installModalComponentCommonModuleMocks({
 });
 
 describe('ModalCardFrame', () => {
+    it('keeps modal shadows outside the clipped rounded card surface', async () => {
+        const { renderScreen } = await import('@/dev/testkit');
+        const { ModalCardFrame } = await import('./ModalCardFrame');
+
+        const screen = await renderScreen(
+            React.createElement(
+                ModalCardFrame,
+                {
+                    children: React.createElement('Child'),
+                    title: 'Modal title',
+                    testID: 'modal-card-frame',
+                },
+            ),
+        );
+
+        const frame = screen.findByTestId('modal-card-frame');
+        if (frame == null) {
+            throw new Error('expected modal card frame to exist');
+        }
+        const frameStyle = flattenStyle(frame.props.style);
+        expect(hasShadow(frameStyle)).toBe(true);
+        expect(frameStyle.overflow).not.toBe('hidden');
+
+        const clippedSurface = screen.findAllByType('View').find((node) => {
+            const style = flattenStyle(node.props.style);
+            return style.borderRadius === 14 && style.overflow === 'hidden';
+        });
+        expect(clippedSurface).toBeTruthy();
+        const clippedSurfaceStyle = flattenStyle(clippedSurface?.props.style);
+        expect(hasShadow(clippedSurfaceStyle)).toBe(false);
+    });
+
     it('renders a flexing body wrapper (so the overlay scroll host can handle overflow)', async () => {
         const { renderScreen } = await import('@/dev/testkit');
         const { ModalCardFrame } = await import('./ModalCardFrame');
@@ -223,7 +275,7 @@ describe('ModalCardFrame', () => {
                     maxWidth: 840,
                 }),
                 expect.objectContaining({
-                    height: 527,
+                    height: 524,
                 }),
             ]),
         );

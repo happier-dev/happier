@@ -51,6 +51,7 @@ const settingsState = vi.hoisted((): PetAppShellCompanionTestState => ({
     },
 }));
 const applyLocalSettingsSpy = vi.hoisted(() => vi.fn());
+const useActivityAttentionSourceSpy = vi.hoisted(() => vi.fn());
 const activityState = vi.hoisted(() => ({
     sessions: [] as Session[],
 }));
@@ -132,7 +133,10 @@ vi.mock('@/utils/platform/tauri', () => ({
 }));
 
 vi.mock('@/activity/source/useActivityAttentionSource', () => ({
-    useActivityAttentionSource: () => activitySourceState.source,
+    useActivityAttentionSource: () => {
+        useActivityAttentionSourceSpy();
+        return activitySourceState.source;
+    },
 }));
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
@@ -189,6 +193,7 @@ vi.mock('@/sync/store/settingsWriters', () => ({
 
 describe('PetAppShellCompanionMount', () => {
     afterEach(() => {
+        vi.restoreAllMocks();
         vi.useRealTimers();
         standardCleanup();
         platformState.os = 'web';
@@ -206,6 +211,7 @@ describe('PetAppShellCompanionMount', () => {
             petsDismissedCompanionTrayItemKeys: [],
         };
         applyLocalSettingsSpy.mockReset();
+        useActivityAttentionSourceSpy.mockClear();
         activityState.sessions = [];
         activitySourceState.source = createActivitySource([]);
         vi.unstubAllGlobals();
@@ -217,6 +223,7 @@ describe('PetAppShellCompanionMount', () => {
         const screen = await renderScreen(<PetAppShellCompanionMount />);
 
         expect(screen.findByTestId('pet-app-shell-companion-root')).toBeNull();
+        expect(useActivityAttentionSourceSpy).not.toHaveBeenCalled();
     });
 
     it('renders the selected built-in pet in the ordinary web app shell', async () => {
@@ -267,12 +274,14 @@ describe('PetAppShellCompanionMount', () => {
 
     it('persists dismissed web app-shell activity bubbles by dismiss key', async () => {
         enableAccountPetsForTest();
+        vi.spyOn(Date, 'now').mockReturnValue(3_000);
         activityState.sessions = [
             createSessionFixture({
                 id: 'session-dismiss-web',
                 serverId: 'server-a',
                 active: true,
                 pendingPermissionRequestCount: 1,
+                pendingRequestObservedAt: 2_000,
                 updatedAt: 2_000,
                 activeAt: 2_000,
             }),

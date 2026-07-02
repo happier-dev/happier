@@ -1,53 +1,167 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveTranscriptRollbackActions } from './rollbackUiSupport';
+import type { Message } from '@/sync/domains/messages/messageTypes';
+import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
+
+import { readSessionRollbackRangesV1, resolveTranscriptRollbackActions } from './rollbackUiSupport';
+
+function createActiveSession(metadata: Metadata): Session {
+    return {
+        id: 'session-1',
+        seq: 4,
+        createdAt: 1,
+        updatedAt: 1,
+        active: true,
+        activeAt: 1,
+        metadata,
+        metadataVersion: 1,
+        agentState: null,
+        agentStateVersion: 1,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+    };
+}
+
+function userTextMessage(id: string, seq: number, text: string): Message {
+    return {
+        kind: 'user-text',
+        id,
+        seq,
+        localId: id,
+        createdAt: seq,
+        text,
+    };
+}
+
+function agentTextMessage(id: string, seq: number, text: string): Message {
+    return {
+        kind: 'agent-text',
+        id,
+        seq,
+        localId: id,
+        createdAt: seq,
+        text,
+    };
+}
+
+describe('readSessionRollbackRangesV1', () => {
+    it('reuses the empty rollback range list when no valid ranges are present', () => {
+        const first = readSessionRollbackRangesV1(null);
+        const second = readSessionRollbackRangesV1({});
+        const third = readSessionRollbackRangesV1({
+            sessionRollbackRangesV1: {
+                v: 1,
+                updatedAt: 1,
+                ranges: [{ target: { type: 'latest_turn' }, startSeqInclusive: 4, endSeqInclusive: 3, rolledBackAt: 1 }],
+            },
+        });
+
+        expect(first).toEqual([]);
+        expect(second).toBe(first);
+        expect(third).toBe(first);
+    });
+});
 
 describe('resolveTranscriptRollbackActions', () => {
-    it('exposes rollback-to-point on each active user message for Codex app-server sessions', () => {
-        const session: any = {
-            active: true,
-            metadata: { flavor: 'codex', codexBackendMode: 'appServer' },
+    it('reuses the empty rollback action map when rollback is unavailable', () => {
+        const session = createActiveSession({
+            path: '/workspace',
+            host: 'localhost',
+            flavor: 'claude',
+        });
+        const messagesById: Record<string, Message> = {
+            u1: userTextMessage('u1', 1, 'initial prompt'),
         };
-        const messagesById: Record<string, any> = {
-            u1: { kind: 'user-text', id: 'u1', seq: 1, text: 'first prompt' },
-            a1: { kind: 'agent-text', id: 'a1', seq: 2, text: 'reply' },
-            u2: { kind: 'user-text', id: 'u2', seq: 3, text: 'second prompt' },
-            a2: { kind: 'agent-text', id: 'a2', seq: 4, text: 'second reply' },
+        const first = resolveTranscriptRollbackActions({
+            session,
+            messageIdsOldestFirst: ['u1'],
+            messagesById,
+            rollbackRanges: [],
+        });
+        const second = resolveTranscriptRollbackActions({
+            session: { ...session, activeAt: 2 },
+            messageIdsOldestFirst: ['u1'],
+            messagesById,
+            rollbackRanges: [],
+        });
+
+        expect(first).toEqual({});
+        expect(second).toBe(first);
+    });
+
+    it('exposes rollback-to-point only on completed turn-start user messages', () => {
+        const session = createActiveSession({
+            path: '/workspace',
+            host: 'localhost',
+            flavor: 'codex',
+            codexBackendMode: 'appServer',
+        });
+        const sessionWithTurns: Session = {
+            ...session,
+            rollbackEligibleTurnStarts: [1],
+        };
+        const messagesById: Record<string, Message> = {
+            u1: userTextMessage('u1', 1, 'initial prompt'),
+            a1: agentTextMessage('a1', 2, 'partial reply'),
+            u2: userTextMessage('u2', 3, 'steer prompt'),
+            a2: agentTextMessage('a2', 4, 'final reply'),
         };
 
         expect(resolveTranscriptRollbackActions({
-            session,
+            session: sessionWithTurns,
             messageIdsOldestFirst: ['u1', 'a1', 'u2', 'a2'],
             messagesById,
             rollbackRanges: [],
         })).toEqual({
             u1: {
                 target: { type: 'before_user_message', userMessageSeq: 1 },
-                restoredDraftText: 'first prompt',
-            },
-            u2: {
-                target: { type: 'before_user_message', userMessageSeq: 3 },
-                restoredDraftText: 'second prompt',
+                restoredDraftText: 'initial prompt',
             },
         });
     });
 
-    it('excludes historical user messages from rollback-to-point actions', () => {
-        const session: any = {
-            active: true,
-            metadata: {
-                flavor: 'codex',
-                codexBackendMode: 'appServer',
-            },
+    it('ignores non-completed turn entries and malformed metadata when projecting point rollback actions', () => {
+        const messagesById: Record<string, Message> = {
+            active: userTextMessage('active', 1, 'active prompt'),
+            interrupted: userTextMessage('interrupted', 3, 'interrupted prompt'),
+            rolledBack: userTextMessage('rolledBack', 5, 'rolled back prompt'),
+            malformedEnd: userTextMessage('malformedEnd', 7, 'malformed prompt'),
         };
-        const messagesById: Record<string, any> = {
-            u1: { kind: 'user-text', id: 'u1', seq: 1, text: 'first prompt' },
-            a1: { kind: 'agent-text', id: 'a1', seq: 2, text: 'reply' },
-            u2: { kind: 'user-text', id: 'u2', seq: 3, text: 'second prompt' },
-        };
+        const session = createActiveSession({
+            path: '/workspace',
+            host: 'localhost',
+            flavor: 'codex',
+            codexBackendMode: 'appServer',
+        });
 
         expect(resolveTranscriptRollbackActions({
             session,
+            messageIdsOldestFirst: ['active', 'interrupted', 'rolledBack', 'malformedEnd'],
+            messagesById,
+            rollbackRanges: [],
+        })).toEqual({});
+    });
+
+    it('excludes historical user messages from rollback-to-point actions', () => {
+        const session = createActiveSession({
+            path: '/workspace',
+            host: 'localhost',
+            flavor: 'codex',
+            codexBackendMode: 'appServer',
+        });
+        const sessionWithTurns: Session = {
+            ...session,
+            rollbackEligibleTurnStarts: [1, 3],
+        };
+        const messagesById: Record<string, Message> = {
+            u1: userTextMessage('u1', 1, 'first prompt'),
+            a1: agentTextMessage('a1', 2, 'reply'),
+            u2: userTextMessage('u2', 3, 'second prompt'),
+        };
+
+        expect(resolveTranscriptRollbackActions({
+            session: sessionWithTurns,
             messageIdsOldestFirst: ['u1', 'a1', 'u2'],
             messagesById,
             rollbackRanges: [{ startSeqInclusive: 1, endSeqInclusive: 2 }],
@@ -60,14 +174,15 @@ describe('resolveTranscriptRollbackActions', () => {
     });
 
     it('projects checkpoint code rollback without conversation action when conversation rollback is unsupported', () => {
-        const session: any = {
-            id: 'session-1',
-            active: true,
-            metadata: { flavor: 'codex', codexBackendMode: 'mcp' },
-        };
-        const messagesById: Record<string, any> = {
-            u1: { kind: 'user-text', id: 'u1', seq: 1, text: 'first prompt' },
-            a1: { kind: 'agent-text', id: 'a1', seq: 2, text: 'reply' },
+        const session = createActiveSession({
+            path: '/workspace',
+            host: 'localhost',
+            flavor: 'codex',
+            codexBackendMode: 'mcp',
+        });
+        const messagesById: Record<string, Message> = {
+            u1: userTextMessage('u1', 1, 'first prompt'),
+            a1: agentTextMessage('a1', 2, 'reply'),
         };
 
         expect(resolveTranscriptRollbackActions({

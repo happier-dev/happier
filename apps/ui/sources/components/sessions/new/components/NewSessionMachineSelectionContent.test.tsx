@@ -6,6 +6,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerScopedMachine } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 import { renderScreen } from '@/dev/testkit';
+import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -18,6 +19,9 @@ const capturedServerScopedMachineSelectorProps: CapturedServerScopedMachineSelec
 const capturedItemListStyles: unknown[] = [];
 
 installNewSessionComponentsCommonModuleMocks({
+    reactNative: () => createReactNativeWebMock({
+        Platform: { OS: 'ios' },
+    }),
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
@@ -33,6 +37,12 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
 
 vi.mock('@/components/ui/text/Text', () => ({
     Text: ({ children }: { children?: React.ReactNode }) => React.createElement('Text', null, children),
+}));
+
+vi.mock('@/components/ui/popover', () => ({
+    resolvePopoverHeightStyle: (maxHeight: number | undefined) => (
+        maxHeight === undefined ? null : { maxHeight }
+    ),
 }));
 
 vi.mock('./MachineSelector', () => ({
@@ -165,7 +175,7 @@ describe('NewSessionMachineSelectionContent', () => {
         expect(typeof capturedMachineSelectorProps[0]?.onToggleFavorite).toBe('function');
     });
 
-    it('bounds the embedded list to the popover content height', async () => {
+    it('caps the embedded list to the popover content height without forcing fixed height', async () => {
         const { NewSessionMachineSelectionContent } = await import('./NewSessionMachineSelectionContent');
 
         capturedItemListStyles.length = 0;
@@ -189,13 +199,15 @@ describe('NewSessionMachineSelectionContent', () => {
             maxHeight: 320,
         }));
 
-        expect(capturedItemListStyles.at(-1)).toMatchObject({
+        const boundedStyle = capturedItemListStyles.at(-1) as Record<string, unknown> | undefined;
+        expect(boundedStyle).toMatchObject({
             maxHeight: 320,
             minHeight: 0,
             flex: 0,
             flexGrow: 0,
             flexShrink: 1,
         });
+        expect(boundedStyle?.height).toBeUndefined();
     });
 
     it('forwards the machine-search visibility flag to the single-server popover selector', async () => {

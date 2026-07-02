@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Linking, Platform, useWindowDimensions } from 'react-native';
+import { Linking, Platform } from 'react-native';
 
 import { useRouter } from 'expo-router';
 
@@ -14,7 +14,6 @@ import sodium from '@/encryption/libsodium.lib';
 import { digest } from '@/platform/digest';
 import { getRandomBytesAsync } from '@/platform/cryptoRandom';
 import { Modal } from '@/modal';
-import { BaseModal } from '@/modal/components/BaseModal';
 import { useAuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import { useIsLandscape } from '@/utils/platform/responsive';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
@@ -30,12 +29,13 @@ import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfigured
 import { isTauriDesktop } from '@/utils/platform/tauri';
 
 import { shouldAutoRedirectToSetupOnFirstLaunch } from '@/utils/platform/firstLaunchSetupRedirectPolicy';
-import { OnboardingWizardSurface } from '@/components/onboarding/surfaces/OnboardingWizardSurface';
+import { OnboardingWizardSurfacePresentation } from '@/components/onboarding/surfaces/OnboardingWizardSurface';
+import { useOnboardingWizardController } from '@/components/onboarding/surfaces/useOnboardingWizardController';
+import { UnauthenticatedSplitShell, useApplyBrandHeroSeen } from '@/components/onboarding/unauthShell';
 import { DesktopShellUpdateIndicatorHost } from '@/components/navigation/shell/desktopChrome/DesktopShellUpdateIndicatorHost';
 import { DesktopShellWindowControlsHost } from '@/components/navigation/shell/desktopChrome/DesktopShellWindowControlsHost';
 import { useResolvedDesktopWindowControls } from '@/components/navigation/shell/desktopChrome/useResolvedDesktopWindowControls';
 import { AppUpdateStatusTag } from '@/components/ui/feedback/AppUpdateStatusTag';
-import { shouldUseWizardFullscreenPresentation } from '@/components/onboarding/ui/wizardPresentation';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { resolveAppShellChromeHost } from '@/components/appShell/resolveAppShellChromeHost';
 import { setOnboardingWizardPreAuthResumeIntent, resolveWizardAuthReturnToRoute } from '@/components/onboarding/state/wizardResume';
@@ -53,18 +53,24 @@ function resolveAuthReturnToRoute(): string {
     return resolveWizardAuthReturnToRoute();
 }
 
+function resolveUnauthShellRouteTestId(stepId: WizardStepId): string {
+    if (stepId === 'auth_restore') return 'unauth-shell-route-restore';
+    if (stepId === 'relay_select') return 'unauth-shell-route-setup-pre-auth';
+    return 'unauth-shell-route-welcome';
+}
+
 export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardingWizardEntry(props: PreAuthOnboardingWizardEntryProps) {
     const auth = useAuth();
     const router = useRouter();
-    const { width: windowWidth } = useWindowDimensions();
     const isLandscape = useIsLandscape();
     const isDesktopShell = React.useMemo(() => isTauriDesktop(), []);
     const authEntryOptions = useAuthEntryOptions();
+    const applyBrandHeroSeen = useApplyBrandHeroSeen();
     const autoRedirectAttemptedRef = React.useRef(false);
     const firstLaunchSetupRedirectedRef = React.useRef(false);
-    const shouldTopAlignWebModal = shouldUseWizardFullscreenPresentation(windowWidth);
     const shellChromeHost = resolveAppShellChromeHost({
         isAuthenticated: false,
+        isWeb: Platform.OS === 'web',
         isTauriDesktop: isDesktopShell,
         isTablet: false,
         isTerminalConnectRoute: false,
@@ -342,48 +348,53 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         }
     }, [props.initialStepId]);
 
-    const wizard = (
-        <OnboardingWizardSurface
-            testID={props.testID ?? 'onboarding-wizard'}
-            layout={isLandscape ? 'landscape' : 'portrait'}
-            isDesktopShell={isDesktopShell}
-            wizardChromeMode={isDesktopShell ? 'embedded' : 'overlay'}
-            wizardLayoutPresentation={isDesktopShell ? 'fullscreen' : undefined}
-            authEntryOptions={authEntryOptions}
-            shellChrome={shellChromeHost === 'unauth-shell' ? (
-                <>
-                    <DesktopShellWindowControlsHost>
-                        {resolvedDesktopWindowControls}
-                    </DesktopShellWindowControlsHost>
-                    <DesktopShellUpdateIndicatorHost>
-                        <AppUpdateStatusTag testID="preauth-app-update-status-tag" />
-                    </DesktopShellUpdateIndicatorHost>
-                </>
-            ) : null}
-            initialStepId={resolvedInitialStepId}
-            onCreateAccount={createAccount}
-            onCreateAccountViaProvider={createAccountViaProvider}
-            onLoginWithKeylessProvider={loginWithKeylessProvider}
-            onLoginWithMtls={loginWithMtls}
-            onChangeRelayViaServerConfig={changeRelayViaServerConfig}
-        />
+    const shellChrome = shellChromeHost === 'unauth-shell' ? (
+        <>
+            <DesktopShellWindowControlsHost>
+                {resolvedDesktopWindowControls}
+            </DesktopShellWindowControlsHost>
+            <DesktopShellUpdateIndicatorHost>
+                <AppUpdateStatusTag testID="preauth-app-update-status-tag" />
+            </DesktopShellUpdateIndicatorHost>
+        </>
+    ) : null;
+
+    const wizardSurfaceProps = {
+        testID: props.testID ?? 'onboarding-wizard',
+        layout: isLandscape ? 'landscape' as const : 'portrait' as const,
+        isDesktopShell,
+        wizardChromeMode: 'bare' as const,
+        wizardLayoutPresentation: isDesktopShell ? 'fullscreen' as const : undefined,
+        authEntryOptions,
+        shellChrome,
+        initialStepId: resolvedInitialStepId,
+        onCreateAccount: createAccount,
+        onCreateAccountViaProvider: createAccountViaProvider,
+        onLoginWithKeylessProvider: loginWithKeylessProvider,
+        onLoginWithMtls: loginWithMtls,
+        onChangeRelayViaServerConfig: changeRelayViaServerConfig,
+    };
+
+    const controller = useOnboardingWizardController(wizardSurfaceProps);
+
+    return (
+        <UnauthenticatedSplitShell
+            stepId={controller.stepId}
+            isWelcomeStep={controller.stepId === 'welcome'}
+            allowMobileBrandHero={controller.stepId === 'welcome'}
+            onOpenRelayCustomFlow={() => {
+                controller.goToStep('relay_select');
+            }}
+            onBrandHeroGetStarted={applyBrandHeroSeen}
+            onBack={controller.onBack ?? undefined}
+            transitionDirection={controller.contentTransitionDirection}
+            workflowPresentation={controller.stepId === 'scan_code' ? 'fullBleed' : 'padded'}
+            testID={props.testID ?? resolveUnauthShellRouteTestId(controller.stepId)}
+        >
+            <OnboardingWizardSurfacePresentation
+                {...wizardSurfaceProps}
+                controller={controller}
+            />
+        </UnauthenticatedSplitShell>
     );
-
-    // On web, render the pre-auth onboarding wizard inside BaseModal so the scrim/backdrop always
-    // covers the full viewport (and matches other overlay surfaces like popovers). On Tauri desktop
-    // we render it directly inside the window, avoiding an extra modal surface.
-    if (Platform.OS === 'web' && !isDesktopShell) {
-        return (
-            <BaseModal
-                visible
-                showBackdrop
-                closeOnBackdrop={false}
-                webPlacement={shouldTopAlignWebModal ? 'top' : undefined}
-            >
-                {wizard}
-            </BaseModal>
-        );
-    }
-
-    return wizard;
 });

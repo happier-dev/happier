@@ -266,6 +266,129 @@ describe('sidechains (provider-agnostic)', () => {
     expect(toolMessage.children[1].kind).toBe('agent-text');
   });
 
+  it('keeps subagent tools running when a ready event follows sidechain activity', () => {
+    const state = createReducer();
+
+    const subAgentTool: NormalizedMessage = {
+      id: 'msg_subagent',
+      localId: null,
+      createdAt: 1000,
+      role: 'agent',
+      isSidechain: false,
+      content: [
+        {
+          type: 'tool-call',
+          id: 'tool_subagent_1',
+          name: 'SubAgent',
+          input: { prompt: 'Search for files' },
+          description: null,
+          uuid: 'uuid_subagent',
+          parentUUID: null,
+        },
+      ],
+    };
+
+    const sidechainText: NormalizedMessage = {
+      id: 'msg_sc_text',
+      localId: null,
+      createdAt: 1200,
+      role: 'agent',
+      isSidechain: true,
+      sidechainId: 'tool_subagent_1',
+      content: [
+        {
+          type: 'text',
+          text: 'Still working',
+          uuid: 'uuid_sc_text',
+          parentUUID: null,
+        },
+      ],
+    };
+
+    const readyEvent: NormalizedMessage = {
+      id: 'ready_1',
+      localId: null,
+      createdAt: 1500,
+      role: 'event',
+      isSidechain: false,
+      content: { type: 'ready' },
+    };
+
+    const result = reducer(state, [subAgentTool, sidechainText, readyEvent]);
+
+    const toolMessage = result.messages.find((m) => m.kind === 'tool-call' && m.tool?.name === 'SubAgent');
+    if (!toolMessage || toolMessage.kind !== 'tool-call') throw new Error('Expected SubAgent tool message');
+    expect(toolMessage.tool.state).toBe('running');
+    expect(toolMessage.tool.completedAt).toBeNull();
+    expect(toolMessage.tool.result).toBeUndefined();
+  });
+
+  it('restores subagent tools when sidechain activity follows a synthetic interrupted placeholder', () => {
+    const state = createReducer();
+
+    const subAgentTool: NormalizedMessage = {
+      id: 'msg_subagent',
+      localId: null,
+      createdAt: 1000,
+      role: 'agent',
+      isSidechain: false,
+      content: [
+        {
+          type: 'tool-call',
+          id: 'tool_subagent_1',
+          name: 'SubAgent',
+          input: { prompt: 'Search for files' },
+          description: null,
+          uuid: 'uuid_subagent',
+          parentUUID: null,
+        },
+      ],
+    };
+
+    reducer(state, [subAgentTool]);
+
+    const interruptedMessageId = state.toolIdToMessageId.get('tool_subagent_1');
+    const interruptedMessage = interruptedMessageId ? state.messages.get(interruptedMessageId) : null;
+    if (!interruptedMessage?.tool) throw new Error('Expected SubAgent tool before restoring');
+    interruptedMessage.tool.state = 'error';
+    interruptedMessage.tool.completedAt = 1100;
+    interruptedMessage.tool.result = { error: 'Request interrupted' };
+    interruptedMessage.tool.permission = {
+      id: 'tool_subagent_1',
+      status: 'canceled',
+      reason: 'Request interrupted',
+      decision: 'abort',
+    };
+
+    const sidechainText: NormalizedMessage = {
+      id: 'msg_sc_text',
+      localId: null,
+      createdAt: 1200,
+      role: 'agent',
+      isSidechain: true,
+      sidechainId: 'tool_subagent_1',
+      content: [
+        {
+          type: 'text',
+          text: 'Still working',
+          uuid: 'uuid_sc_text',
+          parentUUID: null,
+        },
+      ],
+    };
+
+    const result = reducer(state, [sidechainText]);
+
+    const toolMessage = result.messages.find((m) => m.kind === 'tool-call' && m.tool?.name === 'SubAgent');
+    if (!toolMessage || toolMessage.kind !== 'tool-call') throw new Error('Expected SubAgent tool message');
+    expect(toolMessage.tool.state).toBe('running');
+    expect(toolMessage.tool.completedAt).toBeNull();
+    expect(toolMessage.tool.result).toBeUndefined();
+    expect(toolMessage.tool.permission?.status).toBe('approved');
+    expect(toolMessage.tool.permission?.reason).toBeUndefined();
+    expect(toolMessage.tool.permission?.decision).toBeUndefined();
+  });
+
   it('falls back to reducer message id when tool-call id is empty', () => {
     const state = createReducer();
 

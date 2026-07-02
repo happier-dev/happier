@@ -1,6 +1,8 @@
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { serverAccountScopedStorageKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { fromRecord, toRecord, type PendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect.shared';
-import { getActivePendingServerUrl, isPendingServerUrlActive, normalizePendingServerUrl, pendingServerScopedKey } from './pendingServerScopedKeys';
+import { isPendingServerUrlActive, normalizePendingServerUrl } from './pendingServerScopedKeys';
 
 const STORAGE_KEY = scopedStorageId('pending-terminal-connect-record', readStorageScopeFromEnv());
 const STORAGE_KEY_PREFIX = scopedStorageId('pending-terminal-connect-record:v2', readStorageScopeFromEnv());
@@ -10,26 +12,7 @@ function getStorage(): Storage | null {
     return storage ?? null;
 }
 
-export function setPendingTerminalConnect(value: PendingTerminalConnect): void {
-    const storage = getStorage();
-    if (!storage) return;
-    const serverUrl = normalizePendingServerUrl(value.serverUrl);
-    if (!serverUrl) return;
-    const record = toRecord({ ...value, serverUrl });
-    if (!record) return;
-    try {
-        storage.setItem(pendingServerScopedKey(STORAGE_KEY_PREFIX, serverUrl), JSON.stringify(record));
-    } catch {
-        // ignore storage failures
-    }
-}
-
-export function getPendingTerminalConnect(): PendingTerminalConnect | null {
-    const storage = getStorage();
-    if (!storage) return null;
-    const activeServerUrl = getActivePendingServerUrl();
-    if (!activeServerUrl) return null;
-    const key = pendingServerScopedKey(STORAGE_KEY_PREFIX, activeServerUrl);
+function readScopedRecord(storage: Storage, key: string): PendingTerminalConnect | null {
     try {
         const raw = storage.getItem(key);
         if (!raw) return null;
@@ -46,13 +29,36 @@ export function getPendingTerminalConnect(): PendingTerminalConnect | null {
     }
 }
 
+export function setPendingTerminalConnect(value: PendingTerminalConnect): void {
+    const storage = getStorage();
+    if (!storage) return;
+    const activeScope = getActiveServerAccountScope();
+    const serverUrl = normalizePendingServerUrl(value.serverUrl);
+    if (!serverUrl || !activeScope || !isPendingServerUrlActive(serverUrl)) return;
+    const record = toRecord({ ...value, serverUrl });
+    if (!record) return;
+    try {
+        storage.setItem(serverAccountScopedStorageKey(STORAGE_KEY_PREFIX, activeScope), JSON.stringify(record));
+    } catch {
+        // ignore storage failures
+    }
+}
+
+export function getPendingTerminalConnect(): PendingTerminalConnect | null {
+    const storage = getStorage();
+    if (!storage) return null;
+    const activeScope = getActiveServerAccountScope();
+    if (!activeScope) return null;
+    return readScopedRecord(storage, serverAccountScopedStorageKey(STORAGE_KEY_PREFIX, activeScope));
+}
+
 export function clearPendingTerminalConnect(): void {
     const storage = getStorage();
     if (!storage) return;
     try {
-        const activeServerUrl = getActivePendingServerUrl();
-        if (activeServerUrl) {
-            storage.removeItem(pendingServerScopedKey(STORAGE_KEY_PREFIX, activeServerUrl));
+        const activeScope = getActiveServerAccountScope();
+        if (activeScope) {
+            storage.removeItem(serverAccountScopedStorageKey(STORAGE_KEY_PREFIX, activeScope));
         }
         const raw = storage.getItem(STORAGE_KEY);
         if (!raw) return;
@@ -62,5 +68,36 @@ export function clearPendingTerminalConnect(): void {
         }
     } catch {
         // ignore storage failures
+    }
+}
+
+export function migratePendingTerminalConnectScopes(
+    scope: ServerAccountScope,
+    legacyScopes: readonly ServerAccountScope[],
+): void {
+    const storage = getStorage();
+    if (!storage) return;
+    const canonicalKey = serverAccountScopedStorageKey(STORAGE_KEY_PREFIX, scope);
+    let hasCanonicalRecord = readScopedRecord(storage, canonicalKey) !== null;
+    for (const legacyScope of legacyScopes) {
+        if (legacyScope.serverId === scope.serverId && legacyScope.accountId === scope.accountId) continue;
+        const legacyKey = serverAccountScopedStorageKey(STORAGE_KEY_PREFIX, legacyScope);
+        const legacyRecord = readScopedRecord(storage, legacyKey);
+        if (!hasCanonicalRecord && legacyRecord) {
+            const record = toRecord(legacyRecord);
+            if (record) {
+                try {
+                    storage.setItem(canonicalKey, JSON.stringify(record));
+                    hasCanonicalRecord = true;
+                } catch {
+                    // ignore storage failures
+                }
+            }
+        }
+        try {
+            storage.removeItem(legacyKey);
+        } catch {
+            // ignore storage failures
+        }
     }
 }

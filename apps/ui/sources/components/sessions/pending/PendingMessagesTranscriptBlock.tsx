@@ -17,11 +17,13 @@ import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { deriveSessionRuntimePresentationState } from '@/sync/domains/session/attention/runtimePresentation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { TranscriptSeparatorRow } from '@/components/sessions/transcript/separators/TranscriptSeparatorRow';
 import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
 import { PendingMessagesDragReorderList } from './PendingMessagesDragReorderList';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { getPendingMessageVisualState } from './pendingMessageVisualState';
 
 function getPendingText(message: PendingMessage | DiscardedPendingMessage): string {
     const raw = (message.displayText ?? message.text) ?? '';
@@ -31,12 +33,26 @@ function getPendingText(message: PendingMessage | DiscardedPendingMessage): stri
 function canSteerNowForSession(session: ReturnType<typeof useSession>): boolean {
     const capabilities = session?.agentState?.capabilities;
     return Boolean(
-        session?.thinking
+        isSessionRuntimeWorking(session)
         && session?.presence === 'online'
         && (session?.agentStateVersion ?? 0) > 0
         && session?.agentState?.controlledByUser !== true
         && (capabilities?.inFlightSteerAvailable ?? capabilities?.inFlightSteer) === true
     );
+}
+
+function isSessionRuntimeWorking(session: ReturnType<typeof useSession>): boolean {
+    return deriveSessionRuntimePresentationState({
+        active: session?.active,
+        activeAt: session?.activeAt,
+        presence: session?.presence,
+        thinking: session?.thinking,
+        thinkingAt: session?.thinkingAt,
+        latestTurnStatus: session?.latestTurnStatus ?? null,
+        latestTurnStatusObservedAt: session?.latestTurnStatusObservedAt ?? null,
+        meaningfulActivityAt: session?.meaningfulActivityAt ?? null,
+        lastRuntimeIssue: session?.lastRuntimeIssue ?? null,
+    }).working;
 }
 
 function supportsInFlightSteerForSession(session: ReturnType<typeof useSession>): boolean {
@@ -49,10 +65,18 @@ function supportsInFlightSteerForSession(session: ReturnType<typeof useSession>)
     );
 }
 
+export type PendingMessageEditRequest = Readonly<{
+    id: string;
+    text: string;
+    displayText?: string;
+    message: PendingMessage;
+}>;
+
 export function PendingMessagesTranscriptBlock(props: Readonly<{
     sessionId: string;
     pendingMessages: PendingMessage[];
     discardedMessages: DiscardedPendingMessage[];
+    onEditPendingMessage?: (request: PendingMessageEditRequest) => void | Promise<void>;
 }>) {
     const { theme } = useUnistyles();
     const session = useSession(props.sessionId);
@@ -63,10 +87,15 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const discardedCount = props.discardedMessages.length;
     const showNonSteerableNotice = Boolean(
         pendingCount > 0
-        && session?.thinking
+        && isSessionRuntimeWorking(session)
         && supportsInFlightSteer
         && !canSteerNow
     );
+    // G4 honesty: the CLI publishes `user_terminal_draft` when steering is starved by a draft
+    // sitting in the terminal composer — the notice must say so instead of the generic
+    // mode-change wording.
+    const steerBlockedByTerminalDraft =
+        session?.agentState?.capabilities?.inFlightSteerUnavailableReason === 'user_terminal_draft';
 
     const maxHeightSetting = useSetting('transcriptPendingQueueMaxHeightPx');
     const maxHeightPx =
@@ -106,7 +135,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     const [hoveredMessageId, setHoveredMessageId] = React.useState<string | null>(null);
     const [scrollViewportHeightPx, setScrollViewportHeightPx] = React.useState<number | null>(null);
     const [scrollOffsetY, setScrollOffsetY] = React.useState<number | null>(null);
+    const [materializingLocalIdMap, setMaterializingLocalIdMap] = React.useState<Record<string, true>>({});
     const scrollRef = React.useRef<ScrollView | null>(null);
+    const materializingLocalIds = React.useMemo(
+        () => new Set(Object.keys(materializingLocalIdMap)),
+        [materializingLocalIdMap],
+    );
 
     React.useEffect(() => {
         if (props.pendingMessages.length <= 0) {
@@ -138,20 +172,14 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         setIsPendingQueueExpanded((value) => !value);
     }, []);
 
-    const handleEdit = React.useCallback(async (pendingId: string, currentText: string) => {
-        const next = await Modal.prompt(
-            t('session.pendingMessages.editPrompt.title'),
-            undefined,
-            { defaultValue: currentText, confirmText: t('common.save') },
-        );
-        if (next === null) return;
-        if (!next.trim()) return;
-        try {
-            await sync.updatePendingMessage(props.sessionId, pendingId, next);
-        } catch (e) {
-            Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.updateFailed'));
-        }
-    }, [props.sessionId]);
+    const handleEdit = React.useCallback(async (message: PendingMessage) => {
+        await props.onEditPendingMessage?.({
+            id: message.id,
+            text: message.text,
+            displayText: message.displayText,
+            message,
+        });
+    }, [props.onEditPendingMessage]);
 
     const handleReorderIds = React.useCallback(async (ids: string[]) => {
         if (ids.length <= 1) return;
@@ -192,6 +220,20 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         }
     }, [props.sessionId]);
 
+    const setPendingMaterializing = React.useCallback((message: PendingMessage, isMaterializing: boolean) => {
+        const key = typeof message.localId === 'string' && message.localId.length > 0 ? message.localId : message.id;
+        setMaterializingLocalIdMap((prev) => {
+            if (isMaterializing) {
+                if (prev[key]) return prev;
+                return { ...prev, [key]: true };
+            }
+            if (!prev[key]) return prev;
+            const next = { ...prev };
+            delete next[key];
+            return next;
+        });
+    }, []);
+
     const handleSteerNow = React.useCallback(async (message: PendingMessage) => {
         const confirmed = await Modal.confirm(
             t('session.pendingMessages.steerConfirm.title'),
@@ -201,6 +243,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         if (!confirmed) return;
 
         try {
+            setPendingMaterializing(message, true);
             const result = await sync.sendPendingMessageNow(props.sessionId, {
                 localId: message.id,
                 createdAt: message.createdAt,
@@ -213,8 +256,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             }
         } catch (e) {
             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendFailed'));
+        } finally {
+            setPendingMaterializing(message, false);
         }
-    }, [deleteOrDiscardAfterSend, props.sessionId]);
+    }, [deleteOrDiscardAfterSend, props.sessionId, setPendingMaterializing]);
 
     const handleSendNow = React.useCallback(async (message: PendingMessage) => {
         const confirmed = await Modal.confirm(
@@ -225,6 +270,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         if (!confirmed) return;
 
         try {
+            setPendingMaterializing(message, true);
             await sessionAbort(props.sessionId);
             const result = await sync.sendPendingMessageNow(props.sessionId, {
                 localId: message.id,
@@ -238,8 +284,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
             }
         } catch (e) {
             Modal.alert(t('common.error'), e instanceof Error ? e.message : t('session.pendingMessages.errors.sendFailed'));
+        } finally {
+            setPendingMaterializing(message, false);
         }
-    }, [canSteerNow, deleteOrDiscardAfterSend, props.sessionId]);
+    }, [canSteerNow, deleteOrDiscardAfterSend, props.sessionId, setPendingMaterializing]);
 
     const handleRequeueDiscarded = React.useCallback(async (pendingId: string) => {
         try {
@@ -319,7 +367,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     }) => {
         const { message, index, renderDragHandle } = args;
         const text = getPendingText(message).trim();
-        const isAccepted = message.deliveryStatus === 'accepted';
         const isCollapsible = collapseThresholdChars > 0 && text.length >= collapseThresholdChars;
 	        const isExpanded = expandedMessageIds[message.id] === true || !isCollapsible;
 
@@ -332,6 +379,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 	                : null;
         const hideChipBecauseNextHovered =
             isWeb && hoveredIndex !== null && hoveredIndex + 1 === index && hoveredMessageId !== message.id;
+        const visualState = getPendingMessageVisualState(message, { materializingLocalIds });
 
 	        const menuItems = (() => {
 	            const items: DropdownMenuItem[] = [];
@@ -358,7 +406,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                 items={menuItems}
                 onSelect={async (itemId) => {
                     setOpenMenuKey(null);
-                    if (itemId === 'edit') await handleEdit(message.id, message.text);
+                    if (itemId === 'edit') await handleEdit(message);
                     if (itemId === 'remove') await handleRemove(message.id);
                     if (itemId === 'steerNow') await handleSteerNow(message);
                     if (itemId === 'sendNow') await handleSendNow(message);
@@ -431,15 +479,15 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 isWeb ? { pointerEvents: 'none' as const } : null,
                             ]}
                         >
-                            {isAccepted ? (
+                            {visualState.showSpinner ? (
                                 <ActivitySpinner
-                                    testID={`pendingMessages.acceptedIndicator:${message.id}`}
+                                    testID={`pendingMessages.${visualState.kind}Indicator:${message.id}`}
                                     size="small"
                                     color={theme.colors.text.secondary}
                                 />
                             ) : (
                                 <>
-                                    <Ionicons name="time-outline" size={8} color={theme.colors.text.secondary} />
+                                    <Ionicons name={visualState.iconName} size={8} color={theme.colors.text.secondary} />
                                     <Text
                                         testID={`pendingMessages.pendingAffordanceLabel:${message.id}`}
                                         style={[styles.pendingAffordanceText, { color: theme.colors.text.secondary }]}
@@ -474,7 +522,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     testID={`pendingMessages.edit:${message.id}`}
                                     accessibilityLabel={t('session.pendingMessages.actions.edit')}
                                     icon="pencil-outline"
-                                    onPress={() => handleEdit(message.id, message.text)}
+                                    onPress={() => handleEdit(message)}
                                 />
                                 <IconAction
                                     testID={`pendingMessages.remove:${message.id}`}
@@ -528,6 +576,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         handleSendNow,
         handleSteerNow,
         isWeb,
+        materializingLocalIds,
         openMenuKey,
         pendingIndexById,
         props.pendingMessages.length,
@@ -698,12 +747,13 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 subtitle={discardedCount > 0 && pendingCount > 0 ? `${t('session.pendingMessages.discarded.label')} (${discardedCount})` : null}
                                 rightAccessory={canExpandPendingQueue ? (
                                     <Ionicons
-                                        name={isQueueExpanded ? 'chevron-up' : 'chevron-down'}
+                                        name={isQueueExpanded ? 'chevron-down' : 'chevron-up'}
                                         size={13}
                                         color={theme.colors.text.secondary}
                                     />
                                 ) : null}
                                 padding="none"
+                                chipChrome="minimal"
                             />
                         </View>
 
@@ -719,8 +769,13 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 ]}
                             >
                                 <Ionicons name="pause-circle-outline" size={13} color={theme.colors.text.secondary} />
-                                <Text style={[styles.nonSteerableNoticeText, { color: theme.colors.text.secondary }]}>
-                                    {t('session.pendingMessages.nonSteerableNotice')}
+                                <Text
+                                    testID={steerBlockedByTerminalDraft ? 'pendingMessages.steerBlockedTerminalDraftNotice' : undefined}
+                                    style={[styles.nonSteerableNoticeText, { color: theme.colors.text.secondary }]}
+                                >
+                                    {steerBlockedByTerminalDraft
+                                        ? t('session.pendingMessages.steerBlockedTerminalDraftNotice')
+                                        : t('session.pendingMessages.nonSteerableNotice')}
                                 </Text>
                             </View>
                         ) : null}
@@ -728,8 +783,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         <View style={{ position: 'relative' }}>
                             <ScrollView
                                 testID="pendingMessages.scroll"
-                                style={{ height: clampedViewportHeightPx, maxHeight: maxHeight, marginTop: 8 }}
-                                contentContainerStyle={{ paddingTop: 14, paddingBottom: 2 }}
+                                style={{ height: clampedViewportHeightPx, maxHeight: maxHeight, marginTop: 0 }}
+                                contentContainerStyle={{ paddingTop: 6, paddingBottom: 0 }}
                                 ref={scrollRef}
                                 nestedScrollEnabled={true}
                                 scrollEventThrottle={16}
@@ -866,7 +921,7 @@ const styles = StyleSheet.create(() => ({
         paddingHorizontal: 16,
     },
     sectionHeader: {
-        marginTop: 2,
+        marginTop: 0,
     },
     pendingAffordanceRow: {
         flexDirection: 'row',
@@ -879,15 +934,15 @@ const styles = StyleSheet.create(() => ({
     },
     pendingAffordanceChip: {
         position: 'absolute',
-        top: -8,
+        top: -5,
         right: 0,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 3,
-        paddingHorizontal: 6,
-        paddingVertical: 3,
+        paddingHorizontal: 4,
+        paddingVertical: 1,
         borderRadius: 999,
-        borderWidth: 1,
+        borderWidth: 0,
         zIndex: 20,
     },
     nonSteerableNotice: {
@@ -910,7 +965,7 @@ const styles = StyleSheet.create(() => ({
         maxWidth: '100%',
         alignSelf: 'flex-end',
         position: 'relative',
-        paddingBottom: 16,
+        paddingBottom: 8,
     },
     userMessageWrapperHovered: {
         zIndex: 60,

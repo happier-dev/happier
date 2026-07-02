@@ -14,7 +14,7 @@ import {
 
 const agentInputSpy = vi.fn();
 const modalAlertSpy = vi.fn();
-const syncSendMessageSpy = vi.fn(async () => undefined);
+const syncSubmitMessageSpy = vi.fn(async () => undefined);
 const sessionExecutionRunSendSpy = vi.fn<
     (sessionId: string, request: { runId: string; message: string; delivery?: 'prompt' | 'steer_if_supported' | 'interrupt' }) => Promise<{ ok: boolean; error?: string }>
 >(async () => ({ ok: true }));
@@ -55,7 +55,7 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
 
 vi.mock('@/sync/sync', () => ({
     sync: {
-        sendMessage: (...args: Parameters<typeof syncSendMessageSpy>) => syncSendMessageSpy(...args),
+        submitMessage: (...args: Parameters<typeof syncSubmitMessageSpy>) => syncSubmitMessageSpy(...args),
     },
 }));
 
@@ -68,7 +68,7 @@ describe('SessionParticipantComposer', () => {
         resetSessionActionsCommonModuleMockState();
         agentInputSpy.mockClear();
         modalAlertSpy.mockClear();
-        syncSendMessageSpy.mockClear();
+        syncSubmitMessageSpy.mockClear();
         sessionExecutionRunSendSpy.mockClear();
         isExecutionRunNotRunningSendErrorSpy.mockClear();
     });
@@ -104,10 +104,10 @@ describe('SessionParticipantComposer', () => {
             message: 'Refine the current review',
             delivery: 'interrupt',
         });
-        expect(syncSendMessageSpy).not.toHaveBeenCalled();
+        expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
     });
 
-    it('routes agent-team sends through sync.sendMessage with participant meta', async () => {
+    it('routes agent-team sends through sync.submitMessage with participant meta', async () => {
         const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
 
         await renderScreen(<SessionParticipantComposer
@@ -137,7 +137,7 @@ describe('SessionParticipantComposer', () => {
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        expect(syncSendMessageSpy).toHaveBeenCalledWith(
+        expect(syncSubmitMessageSpy).toHaveBeenCalledWith(
             's1',
             'Please focus on regressions only',
             undefined,

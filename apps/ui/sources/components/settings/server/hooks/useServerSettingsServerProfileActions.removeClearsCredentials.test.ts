@@ -143,4 +143,40 @@ describe('useServerSettingsServerProfileActions (remove server)', () => {
         });
         expect(onSwitchServerById).toHaveBeenCalledWith('server-correct');
     });
+
+    it('switches by server identity id after the profile learns a stable server identity', async () => {
+        pendingTerminalConnectMock.current = {
+            publicKeyB64Url: 'abc123',
+            serverUrl: 'https://wrong.example.test',
+        };
+        const onSwitchServerById = vi.fn(async () => {});
+        const setRevision = vi.fn();
+        const profile = {
+            id: 'server-host-derived',
+            name: 'Correct',
+            serverUrl: 'https://correct.example.test',
+            serverIdentityId: 'srv_identity_correct',
+            createdAt: 0,
+            updatedAt: 0,
+            lastUsedAt: 0,
+        };
+
+        const { useServerSettingsServerProfileActions } = await import('./useServerSettingsServerProfileActions');
+        const actions = await renderHook(() =>
+            useServerSettingsServerProfileActions({
+                authStatusByServerId: { srv_identity_correct: 'signedIn' },
+                onSwitchServerById,
+                onAfterSignedOutSwitch: vi.fn(),
+                setRevision: setRevision as any,
+            }),
+        );
+
+        await actions.onSwitchServer(profile);
+
+        expect(pendingTerminalConnectMock.set).toHaveBeenCalledWith({
+            publicKeyB64Url: 'abc123',
+            serverUrl: 'https://correct.example.test',
+        });
+        expect(onSwitchServerById).toHaveBeenCalledWith('srv_identity_correct');
+    });
 });

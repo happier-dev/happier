@@ -2,6 +2,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 import { serverFetch } from '@/sync/http/client';
+import { invalidateAccountEncryptionModeCache } from './apiAccountEncryptionMode';
 import {
   AccountEncryptionMigrateSuccessResponseSchema,
   AccountEncryptionMigrateAnyErrorResponseSchema,
@@ -31,6 +32,7 @@ export async function migrateAccountEncryptionMode(
     const data: unknown = await response.json().catch(() => null);
     const success = AccountEncryptionMigrateSuccessResponseSchema.safeParse(data);
     if (response.ok && success.success) {
+      invalidateAccountEncryptionModeCache();
       return success.data;
     }
 

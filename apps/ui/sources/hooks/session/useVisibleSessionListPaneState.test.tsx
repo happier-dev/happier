@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
 const sessionListPaneState = vi.hoisted(() => ({
+    viewStateCalls: [] as Array<{ storageFilter: string; pathname: string | null; sessionListSurfaceDataActive: boolean | null }>,
     selection: {
         enabled: true,
         presentation: 'grouped',
@@ -14,6 +15,7 @@ const sessionListPaneState = vi.hoisted(() => ({
     visibleIndex: [
         { type: 'session', sessionId: 'session-1', serverId: 's1', serverName: 'Server 1' },
     ],
+    folderFocus: null as null | { folderId: string },
     summary: {
         sessionsReady: true,
         sessionCount: 1,
@@ -38,15 +40,24 @@ vi.mock('./useVisibleSessionListSummaryState', () => ({
 }));
 
 vi.mock('./useVisibleSessionListViewState', () => ({
-    useVisibleSessionListViewState: () => ({
+    useVisibleSessionListViewState: (storageFilter?: string, options?: { pathname?: string; sessionListSurfaceDataActive?: boolean }) => {
+        sessionListPaneState.viewStateCalls.push({
+            storageFilter: storageFilter ?? 'all',
+            pathname: options?.pathname ?? null,
+            sessionListSurfaceDataActive: options?.sessionListSurfaceDataActive ?? null,
+        });
+        return {
         visibleSessionListIndex: sessionListPaneState.visibleIndex,
         hasHiddenInactiveSessions: sessionListPaneState.hasHiddenInactiveSessions,
-    }),
+        folderFocus: sessionListPaneState.folderFocus,
+        };
+    },
 }));
 
 describe('useVisibleSessionListPaneState', () => {
     afterEach(() => {
         standardCleanup();
+        sessionListPaneState.viewStateCalls = [];
         sessionListPaneState.selection = {
             enabled: true,
             presentation: 'grouped',
@@ -58,6 +69,7 @@ describe('useVisibleSessionListPaneState', () => {
         sessionListPaneState.visibleIndex = [
             { type: 'session', sessionId: 'session-1', serverId: 's1', serverName: 'Server 1' },
         ];
+        sessionListPaneState.folderFocus = null;
         sessionListPaneState.summary = {
             sessionsReady: true,
             sessionCount: 1,
@@ -82,9 +94,35 @@ describe('useVisibleSessionListPaneState', () => {
                 }),
             ]),
             hasHiddenInactiveSessions: false,
+            folderFocus: null,
             showLoading: false,
             showEmptyState: false,
         });
+    });
+
+    it('forwards an explicit pathname override to the visible view-state owner', async () => {
+        const { useVisibleSessionListPaneState } = await import('./useVisibleSessionListPaneState');
+        const hook = await renderHook(() => useVisibleSessionListPaneState('direct', { pathname: '/' }));
+        await flushHookEffects();
+
+        expect(hook.getCurrent().visibleSessionListIndex).toEqual(sessionListPaneState.visibleIndex);
+        expect(sessionListPaneState.viewStateCalls).toEqual([
+            { storageFilter: 'direct', pathname: '/', sessionListSurfaceDataActive: null },
+        ]);
+    });
+
+    it('forwards the surface data-active flag to the visible view-state owner', async () => {
+        const { useVisibleSessionListPaneState } = await import('./useVisibleSessionListPaneState');
+        const hook = await renderHook(() => useVisibleSessionListPaneState('direct', {
+            pathname: '/',
+            sessionListSurfaceDataActive: false,
+        }));
+        await flushHookEffects();
+
+        expect(hook.getCurrent().visibleSessionListIndex).toEqual(sessionListPaneState.visibleIndex);
+        expect(sessionListPaneState.viewStateCalls).toEqual([
+            { storageFilter: 'direct', pathname: '/', sessionListSurfaceDataActive: false },
+        ]);
     });
 
     it('treats the pane as empty when filtering removes all visible session rows even if the upstream summary still counted sessions', async () => {

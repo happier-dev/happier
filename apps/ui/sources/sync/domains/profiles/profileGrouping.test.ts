@@ -87,4 +87,53 @@ describe('buildProfileGroups', () => {
         expect(groups.favoriteProfiles.some((p) => p.id === 'custom-gemini-only')).toBe(false);
         expect(groups.customProfiles.some((p) => p.id === 'custom-gemini-only')).toBe(false);
     });
+
+    it('hides disabled profiles from picker groups', () => {
+        const customProfiles = [
+            buildCustomProfile({
+                id: 'custom-profile',
+                name: 'Custom Profile',
+                compatibility: { claude: true, codex: true, gemini: true },
+            }),
+        ];
+
+        const groups = buildProfileGroups({
+            customProfiles,
+            favoriteProfileIds: ['anthropic', 'custom-profile'],
+            profileEnabledById: {
+                anthropic: false,
+                'custom-profile': false,
+            },
+        });
+
+        expect(groups.favoriteIds.has('anthropic')).toBe(false);
+        expect(groups.favoriteIds.has('custom-profile')).toBe(false);
+        expect(groups.favoriteProfiles.map((p) => p.id)).toEqual([]);
+        expect(groups.customProfiles.map((p) => p.id)).not.toContain('custom-profile');
+        expect(groups.builtInProfiles.map((p) => p.id)).not.toContain('anthropic');
+    });
+
+    it('can include disabled profiles for management surfaces', () => {
+        const customProfiles = [
+            buildCustomProfile({
+                id: 'custom-profile',
+                name: 'Custom Profile',
+                compatibility: { claude: true, codex: true, gemini: true },
+            }),
+        ];
+
+        const groups = buildProfileGroups({
+            customProfiles,
+            favoriteProfileIds: ['anthropic', 'custom-profile'],
+            profileEnabledById: {
+                anthropic: false,
+                'custom-profile': false,
+            },
+            includeDisabledProfiles: true,
+        });
+
+        expect(groups.favoriteIds.has('anthropic')).toBe(true);
+        expect(groups.favoriteIds.has('custom-profile')).toBe(true);
+        expect(groups.favoriteProfiles.map((p) => p.id)).toEqual(['anthropic', 'custom-profile']);
+    });
 });

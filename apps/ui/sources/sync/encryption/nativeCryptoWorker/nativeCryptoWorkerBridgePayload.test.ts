@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { decodeBase64 } from '@/encryption/base64';
 
@@ -43,6 +43,32 @@ describe('native crypto worker bridge payload helpers', () => {
         expect(whitespaceBearing.decodedBytes).toBe(2);
         expect(whitespaceBearing.base64Utf16Bytes).toBe(whitespaceBearingValue.length * 2);
         expect(whitespaceBearing.totalBridgeBytes).toBe(2 + whitespaceBearingValue.length * 2);
+    });
+
+    it('estimates large canonical padded base64 payloads without scanning every character', () => {
+        const value = `${'A'.repeat(3998)}==`;
+        const charCodeAtSpy = vi.spyOn(String.prototype, 'charCodeAt');
+
+        try {
+            const estimate = estimateCryptoWorkerBase64BridgeBytes(value);
+
+            expect(estimate.decodedBytes).toBe(2998);
+            expect(estimate.base64Utf16Bytes).toBe(8000);
+            expect(estimate.totalBridgeBytes).toBe(10998);
+            expect(charCodeAtSpy.mock.calls.length).toBeLessThan(16);
+        } finally {
+            charCodeAtSpy.mockRestore();
+        }
+    });
+
+    it('falls back to lenient normalization for large non-canonical base64 estimates', () => {
+        const canonical = 'AAEC'.repeat(300);
+        const value = ` ${canonical.slice(0, 600)}\n\t${canonical.slice(600)} `;
+        const estimate = estimateCryptoWorkerBase64BridgeBytes(value);
+
+        expect(estimate.decodedBytes).toBe(900);
+        expect(estimate.base64Utf16Bytes).toBe(value.length * 2);
+        expect(estimate.totalBridgeBytes).toBe(900 + value.length * 2);
     });
 
     it('aggregates batch bridge costs', () => {

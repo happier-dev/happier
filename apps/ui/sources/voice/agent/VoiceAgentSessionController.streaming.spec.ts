@@ -1437,7 +1437,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
               v: 1,
               runId: 'run_prev',
               backendId: 'claude',
-              resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_1' },
+              resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_1' },
               updatedAtMs: 123,
               transcriptContractVersion: 2,
             },
@@ -1646,7 +1646,7 @@ describe('VoiceAgentSessionController (streaming)', () => {
         runId: 'run_reconciled',
         backendId: 'claude',
         transcript: { persistenceMode: 'persistent', epoch: 0 },
-        resumeHandle: { kind: 'vendor_session.v1', backendId: 'claude', vendorSessionId: 'vs_reconciled' },
+        resumeHandle: { kind: 'provider_session.v1', backendId: 'claude', providerSessionId: 'vs_reconciled' },
       },
     });
 

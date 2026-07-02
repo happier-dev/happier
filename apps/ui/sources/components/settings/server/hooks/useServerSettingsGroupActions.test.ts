@@ -179,6 +179,51 @@ describe('useServerSettingsGroupActions', () => {
         expect(setRevision).toHaveBeenCalled();
     });
 
+    it('checks signed-out confirmation against identity-backed group server ids', async () => {
+        const { useServerSettingsGroupActions } = await import('./useServerSettingsGroupActions');
+        const setServerSelectionActiveTargetKind = vi.fn();
+        const setServerSelectionActiveTargetId = vi.fn();
+        const setServerSelectionGroups = vi.fn();
+        const onSwitchServerById = vi.fn(async () => {});
+        const setRevision = vi.fn();
+        const onAfterSignedOutSwitch = vi.fn();
+        const serverA = {
+            ...makeServerProfile('server-a', 'Server A', 'http://localhost:3013'),
+            serverIdentityId: 'srv-a',
+        };
+        const serverB = {
+            ...makeServerProfile('server-b', 'Server B', 'http://localhost:3012'),
+            serverIdentityId: 'srv-b',
+        };
+
+        const actions = await renderHook(() => useServerSettingsGroupActions({
+            servers: [serverA, serverB],
+            activeServerId: 'srv-a',
+            validServerIds: new Set(['srv-a', 'srv-b']),
+            authStatusByServerId: {},
+            normalizedGroupProfiles: [
+                { id: 'grp', name: 'Group', serverIds: ['srv-b'], presentation: 'grouped' } as const,
+            ],
+            activeGroupId: null,
+            groupPresentation: 'grouped',
+            setRevision: setRevision as unknown as React.Dispatch<React.SetStateAction<number>>,
+            onSwitchServerById,
+            onAfterSignedOutSwitch,
+            setServerSelectionActiveTargetKind,
+            setServerSelectionActiveTargetId,
+            setServerSelectionGroups,
+        }));
+        mountedHookCleanups.push(actions.__cleanup);
+
+        await actions.onSwitchGroup({ id: 'grp', name: 'Group', serverIds: ['srv-b'], presentation: 'grouped' });
+
+        expect(promptSignedOutServerSwitchConfirmationMock).toHaveBeenCalledTimes(1);
+        expect(setServerSelectionActiveTargetKind).toHaveBeenCalledWith('group');
+        expect(setServerSelectionActiveTargetId).toHaveBeenCalledWith('grp');
+        expect(onSwitchServerById).toHaveBeenCalledWith('srv-b');
+        expect(onAfterSignedOutSwitch).toHaveBeenCalledTimes(1);
+    });
+
     it('creates a server group from the add-server-group flow', async () => {
         const { useServerSettingsGroupActions } = await import('./useServerSettingsGroupActions');
         const setServerSelectionActiveTargetKind = vi.fn();

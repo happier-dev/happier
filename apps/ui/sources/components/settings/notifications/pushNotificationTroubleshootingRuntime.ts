@@ -1,9 +1,9 @@
 import { Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
 import Constants from 'expo-constants';
 
 import { loadLastRegisteredExpoPushToken } from '@/sync/domains/state/pushTokenRegistration';
 import { t } from '@/text';
+import { loadExpoNotifications } from '@/utils/platform/loadExpoNotifications';
 
 export type PushPermissionStatus = 'unsupported' | 'granted' | 'denied' | 'undetermined';
 export type PushPermissionInfo = Readonly<{
@@ -11,7 +11,6 @@ export type PushPermissionInfo = Readonly<{
     granted: boolean;
     canAskAgain: boolean;
 }>;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -27,25 +26,29 @@ export function formatPushTimestamp(timestamp: number): string {
 }
 
 function resolveExpoProjectId(): string | null {
-    const constants = Constants as unknown;
-    if (!isRecord(constants)) return null;
+    try {
+        const constants = Constants as unknown;
+        if (!isRecord(constants)) return null;
 
-    const expoConfig = isRecord(constants.expoConfig) ? constants.expoConfig : null;
-    const extra = expoConfig && isRecord(expoConfig.extra) ? expoConfig.extra : null;
-    const easExtra = extra && isRecord(extra.eas) ? extra.eas : null;
-    const projectIdFromExpoConfig = easExtra?.projectId;
+        const expoConfig = isRecord(constants.expoConfig) ? constants.expoConfig : null;
+        const extra = expoConfig && isRecord(expoConfig.extra) ? expoConfig.extra : null;
+        const easExtra = extra && isRecord(extra.eas) ? extra.eas : null;
+        const projectIdFromExpoConfig = easExtra?.projectId;
 
-    const easConfig = isRecord(constants.easConfig) ? constants.easConfig : null;
-    const projectIdFromEasConfig = easConfig?.projectId;
+        const easConfig = isRecord(constants.easConfig) ? constants.easConfig : null;
+        const projectIdFromEasConfig = easConfig?.projectId;
 
-    const candidate =
-        typeof projectIdFromExpoConfig === 'string'
-            ? projectIdFromExpoConfig
-            : typeof projectIdFromEasConfig === 'string'
-                ? projectIdFromEasConfig
-                : null;
-    const trimmed = candidate?.trim() ?? '';
-    return trimmed ? trimmed : null;
+        const candidate =
+            typeof projectIdFromExpoConfig === 'string'
+                ? projectIdFromExpoConfig
+                : typeof projectIdFromEasConfig === 'string'
+                    ? projectIdFromEasConfig
+                    : null;
+        const trimmed = candidate?.trim() ?? '';
+        return trimmed ? trimmed : null;
+    } catch {
+        return null;
+    }
 }
 
 export async function getPushPermissionInfo(): Promise<PushPermissionInfo> {
@@ -54,6 +57,7 @@ export async function getPushPermissionInfo(): Promise<PushPermissionInfo> {
     }
 
     try {
+        const Notifications = await loadExpoNotifications();
         const result = await Notifications.getPermissionsAsync();
         const status: PushPermissionStatus =
             result.status === 'granted' || result.status === 'denied' || result.status === 'undetermined'
@@ -74,6 +78,7 @@ export async function getCurrentExpoPushToken(): Promise<string | null> {
 
     const projectId = resolveExpoProjectId();
     try {
+        const Notifications = await loadExpoNotifications();
         const res = projectId
             ? await Notifications.getExpoPushTokenAsync({ projectId })
             : await Notifications.getExpoPushTokenAsync();

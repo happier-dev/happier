@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionGuidanceCommonModuleMocks, setSessionGettingStartedGuidanceDismissedForTests } from './sessionGuidanceTestHelpers';
@@ -42,6 +42,15 @@ const tauriState = vi.hoisted(() => ({
     desktop: false,
 }));
 
+const connectTerminalHookState = vi.hoisted(() => ({
+    calls: 0,
+}));
+
+const routerMockState = vi.hoisted(() => ({
+    push: vi.fn(),
+    useRouterCalls: 0,
+}));
+
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => tauriState.desktop,
 }));
@@ -51,11 +60,14 @@ vi.mock('@/config', () => ({
 }));
 
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
-    useConnectTerminal: () => ({
-        connectTerminal: () => {},
-        connectWithUrl: () => {},
-        isLoading: false,
-    }),
+    useConnectTerminal: () => {
+        connectTerminalHookState.calls += 1;
+        return {
+            connectTerminal: () => {},
+            connectWithUrl: () => {},
+            isLoading: false,
+        };
+    },
 }));
 
 vi.mock('@/hooks/session/useVisibleSessionListSummaryState', () => ({
@@ -95,9 +107,24 @@ vi.mock('@/sync/domains/features/featureBuildPolicy', () => ({
     getFeatureBuildPolicyDecision: () => 'neutral',
 }));
 
-installSessionGuidanceCommonModuleMocks();
+installSessionGuidanceCommonModuleMocks({
+    router: () => ({
+        router: { push: routerMockState.push },
+        useRouter: () => {
+            routerMockState.useRouterCalls += 1;
+            return { push: routerMockState.push };
+        },
+    }),
+});
 
 describe('SessionGettingStartedGuidance (desktop-only setup CTA)', () => {
+    beforeEach(() => {
+        connectTerminalHookState.calls = 0;
+        routerMockState.push.mockClear();
+        routerMockState.useRouterCalls = 0;
+        setSessionGettingStartedGuidanceDismissedForTests(false);
+    });
+
     it('shows the Open setup CTA on web surfaces', async () => {
         tauriState.desktop = false;
         vi.resetModules();
@@ -105,6 +132,8 @@ describe('SessionGettingStartedGuidance (desktop-only setup CTA)', () => {
 
         const tree: renderer.ReactTestRenderer = (await renderScreen(<SessionGettingStartedGuidance variant="sidebar" />)).tree;
         expect(() => tree.root.findByProps({ testID: 'session-getting-started-open-setup' })).not.toThrow();
+        expect(connectTerminalHookState.calls).toBe(0);
+        expect(routerMockState.useRouterCalls).toBe(0);
     });
 
     it('shows the Open setup CTA on Tauri desktop', async () => {
@@ -116,17 +145,23 @@ describe('SessionGettingStartedGuidance (desktop-only setup CTA)', () => {
         expect(() => tree.root.findByProps({ testID: 'session-getting-started-open-setup' })).not.toThrow();
     });
 
-    it('suppresses the setup CTA after the user dismissed the setup wizard', async () => {
+    it('suppresses optional setup guidance after the user dismissed the setup wizard', async () => {
         tauriState.desktop = false;
         setSessionGettingStartedGuidanceDismissedForTests(true);
-        try {
-            vi.resetModules();
-            const { SessionGettingStartedGuidance } = await import('./SessionGettingStartedGuidance');
+        vi.resetModules();
+        const { SessionGettingStartedGuidance } = await import('./SessionGettingStartedGuidance');
 
-            const tree: renderer.ReactTestRenderer = (await renderScreen(<SessionGettingStartedGuidance variant="sidebar" />)).tree;
-            expect(() => tree.root.findByProps({ testID: 'session-getting-started-open-setup' })).toThrow();
-        } finally {
-            setSessionGettingStartedGuidanceDismissedForTests(false);
-        }
+        const tree: renderer.ReactTestRenderer = (await renderScreen(<SessionGettingStartedGuidance variant="sidebar" />)).tree;
+        expect(() => tree.root.findByProps({ testID: 'session-getting-started-open-setup' })).toThrow();
+    });
+
+    it('keeps blocking new-session setup guidance visible after the user dismissed optional guidance', async () => {
+        tauriState.desktop = false;
+        setSessionGettingStartedGuidanceDismissedForTests(true);
+        vi.resetModules();
+        const { SessionGettingStartedGuidance } = await import('./SessionGettingStartedGuidance');
+
+        const tree: renderer.ReactTestRenderer = (await renderScreen(<SessionGettingStartedGuidance variant="newSessionBlocking" />)).tree;
+        expect(() => tree.root.findByProps({ testID: 'session-getting-started-open-setup' })).not.toThrow();
     });
 });

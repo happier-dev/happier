@@ -45,14 +45,29 @@ export const TranscriptEnterWrapper = React.memo(function TranscriptEnterWrapper
     }
     const shouldAnimate = shouldAnimateRef.current === true;
 
-    const opacity = React.useRef(new Animated.Value(shouldAnimate ? 0 : 1)).current;
+    if (!shouldAnimate) {
+        return <>{props.children}</>;
+    }
+
+    return (
+        <AnimatedTranscriptEnterWrapper runtime={runtime}>
+            {props.children}
+        </AnimatedTranscriptEnterWrapper>
+    );
+});
+
+const AnimatedTranscriptEnterWrapper = React.memo(function AnimatedTranscriptEnterWrapper(props: {
+    runtime: ReturnType<typeof useTranscriptMotion>;
+    children: React.ReactNode;
+}) {
+    const runtime = props.runtime;
+    const opacity = React.useRef(new Animated.Value(0)).current;
     const animateTranslateOnWeb = Platform.OS !== 'web';
-    const translateY = React.useRef(new Animated.Value(shouldAnimate && animateTranslateOnWeb ? 6 : 0)).current;
+    const translateY = React.useRef(new Animated.Value(animateTranslateOnWeb ? 6 : 0)).current;
     const animationStartedRef = React.useRef(false);
     const cancelScheduledStartRef = React.useRef<(() => void) | null>(null);
 
     const startEnterAnimation = React.useCallback(() => {
-        if (!shouldAnimate) return;
         if (animationStartedRef.current) return;
         animationStartedRef.current = true;
 
@@ -78,10 +93,9 @@ export const TranscriptEnterWrapper = React.memo(function TranscriptEnterWrapper
             }));
         }
         Animated.parallel(anims).start();
-    }, [animateTranslateOnWeb, opacity, runtime?.config.preset, shouldAnimate, translateY]);
+    }, [animateTranslateOnWeb, opacity, runtime?.config.preset, translateY]);
 
     const handleLayout = React.useCallback(() => {
-        if (!shouldAnimate) return;
         if (animationStartedRef.current) return;
         if (cancelScheduledStartRef.current) return;
 
@@ -89,7 +103,7 @@ export const TranscriptEnterWrapper = React.memo(function TranscriptEnterWrapper
             cancelScheduledStartRef.current = null;
             startEnterAnimation();
         });
-    }, [shouldAnimate, startEnterAnimation]);
+    }, [startEnterAnimation]);
 
     React.useEffect(() => {
         return () => {
@@ -97,10 +111,6 @@ export const TranscriptEnterWrapper = React.memo(function TranscriptEnterWrapper
             cancelScheduledStartRef.current = null;
         };
     }, []);
-
-    if (!shouldAnimate) {
-        return <>{props.children}</>;
-    }
 
     return (
         <Animated.View onLayout={handleLayout} style={{ opacity, transform: animateTranslateOnWeb ? [{ translateY }] : undefined }}>

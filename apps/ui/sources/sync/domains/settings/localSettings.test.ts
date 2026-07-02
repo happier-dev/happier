@@ -9,6 +9,10 @@ describe('localSettingsParse', () => {
         expect(localSettingsParse(null).sessionListFocusedFolderV1).toBeNull();
     });
 
+    it('defaults the mobile brand hero dismissal timestamp to null', () => {
+        expect(localSettingsParse(null).brandHeroSeenAt).toBeNull();
+    });
+
     it('does not accept the dead shortcut_only desktop overlay expanded behavior in the rollout schema', () => {
         expect(
             ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS.desktopOverlayExpandedBehavior.schema.safeParse('shortcut_only').success,
@@ -132,6 +136,18 @@ describe('localSettingsParse', () => {
         expect(localSettingsParse(null)).toEqual(localSettingsDefaults);
         expect(localSettingsParse(undefined)).toEqual(localSettingsDefaults);
         expect(localSettingsParse('nope')).toEqual(localSettingsDefaults);
+    });
+
+    it('applies the mobile brand hero dismissal timestamp through local settings', () => {
+        const applied = applyLocalSettings(localSettingsDefaults, {
+            brandHeroSeenAt: 1_789_000_000_000,
+        });
+
+        expect(applied.brandHeroSeenAt).toBe(1_789_000_000_000);
+    });
+
+    it('falls back to null for malformed mobile brand hero dismissal timestamps', () => {
+        expect(localSettingsParse({ brandHeroSeenAt: 'yesterday' }).brandHeroSeenAt).toBeNull();
     });
 
     it('defaults theme profiles to an empty local-only state', () => {
@@ -648,6 +664,47 @@ describe('localSettingsParse', () => {
                 autoDismissDelayMs: 25_000,
             },
         });
+    });
+
+    it('preserves attention device override identity for unrelated local setting deltas', () => {
+        const current = localSettingsParse({
+            attentionDeviceOverridesV1: {
+                ...localSettingsDefaults.attentionDeviceOverridesV1,
+                localNotifications: {
+                    ...localSettingsDefaults.attentionDeviceOverridesV1.localNotifications,
+                    enabled: false,
+                },
+            },
+        });
+
+        const applied = applyLocalSettings(current, { uiFontScale: 1.1 });
+
+        expect(applied.uiFontScale).toBeCloseTo(1.1, 5);
+        expect(applied.attentionDeviceOverridesV1).toBe(current.attentionDeviceOverridesV1);
+    });
+
+    it('preserves activity surface alias choices for unrelated local setting deltas', () => {
+        const current = localSettingsParse({
+            liveActivitiesEnabled: false,
+            widgetsEnabled: false,
+            widgetsPresetMode: 'running',
+            widgetsShowPreviewText: false,
+            widgetsShowMachinePath: false,
+        });
+
+        const applied = applyLocalSettings(current, { uiFontScale: 1.1 });
+
+        expect(applied.uiFontScale).toBeCloseTo(1.1, 5);
+        expect(applied.liveActivitiesEnabled).toBe(false);
+        expect(applied.iosLiveActivitiesEnabled).toBe(false);
+        expect(applied.widgetsEnabled).toBe(false);
+        expect(applied.iosWidgetsEnabled).toBe(false);
+        expect(applied.widgetsPresetMode).toBe('running');
+        expect(applied.homeScreenWidgetsMode).toBe('running');
+        expect(applied.widgetsShowPreviewText).toBe(false);
+        expect(applied.homeScreenWidgetsShowPreviewText).toBe(false);
+        expect(applied.widgetsShowMachinePath).toBe(false);
+        expect(applied.homeScreenWidgetsShowMachinePath).toBe(false);
     });
 
     it('drops the deprecated persisted editor focus mode flag while parsing and applying settings', () => {

@@ -23,7 +23,7 @@ vi.mock('@/sync/domains/input/suggestionCommands', () => ({
 
 describe('autocomplete suggestions', () => {
     it('uses a taller row height for slash commands with descriptions', async () => {
-        const { getCommandSuggestions } = await import('./suggestions');
+        const { getCommandSuggestions } = await import('./commandSuggestions');
 
         const suggestions = await getCommandSuggestions('s1', '/go');
 
@@ -37,7 +37,7 @@ describe('autocomplete suggestions', () => {
     });
 
     it('carries prompt invocation metadata on slash command suggestions', async () => {
-        const { getCommandSuggestions } = await import('./suggestions');
+        const { getCommandSuggestions } = await import('./commandSuggestions');
 
         const suggestions = await getCommandSuggestions('s1', '/qa');
 

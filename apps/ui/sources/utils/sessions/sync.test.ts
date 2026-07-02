@@ -173,3 +173,35 @@ describe('InvalidateSync pause behavior', () => {
         });
     });
 });
+
+describe('InvalidateSync retry failure reporting', () => {
+    it('reports retryable failures before sleeping for the next retry', async () => {
+        await withFakeTimers(async () => {
+            const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+            try {
+                const error = new Error('temporary outage');
+                const command = vi.fn(async () => {
+                    throw error;
+                });
+                const onRetryFailure = vi.fn();
+                const sync = new InvalidateSync(command, {
+                    onRetryFailure,
+                    backoff: { minDelayMs: 1000, maxDelayMs: 1000, maxFailureCount: 'infinite' },
+                });
+
+                sync.invalidate();
+                await vi.runAllTicks();
+
+                expect(onRetryFailure).toHaveBeenCalledWith(error, {
+                    failuresCount: 1,
+                    nextDelayMs: 1000,
+                    nextRetryAt: expect.any(Number),
+                });
+
+                sync.stop();
+            } finally {
+                randomSpy.mockRestore();
+            }
+        });
+    });
+});

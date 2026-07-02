@@ -2,6 +2,7 @@ export type SessionTagPlacement = 'below' | 'inline';
 export type SessionTagPlacementDensity = 'default' | 'compact' | 'minimal';
 
 export type SessionTagPlacementChip = Readonly<{
+    key?: string;
     label: string;
 }>;
 
@@ -11,54 +12,143 @@ export type ResolveSessionTagPlacementInput = Readonly<{
     rowWidth: number | null;
     hasTrailingMeta: boolean;
     hasRowActions: boolean;
+    hasLeadingIdentity?: boolean;
 }>;
 
-const COMPACT_INLINE_MAX_CHIPS = 2;
-const MINIMAL_INLINE_MAX_CHIPS = 1;
-const COMPACT_INLINE_MAX_LABEL_LENGTH = 4;
-const MINIMAL_INLINE_MAX_LABEL_LENGTH = 3;
-const COMPACT_INLINE_MAX_TAG_WIDTH = 74;
-const MINIMAL_INLINE_MAX_TAG_WIDTH = 42;
+export type SessionTagDisplayChip = Readonly<{
+    key: string;
+    label: string;
+    isOverflow: boolean;
+}>;
+
+export type SessionTagDisplayPlan = Readonly<{
+    placement: SessionTagPlacement;
+    chips: readonly SessionTagDisplayChip[];
+}>;
+
+const NARROW_INLINE_MAX_TOTAL_LABEL_LENGTH = 10;
+const COMPACT_INLINE_MAX_TOTAL_LABEL_LENGTH = 10;
+const COMPACT_INLINE_MAX_TOTAL_LABEL_LENGTH_WITH_IDENTITY = 5;
+const COMPACT_INLINE_MAX_TAG_WIDTH = 96;
 const ESTIMATED_TAG_CHARACTER_WIDTH = 5.5;
 const ESTIMATED_TAG_HORIZONTAL_CHROME = 16;
 const COMPACT_ROW_NON_TITLE_CHROME = 102;
-const MINIMAL_ROW_NON_TITLE_CHROME = 80;
 const TRAILING_META_WIDTH = 28;
-const COMPACT_TITLE_MIN_WIDTH = 132;
-const MINIMAL_TITLE_MIN_WIDTH = 100;
+const COMPACT_TITLE_MIN_WIDTH = 92;
 
 export function resolveSessionTagPlacement(input: ResolveSessionTagPlacementInput): SessionTagPlacement {
-    if (input.density === 'default' || input.tags.length === 0 || input.hasRowActions) {
-        return 'below';
+    if (input.hasRowActions) return 'below';
+    return planSessionTagDisplay(input).placement;
+}
+
+export function planSessionTagDisplay(input: ResolveSessionTagPlacementInput): SessionTagDisplayPlan {
+    if (input.tags.length === 0 || input.hasRowActions) {
+        return {
+            placement: 'inline',
+            chips: [],
+        };
     }
 
-    const maxChipCount = input.density === 'minimal' ? MINIMAL_INLINE_MAX_CHIPS : COMPACT_INLINE_MAX_CHIPS;
-    if (input.tags.length > maxChipCount) {
-        return 'below';
+    if (input.density === 'minimal') {
+        return {
+            placement: 'inline',
+            chips: createBudgetedInlineTagChips(input.tags, NARROW_INLINE_MAX_TOTAL_LABEL_LENGTH),
+        };
     }
 
-    const maxLabelLength = input.density === 'minimal'
-        ? MINIMAL_INLINE_MAX_LABEL_LENGTH
-        : COMPACT_INLINE_MAX_LABEL_LENGTH;
-    if (input.tags.some((tag) => tag.label.length > maxLabelLength)) {
-        return 'below';
+    const allChips = createTagChips(input.tags);
+    if (input.density === 'default') {
+        return {
+            placement: 'below',
+            chips: allChips,
+        };
+    }
+
+    const maxTotalLabelLength = input.hasLeadingIdentity === true
+        ? COMPACT_INLINE_MAX_TOTAL_LABEL_LENGTH_WITH_IDENTITY
+        : COMPACT_INLINE_MAX_TOTAL_LABEL_LENGTH;
+    if (getTotalLabelLength(input.tags) > maxTotalLabelLength) {
+        return {
+            placement: 'below',
+            chips: allChips,
+        };
     }
 
     const tagWidth = estimateInlineTagWidth(input.tags);
-    const maxTagWidth = input.density === 'minimal' ? MINIMAL_INLINE_MAX_TAG_WIDTH : COMPACT_INLINE_MAX_TAG_WIDTH;
-    if (tagWidth > maxTagWidth) {
-        return 'below';
+    if (tagWidth > COMPACT_INLINE_MAX_TAG_WIDTH) {
+        return {
+            placement: 'below',
+            chips: allChips,
+        };
     }
 
     if (input.rowWidth == null) {
-        return 'inline';
+        return {
+            placement: 'inline',
+            chips: allChips,
+        };
     }
 
-    const nonTitleChrome = input.density === 'minimal' ? MINIMAL_ROW_NON_TITLE_CHROME : COMPACT_ROW_NON_TITLE_CHROME;
-    const titleMinWidth = input.density === 'minimal' ? MINIMAL_TITLE_MIN_WIDTH : COMPACT_TITLE_MIN_WIDTH;
     const trailingMetaWidth = input.hasTrailingMeta ? TRAILING_META_WIDTH : 0;
-    const availableTagWidth = input.rowWidth - nonTitleChrome - trailingMetaWidth - titleMinWidth;
-    return tagWidth <= availableTagWidth ? 'inline' : 'below';
+    const availableTagWidth = input.rowWidth - COMPACT_ROW_NON_TITLE_CHROME - trailingMetaWidth - COMPACT_TITLE_MIN_WIDTH;
+    return tagWidth <= availableTagWidth
+        ? {
+            placement: 'inline',
+            chips: allChips,
+        }
+        : {
+            placement: 'below',
+            chips: allChips,
+        };
+}
+
+function createBudgetedInlineTagChips(
+    tags: readonly SessionTagPlacementChip[],
+    maxTotalLabelLength: number,
+): readonly SessionTagDisplayChip[] {
+    const sortedTags = tags
+        .map((tag, index) => ({ tag, index }))
+        .sort((a, b) => {
+            const lengthDelta = a.tag.label.length - b.tag.label.length;
+            return lengthDelta === 0 ? a.index - b.index : lengthDelta;
+        });
+    const visibleTags: Array<{ tag: SessionTagPlacementChip; index: number }> = [];
+    let usedLabelLength = 0;
+    for (const candidate of sortedTags) {
+        const nextLabelLength = usedLabelLength + candidate.tag.label.length;
+        if (nextLabelLength > maxTotalLabelLength) continue;
+        visibleTags.push(candidate);
+        usedLabelLength = nextLabelLength;
+    }
+
+    const hiddenCount = tags.length - visibleTags.length;
+    const visibleChips = visibleTags.map(({ tag, index }) => createTagChip(tag, index));
+    if (hiddenCount <= 0) return visibleChips;
+
+    return [
+        ...visibleChips,
+        {
+            key: '__more__',
+            label: `+${hiddenCount}`,
+            isOverflow: true,
+        },
+    ];
+}
+
+function createTagChips(tags: readonly SessionTagPlacementChip[]): readonly SessionTagDisplayChip[] {
+    return tags.map((tag, index) => createTagChip(tag, index));
+}
+
+function createTagChip(tag: SessionTagPlacementChip, index: number): SessionTagDisplayChip {
+    return {
+        key: tag.key ?? `${tag.label}:${index}`,
+        label: tag.label,
+        isOverflow: false,
+    };
+}
+
+function getTotalLabelLength(tags: readonly SessionTagPlacementChip[]): number {
+    return tags.reduce((sum, tag) => sum + tag.label.length, 0);
 }
 
 function estimateInlineTagWidth(tags: readonly SessionTagPlacementChip[]): number {

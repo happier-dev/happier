@@ -112,7 +112,7 @@ describe('useHasUnreadMessages', () => {
         }
     });
 
-    it('keeps the session-list activity label stable while streaming timestamps stay in the same display bucket', async () => {
+    it('does not report unread when only trailing non-displayable session activity is newer than the cursor', async () => {
         const previousState = storage.getState();
         try {
             storage.setState((state) => ({
@@ -120,45 +120,167 @@ describe('useHasUnreadMessages', () => {
                 sessions: {
                     s1: {
                         id: 's1',
-                        createdAt: 1,
+                        seq: 946,
+                        lastViewedSessionSeq: 945,
+                        latestTurnStatus: 'in_progress',
+                        metadata: null,
                     },
                 },
                 sessionMessages: {
                     s1: {
-                        latestThinkingMessageActivityAtMs: 60_000,
+                        messageIdsOldestFirst: ['m-visible'],
+                        messagesById: {
+                            'm-visible': {
+                                id: 'm-visible',
+                                kind: 'agent-text',
+                                seq: 945,
+                                localId: null,
+                                createdAt: 1,
+                                text: 'Visible assistant message',
+                            },
+                        },
                     },
                 },
-                sessionPending: {},
                 sessionListRenderables: {},
                 isDataReady: true,
             } as never));
 
-            const { useSessionListActivityTimeLabel } = await import('./hooks');
-            let renderCount = 0;
-            const hook = await renderHook(() => {
-                renderCount += 1;
-                return useSessionListActivityTimeLabel('s1');
-            }, {
+            const hook = await renderHook(() => useHasUnreadMessages('s1'), {
                 flushOptions: { cycles: 1, turns: 4 },
             });
-            const initial = hook.getCurrent();
 
-            await act(async () => {
-                storage.setState((state) => ({
-                    ...state,
-                    sessionMessages: {
-                        s1: {
-                            latestThinkingMessageActivityAtMs: 60_500,
-                        },
-                    },
-                } as never));
-            });
+            expect(hook.getCurrent()).toBe(false);
 
-            expect(hook.getCurrent()).toBe(initial);
-            expect(renderCount).toBe(1);
             await hook.unmount();
         } finally {
             storage.setState(previousState);
         }
     });
+
+    it('does not report unread from raw session seq when the transcript bucket is not loaded', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                sessions: {
+                    s1: {
+                        id: 's1',
+                        seq: 946,
+                        lastViewedSessionSeq: 945,
+                        latestTurnStatus: 'in_progress',
+                        metadata: null,
+                    },
+                },
+                sessionMessages: {
+                    s1: {
+                        isLoaded: false,
+                    },
+                },
+                sessionListRenderables: {},
+                isDataReady: true,
+            } as never));
+
+            const hook = await renderHook(() => useHasUnreadMessages('s1'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent()).toBe(false);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('preserves renderable known unread when the full session exists but transcript activity is unloaded', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                sessions: {
+                    s1: {
+                        id: 's1',
+                        seq: 946,
+                        lastViewedSessionSeq: 945,
+                        latestTurnStatus: 'in_progress',
+                        metadata: null,
+                    },
+                },
+                sessionMessages: {
+                    s1: {
+                        isLoaded: false,
+                    },
+                },
+                sessionListRenderables: {
+                    s1: {
+                        id: 's1',
+                        seq: 946,
+                        createdAt: 1,
+                        updatedAt: 2,
+                        active: true,
+                        activeAt: 2,
+                        archivedAt: null,
+                        lastViewedSessionSeq: 945,
+                        metadataVersion: 1,
+                        agentStateVersion: 0,
+                        metadata: null,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 'online',
+                        latestTurnStatus: 'in_progress',
+                        hasUnreadMessages: true,
+                    },
+                },
+                isDataReady: true,
+            } as never));
+
+            const hook = await renderHook(() => useHasUnreadMessages('s1'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent()).toBe(true);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('reports unread from ready seq when the transcript bucket is not loaded', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                sessions: {
+                    s1: {
+                        id: 's1',
+                        seq: 946,
+                        lastViewedSessionSeq: 945,
+                        latestReadyEventSeq: 946,
+                        latestReadyEventAt: 2_000,
+                        latestTurnStatus: 'in_progress',
+                        metadata: null,
+                    },
+                },
+                sessionMessages: {
+                    s1: {
+                        isLoaded: false,
+                    },
+                },
+                sessionListRenderables: {},
+                isDataReady: true,
+            } as never));
+
+            const hook = await renderHook(() => useHasUnreadMessages('s1'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent()).toBe(true);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
 });

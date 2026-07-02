@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createFeatureDecision, type PeerTcpTunnelOpenV1 } from '@happier-dev/protocol';
+import {
+    PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+    PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
+    createFeatureDecision,
+    type PeerTcpTunnelOpenV1,
+} from '@happier-dev/protocol';
 
 type ClientModule = typeof import('./client');
 
@@ -29,7 +34,42 @@ const open: PeerTcpTunnelOpenV1 = {
     destination: { host: '127.0.0.1', port: 3000 },
 };
 
+class FakeWebSocket {
+    static instances: FakeWebSocket[] = [];
+
+    binaryType?: string;
+    onopen?: () => void;
+    onmessage?: (event: { data: unknown }) => void;
+    onerror?: (event: unknown) => void;
+    onclose?: () => void;
+    sent: Array<string | Uint8Array> = [];
+    closed = false;
+
+    constructor(readonly url: string) {
+        FakeWebSocket.instances.push(this);
+        queueMicrotask(() => {
+            this.onopen?.();
+        });
+    }
+
+    send(payload: string | Uint8Array): void {
+        this.sent.push(payload);
+    }
+
+    close(): void {
+        this.closed = true;
+        this.onclose?.();
+    }
+}
+
 describe('openPeerTcpTunnel', () => {
+    it('exports production stream adapters from the tunnel entrypoint', async () => {
+        const mod = await import('./index');
+
+        expect(mod.openPeerTcpTunnelLoopbackStream).toBeTypeOf('function');
+        expect(mod.openPeerTcpTunnelRelayStream).toBeTypeOf('function');
+    });
+
     it('opens a loopback stream after the tunnel open control request succeeds', async () => {
         const mod = await loadClientModule();
         type OpenTunnelForTest = (input: Parameters<NonNullable<typeof mod>['openPeerTcpTunnel']>[0] & {
@@ -166,6 +206,113 @@ describe('openPeerTcpTunnel', () => {
             open: expect.objectContaining({
                 routeKind: 'server_relay',
             }),
+        });
+    });
+
+    it('opens the production loopback websocket adapter when endpoint dependencies are provided', async () => {
+        const mod = await loadClientModule();
+        const postOpen = vi.fn(async () => ({
+            v: 1,
+            tunnelId: 'tun_1',
+            streamPath: '/peer-mediation/v1/tunnel/stream',
+            encoding: 'json_base64_v1',
+            initialWindowBytes: 1024 * 1024,
+            maxFrameBytes: 64 * 1024,
+        } as const));
+        FakeWebSocket.instances = [];
+        expect(mod?.openPeerTcpTunnel).toBeTypeOf('function');
+
+        const result = await mod?.openPeerTcpTunnel({
+            open,
+            directPeerDecision: featureDecision('machines.tunnel.directPeer', true),
+            serverRoutedDecision: featureDecision('machines.tunnel.serverRouted', false),
+            resolveLoopback: vi.fn(async () => ({
+                kind: 'selected' as const,
+                receipt: 'peer.route.selected' as const,
+                routeKind: 'loopback_direct' as const,
+                flowKind: 'tcp_tunnel' as const,
+                endpointFingerprint: 'endpoint_1',
+            })),
+            postOpen,
+            loopbackEndpointUrl: 'http://127.0.0.1:19364',
+            WebSocketCtor: FakeWebSocket,
+        });
+
+        expect(result).toMatchObject({ ok: true, routeKind: 'loopback_direct' });
+        expect(FakeWebSocket.instances).toHaveLength(1);
+        expect(FakeWebSocket.instances[0]?.url).toBe('ws://127.0.0.1:19364/peer-mediation/v1/tunnel/stream');
+    });
+
+    it('opens the production server relay adapter when relay socket dependencies are provided', async () => {
+        const mod = await loadClientModule();
+        const sent: unknown[] = [];
+        const relayHandlers = new Set<(envelope: unknown) => void>();
+        expect(mod?.openPeerTcpTunnel).toBeTypeOf('function');
+
+        const result = await mod?.openPeerTcpTunnel({
+            open,
+            directPeerDecision: featureDecision('machines.tunnel.directPeer', true),
+            serverRoutedDecision: featureDecision('machines.tunnel.serverRouted', true),
+            resolveLoopback: vi.fn(async () => ({
+                kind: 'fallback' as const,
+                receipt: 'peer.route.fallback' as const,
+                reasonCode: 'route_unavailable',
+            })),
+            postOpen: vi.fn(),
+            serverRelayScopeUserId: 'user_1',
+            serverRelaySocket: {
+                send: vi.fn((event, envelope) => {
+                    sent.push({ event, envelope });
+                }),
+                onEnvelope: vi.fn((handler) => {
+                    relayHandlers.add(handler);
+                    return () => {
+                        relayHandlers.delete(handler);
+                    };
+                }),
+            },
+        });
+
+        expect(result).toMatchObject({ ok: true, routeKind: 'server_relay' });
+        expect(sent).toMatchObject([{
+            event: PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
+            envelope: {
+                v: 1,
+                scopeUserId: 'user_1',
+                frame: {
+                    kind: 'open',
+                    open: expect.objectContaining({ routeKind: 'server_relay' }),
+                },
+            },
+        }]);
+    });
+
+    it('reports the negotiated server relay encoding in the client response', async () => {
+        const mod = await loadClientModule();
+        expect(mod?.openPeerTcpTunnel).toBeTypeOf('function');
+
+        const result = await mod?.openPeerTcpTunnel({
+            open: {
+                ...open,
+                selectedEncoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+            },
+            directPeerDecision: featureDecision('machines.tunnel.directPeer', true),
+            serverRoutedDecision: featureDecision('machines.tunnel.serverRouted', true),
+            resolveLoopback: vi.fn(async () => ({
+                kind: 'fallback' as const,
+                receipt: 'peer.route.fallback' as const,
+                reasonCode: 'route_unavailable',
+            })),
+            postOpen: vi.fn(),
+            openServerRelayStream: vi.fn(async () => ({ close: vi.fn(), sendFrame: vi.fn(), onFrame: vi.fn() })),
+        });
+
+        expect(result).toMatchObject({
+            ok: true,
+            routeKind: 'server_relay',
+            response: {
+                encoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+            },
         });
     });
 });

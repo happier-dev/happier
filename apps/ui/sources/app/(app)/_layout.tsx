@@ -1,4 +1,4 @@
-import { Stack, router, useGlobalSearchParams, usePathname, useSegments } from 'expo-router';
+import { Redirect, Stack, router, useGlobalSearchParams, usePathname, useSegments } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
 import { Platform, TouchableOpacity, View } from 'react-native';
@@ -22,24 +22,19 @@ import { useHappierVoiceSupport } from '@/hooks/server/useHappierVoiceSupport';
 import { shouldHoldAuthenticatedShellForWebServerOverride } from '@/sync/domains/server/url/shouldHoldAuthenticatedShellForWebServerOverride';
 import { consumeLegacySessionDeepLinkFromWebLocation } from '@/sync/domains/server/url/consumeLegacySessionDeepLinkFromWebLocation';
 import { resolveAuthenticatedWebServerUrlOverrideAction } from '@/sync/domains/server/url/resolveAuthenticatedWebServerUrlOverrideAction';
+import { shouldSwitchToServerUrl } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 import {
     createFriendsStackScreenOptions,
     createInboxStackScreenOptions,
 } from '@/utils/navigation/createSocialStackScreenOptions';
-import { ActivityBadgeRuntime } from '@/activity/badges/ActivityBadgeRuntime';
-import { ReleaseNotesAutoShowMount } from '@/changelog/releaseNotes';
-import { ActivitySurfacesRuntime } from '@/activity/adapters/ios/runtime/ActivitySurfacesRuntime';
-import { ActivityLocalNotificationRuntime } from '@/activity/notifications/runtime/ActivityLocalNotificationRuntime';
-import { DesktopActivityOverlayRuntime } from '@/activity/adapters/desktop/runtime/DesktopActivityOverlayRuntime';
 import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/desktop/runtime/isDesktopActivityOverlayWindowContext';
-import { DesktopTrayRuntime } from '@/desktop/tray/DesktopTrayRuntime';
-import { DesktopTrayDaemonLifecycleRuntime } from '@/desktop/tray/DesktopTrayDaemonLifecycleRuntime';
 import { useNotificationResponseRouting } from '@/activity/notifications/runtime/useNotificationResponseRouting';
 import { invokeTauri, isTauriDesktop } from '@/utils/platform/tauri';
+import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
 import { SessionCockpitChromeRegistryProvider } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
-import { DesktopPetOverlayRuntimeMount } from '@/components/pets/runtime/DesktopPetOverlayRuntimeMount';
-import { PetAppShellCompanionMount } from '@/components/pets/runtime/PetAppShellCompanionMount';
+import { AuthenticatedAppRuntimeMounts } from '@/components/appShell/runtime/AuthenticatedAppRuntimeMounts';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useEndpointConnectivity, useSyncError } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import {
@@ -108,8 +103,8 @@ export default function RootLayout() {
 
     React.useEffect(() => {
         if (!isTauriDesktopHost) return;
-        void invokeTauri('desktop_set_window_mode', { mode: isAuthenticated ? 'main' : 'preAuth' });
-    }, [isAuthenticated, isTauriDesktopHost]);
+        void invokeTauri('desktop_set_window_mode', { mode: 'main' });
+    }, [isTauriDesktopHost]);
 
     const [isApplyingWebServerOverride, setIsApplyingWebServerOverride] = React.useState(() =>
         shouldHoldAuthenticatedShellForWebServerOverride(isAuthenticated),
@@ -203,11 +198,6 @@ export default function RootLayout() {
         router.replace(sessionRouteAuthRecovery.baseHref);
     }, [sessionRouteAuthRecovery.baseHref, shouldNormalizeSessionRouteForAuthRecovery]);
 
-    React.useEffect(() => {
-        if (!shouldRedirect) return;
-        router.replace('/');
-    }, [shouldRedirect]);
-
     useNotificationResponseRouting({
         enabled: auth.isAuthenticated && !isDesktopOverlayWindow,
         refreshAuth: auth.refreshFromActiveServer,
@@ -235,7 +225,7 @@ export default function RootLayout() {
 
             const active = normalizeServerUrl(getActiveServerUrl());
             const target = normalizeServerUrl(pendingTerminalConnect.serverUrl);
-            if (target && target !== active) {
+            if (shouldSwitchToServerUrl({ targetServerUrl: target, activeServerUrl: active })) {
                 pendingTerminalHandledRef.current = true;
                 fireAndForget((async () => {
                     try {
@@ -475,18 +465,7 @@ export default function RootLayout() {
         // Swipe-to-dismiss is not consistently available across platforms; always provide a close button.
         headerBackVisible: false,
         headerLeft: () => null,
-        headerRight: () => (
-            <TouchableOpacity
-                onPress={() => router.back()}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                style={{ paddingHorizontal: 12, paddingVertical: 6 }}
-                accessibilityRole="button"
-                accessibilityLabel={t('common.cancel')}
-            >
-                <Ionicons name="close" size={22} color={theme.colors.chrome.header.foreground} />
-            </TouchableOpacity>
-        ),
-    }), [preferredLanguage, theme.colors.chrome.header.foreground]);
+    }), [preferredLanguage]);
     const externalSessionBrowseScreenOptions = React.useMemo<StackScreenOptions>(() => ({
         headerTitle: t('externalSessions.browseTitle'),
         headerShown: true,
@@ -496,46 +475,24 @@ export default function RootLayout() {
         fullScreenGestureEnabled: true,
         headerBackVisible: false,
         headerLeft: () => null,
-        headerRight: () => (
-            <TouchableOpacity
-                onPress={() => router.back()}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                style={{ paddingHorizontal: 12, paddingVertical: 6 }}
-                accessibilityRole="button"
-                accessibilityLabel={t('common.cancel')}
-            >
-                <Ionicons name="close" size={22} color={theme.colors.chrome.header.foreground} />
-            </TouchableOpacity>
-        ),
-    }), [preferredLanguage, theme.colors.chrome.header.foreground]);
+    }), [preferredLanguage]);
 
     // Avoid rendering protected screens for a frame during redirect.
-    if (shouldRedirect || isApplyingWebServerOverride) {
+    if (shouldRedirect) {
+        return <Redirect href="/" />;
+    }
+
+    if (isApplyingWebServerOverride) {
         return null;
     }
 
     return (
         <SessionCockpitChromeRegistryProvider>
             {!isDesktopOverlayWindow && !isTerminalConnectRoute ? (
-                <>
-                    <ActivityBadgeRuntime />
-                    <ActivitySurfacesRuntime />
-                    <ActivityLocalNotificationRuntime />
-                    <DesktopPetOverlayRuntimeMount />
-                    <PetAppShellCompanionMount />
-                    {isAuthenticated ? (
-                        <>
-                            <ReleaseNotesAutoShowMount />
-                        </>
-                    ) : null}
-                    {isTauriDesktopHost ? (
-                        <>
-                            <DesktopTrayRuntime />
-                            <DesktopTrayDaemonLifecycleRuntime />
-                            <DesktopActivityOverlayRuntime />
-                        </>
-                    ) : null}
-                </>
+                <AuthenticatedAppRuntimeMounts
+                    isAuthenticated={isAuthenticated}
+                    isTauriDesktopHost={isTauriDesktopHost}
+                />
             ) : null}
             {debugRouterEnabled && Platform.OS === 'web' ? (
                 <View
@@ -772,11 +729,19 @@ export default function RootLayout() {
                 />
                 <Stack.Screen
                     name="new/index"
-                    options={newSessionScreenOptions}
+                    options={({ navigation }) => ({
+                        ...newSessionScreenOptions,
+                        headerRight: Platform.OS === 'web'
+                            ? undefined
+                            : () => <AppHeaderCloseButton testID="new-session-cancel" onPress={() => safeRouterBack({ router, navigation, fallbackHref: '/' })} />,
+                    })}
                 />
                 <Stack.Screen
                     name="direct/browse"
-                    options={externalSessionBrowseScreenOptions}
+                    options={({ navigation }) => ({
+                        ...externalSessionBrowseScreenOptions,
+                        headerRight: () => <AppHeaderCloseButton testID="direct-session-browse-cancel" onPress={() => safeRouterBack({ router, navigation, fallbackHref: '/' })} />,
+                    })}
                 />
                 <Stack.Screen
                     name="zen/index"

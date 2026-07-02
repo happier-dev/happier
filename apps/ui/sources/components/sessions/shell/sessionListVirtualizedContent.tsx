@@ -1,5 +1,5 @@
 import React from 'react';
-import { FlatList, Platform } from 'react-native';
+import { FlatList, Platform, type ViewToken } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 import { Ionicons } from '@expo/vector-icons';
@@ -12,10 +12,37 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { sessionListStyles } from './sessionListStyles';
 import { SessionFolderFocusBreadcrumbs, SessionsListHeader } from './sessionListChrome';
 import type { SessionFolderFocusScope } from '@/sync/domains/session/folders';
+import type { SessionListRowViewModel } from './sessionListRowViewModels';
 
-const sessionListNodeKeyExtractor = (item: string): string => item;
+export type SessionListVirtualizedNode = Readonly<{
+    id: string;
+    rowViewModel: SessionListRowViewModel | null;
+}>;
 
-function getSessionListNodeType(nodeId: string): string {
+type SessionListScrollableRef = Readonly<{
+    scrollToOffset?: (params: { offset: number; animated?: boolean }) => void;
+}>;
+
+type SessionListScrollEvent = Readonly<{
+    nativeEvent?: Readonly<{
+        contentOffset?: Readonly<{ y?: number }>;
+    }>;
+}>;
+
+type SessionListLayoutEvent = Readonly<{
+    nativeEvent?: Readonly<{
+        layout?: Readonly<{ y?: number; height?: number }>;
+    }>;
+}>;
+
+const WEB_LIST_NON_VIRTUALIZED_MAX_ITEMS = 120;
+const WEB_LIST_SCROLL_EVENT_THROTTLE_MS = 32;
+const NATIVE_LIST_SCROLL_EVENT_THROTTLE_MS = 16;
+
+const sessionListNodeKeyExtractor = (item: SessionListVirtualizedNode): string => item.id;
+
+function getSessionListNodeType(node: SessionListVirtualizedNode): string {
+    const nodeId = node.id;
     if (typeof nodeId === 'string' && nodeId.startsWith('session:')) {
         return 'session';
     }
@@ -58,11 +85,27 @@ const SessionsListArchivedFooter = React.memo(function SessionsListArchivedFoote
 });
 
 export const SessionListVirtualizedContent = React.memo(function SessionListVirtualizedContent(props: Readonly<{
-    nodeIds: ReadonlyArray<string>;
+    listRef?: React.Ref<SessionListScrollableRef>;
+    nodes: ReadonlyArray<SessionListVirtualizedNode>;
     rowHeight: number;
     safeAreaBottom: number;
-    renderItem: (params: { item: string; index: number }) => React.ReactElement | null;
+    renderItem: (params: { item: SessionListVirtualizedNode; index: number }) => React.ReactElement | null;
     rowExtraData: unknown;
+    onScroll?: (event: SessionListScrollEvent) => void;
+    onScrollBeginDrag?: () => void;
+    onScrollEndDrag?: () => void;
+    onMomentumScrollBegin?: () => void;
+    onMomentumScrollEnd?: () => void;
+    onEndReached?: () => void;
+    onViewableItemsChanged?: (info: { viewableItems: ViewToken[] }) => void;
+    viewabilityConfig?: Readonly<{
+        itemVisiblePercentThreshold?: number;
+        minimumViewTime?: number;
+        viewAreaCoveragePercentThreshold?: number;
+        waitForInteraction?: boolean;
+    }>;
+    onLayout?: (event: SessionListLayoutEvent) => void;
+    onContentSizeChange?: (width: number, height: number) => void;
     onStopScrollEventPropagationOnWeb: (event: any) => void;
     onPressArchivedSessions: () => void;
     folderFocus: SessionFolderFocusScope | null;
@@ -104,31 +147,68 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     }, [props.folderFocus, props.folderFocusRootTitle, props.onClearFolderFocus, props.onSelectFolderBreadcrumb]);
 
     if (Platform.OS === 'web') {
+        const disableWebVirtualization = props.nodes.length <= WEB_LIST_NON_VIRTUALIZED_MAX_ITEMS;
         return (
             <FlatList
+                ref={props.listRef}
                 {...({
                     onWheel: props.onStopScrollEventPropagationOnWeb,
                     onTouchMove: props.onStopScrollEventPropagationOnWeb,
                 } as any)}
-                data={props.nodeIds as any}
+                data={props.nodes as any}
                 renderItem={props.renderItem as any}
                 extraData={props.rowExtraData}
                 keyExtractor={sessionListNodeKeyExtractor}
                 contentContainerStyle={contentContainerStyle}
+                onScroll={props.onScroll}
+                onScrollBeginDrag={props.onScrollBeginDrag}
+                onScrollEndDrag={props.onScrollEndDrag}
+                onMomentumScrollBegin={props.onMomentumScrollBegin}
+                onMomentumScrollEnd={props.onMomentumScrollEnd}
+                onEndReached={props.onEndReached}
+                onEndReachedThreshold={0.4}
+                onViewableItemsChanged={props.onViewableItemsChanged}
+                viewabilityConfig={props.viewabilityConfig}
+                onLayout={props.onLayout}
+                onContentSizeChange={props.onContentSizeChange}
+                scrollEventThrottle={WEB_LIST_SCROLL_EVENT_THROTTLE_MS}
                 ListHeaderComponent={headerComponent as any}
                 ListFooterComponent={footerComponent as any}
+                // First-page-sized web lists avoid React Native Web VirtualizedList's
+                // incremental cell update churn during live row data changes. Large
+                // lists stay windowed so the historical all-rows mount case remains bounded.
+                disableVirtualization={disableWebVirtualization}
+                initialNumToRender={12}
+                maxToRenderPerBatch={8}
+                updateCellsBatchingPeriod={50}
+                windowSize={3}
+                // Keep clipping off on web so drag overlays and lifted rows are not clipped by virtualized cells.
+                removeClippedSubviews={false}
             />
         );
     }
 
     return (
         <FlashList
-            data={props.nodeIds as any}
+            ref={props.listRef}
+            data={props.nodes as any}
             renderItem={props.renderItem as any}
             extraData={props.rowExtraData}
             keyExtractor={sessionListNodeKeyExtractor}
             getItemType={getSessionListNodeType as any}
             contentContainerStyle={contentContainerStyle as any}
+            onScroll={props.onScroll}
+            onScrollBeginDrag={props.onScrollBeginDrag}
+            onScrollEndDrag={props.onScrollEndDrag}
+            onMomentumScrollBegin={props.onMomentumScrollBegin}
+            onMomentumScrollEnd={props.onMomentumScrollEnd}
+            onEndReached={props.onEndReached}
+            onEndReachedThreshold={0.4}
+            onViewableItemsChanged={props.onViewableItemsChanged as any}
+            viewabilityConfig={props.viewabilityConfig as any}
+            onLayout={props.onLayout}
+            onContentSizeChange={props.onContentSizeChange}
+            scrollEventThrottle={NATIVE_LIST_SCROLL_EVENT_THROTTLE_MS}
             ListHeaderComponent={headerComponent as any}
             ListFooterComponent={footerComponent as any}
         />

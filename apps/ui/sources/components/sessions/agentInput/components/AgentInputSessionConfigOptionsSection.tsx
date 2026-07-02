@@ -42,19 +42,22 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
                 const option = control.option;
                 const effectiveValue = control.effectiveValue;
                 const isBool = isBooleanConfigOptionType(option.type);
+                const isDisabled = control.disabled === true;
 
                 if (isBool) {
                     const boolValue = resolveBooleanConfigOptionValue(option, effectiveValue);
                     return (
                         <Pressable
                             key={option.id}
+                            disabled={isDisabled}
                             onPress={() => props.onSelectValue?.(
                                 option.id,
                                 resolveBooleanConfigOptionNextValue(option, !boolValue),
                             )}
                             style={({ pressed }) => [
                                 styles.optionRow,
-                                pressed ? transientStyles.optionRowPressed : null,
+                                isDisabled ? styles.optionDisabled : null,
+                                pressed && !isDisabled ? transientStyles.optionRowPressed : null,
                             ]}
                         >
                             <View style={styles.booleanContent}>
@@ -70,6 +73,14 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
                                             })
                                             : t('agentInput.acp.currentValue', { value: formatValue(option.currentValue) })}
                                     </Text>
+                                    {isDisabled && control.disabledByOptionName ? (
+                                        <Text
+                                            testID={`agent-input-config-option-overridden:${option.id}`}
+                                            style={styles.optionDescription}
+                                        >
+                                            {t('agentInput.acp.optionOverriddenBy', { name: control.disabledByOptionName })}
+                                        </Text>
+                                    ) : null}
                                     {option.description ? (
                                         <Text style={styles.optionDescription}>
                                             {option.description}
@@ -79,6 +90,7 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
                                 <View style={styles.switchWrap}>
                                     <Switch
                                         value={boolValue}
+                                        disabled={isDisabled}
                                         onValueChange={(next) => props.onSelectValue?.(
                                             option.id,
                                             resolveBooleanConfigOptionNextValue(option, next),
@@ -102,7 +114,11 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
                 const isSelect = option.type === 'select' && (option.options?.length ?? 0) > 0;
 
                 return (
-                    <View key={option.id} testID={`agent-input-config-option:${option.id}`} style={styles.configCard}>
+                    <View
+                        key={option.id}
+                        testID={`agent-input-config-option:${option.id}`}
+                        style={[styles.configCard, isDisabled ? styles.optionDisabled : null]}
+                    >
                         <Text style={styles.optionLabel}>
                             {option.name}
                         </Text>
@@ -114,6 +130,14 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
                                 ? t('agentInput.acp.pendingValue', { current: currentLabel, requested: requestedLabel })
                                 : t('agentInput.acp.currentValue', { value: currentLabel })}
                         </Text>
+                        {isDisabled && control.disabledByOptionName ? (
+                            <Text
+                                testID={`agent-input-config-option-overridden:${option.id}`}
+                                style={styles.optionDescription}
+                            >
+                                {t('agentInput.acp.optionOverriddenBy', { name: control.disabledByOptionName })}
+                            </Text>
+                        ) : null}
                         {option.description ? (
                             <Text style={styles.optionDescription}>
                                 {option.description}
@@ -128,11 +152,12 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
                                         <Pressable
                                             testID={`agent-input-config-option-option:${option.id}:${String(choice.value)}`}
                                             key={`${option.id}:${String(choice.value)}`}
+                                            disabled={isDisabled}
                                             onPress={() => props.onSelectValue?.(option.id, choice.value)}
                                             style={({ pressed }) => [
                                                 styles.choicePill,
                                                 isSelected ? transientStyles.choicePillSelected : null,
-                                                pressed ? transientStyles.optionRowPressed : null,
+                                                pressed && !isDisabled ? transientStyles.optionRowPressed : null,
                                             ]}
                                         >
                                             <Text
@@ -158,6 +183,9 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
 const styles = StyleSheet.create((theme) => ({
     section: {
         gap: 8,
+    },
+    optionDisabled: {
+        opacity: 0.5,
     },
     optionRow: {
         borderRadius: 12,

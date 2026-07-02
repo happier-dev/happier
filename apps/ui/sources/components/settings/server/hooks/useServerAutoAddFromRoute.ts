@@ -3,7 +3,12 @@ import * as React from 'react';
 import { t } from '@/text';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { validateServerUrl } from '@/sync/domains/server/serverConfig';
-import { removeServerProfile, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import {
+    getServerProfileById,
+    removeServerProfile,
+    resolveServerProfileScopeId,
+    upsertServerProfile,
+} from '@/sync/domains/server/serverProfiles';
 import { canonicalizeServerUrl } from '@/sync/domains/server/url/serverUrlCanonical';
 import { canSafelyAutoAdoptCanonicalServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -82,11 +87,12 @@ export function useServerAutoAddFromRoute(params: Readonly<{
                         profile = canonical;
                     }
                 }
+                profile = getServerProfileById(profile.id) ?? profile;
             } catch {
                 // best-effort
             }
 
-            await params.onSwitchServerById(profile.id, { normalizeRoute: false });
+            await params.onSwitchServerById(resolveServerProfileScopeId(profile), { normalizeRoute: false });
             params.onAfterSuccess();
         })(), {
             tag: 'useServerAutoAddFromRoute.autoAdd',

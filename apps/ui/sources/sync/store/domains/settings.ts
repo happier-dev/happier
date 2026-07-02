@@ -15,7 +15,11 @@ import {
     areAccountSettingsScopesEqual,
     type AccountSettingsScope,
 } from '../../domains/settings/scope/accountSettingsScope';
-import { loadAccountPurchases, saveAccountPurchases } from '../../domains/state/accountProfilePersistence';
+import {
+    loadAccountPurchases,
+    prepareAccountProfileScopeForActivation,
+    saveAccountPurchases,
+} from '../../domains/state/accountProfilePersistence';
 import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../domains/state/settingsPersistence';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import type { ConcurrentSessionListCacheByServerId } from '../../domains/session/listing/concurrentSessionListCache';
@@ -49,7 +53,7 @@ export type SettingsDomain = {
     applySettingsLocal: (delta: Partial<Settings>) => void;
     applySettings: (settings: Settings, version: number) => void;
     replaceSettings: (settings: Settings, version: number) => void;
-    activateSettingsScope: (scope: AccountSettingsScope) => void;
+    activateSettingsScope: (scope: AccountSettingsScope, legacyScopes?: readonly AccountSettingsScope[]) => void;
     clearSettingsScope: () => void;
     applySettingsForScope: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
     replaceSettingsForScope: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
@@ -87,6 +91,7 @@ function rebuildSessionListIndexesForSettingsChange(
             groupInactiveSessionsByProject: nextSettings.groupInactiveSessionsByProject === true,
             activeGroupingV1: nextSettings.sessionListActiveGroupingV1,
             inactiveGroupingV1: nextSettings.sessionListInactiveGroupingV1,
+            sectionModeV1: nextSettings.sessionListSectionModeV1,
             getProjectForSession: state.getProjectForSession,
             previousIndex: previousActiveIndex,
         });
@@ -108,6 +113,7 @@ function rebuildSessionListIndexesForSettingsChange(
             groupInactiveSessionsByProject: nextSettings.groupInactiveSessionsByProject === true,
             activeGroupingV1: nextSettings.sessionListActiveGroupingV1,
             inactiveGroupingV1: nextSettings.sessionListInactiveGroupingV1,
+            sectionModeV1: nextSettings.sessionListSectionModeV1,
             serverScope: {
                 serverId,
                 serverName: entry.serverName ?? undefined,
@@ -214,9 +220,10 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                 saveSettings(nextSettings, nextVersion);
                 return buildSettingsProjectionState(state, nextSettings, nextVersion, null);
             }),
-        activateSettingsScope: (scope) =>
+        activateSettingsScope: (scope, legacyScopes = []) =>
             set((state) => {
-                prepareAccountSettingsScopeForActivation(scope);
+                prepareAccountSettingsScopeForActivation(scope, legacyScopes);
+                prepareAccountProfileScopeForActivation(scope, legacyScopes);
                 const loaded = loadParsedAccountSettings(scope);
                 return {
                     ...buildSettingsProjectionState(state, loaded.settings, loaded.version, scope),

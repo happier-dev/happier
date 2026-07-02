@@ -1,10 +1,19 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const detailsPanelTheme = createThemeFixture() as Readonly<{
+    colors: {
+        surface: {
+            inset: string;
+        };
+    };
+}>;
 
 installSessionDetailsPanelCommonModuleMocks({
     reactNative: async () => {
@@ -27,17 +36,7 @@ installSessionDetailsPanelCommonModuleMocks({
     unistyles: async () => {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
         return createUnistylesMock({
-            theme: {
-                colors: {
-                    surface: '#fff',
-                    surfaceHigh: '#f5f5f5',
-                    divider: '#eee',
-                    text: '#000',
-                    textSecondary: '#666',
-                    accent: { indigo: '#00f' },
-                    shadow: { color: '#000' },
-                },
-            },
+            theme: detailsPanelTheme,
         });
     },
     icons: async () => ({
@@ -67,7 +66,7 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
+    Typography: { default: () => ({}), mono: () => ({}), eyebrow: () => ({}), keyHint: () => ({}) },
 }));
 
 vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
@@ -116,9 +115,10 @@ describe('SessionDetailsPanel (active tab fallback)', () => {
         const firstStyles = firstTab?.props.style;
         const secondStyles = secondTab?.props.style;
 
-        const hasSurfaceHighBg = (styleProp: any) =>
-            Array.isArray(styleProp) && styleProp.some((s: any) => s && s.backgroundColor === '#f5f5f5');
-        expect(hasSurfaceHighBg(firstStyles)).toBe(false);
-        expect(hasSurfaceHighBg(secondStyles)).toBe(true);
+        const hasInsetBg = (styleProp: any) =>
+            Array.isArray(styleProp)
+            && styleProp.some((s: any) => s && s.backgroundColor === detailsPanelTheme.colors.surface.inset);
+        expect(hasInsetBg(firstStyles)).toBe(false);
+        expect(hasInsetBg(secondStyles)).toBe(true);
     });
 });

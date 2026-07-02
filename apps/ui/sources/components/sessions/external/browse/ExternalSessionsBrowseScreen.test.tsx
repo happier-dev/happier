@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ExternalSessionCandidateV1 } from '@happier-dev/protocol';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ExternalSessionCandidateV1, ExternalSessionsCandidatesListResponse } from '@happier-dev/protocol';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
@@ -15,7 +15,7 @@ import { installNewSessionComponentsCommonModuleMocks } from '../../new/componen
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const candidatesListSpy = vi.hoisted(() => vi.fn(async () => ({
+const candidatesListSpy = vi.hoisted(() => vi.fn(async (): Promise<ExternalSessionsCandidatesListResponse> => ({
     ok: true,
     candidates: [
         {
@@ -110,6 +110,7 @@ vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemLi
 vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
 vi.mock('@/components/ui/lists/Item', () => createPassThroughModule(['Item']));
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => createPassThroughModule(['DropdownMenu']));
+vi.mock('@/components/ui/popover', () => createPassThroughModule(['PopoverScope']));
 vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'TextInput']));
 vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
@@ -141,6 +142,7 @@ type DropdownMenuTestNode = Readonly<{
             subtitleFormatter?: (presentation: DropdownTriggerPresentation) => string;
         };
         onSelect?: (value: string) => Promise<void> | void;
+        popoverBoundaryRef?: React.RefObject<unknown> | null;
         selectedId?: string;
     };
 }>;
@@ -154,14 +156,36 @@ function findDropdownMenuByTriggerTestId(
 
 describe('ExternalSessionsBrowseScreen', () => {
     beforeEach(() => {
+        vi.useRealTimers();
         machinesState = [
             { id: 'machine-1', active: true, metadata: { displayName: 'MacBook Pro', host: 'mbp.local' } },
             { id: 'machine-2', active: false, metadata: { displayName: 'Linux Box', host: 'linux.local' } },
         ];
-        candidatesListSpy.mockClear();
+        candidatesListSpy.mockReset();
+        candidatesListSpy.mockResolvedValue({
+            ok: true,
+            candidates: [
+                {
+                    remoteSessionId: 'codex-session-1',
+                    title: 'Existing Codex Session',
+                    updatedAtMs: 1_700_000_000_000,
+                    activity: 'running',
+                    details: {
+                        path: '/tmp/worktree',
+                        codexBackendMode: 'appServer',
+                        source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
+                    },
+                },
+            ] as ExternalSessionCandidateV1[],
+            nextCursor: null,
+        });
         linkEnsureSpy.mockClear();
         routerPushSpy.mockClear();
         modalAlertSpy.mockClear();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
     });
 
     it('loads candidates for the default machine and provider', async () => {
@@ -180,10 +204,17 @@ describe('ExternalSessionsBrowseScreen', () => {
         const machineDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-machine-picker-trigger');
         const providerDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-provider-picker-trigger');
         const sourceDropdown = findDropdownMenuByTriggerTestId(screen, 'direct-session-source-picker-trigger');
+        const popoverScopes = screen.findAllByType('PopoverScope' as any);
+        const popoverBoundaryRef = popoverScopes[0]?.props?.boundaryRef;
 
         expect(machineDropdown).toBeTruthy();
         expect(providerDropdown).toBeTruthy();
         expect(sourceDropdown).toBeTruthy();
+        expect(popoverScopes).toHaveLength(1);
+        expect(popoverBoundaryRef).toBeTruthy();
+        expect(machineDropdown?.props?.popoverBoundaryRef).toBe(popoverBoundaryRef);
+        expect(providerDropdown?.props?.popoverBoundaryRef).toBe(popoverBoundaryRef);
+        expect(sourceDropdown?.props?.popoverBoundaryRef).toBe(popoverBoundaryRef);
         const itemGroups = screen.findAllByType('ItemGroup' as any);
         expect(itemGroups[0]?.props.title).toBe('externalSessions.browseFiltersTitle');
         expect(machineDropdown?.props?.itemTrigger?.itemProps?.density).toBeUndefined();
@@ -289,7 +320,8 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect(machineDropdown?.props?.selectedId).toBe('machine-active');
     });
 
-    it('filters loaded candidates with the search field', async () => {
+    it('searches provider candidates through the daemon with the search field', async () => {
+        vi.useFakeTimers();
         candidatesListSpy.mockResolvedValueOnce({
             ok: true,
             candidates: [
@@ -309,7 +341,32 @@ describe('ExternalSessionsBrowseScreen', () => {
                 },
             ],
             nextCursor: null,
+        }).mockResolvedValueOnce({
+            ok: true,
+            candidates: [
+                {
+                    remoteSessionId: 'codex-hidden-session-9',
+                    title: 'Fast filesystem result',
+                    updatedAtMs: 1_700_000_000_000,
+                    activity: 'idle',
+                    details: { path: '/tmp/hidden', codexBackendMode: 'appServer', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
+                },
+                {
+                    remoteSessionId: 'codex-fast-only-session-8',
+                    title: 'Fast-only filesystem result',
+                    updatedAtMs: 1_699_999_999_000,
+                    activity: 'idle',
+                    details: { path: '/tmp/fast-only', codexBackendMode: 'exec', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
+                },
+            ],
+            nextCursor: null,
+            searchIncomplete: true,
         });
+        let resolveAugmentedSearch!: (value: ExternalSessionsCandidatesListResponse) => void;
+        const augmentedSearchPromise = new Promise<ExternalSessionsCandidatesListResponse>((resolve) => {
+            resolveAugmentedSearch = resolve;
+        });
+        candidatesListSpy.mockImplementationOnce(() => augmentedSearchPromise);
         const { ExternalSessionsBrowseScreen } = await externalSessionsBrowseScreenModulePromise;
 
         const screen = await renderScreen(<ExternalSessionsBrowseScreen />);
@@ -321,12 +378,65 @@ describe('ExternalSessionsBrowseScreen', () => {
         expect(searchInput!.props.placeholder).toBe('externalSessions.browseSearchPlaceholder');
 
         await act(async () => {
-            searchInput!.props.onChangeText('opencode');
+            searchInput!.props.onChangeText('codex-hidden-session-9');
         });
 
-        const candidateItem = screen.findByTestId('direct-session-candidate:codex-session-2');
+        expect(candidatesListSpy).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(250);
+        });
+        await flushHookEffects();
+
+        expect(candidatesListSpy).toHaveBeenNthCalledWith(2, {
+            machineId: 'machine-1',
+            providerId: 'codex',
+            source: { kind: 'codexHome', home: 'user' },
+            limit: 50,
+            searchTerm: 'codex-hidden-session-9',
+            searchMode: 'fast',
+        });
+        expect(candidatesListSpy).toHaveBeenNthCalledWith(3, {
+            machineId: 'machine-1',
+            providerId: 'codex',
+            source: { kind: 'codexHome', home: 'user' },
+            limit: 50,
+            searchTerm: 'codex-hidden-session-9',
+            searchMode: 'full',
+        });
+        expect(screen.findByTestId('direct-session-candidates-search-augmenting')).toBeTruthy();
+
+        await act(async () => {
+            resolveAugmentedSearch({
+                ok: true,
+                candidates: [
+                    {
+                        remoteSessionId: 'codex-hidden-session-9',
+                        title: 'Augmented app-server result',
+                        updatedAtMs: 1_700_000_000_000,
+                        activity: 'idle',
+                        details: { path: '/tmp/hidden', codexBackendMode: 'appServer', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
+                    },
+                    {
+                        remoteSessionId: 'codex-augmented-only-session-7',
+                        title: 'Augmented-only app-server result',
+                        updatedAtMs: 1_699_999_998_000,
+                        activity: 'idle',
+                        details: { path: '/tmp/augmented-only', codexBackendMode: 'appServer', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
+                    },
+                ],
+                nextCursor: null,
+            });
+            await augmentedSearchPromise;
+        });
+        await flushHookEffects();
+
+        const candidateItem = screen.findByTestId('direct-session-candidate:codex-hidden-session-9');
         expect(candidateItem).toBeTruthy();
-        expect(candidateItem?.props.testID).toBe('direct-session-candidate:codex-session-2');
+        expect(candidateItem?.props.testID).toBe('direct-session-candidate:codex-hidden-session-9');
+        expect(candidateItem?.props.title).toBe('Augmented app-server result');
+        expect(screen.findByTestId('direct-session-candidate:codex-fast-only-session-8')).toBeTruthy();
+        expect(screen.findByTestId('direct-session-candidate:codex-augmented-only-session-7')).toBeTruthy();
     });
 
     it('links the selected provider session and navigates to the Happier session', async () => {

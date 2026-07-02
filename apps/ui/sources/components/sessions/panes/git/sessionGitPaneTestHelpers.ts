@@ -118,18 +118,13 @@ export function installSessionGitPaneCommonModuleMocks(
         };
     });
 
-    vi.mock('@/constants/Typography', async () => {
+    vi.mock('@/constants/Typography', async (importOriginal) => {
         const activeOptions = sessionGitPaneModuleState.options;
         if (activeOptions.typography) {
             return await activeOptions.typography();
         }
 
-        return {
-            Typography: {
-                default: () => ({}),
-                mono: () => ({}),
-            },
-        };
+        return await importOriginal<typeof import('@/constants/Typography')>();
     });
 
     vi.mock('@/text', async () => {

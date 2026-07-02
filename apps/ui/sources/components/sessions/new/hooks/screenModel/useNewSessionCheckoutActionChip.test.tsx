@@ -162,7 +162,7 @@ describe('useNewSessionCheckoutActionChip', () => {
 
         expect(chip).not.toBeNull();
         expect(chip?.collapsedOptionsPopover?.presentation).toBe('list');
-        expect(chip?.collapsedOptionsPopover?.heightBehavior).toBe('fixedToMaxHeight');
+        expect(chip?.collapsedOptionsPopover?.heightBehavior).toBe('stabilizedContentHeight');
         const rootStep = getCheckoutChipRootStepFromChip(chip);
         expect(rootStep?.id).toBe('worktree-root');
 
@@ -183,6 +183,25 @@ describe('useNewSessionCheckoutActionChip', () => {
         expect(setSelectedPath).toHaveBeenCalledWith('/repo/packages/app');
         expect(setCheckoutPickerOpen).toHaveBeenCalledWith(false);
         expect(shouldReconcileInitialHydratedCheckoutCreationDraftRef.current).toBe(false);
+    });
+
+    it('keeps worktree popover height intent platform-agnostic so the shared popover wrapper owns native sizing', async () => {
+        vi.doMock('@/components/ui/selectionList', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/components/ui/selectionList')>();
+            return {
+                ...actual,
+                resolvePopoverSelectionListHeightBehavior: () => 'measuredToMaxHeight',
+            };
+        });
+        vi.resetModules();
+
+        try {
+            const chip = await renderCheckoutChip();
+
+            expect(chip?.collapsedOptionsPopover?.heightBehavior).toBe('stabilizedContentHeight');
+        } finally {
+            vi.doUnmock('@/components/ui/selectionList');
+        }
     });
 
     it('routes an existing-worktree selection back through setSelectedPath and closes the popover', async () => {

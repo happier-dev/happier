@@ -158,6 +158,42 @@ describe('ActivityUpdateAccumulator Smart Debounce', () => {
                 new Map([['session1', update]])
             );
         });
+
+        it('should treat the same session id from different source servers as separate streams', () => {
+            const addUpdateWithSource = accumulator.addUpdate.bind(accumulator) as (
+                update: ApiEphemeralActivityUpdate,
+                options?: { shouldContinue?: () => boolean; sourceServerId?: string | null },
+            ) => void;
+            const updateFromServerA: ApiEphemeralActivityUpdate = {
+                type: 'activity',
+                id: 'session1',
+                active: true,
+                activeAt: 1000,
+                thinking: false,
+            };
+            const updateFromServerB: ApiEphemeralActivityUpdate = {
+                type: 'activity',
+                id: 'session1',
+                active: true,
+                activeAt: 1000,
+                thinking: false,
+            };
+
+            addUpdateWithSource(updateFromServerA, { sourceServerId: 'server-a' });
+            addUpdateWithSource(updateFromServerB, { sourceServerId: 'server-b' });
+
+            expect(mockFlushHandler).toHaveBeenCalledTimes(2);
+            expect(mockFlushHandler).toHaveBeenNthCalledWith(
+                1,
+                new Map([['session1', updateFromServerA]]),
+                { sourceServerId: 'server-a' },
+            );
+            expect(mockFlushHandler).toHaveBeenNthCalledWith(
+                2,
+                new Map([['session1', updateFromServerB]]),
+                { sourceServerId: 'server-b' },
+            );
+        });
     });
 
     describe('debounced emission for timestamp-only changes', () => {

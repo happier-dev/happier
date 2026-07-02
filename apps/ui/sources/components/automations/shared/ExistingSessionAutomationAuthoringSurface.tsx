@@ -1,6 +1,7 @@
 import React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 import { ExistingSessionAutomationComposer } from '@/components/automations/shared/ExistingSessionAutomationComposer';
 import { ExistingSessionAutomationContextSection } from '@/components/automations/shared/ExistingSessionAutomationContextSection';
@@ -12,7 +13,6 @@ import { updateSessionAuthoringDraftAutomation } from '@/components/sessions/aut
 import { getAutomationChipLabel } from '@/components/sessions/new/modules/automationChipModel';
 import type { ExistingSessionAutomationAvailability } from '@/sync/domains/automations/existingSessionAutomationAvailability';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 const styles = StyleSheet.create(() => ({
     loadingContainer: {
@@ -37,6 +37,18 @@ export function ExistingSessionAutomationAuthoringSurface(props: Readonly<{
     editable?: boolean;
 }>): React.JSX.Element {
     const { theme } = useUnistyles();
+    const automationDraft = props.draft?.automation ?? null;
+    const automationActionChip = React.useMemo(() => {
+        if (!automationDraft) return null;
+        return createAutomationToggleActionChip({
+            enabled: automationDraft.enabled,
+            label: getAutomationChipLabel(automationDraft),
+            value: automationDraft,
+            onChange: (next) => {
+                props.onChangeDraft((current) => current ? updateSessionAuthoringDraftAutomation(current, next) : current);
+            },
+        });
+    }, [automationDraft, props.onChangeDraft]);
 
     if (props.isWaiting) {
         return (
@@ -50,7 +62,6 @@ export function ExistingSessionAutomationAuthoringSurface(props: Readonly<{
         return <ExistingSessionAutomationUnavailableNotice reason={props.unavailableReason} />;
     }
 
-    const automationDraft = props.draft?.automation ?? null;
     const authoringContext = props.session && props.draft
         ? buildExistingSessionAutomationAuthoringContext({
             session: props.session,
@@ -59,17 +70,6 @@ export function ExistingSessionAutomationAuthoringSurface(props: Readonly<{
             sessionDekBase64: props.draft.sessionEncryptionKeyBase64,
         })
         : null;
-    const automationActionChip = React.useMemo(() => {
-        if (!automationDraft) return null;
-        return createAutomationToggleActionChip({
-            enabled: automationDraft.enabled,
-            label: getAutomationChipLabel(automationDraft),
-            value: automationDraft,
-            onChange: (next) => {
-                props.onChangeDraft((current) => current ? updateSessionAuthoringDraftAutomation(current, next) : current);
-            },
-        });
-    }, [automationDraft, props.onChangeDraft]);
 
     return (
         <>

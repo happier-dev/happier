@@ -15,6 +15,7 @@ import type { Purchases } from '../domains/purchases/purchases';
 import type { AccountPetMetadata } from '../domains/pets/accountPetLibraryTypes';
 import type { LocalPetSourceMetadata } from '../domains/pets/localPetSourceTypes';
 import type { Settings } from '../domains/settings/settings';
+import type { AccountSettingsSyncStatus } from '../domains/settings/accountSettingsSyncStatus';
 import type { AccountSettingsScope } from '../domains/settings/scope/accountSettingsScope';
 import type { ServerAccountScope } from '../domains/scope/serverAccountScope';
 import type { SessionListRenderableSession } from '../domains/session/listing/sessionListRenderable';
@@ -50,7 +51,7 @@ export interface SettingsDomainSlice {
     localSettings: LocalSettings;
     applySettings: (settings: Settings, version: number) => void;
     replaceSettings: (settings: Settings, version: number) => void;
-    activateSettingsScope: (scope: AccountSettingsScope) => void;
+    activateSettingsScope: (scope: AccountSettingsScope, legacyScopes?: readonly AccountSettingsScope[]) => void;
     clearSettingsScope: () => void;
     applySettingsForScope: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
     replaceSettingsForScope: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
@@ -63,7 +64,7 @@ export interface ProfileDomainSlice {
     profileScope: ServerAccountScope | null;
     purchases: Purchases;
     applyPurchases: (customerInfo: CustomerInfo) => void;
-    activateProfileScope: (scope: ServerAccountScope) => void;
+    activateProfileScope: (scope: ServerAccountScope, legacyScopes?: readonly ServerAccountScope[]) => void;
     clearProfileScope: () => void;
     applyProfile: (profile: Profile) => void;
     applyProfileForScope: (scope: ServerAccountScope, profile: Profile) => void;
@@ -88,6 +89,7 @@ export interface SessionsDomainSlice {
     clearSessionLocalStateScope: () => void;
     applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;
     replaceSessionListRenderables: (sessions: SessionListRenderableSession[]) => void;
+    mergeSessionListRenderables: (sessions: SessionListRenderableSession[]) => void;
     applySessionListRenderablePatches: (
         patches: ReadonlyArray<Readonly<{
             sessionId: string;
@@ -172,6 +174,7 @@ export interface RealtimeDomainSlice {
     socketLastError: string | null;
     socketLastErrorAt: number | null;
     syncError: SyncError;
+    accountSettingsSyncStatus: AccountSettingsSyncStatus;
     lastSyncAt: number | null;
     endpointStatus: EndpointConnectivityStatus;
     endpointReason: string | null;
@@ -189,6 +192,8 @@ export interface RealtimeDomainSlice {
     setSocketError: (message: string | null) => void;
     setSyncError: (error: SyncError) => void;
     clearSyncError: () => void;
+    setAccountSettingsSyncStatus: (status: AccountSettingsSyncStatus) => void;
+    resetAccountSettingsSyncStatus: () => void;
     setLastSyncAt: (ts: number) => void;
     applyNativeUpdateStatus: (status: NativeUpdateStatus) => void;
     setEndpointConnectivity: (snapshot: EndpointConnectivitySnapshot) => void;

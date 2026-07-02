@@ -119,7 +119,6 @@ describe('resolveSessionMachineRpcTarget', () => {
                 {
                     id: 's-peer',
                     active: true,
-                    updatedAt: 300,
                     machineId: 'm-primary',
                     hostHint: 'mbp.local',
                     path: '/Users/tester/repo',

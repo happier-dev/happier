@@ -33,6 +33,7 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
         { id: 'server-a', name: 'Server A', serverUrl: 'https://a.example.test', lastUsedAt: 1 },
         { id: 'server-b', name: 'Server B', serverUrl: 'https://b.example.test', lastUsedAt: 2 },
     ]),
+    resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => profile.serverIdentityId ?? profile.id,
 }));
 
 installServerSettingsHooksCommonModuleMocks({
@@ -230,5 +231,54 @@ describe('usePrimaryMachineFromActiveSelection', () => {
 
         const latest = captured.at(-1);
         expect(latest).toBe('m-active');
+    });
+
+    it('uses identity-backed server scope ids when resolving the primary machine', async () => {
+        const { usePrimaryMachineFromActiveSelection } = await import('./usePrimaryMachineFromActiveSelection');
+        const { useAllMachines, useMachineListByServerId } = await import('@/sync/domains/state/storage');
+        const { getEffectiveServerSelectionFromRawSettings } = await import('@/sync/domains/server/selection/serverSelectionResolution');
+        const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+        const profiles = await import('@/sync/domains/server/serverProfiles');
+
+        (getActiveServerSnapshot as any).mockImplementation(() => activeServerRuntimeState.current);
+        (profiles.listServerProfiles as any).mockReturnValue([
+            {
+                id: 'server-a',
+                name: 'Server A',
+                serverUrl: 'https://a.example.test',
+                serverIdentityId: 'srv-a',
+                lastUsedAt: 1,
+            },
+        ]);
+        activeServerRuntimeState.current = {
+            serverId: 'srv-a',
+            serverUrl: 'https://a.example.test',
+            generation: 1,
+        };
+        (useAllMachines as any).mockReturnValue([]);
+        (useMachineListByServerId as any).mockReturnValue({
+            'srv-a': [
+                { id: 'm-identity', revokedAt: null, metadata: { displayName: 'Identity Machine' } },
+            ],
+        });
+        (getEffectiveServerSelectionFromRawSettings as any).mockReturnValue({ serverIds: ['srv-a'] });
+
+        const captured: PrimaryMachineSelection[] = [];
+        function Probe() {
+            const value = usePrimaryMachineFromActiveSelection();
+            React.useEffect(() => {
+                captured.push(value);
+            }, [value]);
+
+            return null;
+        }
+
+        await renderScreen(<Probe />);
+
+        expect(getEffectiveServerSelectionFromRawSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+            activeServerId: 'srv-a',
+            availableServerIds: ['srv-a'],
+        }));
+        expect(captured.at(-1)).toBe('m-identity');
     });
 });

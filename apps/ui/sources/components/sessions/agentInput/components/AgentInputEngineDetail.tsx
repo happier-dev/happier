@@ -32,6 +32,7 @@ type AgentInputEngineDetailProps = Readonly<{
   modelEmptyText?: string;
   canEnterCustomModel?: boolean;
   modelProbe?: OptionPickerProbeState;
+  modelHeaderAccessory?: React.ReactNode;
   favoriteModelValues?: ReadonlySet<string>;
   isModelFavoritable?: (option: AgentInputEngineModelOption) => boolean;
   onToggleFavoriteModel?: (option: AgentInputEngineModelOption) => void;
@@ -70,6 +71,26 @@ function wrapSection(
   );
 }
 
+function orderFavoriteModelOptionsFirst(
+  options: ReadonlyArray<AgentInputEngineModelOption>,
+  favoriteValues: ReadonlySet<string> | null | undefined,
+): ReadonlyArray<AgentInputEngineModelOption> {
+  if (!favoriteValues || favoriteValues.size === 0) return options;
+
+  const favoriteOptions: AgentInputEngineModelOption[] = [];
+  const otherOptions: AgentInputEngineModelOption[] = [];
+  for (const option of options) {
+    if (favoriteValues.has(option.value)) {
+      favoriteOptions.push(option);
+    } else {
+      otherOptions.push(option);
+    }
+  }
+
+  if (favoriteOptions.length === 0) return options;
+  return [...favoriteOptions, ...otherOptions];
+}
+
 export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
   const sectionOrder = props.sectionOrder ?? ["model", "config"];
   const surfaceVariant = props.surfaceVariant ?? "carded";
@@ -90,16 +111,16 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
         option.description.trim().length > 0,
     );
 
-    if (!shouldShowDescriptions) return options;
-
-    return options.map((option) => {
+    const describedOptions = shouldShowDescriptions ? options.map((option) => {
       if (option.value !== "default") return option;
       if (typeof option.description === "string" && option.description.trim().length > 0) {
         return option;
       }
       return { ...option, description: t("agentInput.model.configureInCli") };
-    });
-  }, [props.modelOptions]);
+    }) : options;
+
+    return orderFavoriteModelOptionsFirst(describedOptions, props.favoriteModelValues);
+  }, [props.favoriteModelValues, props.modelOptions]);
 
   const favoriteOptions = React.useMemo<OptionPickerFavoriteOptions | undefined>(() => {
     if (!props.onToggleFavoriteModel || !props.favoriteModelValues) {
@@ -144,6 +165,7 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
               customLabel={`${t("profiles.custom")}...`}
               customDescription={t("agentInput.model.customDescription")}
               favoriteOptions={favoriteOptions}
+              headerAccessory={props.modelHeaderAccessory}
               probe={props.modelProbe}
               selectedOptionControls={props.selectedModelOptionControls ?? undefined}
               onSelectOptionControlValue={props.onSelectModelOptionValue}

@@ -36,6 +36,21 @@ describe('fireAndForget', () => {
         }
     });
 
+    it('can log only the tag without dumping the rejected error object', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+            const error = Object.assign(new Error('network failed'), {
+                config: { headers: { Authorization: 'Bearer SECRET' } },
+            });
+            fireAndForget(Promise.reject(error), { tag: 'test.safe', logError: false });
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(consoleError).toHaveBeenCalledWith('[fireAndForget] test.safe');
+            expect(JSON.stringify(consoleError.mock.calls)).not.toContain('SECRET');
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
+
     it('ignores non-promise inputs', () => {
         expect(() => fireAndForget(undefined as any, { tag: 'test.tag' })).not.toThrow();
         expect(() => fireAndForget(null as any, { tag: 'test.tag' })).not.toThrow();

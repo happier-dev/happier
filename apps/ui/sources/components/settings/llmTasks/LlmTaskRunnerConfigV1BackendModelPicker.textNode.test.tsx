@@ -88,12 +88,6 @@ vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(async () => {}),
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-    },
-}));
-
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroupSelectionContext: React.createContext(null),
 }));

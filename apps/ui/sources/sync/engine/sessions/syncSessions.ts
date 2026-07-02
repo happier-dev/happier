@@ -7,12 +7,14 @@ import { preserveSessionRuntimeLocalMetadata } from '@/sync/domains/session/pres
 import {
     deriveSessionListRenderableHasUnreadMessagesFromMetadataPatch,
     derivePendingRequestFlagsFromAgentState,
+    summarizeSessionListReadableActivityFromMessageRecords,
     type SessionListRenderableSession,
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import { buildSessionListRenderableMetadataComparison } from '@/sync/domains/session/listing/sessionListRenderableMetadataComparison';
 import type { ApiMessage, ApiSessionMessagesResponse } from '@/sync/api/types/apiTypes';
 import { ApiSessionMessagesResponseSchema } from '@/sync/api/types/apiTypes';
 import { storage } from '@/sync/domains/state/storage';
+import { readRollbackEligibleTurnStarts } from '@/sync/domains/session/rollback/rollbackEligibleTurnStarts';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { readStoredSessionMessage } from '@/sync/runtime/readStoredSessionContent';
 import { writeSyncDebugLog } from '@/sync/runtime/syncDebugLogging';
@@ -25,10 +27,50 @@ import {
     tryParsePlainSessionAgentState,
     tryParsePlainSessionMetadata,
 } from './parsePlainSessionPayload';
+import { isLegacyMemoryArtifactTranscriptRow } from './legacyMemoryArtifactTranscriptRows';
+import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol';
 export { handleNewMessageSocketUpdate } from './sessionSocketUpdate';
 export { handleMessageUpdatedSocketUpdate } from './sessionSocketUpdate';
 export { fetchAndApplySessions } from './sessionSnapshot';
 export type { SessionListEncryption } from './sessionSnapshot';
+
+function readLatestTurnStatus(value: unknown, fallback: PrimaryTurnStatusV1 | null | undefined): PrimaryTurnStatusV1 | null | undefined {
+    return value === 'in_progress'
+        || value === 'completed'
+        || value === 'cancelled'
+        || value === 'failed'
+        ? value
+        : value === null
+            ? null
+            : fallback;
+}
+
+function readNullableTimestamp(value: unknown, fallback: number | null | undefined): number | null | undefined {
+    return typeof value === 'number' && Number.isFinite(value)
+        ? Math.trunc(value)
+        : value === null
+            ? null
+            : fallback;
+}
+
+function readTimestamp(value: unknown, fallback: number): number {
+    return typeof value === 'number' && Number.isFinite(value)
+        ? Math.trunc(value)
+        : fallback;
+}
+
+function isTerminalPrimaryTurnStatus(value: PrimaryTurnStatusV1 | null | undefined): boolean {
+    return value === 'completed' || value === 'cancelled' || value === 'failed';
+}
+
+function readRenderablePatchReadableActivity(sessionId: string) {
+    const sessionMessages = storage.getState().sessionMessages?.[sessionId];
+    if (!sessionMessages) return undefined;
+    return summarizeSessionListReadableActivityFromMessageRecords(
+        sessionMessages.messageIdsOldestFirst,
+        sessionMessages.messagesById,
+    );
+}
 
 function applySidechainScopeMetadata(params: Readonly<{
     normalizedMessage: NormalizedMessage;
@@ -84,12 +126,131 @@ export function handleDeleteSessionSocketUpdate(params: {
     log.log(`🗑️ Session ${sessionId} deleted from local storage`);
 }
 
+// Session `metadata.version` is strictly monotonic per session on the server: every metadata write
+// uses optimistic concurrency (`metadataVersion = expectedVersion + 1` guarded by a CAS update) and
+// no flow (re-key/reset/re-create by tag) ever decreases it. So an incoming metadata version that is
+// not strictly greater than the stored version is stale/out-of-order and must not overwrite a newer
+// title. Equal versions are a no-op. Mirrors the machine metadata guard in syncMachines.ts.
+export function isStrictlyNewerSessionMetadataVersion(
+    incomingVersion: unknown,
+    storedVersion: number | null | undefined,
+): boolean {
+    if (typeof incomingVersion !== 'number' || !Number.isFinite(incomingVersion)) {
+        return false;
+    }
+    const normalizedStored = typeof storedVersion === 'number' && Number.isFinite(storedVersion)
+        ? storedVersion
+        : 0;
+    return incomingVersion > normalizedStored;
+}
+
+export function buildUpdatedSessionProjectionFromSocketUpdate(params: {
+    session: Session;
+    updateBody: any;
+    updateSeq: number;
+    updateCreatedAt: number;
+}): Session {
+    const { session, updateBody, updateSeq, updateCreatedAt } = params;
+    const encryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+    const nextLatestTurnStatus = readLatestTurnStatus(updateBody.latestTurnStatus, session.latestTurnStatus);
+    const rollbackEligibleTurnStarts = readRollbackEligibleTurnStarts(updateBody.rollbackEligibleTurnStarts);
+    const clearsStaleThinking = isTerminalPrimaryTurnStatus(nextLatestTurnStatus)
+        && updateBody.latestTurnStatus === nextLatestTurnStatus;
+    const projectedActive =
+        typeof updateBody.active === 'boolean'
+            ? updateBody.active
+            : session.active;
+    const projectedActiveAt = readTimestamp(updateBody.activeAt, session.activeAt);
+    const projectedThinking =
+        clearsStaleThinking
+            ? false
+            : typeof updateBody.thinking === 'boolean'
+                ? updateBody.thinking
+                : updateBody.active === false
+                    ? false
+                    : session.thinking;
+    const projectedThinkingAt =
+        readTimestamp(
+            updateBody.thinkingAt,
+            typeof updateBody.thinking === 'boolean' || updateBody.active === false
+                ? projectedActiveAt
+                : session.thinkingAt,
+        );
+
+    return {
+        ...session,
+        encryptionMode,
+        active: projectedActive,
+        activeAt: projectedActiveAt,
+        thinking: projectedThinking,
+        thinkingAt: projectedThinkingAt,
+        lastViewedSessionSeq:
+            typeof updateBody.lastViewedSessionSeq === 'number'
+                ? updateBody.lastViewedSessionSeq
+                : session.lastViewedSessionSeq,
+        pendingPermissionRequestCount:
+            typeof updateBody.pendingPermissionRequestCount === 'number'
+                ? updateBody.pendingPermissionRequestCount
+                : session.pendingPermissionRequestCount,
+        pendingUserActionRequestCount:
+            typeof updateBody.pendingUserActionRequestCount === 'number'
+                ? updateBody.pendingUserActionRequestCount
+                : session.pendingUserActionRequestCount,
+        pendingRequestObservedAt: readNullableTimestamp(
+            updateBody.pendingRequestObservedAt,
+            session.pendingRequestObservedAt,
+        ),
+        latestTurnId:
+            typeof updateBody.latestTurnId === 'string' && updateBody.latestTurnId.trim().length > 0
+                ? updateBody.latestTurnId
+                : updateBody.latestTurnId === null
+                    ? null
+                    : session.latestTurnId,
+        latestTurnStatus: nextLatestTurnStatus,
+        latestTurnStatusObservedAt: readNullableTimestamp(
+            updateBody.latestTurnStatusObservedAt,
+            session.latestTurnStatusObservedAt,
+        ),
+        latestReadyEventSeq: readNullableTimestamp(updateBody.latestReadyEventSeq, session.latestReadyEventSeq),
+        latestReadyEventAt: readNullableTimestamp(updateBody.latestReadyEventAt, session.latestReadyEventAt),
+        lastRuntimeIssue:
+            updateBody.lastRuntimeIssue === null
+            || (updateBody.lastRuntimeIssue && typeof updateBody.lastRuntimeIssue === 'object')
+                ? updateBody.lastRuntimeIssue
+                : session.lastRuntimeIssue,
+        ...(rollbackEligibleTurnStarts !== undefined ? { rollbackEligibleTurnStarts } : {}),
+        ...(clearsStaleThinking ? {
+            optimisticThinkingAt: null,
+            thinkingGraceUntil: null,
+        } : {}),
+        archivedAt:
+            typeof updateBody.archivedAt === 'number' || updateBody.archivedAt === null
+                ? updateBody.archivedAt
+                : session.archivedAt,
+        updatedAt: updateCreatedAt,
+        meaningfulActivityAt:
+            typeof updateBody.meaningfulActivityAt === 'number'
+                ? updateBody.meaningfulActivityAt
+                : session.meaningfulActivityAt,
+        seq: computeNextSessionSeqFromUpdate({
+            currentSessionSeq: session.seq ?? 0,
+            updateType: 'update-session',
+            containerSeq: updateSeq,
+            messageSeq: undefined,
+        }),
+    };
+}
+
 export async function buildUpdatedSessionFromSocketUpdate(params: {
     session: Session;
     updateBody: any;
     updateSeq: number;
     updateCreatedAt: number;
     sessionEncryption: SessionEncryption | null;
+    hydrateState?: Readonly<{
+        agentState?: boolean;
+        metadata?: boolean;
+    }>;
 }): Promise<{ nextSession: Session; agentState: any }> {
     const { session, updateBody, updateSeq, updateCreatedAt, sessionEncryption } = params;
 
@@ -97,11 +258,24 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
     if (encryptionMode === 'e2ee' && !sessionEncryption) {
         throw new Error(`Session encryption not found for ${session.id}`);
     }
+    const projectionSession = buildUpdatedSessionProjectionFromSocketUpdate({
+        session,
+        updateBody,
+        updateSeq,
+        updateCreatedAt,
+    });
 
-    const hasStatePayload = Boolean(updateBody.metadata || updateBody.agentState);
+    const hydrateAgentState = updateBody.agentState
+        ? params.hydrateState?.agentState !== false
+        : false;
+    const hydrateMetadata = updateBody.metadata
+        ? params.hydrateState?.metadata !== false
+            && isStrictlyNewerSessionMetadataVersion(updateBody.metadata.version, session.metadataVersion)
+        : false;
+    const hasStatePayload = hydrateMetadata || hydrateAgentState;
     const shouldBatchDecryptState = Boolean(
-        updateBody.metadata
-        && updateBody.agentState
+        hydrateMetadata
+        && hydrateAgentState
         && encryptionMode === 'e2ee'
         && sessionEncryption?.decryptSessionSnapshotState,
     );
@@ -122,13 +296,13 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
             };
         }
 
-        const agentStatePromise = updateBody.agentState
+        const agentStatePromise = updateBody.agentState && hydrateAgentState
             ? encryptionMode === 'plain'
                 ? Promise.resolve(parsePlainSessionAgentState(updateBody.agentState.value))
                 : sessionEncryption!.decryptAgentState(updateBody.agentState.version, updateBody.agentState.value)
             : Promise.resolve(session.agentState);
 
-        const metadataPromise = updateBody.metadata
+        const metadataPromise = updateBody.metadata && hydrateMetadata
             ? encryptionMode === 'plain'
                 ? Promise.resolve(parsePlainSessionMetadata(updateBody.metadata.value))
                 : sessionEncryption!.decryptMetadata(updateBody.metadata.version, updateBody.metadata.value)
@@ -143,8 +317,8 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
             {
                 encrypted: encryptionMode === 'e2ee' ? 1 : 0,
                 plain: encryptionMode === 'plain' ? 1 : 0,
-                metadata: updateBody.metadata ? 1 : 0,
-                agentState: updateBody.agentState ? 1 : 0,
+                metadata: hydrateMetadata ? 1 : 0,
+                agentState: hydrateAgentState ? 1 : 0,
                 batched: shouldBatchDecryptState ? 1 : 0,
             },
             resolveUpdatedState,
@@ -153,49 +327,11 @@ export async function buildUpdatedSessionFromSocketUpdate(params: {
     const mergedMetadata = preserveSessionRuntimeLocalMetadata(session.metadata, metadata);
 
     const nextSession: Session = {
-        ...session,
-        encryptionMode,
+        ...projectionSession,
         agentState,
-        agentStateVersion: updateBody.agentState ? updateBody.agentState.version : session.agentStateVersion,
-        lastViewedSessionSeq:
-            typeof updateBody.lastViewedSessionSeq === 'number'
-                ? updateBody.lastViewedSessionSeq
-                : session.lastViewedSessionSeq,
-        pendingPermissionRequestCount:
-            typeof updateBody.pendingPermissionRequestCount === 'number'
-                ? updateBody.pendingPermissionRequestCount
-                : session.pendingPermissionRequestCount,
-        pendingUserActionRequestCount:
-            typeof updateBody.pendingUserActionRequestCount === 'number'
-                ? updateBody.pendingUserActionRequestCount
-                : session.pendingUserActionRequestCount,
-        latestTurnStatus:
-            updateBody.latestTurnStatus === 'in_progress'
-            || updateBody.latestTurnStatus === 'completed'
-            || updateBody.latestTurnStatus === 'cancelled'
-            || updateBody.latestTurnStatus === 'failed'
-                ? updateBody.latestTurnStatus
-                : updateBody.latestTurnStatus === null
-                    ? null
-                    : session.latestTurnStatus,
-        lastRuntimeIssue:
-            updateBody.lastRuntimeIssue === null
-            || (updateBody.lastRuntimeIssue && typeof updateBody.lastRuntimeIssue === 'object')
-                ? updateBody.lastRuntimeIssue
-                : session.lastRuntimeIssue,
-        archivedAt:
-            typeof updateBody.archivedAt === 'number' || updateBody.archivedAt === null
-                ? updateBody.archivedAt
-                : session.archivedAt,
+        agentStateVersion: hydrateAgentState ? updateBody.agentState.version : session.agentStateVersion,
         metadata: mergedMetadata,
-        metadataVersion: updateBody.metadata ? updateBody.metadata.version : session.metadataVersion,
-        updatedAt: updateCreatedAt,
-        seq: computeNextSessionSeqFromUpdate({
-            currentSessionSeq: session.seq ?? 0,
-            updateType: 'update-session',
-            containerSeq: updateSeq,
-            messageSeq: undefined,
-        }),
+        metadataVersion: hydrateMetadata ? updateBody.metadata.version : session.metadataVersion,
     };
 
     return { nextSession, agentState };
@@ -207,11 +343,22 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
     updateSeq: number;
     updateCreatedAt: number;
     sessionEncryption: SessionEncryption | null;
+    hydrateState?: {
+        agentState?: boolean;
+        metadata?: boolean;
+    };
 }): Promise<Partial<SessionListRenderableSession>> {
     const { renderable, updateBody, updateSeq, updateCreatedAt, sessionEncryption } = params;
+    const hydrateMetadata = updateBody.metadata
+        ? params.hydrateState?.metadata !== false
+            && isStrictlyNewerSessionMetadataVersion(updateBody.metadata.version, renderable.metadataVersion)
+        : false;
+    const hydrateAgentState = updateBody.agentState
+        ? params.hydrateState?.agentState !== false
+        : false;
 
     const parsedMetadata =
-        !updateBody.metadata
+        !updateBody.metadata || !hydrateMetadata
             ? undefined
             : sessionEncryption
                 ? await sessionEncryption.decryptMetadata(updateBody.metadata.version, updateBody.metadata.value)
@@ -222,7 +369,7 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
                         : undefined;
 
     const parsedAgentState =
-        !updateBody.agentState
+        !updateBody.agentState || !hydrateAgentState
             ? undefined
             : sessionEncryption
                 ? await sessionEncryption.decryptAgentState(updateBody.agentState.version, updateBody.agentState.value)
@@ -252,41 +399,108 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
     const mergedRenderableMetadata = parsedRenderableMetadata === undefined
         ? renderable.metadata
         : preserveSessionRuntimeLocalMetadata(renderable.metadata, parsedRenderableMetadata);
+    const nextLatestTurnStatus = readLatestTurnStatus(updateBody.latestTurnStatus, renderable.latestTurnStatus);
+    const nextLatestTurnId =
+        typeof updateBody.latestTurnId === 'string' || updateBody.latestTurnId === null
+            ? updateBody.latestTurnId
+            : renderable.latestTurnId;
+    const nextLatestTurnStatusObservedAt = readNullableTimestamp(
+        updateBody.latestTurnStatusObservedAt,
+        renderable.latestTurnStatusObservedAt,
+    );
+    const nextLatestReadyEventSeq =
+        typeof updateBody.latestReadyEventSeq === 'number' || updateBody.latestReadyEventSeq === null
+            ? updateBody.latestReadyEventSeq
+            : renderable.latestReadyEventSeq ?? null;
+    const nextLatestReadyEventAt =
+        typeof updateBody.latestReadyEventAt === 'number'
+            ? updateBody.latestReadyEventAt
+            : renderable.latestReadyEventAt ?? null;
+    const rollbackEligibleTurnStarts = readRollbackEligibleTurnStarts(updateBody.rollbackEligibleTurnStarts);
+    const nextLastViewedSessionSeq =
+        typeof updateBody.lastViewedSessionSeq === 'number'
+            ? updateBody.lastViewedSessionSeq
+            : renderable.lastViewedSessionSeq ?? null;
+    const nextPendingRequestObservedAt =
+        typeof updateBody.pendingRequestObservedAt === 'number' || updateBody.pendingRequestObservedAt === null
+            ? updateBody.pendingRequestObservedAt
+            : renderable.pendingRequestObservedAt ?? null;
+    const clearsStaleThinking = isTerminalPrimaryTurnStatus(nextLatestTurnStatus)
+        && updateBody.latestTurnStatus === nextLatestTurnStatus;
+    const nextActive =
+        typeof updateBody.active === 'boolean'
+            ? updateBody.active
+            : renderable.active;
+    const nextActiveAt = readTimestamp(updateBody.activeAt, renderable.activeAt);
+    const nextThinking =
+        clearsStaleThinking
+            ? false
+            : typeof updateBody.thinking === 'boolean'
+                ? updateBody.thinking
+                : updateBody.active === false
+                    ? false
+                    : renderable.thinking;
+    const nextThinkingAt = readTimestamp(
+        updateBody.thinkingAt,
+        typeof updateBody.thinking === 'boolean' || updateBody.active === false
+            ? nextActiveAt
+            : renderable.thinkingAt,
+    );
+    const shouldRecomputeUnread =
+        typeof updateBody.lastViewedSessionSeq === 'number'
+        || typeof updateBody.latestReadyEventSeq === 'number'
+        || (
+            isTerminalPrimaryTurnStatus(nextLatestTurnStatus)
+            && updateBody.latestTurnStatus === nextLatestTurnStatus
+        );
 
     return {
         seq: nextSessionSeq,
         updatedAt: updateCreatedAt,
-        metadataVersion: updateBody.metadata ? updateBody.metadata.version : renderable.metadataVersion,
-        agentStateVersion: updateBody.agentState ? updateBody.agentState.version : renderable.agentStateVersion,
+        active: nextActive,
+        activeAt: nextActiveAt,
+        thinking: nextThinking,
+        thinkingAt: nextThinkingAt,
+        presence: nextActive ? 'online' : nextActiveAt,
+        meaningfulActivityAt:
+            typeof updateBody.meaningfulActivityAt === 'number'
+                ? updateBody.meaningfulActivityAt
+                : renderable.meaningfulActivityAt,
+        metadataVersion: updateBody.metadata && hydrateMetadata ? updateBody.metadata.version : renderable.metadataVersion,
+        agentStateVersion: updateBody.agentState && hydrateAgentState ? updateBody.agentState.version : renderable.agentStateVersion,
         metadata: mergedRenderableMetadata,
         archivedAt:
             typeof updateBody.archivedAt === 'number' || updateBody.archivedAt === null
                 ? updateBody.archivedAt
                 : renderable.archivedAt,
-        latestTurnStatus:
-            updateBody.latestTurnStatus === 'in_progress'
-            || updateBody.latestTurnStatus === 'completed'
-            || updateBody.latestTurnStatus === 'cancelled'
-            || updateBody.latestTurnStatus === 'failed'
-                ? updateBody.latestTurnStatus
-                : updateBody.latestTurnStatus === null
-                    ? null
-                    : renderable.latestTurnStatus,
+        lastViewedSessionSeq: nextLastViewedSessionSeq,
+        latestTurnId: nextLatestTurnId,
+        latestTurnStatus: nextLatestTurnStatus,
+        latestTurnStatusObservedAt: nextLatestTurnStatusObservedAt,
+        latestReadyEventSeq: nextLatestReadyEventSeq,
+        latestReadyEventAt: nextLatestReadyEventAt,
+        ...(rollbackEligibleTurnStarts !== undefined ? { rollbackEligibleTurnStarts } : {}),
+        pendingRequestObservedAt: nextPendingRequestObservedAt,
         lastRuntimeIssue:
             updateBody.lastRuntimeIssue === null
             || (updateBody.lastRuntimeIssue && typeof updateBody.lastRuntimeIssue === 'object')
                 ? updateBody.lastRuntimeIssue
                 : renderable.lastRuntimeIssue,
+        ...(clearsStaleThinking ? {
+            optimisticThinkingAt: null,
+            thinkingGraceUntil: null,
+        } : {}),
         hasPendingPermissionRequests: pendingFlags.hasPendingPermissionRequests,
         hasPendingUserActionRequests: pendingFlags.hasPendingUserActionRequests,
         hasUnreadMessages: deriveSessionListRenderableHasUnreadMessagesFromMetadataPatch({
             metadata: parsedMetadata,
             nextSessionSeq,
-            nextLastViewedSessionSeq:
-                typeof updateBody.lastViewedSessionSeq === 'number'
-                    ? updateBody.lastViewedSessionSeq
-                    : undefined,
+            nextLastViewedSessionSeq,
+            nextLatestTurnStatus,
+            nextLatestReadyEventSeq,
+            readableActivity: readRenderablePatchReadableActivity(renderable.id),
             previousHasUnreadMessages: renderable.hasUnreadMessages,
+            recomputeUnread: shouldRecomputeUnread,
         }),
     };
 }
@@ -350,6 +564,7 @@ type DecryptedSessionMessage = Readonly<{
 }>;
 
 type MessageDecryptBatchOptions = {
+    initialMessageDecryptBatchSize?: number;
     messageDecryptBatchSize?: number;
     messageDecryptYieldDelayMs?: number;
     yieldToMessageDecryptBatch?: (delayMs: number) => Promise<void>;
@@ -360,6 +575,7 @@ type SessionMessagesPageOptions = MessageDecryptBatchOptions & {
 };
 
 const DEFAULT_MESSAGE_DECRYPT_BATCH_SIZE = 8;
+const DEFAULT_INITIAL_MESSAGE_DECRYPT_BATCH_SIZE = 64;
 
 const plainSessionMessagesEncryption: SessionMessagesEncryption = {
     decryptMessages: async (messages) => Promise.all(
@@ -375,6 +591,16 @@ function normalizePositiveInteger(value: number | undefined, fallback: number): 
 function normalizeNonNegativeInteger(value: number | undefined, fallback: number): number {
     if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
     return Math.max(0, Math.trunc(value));
+}
+
+function resolveMessageDecryptBatchSize(kind: MessagePageTelemetryKind, options: MessageDecryptBatchOptions): number {
+    if (kind === 'initial') {
+        return normalizePositiveInteger(
+            options.initialMessageDecryptBatchSize ?? options.messageDecryptBatchSize,
+            DEFAULT_INITIAL_MESSAGE_DECRYPT_BATCH_SIZE,
+        );
+    }
+    return normalizePositiveInteger(options.messageDecryptBatchSize, DEFAULT_MESSAGE_DECRYPT_BATCH_SIZE);
 }
 
 async function yieldToMessageDecryptBatch(delayMs: number): Promise<void> {
@@ -495,14 +721,15 @@ async function decryptMessagesInBatchesWithTelemetry(
     messages: ApiMessage[],
     options: MessageDecryptBatchOptions,
 ): Promise<Array<DecryptedSessionMessage | null>> {
+    const batchSize = resolveMessageDecryptBatchSize(kind, options);
     return syncPerformanceTelemetry.measureAsync(
         'sync.sessions.messages.decrypt',
         messagePageTelemetryFields(kind, {
             messages: messages.length,
-            batchSize: normalizePositiveInteger(options.messageDecryptBatchSize, DEFAULT_MESSAGE_DECRYPT_BATCH_SIZE),
+            batchSize,
             yieldDelayMs: normalizeNonNegativeInteger(options.messageDecryptYieldDelayMs, 0),
         }),
-        () => decryptMessagesInBatches(encryption, messages, options),
+        () => decryptMessagesInBatches(encryption, messages, options, batchSize),
     );
 }
 
@@ -539,10 +766,10 @@ async function decryptMessagesInBatches(
     encryption: SessionMessagesEncryption,
     messages: ApiMessage[],
     options: MessageDecryptBatchOptions,
+    batchSize: number,
 ): Promise<Array<DecryptedSessionMessage | null>> {
     if (messages.length === 0) return [];
 
-    const batchSize = normalizePositiveInteger(options.messageDecryptBatchSize, DEFAULT_MESSAGE_DECRYPT_BATCH_SIZE);
     if (messages.length <= batchSize) {
         return encryption.decryptMessages(messages);
     }
@@ -682,6 +909,9 @@ export async function fetchAndApplyMessages(params: {
                 if (inputWasEncrypted && decrypted.content === null) {
                     continue;
                 }
+                if (isLegacyMemoryArtifactTranscriptRow(decrypted)) {
+                    continue;
+                }
 
                 const lifecycleEvent = getTaskLifecycleEventFromRawContent(decrypted.content, decrypted.createdAt);
                 if (lifecycleEvent) {
@@ -819,6 +1049,9 @@ export async function fetchAndApplyOlderMessages(params: {
                 if (inputWasEncrypted && decrypted.content === null) {
                     continue;
                 }
+                if (isLegacyMemoryArtifactTranscriptRow(decrypted)) {
+                    continue;
+                }
                 // Older pages can include historical lifecycle markers (task_complete/turn_aborted) that
                 // should not clobber current in-flight UI state. Lifecycle handling is reserved for
                 // newer/socket flows.
@@ -931,6 +1164,9 @@ export async function fetchAndApplyNewerMessages(params: {
                     existingMessages.set(decrypted.id, inputUpdatedAt);
                 }
                 if (inputWasEncrypted && decrypted.content === null) {
+                    continue;
+                }
+                if (isLegacyMemoryArtifactTranscriptRow(decrypted)) {
                     continue;
                 }
                 const lifecycleEvent = getTaskLifecycleEventFromRawContent(decrypted.content, decrypted.createdAt);

@@ -21,6 +21,7 @@ import { AutomationsEmptyState } from '@/components/automations/shared/Automatio
 import { t } from '@/text';
 import { navigateWithBlurOnWeb } from '@/utils/platform/deferOnWeb';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { isSessionRouteHydrationAvailable } from '@/sync/domains/session/sessionRouteHydrationState';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -34,12 +35,20 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export function SessionAutomationsScreen(props: { sessionId: string }) {
+export function SessionAutomationsScreen(props: {
+    sessionId: string;
+    hydrationOptions?: Readonly<{ serverId?: string; forceRefresh?: boolean }>;
+}) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
     const automations = useAutomations();
-    const sessionHydrated = useHydrateSessionForRoute(props.sessionId, 'SessionAutomationsScreen.hydrateTargetSession');
+    const routeHydrationState = useHydrateSessionForRoute(
+        props.sessionId,
+        'SessionAutomationsScreen.hydrateTargetSession',
+        props.hydrationOptions,
+    );
+    const sessionHydrated = isSessionRouteHydrationAvailable(routeHydrationState);
     const session = useSession(props.sessionId);
     const settings = useSettings();
     const sessionDekBase64 = sync.getSessionEncryptionKeyBase64ForResume(props.sessionId);

@@ -1,9 +1,24 @@
+import { SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND } from '@happier-dev/protocol';
+
 import type { AttachmentsUploadConfig } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
 import { sessionAttachmentsUploadFile } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
 import type { AttachmentsUploadFileSource } from '@/sync/domains/attachments/attachmentsUploadFileSource';
+import { RpcError } from '@/sync/runtime/rpcErrors';
 import { randomUUID } from '@/platform/randomUUID';
 
 import type { AttachmentDraft } from './attachmentDraftModel';
+
+type StructuredInputImageInput = Readonly<{
+    type: 'localImage';
+    kind: 'image';
+    localPath: string;
+    path: string;
+    provenance?: Readonly<{ kind: string }>;
+    name: string;
+    mimeType?: string;
+    sizeBytes: number;
+    sha256?: string;
+}>;
 
 export type UploadedAttachment = Readonly<{
     name: string;
@@ -11,7 +26,71 @@ export type UploadedAttachment = Readonly<{
     mimeType?: string;
     sizeBytes: number;
     sha256?: string;
+    structuredInput?: StructuredInputImageInput;
 }>;
+type UploadedAttachmentBase = Omit<UploadedAttachment, 'structuredInput'>;
+
+function isImageMimeType(mimeType: string | undefined): boolean {
+    return typeof mimeType === 'string' && mimeType.toLowerCase().startsWith('image/');
+}
+
+function buildStructuredInputForUploadedAttachment(args: UploadedAttachmentBase): StructuredInputImageInput | undefined {
+    if (!isImageMimeType(args.mimeType)) return undefined;
+    return {
+        type: 'localImage',
+        kind: 'image',
+        localPath: args.path,
+        path: args.path,
+        provenance: { kind: SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND },
+        name: args.name,
+        ...(args.mimeType ? { mimeType: args.mimeType } : {}),
+        sizeBytes: args.sizeBytes,
+        ...(args.sha256 ? { sha256: args.sha256 } : {}),
+    };
+}
+
+function toAttachmentPayload(attachment: UploadedAttachment): Record<string, unknown> {
+    return {
+        name: attachment.name,
+        path: attachment.path,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        sha256: attachment.sha256,
+    };
+}
+
+function markUploadedAttachmentInput(input: StructuredInputImageInput): StructuredInputImageInput {
+    return input.type === 'localImage'
+        ? {
+            ...input,
+            provenance: { kind: SESSION_ATTACHMENT_UPLOAD_STRUCTURED_INPUT_PROVENANCE_KIND },
+        }
+        : input;
+}
+
+export function buildAttachmentMessageMeta(uploaded: readonly UploadedAttachment[]): Record<string, unknown> {
+    const structuredAttachments = uploaded
+        .map((attachment) => attachment.structuredInput)
+        .filter((input): input is StructuredInputImageInput => Boolean(input))
+        .map(markUploadedAttachmentInput);
+
+    return {
+        happier: {
+            kind: 'attachments.v1',
+            payload: {
+                attachments: uploaded.map(toAttachmentPayload),
+            },
+        },
+        ...(structuredAttachments.length > 0
+            ? {
+                happierStructuredInputV1: {
+                    v: 1,
+                    imageInputs: structuredAttachments,
+                },
+            }
+            : {}),
+    };
+}
 
 function describeSource(source: AttachmentsUploadFileSource): Readonly<{
     name: string;
@@ -39,6 +118,14 @@ function describeSource(source: AttachmentsUploadFileSource): Readonly<{
     };
 }
 
+function createAttachmentUploadFailureError(input: Readonly<{
+    error: string;
+    errorCode?: string | null;
+}>): Error {
+    const normalizedCode = typeof input.errorCode === 'string' ? input.errorCode.trim() : '';
+    return normalizedCode ? new RpcError(input.error, normalizedCode) : new Error(input.error);
+}
+
 export async function uploadAttachmentDraftsToSession(args: Readonly<{
     sessionId: string;
     drafts: readonly AttachmentDraft[];
@@ -58,12 +145,19 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
 
         const described = describeSource(stillPresent.source);
         if (stillPresent.uploadedPath) {
-            uploaded.push({
+            const uploadedAttachment: UploadedAttachmentBase = {
                 name: described.name,
                 path: stillPresent.uploadedPath,
-                mimeType: stillPresent.uploadedMimeType ?? described.mimeType,
                 sizeBytes: stillPresent.uploadedSizeBytes ?? described.sizeBytes ?? 0,
-                sha256: stillPresent.sha256,
+                ...((stillPresent.uploadedMimeType ?? described.mimeType)
+                    ? { mimeType: (stillPresent.uploadedMimeType ?? described.mimeType)! }
+                    : {}),
+                ...(stillPresent.sha256 ? { sha256: stillPresent.sha256 } : {}),
+            };
+            const structuredInput = buildStructuredInputForUploadedAttachment(uploadedAttachment);
+            uploaded.push({
+                ...uploadedAttachment,
+                ...(structuredInput ? { structuredInput } : {}),
             });
             continue;
         }
@@ -84,7 +178,7 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
         });
         if (!uploadRes.success) {
             args.applyDraftPatch(stillPresent.id, { status: 'error', error: uploadRes.error });
-            throw new Error(uploadRes.error);
+            throw createAttachmentUploadFailureError(uploadRes);
         }
 
         args.applyDraftPatch(stillPresent.id, {
@@ -97,12 +191,17 @@ export async function uploadAttachmentDraftsToSession(args: Readonly<{
             uploadProgress: { uploadedBytes: uploadRes.sizeBytes, totalBytes: uploadRes.sizeBytes },
         });
 
-        uploaded.push({
+        const uploadedAttachment: UploadedAttachmentBase = {
             name: described.name,
             path: uploadRes.path,
-            mimeType: described.mimeType,
             sizeBytes: uploadRes.sizeBytes,
-            sha256: uploadRes.sha256,
+            ...(described.mimeType ? { mimeType: described.mimeType } : {}),
+            ...(uploadRes.sha256 ? { sha256: uploadRes.sha256 } : {}),
+        };
+        const structuredInput = buildStructuredInputForUploadedAttachment(uploadedAttachment);
+        uploaded.push({
+            ...uploadedAttachment,
+            ...(structuredInput ? { structuredInput } : {}),
         });
     }
 

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createServerProfilesModuleMock } from '@/dev/testkit';
+
 const ioSpy = vi.fn();
 const getCredentialsForServerUrlSpy = vi.fn();
 const listServerProfilesSpy = vi.fn();
@@ -80,6 +82,12 @@ function mockReachabilityOnline() {
     });
 }
 
+function mockServerProfiles() {
+    vi.doMock('@/sync/domains/server/serverProfiles', () => createServerProfilesModuleMock({
+        listServerProfiles: () => listServerProfilesSpy(),
+    }));
+}
+
 async function flushConcurrentCacheStartup(timerCount = 2): Promise<void> {
     for (let index = 0; index < timerCount; index += 1) {
         await vi.advanceTimersToNextTimerAsync();
@@ -144,9 +152,7 @@ describe('concurrent session cache socket routing', () => {
             },
             isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
         }));
-        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
-            listServerProfiles: () => listServerProfilesSpy(),
-        }));
+        mockServerProfiles();
         vi.doMock('@/sync/domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
             subscribeActiveServer: () => () => {},
@@ -257,9 +263,7 @@ describe('concurrent session cache socket routing', () => {
             },
             isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
         }));
-        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
-            listServerProfiles: () => listServerProfilesSpy(),
-        }));
+        mockServerProfiles();
         vi.doMock('@/sync/domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
             subscribeActiveServer: () => () => {},
@@ -402,9 +406,7 @@ describe('concurrent session cache socket routing', () => {
             },
             isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
         }));
-        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
-            listServerProfiles: () => listServerProfilesSpy(),
-        }));
+        mockServerProfiles();
         vi.doMock('@/sync/domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
             subscribeActiveServer: () => () => {},
@@ -560,9 +562,7 @@ describe('concurrent session cache socket routing', () => {
             },
             isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
         }));
-        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
-            listServerProfiles: () => listServerProfilesSpy(),
-        }));
+        mockServerProfiles();
         vi.doMock('@/sync/domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
             subscribeActiveServer: () => () => {},
@@ -707,9 +707,7 @@ describe('concurrent session cache socket routing', () => {
             },
             isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
         }));
-        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
-            listServerProfiles: () => listServerProfilesSpy(),
-        }));
+        mockServerProfiles();
         vi.doMock('@/sync/domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
             subscribeActiveServer: () => () => {},
@@ -826,9 +824,7 @@ describe('concurrent session cache socket routing', () => {
             },
             isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
         }));
-        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
-            listServerProfiles: () => listServerProfilesSpy(),
-        }));
+        mockServerProfiles();
         vi.doMock('@/sync/domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
             subscribeActiveServer: () => () => {},
@@ -988,7 +984,7 @@ describe('concurrent session cache socket routing', () => {
             if (serverUrl !== sharedServerUrl) {
                 return null;
             }
-            if (options?.serverId === 'server-b') {
+            if (options?.serverId === 'srv-b') {
                 return { token: 'token-b', secret: 'secret-b' };
             }
             if (options?.serverId === 'server-c') {
@@ -999,7 +995,13 @@ describe('concurrent session cache socket routing', () => {
 
         listServerProfilesSpy.mockReturnValue([
             { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
-            { id: 'server-b', serverUrl: sharedServerUrl, name: 'Server B' },
+            {
+                id: 'server-b',
+                serverIdentityId: 'srv-b',
+                legacyServerIds: ['legacy-server-b'],
+                serverUrl: sharedServerUrl,
+                name: 'Server B',
+            },
             { id: 'server-c', serverUrl: sharedServerUrl, name: 'Server C' },
         ]);
         getActiveServerSnapshotSpy.mockReturnValue({
@@ -1018,9 +1020,7 @@ describe('concurrent session cache socket routing', () => {
             },
             isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
         }));
-        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
-            listServerProfiles: () => listServerProfilesSpy(),
-        }));
+        mockServerProfiles();
         vi.doMock('@/sync/domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
             subscribeActiveServer: () => () => {},
@@ -1125,7 +1125,7 @@ describe('concurrent session cache socket routing', () => {
                     {
                         id: 'group-main',
                         name: 'Main',
-                        serverIds: ['server-a', 'server-b', 'server-c'],
+                        serverIds: ['server-a', 'legacy-server-b', 'server-c'],
                         presentation: 'grouped',
                     },
                 ],
@@ -1138,20 +1138,22 @@ describe('concurrent session cache socket routing', () => {
         startConcurrentSessionCacheSync();
         await flushConcurrentCacheStartup(3);
 
-        expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith(sharedServerUrl, { serverId: 'server-b' });
+        expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith(sharedServerUrl, { serverId: 'srv-b' });
         expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith(sharedServerUrl, { serverId: 'server-c' });
 
         const cacheByServer = storage.getState().concurrentSessionListCacheByServerId;
-        const serverBSessionIds = Object.keys(cacheByServer['server-b']?.sessions ?? {});
+        const serverBSessionIds = Object.keys(cacheByServer['srv-b']?.sessions ?? {});
         const serverCSessionIds = Object.keys(cacheByServer['server-c']?.sessions ?? {});
 
         expect(serverBSessionIds).toContain('session-b');
         expect(serverBSessionIds).not.toContain('session-c');
+        expect(cacheByServer['server-b']).toBeUndefined();
         expect(serverCSessionIds).toContain('session-c');
         expect(serverCSessionIds).not.toContain('session-b');
 
         const machinesByServer = storage.getState().machineListByServerId;
-        expect((machinesByServer['server-b'] ?? []).map((machine: any) => machine.id)).toEqual(['machine-b']);
+        expect((machinesByServer['srv-b'] ?? []).map((machine: any) => machine.id)).toEqual(['machine-b']);
+        expect(machinesByServer['server-b']).toBeUndefined();
         expect((machinesByServer['server-c'] ?? []).map((machine: any) => machine.id)).toEqual(['machine-c']);
 
         stopConcurrentSessionCacheSync();
@@ -1197,9 +1199,7 @@ describe('concurrent session cache socket routing', () => {
             isLegacyAuthCredentials: (credentials: any) =>
                 Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
         }));
-        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
-            listServerProfiles: () => listServerProfilesSpy(),
-        }));
+        mockServerProfiles();
         vi.doMock('@/sync/domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
             subscribeActiveServer: () => () => {},

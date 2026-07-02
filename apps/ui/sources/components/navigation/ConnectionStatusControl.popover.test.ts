@@ -296,13 +296,27 @@ afterEach(() => {
 });
 
 describe('ConnectionStatusControl (native popover config)', () => {
+    it('does not mount the closed popover shell until the trigger opens it', async () => {
+        const ConnectionStatusControl = await importConnectionStatusControl();
+        const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+
+        expect(capture.popoverProps).toBeNull();
+
+        const trigger = screen.findByProps({ accessibilityRole: 'button' });
+        await act(async () => {
+            await pressTestInstanceAsync(trigger);
+        });
+
+        expect(capture.popoverProps?.open).toBe(true);
+    });
+
     it('toggles the popover when pressing the trigger twice', async () => {
         const ConnectionStatusControl = await importConnectionStatusControl();
         let tree: renderer.ReactTestRenderer | undefined;
         const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
         tree = screen.tree;
 
-        expect(capture.popoverProps?.open).toBe(false);
+        expect(capture.popoverProps).toBeNull();
 
         const trigger = screen.findByProps({ accessibilityRole: 'button' });
         await act(async () => {
@@ -311,11 +325,12 @@ describe('ConnectionStatusControl (native popover config)', () => {
 
         expect(capture.popoverProps?.open).toBe(true);
 
+        capture.popoverProps = null;
         await act(async () => {
             await pressTestInstanceAsync(trigger);
         });
 
-        expect(capture.popoverProps?.open).toBe(false);
+        expect(capture.popoverProps).toBeNull();
 
         await act(async () => {
             tree?.unmount();
@@ -327,6 +342,11 @@ describe('ConnectionStatusControl (native popover config)', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
         tree = screen.tree;
+
+        const trigger = screen.findByProps({ accessibilityRole: 'button' });
+        await act(async () => {
+            await pressTestInstanceAsync(trigger);
+        });
 
         expect(capture.popoverProps).toBeTruthy();
         expect(capture.popoverProps?.portal?.web).toBe(true);
@@ -343,6 +363,11 @@ describe('ConnectionStatusControl (native popover config)', () => {
         let tree: renderer.ReactTestRenderer | undefined;
         const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
         tree = screen.tree;
+
+        const trigger = screen.findByProps({ accessibilityRole: 'button' });
+        await act(async () => {
+            await pressTestInstanceAsync(trigger);
+        });
 
         expect(capture.popoverProps?.maxWidthCap).toBeGreaterThan(400);
 
@@ -546,6 +571,49 @@ describe('ConnectionStatusControl (native popover config)', () => {
             });
 
             const companyItem = findAction(`target-use-server-${company.id}`);
+            expect(companyItem).toBeTruthy();
+
+            await act(async () => {
+                companyItem?.onPress?.();
+            });
+
+            expect(connectionMocks.switchConnectionToActiveServer).toHaveBeenCalledTimes(1);
+            expect(authMocks.refreshFromActiveServer).toHaveBeenCalledTimes(1);
+
+            await act(async () => {
+                tree?.unmount();
+            });
+        } finally {
+            if (previousScope === undefined) {
+                delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+            } else {
+                process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
+            }
+        }
+    });
+
+    it('uses stable server identity ids for relay switch actions', async () => {
+        const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+        const scope = `test_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        try {
+            vi.resetModules();
+            const profiles = await import('@/sync/domains/server/serverProfiles');
+            const company = profiles.upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
+            profiles.setServerProfileIdentityForUrl(company.serverUrl, 'srv_identity_company');
+            const ConnectionStatusControl = await importConnectionStatusControl();
+
+            let tree: renderer.ReactTestRenderer | undefined;
+            const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+            tree = screen.tree;
+
+            const trigger = screen.findByProps({ accessibilityRole: 'button' });
+            await act(async () => {
+                await pressTestInstanceAsync(trigger);
+            });
+
+            const companyItem = findAction('target-use-server-srv_identity_company');
             expect(companyItem).toBeTruthy();
 
             await act(async () => {

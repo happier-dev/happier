@@ -4,7 +4,8 @@ import { View } from 'react-native';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
-import { MessageView } from '@/components/sessions/transcript/MessageView';
+import { MessageViewWithSessionCommon } from '@/components/sessions/transcript/MessageView';
+import { useTranscriptSessionCommon } from '@/components/sessions/transcript/transcriptSessionCommon';
 
 type TranscriptInteraction = {
     canSendMessages: boolean;
@@ -22,6 +23,7 @@ export const TranscriptMessageBlockList = React.memo(function TranscriptMessageB
     onResolvedJumpToMessageY?: (y: number) => void;
     messageWrapperTestIdPrefix?: string;
 }) {
+    const transcriptSessionCommon = useTranscriptSessionCommon(props.sessionId);
     const didJumpRef = React.useRef(false);
     const normalizedJumpToMessageId =
         typeof props.jumpToMessageId === 'string' && props.jumpToMessageId.length > 0 ? props.jumpToMessageId : null;
@@ -46,11 +48,15 @@ export const TranscriptMessageBlockList = React.memo(function TranscriptMessageB
                         props.onResolvedJumpToMessageY?.(y);
                     }}
                 >
-                    <MessageView
+                    <MessageViewWithSessionCommon
                         message={message}
                         metadata={props.metadata}
                         sessionId={props.sessionId}
                         interaction={props.interaction}
+                        forkCommon={transcriptSessionCommon.fork}
+                        messageDisplayCommon={transcriptSessionCommon.messageDisplay}
+                        toolChromeCommon={transcriptSessionCommon.toolChrome}
+                        toolRouteCommon={transcriptSessionCommon.toolRoute}
                     />
                 </View>
             ))}

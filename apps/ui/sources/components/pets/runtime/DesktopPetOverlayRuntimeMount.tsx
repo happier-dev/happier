@@ -82,19 +82,43 @@ export function DesktopPetOverlayRuntimeMount(): React.ReactElement | null {
     return <TauriDesktopPetOverlayRuntimeMount />;
 }
 
-function TauriDesktopPetOverlayRuntimeMount(): React.ReactElement {
+function TauriDesktopPetOverlayRuntimeMount(): React.ReactElement | null {
     const settings = useSettings();
     const localSettings = useLocalSettings();
     const companionEnabled = useFeatureEnabled('pets.companion');
-    const activity = usePetCompanionActivityState();
-    useDesktopPetOverlayMainWindowRequests();
     const policy = React.useMemo(() => resolveDesktopPetOverlayPolicy({
         companionFeatureState: companionEnabled ? 'enabled' : 'disabled',
         accountSettings: settings,
         localSettings,
     }), [companionEnabled, localSettings, settings]);
+    if (!policy.enabled) {
+        return null;
+    }
+
+    return (
+        <TauriDesktopPetOverlayRuntime
+            policy={policy}
+            localSettings={localSettings}
+        />
+    );
+}
+
+function TauriDesktopPetOverlayRuntime({
+    policy,
+    localSettings,
+}: Readonly<{
+    policy: ReturnType<typeof resolveDesktopPetOverlayPolicy>;
+    localSettings: ReturnType<typeof useLocalSettings>;
+}>): React.ReactElement {
+    const activity = usePetCompanionActivityState();
+    useDesktopPetOverlayMainWindowRequests();
     const visible = shouldShowDesktopPetOverlay({ policy, activity });
     const expanded = activity.trayItems.length > 0;
+    const nativeMouseTrackingEnabled =
+        visible
+        && policy.enabled
+        && !policy.inputLocked
+        && activity.trayItems.length > 0;
     const geometry = React.useMemo(
         () => resolveDesktopPetOverlayGeometry(localSettings.petsCompanionSizeScale),
         [localSettings.petsCompanionSizeScale],
@@ -114,6 +138,8 @@ function TauriDesktopPetOverlayRuntimeMount(): React.ReactElement {
             visible={visible}
             expanded={expanded}
             window={window}
+            nativeMouseTrackingEnabled={nativeMouseTrackingEnabled}
+            activity={activity}
             policy={policy}
         />
     );

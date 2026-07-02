@@ -59,6 +59,7 @@ describe('handleTranscriptStreamSegmentEphemeralUpdate', () => {
             getSessionEncryption,
             getSession: () => buildSession('s1'),
             applyMessages,
+            isSessionActivelyViewed: (sessionId) => sessionId === 's1',
         });
 
         expect(applyMessages).toHaveBeenCalledTimes(1);
@@ -68,10 +69,60 @@ describe('handleTranscriptStreamSegmentEphemeralUpdate', () => {
         const streamEvent = events.find((event) => event.name === 'sync.sessions.socket.transcriptStreamSegment');
         expect(streamEvent?.fields.plain).toBe(1);
         expect(streamEvent?.fields.encrypted).toBe(0);
+        expect(streamEvent?.fields.activeViewingSession).toBe(1);
+        expect(streamEvent?.fields.backgroundSession).toBe(0);
         const readEvent = events.find((event) => event.name === 'sync.sessions.socket.transcriptStreamSegment.readMessage');
         expect(readEvent?.fields.plain).toBe(1);
+        expect(readEvent?.fields.activeViewingSession).toBe(1);
         const applyEvent = events.find((event) => event.name === 'sync.sessions.socket.transcriptStreamSegment.apply');
         expect(applyEvent?.fields.normalized).toBe(1);
+        expect(applyEvent?.fields.activeViewingSession).toBe(1);
+    });
+
+    it('skips hidden transcript stream segments before decrypting content', async () => {
+        const decryptMessage = vi.fn(async () => ({
+            id: 'stream-1',
+            seq: 0,
+            localId: 'stream-1',
+            createdAt: 1_000,
+            content: { role: 'agent', content: { type: 'text', text: 'background token' } },
+        }));
+        const applyMessages = vi.fn();
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 60_000,
+        });
+        syncPerformanceTelemetry.reset();
+
+        const params = {
+            update: {
+                type: 'transcript-stream-segment',
+                sessionId: 's1',
+                message: {
+                    localId: 'stream-1',
+                    content: { t: 'encrypted', c: 'ciphertext' },
+                    createdAt: 1_000,
+                    updatedAt: 1_001,
+                },
+            },
+            getSessionEncryption: () => ({ decryptMessage }),
+            getSession: () => buildSession('s1', 'e2ee'),
+            applyMessages,
+            isSessionActivelyViewed: () => false,
+            skipWhenHidden: true,
+        } satisfies Parameters<typeof handleTranscriptStreamSegmentEphemeralUpdate>[0] & { skipWhenHidden: true };
+
+        await handleTranscriptStreamSegmentEphemeralUpdate(params);
+
+        expect(decryptMessage).not.toHaveBeenCalled();
+        expect(applyMessages).not.toHaveBeenCalled();
+
+        const events = syncPerformanceTelemetry.snapshot().events;
+        const streamEvent = events.find((event) => event.name === 'sync.sessions.socket.transcriptStreamSegment');
+        expect(streamEvent?.fields.backgroundSession).toBe(1);
+        expect(streamEvent?.fields.skippedHidden).toBe(1);
+        expect(events.some((event) => event.name === 'sync.sessions.socket.transcriptStreamSegment.readMessage')).toBe(false);
     });
 
     it('drops in-flight stream segment work when the session is deleted before decrypt resolves', async () => {

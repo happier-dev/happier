@@ -13,7 +13,6 @@ import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { useAuth } from '@/auth/context/AuthContext';
 import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
-import { sync } from '@/sync/sync';
 import { delay } from '@/utils/timing/time';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
@@ -29,10 +28,11 @@ import {
   pollOpenAiCodexDeviceAuthViaProxy,
   startOpenAiCodexDeviceAuthViaProxy,
 } from '@/sync/api/account/apiConnectedServicesV2';
-import { storeConnectedServiceCredentialForAccount } from '@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount';
 import { buildOauthRecordFromProxyPayload, parseConnectedServiceOauthProxyBundle } from '@/sync/domains/connectedServices/oauth/connectedServiceOauthProxyBundle';
 import { resolveConnectedServiceOauthErrorMessage } from '../resolveConnectedServiceOauthErrorMessage';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { storeConnectedServiceCredentialWithIdentityConfirmation } from '../../storeConnectedServiceCredentialWithIdentityConfirmation';
+import { runConnectedServiceCredentialStoredEffects } from '../../runConnectedServiceCredentialStoredEffects';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
@@ -179,8 +179,12 @@ export const OpenAiCodexDeviceAuthView = React.memo(function OpenAiCodexDeviceAu
             payload,
           });
 
-          await storeConnectedServiceCredentialForAccount(credentials, { serviceId, profileId, record });
-          await sync.refreshProfile();
+          const stored = await storeConnectedServiceCredentialWithIdentityConfirmation(
+            credentials,
+            { serviceId, profileId, record },
+            { onStored: runConnectedServiceCredentialStoredEffects },
+          );
+          if (!stored) return;
 
           await Modal.alert(
             t('connectedServices.deviceAuth.alerts.connectedTitle'),

@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import renderer from 'react-test-renderer';
+import renderer, { act } from 'react-test-renderer';
 
 import { makeToolCall, renderScreen } from '@/dev/testkit';
 import type { Message } from '@/sync/domains/messages/messageTypes';
@@ -25,11 +25,13 @@ const settings = {
 const turnViewSpy = vi.fn();
 const toolCallsGroupRowSpy = vi.fn();
 const messageViewSpy = vi.fn();
+let scrollToIndexSpy: ReturnType<typeof vi.fn> | null = null;
 
 vi.mock('@/sync/sync', () => ({
     sync: {
         getSyncTuning: () => ({
             transcriptFlashListEstimatedItemSize: 120,
+            transcriptMaxTurnEntriesPerListItem: 8,
         }),
     },
 }));
@@ -44,7 +46,16 @@ installTranscriptCommonModuleMocks({
 });
 
 vi.mock('@shopify/flash-list', () => ({
-    FlashList: (props: any) => {
+    FlashList: React.forwardRef((props: any, ref: any) => {
+        scrollToIndexSpy = vi.fn();
+        const instance = {
+            scrollToIndex: scrollToIndexSpy,
+            scrollToOffset: vi.fn(),
+            scrollToEnd: vi.fn(),
+        };
+        if (typeof ref === 'function') ref(instance);
+        else if (ref && typeof ref === 'object') ref.current = instance;
+
         const data = Array.isArray(props.data) ? props.data : [];
         const header =
             props.ListHeaderComponent
@@ -69,11 +80,15 @@ vi.mock('@shopify/flash-list', () => ({
             }),
             footer,
         );
-    },
+    }),
 }));
 
 vi.mock('@/components/sessions/transcript/MessageView', () => ({
     MessageView: (props: any) => {
+        messageViewSpy(props);
+        return React.createElement('MessageView', props);
+    },
+    MessageViewWithSessionCommon: (props: any) => {
         messageViewSpy(props);
         return React.createElement('MessageView', props);
     },
@@ -84,10 +99,18 @@ vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
         turnViewSpy(props);
         return React.createElement('TurnView', props);
     },
+    TurnViewWithSessionCommon: (props: any) => {
+        turnViewSpy(props);
+        return React.createElement('TurnView', props);
+    },
 }));
 
 vi.mock('@/components/sessions/transcript/toolCalls/ToolCallsGroupRow', () => ({
     ToolCallsGroupRow: (props: any) => {
+        toolCallsGroupRowSpy(props);
+        return React.createElement('ToolCallsGroupRow', props);
+    },
+    ToolCallsGroupRowWithSessionCommon: (props: any) => {
         toolCallsGroupRowSpy(props);
         return React.createElement('ToolCallsGroupRow', props);
     },
@@ -107,6 +130,7 @@ describe('ChainTranscriptList presentation parity', () => {
         turnViewSpy.mockReset();
         toolCallsGroupRowSpy.mockReset();
         messageViewSpy.mockReset();
+        scrollToIndexSpy = null;
     });
 
     it('groups consecutive tool calls the same way as the main transcript when grouping is enabled', async () => {
@@ -144,6 +168,51 @@ describe('ChainTranscriptList presentation parity', () => {
             }),
         );
         expect(messageViewSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps a long turn-level tool run as one semantic group in turn layout', async () => {
+        settings.transcriptGroupingMode = 'turns';
+        settings.transcriptTurnToolCallsGroupStrategy = 'all_tools_in_turn';
+
+        const { ChainTranscriptList } = await import('./ChainTranscriptList');
+
+        const userMessage: Message = {
+            kind: 'user-text',
+            id: 'user-1',
+            localId: null,
+            createdAt: 1,
+            text: 'Run the audit',
+        };
+        const toolMessages: Message[] = Array.from({ length: 200 }, (_, index) => ({
+            kind: 'tool-call',
+            id: `tool-msg-${index + 1}`,
+            localId: null,
+            createdAt: index + 2,
+            tool: makeToolCall({
+                id: `tool-${index + 1}`,
+                name: 'Read',
+                input: { file: `file-${index + 1}.ts` },
+                createdAt: index + 2,
+            }),
+            children: [],
+        }));
+
+        await renderScreen(React.createElement(ChainTranscriptList, {
+                    sessionId: 's1',
+                    messages: [userMessage, ...toolMessages],
+                    metadata: null,
+                    interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+                }));
+
+        expect(toolCallsGroupRowSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                toolMessageIds: toolMessages.map((message) => message.id),
+            }),
+        );
+        const groupSizes = toolCallsGroupRowSpy.mock.calls
+            .map(([props]) => Array.isArray(props?.toolMessageIds) ? props.toolMessageIds.length : 0);
+        expect(groupSizes).not.toContain(8);
+        expect(groupSizes.every((size) => size === 200)).toBe(true);
     });
 
     it('uses turn layout in tool transcripts when transcript layout is set to turns', async () => {
@@ -210,6 +279,137 @@ describe('ChainTranscriptList presentation parity', () => {
                 forcePermissionPromptsInTranscript: true,
             }),
         );
+    });
+
+    it('does not auto-pin after local tool expansion before first content measurement', async () => {
+        const { ChainTranscriptList } = await import('./ChainTranscriptList');
+
+        const toolMessageOne: Message = {
+            kind: 'tool-call',
+            id: 'tool-msg-1',
+            localId: null,
+            createdAt: 1,
+            tool: makeToolCall({ id: 'tool-1', name: 'Read', input: { file: 'a.ts' }, createdAt: 1 }),
+            children: [],
+        };
+        const toolMessageTwo: Message = {
+            kind: 'tool-call',
+            id: 'tool-msg-2',
+            localId: null,
+            createdAt: 2,
+            tool: makeToolCall({ id: 'tool-2', name: 'Read', input: { file: 'b.ts' }, createdAt: 2 }),
+            children: [],
+        };
+
+        const screen = await renderScreen(React.createElement(ChainTranscriptList, {
+            sessionId: 's1',
+            messages: [toolMessageOne, toolMessageTwo],
+            metadata: null,
+            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+        }));
+
+        const toolRow = screen.tree.root.findByType('ToolCallsGroupRow' as any);
+        act(() => {
+            toolRow.props.onSetExpanded({
+                toolCallsGroupId: toolRow.props.toolCallsGroupId,
+                toolMessageIds: toolRow.props.toolMessageIds,
+                expanded: true,
+            });
+        });
+
+        const list = screen.tree.root.findByType('FlashList' as any);
+        act(() => {
+            list.props.onLayout({ nativeEvent: { layout: { height: 300 } } });
+            list.props.onContentSizeChange(0, 600);
+        });
+
+        expect(scrollToIndexSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps the initial auto-pin when local tool expansion does not change state', async () => {
+        const { ChainTranscriptList } = await import('./ChainTranscriptList');
+
+        const toolMessageOne: Message = {
+            kind: 'tool-call',
+            id: 'tool-msg-1',
+            localId: null,
+            createdAt: 1,
+            tool: makeToolCall({ id: 'tool-1', name: 'Read', input: { file: 'a.ts' }, createdAt: 1 }),
+            children: [],
+        };
+        const toolMessageTwo: Message = {
+            kind: 'tool-call',
+            id: 'tool-msg-2',
+            localId: null,
+            createdAt: 2,
+            tool: makeToolCall({ id: 'tool-2', name: 'Read', input: { file: 'b.ts' }, createdAt: 2 }),
+            children: [],
+        };
+
+        const screen = await renderScreen(React.createElement(ChainTranscriptList, {
+            sessionId: 's1',
+            messages: [toolMessageOne, toolMessageTwo],
+            metadata: null,
+            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+        }));
+
+        const toolRow = screen.tree.root.findByType('ToolCallsGroupRow' as any);
+        act(() => {
+            toolRow.props.onSetExpanded({
+                toolCallsGroupId: toolRow.props.toolCallsGroupId,
+                toolMessageIds: toolRow.props.toolMessageIds,
+                expanded: false,
+            });
+        });
+
+        const list = screen.tree.root.findByType('FlashList' as any);
+        const initialScrollToIndexSpy = scrollToIndexSpy;
+        if (!initialScrollToIndexSpy) {
+            throw new Error('Expected FlashList ref to provide scrollToIndex');
+        }
+        act(() => {
+            list.props.onLayout({ nativeEvent: { layout: { height: 300 } } });
+            list.props.onContentSizeChange(0, 600);
+        });
+
+        expect(initialScrollToIndexSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                index: 0,
+                animated: false,
+                viewPosition: 1,
+            }),
+        );
+    });
+
+    it('does not auto-pin after local thinking expansion before first content measurement', async () => {
+        const { ChainTranscriptList } = await import('./ChainTranscriptList');
+
+        const screen = await renderScreen(React.createElement(ChainTranscriptList, {
+            sessionId: 's1',
+            messages: [{
+                kind: 'agent-text',
+                id: 'agent-thinking-1',
+                localId: null,
+                createdAt: 1,
+                text: 'thinking',
+                isThinking: true,
+            }],
+            metadata: null,
+            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+        }));
+
+        const messageView = screen.tree.root.findByType('MessageView' as any);
+        act(() => {
+            messageView.props.onThinkingExpandedChange?.(true);
+        });
+
+        const list = screen.tree.root.findByType('FlashList' as any);
+        act(() => {
+            list.props.onLayout({ nativeEvent: { layout: { height: 300 } } });
+            list.props.onContentSizeChange(0, 600);
+        });
+
+        expect(scrollToIndexSpy).not.toHaveBeenCalled();
     });
 
 });

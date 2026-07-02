@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native-unistyles';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { ToolViewProps } from '../core/_registry';
 import { ToolDiffView } from '@/components/tools/shell/presentation/ToolDiffView';
@@ -75,7 +76,7 @@ export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionI
         const to = truncateOneLine(newString, 48);
         return (
             <ToolSectionView>
-                <Text numberOfLines={1}>
+                <Text style={styles.summaryText} numberOfLines={1}>
                     {`${from} ${TEXT_ARROW} ${to}`}
                 </Text>
             </ToolSectionView>
@@ -103,3 +104,10 @@ export const EditView = React.memo<ToolViewProps>(({ tool, detailLevel, sessionI
         </>
     );
 });
+
+const styles = StyleSheet.create((theme) => ({
+    summaryText: {
+        fontSize: 13,
+        color: theme.colors.text.secondary,
+    },
+}));

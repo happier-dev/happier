@@ -1,6 +1,6 @@
 import Constants from 'expo-constants';
-import * as Notifications from 'expo-notifications';
-import * as TaskManager from 'expo-task-manager';
+import type { BackgroundNotificationTaskResult, NotificationTaskPayload } from 'expo-notifications';
+import type * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 
 import type { LiveActivitySnapshot } from '../liveActivities/buildLiveActivitySnapshots';
@@ -56,6 +56,14 @@ type TaskManagerDefinitionApi = Readonly<{
     isTaskDefined?: (taskName: string) => boolean;
 }>;
 
+type BackgroundNotificationTaskResultApi = typeof BackgroundNotificationTaskResult;
+
+type NotificationsDefinitionApi = Readonly<{
+    BackgroundNotificationTaskResult: BackgroundNotificationTaskResultApi;
+}>;
+
+type NotificationsApi = NotificationsTaskRegistrationApi & NotificationsDefinitionApi;
+
 export type LiveActivityBackgroundWakeTaskRegistrationResult =
     | Readonly<{ status: 'registered' }>
     | Readonly<{ status: 'already_registered' }>
@@ -70,6 +78,18 @@ const CURRENT_STATE_PREFIX = 'liveActivityBackgroundWake.current.';
 const CURRENT_STATE_INDEX_KEY = 'liveActivityBackgroundWake.current.index.v1';
 let defaultStateStorage: BackgroundWakeStorage | null = null;
 let defaultStateStore: LiveActivityBackgroundWakeStateStore | null = null;
+
+function getNotificationsApi(): NotificationsApi {
+    return require('expo-notifications') as NotificationsApi;
+}
+
+function getTaskManagerRegistrationApi(): TaskManagerRegistrationApi {
+    return require('expo-task-manager') as TaskManagerRegistrationApi;
+}
+
+function getTaskManagerDefinitionApi(): TaskManagerDefinitionApi {
+    return require('expo-task-manager') as TaskManagerDefinitionApi;
+}
 
 function buildCurrentStateKey(activityInstanceKey: string): string {
     return `${CURRENT_STATE_PREFIX}${encodeURIComponent(activityInstanceKey)}`;
@@ -209,8 +229,6 @@ export async function syncLiveActivityBackgroundWakeTaskRegistration(params: Rea
     notifications?: NotificationsTaskRegistrationApi;
     taskManager?: TaskManagerRegistrationApi;
 }>): Promise<LiveActivityBackgroundWakeTaskRegistrationResult> {
-    const notifications = params.notifications ?? Notifications;
-    const taskManager = params.taskManager ?? TaskManager;
     const platformOS = params.platformOS ?? Platform.OS;
     const staticConfigSupportsBackgroundWake =
         params.staticConfigSupportsBackgroundWake ?? resolveLiveActivityBackgroundWakeStaticConfigSupported();
@@ -218,6 +236,8 @@ export async function syncLiveActivityBackgroundWakeTaskRegistration(params: Rea
         return { status: 'already_unregistered', reason: 'platform_unsupported' };
     }
 
+    const notifications = params.notifications ?? getNotificationsApi();
+    const taskManager = params.taskManager ?? getTaskManagerRegistrationApi();
     const registered = await taskManager.isTaskRegisteredAsync(LIVE_ACTIVITY_BACKGROUND_WAKE_TASK_NAME);
     const disabledReason = resolveDisabledReason({
         fallbackEnabled: params.fallbackEnabled,
@@ -293,23 +313,33 @@ export async function applyLiveActivityBackgroundWakeTaskPayload(params: Readonl
 
 export function defineLiveActivityBackgroundWakeTask(params: Readonly<{
     taskManager?: TaskManagerDefinitionApi;
-}> = {}): Readonly<{ status: 'defined' | 'already_defined' }> {
-    const taskManager = params.taskManager ?? TaskManager;
+    notifications?: NotificationsDefinitionApi;
+    platformOS?: string;
+}> = {}): Readonly<{ status: 'defined' | 'already_defined' | 'skipped_platform' }> {
+    const platformOS = params.platformOS ?? Platform.OS;
+    if (platformOS !== 'ios') {
+        return { status: 'skipped_platform' };
+    }
+
+    const taskManager = params.taskManager ?? getTaskManagerDefinitionApi();
+    const notifications = params.notifications ?? getNotificationsApi();
     if (taskManager.isTaskDefined?.(LIVE_ACTIVITY_BACKGROUND_WAKE_TASK_NAME)) {
         return { status: 'already_defined' };
     }
 
-    taskManager.defineTask<Notifications.NotificationTaskPayload>(
+    taskManager.defineTask<NotificationTaskPayload>(
         LIVE_ACTIVITY_BACKGROUND_WAKE_TASK_NAME,
         async ({ data, error }) => {
-            if (error) return Notifications.BackgroundNotificationTaskResult.Failed;
+            if (error) return notifications.BackgroundNotificationTaskResult.Failed;
             const result = await applyLiveActivityBackgroundWakeTaskPayload({ payload: data });
             return result.action === 'ignore'
-                ? Notifications.BackgroundNotificationTaskResult.NoData
-                : Notifications.BackgroundNotificationTaskResult.NewData;
+                ? notifications.BackgroundNotificationTaskResult.NoData
+                : notifications.BackgroundNotificationTaskResult.NewData;
         },
     );
     return { status: 'defined' };
 }
 
-defineLiveActivityBackgroundWakeTask();
+if (Platform.OS === 'ios') {
+    defineLiveActivityBackgroundWakeTask();
+}

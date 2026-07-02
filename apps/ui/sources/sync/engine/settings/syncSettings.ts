@@ -11,12 +11,14 @@ import {
     type AccountSettingsScope,
 } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { getServerProfileLegacyServerIds } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
 import { loadPendingSettings } from '@/sync/domains/state/persistence';
 import {
     loadAccountSettings,
     loadPendingAccountSettings,
 } from '@/sync/domains/state/accountSettingsPersistence';
+import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import {
@@ -32,10 +34,20 @@ import {
     AccountSettingsV2UpdateResponseSchema,
     openAccountScopedBlobCiphertext,
     sealAccountScopedBlobCiphertext,
+    type AccountSettingsStoredContentEnvelope,
 } from '@happier-dev/protocol';
 import { applyCrashReportsOptOut } from '@/utils/system/sentry';
 import { emitAccountSettingChangedEvents } from '@/track/settingsAnalytics/emitSettingChangedEvent';
 import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
+import {
+    isServerIssuedIdentityId,
+    migrateAccountSettingsServerIdentityKeys,
+} from '@/sync/domains/settings/serverIdentityKeyMigration';
+import {
+    mergePendingSettingsIntoRawBaseline,
+    removeCommittedPendingSettings,
+} from './writeback/accountSettingsRawDeltaMerge';
+import { areAccountSettingsRawObjectsEqual } from './writeback/accountSettingsRawEquality';
 
 export type SyncSettingsParams = {
     credentials: AuthCredentials;
@@ -47,57 +59,14 @@ export type SyncSettingsParams = {
     settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
 };
 
-function arePendingSettingValuesEqual(left: unknown, right: unknown): boolean {
-    if (left === right) return true;
-    if (left == null || right == null) return left === right;
-    if (Array.isArray(left) || Array.isArray(right)) {
-        if (!Array.isArray(left) || !Array.isArray(right)) return false;
-        if (left.length !== right.length) return false;
-        for (let index = 0; index < left.length; index += 1) {
-            if (!arePendingSettingValuesEqual(left[index], right[index])) {
-                return false;
-            }
-        }
-        return true;
-    }
-    if (typeof left !== 'object' || typeof right !== 'object') return false;
-
-    const leftRecord = left as Record<string, unknown>;
-    const rightRecord = right as Record<string, unknown>;
-    const leftKeys = Object.keys(leftRecord);
-    const rightKeys = Object.keys(rightRecord);
-    if (leftKeys.length !== rightKeys.length) return false;
-    for (const key of leftKeys) {
-        if (!(key in rightRecord)) return false;
-        if (!arePendingSettingValuesEqual(leftRecord[key], rightRecord[key])) {
-            return false;
-        }
-    }
-    return true;
-}
-
-function removeCommittedPendingSettings(
-    currentPendingSettings: Partial<Settings>,
-    submittedPendingSettings: Partial<Settings>,
-): Partial<Settings> {
-    type MutablePartialSettings = { -readonly [K in keyof Settings]?: Settings[K] };
-    const nextPendingSettings: MutablePartialSettings = { ...currentPendingSettings };
-    for (const key of Object.keys(submittedPendingSettings) as Array<keyof Settings>) {
-        if (
-            key in currentPendingSettings
-            && arePendingSettingValuesEqual(currentPendingSettings[key], submittedPendingSettings[key])
-        ) {
-            Reflect.deleteProperty(nextPendingSettings, key);
-        }
-    }
-    return nextPendingSettings;
-}
-
 export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     const { credentials, encryption, pendingSettings, clearPendingSettings } = params;
     const settingsScope = params.settingsScope ?? null;
     const settingsSecretsKey = params.settingsSecretsKey ?? null;
     const settingsSecretsReadKeys = params.settingsSecretsReadKeys ?? (settingsSecretsKey ? [settingsSecretsKey] : []);
+    const legacyServerIdsForSettingsKeys = settingsScope
+        ? getServerProfileLegacyServerIds(settingsScope.serverId)
+        : [];
 
     const activeServerUrl = getActiveServerSnapshot().serverUrl;
     const maxRetries = 3;
@@ -158,7 +127,15 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         applyCrashReportsOptOut(nextSettings.crashReportsOptOut);
     }
 
-    async function fetchSettingsV2(): Promise<{ content: unknown; version: number }> {
+    type AccountSettingsServerBaseline = {
+        api: 'v2' | 'v1';
+        content: AccountSettingsStoredContentEnvelope | null;
+        version: number;
+        raw: Record<string, unknown> | null;
+        serverIdentityKeysChanged: boolean;
+    };
+
+    async function fetchSettingsV2(): Promise<{ content: AccountSettingsStoredContentEnvelope | null; version: number }> {
         const response = await serverFetch('/v2/account/settings', {
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
@@ -183,6 +160,25 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
             throw new Error('Failed to parse account settings v2 response');
         }
         return { content: parsed.data.content, version: parsed.data.version };
+    }
+
+    async function fetchSettingsV1(): Promise<{ content: AccountSettingsStoredContentEnvelope | null; version: number }> {
+        const response = await serverFetch('/v1/account/settings', {
+            headers: {
+                'Authorization': `Bearer ${credentials.token}`,
+                'Content-Type': 'application/json',
+            },
+        }, { includeAuth: false });
+
+        if (!response.ok) {
+            if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+                throw new HappyError(`Failed to fetch settings (${response.status})`, false);
+            }
+            throw new Error(`Failed to fetch settings: ${response.status}`);
+        }
+
+        const data = (await response.json()) as { settings: string | null; settingsVersion: number };
+        return { content: data.settings ? { t: 'encrypted', c: data.settings } : null, version: data.settingsVersion };
     }
 
     async function updateSettingsV2(params: { content: unknown; expectedVersion: number }): Promise<unknown> {
@@ -248,6 +244,79 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         return await decryptAccountSettingsCiphertextForUi(encryption, ciphertext);
     }
 
+    async function openSettingsContent(
+        content: AccountSettingsStoredContentEnvelope | null,
+        options?: { requireReadable?: boolean },
+    ): Promise<Record<string, unknown> | null> {
+        if (!content) return null;
+        if (content.t === 'plain') return content.v as Record<string, unknown>;
+        const decrypted = await decryptSettingsCiphertext(String(content.c ?? ''));
+        if (!decrypted && options?.requireReadable) {
+            throw new Error('Failed to open encrypted account settings');
+        }
+        return decrypted;
+    }
+
+    function migrateRawServerIdentityKeys(raw: Record<string, unknown> | null): {
+        raw: Record<string, unknown> | null;
+        changed: boolean;
+    } {
+        if (!raw || !settingsScope) return { raw, changed: false };
+        const migrated = migrateAccountSettingsServerIdentityKeys({
+            settings: raw,
+            currentServerId: settingsScope.serverId,
+            legacyServerIds: legacyServerIdsForSettingsKeys,
+            rewriteUnknownServerIds: isServerIssuedIdentityId(settingsScope.serverId),
+        });
+        return { raw: migrated.settings, changed: migrated.changed };
+    }
+
+    async function fetchAccountSettingsBaseline(options?: { requireReadable?: boolean }): Promise<AccountSettingsServerBaseline> {
+        try {
+            const fetched = await fetchSettingsV2();
+            const raw = await openSettingsContent(fetched.content, options);
+            const migrated = migrateRawServerIdentityKeys(raw);
+            return {
+                api: 'v2',
+                content: fetched.content,
+                version: fetched.version,
+                raw: migrated.raw,
+                serverIdentityKeysChanged: migrated.changed,
+            };
+        } catch (e: any) {
+            if (e?.code !== 'settings_v2_not_supported') throw e;
+            if (accountMode === 'plain') {
+                throw new Error('Settings v2 is required but not supported by this server');
+            }
+            const fetched = await fetchSettingsV1();
+            const raw = await openSettingsContent(fetched.content, options);
+            const migrated = migrateRawServerIdentityKeys(raw);
+            return {
+                api: 'v1',
+                content: fetched.content,
+                version: fetched.version,
+                raw: migrated.raw,
+                serverIdentityKeysChanged: migrated.changed,
+            };
+        }
+    }
+
+    async function baselineFromVersionMismatch(data: any): Promise<AccountSettingsServerBaseline> {
+        const currentContent = (data.currentContent ??
+            (typeof data.currentSettings === 'string' || data.currentSettings === null
+                ? (data.currentSettings ? { t: 'encrypted', c: data.currentSettings } : null)
+                : null)) as AccountSettingsStoredContentEnvelope | null;
+        const raw = await openSettingsContent(currentContent, { requireReadable: true });
+        const migrated = migrateRawServerIdentityKeys(raw);
+        return {
+            api: data.currentContent !== undefined ? 'v2' : 'v1',
+            content: currentContent,
+            version: data.currentVersion,
+            raw: migrated.raw,
+            serverIdentityKeysChanged: migrated.changed,
+        };
+    }
+
     function normalizeSettingsForLocalStorage(params: { raw: Record<string, unknown>; mode: 'plain' | 'e2ee' }): Settings {
         const parsed = settingsParse(params.raw);
         if (params.mode === 'plain') {
@@ -281,119 +350,128 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         return { value: resealed.value as Record<string, unknown>, changed: resealed.changed };
     }
 
-    function normalizeSettingsForServerStorage(params: { raw: Settings | Record<string, unknown>; mode: 'plain' | 'e2ee' }): Record<string, unknown> {
-        return normalizeSettingsForServerStorageResult(params).value;
+    function createSettingsContentForWrite(raw: Record<string, unknown>): {
+        content: AccountSettingsStoredContentEnvelope;
+        v1Settings: string | null;
+    } {
+        if (accountMode === 'plain') {
+            return { content: { t: 'plain', v: raw }, v1Settings: null };
+        }
+        const ciphertext = sealAccountScopedBlobCiphertext({
+            kind: 'account_settings',
+            material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() },
+            payload: raw,
+            randomBytes: getRandomBytes,
+        });
+        return { content: { t: 'encrypted', c: ciphertext }, v1Settings: ciphertext };
+    }
+
+    function applyRawSettingsProjection(params: {
+        raw: Record<string, unknown> | null;
+        version: number;
+        remainingPendingSettings?: Partial<Settings>;
+        replace?: boolean;
+    }): void {
+        const parsedSettings = params.raw
+            ? normalizeSettingsForLocalStorage({ raw: params.raw, mode: accountMode })
+            : { ...settingsDefaults };
+        const remainingServerPending = stripLocalOnlyAccountSettings(params.remainingPendingSettings ?? {});
+        const mergedWithPending = Object.keys(remainingServerPending).length > 0
+            ? applySettings(parsedSettings, remainingServerPending)
+            : parsedSettings;
+        const nextSettings = applySettings(
+            mergedWithPending,
+            pickLocalOnlyAccountSettings(loadSettingsForCapturedScope().settings),
+        );
+        if (params.replace) {
+            replaceSettingsForCapturedScope(nextSettings, params.version);
+        } else {
+            applySettingsForCapturedScope(nextSettings, params.version);
+        }
+        applyActiveSettingsSideEffects(nextSettings);
+    }
+
+    function clearCommittedPendingSettings(submittedPendingSettings: Partial<Settings>): Partial<Settings> {
+        const currentPendingSettings = loadPendingSettingsForCapturedScope();
+        const nextPendingSettings = removeCommittedPendingSettings(currentPendingSettings, submittedPendingSettings);
+        clearPendingSettings(nextPendingSettings);
+        return nextPendingSettings;
     }
 
     // Apply pending settings
     if (Object.keys(pendingServerSettings).length > 0) {
         dbgSettings('syncSettings: pending detected; will POST', {
             endpoint: activeServerUrl,
-            expectedVersion: storage.getState().settingsVersion ?? 0,
             pendingKeys: Object.keys(pendingServerSettings).sort(),
             pendingSummary: summarizeSettingsDelta(pendingServerSettings as Partial<Settings>),
             base: summarizeSettings(storage.getState().settings, { version: storage.getState().settingsVersion }),
         });
 
+        let baseline = await fetchAccountSettingsBaseline({ requireReadable: true });
         while (retryCount < maxRetries) {
-            const scopedLocal = loadSettingsForCapturedScope();
-            const version = scopedLocal.version;
-            const mergedSettings = applySettings(scopedLocal.settings, pendingServerSettings);
-            const settingsForServer = normalizeSettingsForServerStorage({ raw: mergedSettings, mode: accountMode });
+            const version = baseline.version;
+            const merged = mergePendingSettingsIntoRawBaseline({
+                rawBaseline: baseline.raw,
+                pendingSettings: pendingServerSettings,
+                normalizeForPersistedStorage: (raw) => normalizeSettingsForServerStorageResult({ raw, mode: accountMode }),
+            });
 
-            let e2eeCiphertext: string | null = null;
-            const content =
-                accountMode === 'plain'
-                    ? ({ t: 'plain', v: settingsForServer } as const)
-                    : (() => {
-                        e2eeCiphertext = sealAccountScopedBlobCiphertext({
-                            kind: 'account_settings',
-                            material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() },
-                            payload: settingsForServer,
-                            randomBytes: getRandomBytes,
-                        });
-                        return ({ t: 'encrypted', c: e2eeCiphertext } as const);
-                    })();
+            if (!baseline.serverIdentityKeysChanged && !merged.comparisonChanged && areAccountSettingsRawObjectsEqual(merged.comparisonRaw, merged.outgoingRaw)) {
+                const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings);
+                dbgSettings('syncSettings: pending merge produced no server change; skipped POST', {
+                    endpoint: activeServerUrl,
+                    serverVersion: version,
+                    pendingKeys: Object.keys(pendingServerSettings).sort(),
+                });
+                applyRawSettingsProjection({
+                    raw: baseline.raw,
+                    version,
+                    remainingPendingSettings,
+                });
+                return;
+            }
+
+            const { content, v1Settings } = createSettingsContentForWrite(merged.outgoingRaw);
             dbgSettings('syncSettings: POST attempt', {
                 endpoint: activeServerUrl,
                 attempt: retryCount + 1,
-                expectedVersion: version ?? 0,
-                merged: summarizeSettings(settingsForServer as any, { version }),
+                expectedVersion: version,
+                merged: summarizeSettings(merged.outgoingRaw as any, { version }),
             });
 
-            let data: any;
-            try {
-                data = await updateSettingsV2({ content, expectedVersion: version ?? 0 });
-            } catch (e: any) {
-                if (e?.code === 'settings_v2_not_supported') {
-                    if (accountMode === 'plain') {
-                        throw new Error('Settings v2 is required but not supported by this server');
-                    }
-                    data = await updateSettingsV1({ settings: e2eeCiphertext, expectedVersion: version ?? 0 });
-                } else {
-                    throw e;
-                }
-            }
+            const data: any = baseline.api === 'v2'
+                ? await updateSettingsV2({ content, expectedVersion: version })
+                : await updateSettingsV1({ settings: v1Settings, expectedVersion: version });
 
             if (data.success) {
-                clearPendingSettings(removeCommittedPendingSettings(
-                    loadPendingSettingsForCapturedScope(),
-                    pendingServerSettings,
-                ));
+                const remainingPendingSettings = clearCommittedPendingSettings(pendingServerSettings);
                 dbgSettings('syncSettings: POST success; pending cleared', {
                     endpoint: activeServerUrl,
-                    newServerVersion: (version ?? 0) + 1,
+                    expectedVersion: version,
+                    responseVersion: data.version,
                 });
-                break;
+                applyRawSettingsProjection({
+                    raw: merged.outgoingRaw,
+                    version: data.version,
+                    remainingPendingSettings,
+                });
+                return;
             }
 
             if (data.error === 'version-mismatch') {
                 lastVersionMismatch = {
-                    expectedVersion: version ?? 0,
+                    expectedVersion: version,
                     currentVersion: data.currentVersion,
                     pendingKeys: Object.keys(pendingServerSettings).sort(),
                 };
-
-                const currentContent = (data.currentContent ??
-                    (typeof data.currentSettings === 'string' || data.currentSettings === null
-                        ? (data.currentSettings ? { t: 'encrypted', c: data.currentSettings } : null)
-                        : null)) as any;
-                const serverRaw = await (async () => {
-                    if (!currentContent) return null;
-                    if (currentContent.t === 'plain') return currentContent.v as Record<string, unknown>;
-                    if (currentContent.t === 'encrypted') return await decryptSettingsCiphertext(String(currentContent.c ?? ''));
-                    return null;
-                })();
-
-                const serverSettings = serverRaw
-                    ? normalizeSettingsForLocalStorage({ raw: serverRaw, mode: accountMode })
-                    : { ...settingsDefaults };
-
-                // Merge: server base + our pending changes (our changes win)
-                const mergedServerSettings = applySettings(serverSettings, pendingServerSettings);
-                const mergedSettings = applySettings(
-                    mergedServerSettings,
-                    pickLocalOnlyAccountSettings(loadSettingsForCapturedScope().settings),
-                );
+                baseline = await baselineFromVersionMismatch(data);
                 dbgSettings('syncSettings: version-mismatch merge', {
                     endpoint: activeServerUrl,
-                    expectedVersion: version ?? 0,
+                    expectedVersion: version,
                     currentVersion: data.currentVersion,
                     pendingKeys: Object.keys(pendingServerSettings).sort(),
-                    serverParsed: summarizeSettings(serverSettings, { version: data.currentVersion }),
-                    merged: summarizeSettings(mergedSettings, { version: data.currentVersion }),
+                    serverRawKeys: Object.keys(baseline.raw ?? {}).sort(),
                 });
-
-                // Update local storage with merged result at server's version.
-                //
-                // Important: `data.currentVersion` can be LOWER than our local `settingsVersion`
-                // (e.g. when switching accounts/servers, or after server-side reset). If we only
-                // "apply when newer", we'd never converge and would retry forever.
-                replaceSettingsForCapturedScope(mergedSettings, data.currentVersion);
-
-                applyActiveSettingsSideEffects(mergedSettings);
-
-                // Log and retry
                 retryCount++;
                 continue;
             }
@@ -403,10 +481,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     } else if (Object.keys(pendingSettings).length > 0) {
         // Pending keys can include UI-local server-selection fields, which are intentionally local-only.
         // Drop them from pending storage to avoid unnecessary sync attempts.
-        clearPendingSettings(removeCommittedPendingSettings(
-            loadPendingSettingsForCapturedScope(),
-            pendingSettings,
-        ));
+        clearCommittedPendingSettings(pendingSettings);
         dbgSettings('syncSettings: cleared local-only pending settings keys', {
             endpoint: activeServerUrl,
             pendingKeys: Object.keys(pendingSettings).sort(),
@@ -421,39 +496,8 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         throw new Error(`Settings sync failed after ${maxRetries} retries due to version conflicts${mismatchHint}`);
     }
 
-    let fetched: { content: any; version: number };
-    try {
-        fetched = await fetchSettingsV2();
-    } catch (e: any) {
-        if (e?.code === 'settings_v2_not_supported') {
-            // Back-compat: fall back to v1 (E2EE-only).
-            const response = await serverFetch('/v1/account/settings', {
-                headers: {
-                    'Authorization': `Bearer ${credentials.token}`,
-                    'Content-Type': 'application/json',
-                },
-            }, { includeAuth: false });
-
-            if (!response.ok) {
-                if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
-                    throw new HappyError(`Failed to fetch settings (${response.status})`, false);
-                }
-                throw new Error(`Failed to fetch settings: ${response.status}`);
-            }
-
-            const data = (await response.json()) as { settings: string | null; settingsVersion: number };
-            fetched = { content: data.settings ? { t: 'encrypted', c: data.settings } : null, version: data.settingsVersion };
-        } else {
-            throw e;
-        }
-    }
-
-    const decryptedSettings = await (async () => {
-        if (!fetched.content) return null;
-        if (fetched.content.t === 'plain') return fetched.content.v as Record<string, unknown>;
-        if (fetched.content.t === 'encrypted') return await decryptSettingsCiphertext(String(fetched.content.c ?? ''));
-        return null;
-    })();
+    const fetched = await fetchAccountSettingsBaseline();
+    const decryptedSettings = fetched.raw;
 
     const parsedSettings = decryptedSettings
         ? normalizeSettingsForLocalStorage({ raw: decryptedSettings, mode: accountMode })
@@ -483,17 +527,18 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
 
     const nextSettings = applySettings(mergedWithPending, pickLocalOnlyAccountSettings(loadSettingsForCapturedScope().settings));
 
-    // Apply settings to storage
-    applySettingsForCapturedScope(nextSettings, fetched.version);
-
-    applyActiveSettingsSideEffects(nextSettings);
+    applyRawSettingsProjection({
+        raw: decryptedSettings,
+        version: fetched.version,
+        remainingPendingSettings: pendingLatest,
+    });
 
     // Best-effort migration: if settings were readable but not in canonical `account_scoped_v1` format,
     // rewrite them so other clients can decrypt them reliably.
-    if (accountMode === 'e2ee' && fetched.content?.t === 'encrypted' && decryptedSettings) {
-        const ciphertext = String(fetched.content.c ?? '');
+    if (decryptedSettings && fetched.api === 'v2') {
+        const ciphertext = fetched.content?.t === 'encrypted' ? String(fetched.content.c ?? '') : '';
         const machineKey = encryption.getContentPrivateKey();
-        const opened = ciphertext
+        const opened = accountMode === 'e2ee' && fetched.content?.t === 'encrypted' && ciphertext
             ? openAccountScopedBlobCiphertext({
                   kind: 'account_settings',
                   material: { type: 'dataKey', machineKey },
@@ -503,20 +548,18 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         try {
             const migratedServerSettings = normalizeSettingsForServerStorageResult({
                 raw: decryptedSettings as Record<string, unknown>,
-                mode: 'e2ee',
+                mode: accountMode,
             });
-            const needsMigration = !opened
-                || opened.format !== 'account_scoped_v1'
+            const missingCanonicalEnvelope = accountMode === 'e2ee' && fetched.content?.t === 'encrypted' && !opened;
+            const nonCanonicalFormat = Boolean(opened && opened.format !== 'account_scoped_v1');
+            const needsMigration = missingCanonicalEnvelope
+                || nonCanonicalFormat
+                || fetched.serverIdentityKeysChanged
                 || migratedServerSettings.changed;
             if (needsMigration) {
-                const migrateCiphertext = sealAccountScopedBlobCiphertext({
-                    kind: 'account_settings',
-                    material: { type: 'dataKey', machineKey },
-                    payload: migratedServerSettings.value,
-                    randomBytes: getRandomBytes,
-                });
+                const { content: migrateContent } = createSettingsContentForWrite(migratedServerSettings.value);
                 const migrateRes = await updateSettingsV2({
-                    content: { t: 'encrypted', c: migrateCiphertext },
+                    content: migrateContent,
                     expectedVersion: fetched.version,
                 });
                 if ((migrateRes as any)?.success) {
@@ -575,13 +618,10 @@ export function applySettingsLocalDelta(params: {
         const prev = (currentSettings as any)[key];
         if (Object.is(prev, next)) return false;
 
-        // Keep this O(1) and UI-friendly:
-        // - For objects/arrays/records, rely on reference changes.
-        // - Settings updates should always replace values immutably.
         const prevIsObj = prev !== null && typeof prev === 'object';
         const nextIsObj = next !== null && typeof next === 'object';
         if (prevIsObj || nextIsObj) {
-            return prev !== next;
+            return !areAccountSettingsJsonValuesEqual(prev, next);
         }
         return true;
     });

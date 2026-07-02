@@ -238,8 +238,17 @@ describe('useNewSessionMcpSelection', () => {
         });
         expect(React.isValidElement(renderedContent)).toBe(true);
         const contentNode = renderedContent as React.ReactElement<{
+            maxHeight?: number;
             onSelectionChange: (selection: unknown) => void;
         }>;
+        expect(contentNode.props.maxHeight).toBe(420);
+
+        const compactContent = chip!.collapsedContentPopover.renderContent({
+            requestClose: () => {},
+            maxHeight: 300,
+        });
+        expect(React.isValidElement(compactContent)).toBe(true);
+        expect((compactContent as React.ReactElement<{ maxHeight?: number }>).props.maxHeight).toBe(300);
 
         await act(async () => {
             contentNode.props.onSelectionChange({

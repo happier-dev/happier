@@ -30,6 +30,25 @@ describe('createSessionApplyCoalescer', () => {
         vi.useRealTimers();
     });
 
+    it('defers the leading batch when requested by hidden projection updates', async () => {
+        const applyBatch = vi.fn();
+        const coalescer = createSessionApplyCoalescer({
+            getConfig: () => ({ enabled: true, windowMs: 16, maxBatchSize: 10 }),
+            applyBatch,
+        });
+
+        coalescer.enqueue([
+            buildSession('s1', 1),
+        ], { deferLeadingBatch: true });
+
+        expect(applyBatch).not.toHaveBeenCalled();
+
+        await vi.runAllTimersAsync();
+
+        expect(applyBatch).toHaveBeenCalledTimes(1);
+        expect((applyBatch.mock.calls[0]?.[0] as SessionApplyCoalescerSession[]).map((session) => session.id)).toEqual(['s1']);
+    });
+
     it('drops queued sessions whose guard becomes stale before delayed flush', async () => {
         let isCurrentScope = true;
         const applyBatch = vi.fn();

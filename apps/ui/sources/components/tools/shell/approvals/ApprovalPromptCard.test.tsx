@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { describe, expect, it, vi } from 'vitest';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { collectRenderedTestIds, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
@@ -154,6 +154,28 @@ describe('ApprovalPromptCard', () => {
             'approval.request.decide',
             { artifactId: 'approval-1', decision: 'reject' },
             { surface: 'ui', serverId: 'server-from-header' },
+        );
+    });
+
+    it('places the primary approve action before the reject action', async () => {
+        const { ApprovalPromptCard } = await import('./ApprovalPromptCard');
+
+        const screen = await renderScreen(
+            <ApprovalPromptCard
+                artifact={approvalArtifact()}
+                approval={approvalRequest()}
+                sessionId="s1"
+                metadata={null}
+                canApprovePermissions={true}
+            />,
+        );
+
+        const testIdOrder = collectRenderedTestIds(screen.tree.toJSON());
+
+        expect(testIdOrder.indexOf('approval-prompt-approve')).toBeGreaterThanOrEqual(0);
+        expect(testIdOrder.indexOf('approval-prompt-reject')).toBeGreaterThanOrEqual(0);
+        expect(testIdOrder.indexOf('approval-prompt-approve')).toBeLessThan(
+            testIdOrder.indexOf('approval-prompt-reject'),
         );
     });
 

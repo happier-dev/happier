@@ -136,12 +136,14 @@ describe('buildAccountSettingsSnapshot', () => {
                         disabledSurfaces: ['mcp'],
                         disabledPlacements: ['command_palette'],
                         approvalRequiredSurfaces: ['cli'],
+                        toolExposureModes: {},
                     },
                     'subagents.delegate.start': {
                         enabledPlacements: ['agent_input_chips'],
                         disabledSurfaces: ['voice'],
                         disabledPlacements: [],
                         approvalRequiredSurfaces: ['mcp', 'session_agent'],
+                        toolExposureModes: {},
                     },
                     'subagents.plan.start': {
                         enabled: true,
@@ -149,6 +151,7 @@ describe('buildAccountSettingsSnapshot', () => {
                         disabledSurfaces: [],
                         disabledPlacements: ['command_palette', 'session_header'],
                         approvalRequiredSurfaces: [],
+                        toolExposureModes: {},
                     },
                 },
             },
@@ -160,6 +163,42 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__actionsSettingsV1__disabledSurfaceCount).toBe(2);
         expect(snapshot.properties.acct_setting__actionsSettingsV1__disabledPlacementCount).toBe(3);
         expect(snapshot.properties.acct_setting__actionsSettingsV1__approvalRequiredSurfaceCount).toBe(3);
+    });
+
+    it('counts sparse action tool exposure overrides through canonical analytics serializers', () => {
+        const rawActionsSettings = {
+            v: 1,
+            actions: {
+                'review.start': {
+                    toolExposureModes: {
+                        session_agent: 'direct',
+                        cli: 'discoverable_only',
+                    },
+                },
+                'subagents.delegate.start': {
+                    toolExposureModes: {},
+                },
+                'subagents.plan.start': {
+                    toolExposureModes: {
+                        mcp: 'invalid',
+                        voice: 'direct',
+                    },
+                },
+            },
+        } as unknown as typeof settingsDefaults.actionsSettingsV1;
+
+        const snapshot = buildAccountSettingsSnapshot({
+            ...settingsDefaults,
+            actionsSettingsV1: rawActionsSettings,
+        });
+
+        expect(snapshot.properties.acct_setting__actionsSettingsV1__overrideCount).toBe(1);
+        expect(snapshot.properties.acct_setting__actionsSettingsV1__enabledOverrideCount).toBe(0);
+        expect(snapshot.properties.acct_setting__actionsSettingsV1__enabledPlacementCount).toBe(0);
+        expect(snapshot.properties.acct_setting__actionsSettingsV1__disabledSurfaceCount).toBe(0);
+        expect(snapshot.properties.acct_setting__actionsSettingsV1__disabledPlacementCount).toBe(0);
+        expect(snapshot.properties.acct_setting__actionsSettingsV1__approvalRequiredSurfaceCount).toBe(0);
+        expect(snapshot.properties.acct_setting__actionsSettingsV1__toolExposureOverrideCount).toBe(2);
     });
 
     it('tracks prompt library and context selection summaries through canonical analytics serializers', () => {

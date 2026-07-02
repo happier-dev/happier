@@ -45,6 +45,11 @@ installNewSessionComponentsCommonModuleMocks({
 vi.mock('react-native-keyboard-controller', () => ({
     KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('KeyboardAvoidingView', props, props.children),
+    useKeyboardHandler: () => {},
+    useReanimatedKeyboardAnimation: () => ({
+        height: { value: 0 },
+        progress: { value: 0 },
+    }),
 }));
 
 vi.mock('expo-linear-gradient', () => ({

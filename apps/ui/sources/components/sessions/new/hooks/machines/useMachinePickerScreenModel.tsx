@@ -19,8 +19,8 @@ import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { NewSessionMachineSelectionContent } from '@/components/sessions/new/components/NewSessionMachineSelectionContent';
 import type { Machine } from '@/sync/domains/state/storageTypes';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
+import { useNewSessionActiveServerSource } from '@/components/sessions/new/hooks/serverTarget/useNewSessionActiveServerSource';
 
 function useMachinePickerScreenOptions(params: Readonly<{
     title: string;
@@ -80,7 +80,7 @@ export function useMachinePickerScreenModel() {
         return pickNewSessionRouteParams(params);
     }, [params]);
     const settings = useSettings();
-    const activeServerSnapshot = useActiveServerSnapshot();
+    const activeServerSource = useNewSessionActiveServerSource();
     const machines = useAllMachines();
     const sessions = useAllSessionListRenderables();
     const useMachinePickerSearch = useSetting('useMachinePickerSearch');
@@ -91,13 +91,14 @@ export function useMachinePickerScreenModel() {
     const autoSelectedSingleMachineRef = React.useRef(false);
     const selectedMachineId = typeof params.selectedId === 'string' ? params.selectedId : null;
     const requestedServerId = typeof params.spawnServerId === 'string' ? params.spawnServerId.trim() : null;
-    const activeServerId = activeServerSnapshot.serverId;
+    const activeServerId = activeServerSource.activeServerId;
     const {
         allowedTargetServerIds,
         targetServerId,
     } = useNewSessionServerTargetState({
         settings,
-        activeServerSnapshot,
+        activeServerId: activeServerSource.activeServerId,
+        serverProfiles: activeServerSource.serverProfiles,
         request: {
             spawnServerIdParam: requestedServerId,
         },
@@ -123,8 +124,8 @@ export function useMachinePickerScreenModel() {
         return allowedServerIds[0] ?? activeServerId;
     }, [activeServerId, allowedServerIds, targetServerId]);
     const serverScopeRefreshToken = React.useMemo(() => {
-        return activeServerSnapshot.generation + refreshToken;
-    }, [activeServerSnapshot.generation, refreshToken]);
+        return `${activeServerSource.serverProfilesSignature}\u0000${refreshToken}`;
+    }, [activeServerSource.serverProfilesSignature, refreshToken]);
     const serverScopedMachineGroups = useServerScopedMachineOptions({
         allowedServerIds,
         activeServerId,

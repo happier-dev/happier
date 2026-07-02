@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
+import { BUILT_IN_THEME_PROFILES } from '@/theme/profiles/builtInThemeProfiles';
 import { installSessionSettingsEntryModuleMocks, resetSessionSettingsEntryState, sessionSettingsEntryState } from './sessionSettingsEntryTestHelpers';
 
 const testGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean };
@@ -140,23 +141,13 @@ describe('Appearance settings theme preference', () => {
 
         expect(themeDropdown).toBeTruthy();
         expect(themeDropdown?.props.selectedId).toBe('light');
-        expect(themeDropdown?.props.items.map((item: any) => item.id)).toEqual([
+        const expectedItemIds = [
             'adaptive',
             'light',
             'dark',
-            'premiumDark',
-            'nightDark',
-            'catppuccinMocha',
-            'catppuccinMacchiato',
-            'catppuccinFrappe',
-            'oneDarkPro',
-            'monokaiPro',
-            'githubDark',
-            'darkModern',
-            'premiumLight',
-            'catppuccinLatte',
-            'githubLight',
-        ]);
+            ...BUILT_IN_THEME_PROFILES.map((definition) => definition.profile.id),
+        ];
+        expect(themeDropdown?.props.items.map((item: any) => item.id)).toEqual(expectedItemIds);
     });
 
     it('applies status bar style immediately when selecting dark mode', async () => {

@@ -33,6 +33,26 @@ function buildUsageData(parts: Readonly<{
     };
 }
 
+function pickUsageNumberFromRecords(records: readonly (Record<string, unknown> | null)[], ...keys: readonly string[]): number | null {
+    for (const record of records) {
+        if (!record) continue;
+        const value = pickUsageNumber(record, ...keys);
+        if (value != null) return value;
+    }
+    return null;
+}
+
+function withContextTelemetry(usage: UsageData, records: readonly (Record<string, unknown> | null)[]): UsageData {
+    const contextUsedTokens = pickUsageNumberFromRecords(records, 'context_used_tokens', 'contextUsedTokens', 'used');
+    const contextWindowTokens = pickUsageNumberFromRecords(records, 'context_window_tokens', 'contextWindowTokens', 'contextWindow', 'size');
+
+    return {
+        ...usage,
+        ...(contextUsedTokens != null ? { context_used_tokens: contextUsedTokens } : {}),
+        ...(contextWindowTokens != null ? { context_window_tokens: contextWindowTokens } : {}),
+    };
+}
+
 function extractUsageDataFromTokenMap(raw: unknown): UsageData | null {
     const record = asRecord(raw);
     if (!record) return null;
@@ -66,16 +86,24 @@ export function extractUsageDataFromTokenCountRecord(raw: unknown): UsageData | 
     const record = asRecord(raw);
     if (!record) return null;
 
+    const info = asRecord(record.info);
+    const nestedInfoTotal = asRecord(info?.total_token_usage);
+    const nestedInfoLast = asRecord(info?.last_token_usage);
+    const tokens = asRecord(record.tokens);
+    const contextTelemetryRecords = [record, tokens, info, nestedInfoTotal, nestedInfoLast];
+
     const nestedInfoUsage = extractUsageDataFromNestedInfo(record.info);
-    if (nestedInfoUsage) return nestedInfoUsage;
+    if (nestedInfoUsage) return withContextTelemetry(nestedInfoUsage, contextTelemetryRecords);
 
     const nestedTokenMapUsage = extractUsageDataFromTokenMap(record.tokens);
-    if (nestedTokenMapUsage) return nestedTokenMapUsage;
+    if (nestedTokenMapUsage) return withContextTelemetry(nestedTokenMapUsage, contextTelemetryRecords);
 
-    return buildUsageData({
+    const usage = buildUsageData({
         input: pickUsageNumber(record, 'input_tokens', 'input', 'prompt_tokens'),
         output: pickUsageNumber(record, 'output_tokens', 'output', 'completion_tokens'),
         cacheCreation: pickUsageNumber(record, 'cache_creation_input_tokens', 'cache_creation'),
         cacheRead: pickUsageNumber(record, 'cache_read_input_tokens', 'cache_read', 'cached_input_tokens'),
     });
+
+    return usage ? withContextTelemetry(usage, contextTelemetryRecords) : null;
 }

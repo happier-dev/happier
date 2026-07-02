@@ -942,6 +942,208 @@ describe('ScmRepositoryService.fetchSnapshotForMachinePath', () => {
         expect(machineScmStatusSnapshot).toHaveBeenCalledTimes(1);
     });
 
+    it('deduplicates concurrent machine/path snapshot requests before subdirectory aliases are known', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+        } as any);
+
+        const deferredSnapshot = {
+            resolve: (_value: any): void => {},
+        };
+        const snapshotPromise = new Promise<any>((resolve) => {
+            deferredSnapshot.resolve = resolve;
+        });
+        vi.mocked(machineScmStatusSnapshot).mockReturnValue(snapshotPromise as any);
+
+        const service = new ScmRepositoryService();
+        const rootPromise = service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo',
+        });
+        const childPromise = service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo/subdir',
+        });
+
+        expect(machineScmStatusSnapshot).toHaveBeenCalledTimes(1);
+
+        deferredSnapshot.resolve({
+            success: true,
+            snapshot: makeScmSnapshot({
+                projectKey: '',
+                repo: {
+                    isRepo: true,
+                    rootPath: '/Users/tester/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }],
+                },
+            }),
+        });
+
+        const [rootResult, childResult] = await Promise.all([rootPromise, childPromise]);
+        expect(rootResult).toEqual(childResult);
+        expect(rootResult?.projectKey).toBe('machine-a:/Users/tester/repo');
+        expect(machineScmStatusSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it('waits for an in-flight sibling path snapshot before issuing another first snapshot', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+        } as any);
+
+        const deferredSnapshot = {
+            resolve: (_value: any): void => {},
+        };
+        const snapshotPromise = new Promise<any>((resolve) => {
+            deferredSnapshot.resolve = resolve;
+        });
+        vi.mocked(machineScmStatusSnapshot).mockReturnValue(snapshotPromise as any);
+
+        const service = new ScmRepositoryService();
+        const packageAPromise = service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo/packages/package-a',
+        });
+        const packageBPromise = service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo/packages/package-b',
+        });
+
+        expect(machineScmStatusSnapshot).toHaveBeenCalledTimes(1);
+
+        deferredSnapshot.resolve({
+            success: true,
+            snapshot: makeScmSnapshot({
+                projectKey: '',
+                repo: {
+                    isRepo: true,
+                    rootPath: '/Users/tester/repo',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }],
+                },
+            }),
+        });
+
+        const [packageAResult, packageBResult] = await Promise.all([packageAPromise, packageBPromise]);
+        expect(packageAResult).toEqual(packageBResult);
+        expect(packageAResult?.projectKey).toBe('machine-a:/Users/tester/repo');
+        expect(machineScmStatusSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not wait for sibling repository paths that only share a Windows home directory', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: 'C:\\Users\\tester',
+                    },
+                },
+            },
+        } as any);
+
+        const snapshotPromise = new Promise<any>(() => {});
+        vi.mocked(machineScmStatusSnapshot).mockReturnValue(snapshotPromise as any);
+
+        const service = new ScmRepositoryService();
+        void service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~\\repo-a',
+        });
+        void service.fetchSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~\\repo-b',
+        });
+
+        expect(machineScmStatusSnapshot).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not deduplicate concurrent lightweight and enriched machine/path snapshot requests', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            machines: {
+                'machine-a': {
+                    id: 'machine-a',
+                    metadata: {
+                        homeDir: '/Users/tester',
+                    },
+                },
+            },
+        } as any);
+
+        const lightweightSnapshot = makeScmSnapshot({
+            repo: {
+                isRepo: true,
+                rootPath: '/Users/tester/repo',
+                backendId: 'git',
+                mode: '.git',
+                worktrees: [{ path: '/Users/tester/repo', branch: 'main', isCurrent: true }],
+            },
+        });
+        const enrichedSnapshot = makeScmSnapshot({
+            repo: {
+                isRepo: true,
+                rootPath: '/Users/tester/repo',
+                backendId: 'git',
+                mode: '.git',
+                worktrees: [
+                    {
+                        path: '/Users/tester/repo',
+                        branch: 'main',
+                        isCurrent: true,
+                        changeCount: 4,
+                        lastActivityAt: 1_700_000_000_000,
+                    },
+                ],
+            },
+        });
+
+        vi.mocked(machineScmStatusSnapshot)
+            .mockResolvedValueOnce({ success: true, snapshot: lightweightSnapshot } as any)
+            .mockResolvedValueOnce({ success: true, snapshot: enrichedSnapshot } as any);
+
+        const service = new ScmRepositoryService();
+        const [lightweight, enriched] = await Promise.all([
+            service.fetchSnapshotForMachinePath({
+                machineId: 'machine-a',
+                path: '~/repo',
+            }),
+            service.fetchSnapshotForMachinePath({
+                machineId: 'machine-a',
+                path: '~/repo',
+                includeWorktreeStatus: true,
+            }),
+        ]);
+
+        expect(machineScmStatusSnapshot).toHaveBeenCalledTimes(2);
+        expect(service.readCachedSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo',
+        })).toEqual(lightweight);
+        expect(service.readCachedSnapshotForMachinePath({
+            machineId: 'machine-a',
+            path: '~/repo',
+            includeWorktreeStatus: true,
+        })).toEqual(enriched);
+        expect(enriched?.repo.worktrees?.[0]?.changeCount).toBe(4);
+        expect(lightweight?.repo.worktrees?.[0]?.changeCount).toBeUndefined();
+    });
+
     it('deduplicates concurrent session and machine/path snapshot requests for the same repo identity', async () => {
         vi.spyOn(storage, 'getState').mockReturnValue({
             machines: {

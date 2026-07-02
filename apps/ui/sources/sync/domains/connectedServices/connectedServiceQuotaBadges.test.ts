@@ -47,7 +47,7 @@ describe('computeConnectedServiceQuotaSummaryBadges', () => {
       pinnedMeterIds: ['weekly'],
     });
 
-    expect(badges).toEqual([{ meterId: 'weekly', text: 'weekly —' }]);
+    expect(badges).toEqual([{ meterId: 'weekly', text: '—' }]);
   });
 
   it('derives remaining percent from used/limit when utilizationPct is missing', () => {
@@ -95,5 +95,30 @@ describe('computeConnectedServiceQuotaSummaryBadges', () => {
 
     expect(badges.map((b) => b.meterId)).toEqual(['weekly', 'session']);
     expect(badges[0]?.text).toContain('Weekly');
+  });
+
+  it('does not rank quota badges against provider capacity states', () => {
+    const snapshot: ConnectedServiceQuotaSnapshotV1 = {
+      v: 1,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      fetchedAt: 1,
+      staleAfterMs: 1000,
+      planLabel: null,
+      accountLabel: null,
+      meters: [
+        { meterId: 'daily', label: 'Daily', used: 50, limit: 100, unit: 'requests', utilizationPct: null, resetsAt: null, status: 'ok', details: { limitCategory: 'usage_limit' } },
+        { meterId: 'weekly', label: 'Weekly', used: 80, limit: 100, unit: 'requests', utilizationPct: null, resetsAt: null, status: 'ok', details: { limitCategory: 'usage_limit' } },
+        { meterId: 'server_capacity', label: 'Server capacity', used: 99, limit: 100, unit: 'requests', utilizationPct: null, resetsAt: null, status: 'ok', details: { limitCategory: 'capacity' } },
+      ],
+    };
+
+    const badges = computeConnectedServiceQuotaSummaryBadges({
+      snapshot,
+      pinnedMeterIds: ['daily', 'weekly', 'server_capacity'],
+      strategy: 'min_remaining',
+    });
+
+    expect(badges.map((badge) => badge.meterId)).toEqual(['weekly', 'daily']);
   });
 });

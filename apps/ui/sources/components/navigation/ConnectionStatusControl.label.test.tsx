@@ -123,8 +123,10 @@ vi.mock('@/sync/domains/server/serverConfig', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
     getActiveServerId: () => 'srv-1',
     listServerProfiles: () => [{ id: 'srv-1', name: 'Happier Cloud', serverUrl: 'https://cloud.example.test' }],
+    resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => profile.serverIdentityId ?? profile.id,
     setActiveServerId: vi.fn(),
 }));
 

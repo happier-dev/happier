@@ -3,8 +3,12 @@ import {
     createBottomTabNavigator,
     type BottomTabBarProps,
 } from '@react-navigation/bottom-tabs';
+import {
+    NavigationContainer,
+    NavigationIndependentTree,
+} from '@react-navigation/native';
 
-import { useLocalSetting, useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { usePersistSessionLastMobileSurface } from '@/sync/domains/state/storage';
 
 import {
     type SessionMobileSurface,
@@ -28,6 +32,14 @@ const Tab = createBottomTabNavigator<SessionCockpitTabParamList>();
 
 const SESSION_COCKPIT_SURFACES_WITH_TERMINAL: readonly SessionMobileSurface[] = ['chat', 'browse', 'git', 'tabs', 'terminal'];
 const SESSION_COCKPIT_SURFACES_WITHOUT_TERMINAL: readonly SessionMobileSurface[] = ['chat', 'browse', 'git', 'tabs'];
+const DISABLED_NAVIGATION_LINKING = { enabled: false, prefixes: [] };
+const SESSION_COCKPIT_TAB_SCREEN_OPTIONS = {
+    headerShown: false,
+    animation: 'none',
+    lazy: true,
+    freezeOnBlur: true,
+    tabBarHideOnKeyboard: false,
+} as const;
 
 type SessionCockpitTabNavigatorProps = Omit<SessionCockpitSurfaceScreenProps, 'surface'> & Readonly<{
     initialSurface: SessionMobileSurface;
@@ -53,51 +65,45 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
     const terminalTabAvailable = props.terminalTabAvailable !== false;
     const initialSurface = resolveInitialSurface(props.initialSurface, terminalTabAvailable);
     const surfaces = resolveAvailableSurfaces(terminalTabAvailable);
-    const sessionLastMobileSurfaceBySessionId = useLocalSetting('sessionLastMobileSurfaceBySessionId');
-    const [, setSessionLastMobileSurfaceBySessionId] = useLocalSettingMutable('sessionLastMobileSurfaceBySessionId');
+    const persistSessionLastMobileSurface = usePersistSessionLastMobileSurface();
     const persistSessionSurface = React.useCallback((surface: SessionMobileSurface) => {
-        setSessionLastMobileSurfaceBySessionId({
-            ...(sessionLastMobileSurfaceBySessionId ?? {}),
-            [props.sessionId]: surface,
-        });
-    }, [props.sessionId, sessionLastMobileSurfaceBySessionId, setSessionLastMobileSurfaceBySessionId]);
+        persistSessionLastMobileSurface(props.sessionId, surface);
+    }, [persistSessionLastMobileSurface, props.sessionId]);
 
     return (
-        <Tab.Navigator
-            backBehavior="history"
-            initialRouteName={initialSurface}
-            screenOptions={{
-                headerShown: false,
-                animation: 'none',
-                lazy: true,
-                freezeOnBlur: true,
-                tabBarHideOnKeyboard: true,
-            }}
-            tabBar={(tabBarProps) => (
-                <SessionCockpitNavigatorChromeBridge
-                    {...tabBarProps}
-                    sessionId={props.sessionId}
-                    terminalTabAvailable={terminalTabAvailable}
-                />
-            )}
-        >
-            {surfaces.map((surface) => (
-                <Tab.Screen key={surface} name={surface}>
-                    {({ navigation }) => (
-                        <SessionCockpitSurfaceNavigationProvider
-                            value={{
-                                switchSurface: (targetSurface) => {
-                                    navigation.navigate(targetSurface);
-                                    persistSessionSurface(targetSurface);
-                                },
-                            }}
-                        >
-                            <SessionCockpitSurfaceScreen {...props} surface={surface} />
-                        </SessionCockpitSurfaceNavigationProvider>
+        <NavigationIndependentTree>
+            <NavigationContainer linking={DISABLED_NAVIGATION_LINKING}>
+                <Tab.Navigator
+                    backBehavior="history"
+                    initialRouteName={initialSurface}
+                    screenOptions={SESSION_COCKPIT_TAB_SCREEN_OPTIONS}
+                    tabBar={(tabBarProps) => (
+                        <SessionCockpitNavigatorChromeBridge
+                            {...tabBarProps}
+                            sessionId={props.sessionId}
+                            terminalTabAvailable={terminalTabAvailable}
+                        />
                     )}
-                </Tab.Screen>
-            ))}
-        </Tab.Navigator>
+                >
+                    {surfaces.map((surface) => (
+                        <Tab.Screen key={surface} name={surface}>
+                            {({ navigation }) => (
+                                <SessionCockpitSurfaceNavigationProvider
+                                    value={{
+                                        switchSurface: (targetSurface) => {
+                                            navigation.navigate(targetSurface);
+                                            persistSessionSurface(targetSurface);
+                                        },
+                                    }}
+                                >
+                                    <SessionCockpitSurfaceScreen {...props} surface={surface} />
+                                </SessionCockpitSurfaceNavigationProvider>
+                            )}
+                        </Tab.Screen>
+                    ))}
+                </Tab.Navigator>
+            </NavigationContainer>
+        </NavigationIndependentTree>
     );
 });
 
@@ -113,16 +119,12 @@ const SessionCockpitNavigatorChromeBridge = React.memo((props: BottomTabBarProps
     terminalTabAvailable: boolean;
 }>) => {
     const register = useSessionCockpitChromeRegister();
-    const sessionLastMobileSurfaceBySessionId = useLocalSetting('sessionLastMobileSurfaceBySessionId');
-    const [, setSessionLastMobileSurfaceBySessionId] = useLocalSettingMutable('sessionLastMobileSurfaceBySessionId');
+    const persistSessionLastMobileSurface = usePersistSessionLastMobileSurface();
     const activeSurface = normalizeSurface(props.state.routes[props.state.index]?.name) ?? 'chat';
 
     const persistSessionSurface = React.useCallback((surface: SessionMobileSurface) => {
-        setSessionLastMobileSurfaceBySessionId({
-            ...(sessionLastMobileSurfaceBySessionId ?? {}),
-            [props.sessionId]: surface,
-        });
-    }, [props.sessionId, sessionLastMobileSurfaceBySessionId, setSessionLastMobileSurfaceBySessionId]);
+        persistSessionLastMobileSurface(props.sessionId, surface);
+    }, [persistSessionLastMobileSurface, props.sessionId]);
 
     const switchSurfaceRef = React.useRef<(surface: SessionMobileSurface) => void>(() => {});
     switchSurfaceRef.current = (surface) => {

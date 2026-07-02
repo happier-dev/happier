@@ -84,6 +84,9 @@ describe('DiffView (file list virtualization)', () => {
 
         await renderScreen(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'full' })));
 
-        expect(diffFilesListSpy).toHaveBeenCalledWith(expect.objectContaining({ virtualizeFileList: true }));
+        expect(diffFilesListSpy).toHaveBeenCalledWith(expect.objectContaining({
+            virtualizeFileList: true,
+            virtualizedListLayout: 'intrinsic',
+        }));
     });
 });

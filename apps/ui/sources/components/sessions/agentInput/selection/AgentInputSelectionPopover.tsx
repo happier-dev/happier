@@ -1,12 +1,8 @@
 import * as React from 'react';
 
-import { Platform, useWindowDimensions } from 'react-native';
+import { Platform } from 'react-native';
 import { Popover } from '@/components/ui/popover';
-import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
-import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
-
-const MOBILE_AGENT_INPUT_POPOVER_EDGE_PADDING = 12;
-const DEFAULT_AGENT_INPUT_POPOVER_EDGE_PADDING = 16;
+import { useAgentInputPopoverLayout } from './useAgentInputPopoverLayout';
 
 export type AgentInputSelectionPopoverProps = Readonly<{
     open: boolean;
@@ -20,56 +16,17 @@ export type AgentInputSelectionPopoverProps = Readonly<{
 }>;
 
 export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) {
-    const keyboardHeight = useKeyboardHeight();
-    const retainedNativeKeyboardHeightRef = React.useRef(0);
-    const { width: windowWidth } = useWindowDimensions();
-    const normalizedKeyboardHeight = Number.isFinite(keyboardHeight)
-        ? Math.max(0, keyboardHeight)
-        : 0;
-    React.useEffect(() => {
-        if (Platform.OS === 'web') {
-            retainedNativeKeyboardHeightRef.current = 0;
-            return;
-        }
-        if (!props.open) {
-            retainedNativeKeyboardHeightRef.current = 0;
-            return;
-        }
-        if (normalizedKeyboardHeight > 0) {
-            retainedNativeKeyboardHeightRef.current = normalizedKeyboardHeight;
-        }
-    }, [normalizedKeyboardHeight, props.open]);
-    const effectiveKeyboardHeight =
-        Platform.OS === 'web'
-            ? 0
-            : normalizedKeyboardHeight > 0
-                ? normalizedKeyboardHeight
-                : props.open
-                    ? retainedNativeKeyboardHeightRef.current
-                    : 0;
+    const popoverLayout = useAgentInputPopoverLayout({
+        open: props.open,
+        maxHeightCap: props.maxHeightCap,
+        portalTopBottomLayout: props.portalTopBottomLayout,
+    });
     // On web, agent-input popovers should be constrained to the viewport (not to an in-modal boundary
     // provider), so they can extend outside sheet-like modal cards.
     const boundaryRef =
         Platform.OS === 'web' && props.boundaryRef === undefined
             ? null
             : props.boundaryRef;
-    const edgePadding = React.useMemo(() => ({
-        horizontal:
-            Platform.OS === 'web' && isMobileLayoutWidth(windowWidth)
-                ? MOBILE_AGENT_INPUT_POPOVER_EDGE_PADDING
-                : DEFAULT_AGENT_INPUT_POPOVER_EDGE_PADDING,
-    }), [windowWidth]);
-
-    // AgentInput popovers default to appearing above the chips. When the keyboard is visible on native,
-    // forcing `top` can push the popover off-screen (especially in sheet/drawer presentations). Let
-    // Popover resolve the best placement within the reduced keyboard-safe boundary.
-    const placement =
-        Platform.OS === 'web'
-            ? 'top'
-            : effectiveKeyboardHeight > 0
-                ? 'auto-vertical'
-                : 'top';
-
     return (
         <Popover
             open={props.open}
@@ -79,32 +36,29 @@ export function AgentInputSelectionPopover(props: AgentInputSelectionPopoverProp
             // Passing `null` explicitly disables boundary clamping/measurement, which breaks
             // new-session popover anchoring on native where we rely on a scroll boundary.
             boundaryRef={boundaryRef}
-            placement={placement}
-            gap={8}
-            maxHeightCap={props.maxHeightCap}
+            placement={popoverLayout.placement}
+            gap={popoverLayout.gap}
+            maxHeightCap={popoverLayout.maxHeightCap}
             maxWidthCap={props.maxWidthCap}
-            edgePadding={edgePadding}
+            edgePadding={popoverLayout.edgePadding}
             closeOnAnchorPress={false}
-            portal={{
-                // IMPORTANT:
-                // Do not force portaling to `document.body`. In Expo Router web modals, Radix focus/pointer
-                // management will block interaction with inputs rendered outside the modal subtree.
-                // Let Popover pick the best target (screen-local modal host from PopoverPortalTargetProvider).
-                web: true,
-                native: true,
-                matchAnchorWidth: false,
-                anchorAlign: 'start',
-                topBottomLayout: props.portalTopBottomLayout,
-            }}
+            // IMPORTANT:
+            // Do not force portaling to `document.body`. In Expo Router web modals, Radix focus/pointer
+            // management will block interaction with inputs rendered outside the modal subtree.
+            // Let Popover pick the best target (screen-local modal host from PopoverPortalTargetProvider).
+            portal={popoverLayout.portal}
             onRequestClose={props.onRequestClose}
             consumeOutsidePointerDown={false}
             // On web, agent input popovers must NOT block outside pointer events: users should be
             // able to switch between chips in one click (no "click outside to close first").
             // Click-through prevention is handled at the selection layer by deferring popover
             // closure until after the click event completes.
-            backdrop={{ style: { backgroundColor: 'transparent' }, blockOutsidePointerEvents: false }}
+            backdrop={{
+                style: { backgroundColor: 'transparent' },
+                blockOutsidePointerEvents: Platform.OS === 'web' ? false : 'above-anchor',
+            }}
             containerStyle={{ paddingHorizontal: 0 }}
-            keyboardBottomInset={effectiveKeyboardHeight}
+            keyboardBottomInset={popoverLayout.keyboardBottomInset}
         >
             {({ maxHeight }) => (
                 props.children({ maxHeight })

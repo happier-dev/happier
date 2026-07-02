@@ -1,4 +1,5 @@
 import { MMKV } from 'react-native-mmkv';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { isStackContext } from './serverContext';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from './url/serverUrlCanonical';
@@ -16,6 +17,8 @@ export type ServerProfile = Readonly<{
     serverUrl: string;
     shareableServerUrl?: string | null;
     shareableServerUrlValidatedAgainstServerUrl?: string | null;
+    serverIdentityId?: string | null;
+    legacyServerIds?: readonly string[];
     createdAt: number;
     updatedAt: number;
     lastUsedAt: number;
@@ -71,6 +74,26 @@ function normalizeUrl(raw: string): string {
 function normalizeServerId(raw: unknown): string | null {
     const id = String(raw ?? '').trim();
     return id || null;
+}
+
+function normalizeServerIdentityId(raw: unknown): string | null {
+    return normalizeServerIdentityIdCapability(raw) ?? null;
+}
+
+function uniqueServerIds(ids: readonly unknown[]): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const raw of ids) {
+        const id = normalizeServerId(raw);
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        result.push(id);
+    }
+    return result;
+}
+
+export function resolveServerProfileScopeId(profile: Pick<ServerProfile, 'id' | 'serverIdentityId'>): string {
+    return profile.serverIdentityId ?? profile.id;
 }
 
 function comparableUrlKey(rawUrl: string): string {
@@ -246,6 +269,21 @@ function findProfileByEquivalentUrl(servers: Record<string, ServerProfile>, serv
     return null;
 }
 
+function findProfileByServerIdentifier(
+    servers: Record<string, ServerProfile>,
+    idRaw: string | null | undefined,
+): ServerProfile | null {
+    const id = normalizeServerId(idRaw);
+    if (!id) return null;
+    const direct = servers[id];
+    if (direct) return direct;
+    for (const profile of Object.values(servers)) {
+        if (profile.serverIdentityId === id) return profile;
+        if ((profile.legacyServerIds ?? []).includes(id)) return profile;
+    }
+    return null;
+}
+
 function createUniqueServerId(
     servers: Record<string, ServerProfile>,
     baseIdRaw: string,
@@ -345,6 +383,12 @@ function parseProfile(id: string, value: unknown): ServerProfile | null {
         ...(typeof record.shareableServerUrlValidatedAgainstServerUrl === 'string'
             ? { shareableServerUrlValidatedAgainstServerUrl: normalizeUrl(String(record.shareableServerUrlValidatedAgainstServerUrl)) }
             : {}),
+        ...(normalizeServerIdentityId(record.serverIdentityId)
+            ? { serverIdentityId: normalizeServerIdentityId(record.serverIdentityId) }
+            : {}),
+        ...(Array.isArray(record.legacyServerIds)
+            ? { legacyServerIds: uniqueServerIds(record.legacyServerIds).filter((legacyId) => legacyId !== sid) }
+            : {}),
         createdAt: Number(record.createdAt ?? 0) || 0,
         updatedAt: Number(record.updatedAt ?? 0) || 0,
         lastUsedAt: Number(record.lastUsedAt ?? 0) || 0,
@@ -395,6 +439,24 @@ function pickPreferredEquivalentProfile(
         const bCreated = Number(b.createdAt ?? 0) || 0;
         return aCreated - bCreated;
     })[0]!;
+}
+
+function mergeProfileIdentityMetadata(
+    profiles: readonly ServerProfile[],
+    preferred: ServerProfile,
+): Pick<ServerProfile, 'serverIdentityId' | 'legacyServerIds'> {
+    const identity = preferred.serverIdentityId ?? profiles.find((profile) => profile.serverIdentityId)?.serverIdentityId ?? null;
+    const legacyIds = uniqueServerIds([
+        preferred.id,
+        ...profiles.map((profile) => profile.id),
+        ...profiles.map((profile) => profile.serverIdentityId),
+        ...profiles.flatMap((profile) => profile.legacyServerIds ?? []),
+    ]).filter((id) => id !== preferred.id && id !== identity);
+
+    return {
+        ...(identity ? { serverIdentityId: identity } : {}),
+        ...(legacyIds.length > 0 ? { legacyServerIds: legacyIds } : {}),
+    };
 }
 
 function dedupeEquivalentProfiles(params: Readonly<{
@@ -451,12 +513,78 @@ function dedupeEquivalentProfiles(params: Readonly<{
             };
         }, preferred);
 
-        next[merged.id] = merged;
+        const identityMetadata = mergeProfileIdentityMetadata(group, merged);
+
+        next[merged.id] = { ...merged, ...identityMetadata };
 
         for (const current of group) {
             if (current.id === merged.id) continue;
             idRewrite.set(current.id, merged.id);
         }
+    }
+
+    return { servers: next, idRewrite, changed };
+}
+
+function dedupeIdentityProfiles(params: Readonly<{
+    servers: Record<string, ServerProfile>;
+    sameOriginServerUrl: string | null;
+    preferredServerId: string | null;
+}>): Readonly<{
+    servers: Record<string, ServerProfile>;
+    idRewrite: Map<string, string>;
+    changed: boolean;
+}> {
+    const groupsByIdentity = new Map<string, ServerProfile[]>();
+    for (const profile of Object.values(params.servers)) {
+        const identity = profile.serverIdentityId;
+        if (!identity) continue;
+        const group = groupsByIdentity.get(identity);
+        if (group) group.push(profile);
+        else groupsByIdentity.set(identity, [profile]);
+    }
+
+    let changed = false;
+    const idRewrite = new Map<string, string>();
+    const next: Record<string, ServerProfile> = { ...params.servers };
+
+    for (const group of groupsByIdentity.values()) {
+        if (group.length <= 1) continue;
+        changed = true;
+
+        const preferred = pickPreferredEquivalentProfile(group, {
+            sameOriginServerUrl: params.sameOriginServerUrl,
+            preferredServerId: params.preferredServerId,
+        });
+        const merged: ServerProfile = group.reduce<ServerProfile>((acc, current) => {
+            if (current.id === acc.id) return acc;
+            return {
+                ...acc,
+                createdAt: Math.min(acc.createdAt, current.createdAt),
+                updatedAt: Math.max(acc.updatedAt, current.updatedAt),
+                lastUsedAt: Math.max(acc.lastUsedAt, current.lastUsedAt),
+                ...(acc.shareableServerUrl ?? current.shareableServerUrl
+                    ? { shareableServerUrl: acc.shareableServerUrl ?? current.shareableServerUrl ?? null }
+                    : {}),
+                ...(acc.shareableServerUrlValidatedAgainstServerUrl ?? current.shareableServerUrlValidatedAgainstServerUrl
+                    ? {
+                        shareableServerUrlValidatedAgainstServerUrl:
+                            acc.shareableServerUrlValidatedAgainstServerUrl
+                            ?? current.shareableServerUrlValidatedAgainstServerUrl
+                            ?? null,
+                    }
+                    : {}),
+            };
+        }, preferred);
+        const identityMetadata = mergeProfileIdentityMetadata(group, merged);
+
+        for (const current of group) {
+            if (current.id !== merged.id) {
+                delete next[current.id];
+                idRewrite.set(current.id, merged.id);
+            }
+        }
+        next[merged.id] = { ...merged, ...identityMetadata };
     }
 
     return { servers: next, idRewrite, changed };
@@ -485,16 +613,25 @@ function readPersistedState(): Required<PersistedServerState> {
         const desiredActive = normalizeServerId(parsed.activeServerId);
         const activeServerIdIsExplicit = parsed.activeServerIdIsExplicit === true;
 
-        const deduped = dedupeEquivalentProfiles({
+        const dedupedEquivalent = dedupeEquivalentProfiles({
             servers,
             sameOriginServerUrl: getWebSameOriginServerUrl(),
             preferredServerId: desiredActive,
         });
+        const rewrittenAfterEquivalent =
+            desiredActive && dedupedEquivalent.idRewrite.has(desiredActive)
+                ? dedupedEquivalent.idRewrite.get(desiredActive)!
+                : desiredActive;
+        const deduped = dedupeIdentityProfiles({
+            servers: dedupedEquivalent.servers,
+            sameOriginServerUrl: getWebSameOriginServerUrl(),
+            preferredServerId: rewrittenAfterEquivalent,
+        });
 
         const rewrittenDesiredActive =
-            desiredActive && deduped.idRewrite.has(desiredActive)
-                ? deduped.idRewrite.get(desiredActive)!
-                : desiredActive;
+            rewrittenAfterEquivalent && deduped.idRewrite.has(rewrittenAfterEquivalent)
+                ? deduped.idRewrite.get(rewrittenAfterEquivalent)!
+                : rewrittenAfterEquivalent;
         const activeServerId = resolvePrimaryActiveServerId(deduped.servers, rewrittenDesiredActive);
 
         const state: Required<PersistedServerState> = {
@@ -503,7 +640,7 @@ function readPersistedState(): Required<PersistedServerState> {
             servers: deduped.servers,
         };
 
-        if (deduped.changed) {
+        if (dedupedEquivalent.changed || deduped.changed) {
             writePersistedState(state);
         }
 
@@ -576,17 +713,18 @@ function getWebSameOriginServerUrl(): string | null {
 
 function buildActiveSnapshotFromState(state: Required<PersistedServerState>): ActiveServerSnapshot {
     const tabId = readTabActiveServerId();
-    const tabExplicit = Boolean(tabId && state.servers[tabId]);
+    const tabProfile = findProfileByServerIdentifier(state.servers, tabId);
+    const tabExplicit = Boolean(tabProfile);
     const isSelectionExplicit = tabExplicit || state.activeServerIdIsExplicit === true;
-    const selectedId = tabId && state.servers[tabId]
-        ? tabId
+    const selectedId = tabProfile
+        ? tabProfile.id
         : resolvePrimaryActiveServerId(state.servers, state.activeServerId);
     const selected = selectedId ? state.servers[selectedId] : null;
     const sameOriginUrl = getWebSameOriginServerUrl();
 
     if (selected) {
         return {
-            serverId: selected.id,
+            serverId: resolveServerProfileScopeId(selected),
             serverUrl: selected.serverUrl,
             activeShareableServerUrl: selected.shareableServerUrl ?? null,
             activeShareableServerUrlValidatedAgainstServerUrl: selected.shareableServerUrlValidatedAgainstServerUrl ?? null,
@@ -665,7 +803,30 @@ export function subscribeServerProfiles(listener: (generation: number) => void):
 export function getServerProfileById(idRaw: string): ServerProfile | null {
     const id = normalizeServerId(idRaw);
     if (!id) return null;
-    return readPersistedState().servers[id] ?? null;
+    return findProfileByServerIdentifier(readPersistedState().servers, id);
+}
+
+export function resolveServerProfileScopeIdForIdentifier(idRaw: string | null | undefined): string {
+    const id = normalizeServerId(idRaw);
+    if (!id) return '';
+    const profile = findProfileByServerIdentifier(readPersistedState().servers, id);
+    return profile ? resolveServerProfileScopeId(profile) : id;
+}
+
+export function areServerProfileIdentifiersEquivalent(
+    leftRaw: string | null | undefined,
+    rightRaw: string | null | undefined,
+): boolean {
+    const left = normalizeServerId(leftRaw);
+    const right = normalizeServerId(rightRaw);
+    if (!left || !right) return false;
+    if (left === right) return true;
+
+    const state = readPersistedState();
+    const leftProfile = findProfileByServerIdentifier(state.servers, left);
+    if (!leftProfile) return false;
+    const rightProfile = findProfileByServerIdentifier(state.servers, right);
+    return Boolean(rightProfile && rightProfile.id === leftProfile.id);
 }
 
 export function upsertServerProfile(
@@ -709,6 +870,12 @@ export function upsertServerProfile(
             : existing?.shareableServerUrlValidatedAgainstServerUrl
                 ? { shareableServerUrlValidatedAgainstServerUrl: existing.shareableServerUrlValidatedAgainstServerUrl }
                 : {}),
+        ...(existingEquivalent?.serverIdentityId ?? existing?.serverIdentityId
+            ? { serverIdentityId: existingEquivalent?.serverIdentityId ?? existing?.serverIdentityId ?? null }
+            : {}),
+        ...((existingEquivalent?.legacyServerIds ?? existing?.legacyServerIds)?.length
+            ? { legacyServerIds: existingEquivalent?.legacyServerIds ?? existing?.legacyServerIds ?? [] }
+            : {}),
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
         lastUsedAt: existing?.lastUsedAt ?? 0,
@@ -740,6 +907,73 @@ export function getOrCreateHappierCloudServerProfile(): ServerProfile {
     });
 }
 
+export function setServerProfileIdentityForUrl(serverUrlRaw: string, identityRaw: string | null | undefined): ServerProfile | null {
+    const url = normalizeUrl(serverUrlRaw);
+    const serverIdentityId = normalizeServerIdentityId(identityRaw);
+    if (!url || !serverIdentityId) return null;
+
+    const state = readPersistedState();
+    const existing = findProfileByEquivalentUrl(state.servers, url);
+    const id = existing?.id ?? createUniqueServerId(state.servers, deriveServerIdFromUrl(url), url);
+    const now = nowMs();
+    const profile: ServerProfile = {
+        id,
+        name: existing?.name ?? defaultServerNameFromUrl(url) ?? id,
+        serverUrl: existing?.serverUrl ?? url,
+        ...(existing?.shareableServerUrl ? { shareableServerUrl: existing.shareableServerUrl } : {}),
+        ...(existing?.shareableServerUrlValidatedAgainstServerUrl
+            ? { shareableServerUrlValidatedAgainstServerUrl: existing.shareableServerUrlValidatedAgainstServerUrl }
+            : {}),
+        serverIdentityId,
+        legacyServerIds: uniqueServerIds([...(existing?.legacyServerIds ?? []), existing?.serverIdentityId, id]).filter(
+            (legacyId) => legacyId !== serverIdentityId,
+        ),
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+        lastUsedAt: existing?.lastUsedAt ?? 0,
+        source: existing?.source ?? 'url',
+    };
+
+    const previousSnapshot = getActiveServerSnapshot();
+    const withIdentity: Record<string, ServerProfile> = {
+        ...state.servers,
+        [id]: profile,
+    };
+    const deduped = dedupeIdentityProfiles({
+        servers: withIdentity,
+        sameOriginServerUrl: getWebSameOriginServerUrl(),
+        preferredServerId: state.activeServerId,
+    });
+    const activeServerId =
+        deduped.idRewrite.has(state.activeServerId)
+            ? deduped.idRewrite.get(state.activeServerId)!
+            : resolvePrimaryActiveServerId(deduped.servers, state.activeServerId);
+    const tabId = readTabActiveServerId();
+    if (tabId && deduped.idRewrite.has(tabId)) {
+        writeTabActiveServerId(deduped.idRewrite.get(tabId)!);
+    }
+
+    const nextState: Required<PersistedServerState> = {
+        ...state,
+        activeServerId,
+        servers: deduped.servers,
+    };
+    writePersistedState(nextState);
+    emitServerProfilesChanged();
+    emitActiveServerChanged(previousSnapshot, { force: true });
+    return findProfileByServerIdentifier(nextState.servers, serverIdentityId);
+}
+
+export function getServerProfileLegacyServerIds(idRaw: string): string[] {
+    const state = readPersistedState();
+    const profile = findProfileByServerIdentifier(state.servers, idRaw);
+    if (!profile) return [];
+    return uniqueServerIds([
+        profile.id,
+        ...(profile.legacyServerIds ?? []),
+    ]).filter((id) => id !== profile.serverIdentityId);
+}
+
 export function setActiveServerId(
     idRaw: string,
     opts: Readonly<{ scope: 'tab' | 'device' }> = { scope: 'device' },
@@ -748,7 +982,8 @@ export function setActiveServerId(
     if (!id) throw new Error('server id is required');
 
     const state = readPersistedState();
-    if (!(id in state.servers)) {
+    const profile = findProfileByServerIdentifier(state.servers, id);
+    if (!profile) {
         if (opts.scope === 'tab') {
             const previousSnapshot = getActiveServerSnapshot();
             writeTabActiveServerId(null);
@@ -759,20 +994,20 @@ export function setActiveServerId(
 
     const previousSnapshot = getActiveServerSnapshot();
     if (opts.scope === 'tab') {
-        writeTabActiveServerId(id);
+        writeTabActiveServerId(profile.id);
         emitActiveServerChanged(previousSnapshot, { force: true });
         return;
     }
 
     const now = nowMs();
-    const existing = state.servers[id]!;
+    const existing = state.servers[profile.id]!;
     writePersistedState({
         ...state,
         activeServerIdIsExplicit: true,
-        activeServerId: id,
+        activeServerId: profile.id,
         servers: {
             ...state.servers,
-            [id]: { ...existing, lastUsedAt: now, updatedAt: now },
+            [profile.id]: { ...existing, lastUsedAt: now, updatedAt: now },
         },
     });
     emitServerProfilesChanged();
@@ -802,27 +1037,33 @@ export function getDeviceDefaultServerId(): string {
     return resolvePrimaryActiveServerId(state.servers, state.activeServerId);
 }
 
-export function getActiveServerId(): string {
+export function getDeviceDefaultServerScopeId(): string {
     const state = readPersistedState();
-    const tab = readTabActiveServerId();
-    if (tab && tab in state.servers) return tab;
-    return resolvePrimaryActiveServerId(state.servers, state.activeServerId);
+    const profileId = resolvePrimaryActiveServerId(state.servers, state.activeServerId);
+    const profile = profileId ? state.servers[profileId] : null;
+    return profile ? resolveServerProfileScopeId(profile) : profileId;
+}
+
+export function getActiveServerId(): string {
+    return getActiveServerSnapshot().serverId;
 }
 
 export function isActiveServerSelectionExplicit(): boolean {
     const state = readPersistedState();
     const tab = readTabActiveServerId();
-    if (tab && tab in state.servers) return true;
+    if (findProfileByServerIdentifier(state.servers, tab)) return true;
     return state.activeServerIdIsExplicit === true;
 }
 
 export function getActiveServerUrl(): string {
     const state = readPersistedState();
     const tab = readTabActiveServerId();
-    if (tab && tab in state.servers) return state.servers[tab]!.serverUrl;
+    const tabProfile = findProfileByServerIdentifier(state.servers, tab);
+    if (tabProfile) return tabProfile.serverUrl;
 
-    if (state.activeServerIdIsExplicit && state.activeServerId in state.servers) {
-        return state.servers[state.activeServerId]!.serverUrl;
+    const explicit = findProfileByServerIdentifier(state.servers, state.activeServerId);
+    if (state.activeServerIdIsExplicit && explicit) {
+        return explicit.serverUrl;
     }
 
     const fallbackId = resolvePrimaryActiveServerId(state.servers, state.activeServerId);

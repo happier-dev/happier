@@ -51,8 +51,8 @@ describe('sessionListOrderingStateV1', () => {
             firstSession,
             secondSession,
         ];
-        (firstSession.session as any).updatedAt = 20;
-        (secondSession.session as any).updatedAt = 10;
+        Object.assign(firstSession.session, { createdAt: 20, updatedAt: 20, meaningfulActivityAt: 650_000 });
+        Object.assign(secondSession.session, { createdAt: 10, updatedAt: 10, meaningfulActivityAt: 100 });
 
         const sortSpy = vi.spyOn(Array.prototype, 'sort');
         try {
@@ -63,6 +63,56 @@ describe('sessionListOrderingStateV1', () => {
         }
     });
 
+    it('keeps updated-mode groups ordered when meaningful activity remains in the same bucket', () => {
+        const firstSession = makeSessionItem({ serverId: 's1', sessionId: 'stable-first', groupKey: 'g' });
+        const secondSession = makeSessionItem({ serverId: 's1', sessionId: 'raw-newer', groupKey: 'g' });
+        const source: SessionListViewItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: 'g', serverId: 's1' },
+            firstSession,
+            secondSession,
+        ];
+        Object.assign(firstSession.session, {
+            createdAt: 200,
+            updatedAt: 100,
+            meaningfulActivityAt: 650_000,
+        });
+        Object.assign(secondSession.session, {
+            createdAt: 100,
+            updatedAt: 900_000,
+            meaningfulActivityAt: 640_000,
+        });
+
+        expect(sortSessionListViewItemsByOrderingMode(source, 'updated')).toBe(source);
+    });
+
+    it('sorts updated-mode groups when meaningful activity crosses a bucket boundary', () => {
+        const firstSession = makeSessionItem({ serverId: 's1', sessionId: 'older-bucket', groupKey: 'g' });
+        const secondSession = makeSessionItem({ serverId: 's1', sessionId: 'newer-bucket', groupKey: 'g' });
+        const source: SessionListViewItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: 'g', serverId: 's1' },
+            firstSession,
+            secondSession,
+        ];
+        Object.assign(firstSession.session, {
+            createdAt: 200,
+            updatedAt: 900_000,
+            meaningfulActivityAt: 590_000,
+        });
+        Object.assign(secondSession.session, {
+            createdAt: 100,
+            updatedAt: 100,
+            meaningfulActivityAt: 610_000,
+        });
+
+        const result = sortSessionListViewItemsByOrderingMode(source, 'updated');
+
+        expect(result.map((item) => (item.type === 'session' ? item.session.id : item.type))).toEqual([
+            'header',
+            'newer-bucket',
+            'older-bucket',
+        ]);
+    });
+
     it('reuses the same reordered array for repeated sorting of the same source and mode', () => {
         const firstSession = makeSessionItem({ serverId: 's1', sessionId: 'a', groupKey: 'g' });
         const secondSession = makeSessionItem({ serverId: 's1', sessionId: 'b', groupKey: 'g' });
@@ -71,8 +121,8 @@ describe('sessionListOrderingStateV1', () => {
             firstSession,
             secondSession,
         ];
-        (firstSession.session as any).updatedAt = 10;
-        (secondSession.session as any).updatedAt = 20;
+        Object.assign(firstSession.session, { createdAt: 10, updatedAt: 10, meaningfulActivityAt: 100 });
+        Object.assign(secondSession.session, { createdAt: 20, updatedAt: 20, meaningfulActivityAt: 650_000 });
 
         const first = sortSessionListViewItemsByOrderingMode(source, 'updated');
         const second = sortSessionListViewItemsByOrderingMode(source, 'updated');

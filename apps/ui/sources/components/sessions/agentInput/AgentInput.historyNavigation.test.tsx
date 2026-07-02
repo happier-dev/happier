@@ -68,6 +68,7 @@ installAgentInputCommonModuleMocks({
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
       useSetting: (key: string) => {
+        if (key in localSettingState.values) return localSettingState.values[key as keyof typeof localSettingState.values];
         if (key === 'profiles') return [];
         if (key === 'agentInputEnterToSend') return true;
         if (key === 'agentInputActionBarLayout') return 'wrap';
@@ -78,6 +79,10 @@ installAgentInputCommonModuleMocks({
       },
       useSettings: () => ({
         profiles: [],
+        keyboardShortcutsV2Enabled: localSettingState.values.keyboardShortcutsV2Enabled,
+        keyboardSingleKeyShortcutsEnabled: localSettingState.values.keyboardSingleKeyShortcutsEnabled,
+        keyboardShortcutOverridesV1: localSettingState.values.keyboardShortcutOverridesV1,
+        keyboardShortcutDisabledCommandIdsV1: localSettingState.values.keyboardShortcutDisabledCommandIdsV1,
         agentInputEnterToSend: true,
         agentInputActionBarLayout: 'wrap',
         agentInputChipDensity: 'labels',
@@ -125,6 +130,10 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 vi.mock('@/sync/domains/models/modelOptions', () => ({
+    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
+        options?.find?.((option: any) => option.value === effectiveModelId)
+            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
+            ?? null,
   getModelOptionsForSession: () => [{ value: 'default', label: 'Default' }],
   supportsFreeformModelSelectionForSession: () => false,
 }));
@@ -157,6 +166,11 @@ vi.mock('@/components/ui/forms/MultiTextInput', () => {
       setTextAndSelection: (text: string, selection: { start: number; end: number }) => {
         props.onChangeText?.(text);
         props.onStateChange?.({ text, selection });
+        props.onStateChange?.({ text, selection });
+        props.onSelectionChange?.(selection);
+      },
+      setSelection: (selection: MockMultiTextInputSelection) => {
+        const text = typeof props.value === 'string' ? props.value : '';
         props.onStateChange?.({ text, selection });
         props.onSelectionChange?.(selection);
       },
@@ -238,6 +252,10 @@ function findMultiTextInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
   const nodes = screen.findAll((node) => (node.type as any) === 'MultiTextInput');
   expect(nodes.length).toBe(1);
   return nodes[0]!;
+}
+
+function findAllByTestID(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
+  return screen.findAll((node) => String(node.type) === 'Pressable' && node.props?.testID === testID);
 }
 
 describe('AgentInput (history navigation)', () => {
@@ -377,6 +395,69 @@ describe('AgentInput (history navigation)', () => {
     expect(handled).toBe(true);
     expect(mocks.onSend).toHaveBeenCalledTimes(1);
     expect(mocks.onSend).toHaveBeenCalledWith({ forceImmediate: true });
+  });
+
+  it('does not optimistically clear existing-session text before send acknowledgement', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(
+      <AgentInput
+        sessionId="s1"
+        value="draft"
+        onChangeText={mocks.onChangeText}
+        placeholder="p"
+        onSend={mocks.onSend}
+        autocompletePrefixes={[]}
+        autocompleteSuggestions={async () => []}
+        isSendDisabled={false}
+        disabled={false}
+        showAbortButton={false}
+      />
+    );
+
+    const input = findMultiTextInput(screen);
+
+    await act(async () => {
+      input.props.onKeyPress?.({ key: 'Enter', shiftKey: false });
+    });
+
+    expect(mocks.onSend).toHaveBeenCalledTimes(1);
+    expect(mocks.onChangeText).not.toHaveBeenCalledWith('');
+  });
+
+  it('uses the pending-send shortcut delivery intent', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(
+      <AgentInput
+        sessionId="s1"
+        value="draft"
+        onChangeText={mocks.onChangeText}
+        placeholder="p"
+        onSend={mocks.onSend}
+        autocompletePrefixes={[]}
+        autocompleteSuggestions={async () => []}
+        isSendDisabled={false}
+        disabled={false}
+        showAbortButton={false}
+      />
+    );
+
+    const input = findMultiTextInput(screen);
+
+    let handled: any = null;
+    await act(async () => {
+      handled = input.props.onKeyPress?.({
+        key: 'Enter',
+        code: 'Enter',
+        shiftKey: true,
+        metaKey: true,
+        platformOS: 'web',
+        webPlatform: 'MacIntel',
+      });
+    });
+
+    expect(handled).toBe(true);
+    expect(mocks.onSend).toHaveBeenCalledTimes(1);
+    expect(mocks.onSend).toHaveBeenCalledWith({ deliveryIntent: 'server_pending' });
   });
 
   it('does not treat Ctrl+Enter as immediate-send on Apple web platforms', async () => {
@@ -878,5 +959,112 @@ describe('AgentInput (history navigation)', () => {
     });
 
     expect(mocks.historyWarmup).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes persisted input scroll and selection callbacks to the text input', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const onScrollYChange = vi.fn();
+    const onSelectionChangePersist = vi.fn();
+    const screen = await renderScreen(<AgentInput
+          value="draft"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          disabled={false}
+          showAbortButton={false}
+          inputPersistence={{
+            initialScrollY: 44,
+            initialSelection: { start: 1, end: 3 },
+            restoreToken: 'session:s1:1',
+            onScrollYChange,
+            onSelectionChangePersist,
+          }}
+        />);
+
+    const input = findMultiTextInput(screen);
+    expect(input.props.initialScrollY).toBe(44);
+    expect(input.props.scrollRestoreToken).toBe('session:s1:1');
+    expect(input.props.onScrollYChange).toBe(onScrollYChange);
+
+    await act(async () => {
+      input.props.onStateChange?.({
+        text: 'draft',
+        selection: { start: 2, end: 4 },
+      });
+    });
+
+    expect(onSelectionChangePersist).toHaveBeenCalledWith({ start: 2, end: 4 }, 5);
+  });
+
+  it('shows an expansion toggle when persisted expansion is available and input content overflows', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const onToggle = vi.fn();
+    const screen = await renderScreen(<AgentInput
+          sessionId="s1"
+          value="large draft"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          disabled={false}
+          showAbortButton={false}
+          inputExpansion={{
+            expanded: false,
+            collapsedMaxHeight: 80,
+            onToggle,
+          }}
+        />);
+
+    const input = findMultiTextInput(screen);
+    expect(findAllByTestID(screen, 'agent-input-expand-toggle')).toHaveLength(0);
+
+    await act(async () => {
+      input.props.onContentHeightChange?.(96);
+    });
+
+    const toggles = findAllByTestID(screen, 'agent-input-expand-toggle');
+    expect(toggles).toHaveLength(1);
+
+    await act(async () => {
+      toggles[0]!.props.onPress();
+    });
+
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not pause history browsing for extra textarea events after applying a history entry', async () => {
+    mocks.historyIsBrowsing.mockReturnValue(true);
+    mocks.historyHasRetainedSession.mockReturnValue(true);
+    mocks.historyMoveUp.mockReturnValue('older message');
+
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+          value="previous message"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled={false}
+          showAbortButton={false}
+        />);
+
+    const input = findMultiTextInput(screen);
+    await act(async () => {
+      input.props.onStateChange?.({ text: 'previous message', selection: { start: 0, end: 0 } });
+    });
+    mocks.historyPause.mockClear();
+
+    await act(async () => {
+      input.props.onKeyPress?.({ key: 'ArrowUp', shiftKey: false });
+      input.props.onStateChange?.({ text: 'older message', selection: { start: 13, end: 13 } });
+    });
+
+    expect(mocks.historyPause).not.toHaveBeenCalled();
   });
 });

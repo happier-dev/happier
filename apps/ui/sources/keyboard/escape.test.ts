@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+    ESCAPE_LAYER_PRIORITIES,
     dispatchEscapeToLayerStack,
     getMaxEscapeKeyBlockerPriority,
     isEscapeEventHandled,
@@ -64,6 +65,12 @@ describe('escape layer stack', () => {
 
         unregisterBlocker();
         unregisterLayer();
+    });
+
+    it('places session-list selection below panes and overlays but above ordinary focus layers', () => {
+        expect(ESCAPE_LAYER_PRIORITIES.sessionListSelection).toBeGreaterThan(ESCAPE_LAYER_PRIORITIES.focusSessionSurface);
+        expect(ESCAPE_LAYER_PRIORITIES.sessionListSelection).toBeLessThan(ESCAPE_LAYER_PRIORITIES.pane);
+        expect(ESCAPE_LAYER_PRIORITIES.sessionListSelection).toBeLessThan(ESCAPE_LAYER_PRIORITIES.overlay);
     });
 
     it('marks escape events handled defensively', () => {

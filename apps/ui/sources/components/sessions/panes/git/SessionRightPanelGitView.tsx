@@ -39,6 +39,7 @@ import {
     useSessionProjectScmOperationLog,
     useSessionProjectScmSnapshot,
     useSessionProjectScmSnapshotError,
+    useSessionRealtimeScmTranscriptConsumer,
     useSessionProjectScmTouchedPaths,
     useSetting,
     useSettingMutable,
@@ -53,6 +54,7 @@ import { WorkspaceScmHistoryTab } from '@/components/workspaces/scm/WorkspaceScm
 import { WorkspaceScmUpdateTab } from '@/components/workspaces/scm/WorkspaceScmUpdateTab';
 import { useSessionRightPanelGitTabState } from './useSessionRightPanelGitTabState';
 import { useSessionRightPanelGitOpenDetails } from './useSessionRightPanelGitOpenDetails';
+import { shouldLoadSessionGitHistory } from './shouldLoadSessionGitHistory';
 import type { SourceControlRemoteAction } from '@/components/workspaces/scm/SourceControlRemoteActionsRail';
 import { SourceControlRemotesSection } from '@/components/workspaces/scm/update/SourceControlRemotesSection';
 import { SourceControlBranchIntegrationSection } from '@/components/workspaces/scm/update/SourceControlBranchIntegrationSection';
@@ -131,6 +133,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const scmSnapshot = useSessionProjectScmSnapshot(props.sessionId);
     const lastGoodScmSnapshot = useLastNonNullValue(scmSnapshot, { resetKey: props.sessionId });
     const effectiveScmSnapshot = scmSnapshot ?? lastGoodScmSnapshot;
+    useSessionRealtimeScmTranscriptConsumer(props.sessionId, effectiveScmSnapshot);
     const scmSnapshotError = useSessionProjectScmSnapshotError(props.sessionId);
     const touchedPaths = useSessionProjectScmTouchedPaths(props.sessionId);
     const operationLog = useSessionProjectScmOperationLog(props.sessionId);
@@ -185,6 +188,9 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     const refreshScmData = React.useCallback(async () => {
         await scmStatusSync.invalidateFromUserAndAwait(props.sessionId);
     }, [props.sessionId]);
+    const refreshScmDataFromAutoRefresh = React.useCallback(async () => {
+        await scmStatusSync.invalidateFromAutoRefreshAndAwait(props.sessionId);
+    }, [props.sessionId]);
 
     const initialRefreshKey = `${props.sessionId}:${sessionPath ?? ''}`;
     const didInitialRefreshKeyRef = React.useRef<string | null>(null);
@@ -193,13 +199,8 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     React.useEffect(() => {
         if (didInitialRefreshKeyRef.current === initialRefreshKey) return;
         didInitialRefreshKeyRef.current = initialRefreshKey;
-        void refreshScmData();
-
-        if (!sessionPath) return;
-        if (didInitCommitHistoryKeyRef.current === commitHistoryInitKey) return;
-        didInitCommitHistoryKeyRef.current = commitHistoryInitKey;
-        void loadCommitHistory({ reset: true });
-    }, [commitHistoryInitKey, initialRefreshKey, loadCommitHistory, refreshScmData, sessionPath]);
+        void refreshScmDataFromAutoRefresh();
+    }, [initialRefreshKey, refreshScmDataFromAutoRefresh]);
 
     useScmAdaptivePolling({
         enabled: Boolean(props.sessionId) && Boolean(sessionPath),
@@ -207,9 +208,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
         stepIntervalMs: baseIntervalMs,
         maxIntervalMs,
         getSignature: getSnapshotSignature,
-        invalidateAndAwait: React.useCallback(async () => {
-            await scmStatusSync.invalidateFromAutoRefreshAndAwait(props.sessionId);
-        }, [props.sessionId]),
+        invalidateAndAwait: refreshScmDataFromAutoRefresh,
     });
 
     const {
@@ -268,9 +267,14 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
     }, [activeGitSubTab, displayActiveGitSubTab, setActiveGitSubTab]);
 
     React.useEffect(() => {
-        if (displayActiveGitSubTab !== 'history') return;
-        if (!sessionPath) return;
-        if (didInitCommitHistoryKeyRef.current === commitHistoryInitKey) return;
+        if (!shouldLoadSessionGitHistory({
+            activeSubTab: displayActiveGitSubTab,
+            sessionPath,
+            commitHistoryInitKey,
+            loadedCommitHistoryInitKey: didInitCommitHistoryKeyRef.current,
+        })) {
+            return;
+        }
         didInitCommitHistoryKeyRef.current = commitHistoryInitKey;
         void loadCommitHistory({ reset: true });
     }, [commitHistoryInitKey, displayActiveGitSubTab, loadCommitHistory, sessionPath]);

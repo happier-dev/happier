@@ -51,12 +51,17 @@ vi.mock('./ChatFooter', () => ({
 
 vi.mock('./MessageView', () => ({
   MessageView: () => React.createElement('MessageView'),
+  MessageViewWithSessionCommon: () => React.createElement('MessageViewWithSessionCommon'),
 }));
 
 vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
   TurnView: (props: any) => {
     renderedTurnViewProps.push(props);
     return React.createElement('TurnView', props);
+  },
+  TurnViewWithSessionCommon: (props: any) => {
+    renderedTurnViewProps.push(props);
+    return React.createElement('TurnViewWithSessionCommon', props);
   },
 }));
 
@@ -173,13 +178,69 @@ describe('ChatList (turn thinking expansion wiring)', () => {
     };
 
     await act(async () => {
-      await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} />);
+      // Message updates bump the session seq in production; the ChatList memo
+      // (buildTranscriptRenderSignature) needs a signature-relevant change to re-render.
+      await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState, seq: 1 }} />);
     });
 
     const lastTurnProps = renderedTurnViewProps[renderedTurnViewProps.length - 1];
     expect(typeof lastTurnProps?.getMessageById).toBe('function');
     expect(lastTurnProps?.getMessageById?.('u1')?.text).toBe('updated user');
     expect(lastTurnProps?.getMessageById?.('a1')?.text).toBe('updated answer');
+
+    await screen.unmount();
+  });
+
+  it('passes transcript session common into TurnView when in turns mode', async () => {
+    legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+    legacyChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
+    legacyChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    legacyChatListHarnessState.settingValues.transcriptListImplementation = 'flatlist_legacy';
+    legacyChatListHarnessState.settingValues.sessionThinkingDisplayMode = 'inline';
+    legacyChatListHarnessState.settingValues.sessionThinkingInlinePresentation = 'summary';
+    legacyChatListHarnessState.settingValues.sessionThinkingInlineChrome = 'plain';
+    legacyChatListHarnessState.settingValues.transcriptStreamingSmoothingEnabled = false;
+    legacyChatListHarnessState.settingValues.transcriptStreamingSettleDelayMs = 0;
+    legacyChatListHarnessState.settingValues.transcriptStreamingPartialOutputEnabled = true;
+    legacyChatListHarnessState.settingValues.transcriptStreamingMarkdownRenderingEnabled = false;
+    legacyChatListHarnessState.settingValues.transcriptMessageTimestampDisplayMode = 'always';
+    legacyChatListHarnessState.settingValues.sessionReplayEnabled = false;
+    legacyChatListHarnessState.settingValues.sessionReplayStrategy = 'recent_messages';
+    legacyChatListHarnessState.settingValues.sessionReplaySummaryRunnerV1 = null;
+    legacyChatListHarnessState.settingValues.sessionReplayMaxSeedChars = 120_000;
+    legacyChatListHarnessState.settingValues.toolViewTimelineChromeMode = 'cards';
+    legacyChatListHarnessState.settingValues.transcriptToolCallsCollapsedPreviewCount = 1;
+    legacyChatListHarnessState.settingValues.transcriptToolCallsGroupShowBackground = false;
+
+    const userMessage = { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'hi' };
+    const agentMessage = { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'answer', isThinking: false };
+    legacyChatListHarnessState.sessionMessagesState = {
+      isLoaded: true,
+      messages: [userMessage, agentMessage],
+    };
+    buildChatListItemsMock.mockReturnValue([
+      { kind: 'message', id: userMessage.id, messageId: userMessage.id, createdAt: userMessage.createdAt, seq: null },
+      { kind: 'message', id: agentMessage.id, messageId: agentMessage.id, createdAt: agentMessage.createdAt, seq: null },
+    ]);
+
+    const screen = await renderLegacyChatList();
+
+    const firstTurnProps = renderedTurnViewProps[0];
+    expect(firstTurnProps?.messageDisplayCommon).toEqual(expect.objectContaining({
+      sessionThinkingDisplayMode: 'inline',
+      transcriptMessageTimestampDisplayMode: 'always',
+    }));
+    expect(firstTurnProps?.forkCommon).toEqual(expect.objectContaining({
+      sessionReplayEnabled: false,
+      sessionReplayStrategy: 'recent_messages',
+    }));
+    expect(firstTurnProps?.toolChromeCommon).toEqual(expect.objectContaining({
+      toolViewTimelineChromeMode: 'cards',
+      transcriptToolCallsCollapsedPreviewCount: 1,
+    }));
+    expect(firstTurnProps?.toolRouteCommon).toEqual(expect.objectContaining({
+      reducerState: null,
+    }));
 
     await screen.unmount();
   });

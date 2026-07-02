@@ -6,84 +6,123 @@ import {
     endSessionViewingActivation,
     shouldSuppressAutomaticMarkViewed,
 } from '@/sync/domains/session/readState/sessionManualUnreadHold';
-import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 
+const SESSION_VIEWED_SEQ_CHANGE_MARK_DELAY_MS = 250;
+
 export type UseSessionViewedLifecycleInput = Readonly<{
     sessionId: string;
-    sessionSeq: number | null;
+    visibleReadSeq: number | null;
     surfaceFocused: boolean;
 }>;
+
+function normalizeVisibleReadSeq(value: number | null): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    return Math.max(0, Math.trunc(value));
+}
 
 export function useSessionViewedLifecycle(input: UseSessionViewedLifecycleInput): void {
     const markViewedTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastMarkedRef = React.useRef<{ sessionSeq: number } | null>(null);
+    const pendingMarkRef = React.useRef<{ sessionSeq: number } | null>(null);
     const activationIdRef = React.useRef<number | null>(null);
+    const visibleReadSeqRef = React.useRef<number | null>(null);
+    const activeViewingSeqRef = React.useRef<{
+        sessionId: string;
+        activationId: number;
+        visibleReadSeq: number | null;
+    } | null>(null);
+    const currentVisibleReadSeq = normalizeVisibleReadSeq(input.visibleReadSeq);
+    visibleReadSeqRef.current = currentVisibleReadSeq;
 
-    const markSessionViewed = React.useCallback((opts?: { sessionSeq?: number }) => {
+    const clearDelayedMark = React.useCallback(() => {
+        if (markViewedTimeoutRef.current) {
+            clearTimeout(markViewedTimeoutRef.current);
+            markViewedTimeoutRef.current = null;
+        }
+        pendingMarkRef.current = null;
+    }, []);
+
+    const markSessionViewed = React.useCallback((opts: { sessionSeq: number; activationId: number | null }) => {
+        const sessionSeq = normalizeVisibleReadSeq(opts.sessionSeq);
+        if (sessionSeq === null) return;
+        if (shouldSuppressAutomaticMarkViewed({
+            sessionId: input.sessionId,
+            sessionSeq,
+            activationId: opts.activationId,
+        })) {
+            return;
+        }
         fireAndForget(
-            sync.markSessionViewed(input.sessionId, opts).then(() => {
-                clearManualUnreadHold({ sessionId: input.sessionId });
+            sync.markSessionViewed(input.sessionId, { sessionSeq }).then(() => {
+                clearManualUnreadHold({ sessionId: input.sessionId, activationId: opts.activationId });
             }),
             { tag: 'SessionView.markSessionViewed' },
         );
     }, [input.sessionId]);
+
+    React.useLayoutEffect(() => {
+        const active = activeViewingSeqRef.current;
+        if (active?.sessionId === input.sessionId) {
+            active.visibleReadSeq = currentVisibleReadSeq;
+        }
+    }, [currentVisibleReadSeq, input.sessionId]);
 
     React.useEffect(() => {
         if (!input.surfaceFocused) return;
 
         const activationId = beginSessionViewingActivation(input.sessionId);
         activationIdRef.current = activationId;
-        const current = storage.getState().sessions[input.sessionId];
-        if (shouldSuppressAutomaticMarkViewed({
+        const initialVisibleSeq = visibleReadSeqRef.current;
+        activeViewingSeqRef.current = {
             sessionId: input.sessionId,
-            sessionSeq: current?.seq ?? 0,
             activationId,
-        })) {
-            return () => {
-                endSessionViewingActivation(input.sessionId, activationId);
-                if (activationIdRef.current === activationId) {
-                    activationIdRef.current = null;
-                }
-            };
-        }
-
-        lastMarkedRef.current = {
-            sessionSeq: current?.seq ?? 0,
+            visibleReadSeq: initialVisibleSeq,
         };
-        const cancelMarkViewed = runAfterInteractionsWithFallback(markSessionViewed);
+        lastMarkedRef.current = initialVisibleSeq === null ? null : { sessionSeq: initialVisibleSeq };
+        const cancelMarkViewed = initialVisibleSeq === null
+            ? () => {}
+            : runAfterInteractionsWithFallback(() => {
+                markSessionViewed({ sessionSeq: initialVisibleSeq, activationId });
+            });
 
         return () => {
-            const sessionSeqAtBlur = storage.getState().sessions[input.sessionId]?.seq ?? 0;
-            cancelMarkViewed();
-            if (markViewedTimeoutRef.current) {
-                clearTimeout(markViewedTimeoutRef.current);
-                markViewedTimeoutRef.current = null;
+            const activeViewingSeq = activeViewingSeqRef.current;
+            const activeViewingSeqMatches = activeViewingSeq?.sessionId === input.sessionId
+                && activeViewingSeq.activationId === activationId;
+            const sessionSeqAtBlur = activeViewingSeqMatches ? activeViewingSeq.visibleReadSeq : initialVisibleSeq;
+            if (activeViewingSeqMatches) {
+                activeViewingSeqRef.current = null;
             }
-            runAfterInteractionsWithFallback(() => {
-                if (!shouldSuppressAutomaticMarkViewed({
-                    sessionId: input.sessionId,
-                    sessionSeq: sessionSeqAtBlur,
-                    activationId,
-                })) {
-                    markSessionViewed({ sessionSeq: sessionSeqAtBlur });
-                }
-            });
+            cancelMarkViewed();
+            clearDelayedMark();
+            if (sessionSeqAtBlur !== null && !shouldSuppressAutomaticMarkViewed({
+                sessionId: input.sessionId,
+                sessionSeq: sessionSeqAtBlur,
+                activationId,
+            })) {
+                runAfterInteractionsWithFallback(() => {
+                    markSessionViewed({ sessionSeq: sessionSeqAtBlur, activationId });
+                });
+            }
             endSessionViewingActivation(input.sessionId, activationId);
             if (activationIdRef.current === activationId) {
                 activationIdRef.current = null;
             }
         };
-    }, [input.sessionId, input.surfaceFocused, markSessionViewed]);
+    }, [clearDelayedMark, input.sessionId, input.surfaceFocused, markSessionViewed]);
 
     React.useEffect(() => {
         if (!input.surfaceFocused) return;
 
-        const sessionSeq = input.sessionSeq ?? 0;
+        const sessionSeq = normalizeVisibleReadSeq(input.visibleReadSeq);
+        if (sessionSeq === null) return;
         const last = lastMarkedRef.current;
         if (last && last.sessionSeq >= sessionSeq) return;
+        const pending = pendingMarkRef.current;
+        if (pending && pending.sessionSeq >= sessionSeq) return;
 
         if (shouldSuppressAutomaticMarkViewed({
             sessionId: input.sessionId,
@@ -93,20 +132,16 @@ export function useSessionViewedLifecycle(input: UseSessionViewedLifecycleInput)
             return;
         }
 
-        lastMarkedRef.current = { sessionSeq };
-        if (markViewedTimeoutRef.current) {
-            clearTimeout(markViewedTimeoutRef.current);
-        }
+        clearDelayedMark();
+        pendingMarkRef.current = { sessionSeq };
+        const activationId = activationIdRef.current;
         markViewedTimeoutRef.current = setTimeout(() => {
             markViewedTimeoutRef.current = null;
-            markSessionViewed();
-        }, 250);
+            pendingMarkRef.current = null;
+            lastMarkedRef.current = { sessionSeq };
+            markSessionViewed({ sessionSeq, activationId });
+        }, SESSION_VIEWED_SEQ_CHANGE_MARK_DELAY_MS);
 
-        return () => {
-            if (markViewedTimeoutRef.current) {
-                clearTimeout(markViewedTimeoutRef.current);
-                markViewedTimeoutRef.current = null;
-            }
-        };
-    }, [input.sessionSeq, input.surfaceFocused, markSessionViewed]);
+        return clearDelayedMark;
+    }, [clearDelayedMark, input.sessionId, input.visibleReadSeq, input.surfaceFocused, markSessionViewed]);
 }

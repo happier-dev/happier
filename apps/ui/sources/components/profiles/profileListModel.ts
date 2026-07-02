@@ -1,4 +1,5 @@
 import { buildProfileGroups, type ProfileGroups } from '@/sync/domains/profiles/profileGrouping';
+import type { ProfileEnabledById } from '@/sync/domains/profiles/profileEnablement';
 import { isProfileCompatibleWithAgent, type AIBackendProfile, type ProfileCompatibilitySummary } from '@/sync/domains/profiles/profileCompatibility';
 import { t } from '@/text';
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
@@ -80,10 +81,14 @@ export function buildProfilesListGroups(params: {
     customProfiles: AIBackendProfile[];
     favoriteProfileIds: string[];
     enabledAgentIds?: readonly AgentId[];
+    profileEnabledById?: ProfileEnabledById | null;
+    includeDisabledProfiles?: boolean;
 }): ProfileGroups {
     return buildProfileGroups({
         customProfiles: params.customProfiles,
         favoriteProfileIds: params.favoriteProfileIds,
         enabledAgentIds: params.enabledAgentIds,
+        profileEnabledById: params.profileEnabledById,
+        includeDisabledProfiles: params.includeDisabledProfiles,
     });
 }

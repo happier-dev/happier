@@ -32,6 +32,10 @@ vi.mock('./MessageView', () => ({
         capturedMessageViewProps.push(props);
         return React.createElement('MessageView', props);
     },
+    MessageViewWithSessionCommon: (props: any) => {
+        capturedMessageViewProps.push(props);
+        return React.createElement('MessageView', props);
+    },
 }));
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptEnterWrapper', () => ({
@@ -58,6 +62,16 @@ vi.mock('@/components/sessions/transcript/TranscriptRollbackActionButton', () =>
     TranscriptRollbackActionButton: (props: any) => React.createElement('TranscriptRollbackActionButton', props),
 }));
 
+vi.mock('@/components/sessions/keyboardAvoidance', async () => {
+    const ReactMod = await import('react');
+    type KeyboardAvoidanceProps = { children?: React.ReactNode };
+    return {
+        ComposerKeyboardFloatingInset: (props: KeyboardAvoidanceProps) =>
+            ReactMod.createElement(ReactMod.Fragment, null, props.children),
+        ComposerKeyboardScrollInset: () => null,
+    };
+});
+
 vi.mock('@/components/sessions/transcript/turns/TurnView', async (importOriginal) => {
     const ReactMod = await import('react');
     const actual = await importOriginal<any>();
@@ -65,6 +79,10 @@ vi.mock('@/components/sessions/transcript/turns/TurnView', async (importOriginal
         TurnView: (props: any) => {
             capturedTurnViewProps.push(props);
             return ReactMod.createElement(actual.TurnView, props);
+        },
+        TurnViewWithSessionCommon: (props: any) => {
+            capturedTurnViewProps.push(props);
+            return ReactMod.createElement(actual.TurnViewWithSessionCommon, props);
         },
     };
 });
@@ -79,6 +97,7 @@ vi.mock('@/components/sessions/actions/SessionActionDraftCard', () => ({
 
 vi.mock('@/components/sessions/transcript/toolCalls/ToolCallsGroupRow', () => ({
     ToolCallsGroupRow: () => React.createElement('ToolCallsGroupRow'),
+    ToolCallsGroupRowWithSessionCommon: () => React.createElement('ToolCallsGroupRow'),
 }));
 
 vi.mock('@/sync/domains/state/agentStateCapabilities', () => ({
@@ -103,6 +122,12 @@ vi.mock('@/sync/sync', () => ({
         }),
     },
 }));
+
+function rollbackEligibleTurnStarts(startSeqs: readonly number[]): Record<string, unknown> {
+    return {
+        rollbackEligibleTurnStarts: startSeqs,
+    };
+}
 
 describe('ChatList rollback action', () => {
     beforeEach(() => {
@@ -141,6 +166,7 @@ describe('ChatList rollback action', () => {
                     ranges: [{ target: { type: 'latest_turn' }, startSeqInclusive: 3, endSeqInclusive: 3, rolledBackAt: 99 }],
                 },
             },
+            ...rollbackEligibleTurnStarts([1]),
         };
 
         const messages = [
@@ -176,6 +202,14 @@ describe('ChatList rollback action', () => {
 
     it('does not place rollback actions on tool-call or agent messages when rollback-to-point is available', async () => {
         legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
+        legacyChatListHarnessState.sessionState = {
+            ...legacyChatListHarnessState.sessionState,
+            metadata: {
+                flavor: 'codex',
+                codexBackendMode: 'appServer',
+            },
+            ...rollbackEligibleTurnStarts([1]),
+        };
 
         const messages = [
             { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'first', seq: 1 },
@@ -251,6 +285,14 @@ describe('ChatList rollback action', () => {
 
     it('keeps rollback-to-point attached to user messages when turn grouping is enabled', async () => {
         legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+        legacyChatListHarnessState.sessionState = {
+            ...legacyChatListHarnessState.sessionState,
+            metadata: {
+                flavor: 'codex',
+                codexBackendMode: 'appServer',
+            },
+            ...rollbackEligibleTurnStarts([1, 3]),
+        };
 
         const messages = [
             { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'first', seq: 1 },
@@ -286,7 +328,7 @@ describe('ChatList rollback action', () => {
         await screen.unmount();
     });
 
-    it('shows rollback for older Codex app-server sessions that only have generic codex control metadata', async () => {
+    it('hides point rollback for Codex app-server sessions without trusted turn metadata', async () => {
         legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
         legacyChatListHarnessState.sessionState = {
             ...legacyChatListHarnessState.sessionState,
@@ -320,16 +362,21 @@ describe('ChatList rollback action', () => {
         const screen = await renderLegacyChatList();
 
         const byId = new Map(capturedMessageViewProps.map((props) => [props.message.id, props]));
-        expect(byId.get('u1')?.rollbackAction).toEqual({
-            target: { type: 'before_user_message', userMessageSeq: 1 },
-            restoredDraftText: 'first',
-        });
+        expect(byId.get('u1')?.rollbackAction ?? null).toBeNull();
 
         await screen.unmount();
     });
 
     it('projects checkpoint rollback evidence from canonical turn change sets through the normal ChatList resolver path', async () => {
         legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
+        legacyChatListHarnessState.sessionState = {
+            ...legacyChatListHarnessState.sessionState,
+            metadata: {
+                flavor: 'codex',
+                codexBackendMode: 'appServer',
+            },
+            ...rollbackEligibleTurnStarts([1]),
+        };
 
         const messages = [
             { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'first', seq: 1 },

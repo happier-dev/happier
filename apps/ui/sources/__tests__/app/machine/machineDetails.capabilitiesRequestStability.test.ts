@@ -197,6 +197,7 @@ vi.mock('@/utils/path/pathUtils', () => {
 });
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
     getActiveServerId: () => activeServerIdRef.current,
 }));
 

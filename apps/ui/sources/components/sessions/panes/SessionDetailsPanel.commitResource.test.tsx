@@ -7,10 +7,6 @@ import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPan
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => ({ top: 24, bottom: 12, left: 0, right: 0 }),
-}));
-
 installSessionDetailsPanelCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -45,7 +41,12 @@ installSessionDetailsPanelCommonModuleMocks({
 });
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
+    Typography: {
+        default: () => ({}),
+        mono: () => ({}),
+        eyebrow: () => ({}),
+        keyHint: () => ({}),
+    },
 }));
 
 const closeDetailsSpy = vi.fn();
@@ -100,24 +101,5 @@ describe('SessionDetailsPanel (commit resource)', () => {
         expect(tree).toBeTruthy();
         expect(commitViewSpy).toHaveBeenCalledTimes(1);
         expect(commitViewSpy.mock.calls[0]?.[0]?.sha).toBe('abc1234');
-    });
-
-    it('pads the panel root by the iOS safe-area inset at the top', async () => {
-        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-
-        const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
-        const workspaceRoot = screen.findByTestId('session-details-panel-root');
-        if (!workspaceRoot) {
-            throw new Error('Expected the session details panel root to be rendered.');
-        }
-        const root = workspaceRoot.find((node) => (
-            node !== workspaceRoot
-            && typeof node.props?.onWheel === 'function'
-            && typeof node.props?.onTouchMove === 'function'
-        ));
-        const rootStyle = Array.isArray(root.props.style)
-            ? Object.assign({}, ...root.props.style.filter(Boolean))
-            : root.props.style;
-        expect(rootStyle.paddingTop).toBe(24);
     });
 });

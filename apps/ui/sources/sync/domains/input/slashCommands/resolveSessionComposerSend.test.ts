@@ -29,6 +29,13 @@ describe('resolveSessionComposerSend', () => {
         });
     });
 
+    it('intercepts /goal complete as a client-side goal status command', () => {
+        expect(resolveSessionComposerSend({ input: '/goal complete', executionRunsEnabled: true })).toEqual({
+            kind: 'goal',
+            command: 'complete',
+        });
+    });
+
     it('intercepts configured template tokens', () => {
         const resolved = resolveSessionComposerSend({
             input: '/foo bar',

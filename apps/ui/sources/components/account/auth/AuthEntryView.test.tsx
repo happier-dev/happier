@@ -117,4 +117,60 @@ describe('AuthEntryView', () => {
 
         expect(onCreateAccount).toHaveBeenCalled();
     });
+
+    it('keeps a secondary keyless provider login action when anonymous signup stays primary', async () => {
+        const onCreateAccount = vi.fn();
+        const onLoginWithKeylessProvider = vi.fn();
+
+        const screen = await renderScreen(
+            <AuthEntryView
+                layout="portrait"
+                isDesktopShell={false}
+                options={{
+                    serverAvailability: 'ready',
+                    serverUrlForCopy: 'https://relay.example.test',
+                    showAuthActions: true,
+                    showProviderSignup: false,
+                    showAnonymousSignup: true,
+                    showMtlsLogin: false,
+                    showKeylessProviderLogin: true,
+                    providerId: null,
+                    keylessProviderId: 'github',
+                    providerSignupTitle: '',
+                    providerKeylessTitle: 'Continue with GitHub',
+                    anonymousSignupTitle: 'Create account',
+                    mtlsTitle: 'Sign in with certificate',
+                    primarySignupTitle: 'Create account',
+                    mtlsPrimary: false,
+                    keylessPrimary: false,
+                    autoRedirect: {
+                        enabled: false,
+                        providerId: null,
+                        toKeyedProvision: false,
+                        toKeylessLogin: false,
+                        toMtls: false,
+                        toLegacySignupProvider: false,
+                    },
+                    retryServerCheck: vi.fn(),
+                }}
+                onOpenSetup={vi.fn()}
+                onChangeRelay={vi.fn()}
+                onRestore={vi.fn()}
+                onCreateAccount={onCreateAccount}
+                onCreateAccountViaProvider={vi.fn()}
+                onLoginWithKeylessProvider={onLoginWithKeylessProvider}
+                onLoginWithMtls={vi.fn()}
+            />,
+        );
+
+        expect(screen.findByTestId('welcome-create-account')).toBeTruthy();
+        expect(screen.findByTestId('welcome-login-provider')).toBeTruthy();
+
+        await act(async () => {
+            await screen.findByTestId('welcome-login-provider')!.props.onPress?.();
+        });
+
+        expect(onCreateAccount).not.toHaveBeenCalled();
+        expect(onLoginWithKeylessProvider).toHaveBeenCalledWith('github');
+    });
 });

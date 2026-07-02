@@ -10,6 +10,8 @@ import {
     createUseLocalSettingMutableMock as createUseLocalSettingRuntimeMutableMock,
     createUseSettingMock as createUseSettingRuntimeMock,
     createUseSettingMutableMock as createUseSettingRuntimeMutableMock,
+    adaptStorageStoreLike,
+    isStorageStoreLike,
     type CreateUseLocalSettingMockOptions as CreateUseLocalSettingRuntimeMockOptions,
     type CreateUseSettingMockOptions as CreateUseSettingRuntimeMockOptions,
 } from '../runtime/storageRuntime';
@@ -27,7 +29,20 @@ function createVitestMutableSetter(): MutableSetter {
 }
 
 export async function createStorageModuleMock(options: CreateStorageModuleMockOptions): Promise<StorageModule> {
-    return mergeModuleMock<StorageModule>(options);
+    const module = await mergeModuleMock<StorageModule>(options);
+    const storageOverride = (options.overrides as { storage?: unknown }).storage;
+    if (isStorageStoreLike(storageOverride) && typeof storageOverride !== 'function') {
+        const storage = adaptStorageStoreLike(storageOverride);
+        return {
+            ...module,
+            storage,
+            getStorage: () => storage,
+        };
+    }
+    return {
+        ...module,
+        getStorage: () => module.storage,
+    };
 }
 
 export async function createPartialStorageModuleMock(

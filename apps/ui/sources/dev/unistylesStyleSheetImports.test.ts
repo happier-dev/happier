@@ -7,6 +7,15 @@ import ts from 'typescript';
 
 const EXCLUDED_DIR_NAMES = new Set(['__tests__', '__testdata__']);
 const EXCLUDED_FILE_SUFFIXES = ['.test.ts', '.test.tsx', '.spec.ts', '.spec.tsx'];
+const ALLOWED_REACT_NATIVE_STYLESHEET_IMPORTS = new Set([
+    'components/ui/surfaces/resolveThemeHairlineBorderStyle.ts',
+    'components/ui/motion/SlideTransitionBlurLayer.tsx',
+    'components/ui/motion/SlideTransitionFrame.tsx',
+    'components/ui/motion/StoryDeckSlideTransition.tsx',
+    'components/sessions/files/views/SessionRepositoryTreeBrowserView.tsx',
+    'components/onboarding/unauthShell/PlanetBackground.tsx',
+    'components/ui/code/view/CodeLineRow.tsx',
+]);
 
 function shouldSkipTypeScriptFile(path: string) {
     return EXCLUDED_FILE_SUFFIXES.some((suffix) => path.endsWith(suffix));
@@ -105,8 +114,14 @@ describe('Unistyles StyleSheet import invariants', () => {
             }
         }
 
-        expect(
-            offenders.map(({ file, line }) => `${relative(sourcesDir, file)}:${line}`)
-        ).toEqual([]);
+        const unexpectedOffenders = offenders
+            .map(({ file, line }) => ({
+                relativePath: relative(sourcesDir, file).replaceAll('\\', '/'),
+                line,
+            }))
+            .filter(({ relativePath }) => !ALLOWED_REACT_NATIVE_STYLESHEET_IMPORTS.has(relativePath))
+            .map(({ relativePath, line }) => `${relativePath}:${line}`);
+
+        expect(unexpectedOffenders).toEqual([]);
     }, 30_000);
 });

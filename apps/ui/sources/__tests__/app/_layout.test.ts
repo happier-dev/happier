@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
@@ -18,6 +18,9 @@ type PlatformSelectOptions<T> = {
 
 const platformState = vi.hoisted(() => ({
     os: 'web' as 'web' | 'ios',
+}));
+const notificationNativeState = vi.hoisted(() => ({
+    unavailable: false,
 }));
 const tauriDesktopState = vi.hoisted(() => ({
     value: false,
@@ -116,6 +119,9 @@ vi.mock('socket.io-client', () => {
 });
 
 vi.mock('expo-notifications', () => {
+    if (notificationNativeState.unavailable) {
+        throw new Error('expo-notifications native module unavailable');
+    }
     return {
         DEFAULT_ACTION_IDENTIFIER: 'default',
         getLastNotificationResponseAsync: vi.fn(async () => lastNotificationResponse),
@@ -138,6 +144,7 @@ vi.mock('@/constants/Typography', () => {
     return {
         Typography: {
             default: () => ({}),
+            header: () => ({}),
             mono: () => ({}),
         },
     };
@@ -316,6 +323,7 @@ afterEach(() => {
     router.replace.mockReset();
     router.push.mockReset();
     invokeTauriSpy.mockReset();
+    notificationNativeState.unavailable = false;
     lastNotificationResponse = null;
     platformState.os = 'web';
     tauriDesktopState.value = false;
@@ -358,6 +366,31 @@ describe('RootLayout hooks order', () => {
             }
         }
     }, 60_000);
+
+    it('renders a redirect instead of a blank tree for unauthenticated protected routes', async () => {
+        stubFeatureFetch();
+
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+
+        isAuthenticated = false;
+        segments = ['(app)', 'settings', 'account'];
+        pathname = '/settings/account';
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            const screen = await renderScreen(React.createElement(RootLayout));
+            tree = screen.tree;
+
+            const redirect = screen.findByType('Redirect' as never);
+            expect(redirect.props.href).toBe('/');
+        } finally {
+            if (tree) {
+                act(() => {
+                    tree!.unmount();
+                });
+            }
+        }
+    }, 30_000);
 });
 
 describe('RootLayout stack options', () => {
@@ -419,9 +452,53 @@ describe('RootLayout stack options', () => {
             }
         }
     }, 60_000);
+
+    it('does not freeze the native or web root index route', async () => {
+        stubFeatureFetch();
+
+        const { default: RootLayout } = await import('@/app/(app)/_layout');
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            platformState.os = 'ios';
+            tree = (await renderScreen(React.createElement(RootLayout))).tree;
+            const screens = tree.root.findAllByType('StackScreen');
+            const indexRoute = screens.find((node) => node.props?.name === 'index');
+            expect(indexRoute?.props?.options?.freezeOnBlur).not.toBe(true);
+            const frozenRoutes = screens
+                .filter((node) => node.props?.options?.freezeOnBlur === true)
+                .map((node) => node.props?.name);
+            expect(frozenRoutes).toEqual([]);
+
+            act(() => {
+                tree!.unmount();
+            });
+            tree = undefined;
+
+            platformState.os = 'web';
+            tree = (await renderScreen(React.createElement(RootLayout))).tree;
+            const webIndexRoute = tree.root
+                .findAllByType('StackScreen')
+                .find((node) => node.props?.name === 'index');
+            expect(webIndexRoute?.props?.options?.freezeOnBlur).not.toBe(true);
+        } finally {
+            if (tree) {
+                act(() => {
+                    tree!.unmount();
+                });
+            }
+        }
+    }, 30_000);
 });
 
 describe('RootLayout notification routing', () => {
+    it('does not fail app layout import when expo notifications are unavailable on native', async () => {
+        platformState.os = 'ios';
+        notificationNativeState.unavailable = true;
+
+        await expect(import('@/app/(app)/_layout')).resolves.toHaveProperty('default');
+    });
+
     it('ignores absolute URLs from notification payloads', async () => {
         stubFeatureFetch();
 
@@ -513,9 +590,11 @@ describe('RootLayout settings routes', () => {
 describe('RootLayout activity surfaces', () => {
     it('mounts the iOS activity surfaces runtime in the main app shell', async () => {
         stubFeatureFetch();
+        platformState.os = 'ios';
 
         const { default: RootLayout } = await import('@/app/(app)/_layout');
         const screen = await renderScreen(React.createElement(RootLayout));
+        await flushHookEffects();
 
         expect(screen.findAllByType('ActivitySurfacesRuntime')).toHaveLength(1);
     }, 60_000);
@@ -535,7 +614,7 @@ describe('RootLayout desktop window sizing', () => {
         expect(invokeTauriSpy).toHaveBeenCalledWith('desktop_set_window_mode', { mode: 'main' });
     }, 60_000);
 
-    it('shrinks the Tauri desktop window for unauthenticated users at the app shell', async () => {
+    it('keeps the standard Tauri desktop window mode for unauthenticated users at the app shell', async () => {
         stubFeatureFetch();
         tauriDesktopState.value = true;
         isAuthenticated = false;
@@ -545,7 +624,7 @@ describe('RootLayout desktop window sizing', () => {
         const { default: RootLayout } = await import('@/app/(app)/_layout');
         await renderScreen(React.createElement(RootLayout));
 
-        expect(invokeTauriSpy).toHaveBeenCalledWith('desktop_set_window_mode', { mode: 'preAuth' });
+        expect(invokeTauriSpy).toHaveBeenCalledWith('desktop_set_window_mode', { mode: 'main' });
     }, 60_000);
 });
 
@@ -574,9 +653,10 @@ describe('RootLayout auth recovery route hold', () => {
         syncErrorState = null;
 
         const { default: RootLayout } = await import('@/app/(app)/_layout');
-        await renderScreen(React.createElement(RootLayout));
+        const screen = await renderScreen(React.createElement(RootLayout));
 
-        expect(router.replace).toHaveBeenCalledWith('/');
+        const redirect = screen.findByType('Redirect' as never);
+        expect(redirect.props.href).toBe('/');
     }, 60_000);
 
     it('normalizes a nested stale-auth session route back to the base session route', async () => {

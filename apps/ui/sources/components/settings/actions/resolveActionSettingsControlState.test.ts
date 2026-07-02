@@ -212,6 +212,7 @@ describe('resolveActionSettingsTargetControlState', () => {
             disabledSurfaces: [],
             disabledPlacements: [],
             approvalRequiredSurfaces: ['mcp'],
+            toolExposureModes: {},
         });
     });
 });

@@ -623,6 +623,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
                 } catch {
                     // Best-effort share only.
                 }
+                await cleanupNativeSinkOnce();
             } else {
                 setDownloadState({ status: 'error', error: 'Download sink unavailable' });
                 return { ok: false, error: 'Download sink unavailable' };

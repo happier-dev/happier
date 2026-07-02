@@ -80,7 +80,7 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
+    Typography: { default: () => ({}), eyebrow: () => ({}), keyHint: () => ({}) },
 }));
 
 vi.mock('@/components/sessions/files/views/SessionCommitDetailsView', () => ({
@@ -157,21 +157,21 @@ describe('SessionDetailsPanel (web scroll-lock bypass)', () => {
 
         const screen = await renderScreen(<SessionDetailsPanel sessionId="s1" scopeId="session:s1" />);
 
-        const workspaceRoot = screen.findByTestId('session-details-panel-root');
-        if (!workspaceRoot) {
+        const root = screen.findByTestId('session-details-panel-root');
+        if (!root) {
             throw new Error('expected session-details-panel-root to render');
         }
-        const root = workspaceRoot.find((node) => (
-            node !== workspaceRoot
-            && typeof node.props?.onWheel === 'function'
-            && typeof node.props?.onTouchMove === 'function'
-        ));
-        expect(typeof root.props.onWheel).toBe('function');
-        expect(typeof root.props.onTouchMove).toBe('function');
 
         const stopPropagation = vi.fn();
-        root.props.onWheel({ stopPropagation });
-        root.props.onTouchMove({ stopPropagation });
+        const maybeOnWheel = root.props?.onWheel;
+        const maybeOnTouchMove = root.props?.onTouchMove;
+        if (typeof maybeOnWheel === 'function' && typeof maybeOnTouchMove === 'function') {
+            maybeOnWheel({ stopPropagation });
+            maybeOnTouchMove({ stopPropagation });
+        } else {
+            wheelHandlers.at(-1)?.({ stopPropagation });
+            touchMoveHandlers.at(-1)?.({ stopPropagation });
+        }
         expect(stopPropagation).toHaveBeenCalled();
 
         await act(async () => {

@@ -4,7 +4,9 @@ import {
     resolveDisplayMachineTargetForSessionFromState,
     resolveDisplayMachineIdForSessionFromState,
     resolveDisplayPathForSessionFromState,
+    resolveMachineControlTargetForSessionFromState,
     resolveMachineTargetForSessionFromState,
+    type SessionMachineControlTarget,
     type SessionMachineTargetState,
     type SessionTargetMetadataLike,
 } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
@@ -15,6 +17,12 @@ export function readMachineTargetForSession(
     sessionId: string,
 ): { machineId: string; basePath: string } | null {
     return resolveMachineTargetForSessionFromState(storage.getState() as SessionMachineTargetState, sessionId);
+}
+
+export function readMachineControlTargetForSession(
+    sessionId: string,
+): SessionMachineControlTarget | null {
+    return resolveMachineControlTargetForSessionFromState(storage.getState() as SessionMachineTargetState, sessionId);
 }
 
 export function readDisplayMachineIdForSession(input: Readonly<{
@@ -86,6 +94,7 @@ export {
     resolveDisplayMachineTargetForSessionFromState,
     resolveDisplayMachineIdForSessionFromState,
     resolveDisplayPathForSessionFromState,
+    resolveMachineControlTargetForSessionFromState,
     resolveMachineTargetForSessionFromState,
 };
-export type { SessionMachineTargetState };
+export type { SessionMachineControlTarget, SessionMachineTargetState };

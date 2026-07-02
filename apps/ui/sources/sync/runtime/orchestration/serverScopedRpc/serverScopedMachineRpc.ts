@@ -5,6 +5,7 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 import { resolveServerScopedContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedContext';
 import { resolveScopedMachineDataKey } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
@@ -153,7 +154,7 @@ async function machineRpcWithServerTransport<R, A>(params: ServerScopedMachineRp
     const runOnce = async (options?: { forceScoped?: boolean }): Promise<R> => {
         const preferScoped = options?.forceScoped === true || initialPreferScoped;
         const requestedScopedContext = preferScoped
-            || Boolean(requestedServerId && requestedServerId !== activeServerId);
+            || Boolean(requestedServerId && !areServerProfileIdentifiersEquivalent(requestedServerId, activeServerId));
         const context = await timeoutBudget.runWithinTimeout(
             requestedScopedContext ? 'scoped' : 'active',
             async (timeoutMs) =>

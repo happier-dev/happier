@@ -1,6 +1,5 @@
 import { router } from 'expo-router';
 import * as React from 'react';
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 import { normalizeServerUrl, setActiveServerAndSwitch, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
@@ -13,9 +12,14 @@ import {
     getPendingNotificationAction,
     setPendingNotificationAction,
 } from '@/sync/domains/pending/pendingNotificationAction';
+import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
 
 import { isUnsafeNotificationServerUrl, parseNotificationTap } from '../notificationRouting';
 import type { ActivityInteractionCommand } from '@/activity/actions/resolveActivityInteractionCommand';
+
+type ExpoNotificationsWithClear = ExpoNotificationsModule & Readonly<{
+    clearLastNotificationResponseAsync?: () => Promise<void>;
+}>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -145,10 +149,10 @@ export function useNotificationResponseRouting(params: Readonly<{
             }
         }
 
-        const maybeRedirectFromResponse = (response: unknown) => {
+        const maybeRedirectFromResponse = (response: unknown, defaultActionIdentifier: string) => {
             const parsed = parseNotificationTap({
                 response,
-                defaultActionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
+                defaultActionIdentifier,
             });
             if (!parsed) return;
             const command = parsed.command;
@@ -315,22 +319,32 @@ export function useNotificationResponseRouting(params: Readonly<{
             }
         };
 
-        void Notifications.getLastNotificationResponseAsync()
-            .then(async (response) => {
-                if (!response) return;
-                maybeRedirectFromResponse(response);
-                if (typeof (Notifications as any).clearLastNotificationResponseAsync === 'function') {
-                    await (Notifications as any).clearLastNotificationResponseAsync();
-                }
+        let disposed = false;
+        let subscription: { remove: () => void } | null = null;
+        void loadExpoNotifications()
+            .then((Notifications) => {
+                if (disposed) return;
+                const defaultActionIdentifier = Notifications.DEFAULT_ACTION_IDENTIFIER;
+                void Notifications.getLastNotificationResponseAsync()
+                    .then(async (response) => {
+                        if (!response) return;
+                        maybeRedirectFromResponse(response, defaultActionIdentifier);
+                        const clearLastNotificationResponseAsync = (Notifications as ExpoNotificationsWithClear).clearLastNotificationResponseAsync;
+                        if (typeof clearLastNotificationResponseAsync === 'function') {
+                            await clearLastNotificationResponseAsync();
+                        }
+                    })
+                    .catch(() => {});
+
+                subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+                    maybeRedirectFromResponse(response, defaultActionIdentifier);
+                });
             })
             .catch(() => {});
 
-        const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-            maybeRedirectFromResponse(response);
-        });
-
         return () => {
-            subscription.remove();
+            disposed = true;
+            subscription?.remove();
         };
     }, [params.enabled]);
 }

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as catalog from '@/agents/catalog/catalog';
 import { buildResumeSessionBaseOptionsFromSession } from './resumeSessionBase';
@@ -27,7 +27,47 @@ afterEach(() => {
     };
 });
 
+function setCanonicalSessionTarget(machineId: string, path: string): void {
+    storageState = {
+        sessions: {
+            s1: {
+                active: false,
+                updatedAt: 10,
+                metadata: { machineId, path, homeDir: '/Users/test', host: 'host.local' },
+            },
+        },
+        machines: {
+            [machineId]: {
+                id: machineId,
+                active: true,
+                activeAt: 20,
+                metadata: { host: 'host.local' },
+            },
+        },
+        getProjectForSession: (sessionId: string) =>
+            sessionId === 's1'
+                ? {
+                    key: {
+                        machineId,
+                        rootPath: path,
+                    },
+                }
+                : null,
+    };
+}
+
+beforeEach(() => {
+    setCanonicalSessionTarget('m1', '/tmp');
+});
+
 describe('buildResumeSessionBaseOptionsFromSession', () => {
+    const connectedServices = {
+        v: 1,
+        bindingsByServiceId: {
+            'openai-codex': { source: 'connected', selection: 'profile', profileId: 'codex-work' },
+        },
+    } as const;
+
     it('returns null when session metadata is missing', () => {
         expect(buildResumeSessionBaseOptionsFromSession({
             sessionId: 's1',
@@ -44,10 +84,26 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
         })).toBeNull();
     });
 
-    it('returns base options when vendor resume is allowed and present', () => {
+    it('builds fresh-spawn continuation options WITHOUT a vendor resume id for a pre-start death (QA A-F5)', () => {
+        // A session that died before the provider recorded a vendor resume id has no provider
+        // context to restore: it must remain continuable by a fresh spawn, not a dead-end.
         expect(buildResumeSessionBaseOptionsFromSession({
             sessionId: 's1',
-            session: { metadata: { machineId: 'm1', path: '/tmp', flavor: 'openai', codexSessionId: 'x1' } } as any,
+            session: { metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude' } } as any,
+            resumeCapabilityOptions: { accountSettings: {} },
+        })).toEqual({
+            sessionId: 's1',
+            machineId: 'm1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        });
+    });
+
+    it('returns base options when vendor resume is allowed and present', () => {
+        setCanonicalSessionTarget('m1', '/tmp');
+        expect(buildResumeSessionBaseOptionsFromSession({
+            sessionId: 's1',
+            session: { metadata: { machineId: 'm1', path: '/tmp', flavor: 'openai', codexSessionId: 'x1', connectedServices, connectedServicesUpdatedAt: 2468 } } as any,
             resumeCapabilityOptions: { accountSettings: { codexBackendMode: 'acp' } },
         })).toEqual({
             sessionId: 's1',
@@ -55,7 +111,46 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             resume: 'x1',
+            connectedServices,
+            connectedServicesUpdatedAt: 2468,
         });
+    });
+
+    it('includes persisted connected services and freshness when resuming a configured ACP backend', () => {
+        expect(buildResumeSessionBaseOptionsFromSession({
+            sessionId: 's1',
+            session: {
+                metadata: {
+                    machineId: 'm1',
+                    path: '/tmp',
+                    flavor: 'acp:custom-claude',
+                    acpConfiguredBackendV1: { backendId: 'custom-claude' },
+                    connectedServices,
+                    connectedServicesUpdatedAt: 1357,
+                },
+            } as any,
+            resumeCapabilityOptions: { accountSettings: {} },
+        })).toEqual({
+            sessionId: 's1',
+            machineId: 'm1',
+            directory: '/tmp',
+            backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-claude' },
+            connectedServices,
+            connectedServicesUpdatedAt: 1357,
+        });
+    });
+
+    it('does not use raw metadata as a live resume target when canonical reachability is unavailable', () => {
+        storageState = {
+            sessions: {},
+            machines: {},
+            getProjectForSession: () => null,
+        };
+        expect(buildResumeSessionBaseOptionsFromSession({
+            sessionId: 's1',
+            session: { metadata: { machineId: 'm-stale', path: '/tmp/stale', flavor: 'openai', codexSessionId: 'x1' } } as any,
+            resumeCapabilityOptions: { accountSettings: { codexBackendMode: 'acp' } },
+        })).toBeNull();
     });
 
     it('prefers a resolved resume target override over stale session metadata', () => {
@@ -91,6 +186,14 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
                 },
             },
             machines: {
+                'm-stale': {
+                    id: 'm-stale',
+                    active: false,
+                    activeAt: 5,
+                    metadata: { host: 'stale.local' },
+                    replacedByMachineId: 'm-target',
+                    replacedAt: 15,
+                },
                 'm-target': {
                     id: 'm-target',
                     active: true,
@@ -158,7 +261,7 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
                         providerId: 'codex',
                         provider: {
                             backendMode: 'appServer',
-                            vendorSessionId: 'x1',
+                            providerSessionId: 'x1',
                         },
                     },
                     agentRuntimeDescriptorV1: {
@@ -166,7 +269,7 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
                         providerId: 'codex',
                         provider: {
                             backendMode: 'acp',
-                            vendorSessionId: 'legacy-x1',
+                            providerSessionId: 'legacy-x1',
                         },
                     },
                 },
@@ -183,7 +286,7 @@ describe('buildResumeSessionBaseOptionsFromSession', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'x1',
+                    providerSessionId: 'x1',
                 },
             },
         });

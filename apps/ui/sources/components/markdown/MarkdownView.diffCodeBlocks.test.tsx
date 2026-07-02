@@ -69,6 +69,7 @@ describe('MarkdownView (diff code fences)', () => {
 
             const diffView = screen.findByType('DiffFilesListView' as any);
             expect(diffView).not.toBeNull();
+            expect(diffView.props.virtualizedListLayout).toBe('intrinsic');
             expect(screen.findAllByType('CodeBlockView' as any)).toHaveLength(0);
 
             expect(screen.findByTestId('markdown-code-block-toggle:code')).not.toBeNull();

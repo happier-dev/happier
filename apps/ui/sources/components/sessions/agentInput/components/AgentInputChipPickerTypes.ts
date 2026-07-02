@@ -6,6 +6,15 @@ export type AgentInputChipPickerDetailSelectOption = Readonly<{
     disabled?: boolean;
 }>;
 
+export type AgentInputChipPickerOptionRailAction = Readonly<{
+    icon: React.ReactNode;
+    accessibilityLabel: string;
+    testID?: string;
+    selected?: boolean;
+    disabled?: boolean;
+    onPress: () => void;
+}>;
+
 export const AGENT_INPUT_CHIP_PICKER_DETAIL_MIN_HEIGHT = 272;
 
 export type AgentInputChipPickerOption = Readonly<{
@@ -41,6 +50,7 @@ export type AgentInputChipPickerOption = Readonly<{
     onSelectImmediate?: () => void;
     closeOnSelectImmediate?: boolean;
     preserveFocusOnExternalSelectionChange?: boolean;
+    railAction?: AgentInputChipPickerOptionRailAction;
     onApply?: () => void;
     disabled?: boolean;
 }>;

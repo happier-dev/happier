@@ -81,8 +81,10 @@ describe('useConnectedServiceQuotaSummaries', () => {
                             providerAccountId: null,
                             expiresAt: null,
                             lastUsedAt: null,
+                            health: null,
                         },
                     ],
+                    groups: [],
                 },
             ],
         });

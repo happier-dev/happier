@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { installVitestRnShim } from './vitestRnShim';
 import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { standardCleanup } from './testkit/cleanup/standardCleanup';
+import { createReanimatedModuleMock } from './testkit/mocks/reanimated';
 
 // UI tests should not inherit embedded build-policy gating (set in CI).
 // Clear it by default so feature tests can opt-in explicitly per case.
@@ -467,75 +468,13 @@ vi.mock('@shopify/react-native-skia', () => ({
 }));
 
 // `react-native-reanimated` requires native bindings; provide a lightweight mock for node/Vitest.
-vi.mock('react-native-reanimated', () => {
-    type SharedValue<T> = { value: T };
-
-    const useSharedValue = <T,>(initial: T): SharedValue<T> => {
-        const ref = React.useRef<SharedValue<T> | null>(null);
-        if (!ref.current) {
-            ref.current = { value: initial };
-        }
-        return ref.current;
-    };
-    const useDerivedValue = <T,>(factory: () => T): SharedValue<T> => {
-        const ref = React.useRef<SharedValue<T> | null>(null);
-        const value = factory();
-        if (!ref.current) {
-            ref.current = { value };
-        } else {
-            ref.current.value = value;
-        }
-        return ref.current;
-    };
-
-    const runOnJS = <TArgs extends unknown[], TResult>(fn: (...args: TArgs) => TResult) => fn;
-    const runOnUI = <TArgs extends unknown[], TResult>(fn: (...args: TArgs) => TResult) => fn;
-
-    const useAnimatedStyle = <T,>(factory: () => T): T => factory();
-    const useAnimatedProps = <T,>(factory: () => T): T => factory();
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const useAnimatedReaction = (prepare: () => any, react: (value: any, previous: any) => void) => {
-        try {
-            const value = prepare();
-            react(value, undefined);
-        } catch {
-            // ignore
-        }
-    };
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const withTiming = (value: any) => value;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const withSpring = (value: any) => value;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const withRepeat = (value: any) => value;
-    const cancelAnimation = () => {};
-
-    const Animated = {
-        View: 'Animated.View',
-        ScrollView: 'Animated.ScrollView',
-        Text: 'Animated.Text',
-        createAnimatedComponent: (component: unknown) => component,
-    } as const;
-
-    return {
-        __esModule: true,
-        default: Animated,
-        ...Animated,
-        cancelAnimation,
-        runOnJS,
-        runOnUI,
-        useAnimatedProps,
-        useAnimatedReaction,
-        useAnimatedStyle,
-        useDerivedValue,
-        useSharedValue,
-        withRepeat,
-        withSpring,
-        withTiming,
-    };
-});
+vi.mock('react-native-reanimated', () => createReanimatedModuleMock());
+const createReanimatedSubpathMock = vi.hoisted(() => () => createReanimatedModuleMock());
+vi.mock('react-native-reanimated/lib/module', createReanimatedSubpathMock);
+vi.mock('react-native-reanimated/lib/module/index', createReanimatedSubpathMock);
+vi.mock('react-native-reanimated/lib/module/index.js', createReanimatedSubpathMock);
+vi.mock('react-native-reanimated/lib/module/publicGlobals', createReanimatedSubpathMock);
+vi.mock('react-native-reanimated/lib/module/publicGlobals.js', createReanimatedSubpathMock);
 
 // `react-native-typography` relies on React Native's platform resolution (e.g. systemWeights.web.js),
 // which Node/Vitest cannot resolve via CJS `require("../helpers/systemWeights")`. Provide a minimal
@@ -733,10 +672,11 @@ vi.mock('react-native-unistyles', () => {
             // Permission buttons
             //
             permissionButton: {
-                allow: { background: '#34C759' },
-                deny: { background: '#FF3B30' },
-                allowAll: { background: '#007AFF' },
-                inactive: { background: '#dddddd' },
+                allow: { background: '#34C759', border: '#34C759', text: '#FFFFFF' },
+                deny: { background: '#FF3B30', border: '#FF3B30', text: '#FFFFFF' },
+                allowAll: { background: '#007AFF', border: '#007AFF', text: '#FFFFFF' },
+                inactive: { background: '#dddddd', border: '#dddddd', text: '#666666' },
+                selected: { background: '#E8F2FF', border: '#007AFF', text: '#007AFF' },
             },
             permission: {
                 allow: { foreground: '#FFFFFF', background: '#34C759', border: '#34C759' },
@@ -801,7 +741,23 @@ vi.mock('react-native-unistyles', () => {
             configure: () => {},
             absoluteFillObject: {},
         },
-        useUnistyles: () => ({ theme }),
+        useUnistyles: () => ({
+            theme,
+            // Mirror the canonical testkit runtime fixture (dev/testkit/fixtures/themeFixtures):
+            // components like JumpToBottomButton read rt.breakpoint during transcript suites.
+            rt: {
+                themeName: 'light',
+                colorScheme: 'light',
+                breakpoint: 'lg',
+                insets: { top: 0, right: 0, bottom: 0, left: 0, ime: 0 },
+                screen: { width: 1200, height: 800 },
+                orientation: 'portrait',
+                fontScale: 1,
+                pixelRatio: 2,
+                rtl: false,
+                statusBar: { height: 0 },
+            },
+        }),
         UnistylesRuntime: {
             setRootViewBackgroundColor: () => {},
             setAdaptiveThemes: () => {},

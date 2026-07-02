@@ -1,5 +1,4 @@
 import React from 'react';
-import MaskedView from '@react-native-masked-view/masked-view';
 import { Image, Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import Animated, {
@@ -43,10 +42,8 @@ export function ThemePreferenceTransitionHost(props: Readonly<{ children: React.
     const [surfaceHeight, setSurfaceHeight] = React.useState(0);
     const revealProgress = useSharedValue(0);
 
-    const maskStyle = useAnimatedStyle(() => ({
-        flex: 1,
-        backgroundColor: 'black',
-        transform: [{ translateY: revealProgress.value * surfaceHeight }],
+    const overlayClipStyle = useAnimatedStyle(() => ({
+        height: Math.max(0, surfaceHeight * (1 - revealProgress.value)),
     }));
 
     const captureSurface = React.useCallback(async () => {
@@ -109,21 +106,28 @@ export function ThemePreferenceTransitionHost(props: Readonly<{ children: React.
         >
             {props.children}
             {Platform.OS !== 'web' && overlayUri ? (
-                <MaskedView
+                <Animated.View
                     pointerEvents="none"
-                    style={{
-                        ...StyleSheet.absoluteFillObject,
-                        zIndex: 9999,
-                    }}
-                    maskElement={<Animated.View style={maskStyle} />}
+                    style={[
+                        StyleSheet.absoluteFillObject,
+                        styles.overlayClip,
+                        overlayClipStyle,
+                    ]}
                 >
                     <Image
                         source={{ uri: overlayUri }}
                         style={StyleSheet.absoluteFillObject}
                         resizeMode="stretch"
                     />
-                </MaskedView>
+                </Animated.View>
             ) : null}
         </View>
     );
 }
+
+const styles = StyleSheet.create({
+    overlayClip: {
+        overflow: 'hidden',
+        zIndex: 9999,
+    },
+});

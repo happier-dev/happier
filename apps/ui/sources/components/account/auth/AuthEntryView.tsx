@@ -46,6 +46,7 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
     const keylessPrimary = props.options.keylessPrimary;
     const providerId = props.options.providerId;
     const keylessProviderId = props.options.keylessProviderId;
+    const showSecondaryKeylessProviderLogin = props.options.showKeylessProviderLogin && !keylessPrimary && !!keylessProviderId;
 
     const isLandscape = props.layout === 'landscape';
     const actionStackStyle = isLandscape ? styles.landscapeActionStack : styles.actionStack;
@@ -135,6 +136,17 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
                         />
                     </View>
                 )}
+                {showSecondaryKeylessProviderLogin ? (
+                    <View style={styles.actionRow}>
+                        <RoundButton
+                            testID="welcome-login-provider"
+                            size={smallButtonSize}
+                            title={props.options.providerKeylessTitle}
+                            action={wrapAsyncAction(() => props.onLoginWithKeylessProvider(keylessProviderId!))}
+                            display="inverted"
+                        />
+                    </View>
+                ) : null}
                 {showAnonymousSignup && (
                     <View style={styles.actionRow}>
                         <RoundButton
@@ -220,6 +232,17 @@ export const AuthEntryView = React.memo(function AuthEntryView(props: AuthEntryV
                         />
                     </View>
                 )}
+                {showSecondaryKeylessProviderLogin ? (
+                    <View style={styles.actionRow}>
+                        <RoundButton
+                            testID="welcome-login-provider"
+                            size={smallButtonSize}
+                            title={props.options.providerKeylessTitle}
+                            action={wrapAsyncAction(() => props.onLoginWithKeylessProvider(keylessProviderId!))}
+                            display="inverted"
+                        />
+                    </View>
+                ) : null}
                 {showProviderSignup && showAnonymousSignup && (
                     <View style={styles.actionRow}>
                         <RoundButton

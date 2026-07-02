@@ -17,6 +17,7 @@ export function decideMessageCatchUpPolicy(input: Readonly<{
     materializedMaxSeq: number;
     sessionSeqHint: number;
     offlineForMs: number;
+    hasAcceptedLocalPending?: boolean;
     thresholds: MessageCatchUpThresholds;
 }>): MessageCatchUpDecision {
     const thresholds = input.thresholds;
@@ -36,6 +37,10 @@ export function decideMessageCatchUpPolicy(input: Readonly<{
     // does not include message entries for the gap). Force a single incremental page so we
     // still attempt `afterSeq` catch-up once per resume.
     if (gapSeq <= 0 && input.offlineForMs > 0 && materializedMaxSeq > 0) {
+        return { kind: 'incremental_batched', maxPages: 1 };
+    }
+
+    if (gapSeq <= 0 && input.hasAcceptedLocalPending === true) {
         return { kind: 'incremental_batched', maxPages: 1 };
     }
 

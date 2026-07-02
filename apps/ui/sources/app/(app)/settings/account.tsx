@@ -182,7 +182,8 @@ export default React.memo(() => {
             { confirmText: t('common.logout'), destructive: true }
         );
         if (confirmed) {
-            auth.logout();
+            router.replace('/');
+            await auth.logout();
         }
     };
 
@@ -570,6 +571,7 @@ export default React.memo(() => {
                 {/* Danger Zone */}
                 <ItemGroup title={t('settingsAccount.dangerZone')}>
                     <Item
+                        testID="settings-account-logout"
                         title={t('settingsAccount.logout')}
                         subtitle={t('settingsAccount.logoutSubtitle')}
                         icon={<SafeIonicons name="log-out-outline" size={29} color={theme.colors.state.danger.foreground} />}

@@ -89,6 +89,16 @@ describe('typesRaw.normalizeRawMessage', () => {
         sidechainId: 'tool_subagent_1',
       },
     },
+    {
+      label: 'Codex legacy tool-result',
+      data: {
+        type: 'tool-result',
+        callId: 'call_child_1',
+        id: 'tool-result-legacy-1',
+        output: 'ok',
+        sidechainId: 'tool_subagent_1',
+      },
+    },
   ])('preserves sidechainId for $label payloads and marks them as sidechains', ({ data }) => {
     const raw: any = {
       role: 'agent',

@@ -5,7 +5,7 @@ import { prepareKokoroTts } from '@/voice/kokoro/runtime/synthesizeKokoroWav.nat
 
 describe('synthesizeKokoroWav (native)', () => {
   it('throws when the model pack is not installed', async () => {
-    const deleteAsync = vi.fn().mockResolvedValue(undefined);
+    const fileDelete = vi.fn().mockResolvedValue(undefined);
     class Directory {
       uri: string;
       exists = false;
@@ -27,7 +27,7 @@ describe('synthesizeKokoroWav (native)', () => {
         return '';
       }
       create() {}
-      delete() {}
+      delete = fileDelete;
       async bytes() {
         return new Uint8Array([1]);
       }
@@ -56,7 +56,6 @@ describe('synthesizeKokoroWav (native)', () => {
             File,
             Directory,
             Paths: { cache: 'file:///tmp/', document: 'file:///docs/' },
-            deleteAsync,
           } as any,
           resolveOutWavPath: () => 'file:///tmp/out.wav',
         },
@@ -67,7 +66,7 @@ describe('synthesizeKokoroWav (native)', () => {
   });
 
   it('synthesizes via the native module and returns wav bytes', async () => {
-    const deleteAsync = vi.fn().mockResolvedValue(undefined);
+    const fileDelete = vi.fn().mockRejectedValue(new Error('delete_failed'));
     class File {
       uri: string;
       constructor(...uris: any[]) {
@@ -81,6 +80,7 @@ describe('synthesizeKokoroWav (native)', () => {
       async arrayBuffer() {
         return new Uint8Array([1, 2, 3, 4]).buffer;
       }
+      delete = fileDelete;
     }
 
     const kokoroNativeModule = {
@@ -101,7 +101,13 @@ describe('synthesizeKokoroWav (native)', () => {
       },
       {
         kokoroNativeModule,
-        fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' }, deleteAsync },
+        fs: {
+          File,
+          Paths: { cache: 'file:///tmp/', document: 'file:///docs/' },
+          deleteAsync: () => {
+            throw new Error('deprecated_deleteAsync_called');
+          },
+        } as any,
         resolveOutWavPath: () => 'file:///tmp/out.wav',
         ensureInstalled: async () => ({
           packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-test',
@@ -122,12 +128,12 @@ describe('synthesizeKokoroWav (native)', () => {
     expect(kokoroNativeModule.synthesizeToWavFile).toHaveBeenCalledWith(
       expect.objectContaining({ voiceId: 'af_bella', sid: 0 }),
     );
-    expect(deleteAsync).toHaveBeenCalledTimes(1);
+    expect(fileDelete).toHaveBeenCalledTimes(1);
     expect(new Uint8Array(bytes)).toEqual(new Uint8Array([1, 2, 3, 4]));
   });
 
   it('uses the default Kokoro asset set id when assetSetId is missing', async () => {
-    const deleteAsync = vi.fn().mockResolvedValue(undefined);
+    const fileDelete = vi.fn().mockResolvedValue(undefined);
     class File {
       uri: string;
       constructor(...uris: any[]) {
@@ -141,6 +147,7 @@ describe('synthesizeKokoroWav (native)', () => {
       async arrayBuffer() {
         return new Uint8Array([1, 2, 3, 4]).buffer;
       }
+      delete = fileDelete;
     }
 
     const kokoroNativeModule = {
@@ -173,7 +180,7 @@ describe('synthesizeKokoroWav (native)', () => {
       },
       {
         kokoroNativeModule,
-        fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' }, deleteAsync },
+        fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
         resolveOutWavPath: () => 'file:///tmp/out.wav',
         ensureInstalled,
       },
@@ -183,7 +190,7 @@ describe('synthesizeKokoroWav (native)', () => {
   });
 
   it('cancels in-flight synthesis when aborted', async () => {
-    const deleteAsync = vi.fn().mockResolvedValue(undefined);
+    const fileDelete = vi.fn().mockResolvedValue(undefined);
     class File {
       uri: string;
       constructor(...uris: any[]) {
@@ -197,6 +204,7 @@ describe('synthesizeKokoroWav (native)', () => {
       async arrayBuffer() {
         return new Uint8Array([1]).buffer;
       }
+      delete = fileDelete;
     }
 
     let synthesizeResolve: ((v: { wavPath: string; sampleRate: number }) => void) | null = null;
@@ -223,7 +231,7 @@ describe('synthesizeKokoroWav (native)', () => {
       },
       {
         kokoroNativeModule,
-        fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' }, deleteAsync },
+        fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
         resolveOutWavPath: () => 'file:///tmp/out.wav',
         ensureInstalled: async () => ({
           packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-test',
@@ -243,7 +251,7 @@ describe('synthesizeKokoroWav (native)', () => {
   });
 
   it('falls back to built-in voiceId mapping when manifest has no voices', async () => {
-    const deleteAsync = vi.fn().mockResolvedValue(undefined);
+    const fileDelete = vi.fn().mockResolvedValue(undefined);
     class File {
       uri: string;
       constructor(...uris: any[]) {
@@ -257,6 +265,7 @@ describe('synthesizeKokoroWav (native)', () => {
       async arrayBuffer() {
         return new Uint8Array([9, 9]).buffer;
       }
+      delete = fileDelete;
     }
 
     const kokoroNativeModule = {
@@ -277,7 +286,7 @@ describe('synthesizeKokoroWav (native)', () => {
       },
       {
         kokoroNativeModule,
-        fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' }, deleteAsync },
+        fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
         resolveOutWavPath: () => 'file:///tmp/out.wav',
         ensureInstalled: async () => ({
           packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-test-v0',
@@ -334,7 +343,7 @@ describe('synthesizeKokoroWav (native)', () => {
         kokoroNativeModule,
         ensureInstalled,
         resolveManifestUrl: () => 'https://example.com/manifest.json',
-        fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' }, deleteAsync: vi.fn() } as any,
+        fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
       },
     );
 

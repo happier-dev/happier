@@ -9,6 +9,7 @@ import {
     SELECTION_LIST_VIRTUALIZATION_THRESHOLD,
     SELECTION_LIST_VIRTUALIZED_ROW_ESTIMATED_HEIGHT_PX,
 } from './_constants';
+import { buildSelectionListOptionA11yProps } from './buildSelectionListOptionA11yProps';
 import { renderSelectionListAccessory } from './renderSelectionListAccessory';
 import { SelectionListSectionHeader } from './SelectionListSectionHeader';
 import { selectionListTestId } from './_shared';
@@ -54,6 +55,7 @@ export type SelectionListVirtualizedSectionProps = Readonly<{
      * applies.
      */
     virtualization?: SelectionListVirtualizationMode;
+    showsVerticalScrollIndicator?: boolean;
     /**
      * Override the threshold (test/escape hatch). Defaults to
      * `SELECTION_LIST_VIRTUALIZATION_THRESHOLD`.
@@ -147,11 +149,11 @@ export function SelectionListVirtualizedSection(
             // to a real element with role="option" + matching `id`. FlashList
             // recycles rows out of order, so wrappers are keyed by the option
             // id and apply per-render rather than via a memoised tree.
-            const optionAria = {
-                id: optionTestId,
-                role: 'option' as const,
-                'aria-selected': isSelected,
-            };
+            const optionAria = buildSelectionListOptionA11yProps({
+                optionTestId,
+                isSelected,
+                accessibilityLabel: option.accessibilityLabel,
+            });
             return (
                 <View
                     key={option.id}
@@ -215,6 +217,7 @@ export function SelectionListVirtualizedSection(
                     renderItem={({ item }: { item: SelectionListOption }) => renderRow(item)}
                     getItemType={(option: SelectionListOption) => (option.openStep ? 'drilldown' : 'option')}
                     estimatedItemSize={SELECTION_LIST_VIRTUALIZED_ROW_ESTIMATED_HEIGHT_PX}
+                    showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
                 />
             </View>
         );

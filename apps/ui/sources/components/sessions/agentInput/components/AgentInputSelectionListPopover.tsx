@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { SelectionList } from '@/components/ui/selectionList';
+import { SelectionList, resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList';
 import type { SelectionListHeightBehavior, SelectionListStep } from '@/components/ui/selectionList';
 
 import { AgentInputSelectionPopover } from '../selection/AgentInputSelectionPopover';
@@ -19,6 +19,7 @@ const DEFAULT_TEST_ID = 'agent-input-selection-list-popover';
 export type AgentInputSelectionListPopoverProps = Readonly<{
     open: boolean;
     anchorRef: React.RefObject<any>;
+    boundaryRef?: React.RefObject<any> | null;
     rootStep: SelectionListStep;
     selectedOptionId?: string | null;
     onSelect: (id: string) => void;
@@ -49,6 +50,7 @@ export function AgentInputSelectionListPopover(props: AgentInputSelectionListPop
         <AgentInputSelectionPopover
             open={props.open}
             anchorRef={props.anchorRef}
+            boundaryRef={props.boundaryRef}
             onRequestClose={props.onRequestClose}
             maxHeightCap={props.maxHeightCap ?? DEFAULT_MAX_HEIGHT_CAP}
             maxWidthCap={props.maxWidthCap ?? DEFAULT_MAX_WIDTH_CAP}
@@ -81,7 +83,7 @@ export function AgentInputSelectionListPopover(props: AgentInputSelectionListPop
                         }}
                         onRequestClose={props.onRequestClose}
                         maxHeight={maxHeight}
-                        heightBehavior={props.heightBehavior}
+                        heightBehavior={resolvePopoverSelectionListHeightBehavior(props.heightBehavior)}
                     />
                 </AgentInputPopoverSurface>
             )}

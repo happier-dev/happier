@@ -6,12 +6,13 @@ import {
     isPushNotificationBundledSoundId,
     resolveExpoNotificationSoundName,
     resolvePushNotificationAndroidChannelId,
+    type AccountSettings,
 } from '@happier-dev/protocol';
 import { resolveActivityAttentionDeliveryPlan } from '@/activity/delivery/resolveActivityAttentionDeliveryPlan';
 import type { ActivityAttentionDeliveryEventKind } from '@/activity/delivery/activityAttentionDeliveryPlanTypes';
-import { localSettingsParse } from '@/sync/domains/settings/localSettings';
+import { localSettingsParse, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { isTauriMainWindowActivelyViewed } from '@/desktop/window/isTauriMainWindowActivelyViewed';
-import { storage, useLocalSettings, useSettings } from '@/sync/domains/state/storage';
+import { storage, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { isSessionSurfaceVisible } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
 import { isTauriDesktop } from '@/utils/platform/tauri';
@@ -73,16 +74,33 @@ function isSessionActivelyViewedForLocalNotification(sessionId: string): boolean
     return isTauriMainWindowActivelyViewed();
 }
 
+function useActivityLocalNotificationLocalSettings(): Partial<LocalSettings> {
+    const attentionDeviceOverridesV1 = useLocalSetting('attentionDeviceOverridesV1');
+
+    return React.useMemo(
+        () => localSettingsParse({ attentionDeviceOverridesV1 }),
+        [attentionDeviceOverridesV1],
+    );
+}
+
+function useActivityLocalNotificationAccountSettings(): Partial<AccountSettings> {
+    const attentionDeliveryPolicyV1 = useSetting('attentionDeliveryPolicyV1');
+
+    return React.useMemo(
+        () => ({ attentionDeliveryPolicyV1 }),
+        [attentionDeliveryPolicyV1],
+    );
+}
+
 export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
-    const localSettings = useLocalSettings();
-    const accountSettings = useSettings();
-    const parsedLocalSettings = React.useMemo(() => localSettingsParse(localSettings), [localSettings]);
+    const localSettings = useActivityLocalNotificationLocalSettings();
+    const accountSettings = useActivityLocalNotificationAccountSettings();
 
     React.useEffect(() => {
         return subscribeActivityLocalNotifications((event) => {
             const deliveryPlan = resolveActivityAttentionDeliveryPlan({
                 accountSettings,
-                localSettings: parsedLocalSettings,
+                localSettings,
                 event: resolveLocalNotificationEventKind(event),
                 channel: 'local_notification',
                 sameSessionVisible: isSessionActivelyViewedForLocalNotification(event.sessionId),
@@ -123,7 +141,7 @@ export function ActivityLocalNotificationRuntime(): React.ReactElement | null {
                 tag: 'ActivityLocalNotificationRuntime.sendExpoLocalNotification',
             });
         });
-    }, [accountSettings, parsedLocalSettings]);
+    }, [accountSettings, localSettings]);
 
     return null;
 }

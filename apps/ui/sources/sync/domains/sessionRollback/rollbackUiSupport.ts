@@ -1,7 +1,11 @@
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { evaluateAgentSessionCapabilitySupport, inferAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import { readSessionRollbackRangesV1FromMetadata, type SessionRollbackTarget, type TurnChangeSet } from '@happier-dev/protocol';
+import {
+    readSessionRollbackRangesV1FromMetadata,
+    type SessionRollbackTarget,
+    type TurnChangeSet,
+} from '@happier-dev/protocol';
 
 export type TranscriptRollbackAction = Readonly<{
     target: SessionRollbackTarget;
@@ -20,9 +24,21 @@ export type SessionRollbackRangeV1 = Readonly<{
     endSeqInclusive: number;
 }>;
 
+const EMPTY_SESSION_ROLLBACK_RANGES: readonly SessionRollbackRangeV1[] = Object.freeze([]);
+const EMPTY_TRANSCRIPT_ROLLBACK_ACTIONS: Readonly<Record<string, TranscriptRollbackAction>> = Object.freeze({});
+
 function readFiniteSeq(value: unknown): number | null {
     if (typeof value !== 'number' || !Number.isFinite(value)) return null;
     return Math.trunc(value);
+}
+
+function listTrustedRuntimeTurnStartSeqs(session: Session | null | undefined): ReadonlySet<number> {
+    const startSeqs = new Set<number>();
+    for (const rawStartUserMessageSeq of session?.rollbackEligibleTurnStarts ?? []) {
+        const startUserMessageSeq = readFiniteSeq(rawStartUserMessageSeq);
+        if (startUserMessageSeq != null) startSeqs.add(startUserMessageSeq);
+    }
+    return startSeqs;
 }
 
 export function resolveConversationRollbackSupport(params: Readonly<{
@@ -60,6 +76,7 @@ export function canRollbackConversation(params: Readonly<{
 export function readSessionRollbackRangesV1(metadata: Record<string, unknown> | null | undefined): readonly SessionRollbackRangeV1[] {
     const parsed = readSessionRollbackRangesV1FromMetadata(metadata);
     const raw = parsed?.ranges ?? [];
+    if (raw.length === 0) return EMPTY_SESSION_ROLLBACK_RANGES;
     const ranges: SessionRollbackRangeV1[] = [];
     for (const entry of raw) {
         if (!entry || typeof entry !== 'object') continue;
@@ -69,7 +86,7 @@ export function readSessionRollbackRangesV1(metadata: Record<string, unknown> | 
         if (endSeqInclusive < startSeqInclusive) continue;
         ranges.push({ startSeqInclusive, endSeqInclusive });
     }
-    return ranges;
+    return ranges.length > 0 ? ranges : EMPTY_SESSION_ROLLBACK_RANGES;
 }
 
 export function isMessageRolledBack(params: Readonly<{
@@ -159,6 +176,8 @@ export function resolveTranscriptRollbackActions(params: Readonly<{
     const turnChangeSets = params.turnChangeSets ?? [];
     const conversationRollbackSupported = support.supportsRollbackToPoint || support.supportsLatestTurnRollback;
     if (support.supportsRollbackToPoint) {
+        const trustedStartSeqs = listTrustedRuntimeTurnStartSeqs(params.session);
+        if (trustedStartSeqs.size === 0) return EMPTY_TRANSCRIPT_ROLLBACK_ACTIONS;
         const actions: Record<string, TranscriptRollbackAction> = {};
         for (const messageId of params.messageIdsOldestFirst) {
             const message = params.messagesById[messageId];
@@ -166,6 +185,7 @@ export function resolveTranscriptRollbackActions(params: Readonly<{
             if (isMessageRolledBack({ message, rollbackRanges: params.rollbackRanges })) continue;
             const seq = readFiniteSeq(message.seq);
             if (seq == null) continue;
+            if (!trustedStartSeqs.has(seq)) continue;
             const action = {
                 target: { type: 'before_user_message', userMessageSeq: seq },
                 restoredDraftText: message.text,
@@ -182,7 +202,7 @@ export function resolveTranscriptRollbackActions(params: Readonly<{
                     : undefined,
             );
         }
-        return actions;
+        return Object.keys(actions).length > 0 ? actions : EMPTY_TRANSCRIPT_ROLLBACK_ACTIONS;
     }
 
     const latestActiveMessageId = resolveLatestActiveMessageId({
@@ -190,7 +210,7 @@ export function resolveTranscriptRollbackActions(params: Readonly<{
         messagesById: params.messagesById,
         rollbackRanges: params.rollbackRanges,
     });
-    if (!latestActiveMessageId) return {};
+    if (!latestActiveMessageId) return EMPTY_TRANSCRIPT_ROLLBACK_ACTIONS;
     const latestActiveMessage = params.messagesById[latestActiveMessageId] ?? null;
     const latestActiveSeq = readFiniteSeq(latestActiveMessage?.seq);
     const checkpointCodeRollback = sessionId && latestActiveSeq != null
@@ -201,7 +221,7 @@ export function resolveTranscriptRollbackActions(params: Readonly<{
             turnChangeSets,
         })
         : undefined;
-    if (!support.supportsLatestTurnRollback && !checkpointCodeRollback) return {};
+    if (!support.supportsLatestTurnRollback && !checkpointCodeRollback) return EMPTY_TRANSCRIPT_ROLLBACK_ACTIONS;
     return {
         [latestActiveMessageId]: withCheckpointRollbackEvidence({
             target: { type: 'latest_turn' },

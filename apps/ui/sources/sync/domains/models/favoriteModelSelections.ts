@@ -70,6 +70,19 @@ export function favoriteModelSelectionMatchesBackend(
     );
 }
 
+function addModelOptionAvailability(
+    out: Map<string, AvailableFavoriteModel>,
+    option: ModelOption,
+): void {
+    const modelId = normalizeFavoriteModelId(option.value);
+    if (!isFavoriteModelSelectableId(modelId) || out.has(modelId)) return;
+    out.set(modelId, {
+        modelId,
+        modelLabel: option.label || modelId,
+        modelDescription: option.description ?? '',
+    });
+}
+
 export function buildFavoriteModelAvailabilityById(params: Readonly<{
     mode: FavoriteModelAvailabilityMode;
     modelOptions: readonly ModelOption[];
@@ -79,13 +92,7 @@ export function buildFavoriteModelAvailabilityById(params: Readonly<{
 
     if (params.mode === 'static-only') {
         for (const option of params.modelOptions) {
-            const modelId = normalizeFavoriteModelId(option.value);
-            if (!isFavoriteModelSelectableId(modelId) || out.has(modelId)) continue;
-            out.set(modelId, {
-                modelId,
-                modelLabel: option.label || modelId,
-                modelDescription: option.description ?? '',
-            });
+            addModelOptionAvailability(out, option);
         }
         return out;
     }
@@ -98,6 +105,10 @@ export function buildFavoriteModelAvailabilityById(params: Readonly<{
             modelLabel: model.name || modelId,
             modelDescription: model.description ?? '',
         });
+    }
+
+    for (const option of params.modelOptions) {
+        addModelOptionAvailability(out, option);
     }
 
     return out;

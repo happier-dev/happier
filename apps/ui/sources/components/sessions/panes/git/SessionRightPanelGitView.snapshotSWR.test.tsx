@@ -8,6 +8,7 @@ import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPa
 
 let mockSnapshot: any = null;
 let lastScmOperationsInput: any = null;
+const useSessionRealtimeScmTranscriptConsumerMock = vi.hoisted(() => vi.fn());
 const invalidateFromUserAndAwaitMock = vi.hoisted(() => vi.fn());
 const invalidateFromAutoRefreshAndAwaitMock = vi.hoisted(() => vi.fn());
 
@@ -58,6 +59,7 @@ installSessionDetailsPanelCommonModuleMocks({
                 useSessionProjectScmOperationLog: () => [],
                 useSessionProjectScmSnapshot: () => mockSnapshot,
                 useSessionProjectScmSnapshotError: () => null,
+                useSessionRealtimeScmTranscriptConsumer: useSessionRealtimeScmTranscriptConsumerMock,
                 useSessionProjectScmTouchedPaths: () => [],
             },
         );
@@ -224,6 +226,17 @@ function createValidSnapshot() {
 }
 
 describe('SessionRightPanelGitView (snapshot SWR)', () => {
+    it('registers the mounted git surface as a realtime SCM transcript consumer', async () => {
+        const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
+        const validSnapshot = createValidSnapshot();
+        mockSnapshot = validSnapshot;
+        useSessionRealtimeScmTranscriptConsumerMock.mockClear();
+
+        await renderScreen(React.createElement(SessionRightPanelGitView, { sessionId: 's1', scopeId: 'session:s1' }));
+
+        expect(useSessionRealtimeScmTranscriptConsumerMock).toHaveBeenCalledWith('s1', validSnapshot);
+    });
+
     it('keeps retrying source-control refresh while the first snapshot is still unavailable', async () => {
         const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
         const { scheduledTimeouts, setTimeoutSpy } = createTimeoutCapture();
@@ -234,17 +247,18 @@ describe('SessionRightPanelGitView (snapshot SWR)', () => {
         try {
             await renderScreen(React.createElement(SessionRightPanelGitView, { sessionId: 's1', scopeId: 'session:s1' }));
 
-            expect(invalidateFromUserAndAwaitMock).toHaveBeenCalledWith('s1');
+            expect(invalidateFromUserAndAwaitMock).not.toHaveBeenCalled();
+            expect(invalidateFromAutoRefreshAndAwaitMock).toHaveBeenCalledWith('s1');
 
             await flushHookEffects({ cycles: 1, turns: 1 });
-            expect(invalidateFromAutoRefreshAndAwaitMock).toHaveBeenCalledTimes(1);
+            expect(invalidateFromAutoRefreshAndAwaitMock).toHaveBeenCalledTimes(2);
 
             const nextTimeout = scheduledTimeouts.at(-1);
             expect(nextTimeout).toBeDefined();
             nextTimeout?.();
             await flushHookEffects({ cycles: 1, turns: 1 });
 
-            expect(invalidateFromAutoRefreshAndAwaitMock).toHaveBeenCalledTimes(2);
+            expect(invalidateFromAutoRefreshAndAwaitMock).toHaveBeenCalledTimes(3);
         } finally {
             setTimeoutSpy.mockRestore();
         }

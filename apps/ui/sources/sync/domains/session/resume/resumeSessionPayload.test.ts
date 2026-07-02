@@ -112,7 +112,30 @@ describe('buildResumeHappySessionRpcParams', () => {
         });
     });
 
-    test('includes connectedServices when provided', () => {
+    test('includes an initial goal when resuming a session for goal editing', () => {
+        expect(buildResumeHappySessionRpcParams({
+            sessionId: 's1',
+            directory: '/tmp',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            initialGoal: {
+                objective: 'Ship work-state controls',
+                status: 'active',
+                tokenBudget: 25000,
+            },
+        })).toEqual({
+            type: 'resume-session',
+            sessionId: 's1',
+            directory: '/tmp',
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+            initialGoal: {
+                objective: 'Ship work-state controls',
+                status: 'active',
+                tokenBudget: 25000,
+            },
+        });
+    });
+
+    test('includes connectedServices and freshness when provided', () => {
         const connectedServices = {
             v: 1,
             bindingsByServiceId: {
@@ -127,12 +150,14 @@ describe('buildResumeHappySessionRpcParams', () => {
             directory: '/tmp',
             backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
             connectedServices,
+            connectedServicesUpdatedAt: 1234,
         } as any)).toEqual({
             type: 'resume-session',
             sessionId: 's1',
             directory: '/tmp',
             backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
             connectedServices,
+            connectedServicesUpdatedAt: 1234,
         });
     });
 
@@ -238,7 +263,7 @@ describe('buildResumeHappySessionRpcParams', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'codex-session-2',
+                    providerSessionId: 'codex-session-2',
                 },
             },
         })).toEqual({
@@ -252,7 +277,7 @@ describe('buildResumeHappySessionRpcParams', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'codex-session-2',
+                    providerSessionId: 'codex-session-2',
                 },
             },
         });
@@ -268,7 +293,7 @@ describe('buildResumeHappySessionRpcParams', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'codex-session-1',
+                    providerSessionId: 'codex-session-1',
                 },
             },
         })).toEqual({
@@ -282,7 +307,7 @@ describe('buildResumeHappySessionRpcParams', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'codex-session-1',
+                    providerSessionId: 'codex-session-1',
                 },
             },
         });
@@ -298,7 +323,7 @@ describe('buildResumeHappySessionRpcParams', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'legacy-thread',
+                    providerSessionId: 'legacy-thread',
                 },
             },
         } as any);
@@ -352,7 +377,7 @@ describe('buildResumeHappySessionRpcParams', () => {
                 providerId: 'codex',
                 provider: expect.objectContaining({
                     backendMode: 'appServer',
-                    vendorSessionId: 'codex-session-canonical',
+                    providerSessionId: 'codex-session-canonical',
                 }),
             }),
         });

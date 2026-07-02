@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
+import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import { installSessionFilesCommonModuleMocks } from './sessionFilesTestHelpers';
 
 
@@ -29,16 +30,7 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', async () => {
 });
 
 describe('FilesToolbar', () => {
-    const theme = {
-        colors: {
-            divider: '#000',
-            input: { background: '#111', placeholder: '#999' },
-            surface: '#222',
-            surfaceHigh: '#333',
-            text: '#eee',
-            textSecondary: '#aaa',
-        },
-    };
+    const theme = createThemeFixture();
 
     it('renders view toggles and dispatches handlers', async () => {
         const { FilesToolbar } = await import('./FilesToolbar');
@@ -59,8 +51,6 @@ describe('FilesToolbar', () => {
             changedFilesViewMode="repository"
             changedFilesPresentation="list"
             showTurnViewToggle={true}
-            showTurnAgentReportedViewToggle={true}
-            showTurnCheckpointViewToggle={true}
             showSessionViewToggle={true}
             onChangedFilesViewMode={onChangedFilesViewMode}
             onChangedFilesPresentationChange={onChangedFilesPresentationChange}
@@ -79,12 +69,10 @@ describe('FilesToolbar', () => {
         expect(viewModeMenu.props.items.map((item: { id: string }) => item.id)).toEqual([
             'repository',
             'turn',
-            'turn_agent_reported',
-            'turn_checkpoint',
             'session',
         ]);
-        viewModeMenu.props.onSelect('turn_checkpoint');
-        expect(onChangedFilesViewMode).toHaveBeenCalledWith('turn_checkpoint');
+        viewModeMenu.props.onSelect('turn');
+        expect(onChangedFilesViewMode).toHaveBeenCalledWith('turn');
 
         // Smoke-check: the toolbar still exposes the basic navigation callbacks.
         expect(typeof onShowChangedFiles).toBe('function');
@@ -122,62 +110,5 @@ describe('FilesToolbar', () => {
         expect(textContent).not.toContain('files.toolbar.sessionView');
         expect(screen.tree.findAllByType('DropdownMenu' as any)).toHaveLength(0);
         expect(textContent).toContain('files.attributionReliabilityLimited');
-    });
-
-    it('shows source view controls when only scoped turn evidence is available', async () => {
-        const { FilesToolbar } = await import('./FilesToolbar');
-
-        const screen = await renderScreen(<FilesToolbar
-            theme={theme}
-            searchQuery=""
-            onSearchQueryChange={vi.fn()}
-            showAllRepositoryFiles={false}
-            onShowChangedFiles={vi.fn()}
-            onShowAllRepositoryFiles={vi.fn()}
-            changedFilesCount={0}
-            changedFilesViewMode="turn_checkpoint"
-            changedFilesPresentation="review"
-            showTurnViewToggle={false}
-            showTurnAgentReportedViewToggle={false}
-            showTurnCheckpointViewToggle={true}
-            showSessionViewToggle={false}
-            onChangedFilesViewMode={vi.fn()}
-            onChangedFilesPresentationChange={vi.fn()}
-            scmPanelExpanded={false}
-            onToggleScmPanel={vi.fn()}
-        />);
-
-        const viewModeMenu = screen.tree.findByType('DropdownMenu' as any);
-        expect(viewModeMenu.props.selectedId).toBe('turn_checkpoint');
-        expect(viewModeMenu.props.items.map((item: { id: string }) => item.id)).toEqual([
-            'repository',
-            'turn_checkpoint',
-        ]);
-        expect(screen.getTextContent()).toContain('files.toolbar.review');
-    });
-
-    it('allows hiding the attribution notice when used outside sessions', async () => {
-        const { FilesToolbar } = await import('./FilesToolbar');
-
-        const screen = await renderScreen(<FilesToolbar
-            theme={theme}
-            searchQuery=""
-            onSearchQueryChange={vi.fn()}
-            showAllRepositoryFiles={false}
-            onShowChangedFiles={vi.fn()}
-            onShowAllRepositoryFiles={vi.fn()}
-            changedFilesCount={2}
-            changedFilesViewMode="repository"
-            changedFilesPresentation="list"
-            showTurnViewToggle={false}
-            showSessionViewToggle={false}
-            onChangedFilesViewMode={vi.fn()}
-            onChangedFilesPresentationChange={vi.fn()}
-            scmPanelExpanded={false}
-            onToggleScmPanel={vi.fn()}
-            showAttributionReliabilityNotice={false}
-        />);
-
-        expect(screen.getTextContent()).not.toContain('files.attributionReliabilityLimited');
     });
 });

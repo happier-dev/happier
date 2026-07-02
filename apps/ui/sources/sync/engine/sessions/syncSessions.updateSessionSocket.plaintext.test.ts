@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { storage } from '@/sync/domains/state/storage';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
-import { buildUpdatedSessionFromSocketUpdate } from './syncSessions';
+import {
+  buildUpdatedSessionFromSocketUpdate,
+  buildUpdatedSessionListRenderablePatchFromSocketUpdate,
+} from './syncSessions';
 
 function createSession(params: { sessionId: string; encryptionMode: 'plain' | 'e2ee' }): Session {
   const now = 1_700_000_000_000;
@@ -112,6 +116,303 @@ describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
 
     expect(nextSession.latestTurnStatus).toBe('failed');
     expect(nextSession.lastRuntimeIssue).toEqual(issue);
+  });
+
+  it('clears stale thinking for terminal primary turn projections', async () => {
+    const base = {
+      ...createSession({ sessionId: 's1', encryptionMode: 'plain' }),
+      thinking: true,
+      thinkingAt: 999,
+      latestTurnStatus: 'in_progress' as const,
+    };
+
+    const { nextSession } = await buildUpdatedSessionFromSocketUpdate({
+      session: base,
+      updateBody: {
+        latestTurnStatus: 'completed',
+        lastRuntimeIssue: null,
+      },
+      updateSeq: 10,
+      updateCreatedAt: 1234,
+      sessionEncryption: null,
+    });
+
+    expect(nextSession.latestTurnStatus).toBe('completed');
+    expect(nextSession.thinking).toBe(false);
+  });
+
+  it('applies runtime activity projection fields from update-session payloads', async () => {
+    const base = {
+      ...createSession({ sessionId: 's1', encryptionMode: 'plain' }),
+      active: true,
+      activeAt: 100,
+      thinking: true,
+      thinkingAt: 100,
+    };
+
+    const { nextSession } = await buildUpdatedSessionFromSocketUpdate({
+      session: base,
+      updateBody: {
+        active: false,
+        activeAt: 123_456,
+      },
+      updateSeq: 10,
+      updateCreatedAt: 1234,
+      sessionEncryption: null,
+    });
+
+    expect(nextSession.active).toBe(false);
+    expect(nextSession.activeAt).toBe(123_456);
+    expect(nextSession.thinking).toBe(false);
+    expect(nextSession.thinkingAt).toBe(123_456);
+  });
+
+  it('clears stale renderable thinking for terminal primary turn projections', async () => {
+    const patch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({
+      renderable: {
+        id: 's1',
+        seq: 1,
+        createdAt: 0,
+        updatedAt: 0,
+        active: true,
+        activeAt: 0,
+        metadataVersion: 1,
+        agentStateVersion: 1,
+        metadata: null,
+        thinking: true,
+        thinkingAt: 999,
+        presence: 'online',
+        latestTurnStatus: 'in_progress',
+      },
+      updateBody: {
+        latestTurnStatus: 'completed',
+        lastRuntimeIssue: null,
+      },
+      updateSeq: 10,
+      updateCreatedAt: 1234,
+      sessionEncryption: null,
+    });
+
+    expect(patch.latestTurnStatus).toBe('completed');
+    expect(patch.thinking).toBe(false);
+  });
+
+  it('applies runtime activity projection fields to renderable socket patches', async () => {
+    const patch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({
+      renderable: {
+        id: 's1',
+        seq: 1,
+        createdAt: 0,
+        updatedAt: 0,
+        active: true,
+        activeAt: 100,
+        metadataVersion: 1,
+        agentStateVersion: 1,
+        metadata: null,
+        thinking: true,
+        thinkingAt: 100,
+        presence: 'online',
+      },
+      updateBody: {
+        active: false,
+        activeAt: 123_456,
+      },
+      updateSeq: 10,
+      updateCreatedAt: 1234,
+      sessionEncryption: null,
+    });
+
+    expect(patch.active).toBe(false);
+    expect(patch.activeAt).toBe(123_456);
+    expect(patch.thinking).toBe(false);
+    expect(patch.thinkingAt).toBe(123_456);
+    expect(patch.presence).toBe(123_456);
+  });
+
+  it('applies pending request observation timestamps to renderable socket patches', async () => {
+    const patch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({
+      renderable: {
+        id: 's1',
+        seq: 1,
+        createdAt: 0,
+        updatedAt: 0,
+        active: true,
+        activeAt: 0,
+        metadataVersion: 1,
+        agentStateVersion: 1,
+        metadata: null,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+        pendingRequestObservedAt: null,
+      },
+      updateBody: {
+        pendingRequestObservedAt: 1_700,
+      },
+      updateSeq: 10,
+      updateCreatedAt: 1234,
+      sessionEncryption: null,
+    });
+
+    expect(patch.pendingRequestObservedAt).toBe(1_700);
+  });
+
+  it('applies flattened rollback eligibility from update-session payloads', async () => {
+    const base = createSession({ sessionId: 's1', encryptionMode: 'plain' });
+
+    const { nextSession } = await buildUpdatedSessionFromSocketUpdate({
+      session: base,
+      updateBody: {
+        rollbackEligibleTurnStarts: [1, 3],
+      },
+      updateSeq: 10,
+      updateCreatedAt: 1234,
+      sessionEncryption: null,
+    });
+
+    expect(nextSession.rollbackEligibleTurnStarts).toEqual([1, 3]);
+  });
+
+  it('applies flattened rollback eligibility to renderable socket patches', async () => {
+    const patch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({
+      renderable: {
+        id: 's1',
+        seq: 1,
+        createdAt: 0,
+        updatedAt: 0,
+        active: true,
+        activeAt: 0,
+        metadataVersion: 1,
+        agentStateVersion: 1,
+        metadata: null,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+      },
+      updateBody: {
+        rollbackEligibleTurnStarts: [1, 3],
+      },
+      updateSeq: 10,
+      updateCreatedAt: 1234,
+      sessionEncryption: null,
+    });
+
+    expect(patch.rollbackEligibleTurnStarts).toEqual([1, 3]);
+  });
+
+  it('marks renderable unread when ready projection advances past the read cursor', async () => {
+    const patch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({
+      renderable: {
+        id: 's1',
+        seq: 945,
+        createdAt: 0,
+        updatedAt: 0,
+        active: true,
+        activeAt: 0,
+        metadataVersion: 1,
+        agentStateVersion: 1,
+        metadata: null,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+        lastViewedSessionSeq: 945,
+        latestReadyEventSeq: null,
+        hasUnreadMessages: false,
+      },
+      updateBody: {
+        latestReadyEventSeq: 946,
+      },
+      updateSeq: 946,
+      updateCreatedAt: 1234,
+      sessionEncryption: null,
+    });
+
+    expect(patch.latestReadyEventSeq).toBe(946);
+    expect(patch.hasUnreadMessages).toBe(true);
+  });
+
+  it('clears renderable unread when read cursor reaches the latest ready projection', async () => {
+    const patch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({
+      renderable: {
+        id: 's1',
+        seq: 946,
+        createdAt: 0,
+        updatedAt: 0,
+        active: true,
+        activeAt: 0,
+        metadataVersion: 1,
+        agentStateVersion: 1,
+        metadata: null,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+        lastViewedSessionSeq: 945,
+        latestReadyEventSeq: 946,
+        hasUnreadMessages: true,
+      },
+      updateBody: {
+        lastViewedSessionSeq: 946,
+      },
+      updateSeq: 947,
+      updateCreatedAt: 1235,
+      sessionEncryption: null,
+    });
+
+    expect(patch.lastViewedSessionSeq).toBe(946);
+    expect(patch.hasUnreadMessages).toBe(false);
+  });
+
+  it('clears renderable unread when read cursor reaches the latest displayable message but update-session seq trails with usage activity', async () => {
+    const previousState = storage.getState();
+    try {
+      storage.setState((state) => ({
+        ...state,
+        sessionMessages: {
+          s1: {
+            messageIdsOldestFirst: ['m-visible'],
+            messagesById: {
+              'm-visible': {
+                id: 'm-visible',
+                kind: 'agent-text',
+                seq: 945,
+                localId: null,
+                createdAt: 1,
+                text: 'Visible assistant message',
+              },
+            },
+          },
+        },
+      } as never));
+
+      const patch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({
+        renderable: {
+          id: 's1',
+          seq: 946,
+          createdAt: 0,
+          updatedAt: 0,
+          active: true,
+          activeAt: 0,
+          metadataVersion: 1,
+          agentStateVersion: 1,
+          metadata: null,
+          thinking: false,
+          thinkingAt: 0,
+          presence: 'online',
+          latestTurnStatus: 'in_progress',
+          hasUnreadMessages: true,
+        },
+        updateBody: {
+          lastViewedSessionSeq: 945,
+        },
+        updateSeq: 946,
+        updateCreatedAt: 1234,
+        sessionEncryption: null,
+      });
+
+      expect(patch.hasUnreadMessages).toBe(false);
+    } finally {
+      storage.setState(previousState);
+    }
   });
 
   it('decrypts encrypted metadata and agent-state socket updates in one batch when available', async () => {

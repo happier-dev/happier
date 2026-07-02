@@ -1,7 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionsDomain } from './sessions';
-import { clearPersistence, saveSessionModelModeUpdatedAts, saveSessionModelModes } from '../../domains/state/persistence';
+import {
+    clearPersistence,
+    loadSessionModelModeUpdatedAts,
+    loadSessionModelModes,
+    saveSessionModelModeUpdatedAts,
+    saveSessionModelModes,
+} from '../../domains/state/persistence';
 
 function createHarness() {
     let state: any = {
@@ -70,6 +76,40 @@ describe('sessions domain: modelMode normalization', () => {
 
         expect(get().sessions.s1.modelMode).toBe('gemini-2.5-pro');
         expect(typeof get().sessions.s1.modelModeUpdatedAt).toBe('number');
+    });
+
+    it('persists a loaded session model mode without dropping unloaded session model modes', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(5000);
+        saveSessionModelModes({
+            s_loaded: 'gemini-2.5-pro',
+            s_unloaded: 'claude-3-5-sonnet-latest',
+        });
+        saveSessionModelModeUpdatedAts({
+            s_loaded: 1000,
+            s_unloaded: 2000,
+        });
+        const { domain } = createHarness();
+
+        domain.applySessions([
+            {
+                id: 's_loaded',
+                createdAt: 1,
+                active: false,
+                activeAt: 1,
+                metadata: null,
+            } as any,
+        ]);
+
+        domain.updateSessionModelMode('s_loaded', 'gpt-5.5' as any);
+
+        expect(loadSessionModelModes()).toEqual({
+            s_loaded: 'gpt-5.5',
+            s_unloaded: 'claude-3-5-sonnet-latest',
+        });
+        expect(loadSessionModelModeUpdatedAts()).toEqual({
+            s_loaded: 5000,
+            s_unloaded: 2000,
+        });
     });
 
     it('clamps invalid local model selections for agents without freeform model selection', () => {

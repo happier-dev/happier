@@ -168,20 +168,20 @@ describe('featureLocalPolicy', () => {
         })).toBe(true);
     });
 
-    it('keeps sessions.direct disabled by default even when experiments are on', () => {
+    it('enables sessions.direct by default even when experiments are off', () => {
         expect(resolveLocalFeaturePolicyEnabled('sessions.direct', {
             ...settingsDefaults,
-            experiments: true,
+            experiments: false,
             featureToggles: {},
-        })).toBe(false);
+        })).toBe(true);
     });
 
-    it('keeps sessions.folders disabled by default even when experiments are on', () => {
+    it('enables sessions.folders by default even when experiments are off', () => {
         expect(resolveLocalFeaturePolicyEnabled('sessions.folders', {
             ...settingsDefaults,
-            experiments: true,
+            experiments: false,
             featureToggles: {},
-        })).toBe(false);
+        })).toBe(true);
     });
 
     it('keeps pets.companion disabled by default even when experiments are on', () => {
@@ -240,12 +240,12 @@ describe('featureLocalPolicy', () => {
         })).toBe(false);
     });
 
-    it('defaults files.reviewComments to disabled but keeps files.editor enabled by default', () => {
+    it('defaults file review comments and the file editor to enabled even when experiments are off', () => {
         expect(resolveLocalFeaturePolicyEnabled('files.reviewComments', {
             ...settingsDefaults,
-            experiments: true,
+            experiments: false,
             featureToggles: {},
-        })).toBe(false);
+        })).toBe(true);
 
         expect(resolveLocalFeaturePolicyEnabled('files.editor', {
             ...settingsDefaults,
@@ -254,6 +254,14 @@ describe('featureLocalPolicy', () => {
         })).toBe(true);
 
         expect(resolveLocalFeaturePolicyEnabled('files.editor', {
+            ...settingsDefaults,
+            experiments: false,
+            featureToggles: {},
+        })).toBe(true);
+    });
+
+    it('enables advanced syntax highlighting by default even when experiments are off', () => {
+        expect(resolveLocalFeaturePolicyEnabled('files.syntaxHighlighting.advanced', {
             ...settingsDefaults,
             experiments: false,
             featureToggles: {},

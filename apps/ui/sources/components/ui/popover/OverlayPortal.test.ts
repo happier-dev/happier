@@ -134,4 +134,36 @@ describe('OverlayPortalProvider', () => {
         ));
         expect(hosts.length).toBeGreaterThan(0);
     });
+
+    it('allows callers to lower the host z-index for screen-level portals that must sit below modals', async () => {
+        const { OverlayPortalHost, OverlayPortalProvider, useOverlayPortal } = await import('./OverlayPortal');
+
+        let dispatch: ReturnType<typeof useOverlayPortal> | null = null;
+
+        function CaptureDispatch() {
+            dispatch = useOverlayPortal();
+            return React.createElement('CaptureDispatch');
+        }
+
+        const screen = await renderScreen(React.createElement(
+            OverlayPortalProvider,
+            null,
+            React.createElement(CaptureDispatch),
+            React.createElement(
+                OverlayPortalHost as React.ComponentType<{ zIndex: number }>,
+                { zIndex: 90000 },
+            ),
+        ));
+
+        act(() => {
+            dispatch?.setPortalNode('test-node', React.createElement('PortalContent'));
+        });
+
+        const host = screen.tree.root.find((node: any) => (
+            node?.type === 'View'
+            && node?.props?.collapsable === false
+            && node?.props?.style?.[1]?.zIndex === 90000
+        ));
+        expect(host.props.style[1].elevation).toBe(90000);
+    });
 });

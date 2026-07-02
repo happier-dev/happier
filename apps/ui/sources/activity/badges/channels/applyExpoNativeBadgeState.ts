@@ -1,12 +1,17 @@
-import * as Notifications from 'expo-notifications';
-
 import type { ActivityBadgeState } from '../buildActivityBadgeState';
+import { loadExpoNotifications } from '@/utils/platform/loadExpoNotifications';
 
 let pendingCount: number | null = null;
 let drainPromise: Promise<boolean> | null = null;
 let lastAppliedCount: number | null = null;
 
 async function drainPendingBadgeCount(): Promise<boolean> {
+    const Notifications = await loadExpoNotifications().catch(() => null);
+    if (!Notifications) {
+        pendingCount = null;
+        return false;
+    }
+
     let lastResult = true;
     while (pendingCount !== null) {
         const count = pendingCount;

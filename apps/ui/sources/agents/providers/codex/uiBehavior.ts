@@ -1,6 +1,6 @@
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables';
-import { normalizeCodexBackendMode } from '@happier-dev/protocol';
+import { normalizeCodexBackendMode, type CodexBackendMode } from '@happier-dev/protocol';
 import { resolveCodexSpawnExtrasFromSettings, resolvePersistedCodexRuntimeIdentity } from '@happier-dev/agents';
 import { resolveCodexBrowseSourceOptions } from '@/agents/providers/codex/externalSessions/resolveCodexBrowseSourceOptions';
 import { resolveCodexLinkEnsureRequestExtras } from '@/agents/providers/codex/externalSessions/resolveCodexLinkEnsureRequestExtras';
@@ -17,6 +17,39 @@ import type {
 
 const CODEX_SWITCH_RESUME_ACP = 'resumeAcp';
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+type CodexHomeSource = Readonly<{
+    kind: 'codexHome';
+    home: 'user' | 'connectedService';
+    connectedServiceId?: string;
+    connectedServiceProfileId?: string;
+    homePath?: string;
+}>;
+
+function isCodexHomeSource(value: unknown): value is CodexHomeSource {
+    const record = asRecord(value);
+    return record?.kind === 'codexHome'
+        && (record.home === 'user' || record.home === 'connectedService');
+}
+
+function hasCodexGoalWorkState(metadata: unknown): boolean {
+    const metadataRecord = asRecord(metadata);
+    const snapshot = asRecord(metadataRecord?.sessionWorkStateV1);
+    if (!snapshot || snapshot.v !== 1) return false;
+
+    const backendId = typeof snapshot.backendId === 'string' ? snapshot.backendId.trim() : '';
+    const agentId = typeof snapshot.agentId === 'string' ? snapshot.agentId.trim() : '';
+    if (backendId !== 'codex' && agentId !== 'codex') return false;
+    if (!Array.isArray(snapshot.items)) return false;
+
+    return snapshot.items.some((item) => asRecord(item)?.kind === 'goal');
+}
+
 function getSwitch(experiments: AgentResumeExperiments, id: string): boolean {
     return experiments.switches[id] === true;
 }
@@ -26,11 +59,11 @@ function normalizeCodexUiBackendMode(value: unknown): CodexSpawnSessionExtras['c
 }
 
 export type CodexSpawnSessionExtras = Readonly<{
-    codexBackendMode: 'mcp' | 'acp' | 'appServer';
+    codexBackendMode: CodexBackendMode;
 }>;
 
 export type CodexResumeSessionExtras = Readonly<{
-    codexBackendMode: 'mcp' | 'acp' | 'appServer';
+    codexBackendMode: CodexBackendMode;
 }>;
 
 function resolveCodexResumeExtras(opts: {
@@ -93,6 +126,14 @@ export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
     guidance: {
         includeInSessionGettingStartedCliExamples: true,
     },
+    workState: {
+        supportsEditableGoals: ({ agentId, session }) => {
+            if (agentId !== 'codex') return false;
+            const persistedIdentity = resolvePersistedCodexRuntimeIdentity(session.metadata ?? null);
+            if (persistedIdentity) return persistedIdentity.backendMode === 'appServer';
+            return session.active === true || hasCodexGoalWorkState(session.metadata ?? null);
+        },
+    },
     mcpServers: {
         supportsDetectedConfigScan: true,
     },
@@ -122,7 +163,7 @@ export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
                 resolveCodexLockedBrowseSourceOption({ sourceOptions, agentOptionState })
             ),
             buildLinkEnsureRequestExtras: ({ candidate, source }) => (
-                source.kind === 'codexHome'
+                isCodexHomeSource(source)
                     ? resolveCodexLinkEnsureRequestExtras({ candidate, source })
                     : {}
             ),

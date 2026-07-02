@@ -186,7 +186,8 @@ describe('DesktopSidebarChrome', () => {
         expect(screen.findByTestId('sidebar-back-button')).toBeTruthy();
         expect(screen.findByTestId('sidebar-forward-button')).toBeTruthy();
         expect(screen.findByTestId('nav-settings')).toBeTruthy();
-        expect(actionsRow.findAll((child) => child.props?.testID === 'desktop-update-indicator-host')).toHaveLength(1);
+        expect(actionsRow.findAll((child) => child.props?.testID === 'desktop-update-indicator-host')).toHaveLength(0);
+        expect(screen.findByTestId('desktop-sidebar-title-container')!.findByProps({ testID: 'injected-desktop-update-indicator' })).toBeTruthy();
     });
 
     it('starts window dragging from non-interactive sidebar top strip clicks', async () => {
@@ -329,6 +330,32 @@ describe('DesktopSidebarChrome', () => {
             brandButton.props.testID,
             titleContainer.props.testID,
         ]);
+    });
+
+    it('uses the update indicator in the title slot when one is available', async () => {
+        const { DesktopSidebarChrome } = await import('./DesktopSidebarChrome');
+        const screen = await renderScreen(
+            <DesktopSidebarChrome
+                sidebarWidthPx={600}
+                headerHeightPx={56}
+                onPressHome={vi.fn()}
+                onPressCollapse={vi.fn()}
+                environmentBadge={null}
+                headerActions={[]}
+                renderHeaderOverflowVisual={() => React.createElement(View, { testID: 'desktop-sidebar-overflow-visual' })}
+                popoverBoundaryRef={{ current: null }}
+                desktopWindowControls={<View testID="injected-desktop-window-controls" />}
+                desktopUpdateIndicator={<View testID="injected-desktop-update-indicator" />}
+            />,
+        );
+
+        const titleContainer = requireTestInstance(
+            screen.findByTestId('desktop-sidebar-title-container'),
+            'desktop sidebar title container',
+        );
+
+        expect(titleContainer.findByProps({ testID: 'injected-desktop-update-indicator' })).toBeTruthy();
+        expect(screen.findAllByTestId('desktop-update-indicator-host')).toHaveLength(0);
     });
 
     it('keeps top utility controls compact, right-aligned, and optically tiered', async () => {

@@ -1,9 +1,19 @@
 import type { Settings } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
+import { createReducer } from '@/sync/reducer/reducer';
 import type { StorageState } from '@/sync/store/types';
 import type { StoreApi, UseBoundStore } from 'zustand';
 
 type StorageModule = typeof import('@/sync/domains/state/storage');
+type Profile = ReturnType<StorageModule['useProfile']>;
+type StorageStore = StorageModule['storage'];
+type StorageStoreLike = Readonly<{
+    getState: () => StorageState;
+    getInitialState?: () => StorageState;
+    setState?: StoreApi<StorageState>['setState'];
+    subscribe?: StoreApi<StorageState>['subscribe'];
+    destroy?: () => void;
+}>;
 
 export type StorageMutableSetterFactory = () => (value: unknown) => void;
 
@@ -13,8 +23,40 @@ export type StorageRuntimeOptions = Readonly<{
 
 const createDefaultMutableSetter: StorageMutableSetterFactory = () => () => undefined;
 
+const defaultProfile: Profile = Object.freeze({
+    id: '',
+    timestamp: 0,
+    firstName: null,
+    lastName: null,
+    username: null,
+    avatar: null,
+    linkedProviders: [],
+    connectedServices: [],
+    connectedServicesV2: [],
+});
+
 function resolveMutableSetterFactory(options?: StorageRuntimeOptions): StorageMutableSetterFactory {
     return options?.createMutableSetter ?? createDefaultMutableSetter;
+}
+
+export function isStorageStoreLike(value: unknown): value is StorageStoreLike {
+    return value != null
+        && typeof value === 'object'
+        && typeof (value as { getState?: unknown }).getState === 'function';
+}
+
+export function adaptStorageStoreLike(storeLike: StorageStoreLike): StorageStore {
+    const select = (selector?: (value: StorageState) => unknown) => {
+        const snapshot = storeLike.getState();
+        return typeof selector === 'function' ? selector(snapshot) : snapshot;
+    };
+    return Object.assign(select as StorageStore, {
+        getState: storeLike.getState,
+        getInitialState: storeLike.getInitialState ?? storeLike.getState,
+        setState: storeLike.setState ?? (() => undefined),
+        subscribe: storeLike.subscribe ?? (() => () => undefined),
+        destroy: storeLike.destroy ?? (() => undefined),
+    });
 }
 
 export function createStorageModuleStub<TOverrides extends object>(
@@ -22,10 +64,14 @@ export function createStorageModuleStub<TOverrides extends object>(
     options?: StorageRuntimeOptions,
 ): StorageModule {
     const allMachines = [] as ReturnType<StorageModule['useAllMachines']>;
+    const machineDisplayById = {} as ReturnType<StorageModule['useMachineDisplayById']>;
     const allSessions = [] as ReturnType<StorageModule['useAllSessions']>;
     const allAttentionSessions = [] as ReturnType<StorageModule['useAllSessionsForAttention']>;
     const allSessionListRenderables = [] as ReturnType<StorageModule['useAllSessionListRenderables']>;
     const allSessionListAttentionRows = [] as ReturnType<StorageModule['useAllSessionListAttentionRows']>;
+    const sessionTranscriptIds = [] as string[];
+    const sessionMessagesById = {} as ReturnType<StorageModule['useSessionMessagesById']>;
+    const sessionMessagesReducerState = createReducer();
     const sessionListRenderablesById = {} as ReturnType<StorageModule['useSessionListRenderablesById']>;
     const sessionListRowStateByServerId = {} as ReturnType<StorageModule['useSessionListRowStateByServerId']>;
     const sessionListIndexByServerId = {} as ReturnType<StorageModule['useSessionListIndexByServerId']>;
@@ -43,6 +89,7 @@ export function createStorageModuleStub<TOverrides extends object>(
         sessions: {},
         machines: {},
         getProjectForSession: () => null,
+        mergeSessionListRenderables: () => undefined,
         applySessionListRenderablePatches: () => undefined,
         updateWorkspaceScmSnapshot,
         updateWorkspaceScmSnapshotError,
@@ -58,18 +105,38 @@ export function createStorageModuleStub<TOverrides extends object>(
 
     const defaults = {
         storage: store,
+        getStorage: () => store,
         useSettings: () => ({} as Settings),
         useSetting,
         useSettingMutable,
         useLocalSetting,
         useLocalSettingMutable,
+        useActiveServerAccountScope: () => null,
+        useProfile: () => store.getState().profile ?? defaultProfile,
+        useIsDataReady: () => true,
+        useRealtimeStatus: () => 'connected',
+        useAutomations: () => [],
         useSessionMessages: () => ({ messages: [], isLoaded: true } as const),
+        useSessionMessagesReducerState: () => sessionMessagesReducerState,
+        useSessionMessagesById: () => sessionMessagesById,
         useSessionMessagesVersion: () => 0,
+        useSessionTranscriptIds: () => ({ ids: sessionTranscriptIds, isLoaded: true } as const),
+        useSessionVisibleReadSeq: () => 0,
+        useSessionReadyActivity: () => ({
+            latestReadyEventSeq: null,
+            latestReadyEventAt: null,
+        }),
+        useSessionUsage: () => null,
+        useSessionSubagentSourceMessages: () => [],
+        useMachineCliDetectionTarget: () => ({ daemonStateVersion: 0, isOnline: false }),
+        useSessionForkSupportSource: () => null,
+        useSessionChatFooterState: () => null,
         useHasUnreadMessages: () => false,
         useSessionLatestThinkingMessageActivityAtMs: () => null,
         useSessionListMeaningfulActivityAt: () => null,
         useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true } as const),
         useAllMachines: () => allMachines,
+        useMachineDisplayById: () => machineDisplayById,
         useAllSessions: () => allSessions,
         useAllSessionsForAttention: () => allAttentionSessions,
         useAllSessionListRenderables: () => allSessionListRenderables,
@@ -89,10 +156,13 @@ export function createStorageModuleStub<TOverrides extends object>(
         },
         useSessionListRenderable: () => null,
         useSessionListRenderableWithServerScope: () => null,
+        useSessionListReachabilityRenderablesForItems: () => new Map(),
+        useSessionListRowRenderablesForItems: () => new Map(),
         useSessionListRenderablesById: () => sessionListRenderablesById,
         useSessionListRowStateByServerId: () => sessionListRowStateByServerId,
         useSessionListIndexByServerId: () => sessionListIndexByServerId,
         useArtifacts: () => [],
+        useOpenApprovalSessionIds: () => [],
         useWorkspaceReviewCommentsDrafts: () => [],
         useMachineListByServerId: () => ({}),
         useMachineListStatusByServerId: () => ({}),
@@ -118,7 +188,22 @@ export function createStorageModuleStub<TOverrides extends object>(
         useSyncError: () => null,
     } satisfies Partial<StorageModule>;
 
-    return { ...defaults, ...(overrides as Partial<StorageModule>) } as StorageModule;
+    const module = { ...defaults, ...(overrides as Partial<StorageModule>) } as StorageModule;
+    const storageOverride = (overrides as { storage?: unknown }).storage;
+    const finalStorage = isStorageStoreLike(storageOverride) && typeof storageOverride !== 'function'
+        ? adaptStorageStoreLike(storageOverride)
+        : module.storage;
+    if (finalStorage !== module.storage) {
+        return {
+            ...module,
+            storage: finalStorage,
+            getStorage: () => finalStorage,
+        };
+    }
+    return {
+        ...module,
+        getStorage: () => finalStorage,
+    };
 }
 
 export type CreateUseSettingMockOptions = Readonly<{

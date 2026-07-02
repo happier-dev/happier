@@ -2,15 +2,18 @@ import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
+import type { TranscriptMessageTimestampDisplayMode } from '@/sync/domains/settings/registry/account/accountTranscriptToolSettingDefinitions';
 import {
     resolveToolViewDetailLevelDefaultForChromeMode,
     resolveToolViewExpandedDetailLevelDefaultForChromeMode,
@@ -22,11 +25,13 @@ import {
     TOOL_DETAIL_LEVEL_WITH_STYLE_DEFAULT_OPTIONS,
     TOOL_EXPANDED_DETAIL_LEVEL_WITH_STYLE_DEFAULT_OPTIONS,
 } from '@/components/settings/session/toolRendering/toolRenderingSettingOptions';
+import { resolveTranscriptToolCallsCollapsedPreviewCount } from '@/sync/domains/settings/transcriptToolCallsCollapsedPreviewCount';
 
 type TranscriptGroupingMode = 'linear' | 'turns';
 type TranscriptMotionPreset = 'off' | 'subtle' | 'full';
 type ToolCallsGroupStrategy = 'consecutive_tools' | 'all_tools_in_turn';
 type ToolTapAction = 'expand' | 'open';
+type TranscriptBulkCopyFormat = 'markdown_labeled' | 'plain';
 
 function clampInt(value: number, bounds: Readonly<{ min: number; max: number }>): number {
     if (!Number.isFinite(value)) return bounds.min;
@@ -43,6 +48,11 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
     const [transcriptTurnToolCallsGroupStrategy, setTranscriptTurnToolCallsGroupStrategy] = useSettingMutable('transcriptTurnToolCallsGroupStrategy');
     const [transcriptToolCallsCollapsedPreviewCount, setTranscriptToolCallsCollapsedPreviewCount] = useSettingMutable('transcriptToolCallsCollapsedPreviewCount');
     const [transcriptToolCallsGroupShowBackground, setTranscriptToolCallsGroupShowBackground] = useSettingMutable('transcriptToolCallsGroupShowBackground');
+    const [transcriptMessageTimestampDisplayMode, setTranscriptMessageTimestampDisplayMode] = useSettingMutable('transcriptMessageTimestampDisplayMode');
+    const [transcriptMessageSelectionEnabled, setTranscriptMessageSelectionEnabled] = useSettingMutable('transcriptMessageSelectionEnabled');
+    const [transcriptMessageSendToSessionEnabled, setTranscriptMessageSendToSessionEnabled] = useSettingMutable('transcriptMessageSendToSessionEnabled');
+    const [transcriptMessageSendToSessionTemplate, setTranscriptMessageSendToSessionTemplate] = useSettingMutable('transcriptMessageSendToSessionTemplate');
+    const [transcriptBulkCopyFormat, setTranscriptBulkCopyFormat] = useSettingMutable('transcriptBulkCopyFormat');
 
     const [sessionThinkingDisplayMode, setSessionThinkingDisplayMode] = useSettingMutable('sessionThinkingDisplayMode');
     const [sessionThinkingInlinePresentation, setSessionThinkingInlinePresentation] = useSettingMutable('sessionThinkingInlinePresentation');
@@ -62,6 +72,8 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
     const [transcriptScrollJumpToBottomEnabled, setTranscriptScrollJumpToBottomEnabled] = useSettingMutable('transcriptScrollJumpToBottomEnabled');
 
     const [openGroupingMenu, setOpenGroupingMenu] = React.useState(false);
+    const [openTimestampMenu, setOpenTimestampMenu] = React.useState(false);
+    const [openBulkCopyFormatMenu, setOpenBulkCopyFormatMenu] = React.useState(false);
     const [openThinkingDisplayMenu, setOpenThinkingDisplayMenu] = React.useState(false);
     const [openToolChromeMenu, setOpenToolChromeMenu] = React.useState(false);
     const [openToolDetailMenu, setOpenToolDetailMenu] = React.useState<null | string>(null);
@@ -115,6 +127,50 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
         },
     ];
 
+    const normalizedTimestampDisplayMode: TranscriptMessageTimestampDisplayMode =
+        transcriptMessageTimestampDisplayMode === 'hover_web_always_mobile' ||
+        transcriptMessageTimestampDisplayMode === 'always' ||
+        transcriptMessageTimestampDisplayMode === 'never'
+            ? transcriptMessageTimestampDisplayMode
+            : 'hover_web_hidden_mobile';
+
+    const timestampDisplayOptions: Array<{ key: TranscriptMessageTimestampDisplayMode; title: string; subtitle: string }> = [
+        {
+            key: 'hover_web_hidden_mobile',
+            title: t('settingsSession.transcript.messageTimestamps.hoverWebHiddenMobileTitle'),
+            subtitle: t('settingsSession.transcript.messageTimestamps.hoverWebHiddenMobileSubtitle'),
+        },
+        {
+            key: 'hover_web_always_mobile',
+            title: t('settingsSession.transcript.messageTimestamps.hoverWebAlwaysMobileTitle'),
+            subtitle: t('settingsSession.transcript.messageTimestamps.hoverWebAlwaysMobileSubtitle'),
+        },
+        {
+            key: 'always',
+            title: t('settingsSession.transcript.messageTimestamps.alwaysTitle'),
+            subtitle: t('settingsSession.transcript.messageTimestamps.alwaysSubtitle'),
+        },
+        {
+            key: 'never',
+            title: t('settingsSession.transcript.messageTimestamps.neverTitle'),
+            subtitle: t('settingsSession.transcript.messageTimestamps.neverSubtitle'),
+        },
+    ];
+
+    const normalizedBulkCopyFormat: TranscriptBulkCopyFormat = transcriptBulkCopyFormat === 'plain' ? 'plain' : 'markdown_labeled';
+    const bulkCopyFormatOptions: Array<{ key: TranscriptBulkCopyFormat; title: string; subtitle: string }> = [
+        {
+            key: 'markdown_labeled',
+            title: t('settingsSession.transcript.messageActions.bulkCopyFormat.markdownLabeled'),
+            subtitle: t('settingsSession.transcript.messageActions.bulkCopyFormat.subtitle'),
+        },
+        {
+            key: 'plain',
+            title: t('settingsSession.transcript.messageActions.bulkCopyFormat.plain'),
+            subtitle: t('settingsSession.transcript.messageActions.bulkCopyFormat.subtitle'),
+        },
+    ];
+
     const strategyOptions: Array<{ key: ToolCallsGroupStrategy; title: string; subtitle: string }> = [
         {
             key: 'consecutive_tools',
@@ -128,12 +184,7 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
         },
     ];
 
-    const normalizedCollapsedPreviewCount = clampInt(
-        typeof transcriptToolCallsCollapsedPreviewCount === 'number'
-            ? transcriptToolCallsCollapsedPreviewCount
-            : 5,
-        { min: 0, max: 15 },
-    );
+    const normalizedCollapsedPreviewCount = resolveTranscriptToolCallsCollapsedPreviewCount(transcriptToolCallsCollapsedPreviewCount);
 
     const collapsedPreviewOptions: Array<{ key: number; title: string; subtitle: string }> = [
         {
@@ -287,6 +338,124 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
                     onSelect={(id) => {
                         setTranscriptGroupingMode(id as any);
                         setOpenGroupingMenu(false);
+                    }}
+                />
+
+                <DropdownMenu
+                    open={openTimestampMenu}
+                    onOpenChange={setOpenTimestampMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={normalizedTimestampDisplayMode}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.transcript.messageTimestampsTitle'),
+                        subtitle: t('settingsSession.transcript.messageTimestampsSubtitle'),
+                        icon: <Ionicons name="time-outline" size={29} color={theme.colors.text.secondary} />,
+                        itemProps: { testID: 'settings-session-transcript-message-timestamps' },
+                    }}
+                    items={timestampDisplayOptions.map((opt) => ({
+                        id: opt.key,
+                        title: opt.title,
+                        subtitle: opt.subtitle,
+                        icon: (
+                            <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                <Ionicons name="time-outline" size={22} color={theme.colors.text.secondary} />
+                            </View>
+                        ),
+                    }))}
+                    onSelect={(id) => {
+                        setTranscriptMessageTimestampDisplayMode(id as TranscriptMessageTimestampDisplayMode);
+                        setOpenTimestampMenu(false);
+                    }}
+                />
+            </ItemGroup>
+
+            <ItemGroup title={t('settingsSession.transcript.messageActions.groupTitle')} footer={t('settingsSession.transcript.messageActions.groupFooter')}>
+                <Item
+                    testID="settings-session-transcript-message-selection-enabled"
+                    title={t('settingsSession.transcript.messageActions.selectionEnabled.title')}
+                    subtitle={t('settingsSession.transcript.messageActions.selectionEnabled.subtitle')}
+                    rightElement={<Switch value={transcriptMessageSelectionEnabled === true} onValueChange={setTranscriptMessageSelectionEnabled} />}
+                    showChevron={false}
+                    onPress={() => setTranscriptMessageSelectionEnabled(!(transcriptMessageSelectionEnabled === true))}
+                />
+                <Item
+                    testID="settings-session-transcript-message-send-to-session-enabled"
+                    title={t('settingsSession.transcript.messageActions.sendToSessionEnabled.title')}
+                    subtitle={t('settingsSession.transcript.messageActions.sendToSessionEnabled.subtitle')}
+                    rightElement={<Switch value={transcriptMessageSendToSessionEnabled === true} onValueChange={setTranscriptMessageSendToSessionEnabled} />}
+                    showChevron={false}
+                    onPress={() => setTranscriptMessageSendToSessionEnabled(!(transcriptMessageSendToSessionEnabled === true))}
+                />
+                <View testID="settings-session-transcript-message-send-template-field" style={styles.templateFieldContainer}>
+                    <Text style={[styles.templateFieldLabel, { color: theme.colors.text.secondary }]}>
+                        {t('settingsSession.transcript.messageActions.template.title')}
+                    </Text>
+                    <Text style={[styles.templateFieldHint, { color: theme.colors.text.secondary }]}>
+                        {t('settingsSession.transcript.messageActions.template.subtitle')}
+                    </Text>
+                    <TextInput
+                        testID="settings-session-transcript-message-send-template-input"
+                        accessibilityLabel={t('settingsSession.transcript.messageActions.template.title')}
+                        value={typeof transcriptMessageSendToSessionTemplate === 'string' ? transcriptMessageSendToSessionTemplate : '{{MESSAGES}}'}
+                        onChangeText={setTranscriptMessageSendToSessionTemplate}
+                        placeholder={t('settingsSession.transcript.messageActions.template.placeholder')}
+                        placeholderTextColor={theme.colors.input.placeholder}
+                        multiline
+                        autoCorrect={false}
+                        autoCapitalize="none"
+                        style={[
+                            styles.templateTextInput,
+                            {
+                                color: theme.colors.input.text,
+                                backgroundColor: theme.colors.input.background,
+                                borderColor: theme.colors.border.default,
+                            },
+                        ]}
+                    />
+                </View>
+                {typeof transcriptMessageSendToSessionTemplate === 'string' && !transcriptMessageSendToSessionTemplate.includes('{{MESSAGES}}') ? (
+                    <Item
+                        mode="info"
+                        title={<Text style={{ color: theme.colors.state.warning.foreground }}>{t('settingsSession.transcript.messageActions.template.warningMissingPlaceholder')}</Text>}
+                        showChevron={false}
+                    />
+                ) : null}
+                <DropdownMenu
+                    open={openBulkCopyFormatMenu}
+                    onOpenChange={setOpenBulkCopyFormatMenu}
+                    variant="selectable"
+                    search={false}
+                    selectedId={normalizedBulkCopyFormat}
+                    showCategoryTitles={false}
+                    matchTriggerWidth={true}
+                    connectToTrigger={true}
+                    rowKind="item"
+                    popoverBoundaryRef={popoverBoundaryRef}
+                    itemTrigger={{
+                        title: t('settingsSession.transcript.messageActions.bulkCopyFormat.title'),
+                        subtitle: t('settingsSession.transcript.messageActions.bulkCopyFormat.subtitle'),
+                        icon: <Ionicons name="copy-outline" size={29} color={theme.colors.text.secondary} />,
+                        itemProps: { testID: 'settings-session-transcript-bulk-copy-format' },
+                    }}
+                    items={bulkCopyFormatOptions.map((opt) => ({
+                        id: opt.key,
+                        title: opt.title,
+                        subtitle: opt.subtitle,
+                        icon: (
+                            <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                <Ionicons name="copy-outline" size={22} color={theme.colors.text.secondary} />
+                            </View>
+                        ),
+                    }))}
+                    onSelect={(id) => {
+                        setTranscriptBulkCopyFormat(id as TranscriptBulkCopyFormat);
+                        setOpenBulkCopyFormatMenu(false);
                     }}
                 />
             </ItemGroup>
@@ -719,6 +888,33 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
             </ItemGroup>
         </ItemList>
     );
+});
+
+const styles = StyleSheet.create({
+    templateFieldContainer: {
+        paddingHorizontal: 16,
+        paddingTop: 4,
+        paddingBottom: 12,
+    },
+    templateFieldLabel: {
+        ...Typography.default('semiBold'),
+        fontSize: 13,
+        marginBottom: 4,
+    },
+    templateFieldHint: {
+        ...Typography.default('regular'),
+        fontSize: 12,
+        marginBottom: 8,
+    },
+    templateTextInput: {
+        ...Typography.default('regular'),
+        minHeight: 96,
+        borderWidth: 1,
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        textAlignVertical: 'top',
+    },
 });
 
 export default TranscriptSettingsView;

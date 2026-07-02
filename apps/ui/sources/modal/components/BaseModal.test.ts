@@ -52,6 +52,11 @@ vi.mock('@/utils/web/radixCjs', () => {
     };
 });
 
+vi.mock('react-native-keyboard-controller', () => ({
+    KeyboardAvoidingView: (props: React.PropsWithChildren<Record<string, unknown>>) =>
+        React.createElement('KeyboardAvoidingView', props, props.children),
+}));
+
 installModalComponentCommonModuleMocks({
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -73,12 +78,20 @@ function flattenStyleProp(styleProp: unknown): Record<string, unknown> {
     return flattened as Record<string, unknown>;
 }
 
+function findNodeWithStyle(
+    screen: Awaited<ReturnType<typeof renderBaseModalScreen>>,
+    predicate: (style: Record<string, unknown>) => boolean,
+) {
+    return screen.findAll((node) => predicate(flattenStyleProp((node.props as any)?.style)))?.[0];
+}
+
 describe('BaseModal (web)', () => {
     it('uses an auto-placement content container (centers when short; top when overflowing)', async () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal);
 
-        const container = screen.findAllByType('KeyboardAvoidingView' as any)?.[0];
+        expect(screen.findAllByType('KeyboardAvoidingView' as any)).toHaveLength(0);
+        const container = findNodeWithStyle(screen, (style) => style.minHeight === '100%');
         const style = flattenStyleProp(container?.props?.style);
         expect(style.minHeight).toBe('100%');
         expect(style.justifyContent).toBe('center');
@@ -88,7 +101,8 @@ describe('BaseModal (web)', () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal, { webPlacement: 'top' });
 
-        const container = screen.findAllByType('KeyboardAvoidingView' as any)?.[0];
+        expect(screen.findAllByType('KeyboardAvoidingView' as any)).toHaveLength(0);
+        const container = findNodeWithStyle(screen, (style) => style.minHeight === '100%');
         const style = flattenStyleProp(container?.props?.style);
         expect(style.minHeight).toBe('100%');
         expect(style.justifyContent).toBe('flex-start');
@@ -264,7 +278,8 @@ describe('BaseModal (web)', () => {
         const { BaseModal } = await import('./BaseModal');
         const screen = await renderBaseModalScreen(BaseModal);
 
-        const container = screen.findAllByType('KeyboardAvoidingView' as any)?.[0];
+        expect(screen.findAllByType('KeyboardAvoidingView' as any)).toHaveLength(0);
+        const container = findNodeWithStyle(screen, (style) => style.minHeight === '100%');
         expect(container?.props.pointerEvents).not.toBe('box-none');
     });
 

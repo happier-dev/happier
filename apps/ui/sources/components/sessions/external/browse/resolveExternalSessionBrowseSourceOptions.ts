@@ -3,6 +3,7 @@ import type { AccountProfile, ExternalSessionsProviderId, ExternalSessionsSource
 import { AGENT_IDS, getAgentBehavior, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import type { ExternalSessionBrowseLinkEnsureRequestExtras, ExternalSessionBrowseSourceOption } from '@/agents/registry/registryUiBehavior';
 import type { Settings } from '@/sync/domains/settings/settings';
+import { resolveCompatibleExternalSessionBrowseLinkSource } from './resolveCompatibleExternalSessionBrowseLinkSource';
 
 export function resolveExternalSessionBrowseSourceOptions(params: Readonly<{
     providerId: ExternalSessionsProviderId;
@@ -43,5 +44,26 @@ export function resolveExternalSessionBrowseLinkEnsureRequestExtras(params: Read
         agentId: params.providerId as AgentId,
         source: params.source,
         candidate: params.candidate,
+    });
+}
+
+export function resolveExternalSessionBrowseCompatibleLinkSource(params: Readonly<{
+    providerId: ExternalSessionsProviderId;
+    selectedSource: ExternalSessionsSource;
+    candidateSource?: ExternalSessionsSource | null;
+}>): ExternalSessionsSource {
+    const resolveCompatibleLinkSource = getAgentBehavior(params.providerId as AgentId).externalSessions?.browse?.resolveCompatibleLinkSource;
+    return resolveCompatibleExternalSessionBrowseLinkSource({
+        selectedSource: params.selectedSource,
+        candidateSource: params.candidateSource,
+        ...(resolveCompatibleLinkSource
+            ? {
+                resolveCompatibleLinkSource: (ctx) => resolveCompatibleLinkSource({
+                    agentId: params.providerId as AgentId,
+                    selectedSource: ctx.selectedSource,
+                    candidateSource: ctx.candidateSource,
+                }),
+            }
+            : {}),
     });
 }

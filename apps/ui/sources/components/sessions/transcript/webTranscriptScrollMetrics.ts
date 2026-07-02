@@ -92,7 +92,7 @@ export function isWebTranscriptAtVisualBottom(
     return getWebTranscriptDistanceFromBottom(metrics) <= tolerance;
 }
 
-export function restoreWebTranscriptPrependAnchor(metrics: WebTranscriptScrollMetrics): boolean {
+export function restoreWebTranscriptPrependByGrowth(metrics: WebTranscriptScrollMetrics): boolean {
     const nextScrollHeight = metrics.element.scrollHeight;
     const growth = Math.max(0, nextScrollHeight - metrics.scrollHeight);
     if (growth <= 0) return false;

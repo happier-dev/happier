@@ -11,6 +11,20 @@ import {
 } from './activitySurfaceSelectionTypes';
 import { resolveActivitySurfaceSlots } from './resolveActivitySurfaceSlots';
 
+function pendingAgentState(kind: 'permission' | 'user_action', createdAt = 950) {
+    return {
+        controlledByUser: null,
+        requests: {
+            request_1: {
+                tool: kind === 'permission' ? 'Bash' : 'Read',
+                kind,
+                arguments: {},
+                createdAt,
+            },
+        },
+    };
+}
+
 describe('resolveActivitySurfaceSlots', () => {
     it('excludes ready unread sessions from focused live-activity selection when includeReady is disabled', () => {
         const overview = buildActivityOverviewSnapshot({
@@ -28,9 +42,12 @@ describe('resolveActivitySurfaceSlots', () => {
                 }),
                 createSessionFixture({
                     id: 'thinking',
+                    seq: 1,
+                    lastViewedSessionSeq: 1,
                     active: true,
                     presence: 'online',
                     thinking: true,
+                    thinkingAt: 950,
                     metadata: {
                         path: '/Users/tester/project/thinking',
                         host: 'tester.local',
@@ -63,6 +80,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -75,6 +93,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    agentState: pendingAgentState('user_action'),
                     metadata: {
                         path: '/Users/tester/project/action',
                         host: 'tester.local',
@@ -108,6 +127,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     updatedAt: 2_000,
                 }),
                 createSessionFixture({
@@ -115,6 +135,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    agentState: pendingAgentState('user_action'),
                     updatedAt: 1_000,
                 }),
             ],
@@ -150,6 +171,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     updatedAt: 2_000,
                 }),
                 createSessionFixture({
@@ -157,6 +179,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    agentState: pendingAgentState('user_action'),
                     updatedAt: 1_000,
                 }),
             ],
@@ -191,6 +214,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     updatedAt: 2_000,
                 }),
                 createSessionFixture({
@@ -198,6 +222,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    agentState: pendingAgentState('user_action'),
                     updatedAt: 1_000,
                 }),
             ],
@@ -232,6 +257,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -244,6 +270,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    agentState: pendingAgentState('user_action'),
                     metadata: {
                         path: '/Users/tester/project/action',
                         host: 'tester.local',
@@ -279,6 +306,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -288,6 +316,8 @@ describe('resolveActivitySurfaceSlots', () => {
                 }),
                 createSessionFixture({
                     id: 'thinking',
+                    seq: 2,
+                    lastViewedSessionSeq: 2,
                     active: true,
                     presence: 'online',
                     thinking: true,
@@ -333,6 +363,7 @@ describe('resolveActivitySurfaceSlots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                 }),
                 createSessionFixture({
                     id: 'quiet-active',

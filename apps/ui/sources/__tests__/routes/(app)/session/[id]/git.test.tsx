@@ -104,7 +104,7 @@ vi.mock('@/components/workspaceCockpit/session/SessionCockpitShell', () => ({
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: (sessionId: string) => {
         ensureSessionVisibleSpy(sessionId);
-        return true;
+        return { kind: 'available', sessionId };
     },
 }));
 

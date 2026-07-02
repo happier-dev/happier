@@ -1,6 +1,7 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
 import { renderScreen } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
@@ -13,7 +14,7 @@ const mocks = vi.hoisted(() => ({
     inputBlur: vi.fn(),
     suggestionMoveUp: vi.fn(),
     suggestionMoveDown: vi.fn(),
-    activeSuggestions: [] as Array<{ key: string; text: string; label?: string }>,
+    activeSuggestions: [] as AutocompleteSuggestion[],
     activeSuggestionIndex: -1,
 }));
 
@@ -121,6 +122,10 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 vi.mock('@/sync/domains/models/modelOptions', () => ({
+    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
+        options?.find?.((option: any) => option.value === effectiveModelId)
+            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
+            ?? null,
     getModelOptionsForSession: () => [{ value: 'default', label: 'Default' }],
     supportsFreeformModelSelectionForSession: () => false,
 }));
@@ -173,6 +178,7 @@ vi.mock('@/components/autocomplete/applySuggestion', () => ({
 vi.mock('@/components/ui/popover', () => ({
     Popover: () => null,
     PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS: { web: { target: 'body' }, native: true },
 }));
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
@@ -317,6 +323,103 @@ describe('AgentInput (enter to send on native)', () => {
         }));
         expect(mocks.onChangeText).toHaveBeenCalledWith('Expanded QA prompt');
         expect(mocks.onSend).not.toHaveBeenCalled();
+    });
+
+    it('falls back to default insertion when owner autocomplete selection declines handling', async () => {
+        mocks.activeSuggestions = [{ key: 'cmd-qa', text: '/qa', label: '/qa' }];
+        mocks.activeSuggestionIndex = 0;
+        const onAutocompleteSuggestionSelect = vi.fn(async () => ({ handled: false }));
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(
+            <AgentInput
+                sessionId="session-1"
+                value="/qa"
+                onChangeText={mocks.onChangeText}
+                placeholder="p"
+                onSend={mocks.onSend}
+                autocompletePrefixes={['/']}
+                autocompleteSuggestions={async () => mocks.activeSuggestions}
+                isSendDisabled={false}
+                disabled={false}
+                showAbortButton={false}
+                onAutocompleteSuggestionSelect={onAutocompleteSuggestionSelect}
+            />
+        );
+
+        const input = findNativeTextInput(screen);
+
+        await act(async () => {
+            input.props.onKeyPress?.({
+                nativeEvent: { key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false },
+                preventDefault: vi.fn(),
+            });
+        });
+
+        expect(onAutocompleteSuggestionSelect).toHaveBeenCalledOnce();
+        expect(mocks.onChangeText).toHaveBeenCalledWith('/qa');
+        expect(mocks.onSend).not.toHaveBeenCalled();
+    });
+
+    it('sends selected structured input mentions as message metadata overrides', async () => {
+        settingState.webEnterToSend = false;
+        settingState.nativeEnterToSend = true;
+        mocks.activeSuggestions = [{
+            key: 'vendor-plugin-github',
+            text: '@github',
+            label: 'GitHub',
+            component: () => React.createElement('View', null),
+            structuredInput: {
+                kind: 'vendorPlugin',
+                vendorPluginRef: 'github',
+                label: 'GitHub',
+                backendId: 'codex-app-server',
+                agentId: 'codex',
+            },
+        }];
+        mocks.activeSuggestionIndex = 0;
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(
+            <AgentInput
+                sessionId="session-1"
+                value="@github"
+                onChangeText={mocks.onChangeText}
+                placeholder="p"
+                onSend={mocks.onSend}
+                autocompletePrefixes={['@']}
+                autocompleteSuggestions={async () => mocks.activeSuggestions}
+                isSendDisabled={false}
+                disabled={false}
+                showAbortButton={false}
+            />
+        );
+
+        const input = findNativeTextInput(screen);
+
+        await act(async () => {
+            input.props.onKeyPress?.({
+                nativeEvent: { key: 'Enter', shiftKey: false, metaKey: false, ctrlKey: false },
+                preventDefault: vi.fn(),
+            });
+        });
+        mocks.activeSuggestions = [];
+        mocks.activeSuggestionIndex = -1;
+        await act(async () => {
+            input.props.onSubmitEditing?.();
+        });
+
+        expect(mocks.onSend).toHaveBeenCalledWith({
+            structuredInputMetaOverrides: {
+                happierStructuredInputV1: {
+                    v: 1,
+                    vendorPluginMentions: [{
+                        vendorPluginRef: 'github',
+                        label: 'GitHub',
+                        backendId: 'codex-app-server',
+                        agentId: 'codex',
+                    }],
+                },
+            },
+        });
     });
 
     it('does not submit from the native composer when only the web enter-to-send setting is enabled', async () => {

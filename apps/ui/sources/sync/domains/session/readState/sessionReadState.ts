@@ -1,11 +1,15 @@
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
+import { summarizeSessionListReadableActivityFromMessageRecords } from '@/sync/domains/session/listing/sessionListRenderable';
 import { deriveExternalSessionAttentionHasUnread } from '@/sync/domains/session/external/readExternalSessionAttention';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import {
     resolveLastViewedSessionSeq,
     type LastViewedSessionSeqInput,
 } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
+import { resolveSessionListReadableSeq } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
+import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
+import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol';
 
 export type SessionReadState = 'read' | 'unread' | 'empty';
 
@@ -15,7 +19,10 @@ export type SessionReadStateAction =
     | { kind: 'none'; visible: false };
 
 type SessionReadStateInput = LastViewedSessionSeqInput & Readonly<{
+    id?: string;
     seq: number;
+    latestTurnStatus?: PrimaryTurnStatusV1 | null;
+    latestReadyEventSeq?: number | null;
 }>;
 
 function resolveLegacyPendingActivityAt(metadata: unknown): number | undefined {
@@ -32,6 +39,20 @@ function resolveLegacyPendingActivityAt(metadata: unknown): number | undefined {
         : undefined;
 }
 
+function resolveReadableActivityForReadState(session: SessionReadStateInput) {
+    const sessionId = typeof session.id === 'string' ? session.id.trim() : '';
+    if (!sessionId) return undefined;
+
+    const storageState = readRegisteredStorageState();
+    const sessionMessages = storageState?.sessionMessages?.[sessionId];
+    if (!sessionMessages) return undefined;
+
+    return summarizeSessionListReadableActivityFromMessageRecords(
+        sessionMessages.messageIdsOldestFirst,
+        sessionMessages.messagesById,
+    );
+}
+
 export function deriveSessionReadState(session: SessionReadStateInput): SessionReadState {
     const metadata = session.metadata as Metadata | null | undefined;
     if (readExternalSessionLink(metadata)) {
@@ -40,13 +61,13 @@ export function deriveSessionReadState(session: SessionReadStateInput): SessionR
         if (externalSessionHasUnread === false) return 'read';
     }
 
-    const sessionSeq = Math.max(0, Math.trunc(session.seq));
-    if (sessionSeq <= 0) {
+    const readableSeq = resolveSessionListReadableSeq(session, resolveReadableActivityForReadState(session));
+    if (readableSeq <= 0) {
         return 'empty';
     }
 
     const hasUnread = computeHasUnreadActivity({
-        sessionSeq,
+        sessionSeq: readableSeq,
         pendingActivityAt: 0,
         lastViewedSessionSeq: resolveLastViewedSessionSeq(session),
         lastViewedPendingActivityAt: resolveLegacyPendingActivityAt(session.metadata),

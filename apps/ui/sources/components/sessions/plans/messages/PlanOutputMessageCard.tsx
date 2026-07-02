@@ -31,7 +31,9 @@ export function PlanOutputMessageCard(props: Readonly<{ payload: PlanOutputV1; s
                     recommendedBackendId: props.payload.recommendedBackendId,
                 };
                 const text = `@happier/plan.adopt\n${JSON.stringify(wire)}`;
-                await sync.sendMessage(props.sessionId, text, 'Adopt plan');
+                await sync.submitMessage(props.sessionId, text, 'Adopt plan', undefined, {
+                    callerSurface: 'plan_output_adopt',
+                });
             } catch (e) {
                 setError(e instanceof Error ? e.message : t('session.planOutput.failedToAdopt'));
             } finally {

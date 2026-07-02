@@ -7,11 +7,10 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Avatar } from '@/components/ui/avatar/Avatar';
-import { storage, useSession, useIsDataReady, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
+import { storage, useProfile, useSession, useLocalSetting, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { getSessionName, useSessionStatus, formatOSPlatform, formatPathRelativeToHome, getSessionAvatarId } from '@/utils/sessions/sessionUtils';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
-import { sessionArchiveWithServerScope, sessionDelete, sessionRename, sessionSetManualReadStateWithServerScope, sessionStopWithServerScope } from '@/sync/ops';
 import { useUnistyles } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
@@ -22,7 +21,6 @@ import { Session } from '@/sync/domains/state/storageTypes';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { HappyError } from '@/utils/errors/errors';
-import { clearSessionVisibleWhenInactive, isSessionActiveArchiveResult, stopSessionAndMaybeArchive } from '@/components/sessions/sessionStopArchiveFlow';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
@@ -46,6 +44,7 @@ import {
 import { getActionSpec } from '@happier-dev/protocol';
 import { SessionRetentionNotice } from '@/components/sessions/info/SessionRetentionNotice';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
+import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { useSessionHandoffSourceReachability, type SessionHandoffRuntimeAvailability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
@@ -60,10 +59,123 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { resolveSessionActionDefaultBackendTitle } from '@/sync/domains/session/resolveSessionActionDefaultBackendTitle';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
-import { resolveSessionReadStateAction } from '@/sync/domains/session/readState/sessionReadState';
-import { createSessionReadStateInfoItemProps } from '@/components/sessions/actions/sessionReadStateActionItems';
+import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
+import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
+import {
+    SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_DELETE_ID,
+    SESSION_ACTION_EDIT_TAGS_ID,
+    SESSION_ACTION_MOVE_TO_FOLDER_ID,
+    SESSION_ACTION_PIN_ID,
+    SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_STOP_ID,
+    SESSION_ACTION_UNPIN_ID,
+} from '@/components/sessions/actions/sessionActionIds';
+import { listVisibleSessionActionIds, resolveSessionReadStateActionId } from '@/components/sessions/actions/sessionActionAvailability';
+import { createSessionActionInfoItemProps } from '@/components/sessions/actions/sessionActionPresentation';
 import { buildNewSessionTempDataFromSessionConfiguration } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import { storeTempData } from '@/utils/sessions/tempDataStore';
+import { getTagsForSession, sessionTagKey, setTagsForSession } from '@/components/sessions/shell/sessionTagUtils';
+import { useSessionListMoveSheet } from '@/components/sessions/shell/move-sheet/useSessionListMoveSheet';
+import type { SessionListMoveSheetTarget } from '@/components/sessions/shell/move-sheet/buildSessionListMoveSheetTargets';
+import {
+    buildSessionFolderWorkspaceRefKey,
+    normalizeSessionFolderWorkspaceRef,
+    normalizeSessionFolders,
+    type SessionFolderWorkspaceRefV1,
+} from '@/sync/domains/session/folders';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { setSessionFolderAssignment } from '@/sync/ops/sessionFolders';
+
+type RawJsonSectionId = 'agentState' | 'metadata' | 'sessionStatus' | 'session';
+
+const SESSION_INFO_IDLE_MOVE_RESULT = Object.freeze({
+    instruction: Object.freeze({ kind: 'idle' as const }),
+    visual: Object.freeze({ kind: 'none' as const }),
+});
+
+function parseTagPromptValue(value: string | null): string[] | null {
+    if (value == null) return null;
+    const seen = new Set<string>();
+    const tags: string[] = [];
+    for (const rawTag of value.split(',')) {
+        const tag = rawTag.trim();
+        if (!tag || seen.has(tag)) continue;
+        seen.add(tag);
+        tags.push(tag);
+    }
+    return tags;
+}
+
+function resolveSessionInfoWorkspaceRef(
+    session: Session,
+    serverId: string | null,
+): SessionFolderWorkspaceRefV1 | null {
+    const metadata = session.metadata;
+    if (!metadata || typeof metadata !== 'object') return null;
+    const record = metadata as Record<string, unknown>;
+    const rootPath = typeof record.path === 'string' ? record.path : null;
+    if (!rootPath) return null;
+    return normalizeSessionFolderWorkspaceRef({
+        t: 'workspaceScope',
+        serverId,
+        machineId: typeof record.machineId === 'string' ? record.machineId : null,
+        rootPath,
+    });
+}
+
+function resolveFolderDepth(
+    folderId: string,
+    parentIdByFolderId: ReadonlyMap<string, string | null>,
+): number {
+    let depth = 0;
+    let current = parentIdByFolderId.get(folderId) ?? null;
+    const seen = new Set([folderId]);
+    while (current && !seen.has(current)) {
+        seen.add(current);
+        depth += 1;
+        current = parentIdByFolderId.get(current) ?? null;
+    }
+    return depth;
+}
+
+function buildSessionInfoMoveTargets(params: Readonly<{
+    sessionFolders: unknown;
+    workspace: SessionFolderWorkspaceRefV1 | null;
+}>): SessionListMoveSheetTarget[] {
+    if (!params.workspace) return [];
+    const workspaceKey = buildSessionFolderWorkspaceRefKey(params.workspace);
+    const normalized = normalizeSessionFolders(params.sessionFolders);
+    const parentIdByFolderId = new Map<string, string | null>();
+    for (const folder of normalized.folders) {
+        parentIdByFolderId.set(folder.id, folder.parentId ?? null);
+    }
+    const targets: SessionListMoveSheetTarget[] = [{
+        id: 'session-info-move-folder:root',
+        kind: 'root',
+        label: t('sessionsList.moveToWorkspaceRoot'),
+        disabled: false,
+        result: SESSION_INFO_IDLE_MOVE_RESULT,
+    }];
+    for (const folder of normalized.folders) {
+        if (buildSessionFolderWorkspaceRefKey(folder.workspace) !== workspaceKey) continue;
+        targets.push({
+            id: `session-info-move-folder:${folder.id}`,
+            kind: 'folder',
+            label: folder.name,
+            disabled: false,
+            result: SESSION_INFO_IDLE_MOVE_RESULT,
+        });
+    }
+    return targets.sort((left, right) => {
+        if (left.kind === 'root') return -1;
+        if (right.kind === 'root') return 1;
+        const leftDepth = resolveFolderDepth(left.id.replace('session-info-move-folder:', ''), parentIdByFolderId);
+        const rightDepth = resolveFolderDepth(right.id.replace('session-info-move-folder:', ''), parentIdByFolderId);
+        return leftDepth - rightDepth || left.label.localeCompare(right.label);
+    });
+}
 
 function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandoff, runtimeAvailability, routeScope }: Readonly<{
     session: Session;
@@ -74,13 +186,18 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const profile = useProfile();
     const localDevModeEnabled = useLocalSetting('devModeEnabled');
     const devModeEnabled = __DEV__ || localDevModeEnabled === true;
     const sessionName = getSessionName(session);
-    const sessionStatus = useSessionStatus(session);
+    const sessionStatus = useSessionStatus(session, {
+        subscribeToSession: false,
+        subscribeToTranscript: false,
+    });
     const enabledAgentIds = useEnabledAgentIds();
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
+    const sessionFoldersEnabled = useFeatureEnabled('sessions.folders');
     const sessionExecutionRunsSupported = useSessionExecutionRunsSupported(session.id, sessionServerId);
     const serverSnapshot = useServerFeaturesSnapshotForServerId(sessionServerId, { enabled: Boolean(sessionServerId) });
     const useProfiles = useSetting('useProfiles') === true;
@@ -91,10 +208,14 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const actionsSettingsV1 = useSetting('actionsSettingsV1');
     const sessionReplayEnabled = useSetting('sessionReplayEnabled') === true;
     const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
-    const pinnedSessionKeysV1 = useSetting('pinnedSessionKeysV1');
+    const [pinnedSessionKeysV1, setPinnedSessionKeysV1] = useSettingMutable('pinnedSessionKeysV1');
+    const [sessionTagsV1, setSessionTagsV1] = useSettingMutable('sessionTagsV1');
+    const sessionFoldersV1 = useSetting('sessionFoldersV1');
+    const { openMoveSheet } = useSessionListMoveSheet();
     const sharingSupported = useSessionSharingSupport();
     const automationsSupport = useAutomationsSupport();
     const showAutomations = automationsSupport?.enabled !== false;
+    const [expandedRawJsonSection, setExpandedRawJsonSection] = React.useState<RawJsonSectionId | null>(null);
     // Check if CLI version is outdated
     const isCliOutdated = session.metadata?.version && !isVersionSupported(session.metadata.version, MINIMUM_CLI_VERSION);
     const canManageSharing = !session.accessLevel || session.accessLevel === 'admin';
@@ -215,6 +336,40 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     const tmuxFallbackReason = React.useMemo(() => {
         return getTmuxFallbackReason(session.metadata?.terminal);
     }, [session.metadata?.terminal]);
+    const rawSessionStatus = React.useMemo(() => ({
+        isConnected: sessionStatus.isConnected,
+        statusText: sessionStatus.statusText,
+        statusColor: sessionStatus.statusColor,
+        statusDotColor: sessionStatus.statusDotColor,
+        isPulsing: sessionStatus.isPulsing,
+    }), [
+        sessionStatus.isConnected,
+        sessionStatus.isPulsing,
+        sessionStatus.statusColor,
+        sessionStatus.statusDotColor,
+        sessionStatus.statusText,
+    ]);
+    const toggleRawJsonSection = React.useCallback((section: RawJsonSectionId) => {
+        setExpandedRawJsonSection((current) => current === section ? null : section);
+    }, []);
+    const handleToggleAgentStateJson = React.useCallback(() => toggleRawJsonSection('agentState'), [toggleRawJsonSection]);
+    const handleToggleMetadataJson = React.useCallback(() => toggleRawJsonSection('metadata'), [toggleRawJsonSection]);
+    const handleToggleSessionStatusJson = React.useCallback(() => toggleRawJsonSection('sessionStatus'), [toggleRawJsonSection]);
+    const handleToggleSessionJson = React.useCallback(() => toggleRawJsonSection('session'), [toggleRawJsonSection]);
+    const expandedRawJsonCode = React.useMemo(() => {
+        switch (expandedRawJsonSection) {
+            case 'agentState':
+                return JSON.stringify(session.agentState, null, 2);
+            case 'metadata':
+                return JSON.stringify(session.metadata, null, 2);
+            case 'sessionStatus':
+                return JSON.stringify(rawSessionStatus, null, 2);
+            case 'session':
+                return JSON.stringify(session, null, 2);
+            default:
+                return null;
+        }
+    }, [expandedRawJsonSection, rawSessionStatus, session]);
     const sessionLogPath = React.useMemo(() => {
         const value = typeof (session.metadata as any)?.sessionLogPath === 'string'
             ? (session.metadata as any).sessionLogPath.trim()
@@ -290,9 +445,6 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         });
     }, [routeScope, router, session.id]);
 
-    const canStopSession = !session.accessLevel;
-    const isArchivedSession = session.archivedAt != null;
-    const canArchiveSession = canManageSharing && !isArchivedSession;
     const cachedSessionServerId = resolveServerIdForSessionIdFromLocalCache(session.id);
     const resolvedServerId = cachedSessionServerId ?? sessionServerId;
     const scopedMutationServerId = cachedSessionServerId ?? routeScope.serverId ?? sessionServerId ?? null;
@@ -301,48 +453,178 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         Array.isArray(pinnedSessionKeysV1) &&
         pinnedSessionKeysV1.includes(`${resolvedServerId}:${session.id}`),
     );
-    const readStateAction = React.useMemo(() => {
-        if (isArchivedSession) return { kind: 'none' as const, visible: false as const };
-        return resolveSessionReadStateAction(session);
-    }, [isArchivedSession, session]);
-    const readStateInfoItem = React.useMemo(
-        () => createSessionReadStateInfoItemProps(readStateAction, theme.colors.accent.blue),
-        [readStateAction, theme.colors.accent.blue],
+    const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
+    const sessionActionTarget = React.useMemo(() => createSessionActionTarget({
+        session,
+        serverId: scopedMutationServerId,
+        currentUserId,
+        isConnected: sessionStatus.isConnected,
+        isPinned: isPinnedSession,
+    }), [currentUserId, isPinnedSession, scopedMutationServerId, session, sessionStatus.isConnected]);
+    const canStopSession = sessionActionTarget.isActive && sessionActionTarget.canStop;
+    const canArchiveSession = sessionActionTarget.canArchive;
+    const canDeleteSession = sessionActionTarget.canDelete;
+    const visibleSessionActionIds = React.useMemo(
+        () => new Set(listVisibleSessionActionIds({ target: sessionActionTarget, surface: 'sessionInfo' })),
+        [sessionActionTarget],
     );
+    const canRenameSession = visibleSessionActionIds.has(SESSION_ACTION_RENAME_ID);
+    const sessionSettingsKey = typeof resolvedServerId === 'string' && resolvedServerId.trim()
+        ? sessionTagKey(resolvedServerId, session.id)
+        : null;
+    const sessionInfoTags = sessionSettingsKey
+        ? getTagsForSession(sessionTagsV1 as Record<string, string[]> | null | undefined, sessionSettingsKey)
+        : [];
+    const pinInfoItemProps = React.useMemo(() => createSessionActionInfoItemProps({
+        actionId: isPinnedSession ? SESSION_ACTION_UNPIN_ID : SESSION_ACTION_PIN_ID,
+        iconColor: theme.colors.accent.blue,
+    }), [isPinnedSession, theme.colors.accent.blue]);
+    const tagsInfoItemProps = React.useMemo(() => createSessionActionInfoItemProps({
+        actionId: SESSION_ACTION_EDIT_TAGS_ID,
+        iconColor: theme.colors.accent.blue,
+    }), [theme.colors.accent.blue]);
+    const moveToFolderInfoItemProps = React.useMemo(() => createSessionActionInfoItemProps({
+        actionId: SESSION_ACTION_MOVE_TO_FOLDER_ID,
+        iconColor: theme.colors.accent.blue,
+    }), [theme.colors.accent.blue]);
+    const stopInfoItemProps = React.useMemo(() => createSessionActionInfoItemProps({
+        actionId: SESSION_ACTION_STOP_ID,
+        iconColor: theme.colors.state.danger.foreground,
+    }), [theme.colors.state.danger.foreground]);
+    const archiveInfoItemProps = React.useMemo(() => createSessionActionInfoItemProps({
+        actionId: SESSION_ACTION_ARCHIVE_ID,
+        iconColor: theme.colors.state.danger.foreground,
+    }), [theme.colors.state.danger.foreground]);
+    const deleteInfoItemProps = React.useMemo(() => createSessionActionInfoItemProps({
+        actionId: SESSION_ACTION_DELETE_ID,
+        iconColor: theme.colors.state.danger.foreground,
+    }), [theme.colors.state.danger.foreground]);
+    const readStateActionId = React.useMemo(
+        () => resolveSessionReadStateActionId(sessionActionTarget),
+        [sessionActionTarget],
+    );
+    const readStateInfoItem = React.useMemo(
+        () => readStateActionId
+            ? createSessionActionInfoItemProps({ actionId: readStateActionId, iconColor: theme.colors.accent.blue })
+            : null,
+        [readStateActionId, theme.colors.accent.blue],
+    );
+    const moveTargets = React.useMemo(() => buildSessionInfoMoveTargets({
+        sessionFolders: sessionFoldersV1,
+        workspace: resolveSessionInfoWorkspaceRef(session, scopedMutationServerId),
+    }), [scopedMutationServerId, session, sessionFoldersV1]);
 
     const handleReadStateAction = useCallback(async () => {
-        if (!readStateAction.visible) return;
-        const result = await sessionSetManualReadStateWithServerScope(
-            session.id,
-            readStateAction.targetState,
-            { serverId: scopedMutationServerId },
-        );
-        if (!result.success) {
-            Modal.alert(
-                t('common.error'),
-                result.message || t(
-                    readStateAction.targetState === 'read'
-                        ? 'sessionInfo.failedToMarkSessionRead'
-                        : 'sessionInfo.failedToMarkSessionUnread',
-                ),
-            );
-        }
-    }, [readStateAction, scopedMutationServerId, session.id]);
+        if (!readStateActionId) return;
+        await executeSessionAction({
+            actionId: readStateActionId,
+            target: sessionActionTarget,
+        });
+    }, [readStateActionId, sessionActionTarget]);
     const [updatingReadState, performReadStateAction] = useHappyAction(handleReadStateAction);
 
+    const handleTogglePinned = useCallback(async () => {
+        if (!sessionSettingsKey) return;
+        await executeSessionAction({
+            actionId: isPinnedSession ? SESSION_ACTION_UNPIN_ID : SESSION_ACTION_PIN_ID,
+            target: sessionActionTarget,
+            context: {
+                operations: {
+                    setPinned: async (_sessionId, pinned) => {
+                        const current = Array.isArray(pinnedSessionKeysV1) ? pinnedSessionKeysV1 : [];
+                        const withoutSession = current.filter((key) => key !== sessionSettingsKey);
+                        await setPinnedSessionKeysV1(pinned ? [...withoutSession, sessionSettingsKey] : withoutSession);
+                    },
+                },
+            },
+        });
+    }, [isPinnedSession, pinnedSessionKeysV1, sessionActionTarget, sessionSettingsKey, setPinnedSessionKeysV1]);
+    const [pinningSession, performTogglePinned] = useHappyAction(handleTogglePinned);
+
+    const handleEditTags = useCallback(async () => {
+        if (!sessionSettingsKey) return;
+        const rawTags = await Modal.prompt(
+            t('sessionsList.selectionSetTagsPromptTitle'),
+            t('sessionsList.selectionTagsPromptMessage'),
+            {
+                defaultValue: sessionInfoTags.join(', '),
+                placeholder: t('sessionsList.selectionTagsPlaceholder'),
+                confirmText: t('common.save'),
+                cancelText: t('common.cancel'),
+            },
+        );
+        const nextTags = parseTagPromptValue(rawTags);
+        if (nextTags == null) return;
+        await executeSessionAction({
+            actionId: SESSION_ACTION_EDIT_TAGS_ID,
+            target: sessionActionTarget,
+            input: { tags: nextTags },
+            context: {
+                operations: {
+                    setTags: async (_sessionId, tags) => {
+                        await setSessionTagsV1(setTagsForSession(
+                            sessionTagsV1 as Record<string, string[]> | null | undefined,
+                            sessionSettingsKey,
+                            [...tags],
+                        ));
+                    },
+                },
+            },
+        });
+    }, [sessionActionTarget, sessionInfoTags, sessionSettingsKey, sessionTagsV1, setSessionTagsV1]);
+    const [editingTags, performEditTags] = useHappyAction(handleEditTags);
+
+    const handleMoveToFolder = useCallback(async () => {
+        if (!sessionFoldersEnabled || moveTargets.length === 0) return;
+        const selectedTarget = await openMoveSheet({
+            sourceLabel: sessionName,
+            targets: moveTargets,
+        });
+        if (!selectedTarget) return;
+        const folderId = selectedTarget.kind === 'root'
+            ? null
+            : selectedTarget.id.replace('session-info-move-folder:', '');
+        await executeSessionAction({
+            actionId: SESSION_ACTION_MOVE_TO_FOLDER_ID,
+            target: sessionActionTarget,
+            input: { folderId },
+            context: {
+                operations: {
+                    moveToFolder: async (_target, input) => {
+                        const serverId = typeof scopedMutationServerId === 'string' ? scopedMutationServerId.trim() : '';
+                        if (!serverId) {
+                            throw new HappyError(t('errors.unknownError'), false);
+                        }
+                        const serverProfile = getServerProfileById(serverId);
+                        if (!serverProfile) {
+                            throw new HappyError(t('errors.unknownError'), false);
+                        }
+                        const credentials = await TokenStorage.getCredentialsForServerUrl(serverProfile.serverUrl, { serverId: serverProfile.id });
+                        if (!credentials) {
+                            throw new HappyError(t('errors.unknownError'), false);
+                        }
+                        await setSessionFolderAssignment({
+                            credentials,
+                            serverId: serverProfile.id,
+                            serverUrl: serverProfile.serverUrl,
+                            sessionId: session.id,
+                            folderId: input?.folderId ?? null,
+                        });
+                    },
+                },
+            },
+        });
+    }, [moveTargets, openMoveSheet, scopedMutationServerId, session.id, sessionActionTarget, sessionFoldersEnabled, sessionName]);
+    const [movingToFolder, performMoveToFolder] = useHappyAction(handleMoveToFolder);
+
     const handleStopAndMaybeArchive = useCallback(async () => {
-        await stopSessionAndMaybeArchive({
-            sessionId: session.id,
-            hideInactiveSessions,
-            isPinned: isPinnedSession,
-            archiveAfterStop: 'never',
-            stopSession: async () => await sessionStopWithServerScope(session.id, { serverId: scopedMutationServerId }),
-            archiveSession: async () => await sessionArchiveWithServerScope(session.id, { serverId: scopedMutationServerId }),
-            stopErrorMessage: t('sessionInfo.failedToStopSession'),
-            archiveErrorMessage: t('sessionInfo.failedToArchiveSession'),
+        await executeSessionAction({
+            actionId: SESSION_ACTION_STOP_ID,
+            target: sessionActionTarget,
+            context: { hideInactiveSessions },
         });
         handleExitAfterSessionMutation();
-    }, [handleExitAfterSessionMutation, hideInactiveSessions, isPinnedSession, scopedMutationServerId, session.id]);
+    }, [handleExitAfterSessionMutation, hideInactiveSessions, sessionActionTarget]);
     const [stoppingSession, performStop] = useHappyAction(handleStopAndMaybeArchive);
 
     const handleStopSession = useCallback(async () => {
@@ -360,36 +642,13 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     }, [performStop]);
 
     const handleArchive = useCallback(async () => {
-        const stopThenArchiveSession = async () => {
-            await stopSessionAndMaybeArchive({
-                sessionId: session.id,
-                hideInactiveSessions,
-                isPinned: isPinnedSession,
-                archiveAfterStop: 'always',
-                stopSession: async () => await sessionStopWithServerScope(session.id, { serverId: scopedMutationServerId }),
-                archiveSession: async () => await sessionArchiveWithServerScope(session.id, { serverId: scopedMutationServerId }),
-                stopErrorMessage: t('sessionInfo.failedToStopSession'),
-                archiveErrorMessage: t('sessionInfo.failedToArchiveSession'),
-            });
-            handleExitAfterSessionMutation();
-        };
-
-        if (session.active) {
-            await stopThenArchiveSession();
-            return;
-        }
-
-        const result = await sessionArchiveWithServerScope(session.id, { serverId: scopedMutationServerId });
-        if (!result.success) {
-            if (isSessionActiveArchiveResult(result)) {
-                await stopThenArchiveSession();
-                return;
-            }
-            throw new HappyError(result.message || t('sessionInfo.failedToArchiveSession'), false);
-        }
-        clearSessionVisibleWhenInactive(session.id);
+        await executeSessionAction({
+            actionId: SESSION_ACTION_ARCHIVE_ID,
+            target: sessionActionTarget,
+            context: { hideInactiveSessions },
+        });
         handleExitAfterSessionMutation();
-    }, [handleExitAfterSessionMutation, hideInactiveSessions, isPinnedSession, scopedMutationServerId, session.active, session.id]);
+    }, [handleExitAfterSessionMutation, hideInactiveSessions, sessionActionTarget]);
     const [archivingSession, performArchive] = useHappyAction(handleArchive);
 
     const handleForkAction = useCallback(async () => {
@@ -434,10 +693,10 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
 
     // Use HappyAction for deletion - it handles errors automatically
     const [deletingSession, performDelete] = useHappyAction(async () => {
-        const result = await sessionDelete(session.id);
-        if (!result.success) {
-            throw new HappyError(result.message || t('sessionInfo.failedToDeleteSession'), false);
-        }
+        await executeSessionAction({
+            actionId: SESSION_ACTION_DELETE_ID,
+            target: sessionActionTarget,
+        });
         handleExitAfterSessionMutation();
     });
 
@@ -457,6 +716,7 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
     }, [performDelete]);
 
     const handleRenameSession = useCallback(async () => {
+        if (!canRenameSession) return;
         const newName = await Modal.prompt(
             t('sessionInfo.renameSession'),
             t('sessionInfo.renameSessionSubtitle'),
@@ -469,12 +729,13 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
         );
 
         if (newName?.trim()) {
-            const result = await sessionRename(session.id, newName.trim(), { serverId: sessionServerId });
-            if (!result.success) {
-                Modal.alert(t('common.error'), result.message || t('sessionInfo.failedToRenameSession'));
-            }
+            await executeSessionAction({
+                actionId: SESSION_ACTION_RENAME_ID,
+                target: sessionActionTarget,
+                input: { title: newName },
+            });
         }
-    }, [sessionName, session.id, sessionServerId]);
+    }, [canRenameSession, sessionActionTarget, sessionName]);
 
     const formatDate = useCallback((timestamp: number) => {
         return new Date(timestamp).toLocaleString();
@@ -596,12 +857,14 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
 
                 {/* Quick Actions */}
                 <ItemGroup title={t('sessionInfo.quickActions')}>
-                    <Item
-                        title={t('sessionInfo.renameSession')}
-                        subtitle={t('sessionInfo.renameSessionSubtitle')}
-                        icon={<Ionicons name="pencil-outline" size={29} color={theme.colors.accent.blue} />}
-                        onPress={handleRenameSession}
-                    />
+                    {canRenameSession && (
+                        <Item
+                            title={t('sessionInfo.renameSession')}
+                            subtitle={t('sessionInfo.renameSessionSubtitle')}
+                            icon={<Ionicons name="pencil-outline" size={29} color={theme.colors.accent.blue} />}
+                            onPress={handleRenameSession}
+                        />
+                    )}
                     <Item
                         testID="session-info-new-session-same-setup"
                         title={t('sessionInfo.newSessionSameSetup')}
@@ -633,6 +896,28 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             {...readStateInfoItem}
                             onPress={performReadStateAction}
                             loading={updatingReadState}
+                        />
+                    ) : null}
+                    {sessionSettingsKey && pinInfoItemProps ? (
+                        <Item
+                            {...pinInfoItemProps}
+                            onPress={performTogglePinned}
+                            loading={pinningSession}
+                        />
+                    ) : null}
+                    {sessionSettingsKey && tagsInfoItemProps ? (
+                        <Item
+                            {...tagsInfoItemProps}
+                            detail={sessionInfoTags.length > 0 ? sessionInfoTags.join(', ') : undefined}
+                            onPress={performEditTags}
+                            loading={editingTags}
+                        />
+                    ) : null}
+                    {sessionFoldersEnabled && moveTargets.length > 0 && moveToFolderInfoItemProps ? (
+                        <Item
+                            {...moveToFolderInfoItemProps}
+                            onPress={performMoveToFolder}
+                            loading={movingToFolder}
                         />
                     ) : null}
                     {executionRunsEnabled && sessionExecutionRunsSupported ? (
@@ -697,29 +982,23 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                             onPress={() => router.push(routeScope.buildHref(session.id, { suffix: '/sharing' }))}
                         />
                     )}
-                    {sessionStatus.isConnected && canStopSession && (
+                    {sessionStatus.isConnected && canStopSession && stopInfoItemProps && (
                         <Item
-                            title={t('sessionInfo.stopSession')}
-                            subtitle={t('sessionInfo.stopSessionSubtitle')}
-                            icon={<Ionicons name="stop-circle-outline" size={29} color={theme.colors.state.danger.foreground} />}
+                            {...stopInfoItemProps}
                             onPress={handleStopSession}
                             loading={stoppingSession}
                         />
                     )}
-                    {canArchiveSession && (
+                    {canArchiveSession && archiveInfoItemProps && (
                         <Item
-                            title={t('sessionInfo.archiveSession')}
-                            subtitle={t('sessionInfo.archiveSessionSubtitle')}
-                            icon={<Ionicons name="archive-outline" size={29} color={theme.colors.state.danger.foreground} />}
+                            {...archiveInfoItemProps}
                             onPress={handleArchiveSession}
                             loading={archivingSession}
                         />
                     )}
-                    {!sessionStatus.isConnected && !session.active && (
+                    {canDeleteSession && deleteInfoItemProps && (
                         <Item
-                            title={t('sessionInfo.deleteSession')}
-                            subtitle={t('sessionInfo.deleteSessionSubtitle')}
-                            icon={<Ionicons name="trash-outline" size={29} color={theme.colors.state.danger.foreground} />}
+                            {...deleteInfoItemProps}
                             onPress={handleDeleteSession}
                         />
                     )}
@@ -856,19 +1135,29 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                 {/* Activity */}
                 <ItemGroup title={t('sessionInfo.activity')}>
                     <Item
-                        title={t('sessionInfo.thinking')}
-                        detail={session.thinking ? t('common.yes') : t('common.no')}
-                        icon={<Ionicons name="bulb-outline" size={29} color={session.thinking ? theme.colors.accent.yellow : theme.colors.text.secondary} />}
+                        title={t('sessionInfo.sessionStatus')}
+                        detail={sessionStatus.statusText}
+                        icon={<Ionicons name="pulse-outline" size={29} color={sessionStatus.statusColor} />}
                         showChevron={false}
                     />
-                    {session.thinking && (
-                        <Item
-                            title={t('sessionInfo.thinkingSince')}
-                            subtitle={formatDate(session.thinkingAt)}
-                            icon={<Ionicons name="timer-outline" size={29} color={theme.colors.accent.yellow} />}
-                            showChevron={false}
-                        />
-                    )}
+                    {devModeEnabled ? (
+                        <>
+                            <Item
+                                title={t('sessionInfo.thinking')}
+                                detail={session.thinking ? t('common.yes') : t('common.no')}
+                                icon={<Ionicons name="bulb-outline" size={29} color={session.thinking ? theme.colors.accent.yellow : theme.colors.text.secondary} />}
+                                showChevron={false}
+                            />
+                            {session.thinking && (
+                                <Item
+                                    title={t('sessionInfo.thinkingSince')}
+                                    subtitle={formatDate(session.thinkingAt)}
+                                    icon={<Ionicons name="timer-outline" size={29} color={theme.colors.accent.yellow} />}
+                                    showChevron={false}
+                                />
+                            )}
+                        </>
+                    ) : null}
                 </ItemGroup>
 
                 {/* Raw JSON (Dev Mode Only) */}
@@ -879,14 +1168,16 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                                 <Item
                                     title={t('sessionInfo.agentState')}
                                     icon={<Ionicons name="code-working-outline" size={29} color={theme.colors.accent.orange} />}
-                                    showChevron={false}
+                                    onPress={handleToggleAgentStateJson}
                                 />
-                                <View style={{ marginHorizontal: 16, marginBottom: 12 }}>
-                                    <CodeView 
-                                        code={JSON.stringify(session.agentState, null, 2)}
-                                        language="json"
-                                    />
-                                </View>
+                                {expandedRawJsonSection === 'agentState' && expandedRawJsonCode && (
+                                    <View style={{ marginHorizontal: 16, marginBottom: 12 }}>
+                                        <CodeView
+                                            code={expandedRawJsonCode}
+                                            language="json"
+                                        />
+                                    </View>
+                                )}
                             </>
                         )}
                         {session.metadata && (
@@ -894,14 +1185,16 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                                 <Item
                                     title={t('sessionInfo.metadata')}
                                     icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.accent.indigo} />}
-                                    showChevron={false}
+                                    onPress={handleToggleMetadataJson}
                                 />
-                                <View style={{ marginHorizontal: 16, marginBottom: 12 }}>
-                                    <CodeView 
-                                        code={JSON.stringify(session.metadata, null, 2)}
-                                        language="json"
-                                    />
-                                </View>
+                                {expandedRawJsonSection === 'metadata' && expandedRawJsonCode && (
+                                    <View style={{ marginHorizontal: 16, marginBottom: 12 }}>
+                                        <CodeView
+                                            code={expandedRawJsonCode}
+                                            language="json"
+                                        />
+                                    </View>
+                                )}
                             </>
                         )}
                         {sessionStatus && (
@@ -909,34 +1202,32 @@ function SessionInfoContent({ session, sessionServerId, sourceMachineIdForHandof
                                 <Item
                                     title={t('sessionInfo.sessionStatus')}
                                     icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.accent.blue} />}
-                                    showChevron={false}
+                                    onPress={handleToggleSessionStatusJson}
                                 />
-                                <View style={{ marginHorizontal: 16, marginBottom: 12 }}>
-                                    <CodeView 
-                                        code={JSON.stringify({
-                                            isConnected: sessionStatus.isConnected,
-                                            statusText: sessionStatus.statusText,
-                                            statusColor: sessionStatus.statusColor,
-                                            statusDotColor: sessionStatus.statusDotColor,
-                                            isPulsing: sessionStatus.isPulsing
-                                        }, null, 2)}
-                                        language="json"
-                                    />
-                                </View>
+                                {expandedRawJsonSection === 'sessionStatus' && expandedRawJsonCode && (
+                                    <View style={{ marginHorizontal: 16, marginBottom: 12 }}>
+                                        <CodeView
+                                            code={expandedRawJsonCode}
+                                            language="json"
+                                        />
+                                    </View>
+                                )}
                             </>
                         )}
                         {/* Full Session Object */}
                         <Item
                             title={t('sessionInfo.fullSessionObject')}
                             icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.state.success.foreground} />}
-                            showChevron={false}
+                            onPress={handleToggleSessionJson}
                         />
-                        <View style={{ marginHorizontal: 16, marginBottom: 12 }}>
-                            <CodeView 
-                                code={JSON.stringify(session, null, 2)}
-                                language="json"
-                            />
-                        </View>
+                        {expandedRawJsonSection === 'session' && expandedRawJsonCode && (
+                            <View style={{ marginHorizontal: 16, marginBottom: 12 }}>
+                                <CodeView
+                                    code={expandedRawJsonCode}
+                                    language="json"
+                                />
+                            </View>
+                        )}
                     </ItemGroup>
                 )}
             </ItemList>
@@ -950,13 +1241,13 @@ export default () => {
     const routeScope = React.useMemo(() => createSessionRouteServerScope(params), [params]);
     const { id } = params;
     const sessionId = normalizeSessionId(id);
-    const sessionHydrated = useHydrateSessionForRoute(
+    const routeHydrationState = useHydrateSessionForRoute(
         sessionId,
         'SessionInfoRoute.ensureSessionVisible',
         routeScope.hydrationOptions,
     );
+    const sessionHydrated = isSessionRouteHydrationAvailable(routeHydrationState);
     const session = useSession(sessionId);
-    const isDataReady = useIsDataReady();
     const sessionServerId = React.useMemo(() => {
         const directFallback = String(session?.serverId ?? '').trim() || null;
         const listPreferredServerId = resolveSessionListPreferredServerIdFromState(
@@ -982,10 +1273,10 @@ export default () => {
         sourceMachineId: sourceMachineIdForHandoff,
     });
 
-    // Handle three states: loading, deleted, and exists.
-    // If the session record is already present, fail open and render it even if global hydration
-    // is still in progress; otherwise deep links can get stuck in a permanent spinner state.
-    if (!session && (!isDataReady || !sessionHydrated)) {
+    // Handle three states: route pending, route terminal missing, and route available.
+    // If the session record is already present, fail open and render it; otherwise deep links can
+    // get stuck in a permanent spinner state when the local record is ahead of the route check.
+    if (!session && !sessionHydrated && !isSessionRouteHydrationMissing(routeHydrationState)) {
         // Still loading data
         return (
             <View testID="session-info-screen" style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>

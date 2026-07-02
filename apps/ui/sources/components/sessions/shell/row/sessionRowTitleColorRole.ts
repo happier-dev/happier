@@ -1,8 +1,9 @@
-import {
-    deriveSessionListAttentionState,
-    type SessionListAttentionState,
-} from '../../../../sync/domains/session/listing/deriveSessionListActivity';
+import type { SessionListAttentionState } from '../../../../sync/domains/session/listing/deriveSessionListActivity';
 import type { SessionStatus } from '@/utils/sessions/sessionUtils';
+import {
+    resolveLegacySessionRowAttentionState,
+    type SessionRowAttentionState,
+} from './resolveSessionRowPresentation';
 
 export type SessionListActiveColorModeV1 =
     | 'activityAndAttention'
@@ -11,6 +12,7 @@ export type SessionListActiveColorModeV1 =
 
 export type SessionRowTitleTone = 'quiet' | 'emphasized';
 export type SessionRowTitleColorRole = 'primary' | 'secondary';
+type SessionRowTitleAttentionState = SessionListAttentionState | SessionRowAttentionState;
 
 export function normalizeSessionListActiveColorMode(value: unknown): SessionListActiveColorModeV1 {
     return value === 'attentionOnly' || value === 'allActive'
@@ -22,12 +24,8 @@ export function deriveSessionRowTitleAttentionState(input: Readonly<{
     hasUnreadMessages: boolean;
     pendingCount: number;
     sessionStatus: SessionStatus;
-}>): SessionListAttentionState {
-    return deriveSessionListAttentionState({
-        hasUnreadMessages: input.hasUnreadMessages,
-        pendingCount: input.pendingCount,
-        sessionState: input.sessionStatus.state,
-    });
+}>): SessionRowAttentionState {
+    return resolveLegacySessionRowAttentionState(input);
 }
 
 export function resolveSessionRowTitleColorRole(input: Readonly<{
@@ -35,7 +33,7 @@ export function resolveSessionRowTitleColorRole(input: Readonly<{
     selected: boolean;
     isConnected: boolean;
     isSessionActive: boolean;
-    attentionState: SessionListAttentionState;
+    attentionState: SessionRowTitleAttentionState;
     titleTone: SessionRowTitleTone;
 }>): SessionRowTitleColorRole {
     if (input.selected) return 'primary';
@@ -52,7 +50,7 @@ export function resolveSessionRowTitleColorRole(input: Readonly<{
     return input.titleTone === 'quiet' ? 'secondary' : 'primary';
 }
 
-function isUserAttentionState(attentionState: SessionListAttentionState): boolean {
+function isUserAttentionState(attentionState: SessionRowTitleAttentionState): boolean {
     return attentionState === 'unread'
         || attentionState === 'pending'
         || attentionState === 'ready'

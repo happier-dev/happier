@@ -3,11 +3,12 @@ import { Platform, Pressable, View, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
-import type { PopoverBackdropEffect, PopoverPortalOptions, PopoverWindowRect } from './_types';
+import type { PopoverBackdropEffect, PopoverOutsidePointerEventsMode, PopoverPortalOptions, PopoverWindowRect } from './_types';
 
 export function PopoverBackdrop(props: Readonly<{
     backdrop: boolean | Readonly<{ enabled?: boolean }> | undefined;
     backdropBlocksOutsidePointerEvents: boolean;
+    backdropOutsidePointerEventsMode: PopoverOutsidePointerEventsMode;
     backdropEffect: PopoverBackdropEffect;
     backdropBlurOnWeb: Readonly<{ px?: number; tintColor?: string }> | undefined;
     backdropSpotlight: boolean | Readonly<{ padding?: number }>;
@@ -68,15 +69,18 @@ export function PopoverBackdrop(props: Readonly<{
                         return false;
                     }}
                     style={[
-                        {
-                            position: props.fixedPositionOnWeb,
-                            top: Platform.OS === 'web' ? 0 : (props.shouldPortal ? 0 : -1000),
-                            left: Platform.OS === 'web' ? 0 : (props.shouldPortal ? 0 : -1000),
-                            right: Platform.OS === 'web' ? 0 : (props.shouldPortal ? 0 : -1000),
-                            bottom: Platform.OS === 'web' ? 0 : (props.shouldPortal ? 0 : -1000),
-                            opacity: props.portalOpacity,
-                            zIndex: props.shouldPortal ? props.portalZ : 999,
-                        },
+                        createBackdropPressableFrameStyle({
+                            anchorRect: props.anchorRect,
+                            backdropOutsidePointerEventsMode: props.backdropOutsidePointerEventsMode,
+                            fixedPositionOnWeb: props.fixedPositionOnWeb,
+                            portalPositionOnWeb: props.portalPositionOnWeb,
+                            shouldPortal: props.shouldPortal,
+                            shouldPortalWeb: props.shouldPortalWeb,
+                            portalOpacity: props.portalOpacity,
+                            portalZ: props.shouldPortal ? props.portalZ : 999,
+                            webPortalOffsetY: props.webPortalOffsetY,
+                            windowHeight: props.windowHeight,
+                        }),
                         props.backdropStyle,
                     ]}
                 />
@@ -119,6 +123,44 @@ export function PopoverBackdrop(props: Readonly<{
             ) : null}
         </>
     );
+}
+
+function createBackdropPressableFrameStyle(params: Readonly<{
+    anchorRect: PopoverWindowRect | null;
+    backdropOutsidePointerEventsMode: PopoverOutsidePointerEventsMode;
+    fixedPositionOnWeb: ViewStyle['position'];
+    portalPositionOnWeb: ViewStyle['position'];
+    shouldPortal: boolean;
+    shouldPortalWeb: boolean;
+    portalOpacity: number;
+    portalZ: number;
+    webPortalOffsetY: number;
+    windowHeight: number;
+}>): ViewStyle {
+    const baseFrame: ViewStyle = {
+        position: params.fixedPositionOnWeb,
+        top: Platform.OS === 'web' ? 0 : (params.shouldPortal ? 0 : -1000),
+        left: Platform.OS === 'web' ? 0 : (params.shouldPortal ? 0 : -1000),
+        right: Platform.OS === 'web' ? 0 : (params.shouldPortal ? 0 : -1000),
+        bottom: Platform.OS === 'web' ? 0 : (params.shouldPortal ? 0 : -1000),
+        opacity: params.portalOpacity,
+        zIndex: params.portalZ,
+    };
+
+    if (params.backdropOutsidePointerEventsMode !== 'above-anchor' || !params.anchorRect) {
+        return baseFrame;
+    }
+
+    const anchorY =
+        params.shouldPortalWeb && params.portalPositionOnWeb === 'absolute'
+            ? params.anchorRect.y - params.webPortalOffsetY
+            : params.anchorRect.y;
+    const bottom = Math.max(0, Math.floor(params.windowHeight - Math.max(0, anchorY)));
+
+    return {
+        ...baseFrame,
+        bottom,
+    };
 }
 
 function PopoverBackdropEffectLayer(props: Readonly<{

@@ -18,6 +18,7 @@ export function createEmptyCustomProfile(): AIBackendProfile {
         },
         envVarRequirements: [],
         isBuiltIn: false,
+        defaultEnabled: true,
         createdAt: Date.now(),
         updatedAt: Date.now(),
         version: '1.0.0',

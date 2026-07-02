@@ -28,4 +28,13 @@ export function installPopoverCommonModuleMocks(
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock();
     });
+
+    vi.mock('@/sync/domains/state/storage', async () => {
+        const { createStorageModuleStub, createUseLocalSettingMock } = await import(
+            '@/dev/testkit/mocks/storage'
+        );
+        return createStorageModuleStub({
+            useLocalSetting: createUseLocalSettingMock(),
+        });
+    });
 }

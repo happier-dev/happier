@@ -11,7 +11,6 @@ import {
     type FeatureDecisionScope,
     type FeatureId,
 } from '@happier-dev/protocol';
-import type { Settings } from '@/sync/domains/settings/settings';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {
@@ -21,7 +20,7 @@ import {
 } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { getFeatureBuildPolicyDecision } from './featureBuildPolicy';
-import { resolveLocalFeaturePolicyEnabled } from './featureLocalPolicy';
+import { resolveLocalFeaturePolicyEnabled, type FeatureLocalPolicySettings } from './featureLocalPolicy';
 
 const evaluateFeatureDecision = evaluateFeatureDecisionBase;
 
@@ -259,7 +258,7 @@ export function useServerFeaturesMainSelectionSnapshot(
 
 export function resolveRuntimeFeatureDecisionFromSnapshot(params: {
     featureId: FeatureId;
-    settings: Settings;
+    settings: FeatureLocalPolicySettings;
     snapshot: ServerFeaturesRuntimeSnapshot;
     scope?: FeatureDecisionScope;
 }): FeatureDecision | null {
@@ -385,7 +384,7 @@ export function resolveRuntimeFeatureDecisionFromSnapshot(params: {
 
 export function resolveMainSelectionFeatureDecision(params: {
     featureId: FeatureId;
-    settings: Settings;
+    settings: FeatureLocalPolicySettings;
     snapshot: ServerFeaturesMainSelectionSnapshot;
 }): FeatureDecision | null {
     const scope: FeatureDecisionScope = { scopeKind: 'main_selection' };

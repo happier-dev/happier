@@ -221,7 +221,9 @@ vi.mock('@/components/sessions/panes/url/sessionPaneUrlState', () => ({
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: (sessionId: string) => {
         ensureSessionVisibleSpy(sessionId);
-        return sessionHydrated;
+        return sessionHydrated
+            ? { kind: 'available', sessionId }
+            : { kind: 'loading', sessionId, reason: 'store-miss' };
     },
 }));
 

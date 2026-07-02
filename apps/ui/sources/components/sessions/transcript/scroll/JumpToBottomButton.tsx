@@ -12,22 +12,27 @@ export const JumpToBottomButton = React.memo(function JumpToBottomButton(props: 
     onPress: () => void;
     testID?: string;
 }) {
-    const { theme } = useUnistyles();
+    const { theme, rt } = useUnistyles();
     const label = t('settingsSession.transcript.jumpToBottomButtonLabel');
+    const compact = rt.breakpoint === 'xs' || rt.breakpoint === 'sm' || rt.breakpoint === 'md';
     return (
         <Pressable
             testID={props.testID}
             onPress={props.onPress}
             accessibilityRole="button"
             accessibilityLabel={label}
-            style={({ pressed }) => [styles.container, pressed && { opacity: 0.92 }]}
+            style={({ pressed }) => [styles.container, compact && styles.compactContainer, pressed && { opacity: 0.92 }]}
         >
-            <View style={styles.badge}>
-                <Text style={styles.badgeText}>{String(props.count)}</Text>
-            </View>
-            <Text style={styles.label} numberOfLines={1}>
-                {label}
-            </Text>
+            {props.count > 0 ? (
+                <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{String(props.count)}</Text>
+                </View>
+            ) : null}
+            {!compact ? (
+                <Text style={styles.label} numberOfLines={1}>
+                    {label}
+                </Text>
+            ) : null}
             <Ionicons name="chevron-down" size={16} color={theme.colors.text.primary} />
         </Pressable>
     );
@@ -45,6 +50,14 @@ const styles = StyleSheet.create((theme) => ({
         borderWidth: 1,
         borderColor: theme.colors.border.default,
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),
+    },
+    compactContainer: {
+        minWidth: 40,
+        height: 40,
+        paddingHorizontal: 8,
+        paddingVertical: 0,
+        justifyContent: 'center',
+        gap: 6,
     },
     badge: {
         minWidth: 18,

@@ -12,6 +12,7 @@ import type { ScmCapabilities, ScmStatus, ScmWorkingSnapshot as UiScmWorkingSnap
 import { sessionScmStatusSnapshot } from '@/sync/ops';
 import { machineScmStatusSnapshot, runMachineScmRpc } from '@/sync/ops/scm/machineScm';
 import { normalizeFileSystemPath } from '@/sync/domains/fileSystem/normalizeFileSystemPath';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { resolveRepoScmMachinePathRequest } from '@/scm/repository/resolveRepoScmMachinePathRequest';
 import { resolveRepoScmSessionRequest } from '@/scm/repository/resolveRepoScmSessionRequest';
 import { LruMap } from '@/utils/cache/lruMap';
@@ -24,6 +25,29 @@ import { resolveCanonicalScmProjectKey } from '@/scm/core/resolveCanonicalScmPro
 
 const DEFAULT_MAX_REPO_ENRICHMENT_CACHE_ENTRIES = 32;
 const DEFAULT_MAX_PER_REPO_ENRICHMENT_ENTRIES = 64;
+
+type RepoSnapshotRequestContext = Readonly<{
+    machineId: string;
+    resolvedPath: string;
+    includeWorktreeStatus: boolean;
+}>;
+
+function splitNormalizedPathSegments(path: string): readonly string[] {
+    const normalized = normalizeFileSystemPath(path);
+    if (!normalized) return [];
+    return normalized.split('/').filter(Boolean);
+}
+
+function countSharedLeadingPathSegments(left: string, right: string): number {
+    const leftSegments = splitNormalizedPathSegments(left);
+    const rightSegments = splitNormalizedPathSegments(right);
+    const max = Math.min(leftSegments.length, rightSegments.length);
+    let count = 0;
+    while (count < max && leftSegments[count] === rightSegments[count]) {
+        count += 1;
+    }
+    return count;
+}
 
 function chunkWorktreePathsForEnrichment(
     worktreePaths: ReadonlyArray<string>,
@@ -215,6 +239,7 @@ export function mergeWorktreesEnrichmentIntoSnapshot(
 
 export class ScmRepositoryService {
     private repoSnapshotRequests = new Map<string, Promise<UiScmWorkingSnapshot | null>>();
+    private repoSnapshotRequestContexts = new Map<string, RepoSnapshotRequestContext>();
     private repoSnapshotCache = new Map<string, UiScmWorkingSnapshot | null>();
     private repoSnapshotAliases: LruMap<string, string>;
     private worktreesEnrichmentCache: LruMap<string, LruMap<string, ScmWorktreeEnrichmentEntry>>;
@@ -323,11 +348,82 @@ export class ScmRepositoryService {
         return bestMatchKey;
     }
 
+    private isSameOrNestedPath(path: string, candidateAncestor: string): boolean {
+        const normalizedPath = normalizeFileSystemPath(path);
+        const normalizedAncestor = normalizeFileSystemPath(candidateAncestor);
+        if (!normalizedPath || !normalizedAncestor) return false;
+        if (normalizedPath === normalizedAncestor) return true;
+        if (normalizedAncestor === '/') return normalizedPath.startsWith('/');
+        return normalizedPath.startsWith(`${normalizedAncestor}/`);
+    }
+
+    private isPotentialSameRepoRequest(a: RepoSnapshotRequestContext, b: RepoSnapshotRequestContext): boolean {
+        if (a.machineId !== b.machineId || a.includeWorktreeStatus !== b.includeWorktreeStatus) {
+            return false;
+        }
+        if (
+            this.isSameOrNestedPath(a.resolvedPath, b.resolvedPath)
+            || this.isSameOrNestedPath(b.resolvedPath, a.resolvedPath)
+        ) {
+            return true;
+        }
+
+        // Before the first snapshot resolves, sibling package/workspace paths under one
+        // repository are not yet aliasable by repo root. Wait for one nearby in-flight
+        // request to resolve, then reuse it only if its returned repo root covers this path.
+        return countSharedLeadingPathSegments(a.resolvedPath, b.resolvedPath) >= 4;
+    }
+
+    private findPotentialSameRepoRequest(
+        context: RepoSnapshotRequestContext,
+    ): Readonly<{ key: string; promise: Promise<UiScmWorkingSnapshot | null> }> | null {
+        for (const [key, promise] of this.repoSnapshotRequests.entries()) {
+            const candidate = this.repoSnapshotRequestContexts.get(key);
+            if (!candidate) continue;
+            if (!this.isPotentialSameRepoRequest(context, candidate)) continue;
+            return { key, promise };
+        }
+        return null;
+    }
+
+    private canReuseSnapshotForMachinePath(
+        snapshot: UiScmWorkingSnapshot | null,
+        context: RepoSnapshotRequestContext,
+    ): boolean {
+        if (!snapshot?.repo.isRepo) {
+            return false;
+        }
+        const repoRoot = normalizeFileSystemPath(snapshot.repo.rootPath);
+        if (!repoRoot) {
+            return false;
+        }
+        return this.isSameOrNestedPath(context.resolvedPath, repoRoot);
+    }
+
+    private cacheAliasedSnapshot(
+        repoIdentityKey: string,
+        snapshot: UiScmWorkingSnapshot | null,
+        options?: Readonly<{
+            canonicalIdentityKeyOverride?: (snapshot: UiScmWorkingSnapshot | null) => string;
+        }>,
+    ): void {
+        const canonicalIdentityKey = options?.canonicalIdentityKeyOverride
+            ? options.canonicalIdentityKeyOverride(snapshot)
+            : (snapshot?.projectKey ? snapshot.projectKey : repoIdentityKey);
+
+        this.repoSnapshotCache.set(canonicalIdentityKey, snapshot);
+        if (canonicalIdentityKey !== repoIdentityKey) {
+            this.repoSnapshotCache.delete(repoIdentityKey);
+            this.repoSnapshotAliases.set(repoIdentityKey, canonicalIdentityKey);
+        }
+    }
+
     private async fetchSnapshotForRepoIdentity(
         repoIdentityKey: string,
         loader: () => Promise<UiScmWorkingSnapshot | null>,
         options?: Readonly<{
             canonicalIdentityKeyOverride?: (snapshot: UiScmWorkingSnapshot | null) => string;
+            requestContext?: RepoSnapshotRequestContext;
         }>,
     ): Promise<UiScmWorkingSnapshot | null> {
         const existingRequest = this.repoSnapshotRequests.get(repoIdentityKey);
@@ -335,26 +431,39 @@ export class ScmRepositoryService {
             return await existingRequest;
         }
 
+        if (options?.requestContext) {
+            const compatibleRequest = this.findPotentialSameRepoRequest(options.requestContext);
+            if (compatibleRequest) {
+                syncPerformanceTelemetry.count('sync.scm.snapshot.inFlightAwait', { hit: 1 });
+                const snapshot = await compatibleRequest.promise;
+                if (this.canReuseSnapshotForMachinePath(snapshot, options.requestContext)) {
+                    syncPerformanceTelemetry.count('sync.scm.snapshot.inFlightReuse', { hit: 1 });
+                    this.cacheAliasedSnapshot(repoIdentityKey, snapshot, options);
+                    return snapshot;
+                }
+                syncPerformanceTelemetry.count('sync.scm.snapshot.inFlightReuse', { miss: 1 });
+            }
+        }
+
         const requestPromise = (async () => {
             const snapshot = await loader();
-            const canonicalIdentityKey = options?.canonicalIdentityKeyOverride
-                ? options.canonicalIdentityKeyOverride(snapshot)
-                : (snapshot?.projectKey ? snapshot.projectKey : repoIdentityKey);
-
-            this.repoSnapshotCache.set(canonicalIdentityKey, snapshot);
-            if (canonicalIdentityKey !== repoIdentityKey) {
-                this.repoSnapshotCache.delete(repoIdentityKey);
-                this.repoSnapshotAliases.set(repoIdentityKey, canonicalIdentityKey);
-            }
+            this.cacheAliasedSnapshot(repoIdentityKey, snapshot, options);
             return snapshot;
         })();
 
         this.repoSnapshotRequests.set(repoIdentityKey, requestPromise);
+        if (options?.requestContext) {
+            this.repoSnapshotRequestContexts.set(repoIdentityKey, options.requestContext);
+        }
         try {
             return await requestPromise;
         } finally {
             if (this.repoSnapshotRequests.get(repoIdentityKey) === requestPromise) {
                 this.repoSnapshotRequests.delete(repoIdentityKey);
+            }
+            const context = this.repoSnapshotRequestContexts.get(repoIdentityKey);
+            if (context === options?.requestContext) {
+                this.repoSnapshotRequestContexts.delete(repoIdentityKey);
             }
         }
     }
@@ -383,6 +492,14 @@ export class ScmRepositoryService {
                 fetchedAt,
                 emptyRootPath: null,
             });
+        }, {
+            requestContext: request.machineId
+                ? {
+                    machineId: request.machineId,
+                    resolvedPath: request.resolvedPath,
+                    includeWorktreeStatus: false,
+                }
+                : undefined,
         });
     }
 
@@ -418,6 +535,11 @@ export class ScmRepositoryService {
             canonicalIdentityKeyOverride: includeWorktreeStatus
                 ? (snapshot) => this.applyStatusCacheNamespace(snapshot?.projectKey ?? request.repoIdentityKey, true)
                 : undefined,
+            requestContext: {
+                machineId: request.machineId,
+                resolvedPath: request.resolvedPath,
+                includeWorktreeStatus,
+            },
         });
     }
 

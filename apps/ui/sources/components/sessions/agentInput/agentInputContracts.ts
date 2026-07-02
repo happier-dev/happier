@@ -43,6 +43,25 @@ export type AgentInputComposerAttachmentBadge = Readonly<{
     removeAccessibilityLabel?: string;
 }>;
 
+export type AgentInputStatusBadgeTone = 'neutral' | 'active' | 'paused' | 'warning' | 'complete';
+export type AgentInputStatusBadgeEmphasis = 'quiet' | 'prominent';
+
+export type AgentInputStatusBadge = Readonly<{
+    key: string;
+    label: string;
+    testID?: string;
+    accessibilityLabel?: string;
+    tone?: AgentInputStatusBadgeTone;
+    emphasis?: AgentInputStatusBadgeEmphasis;
+    icon?: (tint: string) => React.ReactNode;
+    onPress?: () => void;
+    renderPopover?: (ctx: Readonly<{
+        open: boolean;
+        anchorRef: React.RefObject<any>;
+        onRequestClose: () => void;
+    }>) => React.ReactNode;
+}>;
+
 type AgentInputCollapsedOptionsPopoverBase = Readonly<{
     title: string;
     label?: string | null;

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Platform, useWindowDimensions } from 'react-native';
+import { Platform, View, useWindowDimensions } from 'react-native';
 import { SessionCommitDetailsView } from '@/components/sessions/files/views/SessionCommitDetailsView';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useLocalSetting } from '@/sync/domains/state/storage';
@@ -10,6 +10,9 @@ import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/se
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 function decodeSha(value: string): string {
     try {
@@ -25,6 +28,12 @@ export default function CommitScreen() {
     const routeScope = React.useMemo(() => createSessionRouteServerScope(params), [params]);
     const { id: sessionIdParam } = params;
     const sessionId = normalizeSessionId(sessionIdParam);
+    const routeHydrationState = useHydrateSessionForRoute(
+        sessionId,
+        'SessionCommitRoute.ensureSessionVisible',
+        routeScope.hydrationOptions,
+    );
+    const sessionHydrated = isSessionRouteHydrationAvailable(routeHydrationState);
     const { sha: shaParam } = useLocalSearchParams<{ sha: string }>();
     // Commit refs cannot contain whitespace; accept accidental "oneline" strings by taking the first token.
     const shaRaw = decodeSha(shaParam || '').trim();
@@ -36,6 +45,7 @@ export default function CommitScreen() {
     const shouldRedirect =
         Boolean(sessionId)
         && Boolean(sha)
+        && sessionHydrated
         && shouldRedirectDetailsRouteToPanes({ containerWidthPx, deviceType, multiPaneEnabled });
 
     const pane = useAppPaneScope(`session:${sessionId}`);
@@ -63,6 +73,7 @@ export default function CommitScreen() {
         if (hasRedirectedToDetailsRef.current) return;
         if (!sessionId) return;
         if (!sha) return;
+        if (!sessionHydrated) return;
         hasRedirectedToDetailsRef.current = true;
         pane.openDetailsTab(
             {
@@ -80,10 +91,17 @@ export default function CommitScreen() {
                 ...serializeSessionPaneUrlState({ details: { kind: 'commit', sha } }),
             }),
         } as any);
-    }, [pane, routeScope, router, sessionId, sha, shouldRedirect, shouldUseDetailsScreen]);
+    }, [pane, routeScope, router, sessionHydrated, sessionId, sha, shouldRedirect, shouldUseDetailsScreen]);
 
-    if (!sessionId || !sha) {
+    if (!sessionId || !sha || isSessionRouteHydrationMissing(routeHydrationState)) {
         return <SessionInvalidLinkFallback />;
+    }
+    if (!sessionHydrated) {
+        return (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <ActivitySpinner size="small" />
+            </View>
+        );
     }
     if (shouldRedirect) return null;
     if (shouldUseDetailsScreen) return null;

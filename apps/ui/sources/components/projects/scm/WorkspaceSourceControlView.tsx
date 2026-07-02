@@ -56,6 +56,10 @@ export type WorkspaceSourceControlViewProps = Readonly<{
     onRevealInFilesTree?: (fullPath: string) => void;
 }>;
 
+const WORKSPACE_CHANGED_FILES_INITIAL_RENDER_COUNT = 12;
+const WORKSPACE_CHANGED_FILES_BATCH_RENDER_COUNT = 12;
+const WORKSPACE_CHANGED_FILES_WINDOW_SIZE = 5;
+
 function matchesQuery(filePath: string, query: string): boolean {
     const normalizedQuery = query.trim().toLowerCase();
     if (!normalizedQuery) return true;
@@ -534,9 +538,9 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                     );
                 }}
                 contentContainerStyle={{ paddingBottom: 12 }}
-                initialNumToRender={Math.min(24, filteredChangedFiles.length)}
-                maxToRenderPerBatch={24}
-                windowSize={7}
+                initialNumToRender={Math.min(WORKSPACE_CHANGED_FILES_INITIAL_RENDER_COUNT, filteredChangedFiles.length)}
+                maxToRenderPerBatch={WORKSPACE_CHANGED_FILES_BATCH_RENDER_COUNT}
+                windowSize={WORKSPACE_CHANGED_FILES_WINDOW_SIZE}
                 removeClippedSubviews={Platform.OS !== 'web'}
                 ListEmptyComponent={(
                     <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>

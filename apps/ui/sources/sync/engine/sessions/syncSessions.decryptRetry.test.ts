@@ -18,6 +18,41 @@ function buildEncryptedApiMessage(id: string, seq: number): ApiMessage {
 }
 
 describe('fetchAndApplyMessages (encrypted decrypt retry)', () => {
+    it('decrypts initial transcript pages in large default batches', async () => {
+        const messages = Array.from({ length: 150 }, (_, index) =>
+            buildEncryptedApiMessage(`m${index + 1}`, index + 1),
+        );
+        const request = vi.fn(async () => new Response(
+            JSON.stringify({ messages }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ));
+
+        const decryptMessages = vi.fn(async (apiMessages: ApiMessage[]) =>
+            apiMessages.map((m) => ({
+                id: m.id,
+                seq: m.seq,
+                localId: null,
+                createdAt: m.createdAt,
+                content: { role: 'user', content: { type: 'text', text: `hello-${m.id}` } },
+            })),
+        );
+
+        await fetchAndApplyMessages({
+            sessionId: 's1',
+            getSessionEncryption: () => ({ decryptMessages }),
+            request,
+            sessionReceivedMessages: new Map<string, Map<string, number>>(),
+            applyMessages: vi.fn(),
+            markMessagesLoaded: vi.fn(),
+            log: { log: () => {} },
+        });
+
+        expect(decryptMessages).toHaveBeenCalledTimes(3);
+        expect(decryptMessages.mock.calls[0]?.[0]).toHaveLength(64);
+        expect(decryptMessages.mock.calls[1]?.[0]).toHaveLength(64);
+        expect(decryptMessages.mock.calls[2]?.[0]).toHaveLength(22);
+    });
+
     it('retries encrypted messages that previously failed to decrypt', async () => {
         const request = vi.fn(async () => new Response(
             JSON.stringify({

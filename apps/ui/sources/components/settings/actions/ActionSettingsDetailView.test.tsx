@@ -13,6 +13,8 @@ const capture = vi.hoisted(() => ({
     itemGroupsWithSearchHeader: 0,
     renderOrder: [] as string[],
     segmentedTabBars: [] as Array<Record<string, unknown>>,
+    dropdownMenus: [] as Array<Record<string, unknown>>,
+    rawSettings: { v: 1, actions: {} } as unknown,
     stackOptions: null as Record<string, unknown> | null,
     switches: [] as Array<Record<string, unknown>>,
     windowWidth: 800,
@@ -24,6 +26,8 @@ const capture = vi.hoisted(() => ({
         this.itemGroupsWithSearchHeader = 0;
         this.renderOrder = [];
         this.segmentedTabBars = [];
+        this.dropdownMenus = [];
+        this.rawSettings = { v: 1, actions: {} };
         this.stackOptions = null;
         this.switches = [];
         this.windowWidth = 800;
@@ -71,7 +75,10 @@ installSettingsViewCommonModuleMocks({
         return createStorageModuleMock({
             importOriginal,
             overrides: {
-                useSettingMutable: () => [{ v: 1, actions: {} }, capture.setRawSettings] as const,
+                useSettingMutable: () => [capture.rawSettings, (next: unknown) => {
+                    capture.rawSettings = next;
+                    capture.setRawSettings(next);
+                }] as const,
                 useSetting: () => ({ privacy: { shareDeviceInventory: true } }),
             },
         });
@@ -97,6 +104,13 @@ vi.mock('@/components/ui/navigation/SegmentedTabBar', () => ({
     SegmentedTabBar: (props: Record<string, unknown>) => {
         capture.segmentedTabBars.push(props);
         return React.createElement('SegmentedTabBar', props);
+    },
+}));
+
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: Record<string, unknown>) => {
+        capture.dropdownMenus.push(props);
+        return React.createElement('DropdownMenu', props);
     },
 }));
 
@@ -201,8 +215,97 @@ describe('ActionSettingsDetailView', () => {
                     disabledSurfaces: [],
                     disabledPlacements: [],
                     approvalRequiredSurfaces: ['cli'],
+                    toolExposureModes: {},
                 },
             },
+        });
+    });
+
+    it('renders tool exposure controls for eligible tool-backed integration surfaces', async () => {
+        const { ActionSettingsDetailContent } = await import('./ActionSettingsDetailView');
+
+        const screen = await renderScreen(<ActionSettingsDetailContent actionId="review.start" />);
+
+        const sessionAgentExposure = capture.dropdownMenus.find((menu) => {
+            const itemTrigger = menu.itemTrigger as { itemProps?: { testID?: string } } | undefined;
+            return itemTrigger?.itemProps?.testID === 'settings-actions:action:review.start:target:session_agent:tool-exposure';
+        });
+        const mcpExposure = capture.dropdownMenus.find((menu) => {
+            const itemTrigger = menu.itemTrigger as { itemProps?: { testID?: string } } | undefined;
+            return itemTrigger?.itemProps?.testID === 'settings-actions:action:review.start:target:mcp:tool-exposure';
+        });
+        const cliExposure = capture.dropdownMenus.find((menu) => {
+            const itemTrigger = menu.itemTrigger as { itemProps?: { testID?: string } } | undefined;
+            return itemTrigger?.itemProps?.testID === 'settings-actions:action:review.start:target:cli:tool-exposure';
+        });
+
+        expect(sessionAgentExposure).toMatchObject({
+            selectedId: 'default',
+        });
+        expect(mcpExposure).toMatchObject({
+            selectedId: 'default',
+        });
+        expect(cliExposure).toMatchObject({
+            selectedId: 'default',
+        });
+        expect((sessionAgentExposure?.items as Array<{ testID?: string }>).map((item) => item.testID)).toEqual([
+            'settings-actions:action:review.start:target:session_agent:tool-exposure:default',
+            'settings-actions:action:review.start:target:session_agent:tool-exposure:discoverable_only',
+            'settings-actions:action:review.start:target:session_agent:tool-exposure:direct',
+        ]);
+        expect(capture.dropdownMenus.some((menu) => {
+            const itemTrigger = menu.itemTrigger as { itemProps?: { testID?: string } } | undefined;
+            return itemTrigger?.itemProps?.testID === 'settings-actions:action:review.start:target:agent_input_chips:tool-exposure';
+        })).toBe(false);
+        expect(await screen.findByTestId(
+            'settings-actions:action:review.start:target:session_agent:tool-exposure:resolved:discoverable_only',
+        )).toBeTruthy();
+        expect(await screen.findByTestId(
+            'settings-actions:action:review.start:target:mcp:tool-exposure:resolved:direct',
+        )).toBeTruthy();
+    });
+
+    it('persists direct tool exposure overrides and clears them when default is selected', async () => {
+        const { ActionSettingsDetailContent } = await import('./ActionSettingsDetailView');
+
+        await renderScreen(<ActionSettingsDetailContent actionId="review.start" />);
+
+        const sessionAgentExposure = capture.dropdownMenus.find((menu) => {
+            const itemTrigger = menu.itemTrigger as { itemProps?: { testID?: string } } | undefined;
+            return itemTrigger?.itemProps?.testID === 'settings-actions:action:review.start:target:session_agent:tool-exposure';
+        });
+        expect(sessionAgentExposure).toBeTruthy();
+
+        (sessionAgentExposure?.onSelect as (itemId: string) => void)('direct');
+
+        expect(capture.setRawSettings).toHaveBeenLastCalledWith({
+            v: 1,
+            actions: {
+                'review.start': {
+                    enabledPlacements: [],
+                    disabledSurfaces: [],
+                    disabledPlacements: [],
+                    approvalRequiredSurfaces: [],
+                    toolExposureModes: {
+                        session_agent: 'direct',
+                    },
+                },
+            },
+        });
+
+        capture.dropdownMenus = [];
+        await renderScreen(<ActionSettingsDetailContent actionId="review.start" />);
+        const resetSessionAgentExposure = capture.dropdownMenus.find((menu) => {
+            const itemTrigger = menu.itemTrigger as { itemProps?: { testID?: string } } | undefined;
+            return itemTrigger?.itemProps?.testID === 'settings-actions:action:review.start:target:session_agent:tool-exposure';
+        });
+        expect(resetSessionAgentExposure).toBeTruthy();
+
+        (resetSessionAgentExposure?.onSelect as (itemId: string) => void)('default');
+
+        expect(capture.setRawSettings).toHaveBeenLastCalledWith({
+            v: 1,
+            actions: {},
         });
     });
 

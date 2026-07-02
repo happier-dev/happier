@@ -51,6 +51,11 @@ installNewSessionComponentsCommonModuleMocks({
 vi.mock('react-native-keyboard-controller', () => ({
     KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('KeyboardAvoidingView', props, props.children),
+    useKeyboardHandler: () => {},
+    useReanimatedKeyboardAnimation: () => ({
+        height: { value: 0 },
+        progress: { value: 0 },
+    }),
 }));
 
 vi.mock('expo-linear-gradient', () => ({
@@ -237,6 +242,20 @@ function buildProps() {
 }
 
 describe('NewSessionWizard agent input chips', () => {
+    it('passes host-constrained panel height mode to AgentInput', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+
+        AgentInputMock.mockClear();
+
+        await renderScreen(React.createElement(NewSessionWizard, {
+            ...buildProps(),
+            popoverBoundaryRef: { current: null },
+        } as any));
+
+        const props = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
+        expect(props.panelMaxHeightMode).toBe('host-constrained');
+    });
+
     it('provides a screen-local popover boundary for chip popovers (portal scope comes from the /new screen)', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
         const popoverBoundaryRef = { current: null } as any;

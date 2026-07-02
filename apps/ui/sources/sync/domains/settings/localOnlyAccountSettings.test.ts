@@ -9,6 +9,7 @@ describe('localOnlyAccountSettings', () => {
         const stripped = stripLocalOnlyAccountSettings({
             lastUsedAgent: 'codex',
             lastUsedBackendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            lastNewSessionAgentPickerViewV1: { kind: 'favoriteModels' },
             analyticsOptOut: true,
         } as any);
 
@@ -19,16 +20,19 @@ describe('localOnlyAccountSettings', () => {
         const settings = settingsParse({
             lastUsedAgent: 'codex',
             lastUsedBackendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            lastNewSessionAgentPickerViewV1: { kind: 'favoriteModels' },
         });
         const picked = pickLocalOnlyAccountSettings(settings);
         expect(picked).toMatchObject({
             lastUsedAgent: 'codex',
             lastUsedBackendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
+            lastNewSessionAgentPickerViewV1: { kind: 'favoriteModels' },
         });
     });
 
     it('declares last-used session creation settings as local-only in the canonical registry metadata', () => {
         expect(ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS.lastUsedAgent.storageScope).toBe('local');
         expect(ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS.lastUsedBackendTarget.storageScope).toBe('local');
+        expect(ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS.lastNewSessionAgentPickerViewV1.storageScope).toBe('local');
     });
 });

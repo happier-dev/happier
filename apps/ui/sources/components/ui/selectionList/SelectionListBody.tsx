@@ -87,6 +87,7 @@ export type SelectionListBodyProps = Readonly<{
     listboxId: string;
     onSelect: (id: string, option: SelectionListOption) => void;
     onPushStep: (step: SelectionListStep) => void;
+    showsVerticalScrollIndicator?: boolean;
     /**
      * FR3-1 / FR3-8 — when `'measure'`, the body is rendered as an
      * identity-free mirror used by `SelectionListAnimatedHeight` for height
@@ -165,6 +166,7 @@ export function SelectionListBody(props: SelectionListBodyProps): React.ReactEle
                 onSelect={props.onSelect}
                 onPushStep={props.onPushStep}
                 measureMode={isMeasure}
+                showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
             />
         );
     }
@@ -179,6 +181,7 @@ export function SelectionListBody(props: SelectionListBodyProps): React.ReactEle
         onSelect: props.onSelect,
         onPushStep: props.onPushStep,
         measureMode: isMeasure,
+        showsVerticalScrollIndicator: props.showsVerticalScrollIndicator === true,
     };
     const sectionNodes = renderSelectionListSectionNodes(
         plan,
@@ -208,6 +211,7 @@ export function SelectionListBody(props: SelectionListBodyProps): React.ReactEle
                 fadeBottomTestId={selectionListTestId(props.rootTestID, 'bodyScroll', 'fadeBottom')}
                 listboxAria={listboxAria as ListboxAriaProps}
                 scrollTargetOptionId={props.scrollTargetOptionId ?? null}
+                showsVerticalScrollIndicator={props.showsVerticalScrollIndicator === true}
             >
                 {sectionNodes}
             </SelectionListBodyScrollFrame>

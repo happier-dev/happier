@@ -194,7 +194,7 @@ describe('playAudioBytesWithStopper (native)', () => {
         __emit: (status: any) => listener?.(status),
       };
     });
-    const deleteAsync = vi.fn(async () => {});
+    const fileDelete = vi.fn(async () => {});
     const fileWrite = vi.fn(async () => {});
 
     vi.doMock('expo-audio', () => ({
@@ -209,8 +209,11 @@ describe('playAudioBytesWithStopper (native)', () => {
           this.uri = `${String(base)}${String(name ?? '')}`;
         }
         write = fileWrite;
+        delete = fileDelete;
       },
-      deleteAsync,
+      deleteAsync: () => {
+        throw new Error('deprecated_deleteAsync_called');
+      },
     }));
 
     let registeredStopper: (() => void) | null = null;
@@ -238,7 +241,7 @@ describe('playAudioBytesWithStopper (native)', () => {
 
       await promise;
 
-      expect(deleteAsync).toHaveBeenCalledWith('file:///tmp/happier-voice-1234.wav', { idempotent: true });
+      expect(fileDelete).toHaveBeenCalledTimes(1);
     } finally {
       vi.restoreAllMocks();
     }

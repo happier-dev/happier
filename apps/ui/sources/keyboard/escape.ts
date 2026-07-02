@@ -6,6 +6,7 @@ const ESCAPE_EVENT_HANDLED_KEY = '__happierEscapeEventHandled';
 
 export const ESCAPE_LAYER_PRIORITIES = {
     focusSessionSurface: 10,
+    sessionListSelection: 15,
     draftClear: 20,
     pane: 100,
     overlay: 200,
@@ -167,10 +168,17 @@ export function useEscapeLayer(options: EscapeLayerOptions): void {
             focusFallbackRef: options.focusFallbackRef ?? contextFallbackRef,
             onEscape: (event) => optionsRef.current.onEscape(event),
         });
-        const target = typeof document !== 'undefined' ? document : null;
-        if (!target?.addEventListener) return unregister;
+        const maybeWindow: unknown = typeof window !== 'undefined' ? window : null;
+        const maybeDocument: unknown = typeof document !== 'undefined' ? document : null;
+        const target =
+            isEscapeEventTarget(maybeWindow)
+                ? maybeWindow
+                : isEscapeEventTarget(maybeDocument)
+                    ? maybeDocument
+                    : null;
+        if (target === null) return unregister;
 
-        const handleKeyDownCapture = (event: KeyboardEvent) => {
+        const handleKeyDownCapture: EventListener = (event) => {
             dispatchEscapeToLayerStack(event);
         };
         target.addEventListener('keydown', handleKeyDownCapture, true);
@@ -187,4 +195,16 @@ export function useEscapeLayer(options: EscapeLayerOptions): void {
         options.priority,
         contextFallbackRef,
     ]);
+}
+
+function isEscapeEventTarget(value: unknown): value is EventTarget {
+    if (value === null || typeof value !== 'object') return false;
+    const candidate = value as {
+        addEventListener?: unknown;
+        removeEventListener?: unknown;
+    };
+    return (
+        typeof candidate.addEventListener === 'function' &&
+        typeof candidate.removeEventListener === 'function'
+    );
 }

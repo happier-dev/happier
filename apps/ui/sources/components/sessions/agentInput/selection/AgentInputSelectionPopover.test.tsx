@@ -43,6 +43,12 @@ type CapturedPopoverProps = Record<string, unknown> & {
 const capturedPopoverProps: { current: CapturedPopoverProps | null } = { current: null };
 
 vi.mock('@/components/ui/popover', () => ({
+    MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS: {
+        web: true,
+        native: true,
+        matchAnchorWidth: false,
+        anchorAlign: 'start',
+    },
     Popover: (props: CapturedPopoverProps) => {
         capturedPopoverProps.current = props;
         const renderedChildren = typeof (props as any).children === 'function'

@@ -26,17 +26,26 @@ vi.mock('react-native-unistyles', async () => {
     });
 });
 
-vi.mock('@/agents/catalog/catalog', () => ({
-    getAgentIconSource: (agentId: string) => agentId === 'image' ? { uri: 'agent.png' } : null,
-    getAgentIconSvgXml: (agentId: string) => agentId === 'svg'
+const catalogSpies = vi.hoisted(() => ({
+    getAgentIconSource: vi.fn((agentId: string) => agentId === 'image' ? { uri: 'agent.png' } : null),
+    getAgentIconSvgXml: vi.fn((agentId: string) => agentId === 'svg'
         ? '<svg fill="#111111" stroke="#222222"><path fill="#333333" stroke="none" /></svg>'
-        : null,
-    getAgentIconTintColor: () => '#444444',
+        : null),
+    getAgentIconTintColor: vi.fn(() => '#444444'),
+}));
+
+vi.mock('@/agents/catalog/catalog', () => ({
+    getAgentIconSource: catalogSpies.getAgentIconSource,
+    getAgentIconSvgXml: catalogSpies.getAgentIconSvgXml,
+    getAgentIconTintColor: catalogSpies.getAgentIconTintColor,
 }));
 
 describe('AgentIcon color override', () => {
     afterEach(() => {
         standardCleanup();
+        catalogSpies.getAgentIconSource.mockClear();
+        catalogSpies.getAgentIconSvgXml.mockClear();
+        catalogSpies.getAgentIconTintColor.mockClear();
     });
 
     it('applies the explicit color to svg fills and strokes', async () => {
@@ -69,4 +78,37 @@ describe('AgentIcon color override', () => {
 
         expect(screen.findAllByType('SafeExpoImage' as never)[0]?.props.tintColor).toBe('#777777');
     });
+
+    it('does not recompute an unchanged icon on an equivalent parent render', async () => {
+        const { AgentIcon } = await import('./AgentIcon');
+
+        const screen = await renderScreen(
+            <>
+                <AgentIcon
+                    agentId="svg"
+                    size={16}
+                    color="#777777"
+                />
+                <HarnessTick value={0} />
+            </>,
+        );
+        expect(catalogSpies.getAgentIconSvgXml).toHaveBeenCalledTimes(1);
+
+        await screen.update(
+            <>
+                <AgentIcon
+                    agentId="svg"
+                    size={16}
+                    color="#777777"
+                />
+                <HarnessTick value={1} />
+            </>,
+        );
+
+        expect(catalogSpies.getAgentIconSvgXml).toHaveBeenCalledTimes(1);
+    });
 });
+
+function HarnessTick(_props: { value: number }) {
+    return null;
+}

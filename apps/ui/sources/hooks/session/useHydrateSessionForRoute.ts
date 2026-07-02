@@ -1,16 +1,38 @@
 import * as React from 'react';
 
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import type {
+    EnsureSessionVisibleForRouteResult,
+    SessionRouteHydrationState,
+} from '@/sync/domains/session/sessionRouteHydrationState';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+
+type SessionRouteHydrationStateRecord = Readonly<{
+    routeKey: string;
+    state: SessionRouteHydrationState;
+}>;
+
+function normalizeRouteId(value: unknown): string {
+    return String(value ?? '').trim();
+}
+
+function areRouteServerIdsEqual(leftRaw: unknown, rightRaw: unknown): boolean {
+    const left = normalizeRouteId(leftRaw);
+    const right = normalizeRouteId(rightRaw);
+    if (!left || !right) return left === right;
+    return areServerProfileIdentifiersEquivalent(left, right);
+}
 
 function hasAuthoritativeHydratedSessionForRoute(sessionId: string, serverId?: string | null): boolean {
     const session = storage.getState().sessions[sessionId] ?? null;
-    if (!session || session.metadata == null || session.agentState == null) {
+    if (!session || session.metadata == null) {
         return false;
     }
-    if (serverId && String(session.serverId ?? '').trim() !== serverId) {
+    if (serverId && !areRouteServerIdsEqual(String(session.serverId ?? '').trim(), serverId)) {
         return false;
     }
     if (session.encryptionMode === 'plain') {
@@ -21,6 +43,97 @@ function hasAuthoritativeHydratedSessionForRoute(sessionId: string, serverId?: s
     } catch {
         return false;
     }
+}
+
+function createLoadingState(
+    sessionId: string,
+    serverId: string | undefined,
+    reason: Extract<SessionRouteHydrationState, { kind: 'loading' }>['reason'],
+): SessionRouteHydrationState {
+    return {
+        kind: 'loading',
+        sessionId,
+        ...(serverId ? { serverId } : {}),
+        reason,
+    };
+}
+
+function createAvailableState(sessionId: string, serverId?: string): SessionRouteHydrationState {
+    return {
+        kind: 'available',
+        sessionId,
+        ...(serverId ? { serverId } : {}),
+    };
+}
+
+function createRetryingState(
+    sessionId: string,
+    serverId: string | undefined,
+    cause: Extract<SessionRouteHydrationState, { kind: 'retrying' }>['cause'],
+): SessionRouteHydrationState {
+    return {
+        kind: 'retrying',
+        sessionId,
+        ...(serverId ? { serverId } : {}),
+        cause,
+    };
+}
+
+function createMissingState(
+    sessionId: string,
+    serverId: string | undefined,
+    cause: Extract<SessionRouteHydrationState, { kind: 'missing' }>['cause'],
+): SessionRouteHydrationState {
+    return {
+        kind: 'missing',
+        sessionId,
+        ...(serverId ? { serverId } : {}),
+        cause,
+    };
+}
+
+function readHydratedRouteServerId(sessionId: string, serverId?: string): string | undefined | null {
+    if (hasAuthoritativeHydratedSessionForRoute(sessionId, serverId ?? null)) {
+        return serverId;
+    }
+
+    if (!serverId) return null;
+    const sessionServerId = normalizeRouteId(storage.getState().sessions[sessionId]?.serverId);
+    const activeServerId = normalizeRouteId(getActiveServerSnapshot().serverId);
+    if (!sessionServerId || !activeServerId) return null;
+    if (!areRouteServerIdsEqual(sessionServerId, activeServerId)) return null;
+    return hasAuthoritativeHydratedSessionForRoute(sessionId, sessionServerId) ? sessionServerId : null;
+}
+
+function readHydratedRouteSnapshot(sessionId: string, serverId?: string): boolean {
+    return readHydratedRouteServerId(sessionId, serverId) !== null;
+}
+
+function uniqueRouteServerIds(...serverIds: readonly unknown[]): string[] {
+    const result: string[] = [];
+    for (const rawServerId of serverIds) {
+        const serverId = normalizeRouteId(rawServerId);
+        if (!serverId) continue;
+        if (result.some((existing) => areRouteServerIdsEqual(existing, serverId))) continue;
+        result.push(serverId);
+    }
+    return result;
+}
+
+function resolveHydratedServerIdForRouteResult(
+    sessionId: string,
+    routeServerId: string | undefined,
+    resultServerId: string | null | undefined,
+): string | undefined | null {
+    for (const candidateServerId of uniqueRouteServerIds(routeServerId, resultServerId)) {
+        if (readHydratedRouteSnapshot(sessionId, candidateServerId)) {
+            return candidateServerId;
+        }
+    }
+    if (!routeServerId && readHydratedRouteSnapshot(sessionId, undefined)) {
+        return undefined;
+    }
+    return null;
 }
 
 /**
@@ -37,16 +150,26 @@ function hasAuthoritativeHydratedSessionForRoute(sessionId: string, serverId?: s
 export function useHydrateSessionForRoute(
     sessionId: string,
     tag: string,
-    options?: Readonly<{ serverId?: string }>,
-): boolean {
+    options?: Readonly<{ serverId?: string; forceRefresh?: boolean }>,
+): SessionRouteHydrationState {
     const normalizedSessionId = normalizeSessionId(sessionId);
     const normalizedServerId = String(options?.serverId ?? '').trim();
-    const [ready, setReady] = React.useState(() => {
-        if (!normalizedSessionId) {
-            return true;
-        }
-        return hasAuthoritativeHydratedSessionForRoute(normalizedSessionId, normalizedServerId || null);
-    });
+    const routeServerId = normalizedServerId || undefined;
+    const routeKey = `${routeServerId ?? ''}\n${normalizedSessionId}`;
+    const forceRefresh = options?.forceRefresh === true;
+    const hasHydratedSession = React.useSyncExternalStore(
+        storage.subscribe,
+        () => readHydratedRouteSnapshot(normalizedSessionId, routeServerId),
+        () => readHydratedRouteSnapshot(normalizedSessionId, routeServerId),
+    );
+    const [routeStateRecord, setRouteStateRecord] = React.useState<SessionRouteHydrationStateRecord>(() => ({
+        routeKey,
+        state: !normalizedSessionId
+            ? createMissingState('', routeServerId, 'not_found')
+            : !forceRefresh && readHydratedRouteSnapshot(normalizedSessionId, routeServerId)
+                ? createAvailableState(normalizedSessionId, routeServerId)
+                : createLoadingState(normalizedSessionId, routeServerId, forceRefresh ? 'refreshing' : 'cold'),
+    }));
 
     React.useEffect(() => {
         let canceled = false;
@@ -54,33 +177,68 @@ export function useHydrateSessionForRoute(
         let attemptCount = 0;
 
         if (!normalizedSessionId) {
-            setReady(true);
+            setRouteStateRecord({ routeKey, state: createMissingState('', routeServerId, 'not_found') });
             return;
         }
-        const alreadyHydrated = hasAuthoritativeHydratedSessionForRoute(normalizedSessionId, normalizedServerId || null);
-        setReady(alreadyHydrated);
-        if (alreadyHydrated) {
+        if (!forceRefresh && hasHydratedSession) {
+            setRouteStateRecord({ routeKey, state: createAvailableState(normalizedSessionId, routeServerId) });
             return;
         }
+        setRouteStateRecord({
+            routeKey,
+            state: createLoadingState(normalizedSessionId, routeServerId, forceRefresh ? 'refreshing' : 'store-miss'),
+        });
 
         const attemptHydration = () => {
             if (canceled) return;
 
             attemptCount++;
-            const hydrationOptions = normalizedServerId ? { serverId: normalizedServerId } : undefined;
+            const hydrationOptions = {
+                ...(forceRefresh ? { forceRefresh: true } : {}),
+                ...(routeServerId ? { serverId: routeServerId } : {}),
+            };
             const promise = (sync.ensureSessionVisibleForMessageRoute as (
                 sessionId: string,
                 options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>,
-            ) => Promise<boolean>)(normalizedSessionId, hydrationOptions);
+            ) => Promise<EnsureSessionVisibleForRouteResult>)(normalizedSessionId, Object.keys(hydrationOptions).length > 0 ? hydrationOptions : undefined);
             fireAndForget(promise, { tag });
 
             void promise
-                .then((hydratedOrTerminal) => {
+                .then((result) => {
                     if (canceled) return;
-                    if (hydratedOrTerminal) {
-                        setReady(true);
+                    if (result.kind === 'missing') {
+                        setRouteStateRecord({
+                            routeKey,
+                            state: createMissingState(
+                                normalizedSessionId,
+                                normalizeRouteId(result.serverId) || routeServerId,
+                                result.cause,
+                            ),
+                        });
                         return;
                     }
+                    if (result.kind === 'available') {
+                        const hydratedServerId = resolveHydratedServerIdForRouteResult(
+                            normalizedSessionId,
+                            routeServerId,
+                            result.serverId,
+                        );
+                        if (hydratedServerId !== null) {
+                            setRouteStateRecord({
+                                routeKey,
+                                state: createAvailableState(normalizedSessionId, hydratedServerId),
+                            });
+                            return;
+                        }
+                    }
+                    setRouteStateRecord({
+                        routeKey,
+                        state: createRetryingState(
+                            normalizedSessionId,
+                            routeServerId,
+                            result.kind === 'retryable_failure' ? result.cause : 'decrypting',
+                        ),
+                    });
                     // Retry with exponential backoff: 2s, 4s, 8s, 16s, max 30s
                     const retryDelayMs = Math.min(2000 * Math.pow(2, attemptCount - 1), 30000);
                     retryTimeoutId = setTimeout(() => {
@@ -91,6 +249,10 @@ export function useHydrateSessionForRoute(
                 })
                 .catch(() => {
                     if (canceled) return;
+                    setRouteStateRecord({
+                        routeKey,
+                        state: createRetryingState(normalizedSessionId, routeServerId, 'unknown'),
+                    });
                     // Retry with exponential backoff: 2s, 4s, 8s, 16s, max 30s
                     const retryDelayMs = Math.min(2000 * Math.pow(2, attemptCount - 1), 30000);
                     retryTimeoutId = setTimeout(() => {
@@ -109,7 +271,19 @@ export function useHydrateSessionForRoute(
                 clearTimeout(retryTimeoutId);
             }
         };
-    }, [normalizedServerId, normalizedSessionId, tag]);
+    }, [forceRefresh, hasHydratedSession, normalizedSessionId, routeKey, routeServerId, tag]);
 
-    return ready;
+    const routeState = routeStateRecord.routeKey === routeKey
+        ? routeStateRecord.state
+        : createLoadingState(normalizedSessionId, routeServerId, 'server-switch');
+
+    const hydratedAvailableServerId = normalizedSessionId && hasHydratedSession && routeState.kind !== 'missing'
+        ? readHydratedRouteServerId(normalizedSessionId, routeServerId) ?? routeServerId
+        : null;
+    const hydratedAvailableState = React.useMemo<SessionRouteHydrationState | null>(() => {
+        if (hydratedAvailableServerId === null) return null;
+        return createAvailableState(normalizedSessionId, hydratedAvailableServerId);
+    }, [hydratedAvailableServerId, normalizedSessionId]);
+
+    return hydratedAvailableState ?? routeState;
 }

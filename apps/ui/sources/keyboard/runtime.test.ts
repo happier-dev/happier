@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     buildKeyboardShortcutLabels,
     createKeyboardShortcutDispatcher,
+    isKeybindingRuleAvailable,
     normalizeKeyboardEvent,
     resolveNativeHardwareKeyboardConsumableEventSignatures,
 } from './runtime';
@@ -28,6 +29,14 @@ function keyEvent(event: Partial<NormalizedKeyboardEvent>): NormalizedKeyboardEv
 }
 
 describe('createKeyboardShortcutDispatcher', () => {
+    it('does not classify Shift+Arrow selection bindings as disabled single-key shortcuts', () => {
+        expect(isKeybindingRuleAvailable({ binding: 'Shift+ArrowDown' }, {
+            platform: 'macos',
+            surface: 'web',
+            singleKeyShortcutsEnabled: false,
+        })).toBe(true);
+    });
+
     it('does not dispatch registry commands when the kill switch is disabled', () => {
         const open = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
@@ -282,6 +291,28 @@ describe('createKeyboardShortcutDispatcher', () => {
         expect(labels['session.new']).toBe('Cmd+P');
         expect(labels['shortcutsHelp.open']).toBeUndefined();
         expect(labels['settings.open']).toBeUndefined();
+    });
+
+    it('keeps editable-safe commands editable when their shortcut is overridden', () => {
+        const sendImmediate = vi.fn();
+        const dispatcher = createKeyboardShortcutDispatcher({
+            enabled: true,
+            platform: 'macos',
+            surface: 'web',
+            singleKeyShortcutsEnabled: true,
+            disabledCommandIds: [],
+            overrides: {
+                'composer.sendImmediate': [{ binding: 'Alt+Enter' }],
+            },
+            handlers: { 'composer.sendImmediate': sendImmediate },
+            getContext: () => ({
+                isEditableTarget: true,
+                isComposing: false,
+            }),
+        });
+
+        expect(dispatcher(keyEvent({ key: 'Enter', code: 'Enter', altKey: true }))).toBe(true);
+        expect(sendImmediate).toHaveBeenCalledTimes(1);
     });
 
     it('derives native consumable signatures only from active Enter and Escape handlers', () => {

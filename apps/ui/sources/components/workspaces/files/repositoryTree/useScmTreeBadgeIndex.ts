@@ -2,12 +2,21 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { createScmTreeBadgeIndex, type ScmTreeBadgeIndex } from './scmTreeBadges';
+import { buildScmTreeBadgeSignature, createScmTreeBadgeIndex, type ScmTreeBadgeIndex } from './scmTreeBadges';
 
 export function useScmTreeBadgeIndex(snapshot: ScmWorkingSnapshot | null | undefined): ScmTreeBadgeIndex | null {
     const [index, setIndex] = React.useState<ScmTreeBadgeIndex | null>(null);
+    const badgeSignature = buildScmTreeBadgeSignature(snapshot);
+    const snapshotRef = React.useRef(snapshot);
+    snapshotRef.current = snapshot;
+
+    const nativeIndex = React.useMemo(() => {
+        if (!snapshot) return null;
+        return createScmTreeBadgeIndex(snapshot);
+    }, [badgeSignature, snapshot]);
 
     React.useEffect(() => {
+        if (Platform.OS !== 'web') return;
         if (!snapshot) {
             setIndex(null);
             return;
@@ -16,22 +25,15 @@ export function useScmTreeBadgeIndex(snapshot: ScmWorkingSnapshot | null | undef
         let cancelled = false;
         const compute = () => {
             if (cancelled) return;
-            setIndex(createScmTreeBadgeIndex(snapshot));
+            setIndex(createScmTreeBadgeIndex(snapshotRef.current));
         };
 
-        if (Platform.OS === 'web') {
-            const handle = setTimeout(compute, 0);
-            return () => {
-                cancelled = true;
-                clearTimeout(handle);
-            };
-        }
-
-        compute();
+        const handle = setTimeout(compute, 0);
         return () => {
             cancelled = true;
+            clearTimeout(handle);
         };
-    }, [snapshot]);
+    }, [badgeSignature, snapshot]);
 
-    return index;
+    return Platform.OS === 'web' ? index : nativeIndex;
 }

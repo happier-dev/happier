@@ -17,7 +17,19 @@ const STREAMING_MARKDOWN_REPAIR_JS_EVENT = 'ui.markdown.streaming.repair.js';
 
 let repairRuntime: WorkletRuntime | null | undefined;
 
-type StreamingMarkdownRepairComplete = (succeeded: number, repairedMarkdown: string) => void;
+type StreamingMarkdownRepairFailureKind = 'timeout' | 'worklet';
+type StreamingMarkdownRepairComplete = (
+    succeeded: number,
+    repairedMarkdown: string,
+    failureKind?: StreamingMarkdownRepairFailureKind,
+) => void;
+
+class StreamingMarkdownWorkletRepairUnavailableError extends Error {
+    constructor() {
+        super('Streaming markdown Worklet repair is unavailable');
+        this.name = 'StreamingMarkdownWorkletRepairUnavailableError';
+    }
+}
 
 function getRepairRuntime(): WorkletRuntime | null {
     if (repairRuntime !== undefined) return repairRuntime;
@@ -43,19 +55,21 @@ function runRepairOnWorklet(runtime: WorkletRuntime, markdown: string, timeoutMs
             }
         };
 
-        const complete: StreamingMarkdownRepairComplete = (succeeded, repairedMarkdown) => {
+        const complete: StreamingMarkdownRepairComplete = (succeeded, repairedMarkdown, failureKind) => {
             if (settled) return;
             settled = true;
             clearRepairTimeout();
             if (succeeded === 1) {
                 resolve(repairedMarkdown);
+            } else if (failureKind === 'worklet') {
+                reject(new StreamingMarkdownWorkletRepairUnavailableError());
             } else {
                 reject(new Error('Streaming markdown Worklet repair failed'));
             }
         };
 
         timeout = setTimeout(() => {
-            complete(0, '');
+            complete(0, '', 'timeout');
         }, timeoutMs);
 
         try {
@@ -70,16 +84,16 @@ function runRepairOnWorklet(runtime: WorkletRuntime, markdown: string, timeoutMs
                     try {
                         scheduleOnRN(onComplete, 1, remend(sourceMarkdown, remendOptions));
                     } catch {
-                        scheduleOnRN(onComplete, 0, '');
+                        scheduleOnRN(onComplete, 0, '', 'worklet');
                     }
                 },
             );
             scheduleRepair(markdown, STREAMING_MARKDOWN_REMEND_OPTIONS, complete);
-        } catch (error) {
+        } catch {
             if (!settled) {
                 settled = true;
                 clearRepairTimeout();
-                reject(error);
+                reject(new StreamingMarkdownWorkletRepairUnavailableError());
             }
         }
     });
@@ -102,7 +116,10 @@ export function repairStreamingMarkdownAsync(markdown: string): Promise<string> 
         STREAMING_MARKDOWN_REPAIR_WORKLET_EVENT,
         telemetryFields,
         () => runRepairOnWorklet(runtime, markdown, timeoutMs),
-    ).catch(() => {
+    ).catch((error) => {
+        if (error instanceof StreamingMarkdownWorkletRepairUnavailableError) {
+            repairRuntime = null;
+        }
         syncPerformanceTelemetry.count(STREAMING_MARKDOWN_REPAIR_FALLBACK_EVENT, telemetryFields);
         return syncPerformanceTelemetry.measure(
             STREAMING_MARKDOWN_REPAIR_JS_EVENT,

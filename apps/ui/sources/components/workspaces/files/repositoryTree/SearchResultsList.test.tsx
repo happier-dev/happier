@@ -57,13 +57,25 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: 'Item',
 }));
 
+const searchResultsTheme = {
+    colors: {
+        border: { default: '#ddd' },
+        surface: { inset: '#eee' },
+        text: {
+            link: '#09f',
+            primary: '#111',
+            secondary: '#999',
+        },
+    },
+};
+
 describe('SearchResultsList', () => {
     it('does not render string children under View when searchQuery is empty', async () => {
         const { SearchResultsList } = await import('./SearchResultsList');
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<SearchResultsList
-                    theme={{ colors: { textSecondary: '#999', text: '#111', surfaceHigh: '#eee', divider: '#ddd', textLink: '#09f' } } as any}
+                    theme={searchResultsTheme}
                     isSearching={false}
                     searchQuery=""
                     searchResults={[]}
@@ -90,7 +102,7 @@ describe('SearchResultsList', () => {
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<SearchResultsList
-                    theme={{ colors: { textSecondary: '#999', text: '#111', surfaceHigh: '#eee', divider: '#ddd', textLink: '#09f' } } as any}
+                    theme={searchResultsTheme}
                     isSearching={false}
                     searchQuery="AG"
                     searchResults={[file]}
@@ -122,7 +134,7 @@ describe('SearchResultsList', () => {
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<SearchResultsList
-                    theme={{ colors: { textSecondary: '#999', text: '#111', surfaceHigh: '#eee', divider: '#ddd', textLink: '#09f' } } as any}
+                    theme={searchResultsTheme}
                     isSearching={false}
                     searchQuery="a"
                     searchResults={[file]}

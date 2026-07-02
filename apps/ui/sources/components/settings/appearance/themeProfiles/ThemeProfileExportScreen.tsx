@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
-import * as FileSystem from 'expo-file-system/legacy';
+import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Platform, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
@@ -52,9 +52,9 @@ async function downloadThemeJson(fileName: string, json: string): Promise<void> 
         return;
     }
 
-    const uri = `${FileSystem.cacheDirectory ?? ''}${fileName}`;
-    await FileSystem.writeAsStringAsync(uri, json, { encoding: FileSystem.EncodingType.UTF8 });
-    await Sharing.shareAsync(uri, {
+    const file = new File(Paths.cache, fileName);
+    file.write(json);
+    await Sharing.shareAsync(file.uri, {
         mimeType: 'application/json',
         dialogTitle: t('settingsAppearance.themeProfiles.exportProfile'),
     });

@@ -9,7 +9,7 @@ import { t } from '@/text';
 
 export interface Todo {
     content: string;
-    status: 'pending' | 'in_progress' | 'completed';
+    status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
     priority?: 'high' | 'medium' | 'low';
     id?: string;
 }
@@ -35,6 +35,7 @@ export const TodoView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
                     const isCompleted = todo.status === 'completed';
                     const isInProgress = todo.status === 'in_progress';
                     const isPending = todo.status === 'pending';
+                    const isCancelled = todo.status === 'cancelled';
 
                     let textStyle: any = styles.todoText;
                     let icon = '☐';
@@ -42,6 +43,9 @@ export const TodoView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
                     if (isCompleted) {
                         textStyle = [styles.todoText, styles.completedText];
                         icon = '☑';
+                    } else if (isCancelled) {
+                        textStyle = [styles.todoText, styles.cancelledText];
+                        icon = '☒';
                     } else if (isInProgress) {
                         textStyle = [styles.todoText, styles.inProgressText];
                         icon = '☐';
@@ -87,6 +91,10 @@ const styles = StyleSheet.create((theme) => ({
     },
     pendingText: {
         color: theme.colors.text.secondary,
+    },
+    cancelledText: {
+        color: theme.colors.text.secondary,
+        textDecorationLine: 'line-through',
     },
     more: {
         fontSize: 12,

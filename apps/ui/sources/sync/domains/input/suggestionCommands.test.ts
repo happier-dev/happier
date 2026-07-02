@@ -52,6 +52,16 @@ describe('suggestionCommands', () => {
         expect(commands.some((c) => c.command === 'clear')).toBe(true);
     });
 
+    it('keeps goal available as a built-in slash command before session metadata loads', async () => {
+        storage.setState({
+            sessions: { s1: { metadata: undefined } },
+            settings: { experiments: false, featureToggles: {} },
+        } as any);
+        const { searchCommands } = await import('./suggestionCommands');
+        const commands = await searchCommands('s1', 'go');
+        expect(commands.some((c) => c.command === 'goal')).toBe(true);
+    });
+
     it('dedupes action-registry slash commands against session-provided commands', async () => {
         storage.setState({
             sessions: {

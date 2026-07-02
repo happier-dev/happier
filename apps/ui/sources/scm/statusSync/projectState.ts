@@ -3,6 +3,7 @@ import { storage } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
 import { readSessionWorkspaceContext } from '@/sync/domains/session/readSessionWorkspaceContext';
+import { clearSuggestionFileSearchCache } from '@/sync/domains/input/suggestionFileCacheInvalidation';
 
 import { isSessionPathWithinRepoRoot } from '../sync/paths';
 
@@ -70,10 +71,9 @@ export async function clearSearchCacheForProject(
     sessionToProjectKey: Map<string, string>,
     projectKey: string
 ): Promise<void> {
-    const { fileSearchCache } = await import('@/sync/domains/input/suggestionFile');
     for (const [sessionId, key] of sessionToProjectKey.entries()) {
         if (key === projectKey) {
-            fileSearchCache.clearCache(sessionId);
+            clearSuggestionFileSearchCache(sessionId);
         }
     }
 }

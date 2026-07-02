@@ -42,6 +42,24 @@ describe('StatusDot', () => {
         const dot = screen.findByType('View');
         expect(dot).toBeTruthy();
         expect(dot?.type).toBe('View');
-        expect(flattenStyle(dot?.props.style).animationName).toBe('happierStatusDotPulse');
+        const style = flattenStyle(dot?.props.style);
+        expect(style.animationName).toBe('happierStatusDotPulse');
+        expect(style.animationTimingFunction).toBe('steps(6, end)');
+    });
+
+    it('can show a pulsing-state web dot without scheduling a CSS pulse animation', async () => {
+        const { StatusDot } = await import('./StatusDot');
+        const screen = await renderScreen(React.createElement(StatusDot, {
+            color: 'red',
+            isPulsing: true,
+            animationEnabled: false,
+            size: 10,
+        }));
+
+        const dot = screen.findByType('View');
+        const style = flattenStyle(dot?.props.style);
+        expect(style.animationName).toBeUndefined();
+        expect(style.animationIterationCount).toBeUndefined();
+        expect(style.backgroundColor).toBe('red');
     });
 });

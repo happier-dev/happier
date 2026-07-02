@@ -12,6 +12,7 @@ import { DiffReviewCommentsViewer } from '@/components/ui/code/diff/reviewCommen
 import { resolveInlineDiffVirtualization } from '@/components/ui/code/diff/resolveInlineDiffVirtualization';
 import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff/useInlineDiffVirtualizationThresholds';
 import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
+import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
 
 import { isKnownBinaryPath, isKnownImagePath } from '@/scm/utils/filePresentation';
 import { useChangedFilesReviewImagePreview } from './useChangedFilesReviewImagePreview';
@@ -27,7 +28,7 @@ export type ReviewDiffState = Readonly<{
     error: string | null;
 }>;
 
-export const ChangedFilesReviewDiffBlock = React.memo((props: Readonly<{
+export type ChangedFilesReviewDiffBlockProps = Readonly<{
     theme: any;
     sessionId: string;
     snapshotSignature: string | null;
@@ -40,7 +41,46 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: Readonly<{
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
-}>) => {
+}>;
+
+function buildDiffDraftsSignature(filePath: string, drafts: readonly ReviewCommentDraft[]): string {
+    let signature = '';
+    for (const draft of drafts) {
+        if (draft.filePath !== filePath || draft.source !== 'diff') continue;
+        signature += `${draft.id}\u0000${draft.body}\u0000${draft.includeInPrompt === false ? '0' : '1'}\u0000${draft.createdAt}\u0000`;
+        signature += `${JSON.stringify(draft.anchor)}\u0000${JSON.stringify(draft.snapshot)}\u0000`;
+    }
+    return signature;
+}
+
+function areChangedFilesReviewDiffBlockPropsEqual(
+    prev: ChangedFilesReviewDiffBlockProps,
+    next: ChangedFilesReviewDiffBlockProps,
+): boolean {
+    if (
+        prev.theme !== next.theme
+        || prev.sessionId !== next.sessionId
+        || prev.snapshotSignature !== next.snapshotSignature
+        || prev.workspaceScope !== next.workspaceScope
+        || prev.filePath !== next.filePath
+        || prev.estimatedChangedLines !== next.estimatedChangedLines
+        || prev.diffStateSource !== next.diffStateSource
+        || prev.reviewCommentsEnabled !== next.reviewCommentsEnabled
+        || prev.onUpsertReviewCommentDraft !== next.onUpsertReviewCommentDraft
+        || prev.onDeleteReviewCommentDraft !== next.onDeleteReviewCommentDraft
+        || prev.onReviewCommentError !== next.onReviewCommentError
+    ) {
+        return false;
+    }
+
+    if (prev.reviewCommentDrafts === next.reviewCommentDrafts) return true;
+    if (!prev.reviewCommentsEnabled) return true;
+
+    return buildDiffDraftsSignature(prev.filePath, prev.reviewCommentDrafts)
+        === buildDiffDraftsSignature(next.filePath, next.reviewCommentDrafts);
+}
+
+export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReviewDiffBlockProps) => {
     const { theme, sessionId, filePath, snapshotSignature } = props;
     const state = React.useSyncExternalStore(
         React.useCallback((listener) => props.diffStateSource.subscribe(filePath, listener), [filePath, props.diffStateSource]),
@@ -91,7 +131,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: Readonly<{
         });
     }, [props.reviewCommentsEnabled, state.diff, virtualizationByteThreshold, virtualizationLineThreshold]);
 
-    const diffContainerStyle = virtualized ? { maxHeight: maxVirtualizedHeight } : null;
+    const diffContainerStyle = virtualized ? resolveInlineDiffVirtualizedViewportStyle(maxVirtualizedHeight) : null;
     const shouldReserveVirtualizedHeightWhileLoading = React.useMemo(() => {
         if (props.reviewCommentsEnabled) return false;
         const estimated = estimatedChangedLines;
@@ -238,4 +278,4 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: Readonly<{
             </View>
         </View>
     );
-});
+}, areChangedFilesReviewDiffBlockPropsEqual);

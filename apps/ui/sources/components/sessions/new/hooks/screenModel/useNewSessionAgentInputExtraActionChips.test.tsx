@@ -141,4 +141,60 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
         storageOptions.find((option) => option.id === 'direct')?.onSelect?.();
         expect(onTranscriptStorageChange).toHaveBeenCalledWith('direct');
     });
+
+    it('passes compact server popover height through instead of forcing the minimum cap', async () => {
+        const { useNewSessionAgentInputExtraActionChips } = await import('./useNewSessionAgentInputExtraActionChips');
+
+        let chips: ReadonlyArray<AgentInputExtraActionChip> = [];
+
+        function Probe() {
+            chips = useNewSessionAgentInputExtraActionChips({
+                agentId: 'codex',
+                agentOptionState: null,
+                setAgentOptionState: vi.fn(),
+                showAutomationActionChips: false,
+                automationDraft: {
+                    enabled: false,
+                    name: '',
+                    description: '',
+                    scheduleKind: 'interval',
+                    everyMinutes: 60,
+                    cronExpr: '0 * * * *',
+                    timezone: null,
+                },
+                automationLabel: 'Automate',
+                onAutomationChange: vi.fn(),
+                showServerPickerChip: true,
+                targetServerId: 'server-a',
+                targetServerName: 'Server A',
+                externalSessionsFeatureEnabled: false,
+                supportsDirectTranscriptStorage: false,
+                transcriptStorage: 'persisted',
+                onTranscriptStorageChange: vi.fn(),
+                selectedMachineIsWindows: false,
+                windowsRemoteSessionLaunchMode: null,
+                windowsTerminalAvailable: false,
+                onWindowsRemoteSessionLaunchModeChange: vi.fn(),
+                onActionShortcutPress: vi.fn(),
+            });
+            return null;
+        }
+
+        await renderScreen(<Probe />);
+
+        const serverChip = chips.find((chip) => chip.key === 'new-session-target-server');
+        expect(serverChip?.collapsedContentPopover?.maxHeightCap).toBe(760);
+        const renderContent = serverChip?.collapsedContentPopover?.renderContent;
+        if (typeof renderContent !== 'function') {
+            throw new Error('Expected server popover renderContent to be a function');
+        }
+
+        const renderedContent = renderContent({
+            requestClose: vi.fn(),
+            maxHeight: 300,
+        });
+
+        expect(React.isValidElement(renderedContent)).toBe(true);
+        expect((renderedContent as React.ReactElement<{ maxHeight?: number }>).props.maxHeight).toBe(300);
+    });
 });

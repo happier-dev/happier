@@ -293,3 +293,21 @@ export function isModelSelectableForSession(agentType: AgentType, metadata: Meta
 export function getModelOptionsForSession(agentType: AgentType, metadata: Metadata | null | undefined): readonly ModelOption[] {
     return resolveModelOptionsForSession(agentType, metadata);
 }
+
+/**
+ * Finds the model option matching an effective model id, tolerating bracket variant
+ * suffixes: Claude models a 1M context window as `<id>[1m]`, so a selected variant id
+ * must still resolve to its base catalog option (label, description, modelOptions).
+ */
+export function findModelOptionForEffectiveModelId(
+    options: readonly ModelOption[],
+    effectiveModelId: string | null | undefined,
+): ModelOption | null {
+    const raw = typeof effectiveModelId === 'string' ? effectiveModelId.trim() : '';
+    if (!raw) return null;
+    const exact = options.find((option) => option.value === raw);
+    if (exact) return exact;
+    const base = raw.replace(/\[[^\]]*\]$/u, '');
+    if (base === raw) return null;
+    return options.find((option) => option.value === base) ?? null;
+}

@@ -12,6 +12,7 @@ export class InvalidateSync {
     private _queuePendings: (() => void)[] = [];
     private _onError?: (e: any) => void;
     private _onSuccess?: () => void;
+    private _onRetryFailure?: (e: any, info: { failuresCount: number; nextDelayMs: number; nextRetryAt: number }) => void;
     private _onRetry?: (info: { failuresCount: number; nextDelayMs: number; nextRetryAt: number }) => void;
     private _pause?: PauseController;
     private _backoff: {
@@ -26,6 +27,7 @@ export class InvalidateSync {
         opts?: {
             onError?: (e: any) => void;
             onSuccess?: () => void;
+            onRetryFailure?: (e: any, info: { failuresCount: number; nextDelayMs: number; nextRetryAt: number }) => void;
             onRetry?: (info: { failuresCount: number; nextDelayMs: number; nextRetryAt: number }) => void;
             pause?: PauseController;
             backoff?: { minDelayMs: number; maxDelayMs: number; maxFailureCount: number | 'infinite' };
@@ -35,6 +37,7 @@ export class InvalidateSync {
         this._command = command;
         this._onError = opts?.onError;
         this._onSuccess = opts?.onSuccess;
+        this._onRetryFailure = opts?.onRetryFailure;
         this._onRetry = opts?.onRetry;
         this._pause = opts?.pause;
         const backoff = opts?.backoff;
@@ -218,7 +221,9 @@ export class InvalidateSync {
                 const minDelayMs = this._backoff.minDelayMs;
                 const maxDelayMs = this._backoff.maxDelayMs;
                 const nextDelayMs = linearBackoffDelay(failuresCount, minDelayMs, Math.max(minDelayMs, maxDelayMs), Math.min(50, maxFailureCount));
-                this._onRetry?.({ failuresCount, nextDelayMs, nextRetryAt: Date.now() + nextDelayMs });
+                const retryInfo = { failuresCount, nextDelayMs, nextRetryAt: Date.now() + nextDelayMs };
+                this._onRetryFailure?.(e, retryInfo);
+                this._onRetry?.(retryInfo);
                 await delay(nextDelayMs);
             }
         }

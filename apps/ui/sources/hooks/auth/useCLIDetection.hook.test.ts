@@ -7,6 +7,11 @@ import { installAuthHookCommonModuleMocks } from './authHookTestHelpers';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const useMachineCapabilitiesCacheMock = vi.fn();
+const storageState = vi.hoisted(() => ({
+    useMachine: vi.fn<() => unknown>(() => ({ id: 'm1', metadata: {}, active: true, daemonStateVersion: 42 })),
+    useMachineCliDetectionTarget: vi.fn(() => ({ daemonStateVersion: 42, isOnline: true })),
+    isMachineOnline: vi.fn(() => true),
+}));
 const agentsPackageState = vi.hoisted(() => ({
     AGENT_IDS: ['claude', 'codex', 'gemini', 'kiro'],
     CANONICAL_AGENT_IDS: ['claude', 'codex', 'gemini', 'kiro'],
@@ -28,7 +33,8 @@ installAuthHookCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            useMachine: vi.fn(() => ({ id: 'm1', metadata: {}, daemonStateVersion: 42 })),
+            useMachine: storageState.useMachine,
+            useMachineCliDetectionTarget: storageState.useMachineCliDetectionTarget,
         });
     },
 });
@@ -53,7 +59,7 @@ vi.mock('@happier-dev/agents', () => ({
 
 vi.mock('@/utils/sessions/machineUtils', () => {
     return {
-        isMachineOnline: vi.fn(() => true),
+        isMachineOnline: storageState.isMachineOnline,
     };
 });
 
@@ -68,6 +74,12 @@ const { useCLIDetection } = await import('./useCLIDetection');
 describe('useCLIDetection (hook)', () => {
     beforeEach(() => {
         agentsPackageState.AGENT_LOCAL_CLI_CONFIG.codex.detectKey = 'codex';
+        storageState.useMachine.mockClear();
+        storageState.useMachine.mockReturnValue({ id: 'm1', metadata: {}, daemonStateVersion: 42 });
+        storageState.useMachineCliDetectionTarget.mockClear();
+        storageState.useMachineCliDetectionTarget.mockReturnValue({ daemonStateVersion: 42, isOnline: true });
+        storageState.isMachineOnline.mockClear();
+        storageState.isMachineOnline.mockReturnValue(true);
     });
 
     async function renderHookState(run: () => unknown) {
@@ -292,6 +304,22 @@ describe('useCLIDetection (hook)', () => {
 
         const firstCall = useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0];
         expect(firstCall?.cacheKeySalt).toBe(42);
+    });
+
+    it('uses the narrow CLI detection target for daemon version and online state', async () => {
+        storageState.useMachine.mockReturnValue({ id: 'm1', metadata: {}, active: false, daemonStateVersion: 1 });
+        storageState.useMachineCliDetectionTarget.mockReturnValue({ daemonStateVersion: 77, isOnline: true });
+        storageState.isMachineOnline.mockReturnValue(false);
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: { status: 'loading' },
+            refresh: vi.fn(),
+        });
+
+        await renderHookState(() => useCLIDetection('m1'));
+
+        const firstCall = useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0];
+        expect(firstCall?.enabled).toBe(true);
+        expect(firstCall?.cacheKeySalt).toBe(77);
     });
 
     it('uses each provider detect key when scoping detection requests', async () => {

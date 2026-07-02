@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, KeyboardAvoidingView, Platform, useWindowDimensions, Pressable } from 'react-native';
+import { View, Platform, useWindowDimensions, Pressable } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { useUnistyles } from 'react-native-unistyles';
@@ -16,6 +16,7 @@ import { Modal } from '@/modal';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { Ionicons } from '@expo/vector-icons';
 import { PopoverScope } from '@/components/ui/popover';
+import { KeyboardAwareScreen } from '@/components/ui/keyboardAvoidance';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
@@ -337,8 +338,8 @@ export default React.memo(function ProfileEditScreen() {
 
     return (
         <PopoverScope>
-            <KeyboardAvoidingView
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            <KeyboardAwareScreen
+                mode="form"
                 keyboardVerticalOffset={Platform.OS === 'ios' ? Constants.statusBarHeight + headerHeight : 0}
                 style={profileEditScreenStyles.container}
             >
@@ -361,7 +362,7 @@ export default React.memo(function ProfileEditScreen() {
                         />
                     </View>
                 </View>
-            </KeyboardAvoidingView>
+            </KeyboardAwareScreen>
         </PopoverScope>
     );
 });

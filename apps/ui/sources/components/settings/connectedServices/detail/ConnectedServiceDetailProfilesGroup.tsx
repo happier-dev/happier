@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -40,6 +40,7 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
   onEditProfileLabel: (profileId: string) => void;
 }>) {
   const { theme } = useUnistyles();
+  const isWeb = Platform.OS === 'web';
 
   return (
     <ItemGroup title={props.title}>
@@ -84,6 +85,43 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
         const iconName = status === 'connected' ? 'checkmark-circle-outline' : 'warning-outline';
         const iconColor = status === 'connected' ? theme.colors.state.success.foreground : theme.colors.accent.orange;
         const isDefault = profileId === props.defaultProfileId;
+        const title = label ?? profileId;
+        const icon = <Ionicons name={iconName as IoniconName} size={22} color={iconColor} />;
+        const openProfile = () => props.onOpenProfile(profileId);
+        const profileNavigationTestId = `connected-services-profile:${profileId}:open`;
+        const webNavigationTitle = isWeb ? (
+          <Pressable
+            testID={profileNavigationTestId}
+            onPress={openProfile}
+            accessibilityRole="link"
+            accessibilityLabel={title}
+            style={{ alignSelf: 'stretch', justifyContent: 'center' }}
+          >
+            <Text
+              numberOfLines={1}
+              style={{ color: theme.colors.text.primary }}
+            >
+              {title}
+            </Text>
+            <Text
+              numberOfLines={1}
+              style={{ color: theme.colors.text.secondary, marginTop: 2 }}
+            >
+              {subtitle}
+            </Text>
+          </Pressable>
+        ) : title;
+        const webNavigationIcon = isWeb ? (
+          <Pressable
+            testID={`${profileNavigationTestId}:icon`}
+            onPress={openProfile}
+            accessibilityRole="link"
+            accessibilityLabel={title}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            {icon}
+          </Pressable>
+        ) : null;
 
         const actions: ItemAction[] = [
           {
@@ -118,14 +156,15 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
         return (
           <Item
             key={profileId}
-            title={label ?? profileId}
-            subtitle={subtitle}
-            icon={<Ionicons name={iconName as IoniconName} size={22} color={iconColor} />}
+            title={webNavigationTitle}
+            subtitle={isWeb ? undefined : subtitle}
+            icon={isWeb ? undefined : icon}
+            leftElement={webNavigationIcon}
             rightElement={(
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                 {props.quotasEnabled ? <ConnectedServiceQuotaBadgesView badges={badges} /> : null}
                 <ItemRowActions
-                  title={label ?? profileId}
+                  title={title}
                   compactActionIds={['default', 'label']}
                   pinnedActionIds={['default']}
                   overflowPosition="beforePinned"
@@ -134,7 +173,8 @@ export const ConnectedServiceDetailProfilesGroup = React.memo(function Connected
                 />
               </View>
             )}
-            onPress={() => props.onOpenProfile(profileId)}
+            onPress={isWeb ? undefined : openProfile}
+            mode={isWeb ? 'info' : undefined}
           />
         );
       })}

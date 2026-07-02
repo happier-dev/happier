@@ -76,17 +76,21 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => {
 });
 
 describe('ConnectedServiceDetailView profile navigation', () => {
-  it('opens profile detail when a profile row is pressed', async () => {
+  it('opens profile detail from a web-safe profile link without making the row pressable', async () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
 
     let tree!: renderer.ReactTestRenderer;
     tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
 
-    const candidates = tree.findAll((n) => n.props?.title === 'work' && typeof n.props?.onPress === 'function');
-    expect(candidates).toHaveLength(1);
-    const profileItem = candidates[0]!;
+    const profileRows = tree.findAll((n) => n.props?.mode === 'info' && n.props?.rightElement);
+    expect(profileRows).toHaveLength(1);
+    const profileItem = profileRows[0]!;
+    expect(profileItem.props.mode).toBe('info');
+    expect(profileItem.props.onPress).toBeUndefined();
+
+    const profileLink = tree.root.findByProps({ testID: 'connected-services-profile:work:open' });
     await act(async () => {
-        await pressTestInstanceAsync(profileItem);
+        await pressTestInstanceAsync(profileLink);
     });
 
     expect(connectedServicesModuleState.routerPushSpy).toHaveBeenCalledWith(

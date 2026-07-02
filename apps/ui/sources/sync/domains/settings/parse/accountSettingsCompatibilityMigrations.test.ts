@@ -27,7 +27,7 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
                 featureToggles: legacyFeatureToggles,
             },
             inputSchemaVersion: 2,
-            supportedSchemaVersion: 6,
+            supportedSchemaVersion: 7,
         });
 
         expect(migrated.preferredLanguage).toBe('zh-Hans');
@@ -39,7 +39,7 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
         expect(migrated.featureToggles?.['inbox.friends']).toBeUndefined();
         expect(migrated.featureToggles?.['social.friends']).toBe(true);
         expect(migrated.featureToggles?.['files.editor']).toBeUndefined();
-        expect(migrated.schemaVersion).toBe(6);
+        expect(migrated.schemaVersion).toBe(7);
     });
 
     it('normalizes invalid server selection state to null', () => {
@@ -108,7 +108,7 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
         });
     });
 
-    it('preserves an existing codex backend mode when migrating a pre-v6 payload', () => {
+    it('canonicalizes legacy mcp codex backend mode when migrating a pre-v6 payload', () => {
         const migrated = applyAccountSettingsCompatibilityMigrations({
             input: {
                 codexBackendMode: 'mcp',
@@ -120,7 +120,7 @@ describe('applyAccountSettingsCompatibilityMigrations', () => {
             supportedSchemaVersion: 6,
         });
 
-        expect(migrated.codexBackendMode).toBe('mcp');
+        expect(migrated.codexBackendMode).toBe('appServer');
     });
 
     it('normalizes legacy codex backend mode aliases and whitespace when migrating a pre-v6 payload', () => {

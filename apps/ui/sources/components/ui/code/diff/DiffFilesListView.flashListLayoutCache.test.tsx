@@ -134,6 +134,55 @@ describe('DiffFilesListView (FlashList layout cache)', () => {
         expect(clearLayoutCacheOnUpdateSpy).toHaveBeenCalledTimes(0);
     });
 
+    it('keeps FlashList extraData stable and changes only the expanded row item when expandedKeys changes', async () => {
+        const { DiffFilesListView } = await import('./DiffFilesListView');
+
+        const files = [
+            { key: 'k1', filePath: 'src/a.ts', unifiedDiff: 'diff\n', oldText: null, newText: null },
+            { key: 'k2', filePath: 'src/b.ts', unifiedDiff: 'diff\n', oldText: null, newText: null },
+        ] as any;
+        const onToggleExpanded = vi.fn();
+
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<DiffFilesListView
+                    files={files}
+                    expandedKeys={new Set()}
+                    onToggleExpanded={onToggleExpanded}
+                    canRenderInlineDiffs={true}
+                    wrapLines={true}
+                    showLineNumbers={true}
+                    showPrefix={true}
+                    virtualizeFileList
+                />)).tree;
+
+        const beforeList = tree.root.findByType('FlashList' as any);
+        const renderItemBefore = beforeList.props.renderItem;
+        const extraDataBefore = beforeList.props.extraData;
+        const dataBefore = beforeList.props.data;
+
+        await act(async () => {
+            tree.update(
+                <DiffFilesListView
+                    files={files}
+                    expandedKeys={new Set(['k1'])}
+                    onToggleExpanded={onToggleExpanded}
+                    canRenderInlineDiffs={true}
+                    wrapLines={true}
+                    showLineNumbers={true}
+                    showPrefix={true}
+                    virtualizeFileList
+                />,
+            );
+        });
+
+        const afterList = tree.root.findByType('FlashList' as any);
+        expect(afterList.props.renderItem).toBe(renderItemBefore);
+        expect(afterList.props.extraData).toBe(extraDataBefore);
+        expect(afterList.props.data).not.toBe(dataBefore);
+        expect(afterList.props.data[0]).not.toBe(dataBefore[0]);
+        expect(afterList.props.data[1]).toBe(dataBefore[1]);
+    });
+
     it('exposes an imperative handle to clear FlashList layout cache (for programmatic expansion)', async () => {
         clearLayoutCacheOnUpdateSpy.mockClear();
 

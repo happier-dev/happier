@@ -87,6 +87,32 @@ describe('warmCachePersistence', () => {
         expect(loadSessionListWarmCacheEntries('server-a', 'account-b')).toEqual({});
     });
 
+    it('rehydrates rollback eligibility from persisted session list entries', () => {
+        store.set(
+            'session-list-warm-cache-v1:server-a:account-a',
+            JSON.stringify({
+                s1: {
+                    sessionId: 's1',
+                    metadataVersion: 2,
+                    agentStateVersion: 3,
+                    updatedAt: 20,
+                    createdAt: 10,
+                    active: true,
+                    activeAt: 20,
+                    archivedAt: null,
+                    path: '/home/u/repo',
+                    rollbackEligibleTurnStarts: [2, 8],
+                },
+            }),
+        );
+
+        expect(loadSessionListWarmCacheEntries('server-a', 'account-a')).toEqual({
+            s1: expect.objectContaining({
+                rollbackEligibleTurnStarts: [2, 8],
+            }),
+        });
+    });
+
     it('drops invalid payloads safely', () => {
         store.set(
             'session-list-warm-cache-v1:server-a:account-a',

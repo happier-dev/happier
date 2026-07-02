@@ -1,5 +1,6 @@
 import { getConfig } from '@expo/config';
 import { describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -402,6 +403,7 @@ describe('app.config.js', () => {
 
     it('bundles Happier notification sounds through expo-notifications', () => {
         const exp = withCleanEnv(() => getPublicConfig());
+        const uiDir = getUiDir();
 
         const plugin = (exp.plugins ?? []).find((entry: any) => Array.isArray(entry) && entry[0] === 'expo-notifications');
         expect(plugin).toEqual([
@@ -420,6 +422,8 @@ describe('app.config.js', () => {
             }),
         ]);
         expect(exp.extra?.app?.iosBackgroundWakeNotificationsEnabled).toBe(true);
+        expect(existsSync(join(uiDir, 'sources/assets/sounds/happier_soft.wav'))).toBe(true);
+        expect(existsSync(join(uiDir, 'sources/assets/sounds/happier_urgent.wav'))).toBe(true);
     });
 
     it('does not enable OTA-native debug development-client launch overrides by default', () => {

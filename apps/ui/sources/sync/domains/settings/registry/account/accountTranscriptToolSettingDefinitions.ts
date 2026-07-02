@@ -1,5 +1,14 @@
 import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
 import { z } from 'zod';
+import { DEFAULT_TRANSCRIPT_TOOL_CALLS_COLLAPSED_PREVIEW_COUNT } from '@/sync/domains/settings/transcriptToolCallsCollapsedPreviewCount';
+
+export const TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES = [
+    'hover_web_hidden_mobile',
+    'hover_web_always_mobile',
+    'always',
+    'never',
+] as const;
+export type TranscriptMessageTimestampDisplayMode = typeof TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES[number];
 
 function bucketCount(value: number, smallMax: number, mediumMax: number): 'small' | 'medium' | 'large' {
     if (value <= smallMax) return 'small';
@@ -105,7 +114,7 @@ export const ACCOUNT_TRANSCRIPT_TOOL_SETTING_DEFINITIONS = defineSettingDefiniti
     },
     transcriptToolCallsCollapsedPreviewCount: {
         schema: z.number(),
-        default: 5,
+        default: DEFAULT_TRANSCRIPT_TOOL_CALLS_COLLAPSED_PREVIEW_COUNT,
         description: 'How many tool calls to preview when a Tool calls group is collapsed',
         storageScope: 'account',
         analytics: {
@@ -114,7 +123,7 @@ export const ACCOUNT_TRANSCRIPT_TOOL_SETTING_DEFINITIONS = defineSettingDefiniti
             valueKind: 'bucket',
             privacy: 'bucketed',
             identityScope: 'person',
-            serializeCurrent: serializeBucketCount(5, 8),
+            serializeCurrent: serializeBucketCount(3, 5),
         },
     },
     transcriptToolCallsGroupShowBackground: {
@@ -123,6 +132,48 @@ export const ACCOUNT_TRANSCRIPT_TOOL_SETTING_DEFINITIONS = defineSettingDefiniti
         description: 'When Tool calls are grouped and rendered in feed mode, show a group background behind the Tool calls',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    },
+    transcriptMessageTimestampDisplayMode: {
+        schema: z.enum(TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES),
+        default: 'hover_web_hidden_mobile' satisfies TranscriptMessageTimestampDisplayMode,
+        description: 'Controls when message time and date are shown below user and assistant transcript messages',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    transcriptMessageSelectionEnabled: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Show transcript message selection actions',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    },
+    transcriptMessageSendToSessionEnabled: {
+        schema: z.boolean(),
+        default: false,
+        description: 'Show transcript message Send to session bulk action',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    },
+    transcriptMessageSendToSessionTemplate: {
+        schema: z.string().max(2_000),
+        default: '{{MESSAGES}}',
+        description: 'Template applied when sending selected transcript messages to another session draft',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'bucket',
+            privacy: 'bucketed',
+            identityScope: 'person',
+            serializeCurrent: (value: unknown) => bucketCount(typeof value === 'string' ? value.length : 0, 128, 512),
+        },
+    },
+    transcriptBulkCopyFormat: {
+        schema: z.enum(['markdown_labeled', 'plain']),
+        default: 'markdown_labeled',
+        description: 'Format used when copying selected transcript messages',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },
     transcriptPendingQueueMaxHeightPx: {
         schema: z.number(),
@@ -395,6 +446,20 @@ export const ACCOUNT_TRANSCRIPT_TOOL_SETTING_DEFINITIONS = defineSettingDefiniti
             privacy: 'bucketed',
             identityScope: 'person',
             serializeCurrent: serializeBucketCount(1, 3),
+        },
+    },
+    transcriptScrollJumpToBottomRevealViewportRatio: {
+        schema: z.number(),
+        default: 0.75,
+        description: 'Viewport fraction away from the transcript bottom before showing jump-to-bottom button',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'bucket',
+            privacy: 'bucketed',
+            identityScope: 'person',
+            serializeCurrent: (value: number) => bucketCount(Math.round(value * 100), 50, 100),
         },
     },
     transcriptScrollJumpToBottomAnimateScroll: {

@@ -7,22 +7,19 @@ import type { SessionPaneUrlState } from '@/components/sessions/panes/url/sessio
 import { useSessionPaneUrlSync } from '@/components/sessions/panes/url/useSessionPaneUrlSync';
 import { useWarmRepositoryDirectoryCacheOnSessionOpen } from '@/hooks/session/files/useWarmRepositoryDirectoryCacheOnSessionOpen';
 import { sync } from '@/sync/sync';
-import { fireAndForget } from '@/utils/system/fireAndForget';
-import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useSessionSurfaceActivation } from './useSessionSurfaceActivation';
-import { useSessionViewedLifecycle } from './useSessionViewedLifecycle';
 
 export type UseSessionViewBootstrapInput = Readonly<{
     sessionId: string;
+    serverId?: string | null;
     paneScopeId: string;
     paneUrlState: SessionPaneUrlState | null;
     multiPaneEnabled: boolean;
     sessionsRightPaneDefaultOpen: boolean;
     deviceType: string;
     sessionPath: string | null;
-    sessionSeq: number | null;
-    sessionPendingVersion: number | null;
+    sessionAccepted: boolean;
     surfaceFocused: boolean;
     surfaceVisible: boolean;
     routeAnchor: boolean;
@@ -73,35 +70,25 @@ export function useSessionViewBootstrap(input: UseSessionViewBootstrapInput): Us
 
     const activation = useSessionSurfaceActivation({
         sessionId: input.sessionId,
+        serverId: input.serverId,
         surfaceFocused: input.surfaceFocused,
         surfaceVisible: input.surfaceVisible,
         routeAnchor: input.routeAnchor,
     });
 
-    useSessionViewedLifecycle({
-        sessionId: input.sessionId,
-        sessionSeq: input.sessionSeq,
-        surfaceFocused: input.surfaceVisible && input.surfaceFocused,
-    });
-
-    React.useEffect(() => {
-        return runAfterInteractionsWithFallback(() => {
-            fireAndForget(sync.fetchPendingMessages(input.sessionId), { tag: 'SessionView.fetchPendingMessages' });
-        });
-    }, [input.sessionId, input.sessionPendingVersion]);
-
     useWarmRepositoryDirectoryCacheOnSessionOpen({
         sessionId: input.sessionId,
-        sessionPath: input.sessionPath,
-        machineOnline,
+        sessionPath: input.sessionAccepted ? input.sessionPath : null,
+        machineOnline: input.sessionAccepted ? machineOnline : false,
     });
 
+    const visibleSurfaceCanSync = input.surfaceFocused || input.routeAnchor;
     React.useLayoutEffect(() => {
-        if (!input.surfaceVisible) {
+        if (!input.sessionAccepted || !input.surfaceVisible || !visibleSurfaceCanSync) {
             return;
         }
         sync.onSessionVisible(input.sessionId);
-    }, [input.sessionId, input.surfaceVisible]);
+    }, [input.sessionAccepted, input.sessionId, input.surfaceVisible, visibleSurfaceCanSync]);
 
     return {
         pane,

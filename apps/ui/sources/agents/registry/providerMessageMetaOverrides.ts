@@ -1,37 +1,33 @@
 import type { AgentId } from '@/agents/catalog/catalog';
-import { buildClaudeReasoningEffortMessageMetaOverrides } from '@/agents/providers/claude/buildClaudeReasoningEffortMessageMetaOverrides';
-
-type ProviderMessageMetaOverrideBuilder = (params: Readonly<{
-    session: unknown;
-    metaOverrides?: Record<string, unknown>;
-}>) => Record<string, unknown> | undefined;
-
-type ProviderMessageMetaOverrideRegistration = Readonly<{
-    agentId: AgentId;
-    buildOverrides: ProviderMessageMetaOverrideBuilder;
-}>;
-
-const PROVIDER_MESSAGE_META_OVERRIDE_BUILDERS = new Map<AgentId, ProviderMessageMetaOverrideBuilder>();
-
-function registerProviderMessageMetaOverrideBuilder(
-    registration: ProviderMessageMetaOverrideRegistration,
-): void {
-    PROVIDER_MESSAGE_META_OVERRIDE_BUILDERS.set(registration.agentId, registration.buildOverrides);
-}
-
-registerProviderMessageMetaOverrideBuilder({
-    agentId: 'claude',
-    buildOverrides: buildClaudeReasoningEffortMessageMetaOverrides,
-});
+import {
+    BUNDLED_PROVIDER_MESSAGE_META_OVERRIDE_BUILDERS,
+    BUNDLED_PROVIDER_MESSAGE_META_OVERRIDE_DESCRIPTORS,
+} from './generatedBundledPluginEntries.messageMetaOverrides';
+import { createProviderMessageMetaOverrideBuilderFromDescriptor } from './providerMessageMetaDescriptors';
 
 export function resolveProviderRegisteredMessageMetaOverrides(args: Readonly<{
     agentId: AgentId;
     session: unknown;
     metaOverrides?: Record<string, unknown>;
 }>): Record<string, unknown> | undefined {
-    const builder = PROVIDER_MESSAGE_META_OVERRIDE_BUILDERS.get(args.agentId);
-    return builder?.({
-        session: args.session,
-        metaOverrides: args.metaOverrides,
-    });
+    const descriptor = BUNDLED_PROVIDER_MESSAGE_META_OVERRIDE_DESCRIPTORS[args.agentId]?.descriptor;
+    const descriptorBuilder = descriptor
+        ? createProviderMessageMetaOverrideBuilderFromDescriptor({
+            kind: 'plugin.ui.v1',
+            pluginId: args.agentId,
+            agentId: args.agentId,
+            version: 1,
+            message: descriptor,
+        }).buildOverrides
+        : null;
+    const builder = descriptorBuilder ?? BUNDLED_PROVIDER_MESSAGE_META_OVERRIDE_BUILDERS[args.agentId];
+    if (!builder) return args.metaOverrides;
+    try {
+        return builder({
+            session: args.session,
+            metaOverrides: args.metaOverrides,
+        }) ?? args.metaOverrides;
+    } catch {
+        return args.metaOverrides;
+    }
 }

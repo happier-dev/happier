@@ -29,16 +29,17 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
             value={composerText}
             onChangeText={setComposerText}
             sessionId={props.sessionId}
-            onSend={() => {
+            onSend={(sendOptions) => {
                 if (!props.canSendMessages) {
                     Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
                     return;
                 }
 
-                const text = composerText.trim();
+                const liveComposerText = sendOptions?.inputTextOverride ?? composerText;
+                const text = liveComposerText.trim();
                 if (text.length === 0) return;
 
-                const previousMessage = composerText;
+                const previousMessage = liveComposerText;
                 setComposerText('');
 
                 fireAndForget((async () => {
@@ -69,10 +70,14 @@ export const SessionParticipantComposer = React.memo((props: Readonly<{
 
                     try {
                         if (routed?.type === 'session_message') {
-                            await sync.sendMessage(props.sessionId, routed.text, routed.displayText, routed.metaOverrides);
+                            await sync.submitMessage(props.sessionId, routed.text, routed.displayText, routed.metaOverrides, {
+                                callerSurface: 'participant_composer',
+                            });
                             return;
                         }
-                        await sync.sendMessage(props.sessionId, text);
+                        await sync.submitMessage(props.sessionId, text, undefined, undefined, {
+                            callerSurface: 'participant_composer',
+                        });
                     } catch (error) {
                         setComposerText(previousMessage);
                         Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.failedToSendMessage'));

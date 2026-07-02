@@ -95,4 +95,32 @@ describe('prepareAccountSettingsForDaemonSpawn', () => {
             clearPendingSettings: vi.fn(),
         })).rejects.toThrow('Account settings scope changed while preparing session spawn');
     });
+
+    it('rejects with a pending-flush error when server-backed pending settings cannot be flushed', async () => {
+        await expect(prepareAccountSettingsForDaemonSpawn({
+            settingsScope: scopeA,
+            pendingSettings: { renameSessions: false } as Partial<Settings>,
+            getActiveSettingsScope: () => scopeA,
+            getCurrentSettingsVersion: () => 5,
+            flushPendingServerSettings: vi.fn(async () => {
+                throw new Error('network down');
+            }),
+            clearPendingSettings: vi.fn(),
+        })).rejects.toMatchObject({
+            code: 'ACCOUNT_SETTINGS_PENDING_FLUSH_FAILED_BEFORE_SPAWN',
+        });
+    });
+
+    it('lets freshness-only flush failures fail open at the operation boundary', async () => {
+        await expect(prepareAccountSettingsForDaemonSpawn({
+            settingsScope: scopeA,
+            pendingSettings: {},
+            getActiveSettingsScope: () => scopeA,
+            getCurrentSettingsVersion: () => null,
+            flushPendingServerSettings: vi.fn(async () => {
+                throw new Error('network down');
+            }),
+            clearPendingSettings: vi.fn(),
+        })).rejects.toThrow('network down');
+    });
 });

@@ -26,6 +26,7 @@ import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getRes
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { Text } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import type { ProfileEnabledById } from '@/sync/domains/profiles/profileEnablement';
 
 
 export interface ProfilesListProps {
@@ -45,6 +46,8 @@ export interface ProfilesListProps {
 
     getProfileDisabled?: (profile: AIBackendProfile) => boolean;
     getProfileSubtitleExtra?: (profile: AIBackendProfile) => string | null;
+    profileEnabledById?: ProfileEnabledById | null;
+    includeDisabledProfiles?: boolean;
 
     onEditProfile?: (profile: AIBackendProfile) => void;
     onDuplicateProfile?: (profile: AIBackendProfile) => void;
@@ -164,6 +167,8 @@ export function ProfilesList(props: ProfilesListProps) {
     const { theme, rt } = useUnistyles();
     const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
+    const settingsProfileEnabledById = useSetting('profileEnabledById') as ProfileEnabledById | undefined;
+    const profileEnabledById = props.profileEnabledById ?? settingsProfileEnabledById;
     const enabledAgentIds = React.useMemo(() => {
         return getEnabledAgentIds({ backendEnabledByTargetKey });
     }, [backendEnabledByTargetKey]);
@@ -204,8 +209,14 @@ export function ProfilesList(props: ProfilesListProps) {
     const isMobile = useWindowDimensions().width < 580;
 
     const groups = React.useMemo(() => {
-        return buildProfilesListGroups({ customProfiles: props.customProfiles, favoriteProfileIds: props.favoriteProfileIds, enabledAgentIds });
-    }, [enabledAgentIds, props.customProfiles, props.favoriteProfileIds]);
+        return buildProfilesListGroups({
+            customProfiles: props.customProfiles,
+            favoriteProfileIds: props.favoriteProfileIds,
+            enabledAgentIds,
+            profileEnabledById,
+            includeDisabledProfiles: props.includeDisabledProfiles,
+        });
+    }, [enabledAgentIds, profileEnabledById, props.customProfiles, props.favoriteProfileIds, props.includeDisabledProfiles]);
 
     const isDefaultEnvironmentFavorite = groups.favoriteIds.has('');
     const showFavoritesGroup = groups.favoriteProfiles.length > 0 || (props.includeDefaultEnvironmentRow && isDefaultEnvironmentFavorite);

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import * as FileSystem from 'expo-file-system/legacy';
+import { File } from 'expo-file-system';
 import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { StyleSheet } from 'react-native-unistyles';
@@ -21,7 +21,7 @@ async function readPickedThemeFile(entry: NativePickedFile): Promise<string> {
         return await entry.file.text();
     }
 
-    return await FileSystem.readAsStringAsync(entry.uri, { encoding: FileSystem.EncodingType.UTF8 });
+    return await new File(entry.uri).text();
 }
 
 export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportScreen() {

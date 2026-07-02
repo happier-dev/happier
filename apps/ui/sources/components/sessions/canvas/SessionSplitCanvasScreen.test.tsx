@@ -10,6 +10,11 @@ const splitCanvasHostSpy = vi.hoisted(() => vi.fn((props: Record<string, unknown
 const useSessionSplitCanvasStateSpy = vi.hoisted(() => vi.fn());
 const useSessionSplitCanvasDragStateSpy = vi.hoisted(() => vi.fn(() => false));
 const navigateToSessionSpy = vi.hoisted(() => vi.fn());
+const routeHydrationState = {
+    kind: 'available',
+    sessionId: 'sess_2',
+    serverId: 'server-route',
+} as const;
 
 const baseSplitCanvasState = {
     root: {
@@ -180,6 +185,7 @@ describe('SessionSplitCanvasScreen', () => {
                 jumpToSeq={42}
                 paneUrlState={paneUrlState as never}
                 initialAttachmentDrafts={attachmentDrafts as never}
+                routeHydrationState={routeHydrationState}
             />,
         );
 
@@ -203,6 +209,7 @@ describe('SessionSplitCanvasScreen', () => {
             jumpToSeq: 42,
             paneUrlState,
             initialAttachmentDrafts: attachmentDrafts,
+            routeHydrationState,
         }));
         expect(registerSessionSplitCanvasRuntimeSpy).toHaveBeenCalledWith({
             snapshot: {
@@ -295,6 +302,7 @@ describe('SessionSplitCanvasScreen', () => {
                 jumpToSeq={42}
                 paneUrlState={paneUrlState as never}
                 initialAttachmentDrafts={attachmentDrafts as never}
+                routeHydrationState={routeHydrationState}
             />,
         );
 
@@ -308,6 +316,7 @@ describe('SessionSplitCanvasScreen', () => {
             jumpToSeq: 42,
             paneUrlState,
             initialAttachmentDrafts: attachmentDrafts,
+            routeHydrationState,
         }));
 
         await screen.unmount();

@@ -13,6 +13,7 @@ import { SourceControlUnavailableState } from '@/components/workspaces/scm/state
 import { t } from '@/text';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { useScmTreeBadgeIndex } from '@/components/workspaces/files/repositoryTree/useScmTreeBadgeIndex';
+import { buildScmTreeBadgeSignature } from '@/components/workspaces/files/repositoryTree/scmTreeBadges';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 import { RepositoryTreeRowActionsMenu, type RepositoryTreeRowActionMenuItemId } from '@/components/workspaces/files/repositoryTree/RepositoryTreeRowActionsMenu';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
@@ -118,6 +119,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
     });
 
     const badgeIndex = useScmTreeBadgeIndex(props.scmSnapshot ?? null);
+    const badgeSignature = buildScmTreeBadgeSignature(props.scmSnapshot ?? null);
     const rowActions = useRepositoryTreeRowActions({
         sessionId,
         writeActionsEnabled,
@@ -160,19 +162,34 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
     ]);
     const rowRenderStateRef = React.useRef(rowRenderState);
     rowRenderStateRef.current = rowRenderState;
-    const rowVisualExtraData = React.useMemo(() => ({
-        badgeIndex,
-        detailsMode,
-        onRequestDownload: props.onRequestDownload,
-        scmSnapshot: props.scmSnapshot,
-        transferAvailable: transferAvailability.available,
-        webDropHoverPath: props.webDropHoverPath,
-        writeActionsEnabled,
-    }), [
-        badgeIndex,
+    const rowVisualExtraData = React.useMemo(() => [
+        badgeSignature,
+        detailsMode ? 'details' : 'compact',
+        props.onRequestDownload ? 'download' : 'no-download',
+        transferAvailability.available ? 'transfer' : 'no-transfer',
+        props.webDropHoverPath ?? '',
+        writeActionsEnabled ? 'write' : 'read',
+        theme.colors.text?.secondary ?? theme.colors.textSecondary,
+        theme.colors.text?.link ?? theme.colors.textLink,
+        theme.colors.surface?.pressed ?? theme.colors.surfacePressed,
+        theme.colors.state?.neutral?.foreground,
+        theme.colors.state?.success?.foreground ?? theme.colors.success,
+        theme.colors.state?.danger?.foreground ?? theme.colors.textDestructive,
+    ].join('|'), [
+        badgeSignature,
         detailsMode,
         props.onRequestDownload,
-        props.scmSnapshot,
+        theme.colors.state?.danger?.foreground,
+        theme.colors.state?.neutral?.foreground,
+        theme.colors.state?.success?.foreground,
+        theme.colors.success,
+        theme.colors.surface?.pressed,
+        theme.colors.surfacePressed,
+        theme.colors.text?.link,
+        theme.colors.text?.secondary,
+        theme.colors.textDestructive,
+        theme.colors.textLink,
+        theme.colors.textSecondary,
         transferAvailability.available,
         props.webDropHoverPath,
         writeActionsEnabled,

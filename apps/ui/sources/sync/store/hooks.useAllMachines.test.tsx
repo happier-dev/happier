@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 
-import { useAllMachines, useMachineListByServerId } from '@/sync/domains/state/storage';
+import { useAllMachines, useLaunchSelectionMachines, useMachineListByServerId, useSessionForkSupportSource } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
@@ -84,6 +85,111 @@ describe('useAllMachines', () => {
         }
     });
 
+    it('keeps launch-selection machines stable when heartbeat timestamps do not change online status', async () => {
+        const previousState = storage.getState();
+        try {
+            const activeAt = Date.now();
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                machines: {
+                    'm-online': {
+                        id: 'm-online',
+                        seq: 1,
+                        createdAt: activeAt,
+                        updatedAt: activeAt,
+                        active: true,
+                        activeAt,
+                        metadata: { host: 'online', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '.happy', homeDir: '/home' },
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                        revokedAt: null,
+                    },
+                },
+            }));
+
+            const hook = await renderHook(() => useLaunchSelectionMachines(), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const firstMachines = hook.getCurrent();
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    machines: {
+                        ...state.machines,
+                        'm-online': {
+                            ...state.machines['m-online']!,
+                            updatedAt: activeAt + 1000,
+                            activeAt: activeAt + 1000,
+                        },
+                    },
+                }));
+            });
+
+            expect(hook.getCurrent()).toBe(firstMachines);
+            expect(hook.getCurrent()[0]?.activeAt).toBe(activeAt);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('refreshes launch-selection machines when heartbeat freshness changes online status', async () => {
+        const previousState = storage.getState();
+        try {
+            const staleActiveAt = Date.now() - 10 * 60_000;
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                machines: {
+                    'm-online': {
+                        id: 'm-online',
+                        seq: 1,
+                        createdAt: staleActiveAt,
+                        updatedAt: staleActiveAt,
+                        active: true,
+                        activeAt: staleActiveAt,
+                        metadata: { host: 'online', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '.happy', homeDir: '/home' },
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                        revokedAt: null,
+                    },
+                },
+            }));
+
+            const hook = await renderHook(() => useLaunchSelectionMachines(), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const firstMachines = hook.getCurrent();
+            const freshActiveAt = Date.now();
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    machines: {
+                        ...state.machines,
+                        'm-online': {
+                            ...state.machines['m-online']!,
+                            updatedAt: freshActiveAt,
+                            activeAt: freshActiveAt,
+                        },
+                    },
+                }));
+            });
+
+            expect(hook.getCurrent()).not.toBe(firstMachines);
+            expect(hook.getCurrent()[0]?.activeAt).toBe(freshActiveAt);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('does not fall back to another server cached machine list while the active server cache is empty during bootstrap', async () => {
         const previousState = storage.getState();
         try {
@@ -129,6 +235,147 @@ describe('useAllMachines', () => {
             });
 
             expect(hook.getCurrent()).toEqual([]);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('keeps transcript fork support source stable when only metadata freshness fields change', async () => {
+        const previousState = storage.getState();
+        try {
+            const metadata = {
+                path: '/repo',
+                host: 'mac',
+                codexSessionId: 'codex-session',
+                sessionModesV1: {
+                    v: 1 as const,
+                    provider: 'codex',
+                    updatedAt: 100,
+                    currentModeId: 'default',
+                    availableModes: [{ id: 'default', name: 'Default' }],
+                },
+                summary: { text: 'Summary', updatedAt: 100 },
+            };
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                sessions: {
+                    ...state.sessions,
+                    's-active': {
+                        id: 's-active',
+                        serverId: 'server-a',
+                        seq: 10,
+                        createdAt: 1000,
+                        updatedAt: 1000,
+                        active: true,
+                        activeAt: 1000,
+                        metadata,
+                        metadataVersion: 1,
+                        agentState: null,
+                        agentStateVersion: 1,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 'online',
+                    },
+                },
+            }));
+
+            const hook = await renderHook(() => useSessionForkSupportSource('s-active'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const firstSource = hook.getCurrent();
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessions: {
+                        ...state.sessions,
+                        's-active': {
+                            ...state.sessions['s-active']!,
+                            metadataVersion: 2,
+                            metadata: {
+                                ...metadata,
+                                sessionModesV1: {
+                                    ...metadata.sessionModesV1,
+                                    updatedAt: 200,
+                                },
+                                summary: { text: 'Summary', updatedAt: 200 },
+                            },
+                        },
+                    },
+                }));
+            });
+
+            expect(hook.getCurrent()).toBe(firstSource);
+            expect(hook.getCurrent()).toEqual({ metadata, serverId: 'server-a' });
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('refreshes transcript fork support source when permission mode timestamp changes', async () => {
+        const previousState = storage.getState();
+        try {
+            const metadata = {
+                path: '/repo',
+                host: 'mac',
+                codexSessionId: 'codex-session',
+                permissionMode: 'yolo' as const,
+                permissionModeUpdatedAt: 100,
+            };
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                sessions: {
+                    ...state.sessions,
+                    's-active': {
+                        id: 's-active',
+                        serverId: 'server-a',
+                        seq: 10,
+                        createdAt: 1000,
+                        updatedAt: 1000,
+                        active: true,
+                        activeAt: 1000,
+                        metadata,
+                        metadataVersion: 1,
+                        agentState: null,
+                        agentStateVersion: 1,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 'online',
+                    },
+                },
+            }));
+
+            const hook = await renderHook(() => useSessionForkSupportSource('s-active'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const firstSource = hook.getCurrent();
+
+            const refreshedMetadata = {
+                ...metadata,
+                permissionModeUpdatedAt: 200,
+            };
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessions: {
+                        ...state.sessions,
+                        's-active': {
+                            ...state.sessions['s-active']!,
+                            metadataVersion: 2,
+                            metadata: refreshedMetadata,
+                        },
+                    },
+                }));
+            });
+
+            expect(hook.getCurrent()).not.toBe(firstSource);
+            expect(hook.getCurrent()).toEqual({ metadata: refreshedMetadata, serverId: 'server-a' });
 
             await hook.unmount();
         } finally {

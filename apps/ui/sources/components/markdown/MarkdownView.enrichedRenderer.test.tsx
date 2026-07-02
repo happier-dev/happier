@@ -54,6 +54,7 @@ describe('MarkdownView (enriched renderer)', () => {
         expect(enrichedRuns[0]!.props.md4cFlags).toEqual({ latexMath: true });
         expect(enrichedRuns[0]!.props.testID).toBeUndefined();
         expect(enrichedRuns[0]!.props['data-testid']).toBe('markdown-enriched-run');
+        expect(enrichedRuns[0]!.props.renderRawFallback).toBe('hidden');
         expect(enrichedRuns[0]!.props.enableLinkPreview).toBeUndefined();
         expect(enrichedRuns[0]!.props.allowFontScaling).toBeUndefined();
         expect(enrichedRuns[0]!.props.streamingAnimation).toBeUndefined();

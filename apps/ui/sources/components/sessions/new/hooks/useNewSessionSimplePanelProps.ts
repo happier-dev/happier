@@ -1,10 +1,99 @@
 import * as React from 'react';
 
+import type {
+    AgentInputContentPopoverConfig,
+    AgentInputContentPopoverRenderArgs,
+} from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import type { NewSessionSimplePanelProps } from '../components/NewSessionSimplePanel';
+
+const objectSignatureIds = new WeakMap<object, number>();
+let nextObjectSignatureId = 1;
+
+function getObjectSignature(value: object | null | undefined): string {
+    if (!value) return '';
+    const existing = objectSignatureIds.get(value);
+    if (existing !== undefined) return String(existing);
+    const next = nextObjectSignatureId;
+    nextObjectSignatureId += 1;
+    objectSignatureIds.set(value, next);
+    return String(next);
+}
+
+function stableJsonSignature(value: unknown): string {
+    try {
+        return JSON.stringify(value) ?? 'null';
+    } catch {
+        return 'unserializable';
+    }
+}
+
+function buildContentPopoverStaticSignature(config: AgentInputContentPopoverConfig | undefined): string {
+    if (!config) return 'undefined';
+    return stableJsonSignature({
+        boundaryRef: getObjectSignature(config.boundaryRef ?? null),
+        maxHeightCap: config.maxHeightCap ?? null,
+        maxWidthCap: config.maxWidthCap ?? null,
+        scrollEnabled: config.scrollEnabled ?? null,
+        keyboardShouldPersistTaps: config.keyboardShouldPersistTaps ?? null,
+        edgeFades: config.edgeFades ?? null,
+        edgeIndicators: config.edgeIndicators ?? null,
+        initialVisibility: config.initialVisibility ?? null,
+    });
+}
+
+function useLatestRef<Value>(value: Value): React.MutableRefObject<Value> {
+    const ref = React.useRef(value);
+    ref.current = value;
+    return ref;
+}
+
+function useStableContentPopoverConfig(
+    config: AgentInputContentPopoverConfig | undefined,
+): AgentInputContentPopoverConfig | undefined {
+    const configRef = useLatestRef(config);
+    const renderContentRef = useLatestRef(config?.renderContent);
+    const signature = React.useMemo(
+        () => buildContentPopoverStaticSignature(config),
+        [
+            config?.boundaryRef,
+            config?.edgeFades,
+            config?.edgeIndicators,
+            config?.initialVisibility,
+            config?.keyboardShouldPersistTaps,
+            config?.maxHeightCap,
+            config?.maxWidthCap,
+            config?.scrollEnabled,
+        ],
+    );
+
+    return React.useMemo(() => {
+        const currentConfig = configRef.current;
+        if (!currentConfig) return undefined;
+        return {
+            boundaryRef: currentConfig.boundaryRef,
+            maxHeightCap: currentConfig.maxHeightCap,
+            maxWidthCap: currentConfig.maxWidthCap,
+            scrollEnabled: currentConfig.scrollEnabled,
+            keyboardShouldPersistTaps: currentConfig.keyboardShouldPersistTaps,
+            edgeFades: currentConfig.edgeFades,
+            edgeIndicators: currentConfig.edgeIndicators,
+            initialVisibility: currentConfig.initialVisibility,
+            renderContent: (args: AgentInputContentPopoverRenderArgs) => {
+                const renderContent = renderContentRef.current;
+                return typeof renderContent === 'function' ? renderContent(args) : renderContent;
+            },
+        };
+    }, [configRef, renderContentRef, signature]);
+}
 
 export function useNewSessionSimplePanelProps(
     params: NewSessionSimplePanelProps,
 ): NewSessionSimplePanelProps {
+    const machinePopover = useStableContentPopoverConfig(params.machinePopover);
+    const resumePopover = useStableContentPopoverConfig(params.resumePopover);
+    const profilePopover = useStableContentPopoverConfig(params.profilePopover);
+    const pathPopover = useStableContentPopoverConfig(params.pathPopover);
+
     return React.useMemo(() => ({
         popoverBoundaryRef: params.popoverBoundaryRef,
         headerHeight: params.headerHeight,
@@ -50,18 +139,18 @@ export function useNewSessionSimplePanelProps(
         setAcpConfigOptionOverride: params.setAcpConfigOptionOverride,
         connectionStatus: params.connectionStatus,
         machineName: params.machineName,
-        machinePopover: params.machinePopover,
+        machinePopover,
         selectedPath: params.selectedPath,
         showResumePicker: params.showResumePicker,
         resumeSessionId: params.resumeSessionId,
-        resumePopover: params.resumePopover,
+        resumePopover,
         isResumeSupportChecking: params.isResumeSupportChecking,
         useProfiles: params.useProfiles,
         selectedProfileId: params.selectedProfileId,
         selectedMachineId: params.selectedMachineId,
         selectedMachineHomeDir: params.selectedMachineHomeDir,
-        profilePopover: params.profilePopover,
-        pathPopover: params.pathPopover,
+        profilePopover,
+        pathPopover,
         targetServerId: params.targetServerId,
         attachmentFlowId: params.attachmentFlowId,
     }), [
@@ -91,7 +180,7 @@ export function useNewSessionSimplePanelProps(
         params.isCreating,
         params.isResumeSupportChecking,
         params.machineName,
-        params.machinePopover,
+        machinePopover,
         params.modelMode,
         params.modelOptions,
         params.modelOptionsProbe,
@@ -102,9 +191,9 @@ export function useNewSessionSimplePanelProps(
         params.onAutocompleteSuggestionSelect,
         params.permissionMode,
         params.popoverBoundaryRef,
-        params.profilePopover,
-        params.pathPopover,
-        params.resumePopover,
+        profilePopover,
+        pathPopover,
+        resumePopover,
         params.resumeSessionId,
         params.safeAreaBottom,
         params.safeAreaTop,

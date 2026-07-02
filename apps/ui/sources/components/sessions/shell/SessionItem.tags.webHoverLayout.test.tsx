@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { createModelBackedSessionItemTestComponent } from './sessionItemRowViewModelTestFixture';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,7 +39,6 @@ installSessionShellCommonModuleMocks({
             importOriginal,
             overrides: {
                 useHasUnreadMessages: () => false,
-                useSessionListActivityTimeLabel: () => '1m',
                 useSetting: (key: string) => {
                     if (key === 'sessionListIdentityDisplay') return 'avatar';
                     if (key === 'sessionListActiveColorModeV1') return 'activityAndAttention';
@@ -172,13 +172,22 @@ function createSession(): any {
     };
 }
 
+async function importSessionItem() {
+    const { SessionItem } = await import('./SessionItem');
+    return createModelBackedSessionItemTestComponent(SessionItem, {
+        defaultRowViewModelOverrides: {
+            activityTimeLabel: '1m',
+        },
+    });
+}
+
 describe('SessionItem tags (web hover layout)', () => {
     afterEach(() => {
         standardCleanup();
     });
 
     it('hides compact tags while row hover actions are visible', async () => {
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem

@@ -6,6 +6,7 @@ import {
     WindowsRemoteSessionLaunchModeSchema,
     WindowsTerminalWindowNameSchema,
 } from '@happier-dev/protocol';
+import { normalizeCodexBackendMode } from '@happier-dev/agents';
 
 import type { AutomationTemplate } from './automationTypes';
 
@@ -61,10 +62,17 @@ const AutomationTemplateSchema: z.ZodType<AutomationTemplate> = z.object({
     sessionEncryptionMode: z.enum(['e2ee', 'plain']).optional(),
     sessionEncryptionKeyBase64: z.string().optional(),
     sessionEncryptionVariant: z.literal('dataKey').optional(),
-}).strict().transform(({ experimentalCodexAcp: _experimentalCodexAcp, codexBackendMode, ...template }) => ({
-    ...template,
-    ...(codexBackendMode ? { codexBackendMode } : _experimentalCodexAcp === true ? { codexBackendMode: 'acp' as const } : {}),
-}));
+}).strict().transform(({ experimentalCodexAcp: _experimentalCodexAcp, codexBackendMode, ...template }) => {
+    const normalizedCodexBackendMode = normalizeCodexBackendMode(codexBackendMode);
+    return {
+        ...template,
+        ...(normalizedCodexBackendMode
+            ? { codexBackendMode: normalizedCodexBackendMode }
+            : _experimentalCodexAcp === true
+                ? { codexBackendMode: 'acp' as const }
+                : {}),
+    };
+});
 
 function normalizeOptionalString(value: string | null | undefined): string | undefined {
     if (typeof value !== 'string') return undefined;

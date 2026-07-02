@@ -9,7 +9,7 @@ import { useServerRetentionPolicies } from '@/hooks/server/useServerRetentionPol
 import { t } from '@/text';
 import { formatSavedServerRetentionSummary } from '@/sync/domains/server/retention/formatServerRetentionPolicy';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
-import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { resolveServerProfileScopeId, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { ServerSelectionGroup } from '@/sync/domains/server/selection/serverSelectionTypes';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
@@ -32,7 +32,7 @@ type SavedServersSectionProps = Readonly<{
 export function SavedServersSection(props: SavedServersSectionProps) {
     const { theme } = useUnistyles();
     const groups = Array.isArray(props.serverGroups) ? props.serverGroups : [];
-    const retentionPoliciesByServerId = useServerRetentionPolicies(props.servers.map((profile) => profile.id));
+    const retentionPoliciesByServerId = useServerRetentionPolicies(props.servers.map((profile) => resolveServerProfileScopeId(profile)));
     const supportsWholeRowPress = Platform.OS !== 'web';
     return (
         <ItemGroup title={t('server.savedServersTitle')}>
@@ -83,14 +83,17 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                 );
             })}
             {props.servers.map((profile) => {
-                const targetKey = `server:${profile.id}`;
+                const scopeId = resolveServerProfileScopeId(profile);
+                const targetKey = `server:${scopeId}`;
                 const isActive = props.activeTargetKey
                     ? props.activeTargetKey === targetKey
-                    : profile.id === props.activeServerId;
+                    : scopeId === props.activeServerId || profile.id === props.activeServerId;
                 const isDeviceDefault = typeof props.deviceDefaultServerId === 'string'
                     && props.deviceDefaultServerId.trim().length > 0
-                    && profile.id === props.deviceDefaultServerId;
-                const authStatus = props.authStatusByServerId[profile.id] ?? 'unknown';
+                    && (scopeId === props.deviceDefaultServerId || profile.id === props.deviceDefaultServerId);
+                const authStatus = props.authStatusByServerId[scopeId]
+                    ?? props.authStatusByServerId[profile.id]
+                    ?? 'unknown';
                 const statusLabel =
                     authStatus === 'signedIn'
                         ? t('server.signedIn')
@@ -99,7 +102,9 @@ export function SavedServersSection(props: SavedServersSectionProps) {
                             : t('server.authStatusUnknown');
                 const retentionSummary = isActive
                     ? null
-                    : formatSavedServerRetentionSummary(retentionPoliciesByServerId[profile.id] ?? null);
+                    : formatSavedServerRetentionSummary(
+                        retentionPoliciesByServerId[scopeId] ?? retentionPoliciesByServerId[profile.id] ?? null,
+                    );
                 const subtitle = [toServerUrlDisplay(profile.serverUrl), statusLabel, retentionSummary]
                     .filter((value): value is string => Boolean(value))
                     .join('\n');

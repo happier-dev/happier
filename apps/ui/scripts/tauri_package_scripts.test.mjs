@@ -12,7 +12,7 @@ test('apps/ui package.json exposes shared stack-owned Tauri dev entrypoints', as
   const pkg = JSON.parse(raw);
   const scripts = pkg?.scripts ?? {};
 
-  assert.equal(scripts['typecheck'], 'tsc -p tsconfig.json --noEmit');
+  assert.equal(scripts['typecheck'], 'node scripts/ensureWorkspacePackagesBuilt.mjs && tsc -p tsconfig.json --noEmit');
   assert.equal(scripts['tauri:dev'], 'yarn -s ensure:workspace:built && node ../stack/scripts/tauri_dev.mjs');
   assert.equal(scripts['ui:tauri'], 'yarn -s ensure:workspace:built && node ../stack/scripts/tauri_dev.mjs');
   assert.equal(scripts['tauri:qa'], 'yarn -s ensure:workspace:built && node ./scripts/tauriMcpQa.mjs');

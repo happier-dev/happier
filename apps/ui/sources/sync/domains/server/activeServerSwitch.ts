@@ -1,6 +1,11 @@
 import { switchConnectionToActiveServer } from '../../runtime/orchestration/connectionManager';
 import { getActiveServerSnapshot, setActiveServer, upsertAndActivateServer } from './serverRuntime';
-import { getDeviceDefaultServerId, getTabActiveServerId, type ServerProfileSource } from './serverProfiles';
+import {
+    areServerProfileIdentifiersEquivalent,
+    getDeviceDefaultServerId,
+    getTabActiveServerId,
+} from './serverProfiles';
+import type { ServerProfileSource } from './serverProfiles';
 import { canonicalizeServerUrl, createServerUrlComparableKey } from './url/serverUrlCanonical';
 
 export { upsertAndActivateServer } from './serverRuntime';
@@ -41,9 +46,10 @@ function canSkipActiveServerIdSwitch(params: Readonly<{
     targetServerId: string;
     scope: 'device' | 'tab';
 }>): boolean {
-    if (params.activeServerId !== params.targetServerId) return false;
+    if (!areServerProfileIdentifiersEquivalent(params.activeServerId, params.targetServerId)) return false;
     if (params.scope === 'tab') return true;
-    return !getTabActiveServerId() && getDeviceDefaultServerId() === params.targetServerId;
+    return !getTabActiveServerId()
+        && areServerProfileIdentifiersEquivalent(getDeviceDefaultServerId(), params.targetServerId);
 }
 
 export async function upsertActivateAndSwitchServer(params: Readonly<{

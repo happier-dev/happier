@@ -64,8 +64,16 @@ function getEffectiveBindings(
     overrides: Readonly<Record<string, readonly KeybindingRule[]>>,
 ): readonly KeybindingRule[] {
     const override = overrides[commandId];
-    if (override && override.length > 0) return override;
     const command = defaultKeyboardCommands.find((entry) => entry.id === commandId);
+    if (override && override.length > 0) {
+        const defaultAllowInEditable = command?.defaultBindings?.find((rule) => rule.allowInEditable != null)?.allowInEditable
+            ?? command?.defaultBinding?.allowInEditable;
+        return override.map((rule) => (
+            rule.allowInEditable == null && defaultAllowInEditable != null
+                ? { ...rule, allowInEditable: defaultAllowInEditable }
+                : rule
+        ));
+    }
     if (command?.defaultBindings && command.defaultBindings.length > 0) return command.defaultBindings;
     return command?.defaultBinding ? [command.defaultBinding] : [];
 }

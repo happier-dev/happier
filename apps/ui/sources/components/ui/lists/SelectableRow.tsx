@@ -139,6 +139,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    accessoryTitleAligned: {
+        alignSelf: 'flex-start',
+        marginTop: 2,
+    },
 }));
 
 export function SelectableRow(props: SelectableRowProps) {
@@ -182,6 +186,7 @@ export function SelectableRow(props: SelectableRowProps) {
     const leftAccessory = React.useMemo(() => normalizeNodeForView(props.left ?? null), [props.left]);
     const rightAccessory = React.useMemo(() => normalizeNodeForView(props.right ?? null), [props.right]);
     const titleAccessory = React.useMemo(() => normalizeNodeForView(props.titleAccessory ?? null), [props.titleAccessory]);
+    const accessoryTitleAlignmentStyle = props.subtitle ? styles.accessoryTitleAligned : null;
 
     return (
         <Pressable
@@ -209,7 +214,7 @@ export function SelectableRow(props: SelectableRowProps) {
             {...pressableProps}
         >
             {leftAccessory ? (
-                <View style={[styles.left, typeof props.leftGap === 'number' ? { marginRight: props.leftGap } : null]}>
+                <View style={[styles.left, accessoryTitleAlignmentStyle, typeof props.leftGap === 'number' ? { marginRight: props.leftGap } : null]}>
                     {leftAccessory}
                 </View>
             ) : null}
@@ -235,7 +240,7 @@ export function SelectableRow(props: SelectableRowProps) {
             </View>
 
             {rightAccessory ? (
-                <View style={styles.right}>
+                <View style={[styles.right, accessoryTitleAlignmentStyle]}>
                     {rightAccessory}
                 </View>
             ) : null}

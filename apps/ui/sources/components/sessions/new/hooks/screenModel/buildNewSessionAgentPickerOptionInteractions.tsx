@@ -3,6 +3,7 @@ import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getRes
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 
 import type { NewSessionAgentPickerSelection } from './buildNewSessionAgentPickerDetailContent';
 import { buildNewSessionAgentPickerDetailContent } from './buildNewSessionAgentPickerDetailContent';
@@ -18,6 +19,11 @@ type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
     refreshProbe?: OptionPickerProbeState | null;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
     onToggleFavoriteModel?: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
+    favoriteEngine?: Readonly<{
+        favorite: boolean;
+        onToggle: () => void;
+    }>;
+    onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
     getEngineSelectionForTargetKey: (targetKey: string) => NewSessionAgentPickerSelection;
     selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: NewSessionAgentPickerSelection) => void;
 }>;
@@ -44,6 +50,10 @@ export function buildNewSessionAgentPickerOptionInteractions(
         ].join(':'),
         onSelectImmediate: () => {
             if (params.disabled) return;
+            params.onRememberAgentPickerView?.({
+                kind: 'backend',
+                backendTargetKey: params.entry.backendTargetKey,
+            });
             const nextSelection = params.getEngineSelectionForTargetKey(params.entry.backendTargetKey);
             params.selectEngineSelection(params.entry, nextSelection);
         },
@@ -61,6 +71,7 @@ export function buildNewSessionAgentPickerOptionInteractions(
                 onToggleFavoriteModel: params.onToggleFavoriteModel
                     ? (model) => params.onToggleFavoriteModel?.(params.entry, model)
                     : undefined,
+                favoriteEngine: params.favoriteEngine,
                 onSelectionChange: (nextSelection) => {
                     params.selectEngineSelection(params.entry, nextSelection);
                 },

@@ -33,8 +33,25 @@ installSessionFilesViewCommonModuleMocks({
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: { OS: 'web', select: (value: any) => value?.web ?? value?.default ?? null },
-            View: ({ testID, children, onLayout: _onLayout, style, ...props }: any) =>
+            View: ({
+                testID,
+                children,
+                onLayout: _onLayout,
+                style,
+                accessibilityLabel: _accessibilityLabel,
+                accessibilityRole: _accessibilityRole,
+                ...props
+            }: any) =>
                 React.createElement('div', { 'data-testid': testID, style: flattenRnStyle(style), ...props }, children),
+            Text: ({
+                testID,
+                children,
+                style,
+                accessibilityLabel: _accessibilityLabel,
+                accessibilityRole: _accessibilityRole,
+                ...props
+            }: any) =>
+                React.createElement('span', { 'data-testid': testID, style: flattenRnStyle(style), ...props }, children),
             Pressable: ({
                 testID,
                 onPress,
@@ -62,6 +79,8 @@ installSessionFilesViewCommonModuleMocks({
                 testID,
                 onChangeText,
                 children,
+                accessibilityLabel: _accessibilityLabel,
+                accessibilityRole: _accessibilityRole,
                 placeholderTextColor: _placeholderTextColor,
                 autoCorrect: _autoCorrect,
                 clearButtonMode: _clearButtonMode,
@@ -78,12 +97,31 @@ installSessionFilesViewCommonModuleMocks({
                     },
                     children,
                 ),
+            ScrollView: ({
+                testID,
+                children,
+                style,
+                accessibilityLabel: _accessibilityLabel,
+                accessibilityRole: _accessibilityRole,
+                ...props
+            }: any) =>
+                React.createElement('div', { 'data-testid': testID, style: flattenRnStyle(style), ...props }, children),
+            ActivityIndicator: ({
+                testID,
+                accessibilityLabel: _accessibilityLabel,
+                accessibilityRole: _accessibilityRole,
+                ...props
+            }: any) =>
+                React.createElement('span', { 'data-testid': testID, ...props }),
         });
     },
-    storage: async (importOriginal) => {
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createPartialStorageModuleMock(importOriginal, {
-            storage: { getState: () => ({ setSessionRepositoryTreeExpandedPaths: vi.fn() }) } as any,
+    storage: async () => {
+        const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+        const storageStore = createStorageStoreMock({
+            setSessionRepositoryTreeExpandedPaths: vi.fn(),
+        } as any);
+        return createStorageModuleStub({
+            storage: storageStore,
             useSession: () => ({ active: true, metadata: { machineId: 'm1' } }) as any,
             useSessionRepositoryTreeExpandedPaths: () => [],
             useSessionProjectScmSnapshot: () => null,
@@ -92,19 +130,19 @@ installSessionFilesViewCommonModuleMocks({
 });
 
 vi.mock('@expo/vector-icons', () => ({
-    Octicons: (props: any) => React.createElement('span', props),
-    Ionicons: (props: any) => React.createElement('span', props),
+    Octicons: ({ accessibilityLabel: _accessibilityLabel, accessibilityRole: _accessibilityRole, ...props }: any) => React.createElement('span', props),
+    Ionicons: ({ accessibilityLabel: _accessibilityLabel, accessibilityRole: _accessibilityRole, ...props }: any) => React.createElement('span', props),
 }));
 
 vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
     RepositoryTreeList: () => React.createElement('div'),
 }));
 
-vi.mock('@/components/workspaces/files/repositoryTree/ChangedFilesTreeList', () => ({
+vi.mock('@/components/sessions/files/content/ChangedFilesTreeList', () => ({
     ChangedFilesTreeList: () => React.createElement('div'),
 }));
 
-vi.mock('@/components/workspaces/files/repositoryTree/SearchResultsList', () => ({
+vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
     SearchResultsList: () => React.createElement('div'),
 }));
 
@@ -113,19 +151,29 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemRowActions', () => ({
-    ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
+    ItemRowActions: ({
+        accessibilityLabel: _accessibilityLabel,
+        accessibilityRole: _accessibilityRole,
+        ...props
+    }: any) => React.createElement('ItemRowActions', props),
 }));
 
-vi.mock('@/components/workspaces/files/repositoryTree/RepositoryTreeDropOverlay', () => ({
+vi.mock('@/components/sessions/files/repositoryTree/RepositoryTreeDropOverlay', () => ({
     RepositoryTreeDropOverlay: () => null,
 }));
 
-vi.mock('@/components/workspaces/files/repositoryTree/RepositoryTreeTransferStatusBar', () => ({
+vi.mock('@/components/sessions/files/repositoryTree/RepositoryTreeTransferStatusBar', () => ({
     RepositoryTreeTransferStatusBar: () => null,
 }));
 
-vi.mock('@/components/workspaces/files/repositoryTree/WebDropTargetView', () => ({
-    WebDropTargetView: ({ children, testID, ...props }: any) =>
+vi.mock('@/components/sessions/files/repositoryTree/WebDropTargetView', () => ({
+    WebDropTargetView: ({
+        children,
+        testID,
+        accessibilityLabel: _accessibilityLabel,
+        accessibilityRole: _accessibilityRole,
+        ...props
+    }: any) =>
         React.createElement('div', { 'data-testid': testID, ...props }, children),
 }));
 
@@ -169,7 +217,7 @@ vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
     }),
 }));
 
-vi.mock('@/components/workspaces/files/repositoryTree/showUploadConflictResolutionDialog', () => ({
+vi.mock('@/components/sessions/files/repositoryTree/showUploadConflictResolutionDialog', () => ({
     showUploadConflictResolutionDialog: vi.fn(async () => 'keep_both'),
 }));
 
@@ -186,25 +234,16 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
-    resolveWorkspaceTargetForSession: () => ({
-        workspaceCacheKey: 'server:m1:/repo',
-        machineId: 'm1',
-        rootPath: '/repo',
-        serverId: 'server',
-    }),
-}));
-
-vi.mock('@/sync/ops/workspaceFileSystem', () => ({
-    workspaceWriteFile: vi.fn(async () => ({ success: true })),
-    workspaceCreateDirectory: vi.fn(async () => ({ success: true })),
+vi.mock('@/sync/ops', () => ({
+    sessionWriteFile: vi.fn(async () => ({ success: true })),
+    sessionCreateDirectory: vi.fn(async () => ({ success: true })),
 }));
 
 vi.mock('@/utils/path/isSafeWorkspaceRelativePath', () => ({
     isSafeWorkspaceRelativePath: () => true,
 }));
 
-vi.mock('@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal', () => ({
+vi.mock('@/components/sessions/files/repositoryTree/computeExpandedPathsForReveal', () => ({
     computeExpandedPathsForReveal: ({ expandedPaths }: any) => expandedPaths,
 }));
 

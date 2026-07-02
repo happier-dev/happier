@@ -9,7 +9,12 @@ import { Popover } from '@/components/ui/popover';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { useSocketStatus, useSyncError, useLastSyncAt, useSettingMutable } from '@/sync/domains/state/storage';
 import { getServerUrl } from '@/sync/domains/server/serverConfig';
-import { getActiveServerId, listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import {
+    areServerProfileIdentifiersEquivalent,
+    getActiveServerId,
+    listServerProfiles,
+    resolveServerProfileScopeId,
+} from '@/sync/domains/server/serverProfiles';
 import { useAuth } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -19,6 +24,10 @@ import { Typography } from '@/constants/Typography';
 import { listServerSelectionTargets } from '@/sync/domains/server/selection/serverSelectionResolver';
 import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
 import { normalizeStoredServerSelectionGroups } from '@/sync/domains/server/selection/serverSelectionMutations';
+import {
+    listServerProfileScopeIds,
+    normalizeServerSelectionSettingsForProfileScopeIds,
+} from '@/sync/domains/server/selection/serverSelectionProfileScopeIds';
 import { writeServerSelectionActiveTargetToServer } from '@/sync/domains/server/selection/serverSelectionActiveTarget';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
 import { useConnectionTargetActions } from '@/components/navigation/connection/useConnectionTargetActions';
@@ -421,7 +430,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     }, [activeServerId, syncError]);
 
     const activeServerLabel = React.useMemo(() => {
-        const active = servers.find((server) => server.id === activeServerId);
+        const active = servers.find((server) => server.id === activeServerId || resolveServerProfileScopeId(server) === activeServerId);
         const name = String(active?.name ?? '').trim();
         if (name) return name;
         return toServerUrlDisplay(getServerUrl()) || t('status.connected');
@@ -431,11 +440,12 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
         let cancelled = false;
         fireAndForget((async () => {
             const entries = await Promise.all(servers.map(async (profile) => {
+                const scopeId = resolveServerProfileScopeId(profile);
                 try {
                     const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id });
-                    return [profile.id, creds ? 'signedIn' : 'signedOut'] as const;
+                    return [scopeId, creds ? 'signedIn' : 'signedOut'] as const;
                 } catch {
-                    return [profile.id, 'unknown'] as const;
+                    return [scopeId, 'unknown'] as const;
                 }
             }));
             if (cancelled) return;
@@ -457,28 +467,37 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
         setOpen(false);
     }, [auth]);
 
+    const serverSelectionScopeSettings = React.useMemo(() => normalizeServerSelectionSettingsForProfileScopeIds({
+        serverSelectionGroups,
+        serverSelectionActiveTargetKind,
+        serverSelectionActiveTargetId,
+    }, servers), [
+        serverSelectionActiveTargetId,
+        serverSelectionActiveTargetKind,
+        serverSelectionGroups,
+        servers,
+    ]);
+
     const serverTargets = React.useMemo(() => {
         return listServerSelectionTargets({
-            serverProfiles: servers,
-            groupProfiles: normalizeStoredServerSelectionGroups(serverSelectionGroups),
+            serverProfiles: servers.map((profile) => ({
+                id: resolveServerProfileScopeId(profile),
+                name: profile.name,
+                serverUrl: profile.serverUrl,
+            })),
+            groupProfiles: normalizeStoredServerSelectionGroups(serverSelectionScopeSettings.serverSelectionGroups),
         });
-    }, [serverSelectionGroups, servers]);
+    }, [serverSelectionScopeSettings.serverSelectionGroups, servers]);
 
     const resolvedTarget = React.useMemo(() => {
         return resolveActiveServerSelectionFromRawSettings({
             activeServerId,
-            availableServerIds: servers.map((server) => server.id),
-            settings: {
-                serverSelectionGroups,
-                serverSelectionActiveTargetKind,
-                serverSelectionActiveTargetId,
-            },
+            availableServerIds: listServerProfileScopeIds(servers),
+            settings: serverSelectionScopeSettings,
         });
     }, [
         activeServerId,
-        serverSelectionActiveTargetId,
-        serverSelectionActiveTargetKind,
-        serverSelectionGroups,
+        serverSelectionScopeSettings,
         servers,
     ]);
 
@@ -490,6 +509,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
         const map = new Map<string, (typeof servers)[number]>();
         for (const server of servers) {
             map.set(server.id, server);
+            map.set(resolveServerProfileScopeId(server), server);
         }
         return map;
     }, [servers]);
@@ -516,7 +536,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
         if (target.kind === 'server') {
             const server = serverById.get(target.serverId);
             if (!server) return;
-            const shouldSwitch = await confirmSignedOutSwitch(server.id);
+            const shouldSwitch = await confirmSignedOutSwitch(target.serverId);
             if (!shouldSwitch) return;
             writeServerSelectionActiveTargetToServer({
                 setServerSelectionActiveTargetKind,
@@ -538,7 +558,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
         setServerSelectionActiveTargetKind('group');
         setServerSelectionActiveTargetId(target.groupId);
 
-        if (nextServerId && nextServerId !== activeServerId) {
+        if (nextServerId && !areServerProfileIdentifiersEquivalent(nextServerId, activeServerId)) {
             await switchServer(nextServerId, 'device');
         }
         if (nextServerId && (authStatusByServerId[nextServerId] ?? 'unknown') === 'signedOut') {
@@ -654,24 +674,25 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                         style={styles.statusChevron}
                     />
                 </Pressable>
-                <Popover
-                    open={open}
-                    anchorRef={anchorRef}
-                    placement="bottom"
-                    edgePadding={{ horizontal: 12, vertical: 12 }}
-                    portal={{
-                        web: true,
-                        native: true,
-                        matchAnchorWidth: false,
-                        anchorAlign: 'center',
-                    }}
-                    maxWidthCap={POPOVER_MAX_WIDTH}
-                    maxHeightCap={520}
-                    onRequestClose={() => {
-                        setRelayDropdownOpen(false);
-                        setOpen(false);
-                    }}
-                >
+                {open ? (
+                    <Popover
+                        open={open}
+                        anchorRef={anchorRef}
+                        placement="bottom"
+                        edgePadding={{ horizontal: 12, vertical: 12 }}
+                        portal={{
+                            web: true,
+                            native: true,
+                            matchAnchorWidth: false,
+                            anchorAlign: 'center',
+                        }}
+                        maxWidthCap={POPOVER_MAX_WIDTH}
+                        maxHeightCap={520}
+                        onRequestClose={() => {
+                            setRelayDropdownOpen(false);
+                            setOpen(false);
+                        }}
+                    >
                     {({ maxHeight }) => (
                         <FloatingOverlay
                             maxHeight={Math.max(220, Math.min(maxHeight, 520))}
@@ -883,7 +904,8 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                             </View>
                         </FloatingOverlay>
                     )}
-                </Popover>
+                    </Popover>
+                ) : null}
             </View>
 
         </>

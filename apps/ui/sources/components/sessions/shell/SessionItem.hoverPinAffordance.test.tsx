@@ -3,11 +3,15 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import {
+    createModelBackedSessionItemTestComponent,
+    type ModelBackedSessionItemTestProps,
+} from './sessionItemRowViewModelTestFixture';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-type SessionItemProps = React.ComponentProps<(typeof import('./SessionItem'))['SessionItem']>;
+type SessionItemProps = ModelBackedSessionItemTestProps;
 
 vi.mock('react-native-reanimated', () => ({}));
 installSessionShellCommonModuleMocks({
@@ -28,10 +32,11 @@ installSessionShellCommonModuleMocks({
         return createModalModuleMock().module;
     },
     storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleMock({
             importOriginal,
             overrides: {
+                storage: createStorageStoreMock({}),
                 useHasUnreadMessages: () => false,
                 useProfile: () => ({
                     id: 'u1',
@@ -77,6 +82,9 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
 }));
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
+}));
+vi.mock('@/agents/registry/AgentIcon', () => ({
+    AgentIcon: 'AgentIcon',
 }));
 vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
@@ -126,7 +134,8 @@ describe('SessionItem pin hover affordance (web)', () => {
 
     async function renderSessionItem(props: SessionItemProps) {
         const { SessionItem } = await import('./SessionItem');
-        return renderScreen(<SessionItem {...props} />);
+        const ModelBackedSessionItem = createModelBackedSessionItemTestComponent(SessionItem);
+        return renderScreen(<ModelBackedSessionItem {...props} />);
     }
 
     function findSessionRow(screen: Awaited<ReturnType<typeof renderSessionItem>>, sessionId: string) {

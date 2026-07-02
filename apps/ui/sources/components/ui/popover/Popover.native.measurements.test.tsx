@@ -28,6 +28,18 @@ installPopoverCommonModuleMocks({
     },
 });
 
+function readNumericStyle(style: Record<string, unknown>, key: string): number {
+    const value = style[key];
+    if (typeof value !== 'number') {
+        throw new Error(`Expected numeric ${key} style`);
+    }
+    return value;
+}
+
+function expectVisualTop(style: Record<string, unknown>, expected: number): void {
+    expect(readNumericStyle(style, 'top') + readNumericStyle(style, 'paddingTop')).toBe(expected);
+}
+
 describe('Popover (native measurements)', () => {
     it('derives portal-relative anchor coordinates from window measurements when measureLayout is inconsistent (prevents iOS sheet/drawer offsets)', async () => {
         const { Popover } = await import('./Popover');
@@ -78,8 +90,8 @@ describe('Popover (native measurements)', () => {
         expect(contentView).toBeTruthy();
 
         const style = flattenStyle(contentView?.props?.style);
-        // Correct relative anchor bottom: (600 - 200) + 40 = 440.
-        expect(style.top).toBe(440);
+        // Correct visual anchor bottom: (600 - 200) + 40 = 440.
+        expectVisualTop(style, 440);
     });
 
     it('does not double-apply the portal-root offset when measureInWindow already reports portal-relative coordinates (prevents popovers rendering too high)', async () => {
@@ -135,8 +147,8 @@ describe('Popover (native measurements)', () => {
 
         const style = flattenStyle(contentView?.props?.style);
         // If we incorrectly subtract portalRootY again: (400 - 200) + 40 = 240 (too high).
-        // Correct anchor bottom uses portal-relative coords directly: 400 + 40 = 440.
-        expect(style.top).toBe(440);
+        // Correct visual anchor bottom uses portal-relative coords directly: 400 + 40 = 440.
+        expectVisualTop(style, 440);
     });
 
     it('falls back to measureLayout when window measurements are in a different coordinate space (prevents negative/way-off offsets)', async () => {
@@ -189,8 +201,8 @@ describe('Popover (native measurements)', () => {
         expect(contentView).toBeTruthy();
 
         const style = flattenStyle(contentView?.props?.style);
-        // Correct relative anchor bottom from measureLayout: 300 + 40 = 340.
-        expect(style.top).toBe(340);
+        // Correct visual anchor bottom from measureLayout: 300 + 40 = 340.
+        expectVisualTop(style, 340);
     });
 
     it('prefers measureInWindow over measure() when both exist (keeps portal-root deltas consistent in iOS sheets)', async () => {
@@ -245,7 +257,7 @@ describe('Popover (native measurements)', () => {
         expect(contentView).toBeTruthy();
 
         const style = flattenStyle(contentView?.props?.style);
-        // Correct relative anchor bottom: (600 - 200) + 40 = 440.
-        expect(style.top).toBe(440);
+        // Correct visual anchor bottom: (600 - 200) + 40 = 440.
+        expectVisualTop(style, 440);
     });
 });

@@ -77,7 +77,7 @@ describe('buildSpawnHappySessionRpcParams', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'codex-session-2',
+                    providerSessionId: 'codex-session-2',
                 },
             },
         } as any);
@@ -92,7 +92,7 @@ describe('buildSpawnHappySessionRpcParams', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'codex-session-2',
+                    providerSessionId: 'codex-session-2',
                 },
             },
         }));
@@ -109,7 +109,7 @@ describe('buildSpawnHappySessionRpcParams', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'legacy-thread',
+                    providerSessionId: 'legacy-thread',
                 },
             },
         } as any);
@@ -141,7 +141,7 @@ describe('buildSpawnHappySessionRpcParams', () => {
                 providerId: 'codex',
                 provider: expect.objectContaining({
                     backendMode: 'appServer',
-                    vendorSessionId: 'codex-session-1',
+                    providerSessionId: 'codex-session-1',
                 }),
             }),
         }));
@@ -180,7 +180,7 @@ describe('buildSpawnHappySessionRpcParams', () => {
                 providerId: 'codex',
                 provider: expect.objectContaining({
                     backendMode: 'acp',
-                    vendorSessionId: 'codex-session-canonical',
+                    providerSessionId: 'codex-session-canonical',
                 }),
             }),
         }));

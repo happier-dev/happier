@@ -91,6 +91,21 @@ describe('sessionCockpitState', () => {
         });
     });
 
+    it('keeps cockpit routing active for nested legacy surface paths', () => {
+        expect(resolveSessionCockpitRouteFromPathname('/session/session-1/files/browse')).toEqual({
+            sessionId: 'session-1',
+            surface: 'browse',
+        });
+        expect(resolveSessionCockpitRouteFromPathname('/session/session-1/git/diff')).toEqual({
+            sessionId: 'session-1',
+            surface: 'git',
+        });
+        expect(resolveSessionCockpitRouteFromPathname('/session/session-1/details/files')).toEqual({
+            sessionId: 'session-1',
+            surface: 'tabs',
+        });
+    });
+
     it('lets an explicit root-route surface hint override stale persisted surface state', () => {
         expect(
             resolveSessionCockpitRouteFromPathname('/session/session-1', 'terminal', true, 'chat'),

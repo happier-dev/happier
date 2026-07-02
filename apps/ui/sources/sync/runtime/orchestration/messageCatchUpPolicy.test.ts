@@ -44,6 +44,19 @@ describe('decideMessageCatchUpPolicy', () => {
         })).toEqual({ kind: 'do_nothing' });
     });
 
+    it('forces a bounded incremental catch-up for accepted local pending messages even when the seq hint did not advance', () => {
+        expect(decideMessageCatchUpPolicy({
+            isForeground: true,
+            isSessionVisible: true,
+            isPinned: true,
+            materializedMaxSeq: 0,
+            sessionSeqHint: 0,
+            offlineForMs: 0,
+            hasAcceptedLocalPending: true,
+            thresholds,
+        })).toEqual({ kind: 'incremental_batched', maxPages: 1 });
+    });
+
     it('forces a bounded incremental catch-up after reconnect even when the seq hint did not advance', () => {
         expect(decideMessageCatchUpPolicy({
             isForeground: true,

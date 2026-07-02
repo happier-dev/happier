@@ -65,6 +65,29 @@ function createInputNodeMock(focus: () => void) {
     };
 }
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.filter(Boolean));
+    }
+    return (style as Record<string, unknown> | undefined) ?? {};
+}
+
+function fireRootLayout(root: { props: Record<string, unknown> }, height: number): void {
+    const onLayout = root.props.onLayout as ((event: unknown) => void) | undefined;
+    if (typeof onLayout !== 'function') {
+        throw new Error('expected SelectionList root onLayout');
+    }
+    onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 320, height } } });
+}
+
+function fireNodeLayout(node: { props: Record<string, unknown> }, height: number): void {
+    const onLayout = node.props.onLayout as ((event: unknown) => void) | undefined;
+    if (typeof onLayout !== 'function') {
+        throw new Error('expected node onLayout');
+    }
+    onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 320, height } } });
+}
+
 describe('SelectionList (orchestrator)', () => {
     it('renders the persistent search header and footer when keyboardHintsEnabled is true', async () => {
         const { SelectionList } = await import('../SelectionList');
@@ -110,6 +133,196 @@ describe('SelectionList (orchestrator)', () => {
 
         expect(flat.maxHeight).toBe(320);
         expect(flat.height).toBeUndefined();
+
+        const content = screen.findByTestId('sl:content') as unknown as { props: { style?: unknown } };
+        const contentStyle = flattenStyle(content.props.style);
+        expect(contentStyle.flex).toBeUndefined();
+        expect(contentStyle.flexGrow).toBe(0);
+        expect(contentStyle.flexShrink).toBe(1);
+    });
+
+    it('keeps the animated body content-sized when maxHeight is only a cap', async () => {
+        const { SelectionList } = await import('../SelectionList');
+        const screen = await renderScreen(
+            <SelectionList
+                {...defaultProps({
+                    disableTransitions: false,
+                    maxHeight: 320,
+                })}
+            />,
+        );
+
+        const animatedHeight = screen.findByTestId('sl:animatedHeight') as unknown as { props: { style?: unknown } };
+        const animatedStyle = flattenStyle(animatedHeight.props.style);
+        expect(animatedStyle.flex).toBe(0);
+        expect(animatedStyle.flexGrow).toBe(0);
+        expect(animatedStyle.flexShrink).toBe(1);
+        expect(animatedStyle.flexBasis).toBe('auto');
+    });
+
+    it('reveals measured native popover content at its capped content height', async () => {
+        const { act } = await import('react-test-renderer');
+        const { SelectionList } = await import('../SelectionList');
+        const screen = await renderScreen(
+            <SelectionList
+                {...defaultProps({
+                    heightBehavior: 'measuredToMaxHeight',
+                    maxHeight: 320,
+                })}
+            />,
+        );
+
+        const initialRoot = screen.findByTestId('sl') as unknown as { props: Record<string, unknown> };
+        expect(flattenStyle(initialRoot.props.style).height).toBe(320);
+        expect(flattenStyle(initialRoot.props.style).opacity).toBe(0);
+        expect(initialRoot.props.pointerEvents).toBe('none');
+
+        const headerFrame = screen.findByTestId('sl:headerFrame') as unknown as { props: Record<string, unknown> };
+        const measureHost = screen.findByTestId('sl:measure') as unknown as { props: Record<string, unknown> };
+        const footerFrame = screen.findByTestId('sl:footerFrame') as unknown as { props: Record<string, unknown> };
+
+        await act(async () => {
+            fireNodeLayout(headerFrame, 44);
+            fireNodeLayout(measureHost, 120);
+            fireNodeLayout(footerFrame, 32);
+        });
+
+        const measuredRoot = screen.findByTestId('sl') as unknown as { props: Record<string, unknown> };
+        expect(flattenStyle(measuredRoot.props.style).height).toBe(196);
+        expect(flattenStyle(measuredRoot.props.style).opacity).toBe(1);
+        expect(measuredRoot.props.pointerEvents).toBeUndefined();
+    });
+
+    it('caps measured native popover content at maxHeight', async () => {
+        const { act } = await import('react-test-renderer');
+        const { SelectionList } = await import('../SelectionList');
+        const screen = await renderScreen(
+            <SelectionList
+                {...defaultProps({
+                    heightBehavior: 'measuredToMaxHeight',
+                    maxHeight: 320,
+                })}
+            />,
+        );
+
+        const headerFrame = screen.findByTestId('sl:headerFrame') as unknown as { props: Record<string, unknown> };
+        const measureHost = screen.findByTestId('sl:measure') as unknown as { props: Record<string, unknown> };
+        const footerFrame = screen.findByTestId('sl:footerFrame') as unknown as { props: Record<string, unknown> };
+
+        await act(async () => {
+            fireNodeLayout(headerFrame, 44);
+            fireNodeLayout(measureHost, 900);
+            fireNodeLayout(footerFrame, 32);
+        });
+
+        const measuredRoot = screen.findByTestId('sl') as unknown as { props: Record<string, unknown> };
+        expect(flattenStyle(measuredRoot.props.style).height).toBe(320);
+        expect(flattenStyle(measuredRoot.props.style).opacity).toBe(1);
+    });
+
+    it('debounces measured native popover shrink to avoid height jiggle', async () => {
+        vi.useFakeTimers();
+        try {
+            const { act } = await import('react-test-renderer');
+            const { SelectionList } = await import('../SelectionList');
+            const screen = await renderScreen(
+                <SelectionList
+                    {...defaultProps({
+                        heightBehavior: 'measuredToMaxHeight',
+                        maxHeight: 320,
+                    })}
+                />,
+            );
+
+            const headerFrame = screen.findByTestId('sl:headerFrame') as unknown as { props: Record<string, unknown> };
+            const measureHost = screen.findByTestId('sl:measure') as unknown as { props: Record<string, unknown> };
+            const footerFrame = screen.findByTestId('sl:footerFrame') as unknown as { props: Record<string, unknown> };
+
+            await act(async () => {
+                fireNodeLayout(headerFrame, 40);
+                fireNodeLayout(measureHost, 200);
+                fireNodeLayout(footerFrame, 20);
+            });
+            expect(flattenStyle((screen.findByTestId('sl') as unknown as { props: { style?: unknown } }).props.style).height).toBe(260);
+
+            await act(async () => {
+                fireNodeLayout(measureHost, 80);
+            });
+            expect(flattenStyle((screen.findByTestId('sl') as unknown as { props: { style?: unknown } }).props.style).height).toBe(260);
+
+            await act(async () => {
+                vi.advanceTimersByTime(179);
+            });
+            expect(flattenStyle((screen.findByTestId('sl') as unknown as { props: { style?: unknown } }).props.style).height).toBe(260);
+
+            await act(async () => {
+                vi.advanceTimersByTime(1);
+            });
+            expect(flattenStyle((screen.findByTestId('sl') as unknown as { props: { style?: unknown } }).props.style).height).toBe(140);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('stabilizes content height by delaying shrink without pinning to maxHeight', async () => {
+        vi.useFakeTimers();
+        try {
+            const { act } = await import('react-test-renderer');
+            const { SelectionList } = await import('../SelectionList');
+            const rootStep = makeRootStep();
+            const shorterStep = makeRootStep({
+                sections: [
+                    {
+                        kind: 'static',
+                        id: 'single',
+                        title: 'SINGLE',
+                        options: [{ id: 'one', label: 'One' }],
+                    },
+                ],
+            });
+            const screen = await renderScreen(
+                <SelectionList
+                    {...defaultProps({
+                        rootStep,
+                        heightBehavior: 'stabilizedContentHeight',
+                        maxHeight: 320,
+                    })}
+                />,
+            );
+
+            const firstRoot = screen.findByTestId('sl') as unknown as { props: Record<string, unknown> };
+            act(() => {
+                fireRootLayout(firstRoot, 240);
+            });
+            const grownRoot = screen.findByTestId('sl') as unknown as { props: { style?: unknown } };
+            expect(flattenStyle(grownRoot.props.style).height).toBeUndefined();
+            expect(flattenStyle(grownRoot.props.style).minHeight).toBe(240);
+
+            await screen.update(
+                <SelectionList
+                    {...defaultProps({
+                        rootStep: shorterStep,
+                        heightBehavior: 'stabilizedContentHeight',
+                        maxHeight: 320,
+                    })}
+                />,
+            );
+            const updatedRoot = screen.findByTestId('sl') as unknown as { props: Record<string, unknown> };
+            act(() => {
+                fireRootLayout(updatedRoot, 120);
+            });
+            const heldRoot = screen.findByTestId('sl') as unknown as { props: { style?: unknown } };
+            expect(flattenStyle(heldRoot.props.style).minHeight).toBe(240);
+
+            await act(async () => {
+                vi.advanceTimersByTime(220);
+            });
+            const releasedRoot = screen.findByTestId('sl') as unknown as { props: { style?: unknown } };
+            expect(flattenStyle(releasedRoot.props.style).minHeight).toBeUndefined();
+            expect(flattenStyle(releasedRoot.props.style).height).toBeUndefined();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('does not render the footer when keyboardHintsEnabled is false', async () => {

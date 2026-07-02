@@ -1,5 +1,6 @@
 import { extractShellCommand, stripShellCommandPreludeForDisplay } from '@happier-dev/protocol';
 import * as React from 'react';
+import { StyleSheet } from 'react-native-unistyles';
 import { ToolCall } from '@/sync/domains/messages/messageTypes';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CommandView } from '@/components/sessions/transcript/CommandView';
@@ -68,7 +69,7 @@ export const BashView = React.memo((props: { tool: ToolCall; metadata: Metadata 
             </ToolSectionView>
             {isFullView && didStripPrelude ? (
                 <ToolSectionView title={t('tools.bashView.commandDiffTitle')} fullWidth>
-                    <Text style={{ marginHorizontal: 12, marginBottom: 8 }} numberOfLines={3}>
+                    <Text style={styles.commandDiffHint} numberOfLines={3}>
                         {t('tools.bashView.commandDiffHint')}
                     </Text>
                     <CodeView code={rawCommandTrimmed} />
@@ -77,3 +78,11 @@ export const BashView = React.memo((props: { tool: ToolCall; metadata: Metadata 
         </>
     );
 });
+
+const styles = StyleSheet.create((theme) => ({
+    commandDiffHint: {
+        marginHorizontal: 12,
+        marginBottom: 8,
+        color: theme.colors.text.secondary,
+    },
+}));

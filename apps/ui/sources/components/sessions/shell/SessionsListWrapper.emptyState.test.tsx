@@ -10,6 +10,13 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 const sessionListState = vi.hoisted(() => ({
     data: [] as any[] | null,
     storageKinds: [] as string[],
+    paneCalls: [] as Array<{ storageKind: string; pathname: string | null; sessionListSurfaceDataActive: boolean | null }>,
+}));
+const focusState = vi.hoisted(() => ({
+    focused: true,
+}));
+const routeState = vi.hoisted(() => ({
+    pathname: '/',
 }));
 const featureDecisionState = vi.hoisted(() => ({
     enabled: false,
@@ -40,9 +47,21 @@ installSessionShellCommonModuleMocks({
         });
     },
 });
+vi.mock('@react-navigation/native', () => ({
+    useIsFocused: () => focusState.focused,
+}));
+vi.mock('expo-router', () => ({
+    usePathname: () => routeState.pathname,
+}));
+
 vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
-    useVisibleSessionListPaneState: (storageKind?: string) => {
+    useVisibleSessionListPaneState: (storageKind?: string, options?: { pathname?: string; sessionListSurfaceDataActive?: boolean }) => {
         sessionListState.storageKinds.push(storageKind ?? 'all');
+        sessionListState.paneCalls.push({
+            storageKind: storageKind ?? 'all',
+            pathname: options?.pathname ?? null,
+            sessionListSurfaceDataActive: options?.sessionListSurfaceDataActive ?? null,
+        });
         const data = sessionListState.data;
         const sessionCount = (data ?? []).filter((item) => item?.type === 'session').length;
         return {
@@ -51,6 +70,7 @@ vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
                 sessionCount,
             },
             visibleSessionListViewData: data,
+            folderFocus: null,
             showLoading: false,
             showEmptyState: sessionCount === 0,
         };
@@ -91,6 +111,9 @@ vi.mock('@/components/sessions/shell/SessionsList', () => ({
     SessionsList: (props: any) => React.createElement('SessionsList', props),
     SessionsListView: (props: any) => React.createElement('SessionsListView', props),
 }));
+vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({
+    ActivitySpinner: (props: any) => React.createElement('ActivitySpinner', props),
+}));
 vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
 }));
@@ -103,10 +126,13 @@ describe('SessionsListWrapper (empty state)', () => {
     beforeEach(() => {
         sessionListState.data = [];
         sessionListState.storageKinds = [];
+        sessionListState.paneCalls = [];
         featureDecisionState.enabled = false;
         storageKindState.storageKind = 'persisted';
         storageKindState.setStorageKind.mockReset();
         gettingStartedState.kind = 'create_session';
+        focusState.focused = true;
+        routeState.pathname = '/';
     });
 
     afterEach(() => {
@@ -148,6 +174,76 @@ describe('SessionsListWrapper (empty state)', () => {
         const screen = await renderScreen(<SessionsListWrapper />);
 
         expect(sessionListState.storageKinds).toEqual(['persisted']);
+
+        await screen.unmount();
+    });
+
+    it('threads a retained pathname override into the pane state owner', async () => {
+        const screen = await renderScreen(<SessionsListWrapper pathname="/" />);
+
+        expect(sessionListState.paneCalls).toEqual([
+            { storageKind: 'persisted', pathname: '/', sessionListSurfaceDataActive: true },
+        ]);
+
+        await screen.unmount();
+    });
+
+    it('keeps an initially unfocused phone root list unsubscribed', async () => {
+        focusState.focused = false;
+        sessionListState.data = [{ type: 'session', session: { id: 'session-1' } }];
+
+        const screen = await renderScreen(<SessionsListWrapper pathname="/" />);
+
+        expect(sessionListState.paneCalls).toEqual([]);
+        expect(screen.findByType('ActivitySpinner' as any)).toBeTruthy();
+        expect(() => screen.findByType('SessionsListView' as any)).toThrow();
+
+        await screen.unmount();
+    });
+
+    it('keeps an initially inactive foreground-route phone root list unsubscribed', async () => {
+        routeState.pathname = '/new';
+        sessionListState.data = [{ type: 'session', session: { id: 'session-1' } }];
+
+        const screen = await renderScreen(<SessionsListWrapper pathname="/" />);
+
+        expect(sessionListState.paneCalls).toEqual([]);
+        expect(screen.findByType('ActivitySpinner' as any)).toBeTruthy();
+        expect(() => screen.findByType('SessionsListView' as any)).toThrow();
+
+        await screen.unmount();
+    });
+
+    it('retains the last active phone root list while unsubscribing after focus loss', async () => {
+        sessionListState.data = [{ type: 'session', session: { id: 'session-1' } }];
+
+        const screen = await renderScreen(<SessionsListWrapper pathname="/" />);
+
+        expect(sessionListState.paneCalls).toEqual([
+            { storageKind: 'persisted', pathname: '/', sessionListSurfaceDataActive: true },
+        ]);
+        expect(screen.findByType('SessionsListView' as any).props.surfaceOwnership).toEqual({
+            ownerKey: 'phone-root',
+            visible: true,
+            interactive: true,
+            dataActive: true,
+        });
+
+        focusState.focused = false;
+        await screen.update(<SessionsListWrapper pathname="/" />);
+
+        expect(sessionListState.paneCalls).toEqual([
+            { storageKind: 'persisted', pathname: '/', sessionListSurfaceDataActive: true },
+        ]);
+        const list = screen.findByType('SessionsListView' as any);
+        expect(list.props.pathname).toBe('/');
+        expect(list.props.paneState.summary.sessionCount).toBe(1);
+        expect(list.props.surfaceOwnership).toEqual({
+            ownerKey: 'phone-root',
+            visible: true,
+            interactive: false,
+            dataActive: false,
+        });
 
         await screen.unmount();
     });

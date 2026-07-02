@@ -29,11 +29,16 @@ vi.mock('react-native-safe-area-context', async () => {
     return {
         useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
         initialWindowMetrics: {
-            insets: { top: 24, bottom: 16, left: 0, right: 0 },
+            insets: { top: 24, bottom: 16, left: 10, right: 12 },
             frame: { x: 0, y: 0, width: 0, height: 0 },
         },
     };
 });
+
+vi.mock('@/components/ui/keyboardAvoidance', () => ({
+    KeyboardAwareModalFrame: (props: React.PropsWithChildren<Record<string, unknown>>) =>
+        React.createElement('KeyboardAwareModalFrame', props, props.children),
+}));
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -54,7 +59,7 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 describe('BaseModal (native)', () => {
-    it('pads the centering container by the safe area insets (so content never overlaps the iOS status bar)', async () => {
+    it('pads the keyboard-aware modal frame by the safe area insets', async () => {
         const { BaseModal } = await import('./BaseModal');
 
         const screen = await renderScreen(
@@ -64,9 +69,34 @@ describe('BaseModal (native)', () => {
             }),
         );
 
-        const container = screen.findAllByType('KeyboardAvoidingView' as any)?.[0];
+        const container = screen.findAllByType('KeyboardAwareModalFrame' as any)?.[0];
         const style = flattenStyleProp(container?.props?.style);
         expect(style.paddingTop).toBe(24);
+        expect(style.paddingRight).toBe(12);
         expect(style.paddingBottom).toBe(16);
+        expect(style.paddingLeft).toBe(10);
+    });
+
+    it('provides a modal-local overlay portal for popovers opened inside the native modal', async () => {
+        const { BaseModal } = await import('./BaseModal');
+        const { useOverlayPortal } = await import('@/components/ui/popover');
+
+        function Child() {
+            const portal = useOverlayPortal();
+            React.useEffect(() => {
+                portal?.setPortalNode('inside-modal', React.createElement('PortalChild', { testID: 'inside-modal-popover' }));
+                return () => portal?.removePortalNode('inside-modal');
+            }, [portal]);
+            return React.createElement('Child');
+        }
+
+        const screen = await renderScreen(
+            React.createElement(BaseModal, {
+                visible: true,
+                children: React.createElement(Child),
+            }),
+        );
+
+        expect(screen.findByTestId('inside-modal-popover')).toBeTruthy();
     });
 });

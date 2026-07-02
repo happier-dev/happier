@@ -9,7 +9,8 @@ import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
 import { sync } from '@/sync/sync';
 import { storage, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
-import { CodeEditor } from '@/components/ui/code/editor/CodeEditor';
+import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
+import { MarkdownCodeEditorField } from '@/components/ui/markdown/editor/MarkdownCodeEditorField';
 import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -69,6 +70,9 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
   const [folderName, setFolderName] = React.useState('');
   const [tagsText, setTagsText] = React.useState('');
   const [saving, setSaving] = React.useState(false);
+  // Flushed before reading `markdown` on save so the latest rich/raw edit (which
+  // may still be debounced inside the active editor surface) is captured.
+  const editorRef = React.useRef<CodeEditorHandle | null>(null);
 
   React.useEffect(() => {
     if (!props.artifactId) {
@@ -127,15 +131,19 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
 
     try {
       setSaving(true);
+      // Flush any debounced edit out of the active editor surface, then read the
+      // freshest markdown from its handle (state may not have caught up yet).
+      await editorRef.current?.flushPendingChange();
+      const latestMarkdown = editorRef.current?.getValue() ?? markdown;
       const ensuredFolder = ensurePromptFolderByName(promptFoldersV1, folderName);
       if (ensuredFolder.promptFoldersV1 !== promptFoldersV1) {
         setPromptFoldersV1(ensuredFolder.promptFoldersV1);
       }
       const tags = normalizePromptTags(tagsText);
       if (!props.artifactId) {
-        await createPromptDoc({ title: title.trim(), markdown, folderId: ensuredFolder.folderId, tags });
+        await createPromptDoc({ title: title.trim(), markdown: latestMarkdown, folderId: ensuredFolder.folderId, tags });
       } else {
-        await updatePromptDoc({ artifactId: props.artifactId, title: title.trim(), markdown, folderId: ensuredFolder.folderId, tags });
+        await updatePromptDoc({ artifactId: props.artifactId, title: title.trim(), markdown: latestMarkdown, folderId: ensuredFolder.folderId, tags });
       }
       safeRouterBack({ router, navigation, fallbackHref: '/settings/prompts/docs' });
     } catch (err) {
@@ -175,15 +183,15 @@ export const PromptDocEditorScreen = React.memo((props: Readonly<{ artifactId: s
         <ItemGroup title={t('promptLibrary.promptContent')}>
           <View style={{ padding: 12 }}>
             <View style={styles.editorContainer}>
-              <CodeEditor
+              <MarkdownCodeEditorField
                 resetKey={props.artifactId ?? 'new'}
                 testID="promptDoc.editor"
                 value={markdown}
                 language="markdown"
                 onChange={setMarkdown}
                 readOnly={isLoading}
+                editorRef={editorRef}
                 wrapLines={wrapLinesInDiffs !== false}
-                showLineNumbers={false}
               />
             </View>
           </View>

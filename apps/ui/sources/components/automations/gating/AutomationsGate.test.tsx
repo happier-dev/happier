@@ -70,10 +70,9 @@ describe('AutomationsGate', () => {
                     <TextStub>Allowed</TextStub>
                 </AutomationsGate>)).tree;
 
-        const json = JSON.stringify(tree.toJSON());
-        expect(json).not.toContain('Allowed');
-        expect(json).not.toContain('Automations are disabled');
-        expect(json).toContain('ActivityIndicator');
+        expect(tree.root.findAllByProps({ testID: 'automations-allowed-child' })).toHaveLength(0);
+        expect(tree.root.findAllByType('ItemList')).toHaveLength(0);
+        expect(tree.root.findAllByProps({ accessibilityRole: 'progressbar' }).length).toBeGreaterThan(0);
     });
 
     it('renders children when automations are enabled', async () => {
@@ -91,7 +90,9 @@ describe('AutomationsGate', () => {
                     <TextStub>Allowed</TextStub>
                 </AutomationsGate>)).tree;
 
-        expect(JSON.stringify(tree.toJSON())).toContain('Allowed');
+        expect(tree.root.findAllByProps({ testID: 'automations-allowed-child' })).toHaveLength(1);
+        expect(tree.root.findAllByType('ItemList')).toHaveLength(0);
+        expect(tree.root.findAllByProps({ accessibilityRole: 'progressbar' })).toHaveLength(0);
     });
 
     it('renders a disabled state when automations are unavailable', async () => {
@@ -109,12 +110,13 @@ describe('AutomationsGate', () => {
                     <TextStub>Allowed</TextStub>
                 </AutomationsGate>)).tree;
 
-        const json = JSON.stringify(tree.toJSON());
-        expect(json).not.toContain('Allowed');
-        expect(json).toContain('Automations are disabled');
+        expect(tree.root.findAllByProps({ testID: 'automations-allowed-child' })).toHaveLength(0);
+        expect(tree.root.findAllByType('ItemList')).toHaveLength(1);
+        expect(tree.root.findAllByType('Ionicons')).toHaveLength(1);
+        expect(tree.root.findAllByProps({ accessibilityRole: 'progressbar' })).toHaveLength(0);
     });
 });
 
 function TextStub(props: { children: string }) {
-    return React.createElement('Text', props);
+    return React.createElement('Text', { ...props, testID: 'automations-allowed-child' });
 }

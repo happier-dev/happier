@@ -200,6 +200,33 @@ describe('buildChatListItemsCached', () => {
         expect(after.items).toBe(before.items);
     });
 
+    it('rebuilds cached items when an existing message changes structure in the same source map', () => {
+        const messagesById: Record<string, Message> = {
+            'm-1': { kind: 'user-text', id: 'm-1', localId: 'u1', createdAt: 1, text: 'user' },
+            'm-2': { kind: 'agent-text', id: 'm-2', localId: null, createdAt: 2, text: 'agent' },
+        };
+        const messageIdsOldestFirst = ['m-1', 'm-2'];
+        const before = buildChatListItemsCached({
+            cache: null,
+            messageIdsOldestFirst,
+            messagesById,
+            pendingMessages: [],
+            groupConsecutiveToolCalls: true,
+        });
+
+        messagesById['m-2'] = buildToolCallMessage({ id: 'm-2', localId: null, createdAt: 2 });
+        const after = buildChatListItemsCached({
+            cache: before.cache,
+            messageIdsOldestFirst,
+            messagesById,
+            pendingMessages: [],
+            groupConsecutiveToolCalls: true,
+        });
+
+        expect(after.items).not.toBe(before.items);
+        expect(after.items[1]?.kind).toBe('tool-calls-group');
+    });
+
     it('reuses committed message item objects on append-only id growth', () => {
         const messages: Message[] = [
             { kind: 'user-text', id: 'm1', localId: 'u1', createdAt: 1, text: 'user' },

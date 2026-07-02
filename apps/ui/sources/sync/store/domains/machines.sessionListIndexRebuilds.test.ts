@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createServerProfilesModuleMock, type ServerProfileMockProfile } from '@/dev/testkit/mocks/serverProfiles';
 import { resolveMachineSessionListIndexImpact } from './machines';
 import { resolveMachineSessionListIndexImpact as resolveMachineSessionIndexImpactFromHelper } from './machineSessionListIndexImpact';
 import type { MachineMetadata } from '../../domains/state/storageTypes';
@@ -44,6 +45,11 @@ const BASE_MACHINE_METADATA: MachineMetadata = {
     homeDir: '/home/u',
 };
 
+const DEFAULT_SERVER_PROFILES: readonly ServerProfileMockProfile[] = [
+    { id: 'server_a', name: 'server_a', serverUrl: 'http://server_a.local' },
+    { id: 'server_b', name: 'server_b', serverUrl: 'http://server_b.local' },
+];
+
 function makeMachineMetadata(partial?: Partial<MachineMetadata>): MachineMetadata {
     return {
         ...BASE_MACHINE_METADATA,
@@ -64,9 +70,13 @@ function createHarness(createMachinesDomain: any, initialState: any) {
     return { get, domain };
 }
 
-function mockMachineDomainBoundaries(): void {
+function mockMachineDomainBoundaries(profiles: readonly ServerProfileMockProfile[] = DEFAULT_SERVER_PROFILES): void {
     vi.doMock('../../domains/server/serverRuntime', () => ({
         getActiveServerSnapshot: () => ({ serverId: 'server_a', serverUrl: 'http://server.local', generation: 0 }),
+    }));
+    vi.doMock('../../domains/server/serverProfiles', () => createServerProfilesModuleMock({
+        profiles,
+        listServerProfiles: () => profiles,
     }));
     vi.doMock('../../domains/transfers/runtime/transferRouteCache', () => ({
         invalidateCachedTransferRoutesForMachine: (...args: unknown[]) => invalidateCachedTransferRoutesForMachineSpy(...args),
@@ -311,6 +321,12 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
     it('stores source-scoped machine snapshots without replacing the active server projection', async () => {
         vi.doMock('../../domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => ({ serverId: 'server_b', serverUrl: 'http://server-b.local', generation: 0 }),
+        }));
+        vi.doMock('../../domains/server/serverProfiles', () => createServerProfilesModuleMock({
+            profiles: [
+                { id: 'server_a', name: 'server_a', serverUrl: 'http://server_a.local' },
+                { id: 'server_b', name: 'server_b', serverUrl: 'http://server_b.local' },
+            ],
         }));
         vi.doMock('../../domains/transfers/runtime/transferRouteCache', () => ({
             invalidateCachedTransferRoutesForMachine: (...args: unknown[]) => invalidateCachedTransferRoutesForMachineSpy(...args),
@@ -563,6 +579,76 @@ describe('machines domain: sessionListIndex rebuild gating', () => {
 
         expect(Array.isArray(get().sessionListIndexByServerId['server_a'])).toBe(true);
         expect(get().sessionListIndexByServerId['server_a']?.length ?? 0).toBeGreaterThan(0);
+    });
+
+    it('rebuilds the active-server sessionListIndex when source server uses an equivalent legacy profile id', async () => {
+        mockMachineDomainBoundaries([
+            {
+                id: 'server_a',
+                name: 'Server A',
+                serverUrl: 'http://server-a.local',
+                serverIdentityId: 'srv_server_a',
+                legacyServerIds: ['localhost-12345'],
+            },
+        ]);
+
+        const { createMachinesDomain } = await import('./machines');
+
+        const initialState = {
+            sessions: {},
+            settings: {
+                groupInactiveSessionsByProject: false,
+                sessionListActiveGroupingV1: 'project' as const,
+                sessionListInactiveGroupingV1: 'date' as const,
+            },
+            sessionListRenderables: {
+                s1: {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    archivedAt: null,
+                    metadataVersion: 1,
+                    agentStateVersion: 0,
+                    metadata: null,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online' as const,
+                },
+            },
+            sessionListIndexByServerId: {},
+            sessionListRowStateByServerId: {},
+            concurrentSessionListCacheByServerId: {},
+            machines: {},
+            machineDisplayById: {},
+            machineListByServerId: {},
+            machineListStatusByServerId: {},
+            profile: { id: 'profile-1' },
+            getProjectForSession: () => null,
+        };
+
+        const { get, domain } = createHarness(createMachinesDomain, initialState);
+
+        domain.applyMachines([
+            {
+                id: 'm1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 2,
+                metadata: makeMachineMetadata(),
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 0,
+            },
+        ], false, { sourceServerId: 'localhost-12345' });
+
+        expect(get().machines.m1).toBeTruthy();
+        expect(Array.isArray(get().sessionListIndexByServerId['server_a'])).toBe(true);
+        expect(get().machineListByServerId['localhost-12345']?.map((machine: any) => machine.id)).toEqual(['m1']);
     });
 
     it('rebuilds the active-server sessionListIndex when project header machine display changes', async () => {

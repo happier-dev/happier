@@ -43,6 +43,7 @@ export function useAttachmentDraftManager(params: Readonly<{
     addPickedAttachments: (picked: readonly PickedAttachment[]) => void;
     removeDraft: (id: string) => void;
     clearDrafts: () => void;
+    replaceDrafts: (drafts: readonly AttachmentDraft[]) => void;
     applyDraftPatch: (id: string, patch: Partial<Omit<AttachmentDraft, 'id' | 'source'>>) => void;
 }> {
     const filePickerRef = React.useRef<AttachmentFilePickerHandle | null>(null);
@@ -117,6 +118,10 @@ export function useAttachmentDraftManager(params: Readonly<{
         setDrafts([]);
     }, []);
 
+    const replaceDrafts = React.useCallback((nextDrafts: readonly AttachmentDraft[]) => {
+        setDrafts([...nextDrafts]);
+    }, []);
+
     React.useEffect(() => {
         const map = webPreviewUrlsRef.current;
         const urlApi = globalThis.URL;
@@ -187,6 +192,7 @@ export function useAttachmentDraftManager(params: Readonly<{
         addPickedAttachments,
         removeDraft,
         clearDrafts,
+        replaceDrafts,
         applyDraftPatch,
     };
 }

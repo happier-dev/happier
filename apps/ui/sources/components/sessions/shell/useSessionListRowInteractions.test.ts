@@ -3,12 +3,22 @@ import { act } from 'react-test-renderer';
 
 import { renderHook } from '@/dev/testkit';
 import { DEFAULT_SESSION_FOLDERS_V1 } from '@/sync/domains/session/folders';
-import { useSessionListRowInteractions } from './useSessionListRowInteractions';
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import {
+    useSessionListRowInteractions,
+    type UseSessionListRowInteractionsInput,
+} from './useSessionListRowInteractions';
+import { treeRowId } from './drop-resolution/treeRowId';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native-reanimated', () => ({
+    Easing: {
+        bezier: () => () => 0,
+        linear: () => 0,
+    },
     useSharedValue: (initial: unknown) => ({ value: initial }),
+    useAnimatedReaction: vi.fn(),
 }));
 
 vi.mock('@/hooks/ui/useHappyAction', () => ({
@@ -16,13 +26,61 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({
 }));
 
 describe('useSessionListRowInteractions', () => {
-    function renderInteractions(overrides: Partial<Parameters<typeof useSessionListRowInteractions>[0]> = {}) {
-        return renderHook(() => useSessionListRowInteractions({
+    const workspace = {
+        t: 'workspaceScope',
+        serverId: 'server-a',
+        machineId: 'machine-a',
+        rootPath: '/repo/a',
+    } as const;
+    const listItems: SessionListIndexItem[] = [
+        {
+            type: 'header',
+            title: 'Project A',
+            headerKind: 'project',
+            groupKey: 'project-a',
+            workspaceKey: 'project-a',
+            workspace,
+            serverId: 'server-a',
+        },
+        {
+            type: 'session',
+            sessionId: 's1',
+            serverId: 'server-a',
+            storageKind: 'persisted',
+            groupKey: 'project-a',
+            groupKind: 'project',
+            folderId: null,
+            folderDepth: 0,
+            workspace,
+        },
+    ];
+    const twoSessionListItems: SessionListIndexItem[] = [
+        listItems[0]!,
+        listItems[1]!,
+        {
+            type: 'session',
+            sessionId: 's2',
+            serverId: 'server-a',
+            storageKind: 'persisted',
+            groupKey: 'project-a',
+            groupKind: 'project',
+            folderId: null,
+            folderDepth: 0,
+            workspace,
+        },
+    ];
+
+    function buildInteractionsInput(overrides: Partial<UseSessionListRowInteractionsInput> = {}): UseSessionListRowInteractionsInput {
+        return {
             folderActionsEnabled: true,
             sessionFoldersV1: DEFAULT_SESSION_FOLDERS_V1,
-            listItems: [],
+            listItems,
             currentGroupOrderMap: {},
+            currentWorkspaceOrderMap: {},
+            sessionListOrderingModeV1: 'custom',
+            sessionListSectionModeV1: 'activity',
             setSessionListGroupOrderV1: vi.fn(),
+            setSessionWorkspaceOrderV1: vi.fn(),
             setSessionFoldersV1: vi.fn(),
             pinnedKeyList: [],
             pinnedKeySet: new Set(),
@@ -30,10 +88,14 @@ describe('useSessionListRowInteractions', () => {
             sessionTags: {},
             setSessionTagsV1: vi.fn(),
             ...overrides,
-        }));
+        };
     }
 
-    it('tracks the resolved outline visual from the canonical tree drop result', async () => {
+    function renderInteractions(overrides: Partial<UseSessionListRowInteractionsInput> = {}) {
+        return renderHook(() => useSessionListRowInteractions(buildInteractionsInput(overrides)));
+    }
+
+    it('exposes only drag snapshot and numeric overlay state for pointer drag visuals', async () => {
         const hook = await renderInteractions();
 
         await act(async () => {
@@ -59,11 +121,11 @@ describe('useSessionListRowInteractions', () => {
         });
 
         expect(hook.getCurrent().draggingSessionKey).toBe('server-a:s1');
-        expect(hook.getCurrent().activeDropTargetId).toBe('folder:target');
-        expect(hook.getCurrent().activeDropVisual).toEqual({
-            kind: 'outline',
-            targetId: 'folder:target',
-        });
+        expect(hook.getCurrent()).toHaveProperty('activeDragSnapshot');
+        expect(hook.getCurrent()).toHaveProperty('dropOverlayShared');
+        expect(hook.getCurrent()).not.toHaveProperty('activeDropTargetId');
+        expect(hook.getCurrent()).not.toHaveProperty('activeDropVisual');
+        expect(hook.getCurrent()).not.toHaveProperty('dropVisual');
 
         await hook.unmount();
     });
@@ -74,6 +136,40 @@ describe('useSessionListRowInteractions', () => {
         expect(hook.getCurrent()).not.toHaveProperty('handleDragEnd');
         expect(hook.getCurrent()).toHaveProperty('resolveTreeDropResult');
         expect(hook.getCurrent()).toHaveProperty('handleTreeDropResult');
+
+        await hook.unmount();
+    });
+
+    it('does not persist same-container session reorder from row interactions in date ordering mode', async () => {
+        const setSessionListGroupOrderV1 = vi.fn();
+        const dateModeInput = {
+            listItems: twoSessionListItems,
+            sessionListOrderingModeV1: 'updated' as const,
+            sessionListSectionModeV1: 'activity' as const,
+            setSessionListGroupOrderV1,
+        };
+        const hook = await renderInteractions(dateModeInput);
+
+        await act(async () => {
+            hook.getCurrent().handleDragStart('server-a:s2');
+            hook.getCurrent().handleTreeDropResult({
+                sessionKey: 'server-a:s2',
+                groupKey: 'project-a',
+                dataIndex: 2,
+                result: {
+                    instruction: {
+                        kind: 'reorder-before',
+                        targetId: treeRowId.session('server-a', 's1'),
+                        containerId: treeRowId.workspaceRoot('project-a'),
+                        parentId: null,
+                        depth: 0,
+                    },
+                    visual: { kind: 'line', targetId: treeRowId.session('server-a', 's1'), edge: 'top', depth: 0 },
+                },
+            });
+        });
+
+        expect(setSessionListGroupOrderV1).not.toHaveBeenCalled();
 
         await hook.unmount();
     });
@@ -94,6 +190,43 @@ describe('useSessionListRowInteractions', () => {
 
         expect(setPinnedSessionKeysV1).toHaveBeenCalledWith([]);
         expect(setSessionTagsV1).toHaveBeenCalledWith({ 'server-a:s1': ['new'] });
+
+        await hook.unmount();
+    });
+
+    it('keeps row action handler identities stable across pin and tag state changes', async () => {
+        const setPinnedSessionKeysV1 = vi.fn();
+        const setSessionTagsV1 = vi.fn();
+        const hook = await renderHook(
+            (input: UseSessionListRowInteractionsInput) => useSessionListRowInteractions(input),
+            {
+                initialProps: buildInteractionsInput({
+                    setPinnedSessionKeysV1,
+                    sessionTags: { 'server-a:s1': ['old'] },
+                    setSessionTagsV1,
+                }),
+            },
+        );
+
+        const initialTogglePinned = hook.getCurrent().handleTogglePinnedSessionKey;
+        const initialSetTags = hook.getCurrent().handleSetTagsSessionKey;
+
+        await hook.rerender(buildInteractionsInput({
+            pinnedKeyList: ['server-a:s1'],
+            pinnedKeySet: new Set(['server-a:s1']),
+            setPinnedSessionKeysV1,
+            sessionTags: { 'server-a:s1': ['old', 'new'] },
+            setSessionTagsV1,
+        }));
+
+        expect(hook.getCurrent().handleTogglePinnedSessionKey).toBe(initialTogglePinned);
+        expect(hook.getCurrent().handleSetTagsSessionKey).toBe(initialSetTags);
+
+        hook.getCurrent().handleTogglePinnedSessionKey('server-a:s1');
+        hook.getCurrent().handleSetTagsSessionKey('server-a:s1', ['latest']);
+
+        expect(setPinnedSessionKeysV1).toHaveBeenLastCalledWith([]);
+        expect(setSessionTagsV1).toHaveBeenLastCalledWith({ 'server-a:s1': ['latest'] });
 
         await hook.unmount();
     });

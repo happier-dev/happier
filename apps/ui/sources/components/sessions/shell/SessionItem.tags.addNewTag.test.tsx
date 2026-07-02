@@ -2,8 +2,10 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { SESSION_ACTION_EDIT_TAGS_ID } from '@/components/sessions/actions/sessionActionIds';
 import { invokeTestInstanceHandler, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { createModelBackedSessionItemTestComponent } from './sessionItemRowViewModelTestFixture';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -103,6 +105,11 @@ installSessionShellCommonModuleMocks({
     },
 });
 
+async function importSessionItem() {
+    const { SessionItem } = await import('./SessionItem');
+    return createModelBackedSessionItemTestComponent(SessionItem);
+}
+
 describe('SessionItem tags (new tag)', () => {
     afterEach(() => {
         standardCleanup();
@@ -112,7 +119,7 @@ describe('SessionItem tags (new tag)', () => {
         promptSpy.mockClear();
         const onSetTags = vi.fn();
 
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const session = {
             id: 'sess_1',
@@ -166,7 +173,7 @@ describe('SessionItem tags (new tag)', () => {
         }
 
         await act(async () => {
-            invokeTestInstanceHandler(contextMenu, 'onSelect', 'tags');
+            invokeTestInstanceHandler(contextMenu, 'onSelect', SESSION_ACTION_EDIT_TAGS_ID);
         });
 
         const dropdown = screen.findAllByType('DropdownMenu').find((d: any) => d.props.search === true);

@@ -1160,13 +1160,14 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
 
         await (sync as any).fetchMessages(sessionId);
-        const result = await (sync as any).loadOlderMessages(sessionId);
+        const result = await (sync as any).loadOlderMessages(sessionId, { limit: 37 });
 
         expect(result).toEqual({ loaded: 1, hasMore: false, status: 'no_more' });
         expect(machineExternalSessionTranscriptPageMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
             remoteSessionId: 'vendor-session-1',
             cursor: 'older-cursor-2',
             direction: 'older',
+            maxItems: 37,
         }), expect.anything());
         const sessionMessages = storage.getState().sessionMessages[sessionId];
         const orderedTexts = (sessionMessages?.messageIdsOldestFirst ?? [])

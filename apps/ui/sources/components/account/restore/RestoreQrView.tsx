@@ -65,12 +65,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default(),
     },
     sectionLead: {
-        fontSize: 15,
+        fontSize: 16,
         color: theme.colors.text.secondary,
         marginTop: 12,
-        marginBottom: 10,
+        marginBottom: 12,
         textAlign: 'center',
-        lineHeight: 21,
+        lineHeight: 24,
         ...Typography.default(),
     },
     embeddedSectionLead: {
@@ -87,7 +87,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 6,
     },
     footer: {
-        marginTop: 12,
+        marginTop: 16,
         alignItems: 'center',
         width: '100%',
     },

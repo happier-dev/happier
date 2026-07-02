@@ -1,20 +1,29 @@
 import {
+    DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE,
+    DEFAULT_USAGE_LIMIT_RECOVERY_SETTINGS_V1,
     DEFAULT_WINDOWS_TERMINAL_WINDOW_NAME,
+    SessionPendingQueueDrainModeSchema,
+    UsageLimitRecoverySettingsV1Schema,
     buildSettingArtifacts,
     defineSettingDefinitions,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
 import { SessionFolderViewModeV1Schema } from '@/sync/domains/session/folders';
-import { SESSION_LIST_ATTENTION_PLACEMENT_MODE_VALUES } from '@/sync/domains/session/listing/sessionListAttentionPlacementTypes';
+import {
+    SESSION_LIST_ATTENTION_PLACEMENT_MODE_VALUES,
+    SESSION_LIST_WORKING_PLACEMENT_MODE_VALUES,
+} from '@/sync/domains/session/listing/sessionListAttentionPlacementTypes';
 
 export const SessionListDensitySchema = z.preprocess((raw) => {
     if (raw === 'compact') return 'cozy';
     return raw;
 }, z.enum(['detailed', 'cozy', 'narrow']));
 export const SessionListIdentityDisplaySchema = z.enum(['avatar', 'agentLogo', 'none']);
+export const SessionListFolderSortModeV1Schema = z.enum(['foldersFirst', 'mixed']);
 
 export const SessionMessageSendModeSchema = z.enum(['agent_queue', 'interrupt', 'server_pending']);
 export const SessionBusySteerSendPolicySchema = z.enum(['steer_immediately', 'server_pending']);
+export const SessionNonSteerableSendPromptSchema = z.enum(['on', 'off']);
 
 export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
     analyticsOptOut: {
@@ -51,6 +60,20 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Enable app-level transcript replay for sessions that cannot be vendor-resumed',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    },
+    usageLimitRecoverySettingsV1: {
+        schema: UsageLimitRecoverySettingsV1Schema,
+        default: DEFAULT_USAGE_LIMIT_RECOVERY_SETTINGS_V1,
+        description: 'Global usage-limit recovery behavior for sessions',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'enum',
+            privacy: 'safe',
+            identityScope: 'person',
+            serializeCurrent: (value: { mode: string }) => value.mode,
+        },
     },
     useProfiles: {
         schema: z.boolean(),
@@ -177,10 +200,24 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },
+    sessionListFolderSortModeV1: {
+        schema: SessionListFolderSortModeV1Schema,
+        default: 'foldersFirst',
+        description: 'Session list folder sort mode: folders first or mixed with sessions',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
     sessionListAttentionPromotionModeV1: {
         schema: z.enum(SESSION_LIST_ATTENTION_PLACEMENT_MODE_VALUES),
         default: 'off',
         description: 'Session list attention placement mode: off, global section, or within current groups',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionListWorkingPlacementModeV1: {
+        schema: z.enum(SESSION_LIST_WORKING_PLACEMENT_MODE_VALUES),
+        default: 'off',
+        description: 'Session list working placement mode: off, global section, or within current groups',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },
@@ -268,6 +305,13 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },
+    sessionListSectionModeV1: {
+        schema: z.enum(['activity', 'single']),
+        default: 'activity',
+        description: 'Whether the session list separates active and inactive sessions into top-level sections',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
     sessionListActiveColorModeV1: {
         schema: z.enum(['activityAndAttention', 'attentionOnly', 'allActive']),
         default: 'activityAndAttention',
@@ -282,10 +326,38 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },
+    sessionPendingQueueDrainMode: {
+        schema: SessionPendingQueueDrainModeSchema,
+        default: DEFAULT_SESSION_PENDING_QUEUE_DRAIN_MODE,
+        description: 'How many pending queue messages an agent should materialize per wake',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
     sessionBusySteerSendPolicy: {
         schema: SessionBusySteerSendPolicySchema,
         default: 'steer_immediately',
         description: 'When an agent is busy and supports in-flight steer, whether messages steer immediately or are queued via the pending queue',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionNonSteerableSendPrompt: {
+        schema: SessionNonSteerableSendPromptSchema,
+        default: 'on',
+        description: 'When a busy send cannot be steered into the active turn: ask (apply/queue/interrupt) or keep the legacy silent behavior (off)',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionProviderUsageGaugeMode: {
+        schema: z.enum(['auto', 'hidden']),
+        default: 'auto',
+        description: 'Whether to show the provider usage gauge in the session composer when reliable quota evidence is available',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionProviderUsageGaugeWindowMode: {
+        schema: z.enum(['most_constrained', 'daily', 'weekly', 'primary', 'secondary', 'session']),
+        default: 'most_constrained',
+        description: 'Which provider usage quota window the session composer gauge should prefer',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },

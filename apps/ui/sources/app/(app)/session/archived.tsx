@@ -126,6 +126,12 @@ function getPinnedSessionKey(session: ArchivedScreenSession): string {
     return serverId && sessionId ? `${serverId}:${sessionId}` : '';
 }
 
+function getArchivedSessionKey(session: ArchivedScreenSession): string {
+    const serverId = String(session.serverId ?? '').trim();
+    const sessionId = String(session.id ?? '').trim();
+    return serverId && sessionId ? `${serverId}:${sessionId}` : sessionId;
+}
+
 function isHiddenInactiveSession(session: ArchivedScreenSession, pinnedSessionKeysV1: ReadonlyArray<string>): boolean {
     if (session.archivedAt != null) return false;
     if (session.active === true) return false;
@@ -147,16 +153,25 @@ export default function ArchivedSessionsScreen() {
         void sync.fetchArchivedSessions().catch(() => undefined);
     }, []);
 
+    const handleLoadMoreSessions = React.useCallback(() => {
+        const requests = [sync.fetchMoreArchivedSessions()];
+        if (hideInactiveSessions) {
+            requests.push(sync.fetchMoreSessions());
+        }
+        void Promise.all(requests).catch(() => undefined);
+    }, [hideInactiveSessions]);
+
     const cachedArchivedSessions = React.useMemo(() => {
         const byId = new Map<string, ArchivedScreenSession>();
         for (const [serverId, rowsBySessionId] of Object.entries(sessionListRowStateByServerId ?? {})) {
             if (!rowsBySessionId || typeof rowsBySessionId !== 'object') continue;
             for (const row of Object.values(rowsBySessionId)) {
                 if (!row || row.archivedAt == null) continue;
-                byId.set(row.id, {
+                const session = {
                     ...row,
                     serverId,
-                });
+                };
+                byId.set(getArchivedSessionKey(session), session);
             }
         }
         return Array.from(byId.values());
@@ -165,11 +180,11 @@ export default function ArchivedSessionsScreen() {
     const archivedSessions = React.useMemo(() => {
         const byId = new Map<string, ArchivedScreenSession>();
         for (const session of cachedArchivedSessions) {
-            byId.set(session.id, session);
+            byId.set(getArchivedSessionKey(session), session);
         }
         for (const session of allSessions) {
             if (session.archivedAt != null) {
-                byId.set(session.id, session);
+                byId.set(getArchivedSessionKey(session), session);
             }
         }
         return Array.from(byId.values())
@@ -242,7 +257,7 @@ export default function ArchivedSessionsScreen() {
 
             return (
                 <Pressable
-                    key={item.id}
+                    key={getArchivedSessionKey(item)}
                     style={[
                         styles.sessionCard,
                         isSingle ? styles.sessionCardSingle : isFirst ? styles.sessionCardFirst : isLast ? styles.sessionCardLast : null,
@@ -302,7 +317,9 @@ export default function ArchivedSessionsScreen() {
                         sections={sections}
                         renderItem={({ item, index, section }) => renderSessionCard(item, index, section as ArchivedSessionsSection)}
                         renderSectionHeader={renderSectionHeader}
-                        keyExtractor={(item) => item.id}
+                        keyExtractor={getArchivedSessionKey}
+                        onEndReached={handleLoadMoreSessions}
+                        onEndReachedThreshold={0.4}
                         {...(Platform.OS === 'web'
                             ? ({ onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb } as any)
                             : null)}

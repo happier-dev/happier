@@ -122,6 +122,56 @@ describe('TokenStorage (web) server-scoped credentials', () => {
         });
     });
 
+    it('migrates credentials from a legacy host-derived server id to the learned server identity id', async () => {
+        const localStorageHandle = installLocalStorageMock();
+        restoreLocalStorage = localStorageHandle.restore;
+
+        const state = {
+            serverIdentityId: null as string | null,
+        };
+
+        vi.doMock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+            return {
+                ...actual,
+                getActiveServerId: () => state.serverIdentityId ?? 'relay.example.test',
+                getActiveServerUrl: () => 'https://relay.example.test',
+                listServerProfiles: () => [{
+                    id: 'relay.example.test',
+                    serverUrl: 'https://relay.example.test',
+                    name: 'Relay',
+                    ...(state.serverIdentityId
+                        ? {
+                            serverIdentityId: state.serverIdentityId,
+                            legacyServerIds: ['relay.example.test'],
+                        }
+                        : {}),
+                }],
+            };
+        });
+
+        try {
+            const { TokenStorage } = await import('./tokenStorage');
+            await expect(TokenStorage.setCredentials({ token: 'token-legacy-id', secret: 'secret-legacy-id' })).resolves.toBe(true);
+
+            state.serverIdentityId = 'srv_identity_credentials';
+
+            await expect(TokenStorage.getCredentials()).resolves.toEqual({
+                token: 'token-legacy-id',
+                secret: 'secret-legacy-id',
+            });
+
+            const migrated = [...localStorageHandle.store.entries()].filter(
+                ([key, value]) =>
+                    key.includes('auth_credentials__srv_srv_identity_credentials') &&
+                    value === JSON.stringify({ token: 'token-legacy-id', secret: 'secret-legacy-id' }),
+            );
+            expect(migrated).toHaveLength(1);
+        } finally {
+            vi.doUnmock('@/sync/domains/server/serverProfiles');
+        }
+    });
+
     it('can read exact same-URL alternate profile credentials by serverId', async () => {
         restoreLocalStorage = installLocalStorageMock().restore;
 

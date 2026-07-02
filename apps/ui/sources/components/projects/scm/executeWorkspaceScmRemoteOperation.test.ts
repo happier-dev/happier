@@ -19,8 +19,8 @@ const {
     refreshScmData,
 } = vi.hoisted(() => ({
     beginWorkspaceScmOperation: vi.fn(() => ({
-        started: true,
-        operation: { id: 'workspace-op-1', startedAt: 1, sessionId: 'workspace', operation: 'push' },
+        started: true as const,
+        operation: { id: 'workspace-op-1', startedAt: 1, sessionId: 'workspace', operation: 'push' as const },
     })),
     finishWorkspaceScmOperation: vi.fn(() => true),
     machineScmRemotePush: vi.fn(async (): Promise<ScmRemoteResponse> => ({ success: true, stdout: 'pushed' })),

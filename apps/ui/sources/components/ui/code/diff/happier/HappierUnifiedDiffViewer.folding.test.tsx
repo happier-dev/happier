@@ -7,6 +7,7 @@ import { renderScreen } from '@/dev/testkit';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let lastLines: any[] | null = null;
+let lastCodeLinesViewProps: Record<string, any> | null = null;
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -32,6 +33,7 @@ vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () =
 
 vi.mock('@/components/ui/code/view/CodeLinesView', () => ({
     CodeLinesView: (props: any) => {
+        lastCodeLinesViewProps = props;
         lastLines = props.lines;
         return React.createElement('CodeLinesView', props);
     },
@@ -72,5 +74,48 @@ describe('HappierUnifiedDiffViewer (folding)', () => {
         expect(texts).toContain('line10');
         expect(texts).not.toContain('line3');
         expect(texts).not.toContain('line8');
+    });
+
+    it('uses precomputed unified diff lines when provided', async () => {
+        lastLines = null;
+        lastCodeLinesViewProps = null;
+        const { HappierUnifiedDiffViewer } = await import('./HappierUnifiedDiffViewer');
+        const precomputedLines = [{
+            id: 'a:1',
+            sourceIndex: 0,
+            kind: 'add',
+            oldLine: null,
+            newLine: 1,
+            renderPrefixText: '+',
+            renderCodeText: 'from precomputed lines',
+            renderIsHeaderLine: false,
+            selectable: true,
+        }];
+
+        await renderScreen(<HappierUnifiedDiffViewer
+                    mode="unified"
+                    unifiedDiff={buildDemoUnifiedDiff()}
+                    filePath="src/demo.ts"
+                    precomputedLines={precomputedLines as any}
+                />);
+
+        const renderedLines = lastLines as any[] | null;
+        if (!renderedLines) throw new Error('Expected CodeLinesView lines');
+        expect(renderedLines.map((line) => line.renderCodeText)).toEqual(['from precomputed lines']);
+    });
+
+    it('passes inactive comment affordance visibility to the code lines view', async () => {
+        lastCodeLinesViewProps = null;
+        const { HappierUnifiedDiffViewer } = await import('./HappierUnifiedDiffViewer');
+
+        await renderScreen(<HappierUnifiedDiffViewer
+                    mode="unified"
+                    unifiedDiff={buildDemoUnifiedDiff()}
+                    filePath="src/demo.ts"
+                    showInactiveCommentAffordance={false}
+                />);
+
+        const codeLinesViewProps = lastCodeLinesViewProps as Record<string, unknown> | null;
+        expect(codeLinesViewProps?.showInactiveCommentAffordance).toBe(false);
     });
 });

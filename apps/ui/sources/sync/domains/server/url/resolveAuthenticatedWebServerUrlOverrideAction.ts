@@ -1,6 +1,7 @@
 import { normalizeServerUrl } from '../activeServerSwitch';
 import { getActiveServerUrl } from '../serverProfiles';
 import { readWebServerUrlOverrideFromLocation } from './bootstrapActiveServerFromWebLocation';
+import { shouldSwitchToServerUrl } from './serverUrlOverridePolicy';
 
 type NoAuthenticatedWebServerUrlOverrideAction = Readonly<{
     kind: 'none';
@@ -42,8 +43,7 @@ export function resolveAuthenticatedWebServerUrlOverrideAction(
     const desired = normalizeServerUrl(override.serverUrl);
     if (!desired) return { kind: 'none' };
 
-    const current = normalizeServerUrl(getActiveServerUrl());
-    if (desired !== current) {
+    if (shouldSwitchToServerUrl({ targetServerUrl: desired, activeServerUrl: getActiveServerUrl() })) {
         return {
             kind: 'switch_server',
             cleanedRelativeUrl: override.cleanedRelativeUrl,
@@ -51,7 +51,7 @@ export function resolveAuthenticatedWebServerUrlOverrideAction(
         };
     }
 
-    if (params.bootstrappedServerUrl === desired) {
+    if (!shouldSwitchToServerUrl({ targetServerUrl: desired, activeServerUrl: params.bootstrappedServerUrl })) {
         return {
             kind: 'refresh_auth',
             cleanedRelativeUrl: override.cleanedRelativeUrl,

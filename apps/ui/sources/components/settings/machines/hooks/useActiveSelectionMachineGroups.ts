@@ -1,8 +1,13 @@
 import * as React from 'react';
 
 import type { ActiveServerSnapshot, ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
 import { filterVisibleMachines, resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { getEffectiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
+import {
+    listServerProfileScopeIds,
+    normalizeServerSelectionSettingsForProfileScopeIds,
+} from '@/sync/domains/server/selection/serverSelectionProfileScopeIds';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
 type MachineListStatus = 'idle' | 'loading' | 'signedOut' | 'error';
@@ -33,8 +38,8 @@ export function useActiveSelectionMachineGroups(params: Readonly<{
     const visibleMachineServerIds = React.useMemo(() => {
         const selection = getEffectiveServerSelectionFromRawSettings({
             activeServerId: params.activeServerSnapshot.serverId,
-            availableServerIds: params.serverProfiles.map((server) => server.id),
-            settings: params.settings,
+            availableServerIds: listServerProfileScopeIds(params.serverProfiles),
+            settings: normalizeServerSelectionSettingsForProfileScopeIds(params.settings, params.serverProfiles),
         });
 
         return selection.serverIds.length > 0
@@ -51,7 +56,11 @@ export function useActiveSelectionMachineGroups(params: Readonly<{
     const showMachinesGroupedByServer = visibleMachineServerIds.length > 1;
 
     const visibleMachineGroups = React.useMemo(() => {
-        const serverNameById = new Map(params.serverProfiles.map((server) => [server.id, server.name] as const));
+        const serverNameById = new Map<string, string>();
+        for (const server of params.serverProfiles) {
+            serverNameById.set(server.id, server.name);
+            serverNameById.set(resolveServerProfileScopeId(server), server.name);
+        }
         return visibleMachineServerIds.map((serverId) => {
             const machines = resolveServerScopedMachines({
                 serverId,

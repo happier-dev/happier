@@ -23,9 +23,11 @@ type CapturedItemProps = Readonly<{
     subtitle?: unknown;
 } & Record<string, unknown>>;
 type CapturedItemGroupProps = Readonly<{ title?: React.ReactNode } & Record<string, unknown>>;
+type CapturedViewProps = Readonly<{ style?: unknown } & Record<string, unknown>>;
 
 const capturedItems: CapturedItemProps[] = [];
 const capturedItemGroups: CapturedItemGroupProps[] = [];
+const capturedViews: CapturedViewProps[] = [];
 
 const mcpServersSettingsFixture: McpServersSettingsV1 = {
     v: 1,
@@ -65,7 +67,10 @@ installNewSessionComponentsCommonModuleMocks({
         Ionicons: createPassThroughComponent('Ionicons'),
     }),
     reactNative: () => createReactNativeWebMock({
-        View: createPassThroughComponent('View'),
+        Platform: { OS: 'ios' },
+        View: createCapturingComponent('View', (props) => {
+            capturedViews.push(props as CapturedViewProps);
+        }),
         Pressable: createPassThroughComponent('Pressable'),
         ScrollView: createPassThroughComponent('ScrollView'),
             ActivityIndicator: createPassThroughComponent('ActivityIndicator'),
@@ -143,6 +148,40 @@ vi.mock('@/components/sessions/new/modules/sessionMcpSelectionState', () => ({
 }));
 
 describe('NewSessionMcpSelectionContent', () => {
+    it('keeps native MCP content-sized under the computed popover height cap', async () => {
+        capturedViews.length = 0;
+
+        const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
+
+        await renderScreen(<NewSessionMcpSelectionContent
+            machineId="machine-1"
+            machineName="Builder"
+            directory="/repo"
+            agentType="claude"
+            hasContext={true}
+            preview={{ ok: true, builtIn: [], managed: [], detected: [] }}
+            selection={{
+                v: 1,
+                managedServersEnabled: true,
+                forceIncludeServerIds: [],
+                forceExcludeServerIds: [],
+            }}
+            loading={false}
+            error={null}
+            onSelectionChange={() => {}}
+            onRefresh={() => {}}
+            onOpenSettings={() => {}}
+            maxHeight={520}
+        />);
+
+        expect(capturedViews.some((view) => {
+            const style = Array.isArray(view.style)
+                ? Object.assign({}, ...view.style)
+                : view.style as Record<string, unknown> | undefined;
+            return style?.maxHeight === 520 && style?.height === undefined;
+        })).toBe(true);
+    });
+
     it('shows a loading indicator in the refresh action while preview data is being refreshed', async () => {
         capturedItems.length = 0;
         capturedItemGroups.length = 0;

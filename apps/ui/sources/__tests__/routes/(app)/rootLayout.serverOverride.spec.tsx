@@ -22,6 +22,7 @@ const routerReplaceSpy = vi.fn();
 const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string; refreshAuth: unknown }) => true);
 const refreshFromActiveServerSpy = vi.fn(async () => {});
 let activeServerUrl = 'https://api.happier.dev';
+let pendingTerminalConnect: Readonly<{ publicKeyB64Url: string; serverUrl: string }> | null = null;
 
 function installWebLocation(params: Readonly<{ href: string }>) {
     const locationState = {
@@ -128,8 +129,12 @@ vi.mock('@/components/navigation/Header', () => ({
     createHeader: () => null,
 }));
 
+vi.mock('@/components/appShell/runtime/AuthenticatedAppRuntimeMounts', () => ({
+    AuthenticatedAppRuntimeMounts: () => null,
+}));
+
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
-    getPendingTerminalConnect: () => null,
+    getPendingTerminalConnect: () => pendingTerminalConnect,
 }));
 
 vi.mock('@/sync/domains/pending/pendingNotificationNav', () => ({
@@ -170,6 +175,7 @@ afterEach(() => {
     routerReplaceSpy.mockReset();
     upsertActivateAndSwitchServerSpy.mockReset();
     refreshFromActiveServerSpy.mockReset();
+    pendingTerminalConnect = null;
     delete (globalThis as any).window;
     delete (globalThis as any).document;
     vi.restoreAllMocks();
@@ -211,6 +217,23 @@ describe('App RootLayout server override', () => {
         });
     });
 
+    it('refreshes auth instead of switching servers when the override is loopback-equivalent to the active server', async () => {
+        installWebLocation({
+            href: 'https://app.example.test/?server=http%3A%2F%2Fhappier-repo-dev-a1cc5e0671.localhost%3A53288',
+        });
+        activeServerUrl = 'http://localhost:53288';
+
+        const { resolveAuthenticatedWebServerUrlOverrideAction } = await import('@/sync/domains/server/url/resolveAuthenticatedWebServerUrlOverrideAction');
+
+        expect(resolveAuthenticatedWebServerUrlOverrideAction({
+            isAuthenticated: true,
+            bootstrappedServerUrl: 'http://happier-repo-dev-a1cc5e0671.localhost:53288',
+        })).toEqual({
+            kind: 'refresh_auth',
+            cleanedRelativeUrl: '/',
+        });
+    });
+
     it('holds the authenticated shell while a cross-server override switch is still resolving', async () => {
         installWebLocation({
             href: 'https://app.example.test/?server=https%3A%2F%2Fstack.example.test',
@@ -232,6 +255,32 @@ describe('App RootLayout server override', () => {
         const { shouldHoldAuthenticatedShellForWebServerOverride } = await import('@/sync/domains/server/url/shouldHoldAuthenticatedShellForWebServerOverride');
 
         expect(shouldHoldAuthenticatedShellForWebServerOverride(true)).toBe(false);
+    });
+
+    it('does not hold the unauthenticated shell for loopback-equivalent same-server overrides', async () => {
+        installWebLocation({
+            href: 'https://app.example.test/?server=http%3A%2F%2Fhappier-repo-dev-a1cc5e0671.localhost%3A53288',
+        });
+
+        const { shouldHoldUnauthenticatedShellForWebServerOverride } = await import('@/sync/domains/server/url/shouldHoldUnauthenticatedShellForWebServerOverride');
+
+        expect(shouldHoldUnauthenticatedShellForWebServerOverride(false, 'http://localhost:53288')).toBe(false);
+    });
+
+    it('does not switch servers for loopback-equivalent pending terminal connects', async () => {
+        installWebLocation({
+            href: 'https://app.example.test/',
+        });
+        activeServerUrl = 'http://localhost:53288';
+        pendingTerminalConnect = {
+            publicKeyB64Url: 'abc123',
+            serverUrl: 'http://happier-repo-dev-a1cc5e0671.localhost:53288',
+        };
+
+        await renderRootLayout();
+
+        expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/terminal/connect#key=abc123&server=http%3A%2F%2Fhappier-repo-dev-a1cc5e0671.localhost%3A53288');
     });
 
     it('redirects legacy `/?id=<sessionId>` deep-links to the canonical session route on web', async () => {

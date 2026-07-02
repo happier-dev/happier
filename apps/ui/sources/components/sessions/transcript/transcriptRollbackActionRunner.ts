@@ -28,6 +28,12 @@ function readInnerOkError(value: unknown): { ok: boolean; errorMessage?: string 
     };
 }
 
+function isApprovalRequestCreated(value: unknown): boolean {
+    return !!value
+        && typeof value === 'object'
+        && (value as { kind?: unknown }).kind === 'approval_request_created';
+}
+
 function readCheckpointRollbackFailure(value: unknown): string | null {
     if (!value || typeof value !== 'object') return null;
     const status = (value as { status?: unknown }).status;
@@ -81,7 +87,15 @@ export async function executeTranscriptRollbackAction(params: Readonly<{
             return;
         }
 
+        if (isApprovalRequestCreated(result.result)) {
+            return;
+        }
+
         const inner = readInnerOkError(result.result);
+        if (!inner) {
+            Modal.alert(t('common.error'), t('errors.unknownError'));
+            return;
+        }
         if (inner && inner.ok !== true) {
             Modal.alert(t('common.error'), inner.errorMessage ?? t('errors.unknownError'));
             return;

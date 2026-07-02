@@ -4,8 +4,8 @@ import type { Href } from 'expo-router';
 import type { ConnectedServiceId } from '@happier-dev/protocol';
 
 import {
+    AGENT_PROVIDER_IDS as SHARED_AGENT_PROVIDER_IDS,
     AGENT_IDS as SHARED_AGENT_IDS,
-    CANONICAL_AGENT_IDS as SHARED_CANONICAL_AGENT_IDS,
     DEFAULT_AGENT_ID,
     resolveAgentIdFromFlavor as resolveAgentIdFromFlavorShared,
     type AgentCore as SharedAgentCore,
@@ -105,6 +105,12 @@ export type AgentCoreConfig = Readonly<{
     permissions: Readonly<{
         modeGroup: PermissionModeGroupId;
         promptProtocol: PermissionPromptProtocol;
+    }>;
+    runtimeInput?: Readonly<{
+        /**
+         * Provider-declared support for steering a busy turn before runtime state is published.
+         */
+        inFlightSteerSupported?: boolean;
     }>;
     sessionModes: Readonly<{
         /**
@@ -206,7 +212,7 @@ export const AGENTS_CORE = Object.freeze({
 }) satisfies Readonly<Record<CanonicalAgentId, AgentCoreConfig>>;
 
 export const CANONICAL_AGENT_IDS = Object.freeze(
-    [...SHARED_CANONICAL_AGENT_IDS] as CanonicalAgentId[],
+    [...SHARED_AGENT_PROVIDER_IDS] as CanonicalAgentId[],
 );
 
 export const AGENT_IDS = Object.freeze(

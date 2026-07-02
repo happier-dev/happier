@@ -28,6 +28,13 @@ vi.mock('@/components/settings/usage/UsagePanel', () => ({
     UsagePanel: (props: { sessionId?: string }) => React.createElement('UsagePanel', props),
 }));
 
+vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
+    useHydrateSessionForRoute: (sessionId: string | null) =>
+        sessionId
+            ? { kind: 'available', sessionId }
+            : { kind: 'loading', sessionId: '', reason: 'store-miss' },
+}));
+
 vi.mock('@/components/sessions/shell/SessionInvalidLinkFallback', () => ({
     SessionInvalidLinkFallback: () => React.createElement('SessionInvalidLinkFallback', { testID: 'session-invalid-link' }),
 }));

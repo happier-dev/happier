@@ -6,6 +6,7 @@ import { applyToolResultUpdateToReducerMessage } from '../helpers/applyToolResul
 import { normalizeThinkingChunk, unwrapThinkingText } from '../helpers/thinkingText';
 import { readStreamSegmentMetaV1 } from '../helpers/streamSegmentMeta';
 import { upsertStreamSegmentSnapshotMessage } from '../helpers/upsertStreamSegmentSnapshotMessage';
+import { restoreSubagentToolFromSyntheticInterruption } from '../helpers/subagentInterruption';
 
 export function runSidechainsPhase(params: Readonly<{
     state: ReducerState;
@@ -311,6 +312,9 @@ export function runSidechainsPhase(params: Readonly<{
         // Provider-agnostic contract: msg.sidechainId is the owning tool-call id. Orphan sidechains
         // remain hidden until that tool-call exists; they should never surface as root transcript rows.
         if (parentMessageId != null) {
+            if (restoreSubagentToolFromSyntheticInterruption({ state, messageId: parentMessageId, sidechainId })) {
+                stateChanged = true;
+            }
             changed.add(parentMessageId);
         }
     }

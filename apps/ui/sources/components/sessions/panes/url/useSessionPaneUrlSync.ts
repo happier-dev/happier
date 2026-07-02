@@ -60,6 +60,31 @@ function serializeToParamShape(
     };
 }
 
+function readSessionIdFromScopeKey(scopeKey: string): string | null {
+    if (!scopeKey.startsWith('session:')) return null;
+    const sessionId = scopeKey.slice('session:'.length).trim();
+    return sessionId.length > 0 ? sessionId : null;
+}
+
+function canWriteSessionPaneParamsForCurrentBrowserUrl(scopeKey: string): boolean {
+    if (typeof window === 'undefined') return true;
+
+    const href = window.location?.href;
+    if (typeof href !== 'string') return false;
+
+    const expectedSessionId = readSessionIdFromScopeKey(scopeKey);
+    if (!expectedSessionId) return false;
+
+    try {
+        const url = new URL(href);
+        const match = /^\/session\/([^/]+)\/?$/.exec(url.pathname);
+        if (!match) return false;
+        return decodeURIComponent(match[1] ?? '') === expectedSessionId;
+    } catch {
+        return false;
+    }
+}
+
 export function useSessionPaneUrlSync(input: UseSessionPaneUrlSyncInput): void {
     primeSessionPaneHistoryTraversalTracking();
 
@@ -188,6 +213,7 @@ export function useSessionPaneUrlSync(input: UseSessionPaneUrlSyncInput): void {
         if (!routeParamSyncEnabled) return;
         if (!input.setParams) return;
         if (derivedSig === urlSig) return;
+        if (!canWriteSessionPaneParamsForCurrentBrowserUrl(scopeKey)) return;
 
         // Pane state changed (or initial empty URL): serialize state back into the URL.
         const shouldReplaceHistoryEntry = isFirstRun || pendingStoredStateWriteSigRef.current === derivedSig;

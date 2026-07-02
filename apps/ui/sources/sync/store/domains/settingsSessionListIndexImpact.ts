@@ -6,5 +6,6 @@ export function resolveSessionListIndexSettingsImpact(
 ): boolean {
     return nextSettings.groupInactiveSessionsByProject !== previousSettings.groupInactiveSessionsByProject
         || nextSettings.sessionListActiveGroupingV1 !== previousSettings.sessionListActiveGroupingV1
-        || nextSettings.sessionListInactiveGroupingV1 !== previousSettings.sessionListInactiveGroupingV1;
+        || nextSettings.sessionListInactiveGroupingV1 !== previousSettings.sessionListInactiveGroupingV1
+        || nextSettings.sessionListSectionModeV1 !== previousSettings.sessionListSectionModeV1;
 }

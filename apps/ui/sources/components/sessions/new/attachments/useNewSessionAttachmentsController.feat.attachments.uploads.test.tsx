@@ -6,7 +6,10 @@ import { Platform } from 'react-native';
 
 import type { PickedAttachment } from '@/components/sessions/attachments/AttachmentFilePicker.types';
 import { installNewSessionScreenModelCommonModuleMocks } from '@/components/sessions/new/hooks/newSessionScreenModelTestHelpers';
-import { clearAllNewSessionAttachmentDrafts } from './newSessionAttachmentDraftStore';
+import {
+    clearAllNewSessionAttachmentDrafts,
+    readNewSessionAttachmentDrafts,
+} from './newSessionAttachmentDraftStore';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -74,6 +77,14 @@ vi.mock('@/components/sessions/attachments/useAttachmentsUploadConfig', () => ({
 vi.mock('@/components/sessions/attachments/uploadAttachmentDraftsToSession', () => ({
     uploadAttachmentDraftsToSession: uploadAttachmentDraftsToSessionSpy,
     formatAttachmentsBlock: formatAttachmentsBlockSpy,
+    buildAttachmentMessageMeta: (uploaded: unknown) => ({
+        happier: {
+            kind: 'attachments.v1',
+            payload: {
+                attachments: uploaded,
+            },
+        },
+    }),
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', () => ({
@@ -181,6 +192,28 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         readCachedSnapshotForMachinePathMock.mockImplementation(() => null);
     });
 
+    it('passes a live input text override through simple sends before prompt state catches up', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-live-text',
+            isCreating: false,
+            sessionPrompt: '',
+            handleCreateSession,
+            selectedProfileId: null,
+            targetServerId: 'server-a',
+            baseActionChips: [],
+        }));
+
+        await act(async () => {
+            hook.getCurrent().handleSend({ inputTextOverride: 'large live prompt' });
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+
+        expect(handleCreateSession).toHaveBeenCalledWith({ inputTextOverride: 'large live prompt' });
+        await hook.unmount();
+    });
+
     it('restores attachment drafts when the new-session flow remounts with the same flow id', async () => {
         const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
         const handleCreateSession = vi.fn();
@@ -229,6 +262,56 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         expect(second.getCurrent().agentInputAttachments).toEqual([
             expect.objectContaining({ label: 'note.txt', status: 'pending' }),
         ]);
+    });
+
+    it('does not clear stored attachment drafts during a transient disabled feature decision', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const handleCreateSession = vi.fn();
+
+        const first = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-feature-loading',
+            isCreating: false,
+            sessionPrompt: '',
+            handleCreateSession,
+            selectedProfileId: null,
+            targetServerId: 'server-a',
+            baseActionChips: [],
+        }));
+
+        await act(async () => {
+            first.getCurrent().addPickedAttachments([{
+                kind: 'native',
+                uri: 'file:///tmp/note.txt',
+                name: 'note.txt',
+                sizeBytes: 12,
+                mimeType: 'text/plain',
+            }]);
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+        await first.unmount();
+
+        featureEnabledSpy.mockImplementation((featureId: string) => (
+            featureId === 'attachments.uploads' ? false : featureId === 'files.reviewComments'
+        ));
+
+        try {
+            const disabled = await renderHook(() => useNewSessionAttachmentsController({
+                flowId: 'flow-feature-loading',
+                isCreating: false,
+                sessionPrompt: '',
+                handleCreateSession,
+                selectedProfileId: null,
+                targetServerId: 'server-a',
+                baseActionChips: [],
+            }));
+            await disabled.unmount();
+
+            expect(readNewSessionAttachmentDrafts('flow-feature-loading')).toEqual([
+                expect.objectContaining({ status: 'pending' }),
+            ]);
+        } finally {
+            featureEnabledSpy.mockImplementation((featureId: string) => featureId === 'attachments.uploads');
+        }
     });
 
     it('triggers the web file picker exactly once when the attachment chip is pressed', async () => {
@@ -332,11 +415,15 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             await afterCreated({
                 sessionId: 'session-1',
                 effectiveSpawnServerId: 'server-a',
+                launchAttempt: {
+                    attachmentMessageLocalId: 'new-session-attachment-local-1',
+                },
             });
         });
 
         expect(uploadAttachmentDraftsToSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'session-1',
+            messageLocalId: 'new-session-attachment-local-1',
             drafts: expect.arrayContaining([
                 expect.objectContaining({
                     source: expect.objectContaining({ kind: 'native', name: 'note.txt' }),
@@ -348,6 +435,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             targetServerId: 'server-a',
             initialMessageText: 'Investigate this bug\n\n[attachments block]',
             displayText: 'Investigate this bug',
+            messageLocalId: 'new-session-attachment-local-1',
             profileId: 'profile-work',
             metaOverrides: {
                 happier: {
@@ -469,6 +557,9 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             await afterCreated({
                 sessionId: 'session-1',
                 effectiveSpawnServerId: 'server-b',
+                launchAttempt: {
+                    attachmentMessageLocalId: 'new-session-attachment-local-1',
+                },
             });
         });
 
@@ -630,6 +721,9 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             await afterCreated({
                 sessionId: 'session-1',
                 effectiveSpawnServerId: 'server-b',
+                launchAttempt: {
+                    attachmentMessageLocalId: 'new-session-attachment-local-1',
+                },
             });
         });
 

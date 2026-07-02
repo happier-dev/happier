@@ -79,9 +79,17 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/components/ui/layout/layout', () => ({
-    layout: { headerMaxWidth: 1024 },
-}));
+vi.mock('@/components/ui/layout/layout', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/ui/layout/layout')>();
+    return {
+        ...actual,
+        layout: {
+            ...actual.layout,
+            headerMaxWidth: 1024,
+        },
+        useLayoutMaxWidth: () => 1024,
+    };
+});
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (!Array.isArray(style)) {

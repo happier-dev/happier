@@ -157,6 +157,7 @@ export function useUserMessageHistory(opts: {
     const remoteHistoryStateRef = React.useRef(remoteHistoryState);
     const localEntriesRef = React.useRef<ReadonlyArray<string>>([]);
     const combinedEntriesRef = React.useRef<ReadonlyArray<string>>([]);
+    const requestRemoteHistoryPageRef = React.useRef<() => void>(() => {});
     const inFlightCursorRef = React.useRef<string | null>(null);
     const failedCursorKeysRef = React.useRef<Set<string>>(new Set());
     const activeHistoryScopeKeyRef = React.useRef<string>('');
@@ -248,18 +249,19 @@ export function useUserMessageHistory(opts: {
             }
         });
     }, [opts.scope, normalizedSessionId, roleQuerySupported]);
+    requestRemoteHistoryPageRef.current = requestRemoteHistoryPage;
 
     const warmup = React.useCallback(() => {
         if (localEntriesRef.current.length > 0) return;
         if (remoteHistoryStateRef.current.entries.length > 0) return;
-        requestRemoteHistoryPage();
-    }, [requestRemoteHistoryPage]);
+        requestRemoteHistoryPageRef.current();
+    }, []);
 
     const maybePrefetchOlder = React.useCallback((state: { index: number; entriesLength: number }) => {
         if (state.entriesLength <= 0) return;
         if (state.index < Math.max(0, state.entriesLength - USER_MESSAGE_HISTORY_PREFETCH_REMAINING_ENTRIES)) return;
-        requestRemoteHistoryPage();
-    }, [requestRemoteHistoryPage]);
+        requestRemoteHistoryPageRef.current();
+    }, []);
 
     const navigator = React.useMemo(
         () => createUserMessageHistoryNavigator(

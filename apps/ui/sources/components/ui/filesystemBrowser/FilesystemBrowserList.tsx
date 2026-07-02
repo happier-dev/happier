@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { FlatList, Pressable, View } from 'react-native';
+import { FlatList, Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -8,11 +8,15 @@ import { Typography } from '@/constants/Typography';
 
 import type { FilesystemBrowserListProps } from './filesystemBrowserTypes';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { FlashList, type FlashListRef } from '@/components/ui/lists/flashListCompat/FlashListCompat';
+
+const FILESYSTEM_BROWSER_ESTIMATED_ITEM_SIZE = 38;
+type FilesystemBrowserListNode = FilesystemBrowserListProps['nodes'][number];
 
 export const FilesystemBrowserList = React.memo(function FilesystemBrowserList(props: FilesystemBrowserListProps): React.ReactElement {
     const { theme } = useUnistyles();
     const showRootLoadingHeader = props.rootLoading && props.showInlineLoadingHeader !== false;
-    const keyExtractor = React.useCallback((node: FilesystemBrowserListProps['nodes'][number]) => `${node.type}:${node.path}`, []);
+    const keyExtractor = React.useCallback((node: FilesystemBrowserListNode) => `${node.type}:${node.path}`, []);
     const listHeaderComponent = React.useMemo(() => (
         showRootLoadingHeader ? (
             <View
@@ -61,33 +65,47 @@ export const FilesystemBrowserList = React.memo(function FilesystemBrowserList(p
         ) : null
     ), [props.inlineRetryLabel, props.listHeaderTestID, props.loadingLabel, props.retryRoot, props.rootError, showRootLoadingHeader, theme.colors.text.link, theme.colors.text.secondary]);
 
-    const renderItem = React.useCallback(({ item: node, index }: { item: FilesystemBrowserListProps['nodes'][number]; index: number }) => (
+    const renderItem = React.useCallback(({ item: node, index }: { item: FilesystemBrowserListNode; index: number }) => (
         props.renderRow({
             node,
             showDivider: index < props.nodes.length - 1,
         })
     ), [props.nodes.length, props.renderRow]);
 
+    const sharedListProps = {
+        data: props.nodes,
+        keyExtractor,
+        style: props.style,
+        contentContainerStyle: props.contentContainerStyle,
+        extraData: props.extraData,
+        ListHeaderComponent: listHeaderComponent,
+        renderItem,
+        initialNumToRender: props.initialNumToRender,
+        maxToRenderPerBatch: props.maxToRenderPerBatch,
+        windowSize: props.windowSize,
+        removeClippedSubviews: props.removeClippedSubviews,
+        onLayout: props.onLayout,
+        onContentSizeChange: props.onContentSizeChange,
+        onScroll: props.onScroll,
+        onScrollToIndexFailed: props.onScrollToIndexFailed,
+        scrollEventThrottle: props.scrollEventThrottle,
+        getItemLayout: props.getItemLayout,
+    } satisfies React.ComponentProps<typeof FlatList<FilesystemBrowserListNode>>;
+
+    if (Platform.OS !== 'web') {
+        return (
+            <FlashList
+                {...sharedListProps}
+                ref={props.listRef as React.Ref<FlashListRef<FilesystemBrowserListNode>>}
+                estimatedItemSize={FILESYSTEM_BROWSER_ESTIMATED_ITEM_SIZE}
+            />
+        );
+    }
+
     return (
         <FlatList
-            ref={props.listRef}
-            data={props.nodes}
-            keyExtractor={keyExtractor}
-            style={props.style}
-            contentContainerStyle={props.contentContainerStyle}
-            extraData={props.extraData}
-            ListHeaderComponent={listHeaderComponent}
-            renderItem={renderItem}
-            initialNumToRender={props.initialNumToRender}
-            maxToRenderPerBatch={props.maxToRenderPerBatch}
-            windowSize={props.windowSize}
-            removeClippedSubviews={props.removeClippedSubviews}
-            onLayout={props.onLayout}
-            onContentSizeChange={props.onContentSizeChange}
-            onScroll={props.onScroll}
-            onScrollToIndexFailed={props.onScrollToIndexFailed}
-            scrollEventThrottle={props.scrollEventThrottle}
-            getItemLayout={props.getItemLayout}
+            {...sharedListProps}
+            ref={props.listRef as React.Ref<FlatList<FilesystemBrowserListNode>>}
         />
     );
 });

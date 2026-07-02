@@ -70,6 +70,43 @@ describe('apiConnectedServicesQuotasV3', () => {
     );
   });
 
+  it('propagates caller abort signals to quota snapshot requests', async () => {
+    mockServerConfig();
+    let requestSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn((input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://api.example.test/health') {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) });
+      }
+      if (url === 'https://api.example.test/v3/connect/openai-codex/profiles/work/quotas') {
+        requestSignal = init?.signal ?? undefined;
+        return new Promise<Response>(() => {});
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) } as Response);
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const { getConnectedServiceQuotaSnapshotPlain } = await import('./apiConnectedServicesQuotasV3');
+    const controller = new AbortController();
+    void (getConnectedServiceQuotaSnapshotPlain as (
+      creds: AuthCredentials,
+      params: Parameters<typeof getConnectedServiceQuotaSnapshotPlain>[1],
+      opts: Readonly<{ signal?: AbortSignal }>,
+    ) => ReturnType<typeof getConnectedServiceQuotaSnapshotPlain>)(
+      credentials,
+      { serviceId: 'openai-codex', profileId: 'work' },
+      { signal: controller.signal },
+    ).catch(() => undefined);
+
+    for (let i = 0; i < 10 && !requestSignal; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
   it('returns null when the server has no snapshot', async () => {
     mockServerConfig();
     const fetchMock = vi.fn(async (input: unknown) => {

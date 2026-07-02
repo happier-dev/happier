@@ -2,6 +2,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { installPendingMessagesCommonModuleMocks } from './pendingMessagesTestHelpers';
 
 
@@ -34,6 +35,7 @@ const discardPendingMessage = vi.fn();
 const sessionAbort = vi.fn();
 const modalConfirm = vi.fn();
 const modalAlert = vi.fn();
+const modalPrompt = vi.fn();
 const reorderPendingMessages = vi.fn();
 
 let sessionValue: any = null;
@@ -54,7 +56,7 @@ installPendingMessagesCommonModuleMocks({
             spies: {
                 confirm: (...args: any[]) => modalConfirm(...args),
                 alert: (...args: any[]) => modalAlert(...args),
-                prompt: vi.fn(),
+                prompt: (...args: any[]) => modalPrompt(...args),
             },
         }).module;
     },
@@ -105,6 +107,45 @@ installPendingMessagesCommonModuleMocks({
         Ionicons: 'Ionicons',
     }),
 });
+
+const agentCatalogMocks = vi.hoisted(() => {
+    const resolveAgentIdFromFlavor = (flavor: unknown) => {
+        if (flavor === 'claude') return 'claude';
+        if (flavor === 'codex') return 'codex';
+        if (flavor === 'pi') return 'pi';
+        return null;
+    };
+    const getAgentCore = (agentId: string) => ({
+        id: agentId,
+        model: {
+            defaultMode: 'default',
+            supportsSelection: false,
+        },
+        resume: {},
+        runtimeInput: {
+            inFlightSteerSupported: agentId === 'pi',
+        },
+    });
+    return { getAgentCore, resolveAgentIdFromFlavor };
+});
+
+vi.mock('@/agents/registry/registryCore', () => ({
+    AGENT_IDS: ['claude', 'codex', 'pi'],
+    CANONICAL_AGENT_IDS: ['claude', 'codex', 'pi'],
+    DEFAULT_AGENT_ID: 'codex',
+    getAgentCore: agentCatalogMocks.getAgentCore,
+    resolveAgentIdFromFlavor: agentCatalogMocks.resolveAgentIdFromFlavor,
+}));
+
+vi.mock('@/agents/catalog/catalog', () => ({
+    getAgentCore: agentCatalogMocks.getAgentCore,
+    isAgentId: (agentId: unknown) => typeof agentId === 'string' && ['claude', 'codex', 'pi'].includes(agentId),
+    resolveAgentIdFromFlavor: agentCatalogMocks.resolveAgentIdFromFlavor,
+    buildWakeResumeExtras: ({ session }: { session?: { metadata?: Record<string, unknown> } | null }) => {
+        const connectedServices = session?.metadata?.connectedServices;
+        return connectedServices ? { connectedServices } : {};
+    },
+}));
 
 vi.mock('@/sync/sync', () => ({
     sync: {
@@ -175,6 +216,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         sessionAbort.mockReset();
         modalConfirm.mockReset();
         modalAlert.mockReset();
+        modalPrompt.mockReset();
         reorderPendingMessages.mockReset();
         sessionValue = null;
         settingValues = {};
@@ -203,6 +245,17 @@ describe('PendingMessagesTranscriptBlock', () => {
         await act(async () => {
             invokeTestInstanceHandler(row, 'onPointerEnter', undefined, `pendingMessages.discarded.row:${messageId}`);
         });
+    }
+
+    function createFreshSteerCapableSession(): Record<string, unknown> {
+        return {
+            active: true,
+            thinking: true,
+            thinkingAt: Date.now(),
+            presence: 'online',
+            agentStateVersion: 1,
+            agentState: { controlledByUser: false, capabilities: { inFlightSteer: true } },
+        };
     }
 
     it('aborts+send+delete in order when send-now is pressed', async () => {
@@ -249,7 +302,10 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const affordance = screen.findByTestId('pendingMessages.pendingAffordance:p1');
         expect(affordance).toBeTruthy();
-        expect(flattenStyle(affordance!.props.style).position).toBe('absolute');
+        const affordanceStyle = flattenStyle(affordance!.props.style);
+        expect(affordanceStyle.position).toBe('absolute');
+        expect(affordanceStyle.borderWidth).toBe(0);
+        expect(affordanceStyle.paddingVertical).toBe(1);
     });
 
     it('uses the transcript markdown typography for pending message markdown rows', async () => {
@@ -330,12 +386,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
 	    it('offers steer-now while a steer-capable session is thinking and does not abort the turn', async () => {
 	        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
-	        sessionValue = {
-	            thinking: true,
-            presence: 'online',
-            agentStateVersion: 1,
-            agentState: { controlledByUser: false, capabilities: { inFlightSteer: true } },
-        };
+	        sessionValue = createFreshSteerCapableSession();
 
         modalConfirm.mockResolvedValueOnce(true);
         sendPendingMessageNow.mockResolvedValueOnce({ type: 'committed' });
@@ -360,10 +411,32 @@ describe('PendingMessagesTranscriptBlock', () => {
 	        expect(deletePendingMessage).toHaveBeenCalledTimes(1);
 	    });
 
+    it('does not offer steer-now when stale thinking follows a completed primary turn projection', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        sessionValue = {
+            ...createFreshSteerCapableSession(),
+            thinkingAt: 1_000,
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: 2_000,
+        };
+
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+            discardedMessages: [],
+        }));
+
+        await hoverPendingMessageRow(screen, 'p1');
+
+        expect(screen.findByTestId('pendingMessages.steerNow:p1')).toBeNull();
+    });
+
     it('shows a non-steerable notice and interrupt action when active-turn steer is unavailable', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         sessionValue = {
+            active: true,
             thinking: true,
+            thinkingAt: Date.now(),
             presence: 'online',
             agentStateVersion: 1,
             agentState: {
@@ -389,14 +462,38 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(screen.findByTestId('pendingMessages.sendNow:p1')).toBeTruthy();
     });
 
+    it('shows the terminal-draft variant of the notice when the CLI published user_terminal_draft', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        sessionValue = {
+            active: true,
+            thinking: true,
+            thinkingAt: Date.now(),
+            presence: 'online',
+            agentStateVersion: 1,
+            agentState: {
+                controlledByUser: false,
+                capabilities: {
+                    inFlightSteer: true,
+                    inFlightSteerSupported: true,
+                    inFlightSteerAvailable: false,
+                    inFlightSteerUnavailableReason: 'user_terminal_draft',
+                },
+            },
+        };
+
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1',
+            pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+            discardedMessages: [],
+        }));
+
+        expect(screen.findByTestId('pendingMessages.nonSteerableNotice')).toBeTruthy();
+        expect(screen.findByTestId('pendingMessages.steerBlockedTerminalDraftNotice')).toBeTruthy();
+    });
+
 	    it('does not offer steer-now or send-now for pending rows that failed to decrypt', async () => {
 	        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
-	        sessionValue = {
-	            thinking: true,
-	            presence: 'online',
-	            agentStateVersion: 1,
-	            agentState: { controlledByUser: false, capabilities: { inFlightSteer: true } },
-	        };
+	        sessionValue = createFreshSteerCapableSession();
 
 	        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
 	                sessionId: 's1',
@@ -486,6 +583,8 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         const scroll = screen.findByType('ScrollView');
         expect(scroll.props.style?.maxHeight).toBe(80);
+        expect(scroll.props.style?.marginTop).toBe(0);
+        expect(scroll.props.contentContainerStyle).toMatchObject({ paddingTop: 6, paddingBottom: 0 });
     });
 
     it('shows the collapsed header toggle only when pending content overflows the compact height', async () => {
@@ -507,8 +606,13 @@ describe('PendingMessagesTranscriptBlock', () => {
             scroll!.props.onContentSizeChange(0, 160);
         });
 
-        expect(screen.findByTestId('pendingMessages.headerToggle')).toBeTruthy();
-        expect(screen.findByProps({ name: 'chevron-down' })).toBeTruthy();
+        const headerToggle = screen.findByTestId('pendingMessages.headerToggle');
+        expect(headerToggle).toBeTruthy();
+        const headerToggleStyle = flattenStyle(headerToggle!.props.style({ pressed: false }));
+        expect(headerToggleStyle.borderWidth).toBe(0);
+        expect(headerToggleStyle.paddingHorizontal).toBe(0);
+        expect(headerToggleStyle.paddingVertical).toBe(0);
+        expect(screen.findByProps({ name: 'chevron-up' })).toBeTruthy();
         expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
     });
 
@@ -549,7 +653,7 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         await screen.pressByTestIdAsync('pendingMessages.headerToggle');
 
-        expect(screen.findByProps({ name: 'chevron-up' })).toBeTruthy();
+        expect(screen.findByProps({ name: 'chevron-down' })).toBeTruthy();
         expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(520);
     });
 
@@ -572,7 +676,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         await screen.pressByTestIdAsync('pendingMessages.headerToggle');
         await screen.pressByTestIdAsync('pendingMessages.headerToggle');
 
-        expect(screen.findByProps({ name: 'chevron-down' })).toBeTruthy();
+        expect(screen.findByProps({ name: 'chevron-up' })).toBeTruthy();
         expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
     });
 
@@ -613,11 +717,11 @@ describe('PendingMessagesTranscriptBlock', () => {
             nextScroll!.props.onContentSizeChange(0, 160);
         });
 
-        expect(screen.findByProps({ name: 'chevron-down' })).toBeTruthy();
+        expect(screen.findByProps({ name: 'chevron-up' })).toBeTruthy();
         expect(screen.findByType('ScrollView').props.style?.maxHeight).toBe(80);
     });
 
-    it('shows a loading affordance instead of the pending badge for accepted pending rows', async () => {
+    it('shows the queued affordance instead of a loading spinner for accepted pending rows', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
                 sessionId: 's1',
@@ -625,8 +729,42 @@ describe('PendingMessagesTranscriptBlock', () => {
                 discardedMessages: [],
             }));
 
-        expect(screen.findByTestId('pendingMessages.acceptedIndicator:p1')).toBeTruthy();
-        expect(screen.findByTestId('pendingMessages.pendingAffordanceLabel:p1')).toBeNull();
+        expect(screen.findByTestId('pendingMessages.acceptedIndicator:p1')).toBeNull();
+        expect(screen.findByTestId('pendingMessages.queuedIndicator:p1')).toBeNull();
+        expect(screen.findByTestId('pendingMessages.pendingAffordanceLabel:p1')).toBeTruthy();
+    });
+
+    it('delegates pending edit to the composer owner without opening a prompt', async () => {
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const onEditPendingMessage = vi.fn();
+        const message: PendingMessage = {
+            id: 'p1',
+            text: 'hello\nfrom queue',
+            displayText: 'hello\nfrom queue',
+            createdAt: 0,
+            updatedAt: 0,
+            localId: 'p1',
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [message],
+                discardedMessages: [],
+                onEditPendingMessage,
+            }));
+
+        await hoverPendingMessageRow(screen, 'p1');
+        await screen.pressByTestIdAsync('pendingMessages.edit:p1');
+
+        expect(modalPrompt).toHaveBeenCalledTimes(0);
+        expect(onEditPendingMessage).toHaveBeenCalledTimes(1);
+        expect(onEditPendingMessage).toHaveBeenCalledWith({
+            id: 'p1',
+            text: 'hello\nfrom queue',
+            displayText: 'hello\nfrom queue',
+            message,
+        });
     });
 
     it('does not show discarded action icons until hover on web', async () => {

@@ -7,10 +7,12 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text } from '@/components/ui/text/Text';
 import { useAuth } from '@/auth/context/AuthContext';
-import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
+import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
+import { useCredentialScopedAccountModeResolver } from '@/hooks/server/connectedServices/useCredentialScopedAccountModeResolver';
 import { getConnectedServiceQuotaSnapshotSealed, requestConnectedServiceQuotaSnapshotRefresh } from '@/sync/api/account/apiConnectedServicesQuotasV2';
 import { getConnectedServiceQuotaSnapshotPlain, requestConnectedServiceQuotaSnapshotRefreshV3 } from '@/sync/api/account/apiConnectedServicesQuotasV3';
 import { openConnectedServiceQuotaSnapshot } from '@/sync/domains/connectedServices/openConnectedServiceQuotaSnapshot';
+import { sanitizeEndpointErrorMessage } from '@/sync/runtime/connectivity/sanitizeEndpointErrorMessage';
 import type { ConnectedServiceId, ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
 import { t } from '@/text';
 
@@ -29,6 +31,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+type QuotaCardLoadScope = Readonly<{
+  credentialScopeKey: string;
+  serviceId: ConnectedServiceId;
+  profileId: string;
+}>;
+type QuotaCardRefreshAndReloadInFlight = Readonly<{
+  scope: QuotaCardLoadScope;
+  promise: Promise<void>;
+}>;
+
+function resolveQuotaCardLoadScopeKey(scope: QuotaCardLoadScope): string {
+  return [
+    scope.credentialScopeKey,
+    scope.serviceId,
+    scope.profileId,
+  ].join('\u0000');
+}
+
+function isSameQuotaCardLoadScope(a: QuotaCardLoadScope | null, b: QuotaCardLoadScope): boolean {
+  return a?.credentialScopeKey === b.credentialScopeKey
+    && a.serviceId === b.serviceId
+    && a.profileId === b.profileId;
+}
+
 export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuotaCard(props: Readonly<{
   serviceId: ConnectedServiceId;
   profileId: string;
@@ -41,14 +67,6 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
   const auth = useAuth();
   const credentials = auth.credentials;
 
-  type AccountMode = 'plain' | 'e2ee';
-  const accountModeRef = React.useRef<'plain' | 'e2ee' | null>(null);
-  const accountModePromiseRef = React.useRef<Promise<AccountMode> | null>(null);
-  React.useEffect(() => {
-    accountModeRef.current = null;
-    accountModePromiseRef.current = null;
-  }, [credentials?.token]);
-
   const onSnapshotRef = React.useRef(props.onSnapshot);
   React.useEffect(() => {
     onSnapshotRef.current = props.onSnapshot;
@@ -58,32 +76,43 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
+  const snapshotRef = React.useRef<ConnectedServiceQuotaSnapshotV1 | null>(null);
   const loadPromiseRef = React.useRef<Promise<ConnectedServiceQuotaSnapshotV1 | null> | null>(null);
+  const refreshAndReloadPromisesRef = React.useRef<Map<string, QuotaCardRefreshAndReloadInFlight>>(new Map());
+  const lastAutomaticLoadScopeRef = React.useRef<QuotaCardLoadScope | null>(null);
+  const automaticLoadScope = React.useMemo<QuotaCardLoadScope | null>(() => {
+    if (!credentials) return null;
+    return {
+      credentialScopeKey: resolveAuthCredentialsScopeKey(credentials),
+      serviceId: props.serviceId,
+      profileId: props.profileId,
+    };
+  }, [credentials, props.serviceId, props.profileId]);
+  const currentLoadScopeRef = React.useRef<QuotaCardLoadScope | null>(automaticLoadScope);
+  currentLoadScopeRef.current = automaticLoadScope;
 
-  const resolveAccountMode = React.useCallback(async (): Promise<AccountMode> => {
-    const cached = accountModeRef.current;
-    if (cached) return cached;
-    if (!credentials) return 'e2ee';
-
-    const promise =
-      accountModePromiseRef.current ??
-      (accountModePromiseRef.current = fetchAccountEncryptionMode(credentials)
-        .then((res): AccountMode => (res.mode === 'plain' ? 'plain' : 'e2ee'))
-        .catch((): AccountMode => 'e2ee')
-        .then((mode): AccountMode => {
-          accountModeRef.current = mode;
-          return mode;
-        }));
-
-    return await promise;
-  }, [credentials]);
+  const isCurrentLoadScope = React.useCallback((scope: QuotaCardLoadScope): boolean => (
+    isSameQuotaCardLoadScope(currentLoadScopeRef.current, scope)
+  ), []);
+  const commitSnapshot = React.useCallback((nextSnapshot: ConnectedServiceQuotaSnapshotV1 | null) => {
+    snapshotRef.current = nextSnapshot;
+    setSnapshot(nextSnapshot);
+    onSnapshotRef.current?.(nextSnapshot);
+  }, []);
+  const resolveAccountMode = useCredentialScopedAccountModeResolver({
+    credentials,
+    credentialScope: automaticLoadScope?.credentialScopeKey ?? '',
+  });
 
   const load = React.useCallback(async (): Promise<ConnectedServiceQuotaSnapshotV1 | null> => {
-    if (!credentials) return null;
+    if (!credentials || !automaticLoadScope) return null;
+    const loadScope = automaticLoadScope;
+    if (!isCurrentLoadScope(loadScope)) return null;
     setLoading(true);
     setError(null);
     try {
       const mode = await resolveAccountMode();
+      if (!isCurrentLoadScope(loadScope)) return null;
       let opened: ConnectedServiceQuotaSnapshotV1 | null = null;
       if (mode === 'plain') {
         opened = await getConnectedServiceQuotaSnapshotPlain(credentials, {
@@ -92,28 +121,33 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
         });
       }
 
+      if (!isCurrentLoadScope(loadScope)) return null;
       if (mode !== 'plain' || !opened) {
         const sealed = await getConnectedServiceQuotaSnapshotSealed(credentials, {
           serviceId: props.serviceId,
           profileId: props.profileId,
         });
         const fallback = sealed ? openConnectedServiceQuotaSnapshot(credentials, sealed.sealed) : null;
-        setSnapshot(fallback);
-        onSnapshotRef.current?.(fallback);
+        if (!isCurrentLoadScope(loadScope)) return null;
+        commitSnapshot(fallback);
         return fallback;
       }
-      setSnapshot(opened);
-      onSnapshotRef.current?.(opened);
+      if (!isCurrentLoadScope(loadScope)) return null;
+      commitSnapshot(opened);
       return opened;
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setSnapshot(null);
-      onSnapshotRef.current?.(null);
+      if (!isCurrentLoadScope(loadScope)) return null;
+      setError(sanitizeEndpointErrorMessage(e) ?? t('common.error'));
+      if (!snapshotRef.current) {
+        commitSnapshot(null);
+      }
       return null;
     } finally {
-      setLoading(false);
+      if (isCurrentLoadScope(loadScope)) {
+        setLoading(false);
+      }
     }
-  }, [credentials, props.serviceId, props.profileId]);
+  }, [automaticLoadScope, commitSnapshot, credentials, props.serviceId, props.profileId, isCurrentLoadScope, resolveAccountMode]);
 
   const loadTracked = React.useCallback(() => {
     const promise = load();
@@ -122,34 +156,69 @@ export const ConnectedServiceQuotaCard = React.memo(function ConnectedServiceQuo
   }, [load]);
 
   React.useEffect(() => {
+    if (!automaticLoadScope) {
+      if (lastAutomaticLoadScopeRef.current) {
+        commitSnapshot(null);
+        setError(null);
+        setLoading(false);
+      }
+      lastAutomaticLoadScopeRef.current = null;
+      return;
+    }
+    if (isSameQuotaCardLoadScope(lastAutomaticLoadScopeRef.current, automaticLoadScope)) return;
+    if (lastAutomaticLoadScopeRef.current) {
+      commitSnapshot(null);
+      setError(null);
+    }
+    lastAutomaticLoadScopeRef.current = automaticLoadScope;
     void loadTracked();
-  }, [loadTracked]);
+  }, [automaticLoadScope, commitSnapshot, loadTracked]);
 
   const requestRefreshAndReload = React.useCallback(async () => {
-    if (!credentials) return;
-    const inFlightFetchedAt = (await loadPromiseRef.current
-      ?.then((s) => s?.fetchedAt ?? 0)
-      .catch(() => 0)) ?? 0;
-    const sinceFetchedAt = Math.max(snapshot?.fetchedAt ?? 0, inFlightFetchedAt);
-    try {
-      const mode = await resolveAccountMode();
-      const ok = mode === 'plain'
-        ? await requestConnectedServiceQuotaSnapshotRefreshV3(credentials, { serviceId: props.serviceId, profileId: props.profileId })
-        : await requestConnectedServiceQuotaSnapshotRefresh(credentials, { serviceId: props.serviceId, profileId: props.profileId });
+    if (!credentials || !automaticLoadScope) return;
+    const refreshScopeKey = resolveQuotaCardLoadScopeKey(automaticLoadScope);
+    const existing = refreshAndReloadPromisesRef.current.get(refreshScopeKey);
+    if (existing && isSameQuotaCardLoadScope(existing.scope, automaticLoadScope)) {
+      await existing.promise;
+      return;
+    }
+    const refreshScope = automaticLoadScope;
+    const promise = (async () => {
+      const inFlightFetchedAt = (await loadPromiseRef.current
+        ?.then((s) => s?.fetchedAt ?? 0)
+        .catch(() => 0)) ?? 0;
+      if (!isCurrentLoadScope(refreshScope)) return;
+      const sinceFetchedAt = Math.max(snapshot?.fetchedAt ?? 0, inFlightFetchedAt);
+      try {
+        const mode = await resolveAccountMode();
+        if (!isCurrentLoadScope(refreshScope)) return;
+        const ok = mode === 'plain'
+          ? await requestConnectedServiceQuotaSnapshotRefreshV3(credentials, { serviceId: props.serviceId, profileId: props.profileId })
+          : await requestConnectedServiceQuotaSnapshotRefresh(credentials, { serviceId: props.serviceId, profileId: props.profileId });
 
-      if (!ok && mode === 'plain') {
-        await requestConnectedServiceQuotaSnapshotRefresh(credentials, { serviceId: props.serviceId, profileId: props.profileId });
+        if (!ok && mode === 'plain') {
+          await requestConnectedServiceQuotaSnapshotRefresh(credentials, { serviceId: props.serviceId, profileId: props.profileId });
+        }
+      } catch {
+        // Best-effort only.
       }
-    } catch {
-      // Best-effort only.
+      const delaysMs = [0, 250, 500, 1_000, 2_000, 3_000, 4_000];
+      for (const delayMs of delaysMs) {
+        await sleep(delayMs);
+        if (!isCurrentLoadScope(refreshScope)) break;
+        const opened = await loadTracked();
+        if (opened && opened.fetchedAt > sinceFetchedAt) break;
+      }
+    })();
+    refreshAndReloadPromisesRef.current.set(refreshScopeKey, { scope: refreshScope, promise });
+    try {
+      await promise;
+    } finally {
+      if (refreshAndReloadPromisesRef.current.get(refreshScopeKey)?.promise === promise) {
+        refreshAndReloadPromisesRef.current.delete(refreshScopeKey);
+      }
     }
-    const delaysMs = [0, 250, 500, 1_000, 2_000, 3_000, 4_000];
-    for (const delayMs of delaysMs) {
-      await sleep(delayMs);
-      const opened = await loadTracked();
-      if (opened && opened.fetchedAt > sinceFetchedAt) break;
-    }
-  }, [credentials, props.serviceId, props.profileId, loadTracked, snapshot?.fetchedAt, resolveAccountMode]);
+  }, [automaticLoadScope, credentials, props.serviceId, props.profileId, isCurrentLoadScope, loadTracked, snapshot?.fetchedAt, resolveAccountMode]);
 
   const nowMs = Date.now();
   const isStale = snapshot ? nowMs - snapshot.fetchedAt > snapshot.staleAfterMs : false;

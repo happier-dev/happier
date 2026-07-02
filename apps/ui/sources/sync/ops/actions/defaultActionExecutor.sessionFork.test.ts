@@ -22,6 +22,7 @@ vi.mock('@/sync/ops/sessionHandoffs', () => ({
 
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
   readMachineTargetForSession: readMachineTargetForSessionMock,
+  readMachineControlTargetForSession: readMachineTargetForSessionMock,
 }));
 
 vi.mock('@/voice/tools/actionImpl/openSession', () => ({

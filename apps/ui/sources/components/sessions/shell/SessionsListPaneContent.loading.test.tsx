@@ -70,6 +70,9 @@ vi.mock('@/components/sessions/shell/ExternalSessionsEmptyState', () => ({
 vi.mock('@/components/sessions/shell/HiddenInactiveSessionsEmptyState', () => ({
     HiddenInactiveSessionsEmptyState: (props: any) => React.createElement('HiddenInactiveSessionsEmptyState', props),
 }));
+vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({
+    ActivitySpinner: (props: any) => React.createElement('ActivitySpinner', props),
+}));
 
 describe('SessionsListPaneContent (loading)', () => {
     it('passes the already resolved pane state into the rendered session list', async () => {
@@ -119,7 +122,7 @@ describe('SessionsListPaneContent (loading)', () => {
             },
         );
 
-        expect(screen.findByType('ActivityIndicator' as any)).toBeTruthy();
+        expect(screen.findByType('ActivitySpinner' as any)).toBeTruthy();
         expect(screen.findAllByType('SessionsListView' as any)).toHaveLength(0);
     });
 

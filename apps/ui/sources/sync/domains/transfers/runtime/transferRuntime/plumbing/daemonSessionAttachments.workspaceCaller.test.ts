@@ -10,7 +10,7 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
-    readMachineTargetForSession: () => ({ machineId: 'machine-1', basePath: '/repo' }),
+    readMachineControlTargetForSession: () => ({ machineId: 'machine-1', basePath: '/repo', confidence: 'reachable' }),
 }));
 
 vi.mock('@/sync/domains/session/listing/sessionListLookupState', () => ({

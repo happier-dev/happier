@@ -2,12 +2,17 @@ import type { SessionListRenderableSession } from '../../domains/session/listing
 import {
     didSessionListRenderableProjectGroupingFieldsChange,
     didSessionListRenderableReachabilityPeerFieldsChange,
-    didSessionListRenderableStructuralFieldsChange,
     didSessionListRenderableWarmCacheFieldsChange,
+    isSessionListRenderableWarmCacheProgressOnlyChange,
 } from '../../domains/session/listing/sessionListRenderable';
+import {
+    shouldRebuildSessionListIndexForRenderableChange,
+    type SessionListIndexRebuildSettings,
+} from '../../domains/session/listing/sessionListIndexRebuildImpact';
 
 export type SessionListRenderableChangeImpact = Readonly<{
     didWarmCacheRelevantRenderableChange: boolean;
+    isWarmCacheProgressOnlyChange: boolean;
     needsSessionListIndexRebuild: boolean;
     needsProjectManagerUpdate: boolean;
     needsReachablePeerReevaluation: boolean;
@@ -16,10 +21,21 @@ export type SessionListRenderableChangeImpact = Readonly<{
 export function resolveSessionListRenderableChangeImpact(
     previousRenderable: SessionListRenderableSession | undefined,
     nextRenderable: SessionListRenderableSession,
+    options?: Readonly<{ sessionListIndexSettings?: SessionListIndexRebuildSettings | null }>,
 ): SessionListRenderableChangeImpact {
+    const didWarmCacheRelevantRenderableChange = didSessionListRenderableWarmCacheFieldsChange(
+        previousRenderable,
+        nextRenderable,
+    );
     return {
-        didWarmCacheRelevantRenderableChange: didSessionListRenderableWarmCacheFieldsChange(previousRenderable, nextRenderable),
-        needsSessionListIndexRebuild: didSessionListRenderableStructuralFieldsChange(previousRenderable, nextRenderable),
+        didWarmCacheRelevantRenderableChange,
+        isWarmCacheProgressOnlyChange: didWarmCacheRelevantRenderableChange
+            && isSessionListRenderableWarmCacheProgressOnlyChange(previousRenderable, nextRenderable),
+        needsSessionListIndexRebuild: shouldRebuildSessionListIndexForRenderableChange(
+            previousRenderable,
+            nextRenderable,
+            options?.sessionListIndexSettings,
+        ),
         needsProjectManagerUpdate: didSessionListRenderableProjectGroupingFieldsChange(previousRenderable, nextRenderable),
         needsReachablePeerReevaluation: didSessionListRenderableReachabilityPeerFieldsChange(previousRenderable, nextRenderable),
     };

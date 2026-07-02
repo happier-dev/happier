@@ -16,6 +16,7 @@ import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { SessionFullscreenPaneSafeAreaView } from '@/components/sessions/panes/SessionFullscreenPaneSafeAreaView';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -28,11 +29,12 @@ export default function FilesScreenRoute() {
     const routeScope = React.useMemo(() => createSessionRouteServerScope(params), [params]);
     const { id: sessionIdParam } = params;
     const sessionId = normalizeSessionId(sessionIdParam);
-    const sessionHydrated = useHydrateSessionForRoute(
+    const routeHydrationState = useHydrateSessionForRoute(
         sessionId,
         'SessionFilesRoute.ensureSessionVisible',
         routeScope.hydrationOptions,
     );
+    const sessionHydrated = isSessionRouteHydrationAvailable(routeHydrationState);
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
     const scopeId = `session:${sessionId}`;
     const pane = useAppPaneScope(scopeId);
@@ -93,7 +95,7 @@ export default function FilesScreenRoute() {
         safeRouterBack({ router, navigation, fallbackHref: routeScope.buildHref(sessionId) });
     }, [closeRight, navigation, routeScope, router, sessionId]);
 
-    if (!sessionId) {
+    if (!sessionId || isSessionRouteHydrationMissing(routeHydrationState)) {
         return <SessionInvalidLinkFallback />;
     }
 
@@ -110,6 +112,7 @@ export default function FilesScreenRoute() {
                         surface="browse"
                         safeAreaPadding={false}
                         routeServerId={routeScope.serverId}
+                        routeHydrationState={routeHydrationState}
                     />
                 ) : (
                     <SessionRightPanel

@@ -61,7 +61,7 @@ function isCanonicalAgentId(value: unknown): value is CanonicalAgentId {
 
 export function getAgentUiConfig(agentId: string | null | undefined): AgentUiConfig {
     if (isCanonicalAgentId(agentId)) {
-        return CANONICAL_AGENTS_UI[agentId];
+        return CANONICAL_AGENTS_UI[agentId] ?? UNKNOWN_AGENT_UI;
     }
     return UNKNOWN_AGENT_UI;
 }

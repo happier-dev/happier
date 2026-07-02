@@ -27,6 +27,37 @@ const buildDataKeyCredentialsForTokenMock = vi.hoisted(() => vi.fn(async (token:
 const serverRuntimeState = vi.hoisted(() => ({
     serverUrl: null as string | null,
 }));
+const applyBrandHeroSeenMock = vi.hoisted(() => vi.fn());
+const wizardControllerMock = vi.hoisted(() => {
+    const goToStep = vi.fn();
+    return {
+        goToStep,
+        lastProps: null as (Record<string, unknown> & {
+            initialStepId?: unknown;
+            onLoginWithMtls?: () => Promise<void> | void;
+        }) | null,
+        current: {
+            stepId: 'welcome',
+            currentStepIndex: 0,
+            stepCount: 4,
+            contentTransitionDirection: 'replace',
+            showBack: false,
+            showSkip: undefined,
+            onBack: null,
+            onSkip: null,
+            onPrimary: null,
+            primaryLabel: null,
+            primaryDisabled: false,
+            skipLabel: null,
+            skipDisabled: false,
+            title: 'welcome',
+            subtitle: null,
+            footerHint: null,
+            body: null as React.ReactNode,
+            goToStep,
+        },
+    };
+});
 const authEntryOptionsState = vi.hoisted(() => ({
     current: {
         serverAvailability: 'ready',
@@ -153,6 +184,30 @@ vi.mock('@/sync/domains/server/readConfiguredServerUrlEnv', () => ({
 vi.mock('@/components/onboarding/surfaces/OnboardingWizardSurface', () => ({
     OnboardingWizardSurface: (props: Record<string, unknown>) =>
         React.createElement('OnboardingWizardSurface', props, props.shellChrome as React.ReactNode),
+    OnboardingWizardSurfacePresentation: (props: Record<string, unknown>) =>
+        React.createElement('OnboardingWizardSurfacePresentation', props, props.shellChrome as React.ReactNode),
+}));
+
+vi.mock('@/components/onboarding/surfaces/useOnboardingWizardController', () => ({
+    useOnboardingWizardController: (props: Record<string, unknown>) => {
+        wizardControllerMock.lastProps = props;
+        return wizardControllerMock.current;
+    },
+}));
+
+vi.mock('@/components/onboarding/unauthShell', () => ({
+    UnauthenticatedSplitShell: (props: Record<string, unknown>) =>
+        React.createElement(
+            'UnauthenticatedSplitShell',
+            props,
+            props.children as React.ReactNode,
+            React.createElement('BrandHeroGetStarted', {
+                key: 'brand-hero-get-started',
+                testID: 'brand-hero-get-started',
+                onPress: props.onBrandHeroGetStarted,
+            }),
+        ),
+    useApplyBrandHeroSeen: () => applyBrandHeroSeenMock,
 }));
 
 vi.mock('@/components/ui/feedback/AppUpdateStatusTag', () => ({
@@ -206,6 +261,18 @@ describe('PreAuthOnboardingWizardEntry', () => {
         loginWithCredentialsMock.mockReset();
         runtimeFetchMock.mockReset();
         buildDataKeyCredentialsForTokenMock.mockClear();
+        applyBrandHeroSeenMock.mockReset();
+        wizardControllerMock.goToStep.mockReset();
+        wizardControllerMock.lastProps = null;
+        wizardControllerMock.current = {
+            ...wizardControllerMock.current,
+            stepId: 'welcome',
+            contentTransitionDirection: 'replace',
+            showBack: false,
+            onBack: null,
+            body: React.createElement('WizardBody', { testID: 'wizard-body' }),
+            goToStep: wizardControllerMock.goToStep,
+        };
         routerMocks.push.mockReset();
         routerMocks.replace.mockReset();
         routerMocks.back.mockReset();
@@ -237,30 +304,32 @@ describe('PreAuthOnboardingWizardEntry', () => {
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
 
-        const wizard = screen.findByType('OnboardingWizardSurface' as never);
-        expect(wizard.props.initialStepId).toBe('relay_select');
+        expect(wizardControllerMock.lastProps?.initialStepId).toBe('relay_select');
+        const shell = screen.findByType('UnauthenticatedSplitShell' as never);
+        expect(shell.props.stepId).toBe('welcome');
     });
 
-    it('wraps the onboarding wizard in a top-aligned BaseModal on narrow web so the wizard can use fullscreen presentation', async () => {
+    it('renders the unauth split shell directly on narrow web without the legacy modal wrapper', async () => {
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
 
-        const modal = screen.findByType('BaseModal' as never);
-        expect(modal.props.showBackdrop).toBe(true);
-        expect(modal.props.webPlacement).toBe('top');
+        expect(screen.findAllByType('BaseModal' as never)).toHaveLength(0);
+        expect(screen.findByType('UnauthenticatedSplitShell' as never)).toBeTruthy();
+        const wizard = screen.findByType('OnboardingWizardSurfacePresentation' as never);
+        expect(wizard.props.wizardChromeMode).toBe('bare');
     });
 
-    it('does not wrap the onboarding wizard in BaseModal on Tauri desktop (window owns the surface)', async () => {
+    it('renders the unauth split shell on Tauri desktop with bare wizard presentation', async () => {
         tauriDesktopState.value = true;
 
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
 
         expect(screen.findAllByType('BaseModal' as never)).toHaveLength(0);
-        const wizard = screen.findByType('OnboardingWizardSurface' as never);
+        expect(screen.findByType('UnauthenticatedSplitShell' as never)).toBeTruthy();
+        const wizard = screen.findByType('OnboardingWizardSurfacePresentation' as never);
         expect(wizard).toBeTruthy();
-        expect(wizard.props.wizardChromeMode).toBe('embedded');
-        expect(wizard.props.wizardLayoutPresentation).toBe('fullscreen');
+        expect(wizard.props.wizardChromeMode).toBe('bare');
     });
 
     it('passes a shell-owned chrome host into the onboarding wizard surface', async () => {
@@ -270,7 +339,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
 
-        const wizard = screen.findByType('OnboardingWizardSurface' as never);
+        const wizard = screen.findByType('OnboardingWizardSurfacePresentation' as never);
         expect(wizard.props.shellChrome).toBeTruthy();
         expect(screen.findByTestId('desktop-window-controls-host')).toBeTruthy();
         expect(screen.findByTestId('desktop-window-controls-slot')).toBeTruthy();
@@ -281,19 +350,29 @@ describe('PreAuthOnboardingWizardEntry', () => {
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
 
-        const wizard = screen.findByType('OnboardingWizardSurface' as never);
+        const wizard = screen.findByType('OnboardingWizardSurfacePresentation' as never);
         expect(wizard.props.shellChrome ?? null).toBeNull();
         expect(screen.findAllByType('AppUpdateStatusTag' as never)).toHaveLength(0);
     });
 
-    it('routes the change-relay action to the wizard relay selection step', async () => {
+    it('routes the shell footer relay action to the wizard relay selection step', async () => {
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
 
-        const wizard = screen.findByType('OnboardingWizardSurface' as never);
-        await wizard.props.onChangeRelayViaServerConfig?.();
+        const shell = screen.findByType('UnauthenticatedSplitShell' as never);
+        await shell.props.onOpenRelayCustomFlow?.();
 
-        expect(routerMocks.replace).toHaveBeenCalledWith('/?happier_wizard_step=relay_select');
+        expect(wizardControllerMock.goToStep).toHaveBeenCalledWith('relay_select');
+    });
+
+    it('writes the shell-local brand hero seen flag without changing wizard step history', async () => {
+        const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
+        const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
+
+        screen.pressByTestId('brand-hero-get-started');
+
+        expect(applyBrandHeroSeenMock).toHaveBeenCalledTimes(1);
+        expect(wizardControllerMock.goToStep).not.toHaveBeenCalled();
     });
 
     it('uses runtimeFetch instead of global fetch for web mtls login', async () => {
@@ -310,10 +389,9 @@ describe('PreAuthOnboardingWizardEntry', () => {
 
         const { PreAuthOnboardingWizardEntry } = await import('./PreAuthOnboardingWizardEntry');
         const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
-        const wizard = screen.findByType('OnboardingWizardSurface' as never);
 
         await act(async () => {
-            await wizard.props.onLoginWithMtls?.();
+            await wizardControllerMock.lastProps?.onLoginWithMtls?.();
         });
 
         expect(fetchMock).not.toHaveBeenCalled();

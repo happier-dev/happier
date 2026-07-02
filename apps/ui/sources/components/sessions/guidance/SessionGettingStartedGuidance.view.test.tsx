@@ -11,6 +11,9 @@ const routerPushSpy = vi.fn();
 const mockEnv = vi.hoisted(() => ({
   iconsRenderAsText: false,
 }));
+const summaryMockState = vi.hoisted(() => ({
+  renderCount: 0,
+}));
 
 vi.mock('expo-clipboard', () => ({
   setStringAsync: vi.fn(async (_text: string) => {}),
@@ -41,6 +44,17 @@ vi.mock('@/constants/Typography', () => ({
     mono: () => ({}),
   },
 }));
+
+vi.mock('./SessionGettingStartedSummary', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./SessionGettingStartedSummary')>();
+  return {
+    ...actual,
+    SessionGettingStartedSummary: (props: any) => {
+      summaryMockState.renderCount += 1;
+      return React.createElement(actual.SessionGettingStartedSummary, props);
+    },
+  };
+});
 
 installSessionGuidanceCommonModuleMocks({
   router: async () => {
@@ -92,6 +106,32 @@ describe('SessionGettingStartedGuidanceView', () => {
 
     expect(screen.findByTestId('session-getting-started-open-setup')).not.toBeNull();
     expect(screen.findAllByType('RoundButton' as any)).toHaveLength(1);
+  });
+
+  it('skips rerendering the guidance view when props are equal by value', async () => {
+    const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
+    summaryMockState.renderCount = 0;
+    const createElement = () => (
+      <SessionGettingStartedGuidanceView
+        variant="primaryPane"
+        model={{
+          kind: 'select_session',
+          targetLabel: 'Company',
+          serverUrl: 'https://api.company.example',
+          serverName: 'company',
+          showServerSetup: false,
+        }}
+      />
+    );
+
+    const screen = await renderScreen(createElement());
+    expect(summaryMockState.renderCount).toBe(1);
+
+    act(() => {
+      screen.tree.update(createElement());
+    });
+
+    expect(summaryMockState.renderCount).toBe(1);
   });
 
   it('hides terminal follow-up when setup is available', async () => {

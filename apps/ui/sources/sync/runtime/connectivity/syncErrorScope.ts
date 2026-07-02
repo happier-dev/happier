@@ -1,3 +1,5 @@
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+
 type ServerScopedSyncError = Readonly<{
     serverId?: string | null;
 }> | null | undefined;
@@ -13,5 +15,5 @@ export function selectSyncErrorForServer<T extends ServerScopedSyncError>(
     if (!syncErrorServerId) {
         return syncError;
     }
-    return syncErrorServerId === String(serverId ?? '').trim() ? syncError : null;
+    return areServerProfileIdentifiersEquivalent(syncErrorServerId, String(serverId ?? '').trim()) ? syncError : null;
 }

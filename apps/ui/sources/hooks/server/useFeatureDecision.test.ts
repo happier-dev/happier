@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderHook } from '@/dev/testkit';
 import { buildServerFeaturesResponse, stubServerFeaturesFetch, stubServerFeaturesFetchFailure } from './serverFeaturesTestUtils';
@@ -117,6 +118,41 @@ describe('useFeatureDecision', () => {
         await expect(hook.rerender({ scope: { scopeKind: 'runtime' } })).resolves.toMatchObject({
             state: 'enabled',
         });
+    });
+
+    it('does not rerender local-only decisions for unrelated account settings', async () => {
+        getStorage().getState().applySettingsLocal({
+            experiments: true,
+            featureToggles: { 'zen.navigation': true },
+            analyticsOptOut: false,
+        });
+
+        const { useFeatureDecision } = await import('./useFeatureDecision');
+        let renderCount = 0;
+        const hook = await renderHook(() => {
+            renderCount += 1;
+            return useFeatureDecision('zen.navigation');
+        });
+
+        expect(hook.getCurrent()?.state).toBe('enabled');
+        const rendersAfterMount = renderCount;
+
+        await act(async () => {
+            getStorage().getState().applySettingsLocal({ analyticsOptOut: true });
+        });
+
+        expect(renderCount).toBe(rendersAfterMount);
+
+        await act(async () => {
+            getStorage().getState().applySettingsLocal({
+                featureToggles: { 'zen.navigation': false },
+            });
+        });
+
+        expect(renderCount).toBeGreaterThan(rendersAfterMount);
+        expect(hook.getCurrent()?.state).toBe('disabled');
+
+        await hook.unmount();
     });
 
     it('returns unsupported when the features endpoint is missing', async () => {

@@ -77,6 +77,70 @@ describe('CodeLineRow native review affordance', () => {
         });
 
         expect(onPressAddComment).toHaveBeenCalledWith(line);
-        expect(onPressLine).toHaveBeenCalledWith(line);
+        expect(onPressLine).toHaveBeenCalledWith(line, undefined);
+    });
+
+    it('can suppress inactive native comment affordances while preserving row comment gestures', async () => {
+        const { CodeLineRow } = await import('./CodeLineRow');
+        const onPressAddComment = vi.fn();
+
+        const line = {
+            id: '1',
+            sourceIndex: 0,
+            kind: 'add' as const,
+            oldLine: null,
+            newLine: 1,
+            renderPrefixText: '+',
+            renderCodeText: 'const selected = true;',
+            renderIsHeaderLine: false,
+            selectable: true,
+        };
+
+        const screen = await renderScreen(<CodeLineRow
+            line={line}
+            selected={false}
+            onPressAddComment={onPressAddComment}
+            showInactiveCommentAffordance={false}
+        />);
+
+        expect(screen.tree.findAllByProps({ testID: 'review-comment-line-affordance-lane' })).toHaveLength(0);
+
+        const rowPressable = screen.tree
+            .findAllByType('Pressable' as any)
+            .find((node) => typeof node.props.onLongPress === 'function');
+
+        act(() => {
+            rowPressable!.props.onLongPress();
+        });
+
+        expect(onPressAddComment).toHaveBeenCalledWith(line);
+    });
+
+    it('keeps active native comment affordances visible when inactive affordances are suppressed', async () => {
+        const { CodeLineRow } = await import('./CodeLineRow');
+        const onPressAddComment = vi.fn();
+
+        const line = {
+            id: '1',
+            sourceIndex: 0,
+            kind: 'add' as const,
+            oldLine: null,
+            newLine: 1,
+            renderPrefixText: '+',
+            renderCodeText: 'const selected = true;',
+            renderIsHeaderLine: false,
+            selectable: true,
+        };
+
+        const screen = await renderScreen(<CodeLineRow
+            line={line}
+            selected={false}
+            onPressAddComment={onPressAddComment}
+            commentActive
+            showInactiveCommentAffordance={false}
+        />);
+
+        expect(screen.findByProps({ testID: 'review-comment-line-affordance-lane' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'review-comment-line-affordance' })).toBeTruthy();
     });
 });

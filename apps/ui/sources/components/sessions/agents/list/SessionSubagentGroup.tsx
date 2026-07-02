@@ -108,9 +108,12 @@ export const SessionSubagentGroup = React.memo((props: Readonly<{
                 teamId: deletableTeamId,
             },
         });
-        fireAndForget(sync.sendMessage(props.sessionId, structured.text, structured.displayText, structured.metaOverrides), {
-            tag: 'SessionSubagentGroup.deleteTeam',
-        });
+        fireAndForget(
+            sync.sendMessage(props.sessionId, structured.text, structured.displayText, structured.metaOverrides, {
+                bypassPendingQueueReason: 'subagent_command',
+            }),
+            { tag: 'SessionSubagentGroup.deleteTeam' },
+        );
     }, [deletableTeamId, props.sessionId]);
     const launchTeammate = React.useCallback(() => {
         if (!launchableTeamId || typeof props.onLaunchTeammate !== 'function') return;

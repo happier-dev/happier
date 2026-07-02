@@ -242,9 +242,7 @@ pub(crate) fn ensure_pet_overlay_window<R: Runtime>(
         builder
     };
 
-    let window = builder
-        .build()
-        .map_err(|error| error.to_string())?;
+    let window = builder.build().map_err(|error| error.to_string())?;
 
     window
         .set_background_color(spec.background_color)

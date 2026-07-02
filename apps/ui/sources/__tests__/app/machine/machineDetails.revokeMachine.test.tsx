@@ -126,7 +126,10 @@ vi.mock('@/hooks/ui/useMountedShouldContinue', () => ({
     useMountedShouldContinue: () => () => true,
 }));
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({ useMachineCapabilitiesCache: () => ({ state: { status: 'idle' }, refresh: vi.fn() }) }));
-vi.mock('@/sync/domains/server/serverProfiles', () => ({ getActiveServerId: () => 'server-a' }));
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
+    getActiveServerId: () => 'server-a',
+}));
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({ setActiveServerAndSwitch: vi.fn(async () => true) }));
 vi.mock('@/sync/sync', () => ({ sync: { refreshMachinesThrottled: refreshMachinesThrottledSpy, refreshMachines: vi.fn(), retryNow: vi.fn() } }));
 vi.mock('@/utils/system/fireAndForget', () => ({
@@ -272,15 +275,18 @@ describe('MachineDetailScreen (revoke/forget machine)', () => {
         });
 
         expect(showSpy).toHaveBeenCalledTimes(1);
-        expect(showSpy.mock.calls[0]?.[0]).toMatchObject({
+        const showOptions = showSpy.mock.calls[0]?.[0];
+        expect(showOptions).toMatchObject({
             props: expect.objectContaining({
                 onSelectCandidate: expect.any(Function),
             }),
             chrome: expect.objectContaining({
                 testID: 'machine-replacement-picker-modal',
+                scrollHost: 'body',
             }),
         });
-        expect(showSpy.mock.calls[0]?.[0]?.props?.candidates).toHaveLength(5);
+        expect(showOptions?.chrome).not.toHaveProperty('layout');
+        expect(showOptions?.props?.candidates).toHaveLength(5);
         expect(replaceSpy).not.toHaveBeenCalled();
     });
 

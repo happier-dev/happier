@@ -52,8 +52,6 @@ describe('McpWorkspaceRootPickerModal openers', () => {
                 secrets={[]}
                 onChangeSecrets={() => {}}
                 machines={[machine]}
-                favoriteDirectories={[]}
-                onChangeFavoriteDirectories={() => {}}
                 onChange={() => {}}
                 onDelete={() => {}}
             />,

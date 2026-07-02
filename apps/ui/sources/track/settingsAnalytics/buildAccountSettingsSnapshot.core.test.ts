@@ -60,6 +60,7 @@ describe('buildAccountSettingsSnapshot', () => {
             avatarStyle: 'gradient',
             sessionListActiveGroupingV1: 'date',
             sessionListInactiveGroupingV1: 'project',
+            sessionListSectionModeV1: 'single',
             useMachinePickerSearch: true,
             usePathPickerSearch: true,
         });
@@ -83,6 +84,7 @@ describe('buildAccountSettingsSnapshot', () => {
         expect(snapshot.properties.acct_setting__avatarStyle).toBe('gradient');
         expect(snapshot.properties.acct_setting__sessionListActiveGroupingV1).toBe('date');
         expect(snapshot.properties.acct_setting__sessionListInactiveGroupingV1).toBe('project');
+        expect(snapshot.properties.acct_setting__sessionListSectionModeV1).toBe('single');
         expect(snapshot.properties.acct_setting__useMachinePickerSearch).toBe(true);
         expect(snapshot.properties.acct_setting__usePathPickerSearch).toBe(true);
     });

@@ -3,7 +3,18 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import {
+    createModelBackedSessionItemTestComponent,
+    type ModelBackedSessionItemTestProps,
+} from './sessionItemRowViewModelTestFixture';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import {
+    SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_MARK_READ_ID,
+    SESSION_ACTION_MARK_UNREAD_ID,
+    SESSION_ACTION_MOVE_TO_FOLDER_ID,
+    SESSION_ACTION_STOP_ID,
+} from '@/components/sessions/actions/sessionActionIds';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -137,6 +148,11 @@ installSessionShellCommonModuleMocks({
     },
 });
 
+async function importSessionItem() {
+    const { SessionItem } = await import('./SessionItem');
+    return createModelBackedSessionItemTestComponent(SessionItem);
+}
+
 describe('SessionItem server-scoped mutations', () => {
     afterEach(() => {
         standardCleanup();
@@ -149,7 +165,7 @@ describe('SessionItem server-scoped mutations', () => {
         readStateSpy.mockClear();
         modalAlertSpy.mockClear();
 
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const session = {
             id: 'sess_1',
@@ -213,7 +229,7 @@ describe('SessionItem server-scoped mutations', () => {
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
 
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const session = {
             id: 'sess_2',
@@ -284,7 +300,7 @@ describe('SessionItem server-scoped mutations', () => {
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
 
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const session = {
             id: 'sess_stale_inactive',
@@ -350,7 +366,7 @@ describe('SessionItem server-scoped mutations', () => {
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
 
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const session = {
             id: 'sess_3',
@@ -415,7 +431,7 @@ describe('SessionItem server-scoped mutations', () => {
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
 
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const session = {
             id: 'sess_active_archive',
@@ -450,13 +466,13 @@ describe('SessionItem server-scoped mutations', () => {
 
         const contextMenus = screen.root.findAll((node: any) => node.type === 'ContextMenu');
         const moreMenu = contextMenus.find((node: any) =>
-            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === 'archive'),
+            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === SESSION_ACTION_ARCHIVE_ID),
         );
         expect(moreMenu).toBeTruthy();
-        expect(moreMenu!.props.items.some((item: any) => item?.id === 'stop')).toBe(true);
+        expect(moreMenu!.props.items.some((item: any) => item?.id === SESSION_ACTION_STOP_ID)).toBe(true);
 
         await act(async () => {
-            moreMenu!.props.onSelect('archive');
+            moreMenu!.props.onSelect(SESSION_ACTION_ARCHIVE_ID);
         });
 
         expect(modalConfirmSpy).toHaveBeenCalledWith(
@@ -481,7 +497,7 @@ describe('SessionItem server-scoped mutations', () => {
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
 
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const session = {
             id: 'sess_4',
@@ -542,12 +558,13 @@ describe('SessionItem server-scoped mutations', () => {
 
     it('offers manual mark-unread in the context menu and uses server scope', async () => {
         readStateSpy.mockClear();
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const session = {
             id: 'sess_read',
             seq: 3,
             lastViewedSessionSeq: 3,
+            latestTurnStatus: 'completed',
             createdAt: 1,
             updatedAt: 1,
             active: false,
@@ -577,21 +594,63 @@ describe('SessionItem server-scoped mutations', () => {
         );
 
         const contextMenu = screen.root.findAll((node: any) => node.type === 'ContextMenu').find((node: any) =>
-            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === 'session.mark-unread'),
+            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === SESSION_ACTION_MARK_UNREAD_ID),
         );
         expect(contextMenu).toBeTruthy();
 
         await act(async () => {
-            contextMenu!.props.onSelect('session.mark-unread');
+            contextMenu!.props.onSelect(SESSION_ACTION_MARK_UNREAD_ID);
         });
 
         expect(readStateSpy).toHaveBeenCalledWith('sess_read', 'unread', { serverId: 'server_read' });
     });
 
+    it('does not offer read-state actions in the context menu from non-terminal raw seq', async () => {
+        const SessionItem = await importSessionItem();
+
+        const session = {
+            id: 'sess_raw_seq',
+            seq: 5,
+            lastViewedSessionSeq: 4,
+            latestTurnStatus: 'in_progress',
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any;
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_raw"
+                serverName="Server Raw"
+                showServerBadge={true}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        const contextMenus = screen.root.findAll((node: any) => node.type === 'ContextMenu');
+        expect(contextMenus.some((node: any) =>
+            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === SESSION_ACTION_MARK_UNREAD_ID || item?.id === SESSION_ACTION_MARK_READ_ID),
+        )).toBe(false);
+    });
+
     it('offers session folder move targets in the context menu', async () => {
         const moveToFolder = vi.fn();
-        const { SessionItem } = await import('./SessionItem');
-        type FolderAwareSessionItemProps = React.ComponentProps<typeof SessionItem> & {
+        const SessionItem = await importSessionItem();
+        type FolderAwareSessionItemProps = ModelBackedSessionItemTestProps & {
             folderMoveTargets?: ReadonlyArray<{
                 id: string;
                 folderId: string | null;
@@ -659,27 +718,30 @@ describe('SessionItem server-scoped mutations', () => {
         );
 
         const contextMenu = screen.root.findAll((node: any) => node.type === 'ContextMenu').find((node: any) =>
-            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === 'session.move-to-folder'),
+            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === SESSION_ACTION_MOVE_TO_FOLDER_ID),
         );
         expect(contextMenu).toBeTruthy();
         expect(contextMenu!.props.items.some((item: any) => item?.id === 'session-folder-move-planning')).toBe(false);
 
-        const moveToFolderItem = contextMenu!.props.items.find((item: any) => item?.id === 'session.move-to-folder');
+        const moveToFolderItem = contextMenu!.props.items.find((item: any) => item?.id === SESSION_ACTION_MOVE_TO_FOLDER_ID);
         expect(moveToFolderItem).toEqual(expect.objectContaining({
-            id: 'session.move-to-folder',
+            id: SESSION_ACTION_MOVE_TO_FOLDER_ID,
             title: 'sessionsList.moveToFolder',
         }));
         expect(moveToFolderItem.submenu.items).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 id: 'session-folder-move-root',
+                testID: 'dropdown-option-move-to-folder_null',
                 title: 'Workspace root',
             }),
             expect.objectContaining({
                 id: 'session-folder-move-planning',
+                testID: 'dropdown-option-move-to-folder_planning',
                 title: 'Planning',
             }),
             expect.objectContaining({
                 id: 'session-folder-move-planning-review',
+                testID: 'dropdown-option-move-to-folder_planning-review',
                 title: 'Review',
                 rowContainerStyle: expect.objectContaining({ paddingLeft: expect.any(Number) }),
             }),
@@ -703,7 +765,7 @@ describe('SessionItem server-scoped mutations', () => {
         const onMoveToWorkspaceRoot = vi.fn();
         const onMoveUp = vi.fn();
         const onMoveDown = vi.fn();
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const session = {
             id: 'sess_accessible_move',
@@ -750,14 +812,14 @@ describe('SessionItem server-scoped mutations', () => {
         );
 
         const contextMenu = screen.root.findAll((node: any) => node.type === 'ContextMenu').find((node: any) =>
-            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === 'session.move-to-folder'),
+            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === SESSION_ACTION_MOVE_TO_FOLDER_ID),
         );
         expect(contextMenu).toBeTruthy();
-        const moveToFolderItem = contextMenu!.props.items.find((item: any) => item?.id === 'session.move-to-folder');
+        const moveToFolderItem = contextMenu!.props.items.find((item: any) => item?.id === SESSION_ACTION_MOVE_TO_FOLDER_ID);
         expect(moveToFolderItem.submenu).toBeUndefined();
 
         await act(async () => {
-            contextMenu!.props.onSelect('session.move-to-folder');
+            contextMenu!.props.onSelect(SESSION_ACTION_MOVE_TO_FOLDER_ID);
         });
         expect(onMoveToFolder).toHaveBeenCalledTimes(1);
 
@@ -783,7 +845,7 @@ describe('SessionItem server-scoped mutations', () => {
     });
 
     it('hides manual read-state actions for archived sessions', async () => {
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const session = {
             id: 'sess_archived_read',
@@ -820,7 +882,7 @@ describe('SessionItem server-scoped mutations', () => {
 
         const contextMenus = screen.root.findAll((node: any) => node.type === 'ContextMenu');
         expect(contextMenus.some((node: any) =>
-            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === 'session.mark-unread' || item?.id === 'session.mark-read'),
+            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === SESSION_ACTION_MARK_UNREAD_ID || item?.id === SESSION_ACTION_MARK_READ_ID),
         )).toBe(false);
     });
 });

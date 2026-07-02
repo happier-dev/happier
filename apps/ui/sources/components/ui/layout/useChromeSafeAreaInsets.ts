@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
+import { Platform, useWindowDimensions } from 'react-native';
 import * as safeAreaContext from 'react-native-safe-area-context';
 import type { EdgeInsets } from 'react-native-safe-area-context';
 
@@ -8,6 +8,14 @@ import { isDesktopActivityOverlayWindowContext } from '@/activity/adapters/deskt
 type Edge = 'top' | 'bottom' | 'left' | 'right';
 
 const CSS_SAFE_AREA_VAR_PREFIX = '--happier-safe-area-';
+const UNKNOWN_VIEWPORT_KEY = 'unknown';
+
+type CachedNativeSafeAreaInsets = Readonly<{
+    insets: EdgeInsets;
+    viewportKey: string;
+}>;
+
+let cachedNativeSafeAreaInsets: CachedNativeSafeAreaInsets | null = null;
 
 function parseCssPx(value: string): number {
     const raw = value.trim();
@@ -78,8 +86,39 @@ export function mergeSafeAreaInsets(primary: EdgeInsets, fallback: EdgeInsets): 
     };
 }
 
+function hasAnyPositiveInset(insets: EdgeInsets): boolean {
+    return insets.top > 0 || insets.bottom > 0 || insets.left > 0 || insets.right > 0;
+}
+
+function createViewportKey(width: number, height: number): string {
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        return UNKNOWN_VIEWPORT_KEY;
+    }
+
+    return `${Math.round(width)}x${Math.round(height)}`;
+}
+
+function resolveNativeSafeAreaInsets(
+    primary: EdgeInsets,
+    fallback: EdgeInsets,
+    viewportKey: string,
+): EdgeInsets {
+    const merged = mergeSafeAreaInsets(primary, fallback);
+    if (hasAnyPositiveInset(merged)) {
+        cachedNativeSafeAreaInsets = { insets: merged, viewportKey };
+        return merged;
+    }
+
+    if (cachedNativeSafeAreaInsets?.viewportKey === viewportKey) {
+        return mergeSafeAreaInsets(merged, cachedNativeSafeAreaInsets.insets);
+    }
+
+    return merged;
+}
+
 export function useChromeSafeAreaInsets(): EdgeInsets {
     const isDesktopOverlayWindow = isDesktopActivityOverlayWindowContext();
+    const dimensions = useWindowDimensions();
     const insets = safeAreaContext.useSafeAreaInsets();
     const nativeFallback = React.useMemo<EdgeInsets>(() => {
         if (Platform.OS === 'web') {
@@ -141,7 +180,11 @@ export function useChromeSafeAreaInsets(): EdgeInsets {
     }
 
     if (Platform.OS !== 'web') {
-        return mergeSafeAreaInsets(insets, nativeFallback);
+        return resolveNativeSafeAreaInsets(
+            insets,
+            nativeFallback,
+            createViewportKey(dimensions.width, dimensions.height),
+        );
     }
 
     return mergeSafeAreaInsets(insets, webFallback);

@@ -8,18 +8,26 @@ type ConnectedServiceV2ProfileProjection = Readonly<{
 }>;
 
 export function filterConnectedServiceV2ProfilesForAgent(params: Readonly<{
-  agentCore: AgentCore | null;
+  agentCore: Pick<AgentCore, 'connectedServices'> | null;
   serviceId: ConnectedServiceId;
   profiles: ReadonlyArray<ConnectedServiceV2ProfileProjection>;
 }>): ReadonlyArray<ConnectedServiceV2ProfileProjection> {
-  const allowedKinds = params.agentCore?.connectedServices?.supportedKindsByServiceId?.[params.serviceId];
-  if (!Array.isArray(allowedKinds) || allowedKinds.length === 0) return params.profiles;
-
-  const allowed = new Set<ConnectedServiceKind>(allowedKinds);
-  return params.profiles.filter((profile) => {
-    const kind = profile.kind ?? null;
-    if (!kind) return true;
-    return allowed.has(kind);
-  });
+  return params.profiles.filter((profile) => isConnectedServiceProfileKindSupportedForAgent({
+    agentCore: params.agentCore,
+    serviceId: params.serviceId,
+    kind: profile.kind ?? null,
+  }));
 }
 
+export function isConnectedServiceProfileKindSupportedForAgent(params: Readonly<{
+  agentCore: Pick<AgentCore, 'connectedServices'> | null;
+  serviceId: ConnectedServiceId;
+  kind: ConnectedServiceKind | null;
+}>): boolean {
+  const allowedKinds = params.agentCore?.connectedServices?.supportedKindsByServiceId?.[params.serviceId];
+  if (!Array.isArray(allowedKinds) || allowedKinds.length === 0) return true;
+  if (!params.kind) return true;
+
+  const allowed = new Set<ConnectedServiceKind>(allowedKinds);
+  return allowed.has(params.kind);
+}

@@ -50,6 +50,7 @@ describe('resolveSessionListRenderableChangeImpact', () => {
 
         expect(resolveSessionListRenderableChangeImpact(previous, previous)).toEqual({
             didWarmCacheRelevantRenderableChange: false,
+            isWarmCacheProgressOnlyChange: false,
             needsSessionListIndexRebuild: false,
             needsProjectManagerUpdate: false,
             needsReachablePeerReevaluation: false,
@@ -79,6 +80,41 @@ describe('resolveSessionListRenderableChangeImpact', () => {
 
         expect(resolveSessionListRenderableChangeImpact(previous, next)).toEqual({
             didWarmCacheRelevantRenderableChange: true,
+            isWarmCacheProgressOnlyChange: false,
+            needsSessionListIndexRebuild: false,
+            needsProjectManagerUpdate: false,
+            needsReachablePeerReevaluation: false,
+        });
+    });
+
+    it('classifies active streaming progress as warm-cache-only progress without reachability reevaluation', () => {
+        const previous = makeRenderable({
+            id: 's1',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 2,
+            meaningfulActivityAt: 2,
+            active: true,
+            activeAt: 2,
+            metadata: { path: '/repo', machineId: 'm1' } as any,
+            metadataVersion: 3,
+            agentStateVersion: 4,
+            pendingCount: 0,
+            pendingVersion: 1,
+            accessLevel: 'edit',
+            canApprovePermissions: true,
+        });
+        const next = makeRenderable({
+            ...previous,
+            seq: 2,
+            updatedAt: 3,
+            meaningfulActivityAt: 3,
+            activeAt: 3,
+        });
+
+        expect(resolveSessionListRenderableChangeImpact(previous, next)).toEqual({
+            didWarmCacheRelevantRenderableChange: true,
+            isWarmCacheProgressOnlyChange: true,
             needsSessionListIndexRebuild: false,
             needsProjectManagerUpdate: false,
             needsReachablePeerReevaluation: false,
@@ -103,6 +139,7 @@ describe('resolveSessionListRenderableChangeImpact', () => {
 
         expect(resolveSessionListRenderableChangeImpact(undefined, next)).toEqual({
             didWarmCacheRelevantRenderableChange: true,
+            isWarmCacheProgressOnlyChange: false,
             needsSessionListIndexRebuild: true,
             needsProjectManagerUpdate: true,
             needsReachablePeerReevaluation: true,

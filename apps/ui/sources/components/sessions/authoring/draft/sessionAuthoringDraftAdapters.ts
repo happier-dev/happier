@@ -789,6 +789,8 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
 export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly<{
     draft: SessionAuthoringDraft;
     machineId: string | null;
+    targetServerId?: string | null;
+    windowsRemoteSessionLaunchModeOverride?: NewSessionDraft['windowsRemoteSessionLaunchModeOverride'];
     entryIntent?: NewSessionDraft['entryIntent'];
     selectedSecretId: string | null;
     selectedSecretIdByProfileIdByEnvVarName: NewSessionDraft['selectedSecretIdByProfileIdByEnvVarName'];
@@ -818,11 +820,21 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
     const normalizedBackendNewSessionOptionStateByTargetKey = normalizeBackendNewSessionOptionStateByTargetKey(
         params.backendNewSessionOptionStateByTargetKey,
     );
+    const targetServerId = normalizeOptionalString(params.targetServerId);
+    const windowsOverrideMachineId = normalizeOptionalString(params.windowsRemoteSessionLaunchModeOverride?.machineId);
+    const windowsRemoteSessionLaunchModeOverride = windowsOverrideMachineId && params.windowsRemoteSessionLaunchModeOverride?.mode
+        ? {
+            machineId: windowsOverrideMachineId,
+            mode: params.windowsRemoteSessionLaunchModeOverride.mode,
+        }
+        : null;
 
     return {
         input: params.draft.displayText || params.draft.prompt,
         selectedMachineId: params.machineId,
         selectedPath: params.draft.directory,
+        ...(targetServerId ? { targetServerId } : {}),
+        ...(windowsRemoteSessionLaunchModeOverride ? { windowsRemoteSessionLaunchModeOverride } : {}),
         ...(params.entryIntent ? { entryIntent: params.entryIntent } : {}),
         ...(params.draft.checkoutCreationDraft ? { checkoutCreationDraft: params.draft.checkoutCreationDraft } : {}),
         selectedProfileId: params.draft.profileId ?? null,

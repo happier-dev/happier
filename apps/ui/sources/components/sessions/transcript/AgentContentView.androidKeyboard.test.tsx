@@ -17,6 +17,14 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     return {};
 }
 
+function findRenderedByTestId(tree: renderer.ReactTestRenderer, testID: string) {
+    const rendered = tree.root.findAllByProps({ testID }).find((node) => typeof node.type === 'string');
+    if (!rendered) {
+        throw new Error(`Expected rendered node with testID ${testID}`);
+    }
+    return rendered;
+}
+
 installTranscriptCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -71,7 +79,7 @@ afterEach(() => {
 });
 
 describe('AgentContentView (android keyboard)', () => {
-    it('uses one keyboard-aware flex layout with a painted input footer on Android', async () => {
+    it('keeps transcript content in normal flex layout while only the composer is lifted on Android', async () => {
         const { AgentContentView } = await import('./AgentContentView.native');
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -81,17 +89,14 @@ describe('AgentContentView (android keyboard)', () => {
                     placeholder={<React.Fragment>placeholder</React.Fragment>}
                 />)).tree;
 
-        const keyboardHost = tree!.root.findByProps({ testID: 'agent-content-keyboard-host' });
-        expect(keyboardHost.props.behavior).toBe('padding');
-        expect(keyboardHost.props.keyboardVerticalOffset).toBe(0);
+        const keyboardHost = findRenderedByTestId(tree!, 'agent-content-keyboard-host');
         expect(flattenStyle(keyboardHost.props.style)).toMatchObject({
             flex: 1,
             minHeight: 0,
-            minWidth: 0,
         });
         expect(flattenStyle(keyboardHost.props.style).backgroundColor).toBeTruthy();
 
-        const contentRegion = tree!.root.findByProps({ testID: 'agent-content-scroll-region' });
+        const contentRegion = findRenderedByTestId(tree!, 'agent-content-scroll-region');
         expect(flattenStyle(contentRegion.props.style)).toMatchObject({
             flex: 1,
             minHeight: 0,
@@ -99,7 +104,7 @@ describe('AgentContentView (android keyboard)', () => {
         });
         expect(flattenStyle(contentRegion.props.style).position).not.toBe('absolute');
 
-        const contentLayer = tree!.root.findByProps({ testID: 'agent-content-layer' });
+        const contentLayer = findRenderedByTestId(tree!, 'agent-content-layer');
         expect(flattenStyle(contentLayer.props.style)).toMatchObject({
             bottom: 0,
             left: 0,
@@ -110,7 +115,7 @@ describe('AgentContentView (android keyboard)', () => {
             top: 0,
         });
 
-        const placeholderLayer = tree!.root.findByProps({ testID: 'agent-content-placeholder-layer' });
+        const placeholderLayer = findRenderedByTestId(tree!, 'agent-content-placeholder-layer');
         expect(flattenStyle(placeholderLayer.props.style)).toMatchObject({
             bottom: 0,
             left: 0,
@@ -120,10 +125,17 @@ describe('AgentContentView (android keyboard)', () => {
             top: 0,
         });
 
-        const inputFooter = tree!.root.findByProps({ testID: 'agent-content-input-footer' });
+        const inputFooter = findRenderedByTestId(tree!, 'agent-content-input-footer');
         expect(flattenStyle(inputFooter.props.style).backgroundColor).toBeTruthy();
+        expect(flattenStyle(inputFooter.props.style)).toMatchObject({
+            bottom: 0,
+            left: 0,
+            position: 'absolute',
+            right: 0,
+        });
 
-        expect(tree!.findAllByType('AnimatedView' as any)).toHaveLength(0);
+        expect(tree!.findAllByType('KeyboardAvoidingView' as any)).toHaveLength(0);
+        expect(tree!.findAllByType('AnimatedView' as any)).toHaveLength(1);
         expect(tree!.findAllByType('AnimatedScrollView' as any)).toHaveLength(0);
     });
 

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, ScrollView, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
@@ -17,6 +17,7 @@ import { removeTaskLinks, getSessionsForTask } from '@/sync/domains/todos/taskSe
 import { t } from '@/text';
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance';
 
 
 export const ZenView = React.memo(() => {
@@ -149,15 +150,11 @@ export const ZenView = React.memo(() => {
     };
 
     return (
-        <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        <KeyboardAwareScrollView
             style={styles.container}
+            contentContainerStyle={{ flexGrow: 1 }}
+            keyboardShouldPersistTaps="handled"
         >
-            <ScrollView
-                style={{ flex: 1 }}
-                contentContainerStyle={{ flexGrow: 1 }}
-                keyboardShouldPersistTaps="handled"
-            >
                 <View style={[
                     styles.content,
                     { paddingBottom: insets.bottom + 20 }
@@ -270,8 +267,7 @@ export const ZenView = React.memo(() => {
                         </Text>
                     </View>
                 </View>
-            </ScrollView>
-        </KeyboardAvoidingView>
+        </KeyboardAwareScrollView>
     );
 });
 

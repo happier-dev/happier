@@ -5,7 +5,7 @@ import type { AttachmentDraft } from '@/components/sessions/attachments/attachme
 import type { SessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { SessionView } from '@/components/sessions/shell/SessionView';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 
 type SessionCanvasLeafProps = Readonly<{
     sessionId: string;
@@ -16,6 +16,7 @@ type SessionCanvasLeafProps = Readonly<{
     surfaceFocused?: boolean;
     surfaceVisible?: boolean;
     routeAnchor?: boolean;
+    routeHydrationState?: SessionRouteHydrationState | null;
     onSurfaceInteract?: () => void;
 }>;
 
@@ -24,11 +25,12 @@ export function SessionCanvasLeaf(props: SessionCanvasLeafProps) {
         const normalized = String(props.routeServerId ?? '').trim();
         return normalized.length > 0 ? normalized : undefined;
     }, [props.routeServerId]);
-    const sessionHydrated = useHydrateSessionForRoute(
+    const ownRouteHydrationState = useHydrateSessionForRoute(
         props.sessionId,
         'SessionCanvasLeaf.ensureSessionVisible',
         hydrationServerId ? { serverId: hydrationServerId } : undefined,
     );
+    const routeHydrationState = props.routeHydrationState ?? ownRouteHydrationState;
     const handleSurfaceInteract = React.useCallback(() => {
         props.onSurfaceInteract?.();
     }, [props.onSurfaceInteract]);
@@ -43,31 +45,17 @@ export function SessionCanvasLeaf(props: SessionCanvasLeafProps) {
             onTouchStart={handleSurfaceInteract}
             onFocus={handleSurfaceInteract}
         >
-            {sessionHydrated ? (
-                <SessionView
-                    id={props.sessionId}
-                    routeServerId={props.routeServerId}
-                    jumpToSeq={props.jumpToSeq ?? null}
-                    paneUrlState={props.paneUrlState}
-                    initialAttachmentDrafts={props.initialAttachmentDrafts}
-                    surfaceFocusedOverride={props.surfaceFocused}
-                    surfaceVisibleOverride={props.surfaceVisible ?? true}
-                    routeAnchorOverride={props.routeAnchor}
-                />
-            ) : (
-                <View
-                    testID={`session-canvas-loading-${props.sessionId}`}
-                    style={{
-                        flex: 1,
-                        minWidth: 0,
-                        minHeight: 0,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                    }}
-                >
-                    <ActivitySpinner />
-                </View>
-            )}
+            <SessionView
+                id={props.sessionId}
+                routeServerId={props.routeServerId}
+                routeHydrationState={routeHydrationState}
+                jumpToSeq={props.jumpToSeq ?? null}
+                paneUrlState={props.paneUrlState}
+                initialAttachmentDrafts={props.initialAttachmentDrafts}
+                surfaceFocusedOverride={props.surfaceFocused}
+                surfaceVisibleOverride={props.surfaceVisible ?? true}
+                routeAnchorOverride={props.routeAnchor}
+            />
         </View>
     );
 }

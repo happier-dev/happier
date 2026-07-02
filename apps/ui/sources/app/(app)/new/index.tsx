@@ -1,8 +1,10 @@
 import React from 'react';
-import { useLocalSearchParams } from 'expo-router';
+import { Platform, StyleSheet, View } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 
+import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
-import { useSessionGettingStartedGuidanceBaseModel } from '@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel';
+import { useShouldBlockNewSessionWithGettingStartedGuidance } from '@/components/sessions/guidance/useShouldBlockNewSessionWithGettingStartedGuidance';
 import { NewSessionSimplePanel } from '@/components/sessions/new/components/NewSessionSimplePanel';
 import { NewSessionWizard } from '@/components/sessions/new/components/NewSessionWizard';
 import { useNewSessionScreenModel } from '@/components/sessions/new/hooks/useNewSessionScreenModel';
@@ -10,11 +12,28 @@ import { NewSessionScreenPortalScope } from '@/components/sessions/new/navigatio
 import { parseNewSessionCheckoutDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import { loadNewSessionDraft } from '@/sync/domains/state/persistence';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
+
+const WEB_CLOSE_BUTTON_EDGE_INSET = 8;
 
 function hasSeededCheckoutIntent(value: unknown): boolean {
     const draft = parseNewSessionCheckoutDraft(value);
     return draft.checkoutCreationDraft !== null;
+}
+
+function NewSessionWebCloseFallback() {
+    const router = useRouter();
+
+    if (Platform.OS !== 'web') {
+        return null;
+    }
+
+    return (
+        <View pointerEvents="box-none" style={styles.webCloseButton}>
+            <AppHeaderCloseButton testID="new-session-cancel" onPress={() => safeRouterBack({ router, fallbackHref: '/' })} />
+        </View>
+    );
 }
 
 function NewSessionScreenInner() {
@@ -38,8 +57,27 @@ function NewSessionScreenInner() {
     );
 }
 
+function NewSessionUnseededContent() {
+    const shouldBlock = useShouldBlockNewSessionWithGettingStartedGuidance();
+
+    if (shouldBlock) {
+        return (
+            <>
+                <NewSessionWebCloseFallback />
+                <SessionGettingStartedGuidance variant="newSessionBlocking" />
+            </>
+        );
+    }
+
+    return (
+        <NewSessionScreenPortalScope>
+            <NewSessionWebCloseFallback />
+            <NewSessionScreenInner />
+        </NewSessionScreenPortalScope>
+    );
+}
+
 function NewSessionScreen() {
-    const baseModel = useSessionGettingStartedGuidanceBaseModel();
     const { dataId, machineId, directory } = useLocalSearchParams<{
         dataId?: string;
         spawnServerId?: string;
@@ -48,8 +86,11 @@ function NewSessionScreen() {
     }>();
     const draftScope = useActiveServerAccountScope();
 
+    const tempData = React.useMemo(() => {
+        return typeof dataId === 'string' ? peekTempData<NewSessionData>(dataId) : null;
+    }, [dataId]);
+
     const hasSeededDraftIntent = React.useMemo(() => {
-        const tempData = typeof dataId === 'string' ? peekTempData<NewSessionData>(dataId) : null;
         const persistedDraft = tempData?.replacePersistedDraftSelections === true
             ? null
             : loadNewSessionDraft(draftScope);
@@ -58,10 +99,9 @@ function NewSessionScreen() {
             ...persistedDraft,
             checkoutCreationDraft: tempData?.checkoutCreationDraft ?? persistedDraft?.checkoutCreationDraft,
         });
-    }, [dataId, draftScope]);
+    }, [draftScope, tempData]);
 
     const hasSeededRouteIntent = React.useMemo(() => {
-        const tempData = typeof dataId === 'string' ? peekTempData<NewSessionData>(dataId) : null;
         return (
             (typeof machineId === 'string' && machineId.trim().length > 0)
             || (typeof directory === 'string' && directory.trim().length > 0)
@@ -69,20 +109,27 @@ function NewSessionScreen() {
             || (typeof tempData?.directory === 'string' && tempData.directory.trim().length > 0)
             || (typeof tempData?.path === 'string' && tempData.path.trim().length > 0)
         );
-    }, [dataId, machineId, directory]);
+    }, [machineId, directory, tempData]);
 
-    if (baseModel.kind === 'connect_machine' && !hasSeededDraftIntent && !hasSeededRouteIntent) {
-        return (
-            <NewSessionScreenPortalScope>
-                <SessionGettingStartedGuidance variant="newSessionBlocking" />
-            </NewSessionScreenPortalScope>
-        );
+    if (!hasSeededDraftIntent && !hasSeededRouteIntent) {
+        return <NewSessionUnseededContent />;
     }
+
     return (
         <NewSessionScreenPortalScope>
+            <NewSessionWebCloseFallback />
             <NewSessionScreenInner />
         </NewSessionScreenPortalScope>
     );
 }
 
 export default React.memo(NewSessionScreen);
+
+const styles = StyleSheet.create({
+    webCloseButton: {
+        position: 'absolute',
+        top: WEB_CLOSE_BUTTON_EDGE_INSET,
+        right: WEB_CLOSE_BUTTON_EDGE_INSET,
+        zIndex: 20,
+    },
+});

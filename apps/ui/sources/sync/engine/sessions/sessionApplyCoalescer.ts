@@ -15,6 +15,7 @@ type TimerHandle = ReturnType<typeof setTimeout>;
 
 type SessionApplyOptions = Readonly<{
     shouldContinue?: () => boolean;
+    deferLeadingBatch?: boolean;
 }>;
 
 type QueuedSession = Readonly<{
@@ -180,12 +181,24 @@ export function createSessionApplyCoalescer(params: Readonly<{
         const nowMs = Date.now();
         const isInsideLeadingWindow = nowMs >= leadingWindowStartedAt && leadingWindowExpiresAt > nowMs;
         if (timer === null && queuedSessions.size === 0 && !isInsideLeadingWindow) {
+            leadingWindowStartedAt = nowMs;
+            leadingWindowExpiresAt = nowMs + windowMs;
+            if (options?.deferLeadingBatch === true) {
+                upsertQueued(sessions, options);
+                syncPerformanceTelemetry.count('sync.socket.sessions.coalesce.queued', {
+                    sessions: sessions.length,
+                    queued: queuedSessions.size,
+                    windowMs,
+                    maxBatchSize,
+                });
+                scheduleFlush(windowMs);
+                return;
+            }
+
             const leadingBatch = sessions.slice(0, maxBatchSize);
             const trailingSessions = sessions.slice(maxBatchSize);
             applyImmediate(leadingBatch, maxBatchSize, options);
             upsertQueued(trailingSessions, options);
-            leadingWindowStartedAt = nowMs;
-            leadingWindowExpiresAt = nowMs + windowMs;
             if (queuedSessions.size > 0) {
                 scheduleFlush(windowMs);
             }

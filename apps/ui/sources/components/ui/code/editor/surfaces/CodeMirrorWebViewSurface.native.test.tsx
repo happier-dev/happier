@@ -189,6 +189,45 @@ describe('CodeMirrorWebViewSurface (native)', () => {
         }));
     });
 
+    it('re-sends init with the latest editor document when readOnly changes before parent value catches up', async () => {
+        postMessageSpy.mockClear();
+        lastWebViewProps = null;
+
+        const onChange = vi.fn();
+        let tree: renderer.ReactTestRenderer;
+
+        tree = (await renderScreen(React.createElement(CodeMirrorWebViewSurface, {
+                    resetKey: '1',
+                    value: 'hello',
+                    language: 'markdown',
+                    onChange,
+                    readOnly: false,
+                }))).tree;
+
+        emitEnvelope({ v: 1, type: 'ready', payload: { ok: true } });
+        postMessageSpy.mockClear();
+
+        emitEnvelope({ v: 1, type: 'docChanged', payload: { doc: 'hello world' } });
+        expect(onChange).toHaveBeenCalledWith('hello world');
+
+        await act(async () => {
+            tree!.update(
+                React.createElement(CodeMirrorWebViewSurface, {
+                    resetKey: '1',
+                    value: 'hello',
+                    language: 'markdown',
+                    onChange,
+                    readOnly: true,
+                }),
+            );
+        });
+
+        expect(findPostedInitPayload(0)).toEqual(expect.objectContaining({
+            doc: 'hello world',
+            readOnly: true,
+        }));
+    });
+
     it('does not re-send init when accepting a doc change from the editor', async () => {
         postMessageSpy.mockClear();
         lastWebViewProps = null;

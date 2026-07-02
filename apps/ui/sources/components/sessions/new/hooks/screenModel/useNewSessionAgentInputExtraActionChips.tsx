@@ -46,7 +46,7 @@ export function useNewSessionAgentInputExtraActionChips(params: Readonly<{
             label: params.targetServerName,
             popoverContent: ({ requestClose, maxHeight }) => (
                 <NewSessionServerSelectionContent
-                    maxHeight={Math.min(760, Math.max(420, maxHeight))}
+                    maxHeight={Math.min(760, maxHeight)}
                     onClose={requestClose}
                     dismissOnSelection={true}
                     selectedServerId={params.targetServerId}

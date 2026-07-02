@@ -126,8 +126,8 @@ describe('KeyboardShortcutProvider', () => {
             </KeyboardShortcutProvider>,
         );
 
-        expect(nativeKeyboardState.subscribe).toHaveBeenCalledTimes(1);
-        const listener = nativeKeyboardState.subscribe.mock.calls[0]?.[0] as (event: {
+        expect(nativeKeyboardState.subscribe).toHaveBeenCalled();
+        const listener = nativeKeyboardState.subscribe.mock.calls.at(-1)?.[0] as (event: {
             key: string;
             code?: string;
             modifiers: { shift: boolean; ctrl: boolean; meta: boolean; alt: boolean };
@@ -263,6 +263,147 @@ describe('KeyboardShortcutProvider', () => {
         });
 
         expect(newSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('updates descendant scoped handler callbacks without re-registering unchanged command keys', async () => {
+        testState.platformOS = 'ios';
+        const calls: number[] = [];
+        let rerenderRegisteredChild: (() => void) | null = null;
+        const { renderScreen } = await import('@/dev/testkit');
+        const { KeyboardShortcutProvider, useKeyboardShortcutHandlers } = await import('./KeyboardShortcutProvider');
+
+        function RegisteredChild() {
+            const [version, setVersion] = React.useState(0);
+            rerenderRegisteredChild = () => setVersion((current) => current + 1);
+            useKeyboardShortcutHandlers(React.useMemo(() => ({
+                'composer.sendImmediate': () => calls.push(version),
+            }), [version]));
+            return <Child />;
+        }
+
+        await renderScreen(
+            <KeyboardShortcutProvider handlers={{}}>
+                <RegisteredChild />
+            </KeyboardShortcutProvider>,
+        );
+
+        expect(nativeKeyboardState.subscribe).toHaveBeenCalled();
+        const listener = nativeKeyboardState.subscribe.mock.calls.at(-1)?.[0] as (event: {
+            key: string;
+            code?: string;
+            modifiers: { shift: boolean; ctrl: boolean; meta: boolean; alt: boolean };
+            repeat: boolean;
+        }) => void;
+        nativeKeyboardState.subscribe.mockClear();
+
+        await act(async () => {
+            rerenderRegisteredChild?.();
+        });
+
+        expect(nativeKeyboardState.subscribe).not.toHaveBeenCalled();
+
+        await act(async () => {
+            listener({
+                key: 'Enter',
+                code: 'Enter',
+                modifiers: { shift: false, ctrl: false, meta: true, alt: false },
+                repeat: false,
+            });
+        });
+
+        expect(calls).toEqual([1]);
+    });
+
+    it('updates native root handlers without re-registering unchanged command keys', async () => {
+        testState.platformOS = 'ios';
+        const firstSendImmediate = vi.fn();
+        const secondSendImmediate = vi.fn();
+        const { renderScreen } = await import('@/dev/testkit');
+        const { KeyboardShortcutProvider } = await import('./KeyboardShortcutProvider');
+
+        const screen = await renderScreen(
+            <KeyboardShortcutProvider handlers={{ 'composer.sendImmediate': firstSendImmediate }}>
+                <Child />
+            </KeyboardShortcutProvider>,
+        );
+
+        expect(nativeKeyboardState.subscribe).toHaveBeenCalled();
+        const listener = nativeKeyboardState.subscribe.mock.calls.at(-1)?.[0] as (event: {
+            key: string;
+            code?: string;
+            modifiers: { shift: boolean; ctrl: boolean; meta: boolean; alt: boolean };
+            repeat: boolean;
+        }) => void;
+        nativeKeyboardState.subscribe.mockClear();
+
+        await screen.update(
+            <KeyboardShortcutProvider handlers={{ 'composer.sendImmediate': secondSendImmediate }}>
+                <Child />
+            </KeyboardShortcutProvider>,
+        );
+
+        expect(nativeKeyboardState.subscribe).not.toHaveBeenCalled();
+
+        await act(async () => {
+            listener({
+                key: 'Enter',
+                code: 'Enter',
+                modifiers: { shift: false, ctrl: false, meta: true, alt: false },
+                repeat: false,
+            });
+        });
+
+        expect(firstSendImmediate).not.toHaveBeenCalled();
+        expect(secondSendImmediate).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses latest native root handlers before passive effects run', async () => {
+        testState.platformOS = 'ios';
+        const firstSendImmediate = vi.fn();
+        const secondSendImmediate = vi.fn();
+        let latestNativeListener: ((event: {
+            key: string;
+            code?: string;
+            modifiers: { shift: boolean; ctrl: boolean; meta: boolean; alt: boolean };
+            repeat: boolean;
+        }) => void) | null = null;
+        nativeKeyboardState.subscribe.mockImplementation((listener) => {
+            latestNativeListener = listener as typeof latestNativeListener;
+            return { remove: vi.fn() };
+        });
+        const { renderScreen } = await import('@/dev/testkit');
+        const { KeyboardShortcutProvider } = await import('./KeyboardShortcutProvider');
+
+        function NativeDispatchOnLayout(props: Readonly<{ enabled: boolean }>) {
+            React.useLayoutEffect(() => {
+                if (!props.enabled) return;
+                latestNativeListener?.({
+                    key: 'Enter',
+                    code: 'Enter',
+                    modifiers: { shift: false, ctrl: false, meta: true, alt: false },
+                    repeat: false,
+                });
+            }, [props.enabled]);
+            return <Child />;
+        }
+
+        const screen = await renderScreen(
+            <KeyboardShortcutProvider handlers={{ 'composer.sendImmediate': firstSendImmediate }}>
+                <NativeDispatchOnLayout enabled={false} />
+            </KeyboardShortcutProvider>,
+        );
+
+        nativeKeyboardState.subscribe.mockClear();
+
+        await screen.update(
+            <KeyboardShortcutProvider handlers={{ 'composer.sendImmediate': secondSendImmediate }}>
+                <NativeDispatchOnLayout enabled />
+            </KeyboardShortcutProvider>,
+        );
+
+        expect(nativeKeyboardState.subscribe).not.toHaveBeenCalled();
+        expect(firstSendImmediate).not.toHaveBeenCalled();
+        expect(secondSendImmediate).toHaveBeenCalledTimes(1);
     });
 });
 

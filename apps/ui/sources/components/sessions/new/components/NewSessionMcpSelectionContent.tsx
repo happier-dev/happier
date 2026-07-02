@@ -25,6 +25,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemListStatic } from '@/components/ui/lists/ItemList';
+import { resolvePopoverHeightStyle } from '@/components/ui/popover';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { StatusPill, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
@@ -276,7 +277,7 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
     }, [managedResolution?.itemsByName, props.onSelectionChange, props.selection]);
 
     return (
-        <View style={[styles.container, { maxHeight: props.maxHeight }]}>
+        <View style={[styles.container, resolvePopoverHeightStyle(props.maxHeight)]}>
             <ScrollView
                 style={styles.scroll}
                 contentContainerStyle={styles.scrollContent}

@@ -6,6 +6,14 @@ export type WebHmrOptOutResolution = {
     shouldStripQueryParam: boolean;
 };
 
+export type WebHmrOptOutRuntimeState = {
+    available: boolean;
+    disabled: boolean;
+    enabled: boolean;
+    guardInstalled: boolean;
+    requiresPageReload: boolean;
+};
+
 export const WEB_HMR_OPT_OUT_QUERY_PARAM = 'happier_hmr';
 export const WEB_HMR_OPT_OUT_SESSION_STORAGE_KEY = 'happier.web.hmrOptOut';
 
@@ -92,14 +100,64 @@ type WebSocketGlobalTargetLike = {
     location?: {
         href?: string;
     };
+    __HAPPIER_WEB_HMR_OPT_OUT__?: boolean;
     __HAPPIER_WEB_HMR_OPT_OUT_WEBSOCKET_GUARD__?: typeof globalThis.__HAPPIER_WEB_HMR_OPT_OUT_WEBSOCKET_GUARD__;
 };
 
-function isWebHmrOptOutDisabled(sessionStorage: SessionStorageLike): boolean {
+function isWebHmrOptOutDisabled(
+    sessionStorage: SessionStorageLike,
+    globalTarget: WebSocketGlobalTargetLike = globalThis,
+): boolean {
     return (
         sessionStorage.getItem(WEB_HMR_OPT_OUT_SESSION_STORAGE_KEY) === 'disabled' ||
-        globalThis.__HAPPIER_WEB_HMR_OPT_OUT__ === true
+        globalTarget.__HAPPIER_WEB_HMR_OPT_OUT__ === true
     );
+}
+
+export function readWebHmrOptOutRuntimeState({
+    sessionStorage,
+    globalTarget = globalThis,
+}: {
+    sessionStorage: SessionStorageLike | null | undefined;
+    globalTarget?: WebSocketGlobalTargetLike;
+}): WebHmrOptOutRuntimeState {
+    if (!sessionStorage) {
+        return {
+            available: false,
+            disabled: false,
+            enabled: false,
+            guardInstalled: Boolean(globalTarget.__HAPPIER_WEB_HMR_OPT_OUT_WEBSOCKET_GUARD__),
+            requiresPageReload: true,
+        };
+    }
+
+    const disabled = isWebHmrOptOutDisabled(sessionStorage, globalTarget);
+    return {
+        available: true,
+        disabled,
+        enabled: !disabled,
+        guardInstalled: Boolean(globalTarget.__HAPPIER_WEB_HMR_OPT_OUT_WEBSOCKET_GUARD__),
+        requiresPageReload: true,
+    };
+}
+
+export function setWebHmrOptOutDisabledForWebTab({
+    disabled,
+    sessionStorage,
+    globalTarget = globalThis,
+}: {
+    disabled: boolean;
+    sessionStorage: SessionStorageLike;
+    globalTarget?: WebSocketGlobalTargetLike;
+}): WebHmrOptOutRuntimeState {
+    if (disabled) {
+        sessionStorage.setItem(WEB_HMR_OPT_OUT_SESSION_STORAGE_KEY, 'disabled');
+    } else {
+        sessionStorage.removeItem(WEB_HMR_OPT_OUT_SESSION_STORAGE_KEY);
+    }
+
+    globalTarget.__HAPPIER_WEB_HMR_OPT_OUT__ = disabled;
+    return readWebHmrOptOutRuntimeState({ sessionStorage, globalTarget });
 }
 
 export function shouldBlockExpoDevWebSocket({
@@ -250,7 +308,7 @@ export function installWebHmrOptOutWebSocketGuard({
             if (
                 guardState &&
                 shouldBlockExpoDevWebSocket({
-                    disabled: isWebHmrOptOutDisabled(guardState.sessionStorage),
+                    disabled: isWebHmrOptOutDisabled(guardState.sessionStorage, globalTarget),
                     socketUrl: args[0] as string | URL,
                     pageUrl: currentPageUrl,
                 })

@@ -14,24 +14,78 @@ export type ExternalSessionBrowseCandidate = Readonly<{
 
 const CANDIDATES_PAGE_LIMIT = 50;
 
+type CandidateApplyMode = 'replace' | 'append' | 'merge';
+
+function hasCandidateTitle(candidate: ExternalSessionBrowseCandidate): boolean {
+    return typeof candidate.title === 'string' && candidate.title.trim().length > 0;
+}
+
+function mergeCandidateDetails(
+    current: ExternalSessionBrowseCandidate['details'],
+    next: ExternalSessionBrowseCandidate['details'],
+): ExternalSessionBrowseCandidate['details'] {
+    if (!current) return next;
+    if (!next) return current;
+    return { ...current, ...next };
+}
+
+function mergeExternalSessionBrowseCandidate(
+    current: ExternalSessionBrowseCandidate,
+    next: ExternalSessionBrowseCandidate,
+): ExternalSessionBrowseCandidate {
+    return {
+        remoteSessionId: current.remoteSessionId,
+        title: hasCandidateTitle(next) ? next.title : current.title,
+        updatedAtMs: Math.max(current.updatedAtMs, next.updatedAtMs),
+        activity: next.activity ?? current.activity,
+        details: mergeCandidateDetails(current.details, next.details),
+    };
+}
+
+function compareExternalSessionBrowseCandidates(
+    a: ExternalSessionBrowseCandidate,
+    b: ExternalSessionBrowseCandidate,
+): number {
+    return b.updatedAtMs - a.updatedAtMs || a.remoteSessionId.localeCompare(b.remoteSessionId);
+}
+
+function mergeExternalSessionBrowseCandidates(
+    current: readonly ExternalSessionBrowseCandidate[],
+    next: readonly ExternalSessionBrowseCandidate[],
+): readonly ExternalSessionBrowseCandidate[] {
+    const merged = new Map<string, ExternalSessionBrowseCandidate>();
+    for (const candidate of current) {
+        merged.set(candidate.remoteSessionId, candidate);
+    }
+    for (const candidate of next) {
+        const existing = merged.get(candidate.remoteSessionId);
+        merged.set(candidate.remoteSessionId, existing ? mergeExternalSessionBrowseCandidate(existing, candidate) : candidate);
+    }
+    return Array.from(merged.values()).sort(compareExternalSessionBrowseCandidates);
+}
+
 export function useExternalSessionBrowseCandidates(params: Readonly<{
     machineId: string | null;
     serverId?: string | null;
     providerId: ExternalSessionsProviderId | null;
     source: ExternalSessionsSource | null;
+    searchTerm?: string;
 }>) {
-    const { machineId, providerId, source, serverId } = params;
+    const { machineId, providerId, searchTerm, source, serverId } = params;
+    const normalizedSearchTerm = typeof searchTerm === 'string' ? searchTerm.trim() : '';
     const currentScopeKey = React.useMemo(() => JSON.stringify({
         machineId,
         serverId: serverId ?? null,
         providerId,
         source,
-    }), [machineId, providerId, serverId, source]);
+        searchTerm: normalizedSearchTerm || null,
+    }), [machineId, normalizedSearchTerm, providerId, serverId, source]);
 
     const [candidates, setCandidates] = React.useState<readonly ExternalSessionBrowseCandidate[]>([]);
     const [nextCursor, setNextCursor] = React.useState<string | null>(null);
     const [loading, setLoading] = React.useState(false);
     const [loadingMore, setLoadingMore] = React.useState(false);
+    const [searchAugmenting, setSearchAugmenting] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
     const [loadedScopeKey, setLoadedScopeKey] = React.useState<string | null>(null);
 
@@ -50,32 +104,36 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             setLoadingMore(true);
         } else {
             setLoading(true);
+            setSearchAugmenting(false);
             setError(null);
         }
 
-        try {
+        const shouldStartWithFastSearch = !append && !opts?.cursor && normalizedSearchTerm.length > 0;
+        const requestCandidates = async (searchMode?: 'fast' | 'full') => {
             const request = {
                 machineId,
                 providerId,
                 source,
                 limit: CANDIDATES_PAGE_LIMIT,
+                ...(normalizedSearchTerm ? { searchTerm: normalizedSearchTerm } : {}),
                 ...(opts?.cursor ? { cursor: opts.cursor } : {}),
+                ...(searchMode ? { searchMode } : {}),
             };
-            const result = serverId
-                ? await machineExternalSessionsCandidatesList(request, { serverId })
-                : await machineExternalSessionsCandidatesList(request);
-
-            if (loadGenerationRef.current !== currentGeneration) {
-                return;
-            }
-
+            return serverId
+                ? machineExternalSessionsCandidatesList(request, { serverId })
+                : machineExternalSessionsCandidatesList(request);
+        };
+        const applyResult = (result: Awaited<ReturnType<typeof machineExternalSessionsCandidatesList>>, mode: CandidateApplyMode): boolean => {
             if (!result.ok) {
+                if (mode === 'merge') {
+                    return false;
+                }
                 setError(result.error);
                 if (!append) {
                     setCandidates([]);
                     setNextCursor(null);
                 }
-                return;
+                return false;
             }
 
             const nextItems = result.candidates.map((candidate) => ({
@@ -87,9 +145,43 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
             })) satisfies readonly ExternalSessionBrowseCandidate[];
 
             setLoadedScopeKey(currentScopeKey);
-            setCandidates((current) => append ? [...current, ...nextItems] : nextItems);
-            setNextCursor(result.nextCursor ?? null);
+            setCandidates((current) => {
+                if (mode === 'append') return [...current, ...nextItems];
+                if (mode === 'merge') return mergeExternalSessionBrowseCandidates(current, nextItems);
+                return nextItems;
+            });
+            if (mode === 'merge') {
+                setNextCursor((current) => result.nextCursor ?? (result.searchIncomplete ? current : null));
+            } else {
+                setNextCursor(result.nextCursor ?? null);
+            }
             setError(null);
+            return true;
+        };
+
+        try {
+            const result = await requestCandidates(shouldStartWithFastSearch ? 'fast' : undefined);
+
+            if (loadGenerationRef.current !== currentGeneration) {
+                return;
+            }
+
+            const ok = applyResult(result, append ? 'append' : 'replace');
+            if (!ok || !shouldStartWithFastSearch || !result.ok || !result.searchIncomplete) {
+                return;
+            }
+
+            setLoading(false);
+            setSearchAugmenting(true);
+            try {
+                const augmentedResult = await requestCandidates('full');
+                if (loadGenerationRef.current !== currentGeneration) {
+                    return;
+                }
+                applyResult(augmentedResult, 'merge');
+            } catch {
+                // Keep fast search results visible if slower augmentation fails.
+            }
         } catch (loadError) {
             if (loadGenerationRef.current !== currentGeneration) {
                 return;
@@ -107,10 +199,11 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                     setLoadingMore(false);
                 } else {
                     setLoading(false);
+                    setSearchAugmenting(false);
                 }
             }
         }
-    }, [currentScopeKey, machineId, providerId, serverId, source]);
+    }, [currentScopeKey, machineId, normalizedSearchTerm, providerId, serverId, source]);
 
     React.useEffect(() => {
         void loadCandidates();
@@ -128,6 +221,7 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
         nextCursor: scopeMatches ? nextCursor : null,
         loading,
         loadingMore,
+        searchAugmenting: scopeMatches ? searchAugmenting : false,
         error: scopeMatches ? error : null,
         loadMore,
     } as const;

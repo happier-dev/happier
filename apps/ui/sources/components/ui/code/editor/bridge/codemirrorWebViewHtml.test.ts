@@ -176,4 +176,24 @@ describe('buildCodeMirrorWebViewHtml', () => {
         expect(html).toContain('requestDoc');
         expect(html).toContain('docSnapshot');
     });
+
+    it('guards same-document host updates so cursor selection is not reset', async () => {
+        vi.resetModules();
+        vi.doMock('./codemirrorWebViewBundle.generated', () => ({
+            CODEMIRROR_WEBVIEW_BUNDLE_JS: '',
+        }));
+
+        const { buildCodeMirrorWebViewHtml } = await import('./codemirrorWebViewHtml');
+        const html = buildCodeMirrorWebViewHtml({
+            theme: createCodeMirrorWebViewTheme(),
+            wrapLines: true,
+            showLineNumbers: true,
+            changeDebounceMs: 100,
+            maxChunkBytes: 64_000,
+            uiFontScale: 1,
+            osFontScale: 1,
+        });
+
+        expect(html).toContain('view.state.doc.toString() === normalizedDoc');
+    });
 });

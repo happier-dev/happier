@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
-import { useRouter } from 'expo-router';
+import { router } from 'expo-router';
 import { Modal } from '@/modal';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
@@ -45,6 +45,11 @@ export type SessionGettingStartedGuidanceViewModel = Readonly<{
     onConnectTerminal?: () => void;
     onEnterUrlManually?: () => void;
     connectIsLoading?: boolean;
+}>;
+
+type SessionGettingStartedGuidanceViewProps = Readonly<{
+    variant: SessionGettingStartedGuidanceVariant;
+    model: SessionGettingStartedGuidanceViewModel;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -290,24 +295,29 @@ async function copyTextToClipboard(params: Readonly<{ label: string; text: strin
     }
 }
 
-export function SessionGettingStartedGuidanceView(props: Readonly<{
-    variant: SessionGettingStartedGuidanceVariant;
-    model: SessionGettingStartedGuidanceViewModel;
-}>): React.ReactElement {
+function SessionGettingStartedGuidanceViewImpl(props: SessionGettingStartedGuidanceViewProps): React.ReactElement {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const router = useRouter();
     const { model } = props;
 
     const title = getSessionGettingStartedTitle(model.kind);
     const subtitle = getSessionGettingStartedSubtitle(model.kind, model.targetLabel);
-    const steps = buildSteps(model);
     const showSummaryOnly = model.kind === 'create_session' || model.kind === 'select_session';
     const showLogo = (props.variant === 'primaryPane' || props.variant === 'newSessionBlocking')
         && model.kind !== 'create_session'
         && model.kind !== 'select_session';
     const showSetupPrimaryCard = model.kind === 'connect_machine' || model.kind === 'start_daemon';
-    const showCliFollowUp = steps.length > 0 && !showSetupPrimaryCard && !showSummaryOnly;
+    const shouldBuildCliFollowUpSteps = !showSetupPrimaryCard && !showSummaryOnly;
+    const steps = React.useMemo(() => (
+        shouldBuildCliFollowUpSteps ? buildSteps(model) : []
+    ), [
+        model.kind,
+        model.serverName,
+        model.serverUrl,
+        model.showServerSetup,
+        shouldBuildCliFollowUpSteps,
+    ]);
+    const showCliFollowUp = steps.length > 0 && shouldBuildCliFollowUpSteps;
     const showCliFollowUpTitle = false;
     const handleOpenSetup = React.useCallback(() => {
         if (model.onOpenSetup) {
@@ -315,7 +325,7 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
             return;
         }
         router.push(buildMachineSetupWizardHref({ action: 'local', step: 'setup_this_computer' }) as any);
-    }, [model.onOpenSetup, router]);
+    }, [model.onOpenSetup]);
 
     return (
         <ScrollView
@@ -442,18 +452,79 @@ export function SessionGettingStartedGuidanceView(props: Readonly<{
     );
 }
 
-function SessionGettingStartedGuidanceEnabled(props: Readonly<{ variant: SessionGettingStartedGuidanceVariant }>): React.ReactElement | null {
-    const router = useRouter();
+function areSessionGettingStartedGuidanceViewModelsEqual(
+    previous: SessionGettingStartedGuidanceViewModel,
+    next: SessionGettingStartedGuidanceViewModel,
+): boolean {
+    return previous.kind === next.kind
+        && previous.targetLabel === next.targetLabel
+        && previous.serverUrl === next.serverUrl
+        && previous.serverName === next.serverName
+        && previous.showServerSetup === next.showServerSetup
+        && previous.onOpenSetup === next.onOpenSetup
+        && previous.onStartNewSession === next.onStartNewSession
+        && previous.onConnectTerminal === next.onConnectTerminal
+        && previous.onEnterUrlManually === next.onEnterUrlManually
+        && previous.connectIsLoading === next.connectIsLoading;
+}
+
+function areSessionGettingStartedGuidanceViewPropsEqual(
+    previous: SessionGettingStartedGuidanceViewProps,
+    next: SessionGettingStartedGuidanceViewProps,
+): boolean {
+    return previous.variant === next.variant
+        && areSessionGettingStartedGuidanceViewModelsEqual(previous.model, next.model);
+}
+
+export const SessionGettingStartedGuidanceView = React.memo(
+    SessionGettingStartedGuidanceViewImpl,
+    areSessionGettingStartedGuidanceViewPropsEqual,
+);
+SessionGettingStartedGuidanceView.displayName = 'SessionGettingStartedGuidanceView';
+
+function useSessionGettingStartedGuidanceViewModelBase(
+    options: Readonly<{ ignoreConnectMachineDismissal?: boolean }> = {},
+): SessionGettingStartedGuidanceViewModel | null {
     const baseModel = useSessionGettingStartedGuidanceBaseModel();
     const dismissed = useLocalSetting('sessionGettingStartedGuidanceDismissed') === true;
+    const ignoreConnectMachineDismissal = options.ignoreConnectMachineDismissal === true;
     const onOpenSetup = React.useCallback(() => {
         router.push(buildMachineSetupWizardHref({ action: 'local', step: 'setup_this_computer' }) as any);
-    }, [router]);
+    }, []);
 
     const onStartNewSession = React.useCallback(() => {
         router.push('/new' as any);
-    }, [router]);
+    }, []);
 
+    return React.useMemo(() => {
+        if (dismissed && baseModel.kind === 'connect_machine' && !ignoreConnectMachineDismissal) {
+            return null;
+        }
+
+        return {
+            kind: baseModel.kind,
+            targetLabel: baseModel.targetLabel,
+            serverUrl: baseModel.serverUrl,
+            serverName: baseModel.serverName,
+            showServerSetup: baseModel.showServerSetup,
+            ...((baseModel.kind === 'connect_machine' || baseModel.kind === 'start_daemon') ? { onOpenSetup } : {}),
+            ...(baseModel.kind === 'create_session' || baseModel.kind === 'select_session' ? { onStartNewSession } : {}),
+        };
+    }, [
+        baseModel.kind,
+        baseModel.serverName,
+        baseModel.serverUrl,
+        baseModel.showServerSetup,
+        baseModel.targetLabel,
+        dismissed,
+        ignoreConnectMachineDismissal,
+        onOpenSetup,
+        onStartNewSession,
+    ]);
+}
+
+function SessionGettingStartedPhoneGuidanceEnabled(): React.ReactElement | null {
+    const baseViewModel = useSessionGettingStartedGuidanceViewModelBase();
     const { connectTerminal, connectWithUrl, isLoading } = useConnectTerminal();
 
     const onEnterUrlManually = React.useCallback(async () => {
@@ -471,33 +542,38 @@ function SessionGettingStartedGuidanceEnabled(props: Readonly<{ variant: Session
         }
     }, [connectWithUrl]);
 
-    const viewModel: SessionGettingStartedGuidanceViewModel = {
-        kind: baseModel.kind,
-        targetLabel: baseModel.targetLabel,
-        serverUrl: baseModel.serverUrl,
-        serverName: baseModel.serverName,
-        showServerSetup: baseModel.showServerSetup,
-        ...((baseModel.kind === 'connect_machine' || baseModel.kind === 'start_daemon') ? { onOpenSetup } : {}),
-        ...(baseModel.kind === 'create_session' || baseModel.kind === 'select_session' ? { onStartNewSession } : {}),
-        ...(props.variant === 'phone'
+    const viewModel = React.useMemo<SessionGettingStartedGuidanceViewModel | null>(() => (
+        baseViewModel
             ? {
+                ...baseViewModel,
                 onConnectTerminal: connectTerminal,
                 onEnterUrlManually,
                 connectIsLoading: isLoading,
             }
-            : {}),
-    };
+            : null
+    ), [baseViewModel, connectTerminal, isLoading, onEnterUrlManually]);
 
-    if (dismissed && baseModel.kind === 'connect_machine') {
-        return null;
-    }
+    if (!viewModel) return null;
+    return <SessionGettingStartedGuidanceView variant="phone" model={viewModel} />;
+}
 
+function SessionGettingStartedGuidanceEnabled(
+    props: Readonly<{ variant: Exclude<SessionGettingStartedGuidanceVariant, 'phone'> }>,
+): React.ReactElement | null {
+    const viewModel = useSessionGettingStartedGuidanceViewModelBase({
+        ignoreConnectMachineDismissal: props.variant === 'newSessionBlocking',
+    });
+
+    if (!viewModel) return null;
     return <SessionGettingStartedGuidanceView variant={props.variant} model={viewModel} />;
 }
 
 export function SessionGettingStartedGuidance(props: Readonly<{ variant: SessionGettingStartedGuidanceVariant }>): React.ReactElement | null {
     if (getFeatureBuildPolicyDecision(SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID) === 'deny') {
         return null;
+    }
+    if (props.variant === 'phone') {
+        return <SessionGettingStartedPhoneGuidanceEnabled />;
     }
     return <SessionGettingStartedGuidanceEnabled variant={props.variant} />;
 }

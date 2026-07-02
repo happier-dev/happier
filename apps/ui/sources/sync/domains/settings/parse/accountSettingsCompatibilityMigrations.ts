@@ -10,6 +10,7 @@ import {
 import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES, isPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 
 import { SessionTmuxMachineOverrideSchema } from '../registry/account/accountRuntimeSettingDefinitions';
+import { TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES } from '../registry/account/accountTranscriptToolSettingDefinitions';
 import { migrateAccountFeatureToggles } from './accountSettingsFeatureToggleMigration';
 import { normalizeAccountSettingsServerSelection } from './accountSettingsServerSelectionNormalization';
 
@@ -42,6 +43,10 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
                 ? (legacyMinimal.success && legacyMinimal.data ? 'narrow' : 'cozy')
                 : 'detailed';
         }
+    }
+
+    if (!('sessionListIdentityDisplay' in input) && next.sessionListDensity !== 'narrow') {
+        next.sessionListIdentityDisplay = 'avatar';
     }
 
     next.compactSessionView = next.sessionListDensity === 'cozy' || next.sessionListDensity === 'narrow';
@@ -86,6 +91,15 @@ export function applyAccountSettingsCompatibilityMigrations<TSettings extends Re
 
     if (input.sessionBusySteerSendPolicy === 'queue_for_review') {
         next.sessionBusySteerSendPolicy = 'server_pending';
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(input, 'transcriptMessageTimestampDisplayMode')) {
+        const legacyTimestampsEnabled = z.boolean().safeParse(input.transcriptMessageTimestampsEnabled);
+        if (legacyTimestampsEnabled.success && legacyTimestampsEnabled.data === true) {
+            next.transcriptMessageTimestampDisplayMode = 'always';
+        }
+    } else if (!(TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES as readonly unknown[]).includes(next.transcriptMessageTimestampDisplayMode)) {
+        next.transcriptMessageTimestampDisplayMode = 'hover_web_hidden_mobile';
     }
 
     if (!('backendEnabledByTargetKey' in input)) {

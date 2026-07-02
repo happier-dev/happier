@@ -5,7 +5,7 @@ import { getAllProviderSettingsDefinitions } from '@happier-dev/agents';
 
 import type { ProviderSettingsBehavior, ProviderSettingsDescriptor, ProviderSettingsPlugin } from '@/agents/providers/shared/providerSettingsPlugin';
 import { PROVIDER_SETTINGS_DEFAULTS, PROVIDER_SETTINGS_SHAPE } from '@/agents/providers/registry/providerSettingArtifacts';
-import * as providerSettingsRegistry from '@/agents/providers/catalog/providerSettingsCatalog';
+import * as providerSettingsRegistry from '@/agents/catalog/providerSettingsCatalog';
 import {
     PROVIDER_SETTINGS_BEHAVIORS,
     PROVIDER_SETTINGS_DESCRIPTORS,
@@ -16,7 +16,9 @@ import {
     getProviderSettingsDescriptor,
     getProviderSettingsPlugin,
     resolveProviderSettingsRegistryEntry,
-} from '@/agents/providers/catalog/providerSettingsCatalog';
+} from '@/agents/catalog/providerSettingsCatalog';
+import { createProviderSettingsPluginFromDescriptor } from '@/agents/catalog/providerSettingsDescriptorAdapters';
+import { BUNDLED_PROVIDER_SETTINGS_DESCRIPTORS } from '@/agents/registry/generatedBundledPluginEntries.providerSettings';
 import { assertProviderSettingKeysCompatible } from '@/sync/domains/settings/registry/provider/assertProviderSettingKeysCompatible';
 import { LEGACY_COMPAT_PRIMARY_AGENT_ID } from '@/agents/backendCatalog/legacyCompatAgents';
 
@@ -32,7 +34,7 @@ function makePlugin(overrides: Partial<ProviderSettingsPlugin>): ProviderSetting
     const base: ProviderSettingsPlugin = {
         providerId: 'claude',
         title: { key: 'settingsProviders.notFoundTitle' },
-        icon: { ionName: 'bug-outline', color: '#000' },
+        icon: { ionName: 'bug-outline', color: { kind: 'theme', token: 'blue' } },
         settings,
         uiSections: [
             {
@@ -141,6 +143,32 @@ describe('assertProviderSettingsPluginsValid', () => {
 
         expect(() => assertProviderSettingsPluginsValid([plugin])).toThrow(/translation key/i);
     });
+
+    it('rejects unsupported control kinds', () => {
+        const plugin = makePlugin({
+            uiSections: [
+                {
+                    id: 'main',
+                    title: { key: 'settingsProviders.cliConnection' },
+                    fields: [{
+                        key: 'foo',
+                        kind: 'providerSpecificToggle' as any,
+                        title: { key: 'settingsProviders.targetMachineTitle' },
+                    }],
+                },
+            ],
+        });
+
+        expect(() => assertProviderSettingsPluginsValid([plugin])).toThrow(/unsupported control kind/i);
+    });
+
+    it('rejects raw icon colors', () => {
+        const plugin = makePlugin({
+            icon: { ionName: 'bug-outline', color: '#000' },
+        });
+
+        expect(() => assertProviderSettingsPluginsValid([plugin])).toThrow(/theme token/i);
+    });
 });
 
 describe('provider settings descriptor/runtime accessors', () => {
@@ -246,15 +274,187 @@ describe('getProviderSettingsPlugin', () => {
         }
     });
 
+    it('materializes provider settings from generated inert descriptor data', () => {
+        const plugin = createProviderSettingsPluginFromDescriptor({
+            agentId: 'acme',
+            descriptor: {
+                kind: 'providerSettings.v1',
+                descriptorId: 'acme.providerSettings.v1',
+                providerId: 'acme',
+                title: { key: 'settingsProviders.plugins.opencode.title' },
+                icon: { ionName: 'code-slash-outline', color: { kind: 'theme', token: 'blue' } },
+                settings: {
+                    acmeEnabled: {
+                        schema: { kind: 'boolean' },
+                        default: true,
+                        description: 'Enable Acme',
+                        storageScope: 'account',
+                    },
+                    acmeMode: {
+                        schema: { kind: 'enum', values: ['server', 'acp'] },
+                        default: 'server',
+                        description: 'Preferred Acme backend mode',
+                        storageScope: 'account',
+                    },
+                    acmeParallelism: {
+                        schema: { kind: 'number', int: true, min: 1 },
+                        default: 2,
+                        description: 'Acme parallelism',
+                        storageScope: 'account',
+                    },
+                    acmeSelectedSources: {
+                        schema: { kind: 'array', element: { kind: 'enum', values: ['user', 'project'] }, max: 2 },
+                        default: ['user'],
+                        description: 'Acme selected sources',
+                        storageScope: 'account',
+                    },
+                    acmeUrlsByServerId: {
+                        schema: { kind: 'stringRecord' },
+                        default: {},
+                        description: 'Per-server Acme URLs',
+                        storageScope: 'account',
+                    },
+                },
+                uiSections: [
+                    {
+                        id: 'acmeMode',
+                        title: { key: 'settingsProviders.plugins.opencode.sections.backendMode.title' },
+                        fields: [
+                            {
+                                key: 'acmeMode',
+                                kind: 'enum',
+                                title: { key: 'settingsProviders.plugins.opencode.fields.opencodeBackendMode.title' },
+                                enumOptions: [
+                                    {
+                                        id: 'server',
+                                        title: { key: 'settingsProviders.plugins.opencode.fields.opencodeBackendMode.options.server.title' },
+                                    },
+                                    {
+                                        id: 'acp',
+                                        title: { key: 'settingsProviders.plugins.opencode.fields.opencodeBackendMode.options.acp.title' },
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            },
+        });
+
+        expect(plugin?.providerId).toBe('acme');
+        expect(plugin?.settings.acmeEnabled?.schema.safeParse(true).success).toBe(true);
+        expect(plugin?.settings.acmeEnabled?.schema.safeParse('true').success).toBe(false);
+        expect(plugin?.settings.acmeMode?.schema.safeParse('server').success).toBe(true);
+        expect(plugin?.settings.acmeMode?.schema.safeParse('other').success).toBe(false);
+        expect(plugin?.settings.acmeParallelism?.schema.safeParse(2).success).toBe(true);
+        expect(plugin?.settings.acmeParallelism?.schema.safeParse(0).success).toBe(false);
+        expect(plugin?.settings.acmeParallelism?.schema.safeParse(1.5).success).toBe(false);
+        expect(plugin?.settings.acmeSelectedSources?.schema.safeParse(['user', 'project']).success).toBe(true);
+        expect(plugin?.settings.acmeSelectedSources?.schema.safeParse(['invalid']).success).toBe(false);
+        expect(plugin?.settings.acmeUrlsByServerId?.schema.parse({
+            serverA: 'http://127.0.0.1:4096',
+            '': 'ignored',
+            serverB: 42,
+        })).toEqual({ serverA: 'http://127.0.0.1:4096' });
+    });
+
+    it('uses full generated inert settings data for OpenCode', () => {
+        const generated = BUNDLED_PROVIDER_SETTINGS_DESCRIPTORS.find((entry) => entry.agentId === 'opencode');
+        expect(generated?.descriptor).toMatchObject({
+            kind: 'providerSettings.v1',
+            descriptorId: 'opencode.providerSettings.v1',
+            providerId: 'opencode',
+            settings: {
+                opencodeBackendMode: {
+                    schema: { kind: 'enum', values: ['server', 'acp'] },
+                    default: 'server',
+                    storageScope: 'account',
+                },
+                opencodeServerBaseUrl: {
+                    schema: { kind: 'string' },
+                    default: '',
+                    storageScope: 'account',
+                },
+                opencodeServerBaseUrlByServerIdV1: {
+                    schema: { kind: 'stringRecord' },
+                    default: {},
+                    storageScope: 'account',
+                },
+            },
+            uiSections: expect.arrayContaining([
+                expect.objectContaining({
+                    id: 'opencodeBackendMode',
+                    fields: expect.arrayContaining([
+                        expect.objectContaining({ key: 'opencodeBackendMode', kind: 'enum' }),
+                    ]),
+                }),
+            ]),
+        });
+
+        const plugin = getProviderSettingsPlugin('opencode');
+        expect(plugin?.settings.opencodeBackendMode?.schema.safeParse('server').success).toBe(true);
+        expect(plugin?.settings.opencodeBackendMode?.schema.safeParse('invalid').success).toBe(false);
+    });
+
+    it('uses full generated inert settings data for Claude', () => {
+        const generated = BUNDLED_PROVIDER_SETTINGS_DESCRIPTORS.find((entry) => entry.agentId === 'claude');
+        expect(generated?.descriptor).toMatchObject({
+            kind: 'providerSettings.v1',
+            descriptorId: 'claude.providerSettings.v1',
+            providerId: 'claude',
+            settings: {
+                claudeRemoteAgentSdkEnabled: {
+                    schema: { kind: 'boolean' },
+                    default: true,
+                    storageScope: 'account',
+                },
+                claudeUnifiedTerminalHost: {
+                    schema: { kind: 'enum', values: ['auto', 'tmux', 'zellij'] },
+                    default: 'auto',
+                    storageScope: 'account',
+                },
+                claudeRemoteSettingSourcesV2: {
+                    schema: { kind: 'array', element: { kind: 'enum', values: ['user', 'project', 'local'] }, max: 3 },
+                    default: ['user', 'project', 'local'],
+                    storageScope: 'account',
+                },
+                claudeRemoteMaxThinkingTokens: {
+                    schema: { kind: 'number', int: true, min: 1, nullable: true },
+                    default: null,
+                    storageScope: 'account',
+                },
+            },
+            uiSections: expect.arrayContaining([
+                expect.objectContaining({
+                    id: 'claudeUnifiedTerminal',
+                    fields: expect.arrayContaining([
+                        expect.objectContaining({ key: 'claudeUnifiedTerminalEnabled', kind: 'boolean' }),
+                        expect.objectContaining({ key: 'claudeUnifiedTerminalHost', kind: 'enum' }),
+                    ]),
+                }),
+            ]),
+        });
+
+        const plugin = getProviderSettingsPlugin('claude');
+        expect(plugin?.settings.claudeUnifiedTerminalHost?.schema.safeParse('tmux').success).toBe(true);
+        expect(plugin?.settings.claudeUnifiedTerminalHost?.schema.safeParse('screen').success).toBe(false);
+        expect(plugin?.settings.claudeRemoteSettingSourcesV2?.schema.safeParse(['user', 'local']).success).toBe(true);
+        expect(plugin?.settings.claudeRemoteSettingSourcesV2?.schema.safeParse(['invalid']).success).toBe(false);
+        expect(plugin?.settings.claudeRemoteMaxThinkingTokens?.schema.safeParse(null).success).toBe(true);
+        expect(plugin?.settings.claudeRemoteMaxThinkingTokens?.schema.safeParse(10).success).toBe(true);
+        expect(plugin?.settings.claudeRemoteMaxThinkingTokens?.schema.safeParse(0).success).toBe(false);
+    });
+
     it('uses translation refs for first-party provider settings UI text', () => {
         const expectTranslationRef = (value: unknown) => {
             expect(value).toEqual({ key: expect.any(String) });
         };
 
         for (const plugin of PROVIDER_SETTINGS_PLUGINS) {
-            expectTranslationRef(plugin.title);
+            const descriptor: ProviderSettingsDescriptor = plugin;
+            expectTranslationRef(descriptor.title);
 
-            for (const section of plugin.uiSections) {
+            for (const section of descriptor.uiSections) {
                 expectTranslationRef(section.title);
                 if (section.footer) expectTranslationRef(section.footer);
 
@@ -269,7 +469,7 @@ describe('getProviderSettingsPlugin', () => {
                 }
             }
 
-            for (const section of plugin.subagentSettingsSections ?? []) {
+            for (const section of descriptor.subagentSettingsSections ?? []) {
                 expectTranslationRef(section.title);
                 if (section.footer) expectTranslationRef(section.footer);
 
@@ -284,6 +484,7 @@ describe('getProviderSettingsPlugin', () => {
     it('exposes provider setting artifacts without a registry initialization cycle', () => {
         expect(PROVIDER_SETTINGS_SHAPE).toBeTruthy();
         expect(PROVIDER_SETTINGS_DEFAULTS).toBeTruthy();
+        expect(PROVIDER_SETTINGS_DEFAULTS.kimiAcpPythonSelector).toBe('auto');
     });
 });
 

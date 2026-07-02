@@ -21,7 +21,7 @@ function readAgentStateLocalControl(agentState: AgentState | null | undefined): 
 
     const attached = normalizeBoolean(raw.attached) === true;
     const topology = raw.topology === 'shared' ? 'shared' : 'exclusive';
-    const remoteWritable = normalizeBoolean(raw.remoteWritable) ?? (!attached || topology === 'shared');
+    const remoteWritable = normalizeBoolean(raw.remoteWritable) === true;
     const canAttach = normalizeBoolean(raw.canAttach) ?? (!attached);
     const canDetach = normalizeBoolean(raw.canDetach) ?? attached;
 

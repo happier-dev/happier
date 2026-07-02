@@ -3,7 +3,12 @@ import { AsyncTtlCache } from '@happier-dev/protocol';
 
 import { ServerFetchAbortedForServerSwitchError, serverFetch } from '@/sync/http/client';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import {
+    areServerProfileIdentifiersEquivalent,
+    getServerProfileById,
+    resolveServerProfileScopeIdForIdentifier,
+    setServerProfileIdentityForUrl,
+} from '@/sync/domains/server/serverProfiles';
 import { parseServerFeatures } from './serverFeaturesParse';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import { normalizeBaseUrl } from './probeAuthenticatedServerAuthPingEndpoint';
@@ -62,8 +67,8 @@ function getForceCooldownMs(snapshot: ServerFeaturesSnapshot): number {
 function getCacheKey(serverId?: string): string {
     const snapshot = getActiveServerSnapshot();
     const requested = String(serverId ?? '').trim();
-    if (!requested) return snapshot.serverId;
-    return requested;
+    if (!requested || areServerProfileIdentifiersEquivalent(requested, snapshot.serverId)) return snapshot.serverId;
+    return resolveServerProfileScopeIdForIdentifier(requested);
 }
 
 function joinBaseAndPath(baseUrl: string, path: string): string {
@@ -90,9 +95,11 @@ async function getServerFeaturesSnapshotWithRetry(
     const cacheKey = getCacheKey(params?.serverId);
     const requestedServerId = String(params?.serverId ?? '').trim();
     const activeSnapshot = getActiveServerSnapshot();
-    const isExplicitServerRequest = requestedServerId.length > 0 && requestedServerId !== activeSnapshot.serverId;
+    const isExplicitServerRequest = requestedServerId.length > 0
+        && !areServerProfileIdentifiersEquivalent(requestedServerId, activeSnapshot.serverId);
+    const explicitServerId = isExplicitServerRequest ? resolveServerProfileScopeIdForIdentifier(requestedServerId) : '';
     const explicitServerUrl = isExplicitServerRequest
-        ? normalizeBaseUrl(getServerProfileById(requestedServerId)?.serverUrl ?? '')
+        ? normalizeBaseUrl(getServerProfileById(explicitServerId)?.serverUrl ?? '')
         : null;
 
     const cachedEntry = cache.get(cacheKey);
@@ -230,6 +237,14 @@ async function getServerFeaturesSnapshotWithRetry(
                     const value: ServerFeaturesSnapshot = { status: 'unsupported', reason: 'invalid_payload' };
                     cache.setSuccess(cacheKey, value, { ttlMs: getCacheTtlMs(value) });
                     return value;
+                }
+
+                const serverIdentityId = parsed.capabilities.serverIdentity.serverIdentityId;
+                if (serverIdentityId) {
+                    setServerProfileIdentityForUrl(
+                        isExplicitServerRequest ? explicitServerUrl! : activeSnapshot.serverUrl,
+                        serverIdentityId,
+                    );
                 }
 
                 const value: ServerFeaturesSnapshot = { status: 'ready', features: parsed };

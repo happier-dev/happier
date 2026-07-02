@@ -87,6 +87,7 @@ vi.mock('react-native-safe-area-context', () => ({
 
 vi.mock('./MessageView', () => ({
     MessageView: () => React.createElement('MessageView'),
+    MessageViewWithSessionCommon: () => React.createElement('MessageView'),
 }));
 
 vi.mock('./ChatFooter', () => ({

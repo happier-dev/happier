@@ -23,6 +23,13 @@ type ModalCardDimensionPreset = Readonly<{
     heightRatio: number;
 }>;
 
+const DEFAULT_MODAL_CARD_VIEWPORT_MARGIN = {
+    horizontal: 40,
+    vertical: 48,
+} as const;
+
+const MODAL_CARD_MIN_VERTICAL_VIEWPORT_MARGIN = DEFAULT_MODAL_CARD_VIEWPORT_MARGIN.vertical;
+
 const MODAL_CARD_PRESETS: Record<ModalCardSizePreset, ModalCardDimensionPreset> = {
     dialog: {
         minWidth: 280,
@@ -59,13 +66,16 @@ export function resolveModalCardDimensions(
         if (typeof options.viewportMargin === 'number') {
             return {
                 horizontal: options.viewportMargin,
-                vertical: options.viewportMargin,
+                vertical: Math.max(options.viewportMargin, MODAL_CARD_MIN_VERTICAL_VIEWPORT_MARGIN),
             };
         }
 
         return {
-            horizontal: options.viewportMargin?.horizontal ?? 40,
-            vertical: options.viewportMargin?.vertical ?? 0,
+            horizontal: options.viewportMargin?.horizontal ?? DEFAULT_MODAL_CARD_VIEWPORT_MARGIN.horizontal,
+            vertical: Math.max(
+                options.viewportMargin?.vertical ?? DEFAULT_MODAL_CARD_VIEWPORT_MARGIN.vertical,
+                MODAL_CARD_MIN_VERTICAL_VIEWPORT_MARGIN,
+            ),
         };
     })();
     const hasWindowWidth = Number.isFinite(windowDimensions.width) && windowDimensions.width > 0;

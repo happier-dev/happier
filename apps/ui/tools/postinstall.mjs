@@ -90,6 +90,13 @@ function packageExists(nodeModulesDir, packageName) {
     return fs.existsSync(path.resolve(nodeModulesDir, packageName));
 }
 
+function findReactNativeEnrichedMarkdownPackageDirs() {
+    return [
+        path.resolve(repoRootNodeModulesDir, 'react-native-enriched-markdown'),
+        path.resolve(expoAppNodeModulesDir, 'react-native-enriched-markdown'),
+    ].filter((packageDir) => fs.existsSync(packageDir));
+}
+
 function createFilteredPatchDir({ patchDir: inputPatchDir, nodeModulesDir, label }) {
     const patchFiles = listPatchFiles(inputPatchDir);
     if (patchFiles.length === 0) return '';
@@ -137,11 +144,31 @@ if (wants('patch-package')) {
     }
 }
 
+if (wants('install-react-native-enriched-markdown-web-wasm')) {
+    const packageDirs = findReactNativeEnrichedMarkdownPackageDirs();
+    const vendoredWasmModulePath = path.resolve(
+        toolsDir,
+        'react-native-enriched-markdown',
+        'md4c.esm.single-file.js',
+    );
+
+    if (!fs.existsSync(vendoredWasmModulePath)) {
+        console.error(`Could not find vendored react-native-enriched-markdown WASM module at ${vendoredWasmModulePath}`);
+        process.exit(1);
+    }
+
+    for (const packageDir of packageDirs) {
+        const sourceTargetPath = path.resolve(packageDir, 'src', 'web', 'wasm', 'md4c.js');
+        const builtTargetPath = path.resolve(packageDir, 'lib', 'module', 'web', 'wasm', 'md4c.js');
+        fs.mkdirSync(path.dirname(sourceTargetPath), { recursive: true });
+        fs.mkdirSync(path.dirname(builtTargetPath), { recursive: true });
+        fs.copyFileSync(vendoredWasmModulePath, sourceTargetPath);
+        fs.copyFileSync(vendoredWasmModulePath, builtTargetPath);
+    }
+}
+
 if (wants('verify-react-native-enriched-markdown-web-streaming-patch')) {
-    const packageDirs = [
-        path.resolve(repoRootNodeModulesDir, 'react-native-enriched-markdown'),
-        path.resolve(expoAppNodeModulesDir, 'react-native-enriched-markdown'),
-    ].filter((packageDir) => fs.existsSync(packageDir));
+    const packageDirs = findReactNativeEnrichedMarkdownPackageDirs();
 
     if (packageDirs.length === 0) {
         console.error('Could not find react-native-enriched-markdown under repo or UI node_modules.');
@@ -153,6 +180,11 @@ if (wants('verify-react-native-enriched-markdown-web-streaming-patch')) {
         const enrichedMarkdownTextPath = path.resolve(packageDir, 'lib', 'module', 'web', 'EnrichedMarkdownText.js');
         const streamingRevealPath = path.resolve(packageDir, 'lib', 'module', 'web', 'streamingReveal.js');
         const parseMarkdownPath = path.resolve(packageDir, 'lib', 'module', 'web', 'parseMarkdown.js');
+        const parseMarkdownSourcePath = path.resolve(packageDir, 'src', 'web', 'parseMarkdown.ts');
+        const enrichedMarkdownTextSourcePath = path.resolve(packageDir, 'src', 'web', 'EnrichedMarkdownText.tsx');
+        const wasmBuildScriptPath = path.resolve(packageDir, 'cpp', 'wasm', 'build.sh');
+        const wasmSourceModulePath = path.resolve(packageDir, 'src', 'web', 'wasm', 'md4c.js');
+        const wasmBuiltModulePath = path.resolve(packageDir, 'lib', 'module', 'web', 'wasm', 'md4c.js');
         const iosTailFadeAnimatorPath = path.resolve(packageDir, 'ios', 'utils', 'ENRMTailFadeInAnimator.m');
         const androidTailFadeAnimatorPath = path.resolve(packageDir, 'android', 'src', 'main', 'java', 'com', 'swmansion', 'enriched', 'markdown', 'utils', 'text', 'TailFadeInAnimator.kt');
 
@@ -160,6 +192,11 @@ if (wants('verify-react-native-enriched-markdown-web-streaming-patch')) {
             !fs.existsSync(enrichedMarkdownTextPath)
             || !fs.existsSync(streamingRevealPath)
             || !fs.existsSync(parseMarkdownPath)
+            || !fs.existsSync(parseMarkdownSourcePath)
+            || !fs.existsSync(enrichedMarkdownTextSourcePath)
+            || !fs.existsSync(wasmBuildScriptPath)
+            || !fs.existsSync(wasmSourceModulePath)
+            || !fs.existsSync(wasmBuiltModulePath)
             || !fs.existsSync(iosTailFadeAnimatorPath)
             || !fs.existsSync(androidTailFadeAnimatorPath)
         ) {
@@ -170,6 +207,13 @@ if (wants('verify-react-native-enriched-markdown-web-streaming-patch')) {
         const enrichedMarkdownTextContents = fs.readFileSync(enrichedMarkdownTextPath, 'utf8');
         const streamingRevealContents = fs.readFileSync(streamingRevealPath, 'utf8');
         const parseMarkdownContents = fs.readFileSync(parseMarkdownPath, 'utf8');
+        const parseMarkdownSourceContents = fs.readFileSync(parseMarkdownSourcePath, 'utf8');
+        const enrichedMarkdownTextSourceContents = fs.readFileSync(enrichedMarkdownTextSourcePath, 'utf8');
+        const wasmBuildScriptContents = fs.readFileSync(wasmBuildScriptPath, 'utf8');
+        const wasmSourceModuleContents = fs.readFileSync(wasmSourceModulePath, 'utf8');
+        const wasmBuiltModuleContents = fs.readFileSync(wasmBuiltModulePath, 'utf8');
+        const wasmSourceModuleBytes = fs.readFileSync(wasmSourceModulePath);
+        const wasmBuiltModuleBytes = fs.readFileSync(wasmBuiltModulePath);
         const iosTailFadeAnimatorContents = fs.readFileSync(iosTailFadeAnimatorPath, 'utf8');
         const androidTailFadeAnimatorContents = fs.readFileSync(androidTailFadeAnimatorPath, 'utf8');
         if (
@@ -177,6 +221,25 @@ if (wants('verify-react-native-enriched-markdown-web-streaming-patch')) {
             || !enrichedMarkdownTextContents.includes('streamingAnimation')
             || !enrichedMarkdownTextContents.includes('updateStreamingRevealRanges')
             || !parseMarkdownContents.includes('preloadMarkdownRuntime')
+            || !parseMarkdownContents.includes("['number', 'number', 'number']")
+            || !parseMarkdownContents.includes('stringToUTF8(markdown')
+            || !parseMarkdownContents.includes('parseCache.clear()')
+            || !parseMarkdownSourceContents.includes('lengthBytesUTF8(markdown)')
+            || !parseMarkdownSourceContents.includes('parserPromise = null')
+            || !enrichedMarkdownTextSourceContents.includes('lastChildStyles.paragraph')
+            || enrichedMarkdownTextSourceContents.includes('<pre')
+            || !wasmBuildScriptContents.includes('STACK_SIZE=8MB')
+            || !wasmBuildScriptContents.includes('SINGLE_FILE_BINARY_ENCODE=0')
+            || !wasmBuildScriptContents.includes('ALLOW_MEMORY_GROWTH=1')
+            || !wasmBuildScriptContents.includes('EXPORT_ES6=1')
+            || !wasmBuildScriptContents.includes('"_parseMarkdown","_malloc","_free"')
+            || !wasmBuildScriptContents.includes('"stringToUTF8","lengthBytesUTF8"')
+            || !wasmSourceModuleContents.includes('export default createMd4cModule')
+            || !wasmBuiltModuleContents.includes('export default createMd4cModule')
+            || wasmSourceModuleContents.includes('import.meta')
+            || wasmBuiltModuleContents.includes('import.meta')
+            || wasmSourceModuleBytes.includes(0)
+            || wasmBuiltModuleBytes.includes(0)
             || !streamingRevealContents.includes('data-happier-enriched-markdown-reveal')
             || !streamingRevealContents.includes('updateStreamingRevealRanges')
             || !iosTailFadeAnimatorContents.includes('ENRMActiveFadeRange')
@@ -321,5 +384,23 @@ if (wants('vendor-xterm-webview-bundle')) {
         });
     } catch (e) {
         // Best-effort: Xterm is optional and should not break installs.
+    }
+}
+
+// Bundle TipTap (headless @tiptap/core) for the native rich markdown WebView editor. We embed the
+// resulting bundle as a JS string. Unlike CodeMirror/Xterm there is NO CDN fallback (D9): when the
+// embedded bundle is missing the native rich editor fails closed to raw mode. The build script
+// asserts non-empty output, so a successful run always produces a usable bundle. Kept best-effort:
+// the rich editor is an experimental, flag-gated feature and must not break installs (it degrades to
+// raw editing when the bundle is absent).
+if (wants('vendor-tiptap-webview-bundle')) {
+    try {
+        runCommandBestEffort({
+            command: process.execPath,
+            args: [path.resolve(expoAppDir, 'tools', 'tiptap', 'buildTiptapWebViewBundle.mjs')],
+            options: { cwd: expoAppDir },
+        });
+    } catch (e) {
+        // Best-effort: the rich markdown editor is experimental and degrades to raw mode without it.
     }
 }

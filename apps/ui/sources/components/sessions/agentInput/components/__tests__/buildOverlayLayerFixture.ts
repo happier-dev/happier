@@ -22,11 +22,8 @@ function noopRef(): React.RefObject<View | null> {
 function buildDefaultOverlayLayerFixture(): AgentInputOverlayLayerProps {
     const sharedRef = noopRef();
     return {
-        suggestions: [],
         overlayAnchorRef: sharedRef,
         screenWidth: 800,
-        autocompleteSelectedIndex: 0,
-        onAutocompleteSelect: () => {},
 
         showPermissionPopover: false,
         permissionChipAnchorRef: sharedRef,

@@ -254,7 +254,7 @@ describe('WorkspaceRightPanelGitView update mutations', () => {
                 ...createSnapshot().capabilities,
                 readHostingRepositoryPublishTargets: true,
                 writeHostingRepositoryPublish: true,
-            },
+            } as ScmWorkingSnapshot['capabilities'],
             hostingProvider: {
                 id: 'scm.gitlab',
                 kind: 'gitlab',

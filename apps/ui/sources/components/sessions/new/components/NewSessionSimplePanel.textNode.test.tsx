@@ -88,8 +88,11 @@ afterEach(() => {
 });
 
 vi.mock('react-native-keyboard-controller', () => ({
-    KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('KeyboardAvoidingView', props, props.children),
+    useKeyboardHandler: () => {},
+    useReanimatedKeyboardAnimation: () => ({
+        height: { value: 0 },
+        progress: { value: 0 },
+    }),
 }));
 
 vi.mock('expo-image', () => ({
@@ -227,6 +230,10 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 vi.mock('@/sync/domains/models/modelOptions', () => ({
+    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
+        options?.find?.((option: any) => option.value === effectiveModelId)
+            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
+            ?? null,
     getModelOptionsForSession: () => [{ value: 'default', label: 'Default' }],
     supportsFreeformModelSelectionForSession: () => false,
 }));
@@ -342,7 +349,7 @@ describe('NewSessionSimplePanel', () => {
             />,
         );
 
-        expect(screen.findAllByType('KeyboardAvoidingView')).toHaveLength(0);
+        expect(screen.findByProps({ testID: 'new-session-composer-keyboard-host' })).toBeTruthy();
         expect(screen.findAllByType('View').some((node) => flattenStyle(node.props.style).flex === 0)).toBe(true);
     });
 
@@ -440,11 +447,12 @@ describe('NewSessionSimplePanel', () => {
         const allViews = screen.findAllByType('View');
         const allPressables = screen.findAllByType('Pressable');
 
-        expect(screen.findAllByType('KeyboardAvoidingView')).toHaveLength(0);
+        const composerHost = screen.findByProps({ testID: 'new-session-composer-keyboard-host' });
+        expect(flattenStyle(composerHost.props.style).position).toBe('absolute');
+        expect(flattenStyle(composerHost.props.style).bottom).toBe(0);
         expect(allViews.some((view) => flattenStyle(view.props.style).justifyContent === 'flex-end')).toBe(true);
         expect(allViews.some((view) => view.props.style?.marginTop === 'auto')).toBe(false);
         expect(allPressables.some((pressable) => flattenStyle(pressable.props.style).flex === 1)).toBe(true);
-        expect(allViews.some((view) => flattenStyle(view.props.style).paddingBottom === 56)).toBe(true);
     });
 
     it('does not render the legacy visible session type selector even when the feature flag is enabled', async () => {

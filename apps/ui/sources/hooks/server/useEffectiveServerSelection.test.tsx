@@ -10,7 +10,13 @@ const state = vi.hoisted(() => ({
         generation: 1,
     },
     serverProfilesGeneration: 1,
-    serverProfiles: [] as ReadonlyArray<{ id: string; name: string; serverUrl: string }>,
+    serverProfiles: [] as ReadonlyArray<{
+        id: string;
+        name: string;
+        serverUrl: string;
+        serverIdentityId?: string | null;
+        legacyServerIds?: readonly string[];
+    }>,
     settings: {
         serverSelectionGroups: null as ReadonlyArray<unknown> | null,
         serverSelectionActiveTargetKind: null as 'server' | 'group' | null,
@@ -26,8 +32,14 @@ vi.mock('@/hooks/server/useServerProfilesGeneration', () => ({
     useServerProfilesGeneration: () => state.serverProfilesGeneration,
 }));
 
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => state.activeServerSnapshot,
+    subscribeActiveServer: () => () => {},
+}));
+
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     listServerProfiles: () => state.serverProfiles,
+    resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => profile.serverIdentityId ?? profile.id,
 }));
 
 const storageMock = createStorageModuleStub({
@@ -79,6 +91,50 @@ describe('useResolvedActiveServerSelection', () => {
             presentation: 'grouped',
             explicit: false,
         });
+    });
+
+    it('uses the identity-backed active server id as an available server id', async () => {
+        state.activeServerSnapshot = {
+            serverId: 'srv_identity_active',
+            serverUrl: 'https://api.a.example',
+            generation: 1,
+        };
+        state.serverProfiles = [{
+            id: 'srv-a',
+            name: 'A',
+            serverUrl: 'https://api.a.example',
+            serverIdentityId: 'srv_identity_active',
+            legacyServerIds: ['srv-a'],
+        }];
+
+        const { useResolvedActiveServerSelection } = await import('./useEffectiveServerSelection');
+        const hook = await renderHook(() => useResolvedActiveServerSelection());
+
+        expect(hook.getCurrent().activeServerId).toBe('srv_identity_active');
+        expect(hook.getCurrent().allowedServerIds).toEqual(['srv_identity_active']);
+    });
+
+    it('keeps the resolved active server stable when active-server metadata changes without changing selection inputs', async () => {
+        state.activeServerSnapshot = {
+            serverId: 'srv-a',
+            serverUrl: 'https://api.a.example',
+            generation: 1,
+        };
+        state.serverProfiles = [{ id: 'srv-a', name: 'A', serverUrl: 'https://api.a.example' }];
+
+        const { useResolvedActiveServerSelection } = await import('./useEffectiveServerSelection');
+        const hook = await renderHook(() => useResolvedActiveServerSelection());
+        const initial = hook.getCurrent();
+
+        state.activeServerSnapshot = {
+            serverId: 'srv-a',
+            serverUrl: 'https://api.a.example',
+            generation: 2,
+        };
+
+        await hook.rerender();
+
+        expect(hook.getCurrent()).toBe(initial);
     });
 });
 

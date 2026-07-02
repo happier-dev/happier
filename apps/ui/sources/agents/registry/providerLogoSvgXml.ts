@@ -85,21 +85,6 @@ function kiroSvg(theme: Theme): string {
     );
 }
 
-function opencodeSvg(theme: Theme): string {
-    // OpenCode official mark geometry: frame with cutout + bottom fill (no wordmark).
-    // We keep it theme-colored so it works in both light/dark mode.
-    const primary = theme.colors.text.primary;
-    const secondary = theme.colors.text.tertiary ?? theme.colors.text.secondary ?? primary;
-    return themedSvg(
-        `
-            <!-- Frame as an even-odd cutout so the center stays transparent. -->
-            <path fill="${primary}" fill-rule="evenodd" clip-rule="evenodd" d="M0 0H240V300H0V0ZM60 60H180V240H60V60Z"/>
-            <path fill="${secondary}" d="M60 120H180V240H60V120Z"/>
-        `,
-        '0 0 240 300',
-    );
-}
-
 function piSvg(theme: Theme): string {
     return monochrome(
         theme.colors.text.primary,
@@ -170,16 +155,28 @@ function auggieSvg(theme: Theme): string {
     );
 }
 
+function cursorSvg(theme: Theme): string {
+    const primary = theme.colors.text.primary;
+    return themedSvg(
+        `
+            <rect x="3" y="5" width="26" height="22" rx="5" fill="none" stroke="${primary}" stroke-width="3"/>
+            <path d="M9 12L14 16L9 20" fill="none" stroke="${primary}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M17 21H23" fill="none" stroke="${primary}" stroke-width="3" stroke-linecap="round"/>
+        `,
+        '0 0 32 32',
+    );
+}
+
 export const PROVIDER_LOGO_SVG_XML: Partial<Record<CanonicalAgentId, AgentIconSvgXmlResolver>> = {
     auggie: auggieSvg,
     claude: claudeSvg,
     copilot: copilotSvg,
     codex: codexSvg,
+    cursor: cursorSvg,
     gemini: geminiSvg,
     kimi: kimiSvg,
     kilo: kiloSvg,
     kiro: kiroSvg,
-    opencode: opencodeSvg,
     ohMyPi: ohMyPiSvg,
     pi: piSvg,
     qwen: qwenSvg,

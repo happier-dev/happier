@@ -2,17 +2,26 @@ import * as React from 'react';
 import { View, type ViewStyle } from 'react-native';
 
 import { layout } from '@/components/ui/layout/layout';
+import { resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList';
 import { machineMetadataPlatformToTarget } from '@/utils/path/machinePlatform';
 import {
+    normalizeDirectoryFavoritePaths,
     resolveDirectoryFavoriteComparisonKey,
     toggleHomeAwareDirectoryFavorite,
 } from '@/utils/sessions/favoriteDirectoriesToggle';
 
 import { PathSelectionList } from './PathSelectionList';
+import type { PathSelectionInitialSuggestionMode } from './createPathSelectionInputBehavior';
 
 export type NewSessionPathSelectionContentProps = Readonly<{
     machineHomeDir: string;
     selectedPath: string;
+    /**
+     * Popover callers use history-first so opening the path chip shows saved
+     * locations before machine folder suggestions. Dedicated picker surfaces
+     * omit this to preserve direct browse-from-selected-path behavior.
+     */
+    initialSuggestionMode?: PathSelectionInitialSuggestionMode;
     onChangeSelectedPath: (path: string) => void;
     onChangeDraftSelectedPath?: (path: string) => void;
     onSubmitSelectedPath?: (path: string) => void;
@@ -38,18 +47,60 @@ export type NewSessionPathSelectionContentProps = Readonly<{
 
 export function NewSessionPathSelectionContent(props: NewSessionPathSelectionContentProps) {
     const machineId = props.machineBrowse?.enabled === true ? props.machineBrowse.machineId : null;
+    const [optimisticFavoriteDirectories, setOptimisticFavoriteDirectories] = React.useState<ReadonlyArray<string>>(
+        () => normalizeDirectoryFavoritePaths(props.favoriteDirectories, props.machineHomeDir),
+    );
+    React.useEffect(() => {
+        setOptimisticFavoriteDirectories((current) => {
+            const next = normalizeDirectoryFavoritePaths(props.favoriteDirectories, props.machineHomeDir);
+            if (current.length === next.length && current.every((entry, index) => entry === next[index])) {
+                return current;
+            }
+            return next;
+        });
+    }, [props.favoriteDirectories, props.machineHomeDir]);
+
+    const visibleFavoriteDirectories = React.useMemo(
+        () => normalizeDirectoryFavoritePaths(optimisticFavoriteDirectories, props.machineHomeDir),
+        [optimisticFavoriteDirectories, props.machineHomeDir],
+    );
     const favoriteKeys = React.useMemo(() => new Set(
-        props.favoriteDirectories.map((path) =>
+        visibleFavoriteDirectories.map((path) =>
             resolveDirectoryFavoriteComparisonKey(path, props.machineHomeDir)
         ),
-    ), [props.favoriteDirectories, props.machineHomeDir]);
+    ), [visibleFavoriteDirectories, props.machineHomeDir]);
+    const recentEntries = React.useMemo(() => {
+        const seenRecentKeys = new Set<string>();
+        return props.recentPaths
+            .filter((path) => typeof path === 'string' && path.trim().length > 0)
+            .filter((path) => {
+                const key = resolveDirectoryFavoriteComparisonKey(path, props.machineHomeDir);
+                if (favoriteKeys.has(key)) return false;
+                if (seenRecentKeys.has(key)) return false;
+                seenRecentKeys.add(key);
+                return true;
+            })
+            .map((path, index) => ({ path, lastUsedAt: index }));
+    }, [favoriteKeys, props.machineHomeDir, props.recentPaths]);
+
+    const handleToggleFavorite = React.useCallback((path: string) => {
+        const next = toggleHomeAwareDirectoryFavorite(
+            visibleFavoriteDirectories,
+            path,
+            props.machineHomeDir,
+        );
+        setOptimisticFavoriteDirectories(next);
+        props.onChangeFavoriteDirectories([...next]);
+    }, [props.machineHomeDir, props.onChangeFavoriteDirectories, visibleFavoriteDirectories]);
+
     return (
         <View style={styles.contentWrapper}>
             <PathSelectionList
                 initialValue={props.selectedPath}
+                initialSuggestionMode={props.initialSuggestionMode}
                 machineHomeDir={props.machineHomeDir}
-                favorites={props.favoriteDirectories.map((path) => ({ path }))}
-                recents={props.recentPaths.map((path, index) => ({ path, lastUsedAt: index }))}
+                favorites={visibleFavoriteDirectories.map((path) => ({ path }))}
+                recents={recentEntries}
                 machineId={machineId}
                 serverId={props.machineBrowse?.serverId ?? null}
                 machinePlatform={machineMetadataPlatformToTarget(props.machinePlatform)}
@@ -62,14 +113,13 @@ export function NewSessionPathSelectionContent(props: NewSessionPathSelectionCon
                 onRequestClose={() => {}}
                 onBeforeBrowseMachinePath={props.onBeforeBrowseMachinePath}
                 isFavorite={(path) => favoriteKeys.has(resolveDirectoryFavoriteComparisonKey(path, props.machineHomeDir))}
-                onToggleFavorite={(path) => {
-                    props.onChangeFavoriteDirectories([...toggleHomeAwareDirectoryFavorite(
-                        props.favoriteDirectories,
-                        path,
-                        props.machineHomeDir,
-                    )]);
-                }}
+                onToggleFavorite={handleToggleFavorite}
                 maxHeight={props.maxHeight}
+                heightBehavior={
+                    props.maxHeight === undefined
+                        ? undefined
+                        : resolvePopoverSelectionListHeightBehavior('stabilizedContentHeight')
+                }
             />
         </View>
     );

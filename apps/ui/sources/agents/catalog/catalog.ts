@@ -11,7 +11,7 @@ import {
 } from '@/agents/registry/registryCore';
 
 import type { AgentUiConfig } from '@/agents/registry/registryUi';
-import { applyVendorSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { applyProviderSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 type RegistryUiModule = typeof import('@/agents/registry/registryUi');
 type AgentIconTintTheme = Parameters<RegistryUiModule['getAgentIconTintColor']>[1];
 import * as RegistryUi from '@/agents/registry/registryUi';
@@ -57,7 +57,7 @@ export function writeAgentVendorResumeIdToMetadata<Metadata extends Record<strin
 ): Metadata {
     const vendorResumeIdField = getAgentCore(agentId).resume.vendorResumeIdField;
     if (!vendorResumeIdField) return metadata;
-    return applyVendorSessionIdSessionMetadata(metadata, {
+    return applyProviderSessionIdSessionMetadata(metadata, {
         metadataKey: vendorResumeIdField,
         value: vendorResumeId,
     });

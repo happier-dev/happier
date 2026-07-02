@@ -1,4 +1,30 @@
-import { joinFileUri, sanitizeFileUriSegment } from './fileUriPath';
+import { sanitizeFileUriSegment } from './fileUriPath';
+
+type ExpoFileSystemModule = Readonly<{
+    Directory: new (parent: ExpoFileSystemDirectory | string, name?: string) => ExpoFileSystemDirectory;
+    File: new (parent: ExpoFileSystemDirectory | string, name?: string) => ExpoFileSystemFile;
+    Paths?: Readonly<{
+        cache?: ExpoFileSystemDirectory | string | null;
+    }>;
+}>;
+
+type ExpoFileSystemDirectory = Readonly<{
+    uri: string;
+    create: (options?: { intermediates?: boolean; idempotent?: boolean }) => void;
+}>;
+
+type ExpoFileSystemFile = Readonly<{
+    uri: string;
+    delete: () => void;
+    create: () => void;
+    open: () => ExpoFileSystemFileHandle;
+}>;
+
+type ExpoFileSystemFileHandle = {
+    offset?: number | null;
+    close: () => void;
+    writeBytes: (bytes: Uint8Array) => void;
+};
 
 export type NativeCacheFileSink = Readonly<{
     fileUri: string;
@@ -15,18 +41,21 @@ export async function createNativeCacheFileSink(input: Readonly<{
     | Readonly<{ ok: false; error: string }>
 > {
     try {
-        const FileSystem: any = await import('expo-file-system');
-        const cacheDir = String(FileSystem.cacheDirectory ?? FileSystem.Paths?.cache ?? '').trim();
-        if (!cacheDir) {
+        const FileSystem = await import('expo-file-system') as ExpoFileSystemModule;
+        const cachePath = FileSystem.Paths?.cache ?? null;
+        if (!cachePath) {
             return { ok: false, error: 'No cache directory available' };
         }
 
         const directoryName = sanitizeFileUriSegment(input.directoryName, 'happier-cache');
         const fileName = sanitizeFileUriSegment(input.fileName, 'preview');
-        const directoryUri = joinFileUri(cacheDir, directoryName);
-        await FileSystem.makeDirectoryAsync(directoryUri, { intermediates: true });
+        const cacheDirectory = typeof cachePath === 'string'
+            ? new FileSystem.Directory(cachePath)
+            : cachePath;
+        const directory = new FileSystem.Directory(cacheDirectory, directoryName);
+        directory.create({ intermediates: true, idempotent: true });
 
-        const file = new FileSystem.File(joinFileUri(directoryUri, fileName));
+        const file = new FileSystem.File(directory, fileName);
         try {
             file.delete();
         } catch {}

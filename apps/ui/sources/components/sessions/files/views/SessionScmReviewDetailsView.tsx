@@ -4,10 +4,11 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { Text } from '@/components/ui/text/Text';
+import { ReviewCommentsSessionSurface } from '@/components/reviews/ReviewCommentsSessionSurface';
 import { ChangedFilesReview } from '@/components/workspaces/scm/review/ChangedFilesReview';
 import { ChangedFilesViewModeMenu } from '@/components/sessions/files/ChangedFilesViewModeMenu';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
-import { useProjectForSession, useProjectSessions, useSessionMessages, useSessionProjectScmOperationLog, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useSessionProjectScmTouchedPaths, useSessionWorkspacePath, useSetting, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
+import { useProjectForSession, useProjectSessions, useSessionMessages, useSessionProjectScmOperationLog, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useSessionProjectScmTouchedPaths, useSessionRealtimeScmTranscriptConsumer, useSessionWorkspacePath, useSetting, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { ScmChangeDiscardButton } from '@/components/sessions/sourceControl/changes/ScmChangeDiscardButton';
@@ -32,12 +33,70 @@ import {
     type ChangedFilesViewMode,
 } from '@/scm/scmAttribution';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { createReviewCommentsHttpActionExecutor } from '@/sync/domains/reviews/comments/api';
+import { createPluginPermissionGrantActions } from '@/sync/domains/plugins/permissions/actions';
+import { createPluginPermissionGrantHttpActionExecutor } from '@/sync/domains/plugins/permissions/api';
+import { usePluginPermissionGrants } from '@/sync/domains/plugins/permissions/usePluginPermissionGrants';
+import {
+    selectPluginPermissionPendingRequests,
+} from '@/sync/domains/plugins/permissions/store';
+import {
+    REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
+    type PluginPermissionGrantListInput,
+    type PluginPermissionGrantTargetScope,
+} from '@/sync/domains/plugins/permissions/types';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 
 export type SessionScmReviewDetailsViewProps = Readonly<{
     sessionId: string;
     scopeId: string;
 }>;
+
+const REVIEW_SCROLL_TOP_PERSIST_DEBOUNCE_MS = 250;
+const REVIEW_SCROLL_TOP_PERSIST_EPSILON_PX = 1;
+
+function areReviewScrollTopValuesEqual(previous: unknown, next: unknown): boolean {
+    if (Object.is(previous, next)) return true;
+    if (typeof previous !== 'number' || typeof next !== 'number') return false;
+    if (!Number.isFinite(previous) || !Number.isFinite(next)) return false;
+    return Math.abs(previous - next) < REVIEW_SCROLL_TOP_PERSIST_EPSILON_PX;
+}
+
+function areReviewTabStateValuesEqual(key: string, previous: unknown, next: unknown): boolean {
+    if (key === 'scrollTop') {
+        return areReviewScrollTopValuesEqual(previous, next);
+    }
+    if (Object.is(previous, next)) return true;
+    if (Array.isArray(previous) || Array.isArray(next)) {
+        const previousArray = Array.isArray(previous) ? previous : [];
+        const nextArray = Array.isArray(next) ? next : [];
+        if (previousArray.length !== nextArray.length) return false;
+        return previousArray.every((value, index) => Object.is(value, nextArray[index]));
+    }
+    return false;
+}
+
+function useMountedReviewInitialState(
+    sessionId: string,
+    scrollTop: number | null,
+    collapsedPaths: string[] | null,
+): Readonly<{ scrollTop: number | null; collapsedPaths: string[] | null }> {
+    const initialStateRef = React.useRef<Readonly<{
+        sessionId: string;
+        scrollTop: number | null;
+        collapsedPaths: string[] | null;
+    }> | null>(null);
+
+    if (!initialStateRef.current || initialStateRef.current.sessionId !== sessionId) {
+        initialStateRef.current = {
+            sessionId,
+            scrollTop,
+            collapsedPaths: collapsedPaths ? [...collapsedPaths] : null,
+        };
+    }
+
+    return initialStateRef.current;
+}
 
 export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDetailsViewProps) => {
     const { theme } = useUnistyles();
@@ -57,6 +116,7 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         const raw = persistedReviewTabState?.scrollTop;
         return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
     }, [persistedReviewTabState?.scrollTop]);
+    const mountedInitialReviewState = useMountedReviewInitialState(props.sessionId, persistedScrollTop, persistedCollapsedPaths);
     const persistedReviewTabStateRef = React.useRef<Record<string, unknown>>({});
     React.useEffect(() => {
         persistedReviewTabStateRef.current =
@@ -68,25 +128,51 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
         const prev = persistedReviewTabStateRef.current ?? {};
         let hasChange = false;
         for (const [key, value] of Object.entries(patch)) {
-            if (prev[key] !== value) {
+            if (!areReviewTabStateValuesEqual(key, prev[key], value)) {
                 hasChange = true;
                 break;
             }
         }
         if (!hasChange) return;
-        setDetailsTabState(reviewTabKey, { ...prev, ...patch });
+        const next = { ...prev, ...patch };
+        persistedReviewTabStateRef.current = next;
+        setDetailsTabState(reviewTabKey, next);
     }, [setDetailsTabState]);
     const onCollapsedPathsChange = React.useCallback((paths: string[]) => {
         setPersistedReviewTabState({ collapsedPaths: paths });
     }, [setPersistedReviewTabState]);
-    const onScrollTopChange = React.useCallback((top: number) => {
+    const pendingScrollTopRef = React.useRef<number | null>(null);
+    const scrollTopPersistTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const flushPendingScrollTop = React.useCallback(() => {
+        if (scrollTopPersistTimerRef.current) {
+            clearTimeout(scrollTopPersistTimerRef.current);
+            scrollTopPersistTimerRef.current = null;
+        }
+        const top = pendingScrollTopRef.current;
+        pendingScrollTopRef.current = null;
+        if (typeof top !== 'number' || !Number.isFinite(top)) return;
         setPersistedReviewTabState({ scrollTop: top });
     }, [setPersistedReviewTabState]);
+    const onScrollTopChange = React.useCallback((top: number) => {
+        if (!Number.isFinite(top)) return;
+        if (areReviewScrollTopValuesEqual(pendingScrollTopRef.current, top)) return;
+        if (pendingScrollTopRef.current === null && areReviewScrollTopValuesEqual(persistedReviewTabStateRef.current?.scrollTop, top)) return;
+        pendingScrollTopRef.current = top;
+        if (scrollTopPersistTimerRef.current) {
+            clearTimeout(scrollTopPersistTimerRef.current);
+        }
+        scrollTopPersistTimerRef.current = setTimeout(
+            flushPendingScrollTop,
+            REVIEW_SCROLL_TOP_PERSIST_DEBOUNCE_MS,
+        );
+    }, [flushPendingScrollTop]);
+    React.useEffect(() => flushPendingScrollTop, [flushPendingScrollTop]);
     const project = useProjectForSession(props.sessionId);
     const sessionPath = useSessionWorkspacePath(props.sessionId);
     const snapshot = useSessionProjectScmSnapshot(props.sessionId);
     const lastGoodSnapshot = useLastNonNullValue(snapshot, { resetKey: props.sessionId });
     const effectiveSnapshot = snapshot ?? lastGoodSnapshot;
+    useSessionRealtimeScmTranscriptConsumer(props.sessionId, effectiveSnapshot);
     const snapshotError = useSessionProjectScmSnapshotError(props.sessionId);
     const touchedPaths = useSessionProjectScmTouchedPaths(props.sessionId);
     const operationLog = useSessionProjectScmOperationLog(props.sessionId);
@@ -105,6 +191,44 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments') === true && Boolean(reviewScope);
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
     const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(reviewScope);
+    const reviewCommentsExecutor = React.useMemo(() => createReviewCommentsHttpActionExecutor(), []);
+    const pluginPermissionGrantExecutor = React.useMemo(() => createPluginPermissionGrantHttpActionExecutor(), []);
+    const pluginPermissionGrantActions = React.useMemo(
+        () => createPluginPermissionGrantActions({ execute: pluginPermissionGrantExecutor }),
+        [pluginPermissionGrantExecutor],
+    );
+    const directWriteGrantScope = React.useMemo<PluginPermissionGrantTargetScope | null>(() => {
+        if (!project?.id) return null;
+        return {
+            kind: 'project',
+            projectId: project.id,
+        };
+    }, [project?.id]);
+    const pluginPermissionGrantListInput = React.useMemo<PluginPermissionGrantListInput | null>(() => (
+        directWriteGrantScope
+            ? {
+                  capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
+                  targetScope: directWriteGrantScope,
+              }
+            : null
+    ), [directWriteGrantScope]);
+    const pluginPermissionGrants = usePluginPermissionGrants({
+        actions: pluginPermissionGrantActions,
+        enabled: reviewCommentsEnabled && Boolean(pluginPermissionGrantListInput),
+        listInput: pluginPermissionGrantListInput,
+    });
+    const directWriteGranted = directWriteGrantScope
+        ? pluginPermissionGrants.hasGrant({
+            capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
+            targetScope: directWriteGrantScope,
+        })
+        : false;
+    const pendingDirectWriteGrantRequest = directWriteGrantScope
+        ? selectPluginPermissionPendingRequests(pluginPermissionGrants.state, {
+            capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
+            targetScope: directWriteGrantScope,
+        })[0] ?? null
+        : null;
     const [diffRefreshToken, setDiffRefreshToken] = React.useState(0);
 
     useScmDiffCacheLimits(scmDiffCache);
@@ -233,7 +357,7 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
     // Ensure the SCM snapshot is warm so large reviews can load diffs even if the user
     // opened the review tab before visiting Source control.
     React.useEffect(() => {
-        scmStatusSync.invalidateFromUser(props.sessionId);
+        scmStatusSync.invalidateFromAutoRefresh(props.sessionId);
     }, [props.sessionId]);
 
     const refreshAfterMutation = React.useCallback(async () => {
@@ -319,6 +443,19 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
                     />
                 </View>
             ) : null}
+            {reviewCommentsEnabled && project?.id ? (
+                <ReviewCommentsSessionSurface
+                    projectId={project.id}
+                    sessionId={props.sessionId}
+                    execute={reviewCommentsExecutor}
+                    directWriteGranted={directWriteGranted}
+                    pendingDirectWriteGrantRequest={pendingDirectWriteGrantRequest}
+                    onGrantDirectWrite={pluginPermissionGrants.grant}
+                    onCancelDirectWriteGrant={pluginPermissionGrants.dismissRequest}
+                    defaultPanelOpen={false}
+                    testID="review-comments-session"
+                />
+            ) : null}
             <ChangedFilesReview
                 theme={theme}
                 sessionId={props.sessionId}
@@ -338,9 +475,9 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
                 maxChangedLines={maxChangedLines}
                 onFilePress={openFileDefault}
                 onFilePressPinned={openFilePinned}
-                initialCollapsedPaths={persistedCollapsedPaths}
+                initialCollapsedPaths={mountedInitialReviewState.collapsedPaths}
                 onCollapsedPathsChange={onCollapsedPathsChange}
-                initialScrollTop={persistedScrollTop}
+                initialScrollTop={mountedInitialReviewState.scrollTop}
                 onScrollTopChange={onScrollTopChange}
                 renderFileTrailingActions={renderReviewFileTrailingActions}
                 rowDensity="compact"

@@ -1,6 +1,12 @@
 import * as React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { storage } from '@/sync/domains/state/storage';
+import { buildSessionMetadataStabilitySignatureValue } from '@/sync/domains/session/metadata/sessionMetadataStability';
+import { resolveServerIdForSessionIdFromLocalState } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import type { StorageState } from '@/sync/store/types';
 
 type ShellVisibleAgentStateRequestSignature = ReadonlyArray<readonly [
     string,
@@ -17,10 +23,41 @@ type ShellVisibleAgentStateRequestSignature = ReadonlyArray<readonly [
     },
 ]>;
 
-function buildShellVisibleMetadataSignatureValue(metadata: Session['metadata']): Session['metadata'] {
-    if (!metadata) return null;
-    const { readStateV1: _readStateV1, ...shellVisibleMetadata } = metadata;
-    return shellVisibleMetadata;
+type ShellVisibleLatestUsageSignature = Readonly<{
+    inputTokens: number | null;
+    outputTokens: number | null;
+    cacheCreation: number | null;
+    cacheRead: number | null;
+    contextSize: number | null;
+    contextWindowTokens: number | null;
+}>;
+
+function buildShellVisibleMetadataSignatureValue(metadata: Session['metadata']): unknown {
+    return buildSessionMetadataStabilitySignatureValue(metadata);
+}
+
+function normalizeServerId(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
+function buildShellVisibleLatestUsageSignatureValue(
+    latestUsage: Session['latestUsage'],
+): ShellVisibleLatestUsageSignature | null {
+    if (!latestUsage || typeof latestUsage !== 'object') return null;
+    const usageWithContextWindowTokens = latestUsage as (typeof latestUsage & { contextWindowTokens?: number });
+
+    return {
+        inputTokens: typeof latestUsage.inputTokens === 'number' ? latestUsage.inputTokens : null,
+        outputTokens: typeof latestUsage.outputTokens === 'number' ? latestUsage.outputTokens : null,
+        cacheCreation: typeof latestUsage.cacheCreation === 'number' ? latestUsage.cacheCreation : null,
+        cacheRead: typeof latestUsage.cacheRead === 'number' ? latestUsage.cacheRead : null,
+        contextSize: typeof latestUsage.contextSize === 'number' ? latestUsage.contextSize : null,
+        contextWindowTokens: typeof usageWithContextWindowTokens.contextWindowTokens === 'number'
+            ? usageWithContextWindowTokens.contextWindowTokens
+            : null,
+    };
 }
 
 function buildShellVisibleAgentStateRequestSignatureValue(
@@ -60,12 +97,11 @@ function buildShellVisibleAgentStateRequestSignatureValue(
 export function buildSessionViewShellSessionSignature(session: Session): string {
     return JSON.stringify({
         id: session.id,
+        serverId: normalizeServerId((session as { serverId?: unknown }).serverId),
         hasTranscriptHistory: (session.seq ?? 0) > 0,
         createdAt: session.createdAt ?? 0,
         active: session.active === true,
         archivedAt: session.archivedAt ?? null,
-        pendingVersion: session.pendingVersion ?? null,
-        pendingCount: session.pendingCount ?? null,
         agentStateVersion: session.agentStateVersion ?? null,
         encryptionMode: session.encryptionMode ?? null,
         presence: session.presence ?? null,
@@ -73,12 +109,15 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
         optimisticThinkingAt: session.thinking ? null : session.optimisticThinkingAt ?? null,
         thinkingGraceUntil: session.thinking ? null : session.thinkingGraceUntil ?? null,
         latestTurnStatus: session.latestTurnStatus ?? null,
+        latestReadyEventAt: session.latestReadyEventAt ?? null,
+        meaningfulActivityAt: session.meaningfulActivityAt ?? null,
         lastRuntimeIssue: session.lastRuntimeIssue ?? null,
         owner: session.owner ?? null,
         accessLevel: session.accessLevel ?? null,
         canApprovePermissions: session.canApprovePermissions ?? null,
         pendingPermissionRequestCount: session.pendingPermissionRequestCount ?? null,
         pendingUserActionRequestCount: session.pendingUserActionRequestCount ?? null,
+        latestUsage: buildShellVisibleLatestUsageSignatureValue(session.latestUsage),
         agentStateRequests: buildShellVisibleAgentStateRequestSignatureValue(session.agentState),
         metadata: buildShellVisibleMetadataSignatureValue(session.metadata),
     });
@@ -97,4 +136,66 @@ export function useStableSessionViewShellSession(session: Session | null): Sessi
         ref.current = { signature, session };
     }
     return ref.current.session;
+}
+
+const sessionViewShellSessionCache = new Map<string, { signature: string; session: Session }>();
+
+function buildSessionViewShellSessionCacheKey(sessionId: string, serverScopeId: string | null): string {
+    return `${serverScopeId ?? 'unscoped'}\u0000${sessionId}`;
+}
+
+function getStableSessionViewShellSession(session: Session, serverScopeId: string | null): Session {
+    const signature = buildSessionViewShellSessionSignature(session);
+    const cacheKey = buildSessionViewShellSessionCacheKey(session.id, serverScopeId);
+    const cached = sessionViewShellSessionCache.get(cacheKey);
+    if (cached?.signature === signature) {
+        return cached.session;
+    }
+    sessionViewShellSessionCache.set(cacheKey, { signature, session });
+    return session;
+}
+
+export function selectSessionViewShellSessionForRouteState(
+    state: Pick<StorageState, 'sessions' | 'sessionListIndexByServerId' | 'concurrentSessionListCacheByServerId'>,
+    sessionId: string,
+    expectedServerId?: string | null,
+): Session | null {
+    const session = state.sessions[sessionId] ?? null;
+    if (!session) return null;
+
+    const normalizedExpectedServerId = normalizeServerId(expectedServerId);
+    let resolvedServerScopeId = normalizeServerId((session as { serverId?: unknown }).serverId);
+    if (normalizedExpectedServerId) {
+        const cachedServerId = normalizeServerId(resolveServerIdForSessionIdFromLocalState({
+            sessions: state.sessions as Record<string, { serverId?: unknown } | null>,
+            sessionListIndexByServerId: state.sessionListIndexByServerId,
+            concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
+        }, sessionId));
+        if (!cachedServerId || !areServerProfileIdentifiersEquivalent(cachedServerId, normalizedExpectedServerId)) {
+            return null;
+        }
+        resolvedServerScopeId = cachedServerId;
+    }
+
+    return getStableSessionViewShellSession(session, resolvedServerScopeId);
+}
+
+export function useSessionViewShellSession(sessionId: string, expectedServerId?: string | null): Session | null {
+    return storage(
+        useShallow((state) => {
+            return selectSessionViewShellSessionForRouteState(
+                {
+                    sessions: state.sessions,
+                    sessionListIndexByServerId: state.sessionListIndexByServerId,
+                    concurrentSessionListCacheByServerId: state.concurrentSessionListCacheByServerId,
+                },
+                sessionId,
+                expectedServerId,
+            );
+        }),
+    );
+}
+
+export function useSessionViewShellSessionSeq(sessionId: string): number {
+    return storage((state) => state.sessions[sessionId]?.seq ?? 0);
 }

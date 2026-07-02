@@ -71,6 +71,34 @@ describe('repairStreamingMarkdownAsync native', () => {
         ]));
     });
 
+    it('skips future Worklets attempts after the runtime reports repair failure', async () => {
+        workletsMock.runOnRuntime.mockImplementationOnce((_runtime: MockRuntime, _worklet: MockWorklet): MockWorklet => (
+            ...args: unknown[]
+        ) => {
+            const onComplete = args[2];
+            expect(onComplete).toBeTypeOf('function');
+            (onComplete as (succeeded: number, repairedMarkdown: string, failureKind?: string) => void)(0, '', 'worklet');
+        });
+        const { repairStreamingMarkdownAsync } = await import('./repairStreamingMarkdownAsync.native');
+        const { preprocessStreamingMarkdown } = await import('./preprocessStreamingMarkdown');
+        const { syncPerformanceTelemetry } = await import('@/sync/runtime/syncPerformanceTelemetry');
+        const first = 'streaming **markdown';
+        const second = 'streaming `markdown';
+        syncPerformanceTelemetry.configure({ enabled: true });
+        syncPerformanceTelemetry.reset();
+
+        await expect(repairStreamingMarkdownAsync(first)).resolves.toBe(preprocessStreamingMarkdown(first));
+        await expect(repairStreamingMarkdownAsync(second)).resolves.toBe(preprocessStreamingMarkdown(second));
+
+        expect(workletsMock.createWorkletRuntime).toHaveBeenCalledTimes(1);
+        expect(workletsMock.runOnRuntime).toHaveBeenCalledTimes(1);
+        expect(syncPerformanceTelemetry.snapshot().events).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'ui.markdown.streaming.repair.worklet', count: 1 }),
+            expect.objectContaining({ name: 'ui.markdown.streaming.repair.fallback', count: 2 }),
+            expect.objectContaining({ name: 'ui.markdown.streaming.repair.js', count: 2 }),
+        ]));
+    });
+
     it('falls back to JS preprocessing when the Worklets callback does not complete', async () => {
         vi.useFakeTimers();
         process.env.EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON = JSON.stringify({

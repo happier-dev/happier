@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, type AccessibilityRole } from 'react-native';
+import { View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, type AccessibilityRole, type TextProps } from 'react-native';
 import { Typography } from '@/constants/Typography';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
@@ -10,6 +10,10 @@ import { useItemGroupRowPosition } from '@/components/ui/lists/ItemGroupRowPosit
 import { getItemGroupRowCornerRadii } from '@/components/ui/lists/itemGroupRowCorners';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
+import {
+    WEB_START_ELLIPSIS_CONTAINER_TEXT_STYLE,
+    WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE,
+} from '@/components/ui/text/webStartEllipsisTextStyles';
 import { useResolvedItemDensity } from '@/components/ui/lists/useResolvedItemDensity';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import {
@@ -30,6 +34,8 @@ function resizeItemIconForDensity(icon: React.ReactNode, iconSize: number): Reac
         size: iconSize,
     } as Record<string, unknown>);
 }
+
+type ItemTextEllipsizeMode = NonNullable<TextProps['ellipsizeMode']>;
 
 export interface ItemProps {
     testID?: string;
@@ -65,6 +71,8 @@ export interface ItemProps {
     style?: StyleProp<ViewStyle>;
     titleStyle?: StyleProp<TextStyle>;
     subtitleStyle?: StyleProp<TextStyle>;
+    titleEllipsizeMode?: ItemTextEllipsizeMode;
+    subtitleEllipsizeMode?: ItemTextEllipsizeMode;
     detailStyle?: StyleProp<TextStyle>;
     showChevron?: boolean;
     showDivider?: boolean;
@@ -259,6 +267,8 @@ export const Item = React.memo<ItemProps>((props) => {
         style,
         titleStyle,
         subtitleStyle,
+        titleEllipsizeMode,
+        subtitleEllipsizeMode,
         detailStyle,
         showChevron = true,
         showDivider = true,
@@ -448,6 +458,32 @@ export const Item = React.memo<ItemProps>((props) => {
         />
     ) : null;
     
+    const renderPrimitiveText = React.useCallback((params: Readonly<{
+        value: string | number;
+        style: StyleProp<TextStyle>;
+        numberOfLines?: number;
+        ellipsizeMode?: ItemTextEllipsizeMode;
+        testID?: string;
+    }>) => {
+        const value = String(params.value);
+        const useWebStartEllipsis = isWeb && params.ellipsizeMode === 'head';
+        return (
+            <Text
+                testID={params.testID}
+                style={[
+                    params.style,
+                    useWebStartEllipsis ? WEB_START_ELLIPSIS_CONTAINER_TEXT_STYLE : null,
+                ]}
+                numberOfLines={params.numberOfLines}
+                ellipsizeMode={params.ellipsizeMode}
+            >
+                {useWebStartEllipsis ? (
+                    <Text style={WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE}>{value}</Text>
+                ) : value}
+            </Text>
+        );
+    }, [isWeb]);
+
     const renderRowContent = React.useCallback(() => (
         <>
             {/* Left Section */}
@@ -460,12 +496,12 @@ export const Item = React.memo<ItemProps>((props) => {
             {/* Center Section */}
             <View style={styles.centerContent}>
                 {typeof title === 'string' || typeof title === 'number' ? (
-                    <Text
-                        style={[styles.title, titleSizeStyle, titleColor, titleStyle]}
-                        numberOfLines={subtitle ? 1 : 2}
-                    >
-                        {title}
-                    </Text>
+                    renderPrimitiveText({
+                        value: title,
+                        style: [styles.title, titleSizeStyle, titleColor, titleStyle],
+                        numberOfLines: subtitle ? 1 : 2,
+                        ellipsizeMode: titleEllipsizeMode,
+                    })
                 ) : (
                     normalizeNodeForView(title)
                 )}
@@ -479,14 +515,12 @@ export const Item = React.memo<ItemProps>((props) => {
                                 ? (subtitleLines <= 0 ? undefined : subtitleLines)
                                 : (asText.indexOf('\n') !== -1 ? undefined : 1);
 
-                            return (
-                                <Text
-                                    style={[styles.subtitle, subtitleSizeStyle, subtitleStyle]}
-                                    numberOfLines={effectiveLines}
-                                >
-                                    {asText}
-                                </Text>
-                            );
+                            return renderPrimitiveText({
+                                value: asText,
+                                style: [styles.subtitle, subtitleSizeStyle, subtitleStyle],
+                                numberOfLines: effectiveLines,
+                                ellipsizeMode: subtitleEllipsizeMode,
+                            });
                         };
 
                         const normalizeNode = (node: any): any => {
@@ -513,15 +547,13 @@ export const Item = React.memo<ItemProps>((props) => {
                         ? (subtitleLines <= 0 ? undefined : subtitleLines)
                         : (subtitle.indexOf('\n') !== -1 ? undefined : 1);
 
-                    return (
-                        <Text
-                            testID={subtitleTestID}
-                            style={[styles.subtitle, subtitleSizeStyle, subtitleStyle]}
-                            numberOfLines={effectiveLines}
-                        >
-                            {subtitle}
-                        </Text>
-                    );
+                    return renderPrimitiveText({
+                        value: subtitle,
+                        testID: subtitleTestID,
+                        style: [styles.subtitle, subtitleSizeStyle, subtitleStyle],
+                        numberOfLines: effectiveLines,
+                        ellipsizeMode: subtitleEllipsizeMode,
+                    });
                 })()}
                 {subtitleAccessoryNode ? (
                     <View style={{ marginTop: 0 }}>
@@ -566,10 +598,12 @@ export const Item = React.memo<ItemProps>((props) => {
         iconContainerStyle,
         leftAccessory,
         loading,
+        renderPrimitiveText,
         rightAccessory,
         showAccessory,
         subtitle,
         subtitleAccessoryNode,
+        subtitleEllipsizeMode,
         subtitleLines,
         subtitleSizeStyle,
         styles.centerContent,
@@ -579,6 +613,7 @@ export const Item = React.memo<ItemProps>((props) => {
         style,
         title,
         titleColor,
+        titleEllipsizeMode,
         titleSizeStyle,
         titleStyle,
         theme.colors.text.secondary,

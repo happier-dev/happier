@@ -3,7 +3,6 @@ import type { Session } from '../../state/storageTypes';
 export type ReachableTargetPeerSession = Readonly<{
     id: string;
     active: boolean;
-    updatedAt: number;
     machineId: string | null;
     hostHint: string | null;
     projectMachineId: string | null;
@@ -14,7 +13,7 @@ export type ComparableBasePathPeerSessionResolution = Readonly<{
     peerSession: ReachableTargetPeerSession;
 }>;
 
-export type ComparableBasePathPeerSessionSource = Readonly<Pick<Session, 'id' | 'active' | 'updatedAt'>>;
+export type ComparableBasePathPeerSessionSource = Readonly<Pick<Session, 'id' | 'active'>>;
 
 export type BuildComparableBasePathPeerSessionsParams<TSession extends ComparableBasePathPeerSessionSource = ComparableBasePathPeerSessionSource> = Readonly<{
     sessionRecords: Record<string, TSession>;
@@ -32,7 +31,7 @@ function compareReachableTargetPeerSessions(a: ReachableTargetPeerSession, b: Re
     if (activeDelta !== 0) {
         return activeDelta;
     }
-    return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+    return a.id.localeCompare(b.id);
 }
 
 export function buildComparableBasePathPeerSessions<TSession extends ComparableBasePathPeerSessionSource>(

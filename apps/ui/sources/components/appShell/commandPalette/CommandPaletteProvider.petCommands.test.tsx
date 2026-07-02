@@ -11,6 +11,7 @@ const resetDesktopActivityOverlayPositionMock = vi.hoisted(() => vi.fn(async () 
 const captured = vi.hoisted(() => ({
     petControls: null as PetCommandControls | null,
     shortcutLabelHandlers: null as KeyboardShortcutHandlers | null,
+    keyboardHandlers: null as KeyboardShortcutHandlers | null,
 }));
 
 vi.mock('expo-router', () => ({
@@ -28,10 +29,18 @@ vi.mock('@/auth/context/AuthContext', () => ({
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({
-    storage: (selector: (state: unknown) => unknown) => selector({
-        sessions: {},
-        settings: { commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true, keyboardSingleKeyShortcutsEnabled: false, keyboardShortcutOverridesV1: {}, keyboardShortcutDisabledCommandIdsV1: [] },
-    }),
+    storage: Object.assign(
+        (selector: (state: unknown) => unknown) => selector({
+            sessions: {},
+            settings: { commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true, keyboardSingleKeyShortcutsEnabled: false, keyboardShortcutOverridesV1: {}, keyboardShortcutDisabledCommandIdsV1: [] },
+        }),
+        {
+            getState: () => ({
+                sessions: {},
+                settings: { commandPaletteEnabled: true, keyboardShortcutsV2Enabled: true, keyboardSingleKeyShortcutsEnabled: false, keyboardShortcutOverridesV1: {}, keyboardShortcutDisabledCommandIdsV1: [] },
+            }),
+        },
+    ),
 }));
 
 vi.mock('zustand/react/shallow', () => ({
@@ -74,7 +83,12 @@ vi.mock('@/keyboard', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/keyboard')>();
     return {
         ...actual,
-        KeyboardShortcutProvider: ({ children }: React.PropsWithChildren) => React.createElement('KeyboardShortcutProvider', null, children),
+        KeyboardShortcutProvider: ({ children, handlers }: React.PropsWithChildren<{
+            handlers: KeyboardShortcutHandlers;
+        }>) => {
+            captured.keyboardHandlers = handlers;
+            return React.createElement('KeyboardShortcutProvider', null, children);
+        },
         buildKeyboardShortcutLabels: (
             platform: Parameters<typeof actual.buildKeyboardShortcutLabels>[0],
             surface: Parameters<typeof actual.buildKeyboardShortcutLabels>[1],
@@ -114,6 +128,7 @@ describe('CommandPaletteProvider pet commands', () => {
         resetDesktopActivityOverlayPositionMock.mockClear();
         captured.petControls = null;
         captured.shortcutLabelHandlers = null;
+        captured.keyboardHandlers = null;
     });
 
     afterEach(() => {
@@ -124,6 +139,7 @@ describe('CommandPaletteProvider pet commands', () => {
         const { CommandPaletteProvider } = await import('./CommandPaletteProvider');
 
         await renderScreen(<CommandPaletteProvider><React.Fragment /></CommandPaletteProvider>);
+        captured.keyboardHandlers?.['commandPalette.open']?.();
 
         captured.petControls?.wake();
         captured.petControls?.tuck();

@@ -17,7 +17,7 @@ const DEFAULT_WORKSPACE_FILE_INLINE_MAX_BYTES = 256 * 1024;
 // canonical transfer runtime (`transferRuntime/**` for large payloads).
 const WORKSPACE_FILE_INLINE_HARD_MAX_BYTES = 10_000_000;
 const WORKSPACE_READ_FILE_TOO_LARGE_ERROR = 'File exceeds the inline file read size limit';
-const WORKSPACE_WRITE_FILE_TOO_LARGE_ERROR = 'File exceeds the inline file write size limit';
+export const WORKSPACE_WRITE_FILE_TOO_LARGE_ERROR = 'File exceeds the inline file write size limit';
 
 function resolveWorkspaceFileInlineMaxBytes(): number {
     const raw = String(process.env[WORKSPACE_FILE_INLINE_MAX_BYTES_ENV_KEY] ?? '').trim();

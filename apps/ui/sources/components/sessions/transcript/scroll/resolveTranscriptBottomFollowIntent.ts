@@ -10,12 +10,21 @@ export type TranscriptBottomFollowIntentResult = Readonly<{
     wantsPinned: boolean;
 }>;
 
+/**
+ * Per-frame bottom-follow intent derivation.
+ *
+ * `canRelease` is the trusted-gate (plan B6): only observations carrying release
+ * authority (trusted user scrolls on native — including untrusted momentum frames
+ * inside the post-drag attribution window, plan B9; genuine gesture-derived intent
+ * on web) may transition `wantsPinned` true -> false. Untrusted height-churn
+ * observations can never unpin a user who did not scroll.
+ */
 export function resolveTranscriptBottomFollowIntent(params: Readonly<{
+    canRelease: boolean;
     direction: TranscriptBottomScrollDirection;
     distanceFromBottom: number;
     pinThresholdPx: number;
     previousScrollOffset: number | null;
-    recentUserIntent: boolean;
     scrollOffset: number;
     wantsPinned: boolean;
 }>): TranscriptBottomFollowIntentResult {
@@ -47,10 +56,10 @@ export function resolveTranscriptBottomFollowIntent(params: Readonly<{
     if (distanceFromBottom === 0) {
         rearmed = wantsPinned !== true;
         wantsPinned = true;
-    } else if (params.recentUserIntent && movedAwayFromBottom) {
+    } else if (params.canRelease && movedAwayFromBottom) {
         released = wantsPinned !== false;
         wantsPinned = false;
-    } else if (params.recentUserIntent && movedTowardBottom && distanceFromBottom <= pinThresholdPx) {
+    } else if (movedTowardBottom && distanceFromBottom <= pinThresholdPx) {
         rearmed = wantsPinned !== true;
         wantsPinned = true;
     }

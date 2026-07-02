@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -8,14 +9,30 @@ import { installNewSessionComponentsCommonModuleMocks } from './newSessionCompon
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const mockEnv = vi.hoisted(() => ({
+    keyboardListeners: new Map<string, (event?: { endCoordinates?: { height?: number } }) => void>(),
     platform: 'ios' as 'ios' | 'android',
 }));
 const useKeyboardHandlerMock = vi.fn();
+let latestAnimatedStyleFactory: null | (() => any) = null;
+const keyboardAnimationState = {
+    height: { value: -240 },
+    progress: { value: 1 },
+};
 
 installNewSessionComponentsCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
+            Keyboard: {
+                addListener: (eventName: string, listener: (event?: { endCoordinates?: { height?: number } }) => void) => {
+                    mockEnv.keyboardListeners.set(eventName, listener);
+                    return {
+                        remove: () => {
+                            mockEnv.keyboardListeners.delete(eventName);
+                        },
+                    };
+                },
+            },
             Platform: {
                 get OS() {
                     return mockEnv.platform;
@@ -39,13 +56,8 @@ installNewSessionComponentsCommonModuleMocks({
 });
 
 vi.mock('react-native-keyboard-controller', () => ({
-    KeyboardAvoidingView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('KeyboardAvoidingView', props, props.children),
     useKeyboardHandler: (...args: any[]) => useKeyboardHandlerMock(...args),
-    useReanimatedKeyboardAnimation: () => ({
-        height: { value: 240 },
-        progress: { value: 1 },
-    }),
+    useReanimatedKeyboardAnimation: () => keyboardAnimationState,
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -60,7 +72,11 @@ vi.mock('react-native-reanimated', async () => {
         default: {
             View: (props: any) => React.createElement('AnimatedView', props, props.children),
         },
-        useAnimatedStyle: (fn: any) => fn(),
+        useAnimatedStyle: (fn: any) => {
+            latestAnimatedStyleFactory = fn;
+            return fn();
+        },
+        runOnJS: (fn: (...args: any[]) => unknown) => fn,
         useSharedValue: (initial: any) => ({ value: initial }),
     };
 });
@@ -145,8 +161,12 @@ vi.mock('color', () => ({
 
 afterEach(() => {
     standardCleanup();
+    mockEnv.keyboardListeners.clear();
     mockEnv.platform = 'ios';
     useKeyboardHandlerMock.mockReset();
+    latestAnimatedStyleFactory = null;
+    keyboardAnimationState.height.value = -240;
+    keyboardAnimationState.progress.value = 1;
 });
 
 function buildSimplePanel() {
@@ -292,41 +312,70 @@ function buildWizard() {
 }
 
 describe('new-session native keyboard avoiding', () => {
-    it('uses automatic offset for the simple panel on iOS', async () => {
+    it('uses the scaffold keyboard host for the simple panel on iOS', async () => {
         mockEnv.platform = 'ios';
         const screen = await renderScreen(await buildSimplePanel());
 
-        const keyboardAvoidingView = screen.tree.root.findByType('KeyboardAvoidingView' as any);
-        expect(keyboardAvoidingView.props.automaticOffset).toBe(true);
-        expect(keyboardAvoidingView.props.behavior).toBe('translate-with-padding');
-        expect(keyboardAvoidingView.props.keyboardVerticalOffset).toBe(0);
-    });
-
-    it('uses the native keyboard-shift host for the simple panel on Android', async () => {
-        mockEnv.platform = 'android';
-        const screen = await renderScreen(await buildSimplePanel());
-
-        expect(screen.tree.root.findAllByType('KeyboardAvoidingView' as any)).toHaveLength(0);
-        expect(screen.tree.root.findAllByType('AnimatedView' as any).length).toBeGreaterThan(0);
+        expect(screen.tree.root.findByProps({ testID: 'new-session-composer-keyboard-host' })).toBeTruthy();
         expect(useKeyboardHandlerMock).toHaveBeenCalled();
     });
 
-    it('uses automatic offset for the wizard on iOS', async () => {
+    it('uses the scaffold keyboard host for the simple panel on Android', async () => {
+        mockEnv.platform = 'android';
+        const screen = await renderScreen(await buildSimplePanel());
+
+        expect(screen.tree.root.findByProps({ testID: 'new-session-composer-keyboard-host' })).toBeTruthy();
+        expect(useKeyboardHandlerMock).toHaveBeenCalled();
+    });
+
+    it('translates the simple panel upward on Android keyboard events', async () => {
+        mockEnv.platform = 'android';
+        await renderScreen(await buildSimplePanel());
+
+        const [handlers] = useKeyboardHandlerMock.mock.calls.at(-1) ?? [];
+        act(() => {
+            handlers?.onStart?.({ height: 240, progress: 1 });
+        });
+        const animatedStyle = latestAnimatedStyleFactory?.();
+        const translateY = animatedStyle?.transform?.[0]?.translateY;
+
+        expect(translateY).toBeLessThanOrEqual(0);
+    });
+
+    it('uses Android native keyboard final-frame events when worklet frames do not arrive', async () => {
+        mockEnv.platform = 'android';
+        keyboardAnimationState.height.value = 0;
+        keyboardAnimationState.progress.value = 0;
+        await renderScreen(await buildSimplePanel());
+
+        act(() => {
+            mockEnv.keyboardListeners.get('keyboardDidShow')?.({
+                endCoordinates: { height: 320 },
+            });
+        });
+
+        expect(latestAnimatedStyleFactory?.()?.transform?.[0]?.translateY).toBe(-320);
+
+        act(() => {
+            mockEnv.keyboardListeners.get('keyboardDidHide')?.();
+        });
+
+        expect(latestAnimatedStyleFactory?.()?.transform?.[0]?.translateY).toBe(-34);
+    });
+
+    it('uses the scaffold keyboard host for the wizard on iOS', async () => {
         mockEnv.platform = 'ios';
         const screen = await renderScreen(await buildWizard());
 
-        const keyboardAvoidingView = screen.tree.root.findByType('KeyboardAvoidingView' as any);
-        expect(keyboardAvoidingView.props.automaticOffset).toBe(true);
-        expect(keyboardAvoidingView.props.behavior).toBe('translate-with-padding');
-        expect(keyboardAvoidingView.props.keyboardVerticalOffset).toBe(0);
+        expect(screen.tree.root.findByProps({ testID: 'new-session-wizard-composer-keyboard-host' })).toBeTruthy();
+        expect(useKeyboardHandlerMock).toHaveBeenCalled();
     });
 
-    it('uses the native keyboard-shift host for the wizard on Android', async () => {
+    it('uses the scaffold keyboard host for the wizard on Android', async () => {
         mockEnv.platform = 'android';
         const screen = await renderScreen(await buildWizard());
 
-        expect(screen.tree.root.findAllByType('KeyboardAvoidingView' as any)).toHaveLength(0);
-        expect(screen.tree.root.findAllByType('AnimatedView' as any).length).toBeGreaterThan(0);
+        expect(screen.tree.root.findByProps({ testID: 'new-session-wizard-composer-keyboard-host' })).toBeTruthy();
         expect(useKeyboardHandlerMock).toHaveBeenCalled();
     });
 });

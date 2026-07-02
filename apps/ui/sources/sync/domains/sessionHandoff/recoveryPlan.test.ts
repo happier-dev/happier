@@ -60,7 +60,7 @@ describe('buildSessionHandoffRecoveryPlan', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'thread_runtime',
+                    providerSessionId: 'thread_runtime',
                 },
             },
         } as Metadata;

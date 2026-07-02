@@ -11,6 +11,18 @@ import { installSessionFilesCommonModuleMocks } from '@/components/sessions/file
 
 const octiconsRenderMock = vi.hoisted(() => vi.fn());
 
+function buildBranchSummaryTheme() {
+    return {
+        colors: {
+            border: { default: '#000' },
+            input: { background: '#111' },
+            surface: { base: '#111', inset: '#222' },
+            text: { primary: '#fff', secondary: '#aaa' },
+            textLink: '#0af',
+        },
+    };
+}
+
 installSessionFilesCommonModuleMocks({
     icons: () => ({
         Octicons: (props: any) => {
@@ -47,16 +59,7 @@ describe('SourceControlBranchSummary', () => {
 
         function Wrapper(props: Readonly<{ tick: number }>) {
             void props.tick;
-            const theme = {
-                colors: {
-                    divider: '#000',
-                    input: { background: '#111' },
-                    surface: '#111',
-                    surfaceHigh: '#222',
-                    text: '#fff',
-                    textSecondary: '#aaa',
-                },
-            };
+            const theme = buildBranchSummaryTheme();
             return <SourceControlBranchSummary theme={theme} scmStatusFiles={scmStatusFiles} variant="rail" />;
         }
 
@@ -77,17 +80,7 @@ describe('SourceControlBranchSummary', () => {
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<SourceControlBranchSummary
                     variant="rail"
-                    theme={{
-                        colors: {
-                            divider: '#000',
-                            input: { background: '#111' },
-                            surface: '#111',
-                            surfaceHigh: '#222',
-                            text: '#fff',
-                            textSecondary: '#aaa',
-                            textLink: '#0af',
-                        },
-                    }}
+                    theme={buildBranchSummaryTheme()}
                     branchTrigger={React.createElement('BranchTrigger', { testID: 'branch-trigger' })}
                     scmStatusFiles={{
                         branch: 'dev',
@@ -107,15 +100,7 @@ describe('SourceControlBranchSummary', () => {
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<SourceControlBranchSummary
-                    theme={{
-                        colors: {
-                            divider: '#000',
-                            input: { background: '#111' },
-                            surfaceHigh: '#222',
-                            text: '#fff',
-                            textSecondary: '#aaa',
-                        },
-                    }}
+                    theme={buildBranchSummaryTheme()}
                     scmStatusFiles={{
                         branch: 'main',
                         includedFiles: [],
@@ -136,15 +121,7 @@ describe('SourceControlBranchSummary', () => {
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<SourceControlBranchSummary
-                    theme={{
-                        colors: {
-                            divider: '#000',
-                            input: { background: '#111' },
-                            surfaceHigh: '#222',
-                            text: '#fff',
-                            textSecondary: '#aaa',
-                        },
-                    }}
+                    theme={buildBranchSummaryTheme()}
                     scmStatusFiles={{
                         branch: 'feature/refactor',
                         upstream: 'origin/feature/refactor',
@@ -178,15 +155,7 @@ describe('SourceControlBranchSummary', () => {
 
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<SourceControlBranchSummary
-                    theme={{
-                        colors: {
-                            divider: '#000',
-                            input: { background: '#111' },
-                            surfaceHigh: '#222',
-                            text: '#fff',
-                            textSecondary: '#aaa',
-                        },
-                    }}
+                    theme={buildBranchSummaryTheme()}
                     scmStatusFiles={{
                         branch: 'main',
                         changeSetModel: 'working-copy',

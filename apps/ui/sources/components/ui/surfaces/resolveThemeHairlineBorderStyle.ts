@@ -1,6 +1,7 @@
-import { StyleSheet } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 
 const THEME_HAIRLINE_WIDTH = StyleSheet.hairlineWidth || 1;
+const THEME_VISIBLE_BORDER_WIDTH = Platform.OS === 'ios' ? 1 : THEME_HAIRLINE_WIDTH;
 
 export type ThemeHairlineBorderStyle = Readonly<{
     borderColor: string;
@@ -75,7 +76,7 @@ function isAlphaZeroColor(color: string): boolean {
 export function resolveThemeHairlineBorderStyle(color: string): ThemeHairlineBorderStyle {
     return {
         borderColor: color,
-        borderWidth: isAlphaZeroColor(color) ? 0 : THEME_HAIRLINE_WIDTH,
+        borderWidth: isAlphaZeroColor(color) ? 0 : THEME_VISIBLE_BORDER_WIDTH,
     };
 }
 

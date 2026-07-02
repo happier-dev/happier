@@ -123,6 +123,36 @@ describe('ModalProvider', () => {
         expect(top?.props.zIndexBase).toBeGreaterThan(bottom?.props.zIndexBase);
     });
 
+    it('layers screen-level overlay portals below custom modals', async () => {
+        const { ModalProvider } = await import('./ModalProvider');
+        const { Modal } = await import('./ModalManager');
+        const { useOverlayPortal } = await import('@/components/ui/popover');
+        let dispatch: ReturnType<typeof useOverlayPortal> | null = null;
+
+        function CapturePortalDispatch() {
+            dispatch = useOverlayPortal();
+            return React.createElement('CapturePortalDispatch');
+        }
+
+        const screen = await renderScreen(
+            React.createElement(ModalProvider, { children: React.createElement(CapturePortalDispatch) }),
+        );
+
+        act(() => {
+            dispatch?.setPortalNode('screen-popover', React.createElement('ScreenPopover'));
+        });
+        showCustomModal(Modal, DummyModalA);
+
+        const screenPortalHost = screen.tree.root.find((node: any) => (
+            node?.type === 'View'
+            && node?.props?.collapsable === false
+            && node?.props?.style?.[1]?.zIndex === 90000
+        ));
+        const modalBackdrop = screen.findAllByType('Backdrop' as any)[0];
+
+        expect(screenPortalHost.props.style[1].zIndex).toBeLessThan(modalBackdrop.props.zIndexBase);
+    });
+
     it('keeps a hidden custom modal mounted until the shared modal exit animation can complete', async () => {
         vi.useFakeTimers();
         const { ModalProvider } = await import('./ModalProvider');

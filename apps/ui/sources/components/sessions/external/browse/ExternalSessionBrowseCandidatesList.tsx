@@ -12,7 +12,6 @@ import { t } from '@/text';
 import {
     buildExternalSessionBrowseCandidateDisplayTitle,
     buildExternalSessionBrowseCandidateRightElement,
-    buildExternalSessionBrowseCandidateSearchValue,
     buildExternalSessionBrowseCandidateSubtitle,
 } from './buildExternalSessionBrowseCandidatePresentation';
 import type { ExternalSessionBrowseCandidate } from './useExternalSessionBrowseCandidates';
@@ -28,6 +27,7 @@ const stylesheet = StyleSheet.create((theme: AppTheme) => ({
         fontSize: 13,
     },
     searchContainer: {
+        position: 'relative',
         paddingHorizontal: 12,
         paddingTop: 12,
         paddingBottom: 6,
@@ -39,6 +39,14 @@ const stylesheet = StyleSheet.create((theme: AppTheme) => ({
         backgroundColor: theme.colors.surface.inset,
         color: theme.colors.text.primary,
         fontSize: 13,
+    },
+    searchInputWithAugmentingIndicator: {
+        paddingRight: 40,
+    },
+    searchAugmentingIndicator: {
+        position: 'absolute',
+        right: 22,
+        top: 22,
     },
     loadingRow: {
         paddingVertical: 18,
@@ -53,7 +61,10 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
     error: string | null;
     nextCursor: string | null;
     loadingMore: boolean;
+    searchAugmenting: boolean;
     linkingSessionId: string | null;
+    searchQuery: string;
+    onSearchQueryChange: (query: string) => void;
     onSelectCandidate: (candidate: ExternalSessionBrowseCandidate) => void;
     onLoadMore: () => void;
 }>) {
@@ -61,25 +72,24 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
     const styles = stylesheet;
     const itemDensity = useResolvedItemDensity(undefined);
 
-    const [searchQuery, setSearchQuery] = React.useState('');
-
-    const filteredCandidates = React.useMemo(() => {
-        const normalizedSearchQuery = searchQuery.trim().toLowerCase();
-        if (!normalizedSearchQuery) return props.candidates;
-        return props.candidates.filter((candidate) => buildExternalSessionBrowseCandidateSearchValue(candidate).includes(normalizedSearchQuery));
-    }, [props.candidates, searchQuery]);
+    const hasSearchQuery = props.searchQuery.trim().length > 0;
 
     return (
         <ItemGroup title={t('externalSessions.browseCandidates')}>
             <View style={styles.searchContainer}>
                 <TextInput
                     testID="direct-session-candidates-search-input"
-                    value={searchQuery}
-                    onChangeText={setSearchQuery}
+                    value={props.searchQuery}
+                    onChangeText={props.onSearchQueryChange}
                     placeholder={t('externalSessions.browseSearchPlaceholder')}
                     placeholderTextColor={theme.colors.text.secondary}
-                    style={styles.searchInput}
+                    style={[styles.searchInput, props.searchAugmenting ? styles.searchInputWithAugmentingIndicator : null]}
                 />
+                {props.searchAugmenting ? (
+                    <View testID="direct-session-candidates-search-augmenting" style={styles.searchAugmentingIndicator}>
+                        <ActivitySpinner size="small" color={theme.colors.text.secondary} />
+                    </View>
+                ) : null}
             </View>
 
             {props.loading ? (
@@ -92,15 +102,13 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
                 </View>
             ) : props.candidates.length === 0 ? (
                 <View>
-                    <Text style={styles.helperText}>{t('externalSessions.browseNoCandidates')}</Text>
-                </View>
-            ) : filteredCandidates.length === 0 ? (
-                <View>
-                    <Text style={styles.helperText}>{t('externalSessions.browseNoSearchResults')}</Text>
+                    <Text style={styles.helperText}>
+                        {t(hasSearchQuery ? 'externalSessions.browseNoSearchResults' : 'externalSessions.browseNoCandidates')}
+                    </Text>
                 </View>
             ) : (
                 <>
-                    {filteredCandidates.map((candidate) => (
+                    {props.candidates.map((candidate) => (
                         <Item
                             key={candidate.remoteSessionId}
                             testID={`direct-session-candidate:${candidate.remoteSessionId}`}

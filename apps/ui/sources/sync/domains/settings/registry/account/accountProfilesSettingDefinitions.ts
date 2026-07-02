@@ -75,6 +75,18 @@ function buildSecretBindingsSummaryProperties(value: unknown): Record<string, nu
     };
 }
 
+function buildProfileEnabledSummaryProperties(value: unknown): Record<string, number> {
+    const entries = value && typeof value === 'object' && !Array.isArray(value)
+        ? Object.values(value as Record<string, unknown>)
+        : [];
+
+    return {
+        overrideCount: entries.length,
+        enabledOverrideCount: entries.filter((entry) => entry === true).length,
+        disabledOverrideCount: entries.filter((entry) => entry === false).length,
+    };
+}
+
 export const ACCOUNT_PROFILES_SETTING_DEFINITIONS = defineSettingDefinitions({
     profiles: {
         schema: z.array(AIBackendProfileSchema),
@@ -102,6 +114,20 @@ export const ACCOUNT_PROFILES_SETTING_DEFINITIONS = defineSettingDefinitions({
             privacy: 'safe',
             identityScope: 'person',
             serializeCurrentWithContext: serializeLastUsedProfileKind,
+        },
+    },
+    profileEnabledById: {
+        schema: z.record(z.string(), z.boolean()).default({}),
+        default: {},
+        description: 'Per-profile enable/disable overrides for picker visibility',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'person',
+            serializeCurrentProperties: buildProfileEnabledSummaryProperties,
         },
     },
     secrets: {

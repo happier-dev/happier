@@ -78,12 +78,16 @@ vi.mock('./AgentInputPopoverSurface', () => ({
     },
 }));
 
-vi.mock('@/components/ui/selectionList', () => ({
-    SelectionList: (props: CapturedSelectionListProps) => {
-        state.selectionList = props;
-        return React.createElement('SelectionList', props, null);
-    },
-}));
+vi.mock('@/components/ui/selectionList', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/ui/selectionList')>();
+    return {
+        ...actual,
+        SelectionList: (props: CapturedSelectionListProps) => {
+            state.selectionList = props;
+            return React.createElement('SelectionList', props, null);
+        },
+    };
+});
 
 const sampleRootStep: SelectionListStep = {
     id: 'root',

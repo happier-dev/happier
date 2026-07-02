@@ -1,7 +1,9 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 import { renderScreen } from '@/dev/testkit';
+import { SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS } from '@/sync/domains/session/attention/runtimePresentation';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -29,9 +31,22 @@ let storageSnapshot: any = null;
 const readStorageSnapshot = () => storageSnapshot;
 
 vi.mock('@/sync/domains/state/storage', async () => {
+    const React = await import('react');
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const listeners = new Set<() => void>();
     const store = Object.assign(
-        ((selector?: (value: any) => unknown) => (typeof selector === 'function' ? selector(storageSnapshot) : storageSnapshot)) as any,
+        ((selector?: (value: any) => unknown) => {
+            return React.useSyncExternalStore(
+                (listener) => {
+                    listeners.add(listener);
+                    return () => {
+                        listeners.delete(listener);
+                    };
+                },
+                () => (typeof selector === 'function' ? selector(storageSnapshot) : storageSnapshot),
+                () => (typeof selector === 'function' ? selector(storageSnapshot) : storageSnapshot),
+            );
+        }) as any,
         {
             getState: () => storageSnapshot,
             getInitialState: () => storageSnapshot,
@@ -67,6 +82,7 @@ function setGlobalDocument(value: any): void {
 }
 
 afterEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     storageSnapshot = null;
     if (originalWindowDescriptor) {
@@ -117,6 +133,8 @@ describe('FaviconPermissionIndicator', () => {
     });
 
     it('signals permissions from hydrated pending transcript state for active sessions', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(1_000));
         setGlobalWindow({});
         setGlobalDocument({});
 
@@ -164,5 +182,85 @@ describe('FaviconPermissionIndicator', () => {
         await renderScreen(<FaviconPermissionIndicator />);
 
         expect(updateFaviconWithNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not signal stale projected permissions without runtime freshness', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(1_000_000));
+        setGlobalWindow({});
+        setGlobalDocument({});
+
+        storageSnapshot = {
+            sessions: {
+                s1: {
+                    id: 's1',
+                    presence: 'online',
+                    active: true,
+                    activeAt: 0,
+                    thinking: false,
+                    thinkingAt: 0,
+                    latestTurnStatus: 'in_progress',
+                    latestTurnStatusObservedAt: 1,
+                    pendingPermissionRequestCount: 1,
+                    pendingUserActionRequestCount: 0,
+                    pendingRequestObservedAt: 1,
+                    agentState: {
+                        controlledByUser: null,
+                        requests: { req1: { tool: 'Bash', arguments: {}, createdAt: 1 } },
+                        completedRequests: null,
+                    },
+                },
+            },
+            sessionMessages: {},
+        };
+
+        const { FaviconPermissionIndicator } = await import('./FaviconPermissionIndicator');
+        await renderScreen(<FaviconPermissionIndicator />);
+
+        expect(updateFaviconWithNotification).not.toHaveBeenCalled();
+        expect(resetFavicon).toHaveBeenCalled();
+    });
+
+    it('resets when projected permission freshness expires without a storage update', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(1_000));
+        setGlobalWindow({});
+        setGlobalDocument({});
+
+        storageSnapshot = {
+            sessions: {
+                s1: {
+                    id: 's1',
+                    presence: 'online',
+                    active: true,
+                    activeAt: 1_000,
+                    thinking: false,
+                    thinkingAt: 0,
+                    latestTurnStatus: 'in_progress',
+                    latestTurnStatusObservedAt: 1_000,
+                    pendingPermissionRequestCount: 1,
+                    pendingUserActionRequestCount: 0,
+                    pendingRequestObservedAt: 1_000,
+                    agentState: {
+                        controlledByUser: null,
+                        requests: {},
+                        completedRequests: null,
+                    },
+                },
+            },
+            sessionMessages: {},
+        };
+
+        const { FaviconPermissionIndicator } = await import('./FaviconPermissionIndicator');
+        await renderScreen(<FaviconPermissionIndicator />);
+        expect(updateFaviconWithNotification).toHaveBeenCalledTimes(1);
+        resetFavicon.mockClear();
+
+        await act(async () => {
+            vi.setSystemTime(new Date(1_000 + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1));
+            await vi.advanceTimersByTimeAsync(SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1);
+        });
+
+        expect(resetFavicon).toHaveBeenCalled();
     });
 });

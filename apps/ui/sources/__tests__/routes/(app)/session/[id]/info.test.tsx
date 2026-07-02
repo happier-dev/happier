@@ -8,6 +8,7 @@ import { createStorageModuleMock } from '@/dev/testkit/mocks/storage';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { clearTempData, peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
+import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,8 +16,9 @@ let mockSessionId = 'session-1';
 let mockServerId: string | undefined;
 let mockSession: any = null;
 let isDataReady = true;
-let sessionHydrated = true;
+let routeHydrationState: SessionRouteHydrationState = { kind: 'available', sessionId: 'session-1' };
 let sessionIsConnected = true;
+let localDevModeEnabled = false;
 const allSessionsState = vi.hoisted(() => ({
     current: [] as any[],
 }));
@@ -49,13 +51,21 @@ const sessionDeleteSpy = vi.fn(async () => ({ success: true }));
 const sessionSetManualReadStateSpy = vi.fn(async () => ({ success: true, readState: 'unread', lastViewedSessionSeq: 0, didChange: true }));
 const modalAlertSpy = vi.fn();
 const modalConfirmSpy = vi.fn(async () => true);
+const modalPromptSpy = vi.fn(async () => 'urgent, review');
 const applySessionListRenderablePatchesSpy = vi.fn();
+const setPinnedSessionKeysV1Spy = vi.fn();
+const setSessionTagsV1Spy = vi.fn();
+const openMoveSheetSpy = vi.fn(async () => null as any);
+const setSessionFolderAssignmentSpy = vi.fn(async () => undefined);
 let hideInactiveSessions = false;
 let pinnedSessionKeysV1: unknown = null;
+let sessionTagsV1: unknown = null;
+let sessionFoldersV1: unknown = null;
 let acpCatalogSettingsV1: unknown = null;
 let backendEnabledByTargetKey: unknown = null;
 let resolvedServerId = 'server-1';
 let sessionHandoffFeatureEnabled = false;
+let sessionFoldersFeatureEnabled = false;
 let serverFeaturesSnapshot: any = {
     status: 'ready',
     features: {
@@ -141,6 +151,7 @@ installSessionRouteCommonModuleMocks({
             spies: {
                 alert: modalAlertSpy,
                 confirm: modalConfirmSpy,
+                prompt: modalPromptSpy,
             },
         }).module;
     },
@@ -166,7 +177,7 @@ installSessionRouteCommonModuleMocks({
                 useProjectForSession: () => null,
                 useLocalSetting: <K extends keyof LocalSettings>(name: K): LocalSettings[K] => {
                     if (name === 'devModeEnabled') {
-                        return false as LocalSettings[K];
+                        return localDevModeEnabled as LocalSettings[K];
                     }
                     return null as unknown as LocalSettings[K];
                 },
@@ -177,6 +188,12 @@ installSessionRouteCommonModuleMocks({
                     if (key === 'pinnedSessionKeysV1') {
                         return pinnedSessionKeysV1;
                     }
+                    if (key === 'sessionTagsV1') {
+                        return sessionTagsV1;
+                    }
+                    if (key === 'sessionFoldersV1') {
+                        return sessionFoldersV1;
+                    }
                     if (key === 'acpCatalogSettingsV1') {
                         return acpCatalogSettingsV1;
                     }
@@ -184,6 +201,15 @@ installSessionRouteCommonModuleMocks({
                         return backendEnabledByTargetKey;
                     }
                     return null;
+                },
+                useSettingMutable: (key: string) => {
+                    if (key === 'pinnedSessionKeysV1') {
+                        return [pinnedSessionKeysV1, setPinnedSessionKeysV1Spy];
+                    }
+                    if (key === 'sessionTagsV1') {
+                        return [sessionTagsV1, setSessionTagsV1Spy];
+                    }
+                    return [null, vi.fn()];
                 },
             },
         }),
@@ -197,9 +223,15 @@ vi.mock('@expo/vector-icons', () => ({
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionSpy(sessionId),
 }));
+vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
+    useSessionReachableMachineTarget: (sessionId: string) => readMachineTargetForSessionSpy(sessionId),
+}));
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
-    useHydrateSessionForRoute: () => sessionHydrated,
+    useHydrateSessionForRoute: (sessionId: string) => ({
+        ...routeHydrationState,
+        sessionId,
+    }),
 }));
 vi.mock('@/utils/navigation/safeRouterBack', () => ({
     safeRouterBack: (...args: any[]) => safeRouterBackSpy(...args),
@@ -214,12 +246,16 @@ vi.mock('@/components/ui/lists/ItemList', () => ({ ItemList: 'ItemList' }));
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: (props: any) => React.createElement('Avatar', { ...props, testID: props.testID ?? 'session-info-avatar' }),
 }));
-vi.mock('@/components/ui/media/CodeView', () => ({ CodeView: 'CodeView' }));
+vi.mock('@/components/ui/media/CodeView', () => ({
+    CodeView: ({ code, language }: { code: string; language: string }) =>
+        React.createElement('CodeView', { code, language }),
+}));
 vi.mock('@/components/sessions/info/SessionRetentionNotice', () => ({ SessionRetentionNotice: 'SessionRetentionNotice' }));
 vi.mock('@/hooks/ui/useHappyAction', () => ({ useHappyAction: (fn: any) => useHappyActionMock(fn) }));
 vi.mock('@/sync/ops', () => ({
     sessionArchiveWithServerScope: sessionArchiveSpy,
     sessionDelete: sessionDeleteSpy,
+    sessionDeleteWithServerScope: sessionDeleteSpy,
     sessionRename: vi.fn(),
     sessionSetManualReadStateWithServerScope: sessionSetManualReadStateSpy,
     sessionStop: sessionStopSpy,
@@ -245,8 +281,34 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
         if (featureId === 'sessions.handoff') {
             return sessionHandoffFeatureEnabled;
         }
+        if (featureId === 'sessions.folders') {
+            return sessionFoldersFeatureEnabled;
+        }
         return false;
     },
+}));
+vi.mock('@/components/sessions/shell/move-sheet/useSessionListMoveSheet', () => ({
+    useSessionListMoveSheet: () => ({
+        openMoveSheet: openMoveSheetSpy,
+    }),
+}));
+vi.mock('@/auth/storage/tokenStorage', () => ({
+    TokenStorage: {
+        getCredentialsForServerUrl: vi.fn(async () => ({ token: 'token' })),
+    },
+}));
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+    return {
+        ...actual,
+        getServerProfileById: () => ({
+            id: 'server-1',
+            serverUrl: 'https://server.example.test',
+        }),
+    };
+});
+vi.mock('@/sync/ops/sessionFolders', () => ({
+    setSessionFolderAssignment: setSessionFolderAssignmentSpy,
 }));
 vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
     useSessionExecutionRunsSupported: (sessionId: string, sessionServerId?: string | null) =>
@@ -319,8 +381,9 @@ describe('/session/[id]/info', () => {
         mockServerId = undefined;
         mockSession = null;
         isDataReady = true;
-        sessionHydrated = true;
+        routeHydrationState = { kind: 'available', sessionId: 'session-1' };
         sessionIsConnected = true;
+        localDevModeEnabled = false;
         routerPushSpy.mockReset();
         routerBackSpy.mockReset();
         safeRouterBackSpy.mockReset();
@@ -332,6 +395,13 @@ describe('/session/[id]/info', () => {
         sessionSetManualReadStateSpy.mockClear();
         modalAlertSpy.mockClear();
         modalConfirmSpy.mockClear();
+        modalPromptSpy.mockClear();
+        modalPromptSpy.mockResolvedValue('urgent, review');
+        setPinnedSessionKeysV1Spy.mockClear();
+        setSessionTagsV1Spy.mockClear();
+        openMoveSheetSpy.mockClear();
+        openMoveSheetSpy.mockResolvedValue(null);
+        setSessionFolderAssignmentSpy.mockClear();
         resolveSessionTargetServerIdSpy.mockClear();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockClear();
         machineRpcWithServerScopeSpy.mockClear();
@@ -341,10 +411,13 @@ describe('/session/[id]/info', () => {
         machineRpcWithServerScopeSpy.mockRejectedValue(new Error('unreachable'));
         hideInactiveSessions = false;
         pinnedSessionKeysV1 = null;
+        sessionTagsV1 = null;
+        sessionFoldersV1 = null;
         acpCatalogSettingsV1 = null;
         backendEnabledByTargetKey = null;
         resolvedServerId = 'server-1';
         sessionHandoffFeatureEnabled = false;
+        sessionFoldersFeatureEnabled = false;
         allSessionsState.current = [];
         allMachinesState.current = [];
         serverFeaturesSnapshot = {
@@ -402,9 +475,30 @@ describe('/session/[id]/info', () => {
     }
 
     it('shows loading while the route hydration is still in progress', async () => {
-        sessionHydrated = false;
+        routeHydrationState = { kind: 'loading', sessionId: 'session-1', reason: 'store-miss' };
         const screen = await renderInfoScreen();
         expect(screen.getTextContent()).toContain('common.loading');
+    });
+
+    it('shows loading while route hydration is retrying without rendering terminal unavailable', async () => {
+        routeHydrationState = { kind: 'retrying', sessionId: 'session-1', cause: 'server_unavailable' };
+        const screen = await renderInfoScreen();
+        expect(screen.getTextContent()).toContain('common.loading');
+        expect(screen.getTextContent()).not.toContain('errors.sessionDeleted');
+    });
+
+    it('renders terminal fallback when route hydration is missing', async () => {
+        routeHydrationState = { kind: 'missing', sessionId: 'session-1', cause: 'not_found' };
+        const screen = await renderInfoScreen();
+        expect(screen.getTextContent()).not.toContain('common.loading');
+        expect(screen.getTextContent()).toContain('errors.sessionDeleted');
+    });
+
+    it('does not keep the route loading after route hydration is available when global data is not ready', async () => {
+        isDataReady = false;
+        const screen = await renderInfoScreen();
+        expect(screen.getTextContent()).not.toContain('common.loading');
+        expect(screen.getTextContent()).toContain('errors.sessionDeleted');
     });
 
     it('fails open and renders the session when the record exists even if global hydration is still in progress', async () => {
@@ -418,7 +512,7 @@ describe('/session/[id]/info', () => {
             metadata: {},
         };
         isDataReady = false;
-        sessionHydrated = false;
+        routeHydrationState = { kind: 'loading', sessionId: 'session-1', reason: 'store-miss' };
         const screen = await renderInfoScreen();
         expect(screen.getTextContent()).not.toContain('common.loading');
         expect(screen.getTextContent()).toContain('name');
@@ -503,6 +597,73 @@ describe('/session/[id]/info', () => {
             .filter((node: any) => node.props?.title === 'sessionInfo.aiProvider');
         expect(aiProviderItems).toHaveLength(1);
         expect(aiProviderItems[0]?.props?.subtitle).toBe('Claude (daemon)');
+    });
+
+    it('defers raw dev JSON rendering until a section is opened', async () => {
+        localDevModeEnabled = true;
+        mockSession = {
+            id: 'session-1',
+            active: false,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {
+                path: '/workspace/repo',
+                sessionModelsV1: {
+                    availableModels: Array.from({ length: 50 }, (_, index) => ({
+                        id: `model-${index}`,
+                        description: 'large metadata payload',
+                    })),
+                },
+            },
+            agentState: {
+                controlledByUser: false,
+                requests: {},
+            },
+        };
+
+        const screen = await renderInfoScreen();
+        expect(screen.findAllByType('CodeView' as any)).toHaveLength(0);
+
+        const metadataRawItem = screen.findAllByType('Item' as any)
+            .find((node: any) => node.props?.title === 'sessionInfo.metadata' && typeof node.props?.onPress === 'function');
+        expect(metadataRawItem).toBeTruthy();
+
+        await act(async () => {
+            metadataRawItem?.props.onPress();
+        });
+
+        const codeViews = screen.findAllByType('CodeView' as any);
+        expect(codeViews).toHaveLength(1);
+        expect(codeViews[0]?.props.language).toBe('json');
+        expect(codeViews[0]?.props.code).toContain('"sessionModelsV1"');
+    });
+
+    it('shows projected product activity status without raw thinking diagnostics outside dev mode', async () => {
+        localDevModeEnabled = false;
+        mockSession = {
+            id: 'session-projected-status',
+            active: true,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+            thinking: true,
+            thinkingAt: Date.now(),
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: Date.now(),
+        };
+
+        const screen = await renderInfoScreen();
+        const items = screen.findAllByType('Item' as any);
+
+        expect(items.some((node: any) =>
+            node.props?.title === 'sessionInfo.sessionStatus'
+            && node.props?.detail === 'Connected'
+        )).toBe(true);
+        expect(items.some((node: any) => node.props?.title === 'sessionInfo.thinking')).toBe(false);
     });
 
     it('fails closed and hides the handoff quick action when direct peer truth is runtime-unknown and server-routed fallback would make the UI untruthful', async () => {
@@ -609,6 +770,7 @@ describe('/session/[id]/info', () => {
             updatedAt: Date.now(),
             seq: 4,
             lastViewedSessionSeq: 4,
+            latestTurnStatus: 'completed',
             metadata: {
                 machineId: 'machine_source',
                 flavor: 'claude',
@@ -641,6 +803,7 @@ describe('/session/[id]/info', () => {
             updatedAt: Date.now(),
             seq: 4,
             lastViewedSessionSeq: 4,
+            latestTurnStatus: 'completed',
             metadata: {
                 machineId: 'machine_source',
                 flavor: 'claude',
@@ -651,6 +814,97 @@ describe('/session/[id]/info', () => {
 
         expect(screen.findAllByProps({ testID: 'session-info-mark-unread' })).toHaveLength(0);
         expect(screen.findAllByProps({ testID: 'session-info-mark-read' })).toHaveLength(0);
+    });
+
+    it('surfaces pin and tag actions from the session view quick actions', async () => {
+        mockServerId = 'server-b';
+        pinnedSessionKeysV1 = [];
+        sessionTagsV1 = { 'server-1:session-1': ['existing'] };
+        mockSession = {
+            id: 'session-1',
+            active: false,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 2,
+            lastViewedSessionSeq: 1,
+            latestTurnStatus: 'completed',
+            archivedAt: null,
+            metadata: {},
+        };
+
+        const screen = await renderInfoScreen();
+
+        await screen.pressByTestIdAsync('session-info-session-pin');
+        expect(setPinnedSessionKeysV1Spy).toHaveBeenCalledWith(['server-1:session-1']);
+
+        await screen.pressByTestIdAsync('session-info-session-tags-edit');
+        expect(modalPromptSpy).toHaveBeenCalledWith(
+            'sessionsList.selectionSetTagsPromptTitle',
+            'sessionsList.selectionTagsPromptMessage',
+            expect.objectContaining({ defaultValue: 'existing' }),
+        );
+        expect(setSessionTagsV1Spy).toHaveBeenCalledWith({
+            'server-1:session-1': ['urgent', 'review'],
+        });
+    });
+
+    it('surfaces move-to-folder from the session view when folder targets match the session workspace', async () => {
+        mockServerId = 'server-1';
+        sessionFoldersFeatureEnabled = true;
+        sessionFoldersV1 = {
+            v: 1,
+            folders: [{
+                id: 'folder-1',
+                workspace: {
+                    t: 'workspaceScope',
+                    serverId: 'server-1',
+                    machineId: 'machine-1',
+                    rootPath: '/repo',
+                },
+                parentId: null,
+                name: 'Planning',
+                createdAt: 1,
+                updatedAt: 1,
+            }],
+        };
+        mockSession = {
+            id: 'session-1',
+            active: false,
+            accessLevel: null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 2,
+            lastViewedSessionSeq: 1,
+            latestTurnStatus: 'completed',
+            archivedAt: null,
+            metadata: {
+                machineId: 'machine-1',
+                path: '/repo',
+            },
+        };
+        openMoveSheetSpy.mockResolvedValue({
+            id: 'session-info-move-folder:folder-1',
+            kind: 'folder',
+            label: 'Planning',
+            disabled: false,
+            result: { instruction: { kind: 'idle' }, visual: { kind: 'none' } },
+        });
+
+        const screen = await renderInfoScreen();
+        await screen.pressByTestIdAsync('session-info-session-move-to-folder');
+
+        expect(openMoveSheetSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sourceLabel: 'name',
+            targets: expect.arrayContaining([
+                expect.objectContaining({ id: 'session-info-move-folder:folder-1', label: 'Planning' }),
+            ]),
+        }));
+        expect(setSessionFolderAssignmentSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'server-1',
+            sessionId: 'session-1',
+            folderId: 'folder-1',
+        }));
     });
 
     it('fails closed and hides the handoff quick action when server-routed transfer is the only transport the selected server advertises', async () => {
@@ -898,7 +1152,7 @@ describe('/session/[id]/info', () => {
                     providerId: 'opencode',
                     provider: {
                         backendMode: 'server',
-                        vendorSessionId: 'runtime-session-1234567890',
+                        providerSessionId: 'runtime-session-1234567890',
                     },
                 },
             },
@@ -932,7 +1186,7 @@ describe('/session/[id]/info', () => {
                     providerId: 'opencode',
                     provider: {
                         backendMode: 'server',
-                        vendorSessionId: 'runtime-session-1234567890',
+                        providerSessionId: 'runtime-session-1234567890',
                     },
                 },
             },
@@ -1306,7 +1560,7 @@ describe('/session/[id]/info', () => {
             await deleteButton.onPress();
         });
 
-        expect(sessionDeleteSpy).toHaveBeenCalledWith('session-1');
+        expect(sessionDeleteSpy).toHaveBeenCalledWith('session-1', { serverId: 'server-b' });
         expect(routerBackSpy).not.toHaveBeenCalled();
         expect(safeRouterBackSpy).toHaveBeenCalledTimes(2);
         expect(safeRouterBackSpy).toHaveBeenNthCalledWith(1, {
@@ -1358,5 +1612,25 @@ describe('/session/[id]/info', () => {
 
         expect(screen.findByTestId('sessionInfo.stopSession')?.props.loading).toBe(true);
         expect(screen.findByTestId('sessionInfo.archiveSession')?.props.loading).toBe(true);
+    });
+
+    it.each(['view', 'edit'] as const)('hides rename quick action for %s shared sessions', async (accessLevel) => {
+        mockServerId = 'server-b';
+        mockSession = {
+            id: 'session-1',
+            active: false,
+            accessLevel,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            seq: 1,
+            metadata: {},
+            archivedAt: null,
+        };
+
+        const screen = await renderInfoScreen();
+        const renameItems = screen.findAllByType('Item' as any)
+            .filter((node: any) => node.props?.title === 'sessionInfo.renameSession');
+
+        expect(renameItems).toHaveLength(0);
     });
 });

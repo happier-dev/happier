@@ -6,7 +6,6 @@ import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { PermissionPromptCard } from '@/components/tools/shell/permissions/PermissionPromptCard';
 import { ApprovalPromptCard } from '@/components/tools/shell/approvals/ApprovalPromptCard';
-import { UserActionPromptCard } from '@/components/tools/shell/userActions/UserActionPromptCard';
 import { Typography } from '@/constants/Typography';
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
@@ -15,8 +14,7 @@ import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/ap
 
 type AttentionRequest =
     | Readonly<{ kind: 'permission'; request: PendingPermissionRequest }>
-    | Readonly<{ kind: 'approval'; request: OpenApprovalArtifactForSession }>
-    | Readonly<{ kind: 'userAction'; request: PendingPermissionRequest }>;
+    | Readonly<{ kind: 'approval'; request: OpenApprovalArtifactForSession }>;
 
 function getAttentionRequestKey(request: AttentionRequest): string {
     switch (request.kind) {
@@ -24,8 +22,6 @@ function getAttentionRequestKey(request: AttentionRequest): string {
             return request.request.id;
         case 'approval':
             return `approval:${request.request.artifact.id}`;
-        case 'userAction':
-            return `userAction:${request.request.id}`;
     }
 }
 
@@ -79,14 +75,10 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
 
     const permissionRequests = props.disabledReason === 'inactive' ? [] : props.permissionRequests;
     const approvalRequests = props.disabledReason === 'inactive' ? [] : props.approvalRequests ?? [];
-    const userActionRequests = props.disabledReason === 'inactive'
-        ? []
-        : (props.userActionRequests ?? []).filter((request) => request.kind === 'user_action');
     const attentionRequests = React.useMemo<AttentionRequest[]>(() => [
         ...permissionRequests.map((request) => ({ kind: 'permission' as const, request })),
         ...approvalRequests.map((request) => ({ kind: 'approval' as const, request })),
-        ...userActionRequests.map((request) => ({ kind: 'userAction' as const, request })),
-    ], [approvalRequests, permissionRequests, userActionRequests]);
+    ], [approvalRequests, permissionRequests]);
     const scrollStyle = React.useMemo(() => ({ maxHeight: props.maxHeightPx }), [props.maxHeightPx]);
 
     if (attentionRequests.length === 0) {
@@ -127,22 +119,12 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
                                             canApprovePermissions={props.canApprovePermissions}
                                             disabledReason={props.disabledReason}
                                         />
-                                    ) : item.kind === 'approval' ? (
+                                    ) : (
                                         <ApprovalPromptCard
                                             chrome="inline"
                                             artifact={item.request.artifact}
                                             approval={item.request.approval}
                                             location={props.approvalLocationsByArtifactId?.get(item.request.artifact.id) ?? null}
-                                            sessionId={props.sessionId}
-                                            metadata={props.metadata}
-                                            canApprovePermissions={props.canApprovePermissions}
-                                            disabledReason={props.disabledReason}
-                                        />
-                                    ) : (
-                                        <UserActionPromptCard
-                                            chrome="inline"
-                                            request={item.request}
-                                            location={props.permissionLocationsById.get(item.request.id) ?? null}
                                             sessionId={props.sessionId}
                                             metadata={props.metadata}
                                             canApprovePermissions={props.canApprovePermissions}

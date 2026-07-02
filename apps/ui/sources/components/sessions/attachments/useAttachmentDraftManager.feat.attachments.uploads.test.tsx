@@ -103,4 +103,30 @@ describe('useAttachmentDraftManager (attachments.uploads)', () => {
             uri: 'data:image/png;base64,AQID',
         });
     });
+
+    it('replaces attachment drafts from a failed handoff recovery snapshot', async () => {
+        const { useAttachmentDraftManager } = await import('./useAttachmentDraftManager');
+        const hook = await renderHook(() => useAttachmentDraftManager({ enabled: true, maxFileBytes: 25 * 1024 * 1024 }));
+        const manager = () => hook.getCurrent();
+
+        const restoredDraft = {
+            id: 'restored-draft',
+            source: {
+                kind: 'memory',
+                name: 'retry.txt',
+                bytes: new Uint8Array([1, 2, 3]),
+                mimeType: 'text/plain',
+            },
+            status: 'pending',
+        } as const;
+
+        expect(typeof manager().replaceDrafts).toBe('function');
+
+        act(() => {
+            manager().replaceDrafts?.([restoredDraft]);
+        });
+
+        expect(manager().drafts).toEqual([restoredDraft]);
+        expect(manager().agentInputAttachments[0]?.label).toBe('retry.txt');
+    });
 });

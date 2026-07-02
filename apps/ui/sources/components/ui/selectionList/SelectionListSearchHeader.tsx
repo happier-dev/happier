@@ -8,7 +8,9 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { SelectionListInputGhost } from './SelectionListInputGhost';
 import { SelectionListInputMirror } from './SelectionListInputMirror';
 import { SelectionListSearchHeaderLeadingSlot } from './SelectionListSearchHeaderLeadingSlot';
+import { SelectionListStartEllipsisInputValue } from './SelectionListStartEllipsisInputValue';
 import { selectionListTestId } from './_shared';
+import type { SelectionListTextEllipsizeMode } from './_types';
 
 const IS_WEB = Platform.OS === 'web';
 
@@ -113,6 +115,11 @@ const stylesheet = StyleSheet.create((theme) => ({
             default: {},
         }) as object),
     },
+    inputCellOverlay: {
+        position: 'relative',
+        overflow: 'hidden',
+        flex: 1,
+    },
     input: {
         fontSize: Platform.select({ ios: 16, default: 15 }),
         lineHeight: Platform.select({ ios: 20, default: 22 }),
@@ -145,7 +152,7 @@ const stylesheet = StyleSheet.create((theme) => ({
      * with transparent text but a visible caret. The mirror underneath
      * paints the typed value + ghost suffix as inline `<Text>` spans.
      */
-    inputWebOverlay: {
+    inputOverlay: {
         position: 'absolute',
         top: 0,
         left: 0,
@@ -155,12 +162,26 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: 'transparent',
         caretColor: theme.colors.input.text,
     } satisfies WebOverlayInputStyle,
+    inputOverlayNative: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'transparent',
+        color: 'transparent',
+    } satisfies TextStyle,
     /**
      * RUX-10: when the ghost is absent the layered approach is overkill —
      * the TextInput renders as a normal opaque inline element again.
      */
     inputWebInline: {
         flex: 1,
+    },
+    inputSuffixSlot: {
+        marginLeft: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 }));
 
@@ -205,6 +226,8 @@ export type SelectionListSearchHeaderProps = Readonly<{
     ) => void;
     /** Phase 2.4: ghost suffix rendered after the input value. Empty = hidden. */
     ghostSuffix?: string;
+    /** Optional visual truncation for value-like inputs such as paths. */
+    inputValueEllipsizeMode?: SelectionListTextEllipsizeMode;
     /**
      * Phase 2.7: optional element inserted to the left of the input. When the
      * back chip is visible the prefix is suppressed (back chip wins the
@@ -279,6 +302,10 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
     // RUX-10: the layered-mirror approach is web-only (depends on
     // `caretColor`). On native we keep RUX-2's sibling-ghost layout.
     const useLayeredMirror = IS_WEB && hasGhost;
+    const useStartEllipsisValueMirror = props.inputValueEllipsizeMode === 'head'
+        && props.value.length > 0
+        && !useLayeredMirror;
+    const useOverlayInput = useLayeredMirror || useStartEllipsisValueMirror;
     type WebComboboxAria = Readonly<{
         role: 'combobox';
         'aria-haspopup': 'listbox';
@@ -342,8 +369,11 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
     // transparent text + caretColor. Otherwise the input is opaque inline
     // (web w/o ghost) or shrink-fit (native, ghost or not).
     let inputStyle: StyleProp<TextStyle>;
-    if (useLayeredMirror) {
-        inputStyle = [styles.input, styles.inputWebOverlay as TextStyle];
+    if (useOverlayInput) {
+        inputStyle = [
+            styles.input,
+            (IS_WEB ? styles.inputOverlay : styles.inputOverlayNative) as TextStyle,
+        ];
     } else if (IS_WEB) {
         inputStyle = [styles.input, styles.inputWebInline];
     } else {
@@ -383,7 +413,7 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
             >
                 <View
                     testID={selectionListTestId(props.testID, 'input-cell')}
-                    style={styles.inputCell}
+                    style={[styles.inputCell, useOverlayInput ? styles.inputCellOverlay : null]}
                 >
                     {/*
                       * Mirror sits BEFORE the TextInput so the input paints
@@ -398,6 +428,12 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
                             ghostSuffix={ghostSuffix}
                         />
                     ) : null}
+                    {useStartEllipsisValueMirror ? (
+                        <SelectionListStartEllipsisInputValue
+                            testID={selectionListTestId(props.testID, 'input', 'start-ellipsis')}
+                            value={props.value}
+                        />
+                    ) : null}
                     <TextInput
                         ref={setInputNodeRef}
                         testID={selectionListTestId(props.testID, 'input')}
@@ -406,6 +442,8 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
                         onChangeText={props.onChangeText}
                         placeholder={props.placeholder}
                         placeholderTextColor={theme.colors.input.placeholder}
+                        cursorColor={useOverlayInput ? theme.colors.input.text : undefined}
+                        selectionColor={useOverlayInput ? theme.colors.input.text : undefined}
                         autoCapitalize="none"
                         autoCorrect={false}
                         onKeyPress={nativeKeyPress}
@@ -438,7 +476,7 @@ export function SelectionListSearchHeader(props: SelectionListSearchHeaderProps)
             {props.inputSuffix != null ? (
                 <View
                     testID={selectionListTestId(props.testID, 'input-suffix')}
-                    style={styles.leadingSlot}
+                    style={styles.inputSuffixSlot}
                 >
                     {props.inputSuffix}
                 </View>

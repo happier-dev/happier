@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { settingsDefaults } from '../settings/settings';
+import { settingsDefaults, settingsParse } from '../settings/settings';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { ServerAccountScope } from '../scope/serverAccountScope';
 
@@ -622,6 +622,45 @@ describe('persistence', () => {
         });
     });
 
+    describe('markdown rich editor settings (UI registry)', () => {
+        it('exposes the three markdown rich editor settings at their registered defaults', () => {
+            // settingsParse() is the effective-load path: it applies registry
+            // defaults for keys absent from the stored blob (loadSettings() returns
+            // the raw stored blob, not defaults-applied).
+            const settings = settingsParse({}) as any;
+            expect(settings.markdownDefaultEditMode).toBe('rich');
+            expect(settings.filesMarkdownRichEditorMaxBytes).toBe(256_000);
+            expect(settings.filesMarkdownRichEditorHtmlRoundTripMaxBytes).toBe(50_000);
+        });
+
+        it('exposes the same defaults via settingsDefaults', () => {
+            expect((settingsDefaults as any).markdownDefaultEditMode).toBe('rich');
+            expect((settingsDefaults as any).filesMarkdownRichEditorMaxBytes).toBe(256_000);
+            expect((settingsDefaults as any).filesMarkdownRichEditorHtmlRoundTripMaxBytes).toBe(50_000);
+        });
+
+        it('keeps an empty pending delta empty without synthesizing the new settings (no .default() on the schema)', () => {
+            store.set('pending-settings', JSON.stringify({}));
+            const pending = loadPendingSettings() as any;
+            expect(pending).toEqual({});
+            expect(pending.markdownDefaultEditMode).toBeUndefined();
+            expect(pending.filesMarkdownRichEditorMaxBytes).toBeUndefined();
+            expect(pending.filesMarkdownRichEditorHtmlRoundTripMaxBytes).toBeUndefined();
+        });
+
+        it('parses a single markdown setting in pending without injecting the other two as defaults', () => {
+            store.set('pending-settings', JSON.stringify({ markdownDefaultEditMode: 'raw' }));
+            const pending = loadPendingSettings() as any;
+            expect(pending).toEqual({ markdownDefaultEditMode: 'raw' });
+            expect(Object.keys(pending)).toEqual(['markdownDefaultEditMode']);
+        });
+
+        it('drops an invalid markdown edit mode from pending', () => {
+            store.set('pending-settings', JSON.stringify({ markdownDefaultEditMode: 'fancy' }));
+            expect(loadPendingSettings()).toEqual({});
+        });
+    });
+
 
     describe('session action drafts', () => {
         it('returns an empty object when nothing is persisted', () => {
@@ -878,30 +917,123 @@ describe('persistence', () => {
             expect(draft?.resumeSessionId).toBe('abc123');
         });
 
-	        it('roundtrips backendTarget when persisted', () => {
-	            store.set(
-	                'new-session-draft-v1',
-	                JSON.stringify({
-	                    input: '',
-	                    selectedMachineId: null,
-	                    selectedPath: null,
-	                    selectedProfileId: null,
-	                    agentType: 'customAcp',
-	                    backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
-	                    permissionMode: 'default',
-	                    modelMode: 'default',
-	                    sessionType: 'simple',
-	                    updatedAt: Date.now(),
-	                }),
-	            );
+        it('roundtrips backendTarget when persisted', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    agentType: 'customAcp',
+                    backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    sessionType: 'simple',
+                    updatedAt: Date.now(),
+                }),
+            );
 
-	            const draft = loadNewSessionDraft();
-	            expect((draft as any)?.backendTarget).toMatchObject({
-	                kind: 'backend',
-	                backendId: 'review-bot',
-	                configuredBackendId: 'review-bot',
-	            });
-	        });
+            const draft = loadNewSessionDraft();
+            expect((draft as any)?.backendTarget).toMatchObject({
+                kind: 'backend',
+                backendId: 'review-bot',
+                configuredBackendId: 'review-bot',
+            });
+        });
+
+        it('roundtrips a selected target server id when persisted', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    targetServerId: '  server-b  ',
+                    agentType: 'claude',
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    sessionType: 'simple',
+                    updatedAt: Date.now(),
+                }),
+            );
+
+            expect(loadNewSessionDraft()?.targetServerId).toBe('server-b');
+        });
+
+        it('drops blank selected target server ids when hydrating drafts', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    targetServerId: '   ',
+                    agentType: 'claude',
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    sessionType: 'simple',
+                    updatedAt: Date.now(),
+                }),
+            );
+
+            expect(loadNewSessionDraft()).not.toEqual(expect.objectContaining({
+                targetServerId: expect.anything(),
+            }));
+        });
+
+        it('roundtrips the machine-scoped Windows remote launch override when persisted', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: 'machine-1',
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    windowsRemoteSessionLaunchModeOverride: {
+                        machineId: '  machine-1  ',
+                        mode: 'console',
+                    },
+                    agentType: 'claude',
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    sessionType: 'simple',
+                    updatedAt: Date.now(),
+                }),
+            );
+
+            expect(loadNewSessionDraft()?.windowsRemoteSessionLaunchModeOverride).toEqual({
+                machineId: 'machine-1',
+                mode: 'console',
+            });
+        });
+
+        it('drops invalid Windows remote launch overrides when hydrating drafts', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: 'machine-1',
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    windowsRemoteSessionLaunchModeOverride: {
+                        machineId: 'machine-1',
+                        mode: 'invalid',
+                    },
+                    agentType: 'claude',
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    sessionType: 'simple',
+                    updatedAt: Date.now(),
+                }),
+            );
+
+            expect(loadNewSessionDraft()).not.toEqual(expect.objectContaining({
+                windowsRemoteSessionLaunchModeOverride: expect.anything(),
+            }));
+        });
 
         it('roundtrips codexBackendMode when persisted', () => {
             store.set(

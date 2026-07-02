@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
 import {
@@ -24,10 +25,12 @@ vi.mock('./ChatFooter', () => ({
 
 vi.mock('./MessageView', () => ({
   MessageView: () => React.createElement('MessageView'),
+  MessageViewWithSessionCommon: () => React.createElement('MessageView'),
 }));
 
 vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
   TurnView: () => React.createElement('TurnView'),
+  TurnViewWithSessionCommon: () => React.createElement('TurnView'),
 }));
 
 vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
@@ -87,6 +90,7 @@ describe('ChatList (jump-to-bottom)', () => {
   });
 
   it('shows a jump-to-bottom button when unpinned and new messages arrive', async () => {
+    const onViewportChange = vi.fn();
     legacyChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [
@@ -96,6 +100,13 @@ describe('ChatList (jump-to-bottom)', () => {
     };
 
     const screen = await renderLegacyChatList();
+    const { ChatList } = await import('./ChatList');
+    await screen.update(
+      <ChatList
+        session={{ ...legacyChatListHarnessState.sessionState }}
+        onViewportChange={onViewportChange}
+      />,
+    );
     requireCapturedFlatListProps();
 
     // Scroll up (unpinned)
@@ -110,11 +121,26 @@ describe('ChatList (jump-to-bottom)', () => {
       ],
     };
 
-    const { ChatList } = await import('./ChatList');
-    await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} />);
+    await screen.update(
+      <ChatList
+        session={{ ...legacyChatListHarnessState.sessionState }}
+        onViewportChange={onViewportChange}
+      />,
+    );
 
     const jumpButtons = screen.findAllByTestId('transcript-jump-to-bottom');
     expect(jumpButtons.length).toBeGreaterThan(0);
+
+    onViewportChange.mockClear();
+    await act(async () => {
+      jumpButtons[0]?.props.onPress();
+    });
+
+    expect(onViewportChange).toHaveBeenCalledWith({
+      isPinned: true,
+      offsetY: 0,
+      shouldRestoreViewport: false,
+    });
 
     await screen.unmount();
   });

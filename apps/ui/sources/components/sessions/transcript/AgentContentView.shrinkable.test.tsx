@@ -10,6 +10,11 @@ vi.mock('@/utils/platform/responsive', () => ({
 }));
 
 vi.mock('react-native-keyboard-controller', () => ({
+    useKeyboardHandler: () => undefined,
+    useReanimatedKeyboardAnimation: () => ({
+        height: { value: 0 },
+        progress: { value: 0 },
+    }),
     useKeyboardState: () => ({ isVisible: false, height: 0 }),
 }));
 
@@ -37,30 +42,19 @@ describe('AgentContentView (shrinkable layout)', () => {
             />,
         );
 
-        const composer = screen.tree.root.findByType('Composer');
-        const outerContainer = findAncestorWithStyle(composer, (style) => {
-            return style != null && typeof style === 'object' && 'paddingBottom' in style && 'flexGrow' in style;
-        });
-        expect(outerContainer?.props?.style).toEqual(
-            expect.objectContaining({
-                flexBasis: 0,
-                flexGrow: 1,
-                minHeight: 0,
-                minWidth: 0,
-            }),
-        );
+        const keyboardHost = screen.tree.root.findByProps({ testID: 'agent-content-keyboard-host' });
+        expect(keyboardHost).toBeTruthy();
 
-        const placeholder = screen.tree.root.findByType('Placeholder');
-        const contentRegion = findAncestorWithStyle(placeholder, (style) => {
-            return style != null && typeof style === 'object' && !('paddingBottom' in style) && 'flexGrow' in style;
-        });
-        expect(contentRegion?.props?.style).toEqual(
-            expect.objectContaining({
-                flexBasis: 0,
-                flexGrow: 1,
-                minHeight: 0,
-                minWidth: 0,
-            }),
+        const composer = screen.tree.root.findByType('Composer');
+        const contentRegion = screen.tree.root.findByProps({ testID: 'agent-content-scroll-region' });
+        expect(contentRegion.props.style).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    flex: 1,
+                    minHeight: 0,
+                    minWidth: 0,
+                }),
+            ]),
         );
 
         const content = screen.tree.root.findByType('Content');
@@ -79,12 +73,9 @@ describe('AgentContentView (shrinkable layout)', () => {
             }),
         );
 
-        const composerHost = findAncestorWithStyle(composer, (style) => {
-            return style != null && typeof style === 'object' && 'minWidth' in (style as Record<string, unknown>);
-        });
-        expect(findStyleEntry(composerHost?.props?.style, (style) => 'minWidth' in style)).toEqual(
+        expect(screen.tree.root.findByProps({ testID: 'agent-content-input-footer' }).props.children).toEqual(
             expect.objectContaining({
-                minWidth: 0,
+                type: Composer,
             }),
         );
     });

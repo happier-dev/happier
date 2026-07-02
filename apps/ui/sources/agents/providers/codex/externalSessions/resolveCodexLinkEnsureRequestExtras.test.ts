@@ -15,7 +15,7 @@ describe('resolveCodexLinkEnsureRequestExtras', () => {
                         providerId: 'codex',
                         provider: {
                             backendMode: 'appServer',
-                            vendorSessionId: 'thread_app_server',
+                            providerSessionId: 'thread_app_server',
                         },
                     },
                 },
@@ -47,7 +47,7 @@ describe('resolveCodexLinkEnsureRequestExtras', () => {
         expect(readSessionMetadataRuntimeDescriptor({
             runtimeDescriptorV1: extras.runtimeDescriptorV1,
         }, 'codex')).toMatchObject({
-            vendorSessionId: 'thread_app_server',
+            providerSessionId: 'thread_app_server',
             backendMode: 'appServer',
             home: 'user',
         });
@@ -63,7 +63,7 @@ describe('resolveCodexLinkEnsureRequestExtras', () => {
                         providerId: 'codex',
                         provider: {
                             backendMode: 'appServer',
-                            vendorSessionId: 'thread_legacy_app_server',
+                            providerSessionId: 'thread_legacy_app_server',
                         },
                     },
                 },
@@ -93,7 +93,7 @@ describe('resolveCodexLinkEnsureRequestExtras', () => {
         expect(readSessionMetadataRuntimeDescriptor({
             runtimeDescriptorV1: extras.runtimeDescriptorV1,
         }, 'codex')).toMatchObject({
-            vendorSessionId: 'thread_legacy_app_server',
+            providerSessionId: 'thread_legacy_app_server',
             backendMode: 'appServer',
             home: 'user',
         });

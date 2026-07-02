@@ -30,9 +30,32 @@ import {
 } from '@/sync/encryption/machineEncryption';
 import { prepareAccountSettingsForDaemonSpawnIfNeeded } from './accountSettingsDaemonSpawnPreparation';
 import { isAccountSettingsScopeChangedDuringSpawnPreparationError } from '@/sync/engine/settings/accountSettingsSpawnPreparationError';
+import { delay } from '@/utils/timing/time';
 
 export type { SpawnHappySessionRpcParams, SpawnSessionOptions } from '../domains/session/spawn/spawnSessionPayload';
 export { buildSpawnHappySessionRpcParams } from '../domains/session/spawn/spawnSessionPayload';
+
+export type MachineResolveSpawnSessionByNonceResult =
+    | { status: 'success'; sessionId: string }
+    | { status: 'pending' }
+    | { status: 'not_found' }
+    | { status: 'unsupported' }
+    | { status: 'transport_error' };
+
+const DEFAULT_MACHINE_SPAWN_NONCE_RESOLUTION_TIMEOUT_MS = 3_000;
+const DEFAULT_MACHINE_SPAWN_NONCE_RESOLUTION_POLL_INTERVAL_MS = 200;
+
+function normalizeMachineResolveSpawnSessionByNonceResult(result: unknown): MachineResolveSpawnSessionByNonceResult {
+    if (!isPlainObject(result)) return { status: 'not_found' };
+    const status = typeof result.status === 'string' ? result.status.trim() : '';
+    if (status === 'pending') return { status: 'pending' };
+    if (status === 'unsupported') return { status: 'unsupported' };
+    if (status === 'success') {
+        const sessionId = typeof result.sessionId === 'string' ? result.sessionId.trim() : '';
+        return sessionId ? { status: 'success', sessionId } : { status: 'not_found' };
+    }
+    return { status: 'not_found' };
+}
 
 function readMachineDaemonCliVersion(machineId: string): string | null {
     const rawVersion = storage.getState().machines[machineId]?.daemonState?.startedWithCliVersion;
@@ -88,7 +111,11 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
         const legacyBuiltInAgentTarget =
             typeof preparedOptions.backendTarget === 'string'
                 ? preparedOptions.backendTarget.startsWith('agent:')
-                : preparedOptions.backendTarget.kind === 'builtInAgent';
+                : preparedOptions.backendTarget.kind === 'builtInAgent'
+                    || (
+                        preparedOptions.backendTarget.kind === 'backend'
+                        && preparedOptions.backendTarget.configuredBackendId === undefined
+                    );
 
         if (
             shouldUseLegacySpawnHappySessionRpcParams(daemonCliVersion)
@@ -151,6 +178,85 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             errorMessage: error instanceof Error ? error.message : 'Failed to spawn session'
         };
     }
+}
+
+export async function machineResolveSpawnSessionByNonce(params: Readonly<{
+    machineId: string;
+    spawnNonce: string;
+    serverId?: string | null;
+}>): Promise<MachineResolveSpawnSessionByNonceResult> {
+    const spawnNonce = params.spawnNonce.trim();
+    if (!spawnNonce) return { status: 'not_found' };
+
+    try {
+        const callResolver = async (method: string) => await machineRpcWithServerScope<unknown, { spawnNonce: string }>({
+            machineId: params.machineId,
+            method,
+            payload: { spawnNonce },
+            serverId: params.serverId ?? null,
+        });
+        try {
+            return normalizeMachineResolveSpawnSessionByNonceResult(
+                await callResolver(RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE),
+            );
+        } catch (error) {
+            const rpcErrorCode = readRpcErrorCode(error);
+            if (
+                rpcErrorCode !== RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+                && rpcErrorCode !== RPC_ERROR_CODES.METHOD_NOT_FOUND
+            ) {
+                throw error;
+            }
+        }
+        const legacyResult = await callResolver(RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE);
+        return legacyResult === undefined
+            ? { status: 'unsupported' }
+            : normalizeMachineResolveSpawnSessionByNonceResult(legacyResult);
+    } catch (error) {
+        const rpcErrorCode = readRpcErrorCode(error);
+        if (
+            rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+            || rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND
+        ) {
+            return { status: 'unsupported' };
+        }
+        return { status: 'transport_error' };
+    }
+}
+
+function normalizeMachineSpawnNonceRecoveryDuration(value: number | undefined, fallback: number): number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return fallback;
+    }
+    return Math.max(0, Math.trunc(value));
+}
+
+export async function machineResolveSpawnSessionByNonceUntilSettled(params: Readonly<{
+    machineId: string;
+    spawnNonce: string;
+    serverId?: string | null;
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+}>): Promise<MachineResolveSpawnSessionByNonceResult> {
+    const timeoutMs = normalizeMachineSpawnNonceRecoveryDuration(
+        params.timeoutMs,
+        DEFAULT_MACHINE_SPAWN_NONCE_RESOLUTION_TIMEOUT_MS,
+    );
+    const pollIntervalMs = normalizeMachineSpawnNonceRecoveryDuration(
+        params.pollIntervalMs,
+        DEFAULT_MACHINE_SPAWN_NONCE_RESOLUTION_POLL_INTERVAL_MS,
+    );
+    const deadlineMs = Date.now() + timeoutMs;
+    let result = await machineResolveSpawnSessionByNonce(params);
+
+    while (result.status === 'pending' && Date.now() < deadlineMs) {
+        if (pollIntervalMs > 0) {
+            await delay(pollIntervalMs);
+        }
+        result = await machineResolveSpawnSessionByNonce(params);
+    }
+
+    return result;
 }
 
 /**

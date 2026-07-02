@@ -30,6 +30,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
     automationDraft: NewSessionAutomationDraft;
     automationFeatureEnabled: boolean;
     selectedMachineId: string | null;
+    targetServerId: string | null;
+    windowsRemoteSessionLaunchModeOverride: BuildPersistedInputs['windowsRemoteSessionLaunchModeOverride'];
     selectedMachine: Machine | null;
     selectedMachineSpawnReadiness?: MachineSpawnReadiness | null;
     selectedPath: string;
@@ -157,6 +159,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
         const persistedDraft = buildPersistedNewSessionDraftFromAuthoringDraft({
             draft: currentAuthoringDraft,
             machineId: params.selectedMachineId,
+            targetServerId: params.targetServerId,
+            windowsRemoteSessionLaunchModeOverride: params.windowsRemoteSessionLaunchModeOverride,
             entryIntent: params.automationRequestedByRoute ? 'automation' : 'session',
             selectedSecretId: params.selectedSecretId,
             selectedSecretIdByProfileIdByEnvVarName: params.selectedSecretIdByProfileIdByEnvVarName,
@@ -188,6 +192,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.selectedMachineId,
         params.selectedSecretId,
         params.selectedSecretIdByProfileIdByEnvVarName,
+        params.targetServerId,
+        params.windowsRemoteSessionLaunchModeOverride,
     ]);
 
     const persistDraftIfEnabled = React.useCallback((draft: PersistedDraft) => {

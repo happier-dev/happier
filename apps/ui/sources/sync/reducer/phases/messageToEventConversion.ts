@@ -20,6 +20,8 @@ export function runMessageToEventConversion({
   incomingToolIds: Set<string>;
   hasReadyEvent: boolean;
   readyAt: number | null;
+  latestReadyEventSeq: number | null;
+  latestReadyEventAt: number | null;
 } {
   //
   // Phase 0.5: Message-to-Event Conversion
@@ -34,6 +36,8 @@ export function runMessageToEventConversion({
   const convertedEvents: { message: NormalizedMessage; event: AgentEvent }[] = [];
   let hasReadyEvent = false;
   let readyAt: number | null = null;
+  let latestReadyEventSeq: number | null = null;
+  let latestReadyEventAt: number | null = null;
 
   for (const msg of nonSidechainMessages) {
     // Check if we've already processed this message
@@ -50,6 +54,11 @@ export function runMessageToEventConversion({
       state.messageIds.set(msg.id, msg.id);
       hasReadyEvent = true;
       readyAt = readyAt === null ? msg.createdAt : Math.max(readyAt, msg.createdAt);
+      latestReadyEventAt = latestReadyEventAt === null ? msg.createdAt : Math.max(latestReadyEventAt, msg.createdAt);
+      if (typeof msg.seq === 'number' && Number.isFinite(msg.seq)) {
+        const seq = Math.trunc(msg.seq);
+        latestReadyEventSeq = latestReadyEventSeq === null ? seq : Math.max(latestReadyEventSeq, seq);
+      }
       continue;
     }
 
@@ -144,5 +153,12 @@ export function runMessageToEventConversion({
     }
   }
 
-  return { nonSidechainMessages, incomingToolIds, hasReadyEvent, readyAt };
+  return {
+    nonSidechainMessages,
+    incomingToolIds,
+    hasReadyEvent,
+    readyAt,
+    latestReadyEventSeq,
+    latestReadyEventAt,
+  };
 }

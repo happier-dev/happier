@@ -3,13 +3,14 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 
 const sessionViewSpy = vi.hoisted(() => vi.fn((props: Record<string, unknown>) => React.createElement('SessionView', props)));
 const useHydrateSessionForRouteSpy = vi.hoisted(() => vi.fn((
     _sessionId: string,
     _tag: string,
     _options?: { serverId?: string },
-) => true));
+): SessionRouteHydrationState => ({ kind: 'available', sessionId: _sessionId })));
 
 vi.mock('@/components/sessions/shell/SessionView', () => ({
     SessionView: (props: Record<string, unknown>) => sessionViewSpy(props),
@@ -25,7 +26,7 @@ describe('SessionCanvasLeaf', () => {
         standardCleanup();
         sessionViewSpy.mockClear();
         useHydrateSessionForRouteSpy.mockReset();
-        useHydrateSessionForRouteSpy.mockReturnValue(true);
+        useHydrateSessionForRouteSpy.mockImplementation((sessionId: string): SessionRouteHydrationState => ({ kind: 'available', sessionId }));
     });
 
     it('promotes surface interaction back to the owning split leaf', async () => {
@@ -56,6 +57,10 @@ describe('SessionCanvasLeaf', () => {
             surfaceFocusedOverride: false,
             surfaceVisibleOverride: true,
             routeAnchorOverride: false,
+            routeHydrationState: expect.objectContaining({
+                kind: 'available',
+                sessionId: 'sess_1',
+            }),
         }));
         expect(useHydrateSessionForRouteSpy).toHaveBeenCalledWith(
             'sess_1',
@@ -109,8 +114,12 @@ describe('SessionCanvasLeaf', () => {
         await screen.unmount();
     });
 
-    it('shows a leaf-local loading surface until the session hydration path is ready', async () => {
-        useHydrateSessionForRouteSpy.mockReturnValue(false);
+    it('delegates loading route hydration to the session view so cached transcripts can stay painted', async () => {
+        useHydrateSessionForRouteSpy.mockReturnValue({
+            kind: 'loading',
+            sessionId: 'sess_loading',
+            reason: 'store-miss',
+        });
         const { SessionCanvasLeaf } = await import('./SessionCanvasLeaf');
 
         const screen = await renderScreen(
@@ -122,8 +131,73 @@ describe('SessionCanvasLeaf', () => {
         );
 
         expect(screen.findByTestId('session-canvas-surface-sess_loading')).not.toBeNull();
-        expect(screen.findByTestId('session-canvas-loading-sess_loading')).not.toBeNull();
-        expect(sessionViewSpy).not.toHaveBeenCalled();
+        expect(screen.findByTestId('session-canvas-loading-sess_loading')).toBeNull();
+        expect(sessionViewSpy).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'sess_loading',
+            routeHydrationState: expect.objectContaining({
+                kind: 'loading',
+                sessionId: 'sess_loading',
+                reason: 'store-miss',
+            }),
+        }));
+
+        await screen.unmount();
+    });
+
+    it('renders the session view for terminal missing route hydration so the shell can show the missing state', async () => {
+        useHydrateSessionForRouteSpy.mockReturnValue({
+            kind: 'missing',
+            sessionId: 'sess_missing',
+            cause: 'not_found',
+        });
+        const { SessionCanvasLeaf } = await import('./SessionCanvasLeaf');
+
+        const screen = await renderScreen(
+            <SessionCanvasLeaf
+                sessionId="sess_missing"
+                surfaceFocused={false}
+                routeAnchor={false}
+            />,
+        );
+
+        expect(screen.findByTestId('session-canvas-loading-sess_missing')).toBeNull();
+        expect(sessionViewSpy).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'sess_missing',
+            routeHydrationState: expect.objectContaining({
+                kind: 'missing',
+                sessionId: 'sess_missing',
+                cause: 'not_found',
+            }),
+        }));
+
+        await screen.unmount();
+    });
+
+    it('renders the session view for retrying route hydration so the shell can show retry status', async () => {
+        useHydrateSessionForRouteSpy.mockReturnValue({
+            kind: 'retrying',
+            sessionId: 'sess_retrying',
+            cause: 'server_unavailable',
+        });
+        const { SessionCanvasLeaf } = await import('./SessionCanvasLeaf');
+
+        const screen = await renderScreen(
+            <SessionCanvasLeaf
+                sessionId="sess_retrying"
+                surfaceFocused
+                routeAnchor
+            />,
+        );
+
+        expect(screen.findByTestId('session-canvas-loading-sess_retrying')).toBeNull();
+        expect(sessionViewSpy).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'sess_retrying',
+            routeHydrationState: expect.objectContaining({
+                kind: 'retrying',
+                sessionId: 'sess_retrying',
+                cause: 'server_unavailable',
+            }),
+        }));
 
         await screen.unmount();
     });
@@ -145,6 +219,10 @@ describe('SessionCanvasLeaf', () => {
             surfaceFocusedOverride: false,
             surfaceVisibleOverride: false,
             routeAnchorOverride: false,
+            routeHydrationState: expect.objectContaining({
+                kind: 'available',
+                sessionId: 'sess_hidden',
+            }),
         }));
 
         await screen.unmount();

@@ -348,18 +348,30 @@ describe('Popover (web)', () => {
         expect(onRequestClose).toHaveBeenCalledTimes(1);
     });
 
-    it('stops event propagation when closing on Escape so underlying modal layers do not also dismiss', async () => {
+    it('routes Escape through the shared window-capture escape layer so underlying modal layers do not also dismiss', async () => {
         const { Popover } = await import('./Popover');
+        const { isEscapeEventHandled } = await import('@/keyboard/escape');
 
-        const keyHandlers: Array<{ handler: any; options: any }> = [];
-        const addEventListener = vi.fn((type: string, handler: any, options?: any) => {
-            if (type === 'keydown') keyHandlers.push({ handler, options });
+        const windowKeyHandlers: Array<{ handler: any; options: any }> = [];
+        const documentKeyHandlers: Array<{ handler: any; options: any }> = [];
+        const windowAddEventListener = vi.fn((type: string, handler: any, options?: any) => {
+            if (type === 'keydown') windowKeyHandlers.push({ handler, options });
         });
-        const removeEventListener = vi.fn();
+        const windowRemoveEventListener = vi.fn();
+        const documentAddEventListener = vi.fn((type: string, handler: any, options?: any) => {
+            if (type === 'keydown') documentKeyHandlers.push({ handler, options });
+        });
+        const documentRemoveEventListener = vi.fn();
 
+        vi.stubGlobal('window', {
+            addEventListener: windowAddEventListener,
+            removeEventListener: windowRemoveEventListener,
+            setTimeout: globalThis.setTimeout.bind(globalThis),
+            clearTimeout: globalThis.clearTimeout.bind(globalThis),
+        });
         vi.stubGlobal('document', {
-            addEventListener,
-            removeEventListener,
+            addEventListener: documentAddEventListener,
+            removeEventListener: documentRemoveEventListener,
         });
 
         const onRequestClose = vi.fn();
@@ -380,23 +392,26 @@ describe('Popover (web)', () => {
 
         await act(async () => {});
 
-        expect(keyHandlers.length).toBeGreaterThan(0);
+        expect(windowKeyHandlers.length).toBeGreaterThan(0);
+        expect(documentKeyHandlers).toHaveLength(0);
 
         const stopPropagation = vi.fn();
         const stopImmediatePropagation = vi.fn();
         const preventDefault = vi.fn();
-        keyHandlers.at(-1)?.handler({
+        const event = {
             key: 'Escape',
             stopPropagation,
             stopImmediatePropagation,
             preventDefault,
-        });
+        };
+        windowKeyHandlers.at(-1)?.handler(event);
 
         expect(stopPropagation).toHaveBeenCalledTimes(1);
         expect(stopImmediatePropagation).toHaveBeenCalledTimes(1);
         expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(isEscapeEventHandled(event)).toBe(true);
         expect(onRequestClose).toHaveBeenCalledTimes(1);
-        expect(keyHandlers.at(-1)?.options).toBe(true);
+        expect(windowKeyHandlers.at(-1)?.options).toBe(true);
     });
 
     it('stops event propagation when closing on outside clicks so underlying modal layers do not also dismiss', async () => {

@@ -3,41 +3,38 @@ import { View, Platform } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 
-import { SessionItem } from './SessionItem';
+import { SessionItem, type SessionItemProps } from './SessionItem';
 import {
     useSessionInlineDrag,
-    type SessionInlineDragVisualSharedValues,
+    type UseSessionInlineDragCancelEvent,
     type UseSessionInlineDragDropResultEvent,
+    type UseSessionInlineDragResolvedDrop,
     type UseSessionInlineDragResolveDropResultEvent,
 } from './useSessionInlineDrag';
-import type {
-    TreeDropResult,
-    TreeInstructionVisual,
-} from '@/components/ui/treeDragDrop';
+import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 import type {
     RegisterSessionListTreeRowBounds,
     UnregisterSessionListTreeRowBounds,
 } from './SessionListHeaderFrame';
-import { SessionListDropIndicator } from './SessionListDropIndicator';
 
 export type SessionListRowProps = Readonly<
-    Omit<React.ComponentProps<typeof SessionItem>, 'onTogglePinned' | 'onSetTags' | 'onNativeContextMenuOpenChange'> & {
+    Omit<SessionItemProps, 'onTogglePinned' | 'onSetTags' | 'onNativeContextMenuOpenChange'> & {
         sessionKey: string | null;
         treeRowId: string;
         groupKey: string;
         reorderEnabled: boolean;
         onDragStart: (sessionKey: string) => void;
-        resolveDropResult: (event: UseSessionInlineDragResolveDropResultEvent) => TreeDropResult;
+        resolveDropResult: (event: UseSessionInlineDragResolveDropResultEvent) => UseSessionInlineDragResolvedDrop;
         onDropResult: (event: UseSessionInlineDragDropResultEvent) => void | Promise<void>;
         onDragUpdate?: (event: UseSessionInlineDragDropResultEvent) => void;
+        onDragCancel?: (event: UseSessionInlineDragCancelEvent) => void;
         onTogglePinnedSessionKey: ((sessionKey: string) => void) | null;
         onSetTagsSessionKey: ((sessionKey: string, newTags: string[]) => void) | null;
         onNativeContextMenuOpenChangeSessionKey: ((sessionKey: string, next: boolean) => void) | null;
         isDragActive: boolean;
         isBeingDragged: boolean;
         dataIndex: number;
-        dropVisual: SessionInlineDragVisualSharedValues;
-        activeDropVisual: TreeInstructionVisual;
+        overlayShared: TreeDropOverlaySharedValues;
         onRegisterTreeRowBounds: RegisterSessionListTreeRowBounds;
         onUnregisterTreeRowBounds: UnregisterSessionListTreeRowBounds;
     }
@@ -52,6 +49,7 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         onDragStart,
         onDropResult,
         onDragUpdate,
+        onDragCancel,
         resolveDropResult,
         onTogglePinnedSessionKey,
         onSetTagsSessionKey,
@@ -59,8 +57,7 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         isDragActive,
         isBeingDragged,
         dataIndex,
-        dropVisual,
-        activeDropVisual,
+        overlayShared,
         onRegisterTreeRowBounds,
         onUnregisterTreeRowBounds,
         ...itemProps
@@ -124,10 +121,11 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         onDragStart: handleInlineDragStart,
         onDropResult: handleInlineDropResult,
         onDragUpdate,
+        onDragCancel,
         resolveDropResult,
         onLongPressActivated: isIos ? handleInlineLongPressActivated : undefined,
         dataIndex,
-        dropVisual,
+        overlayShared,
         activateAfterLongPressMs: isWeb ? undefined : 350,
     });
 
@@ -167,20 +165,29 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         />
     );
 
-    const rowNode = (
+    const handleRowLayout = React.useCallback(() => {
+        onRegisterTreeRowBounds(treeRowId, wrapperRef.current);
+    }, [onRegisterTreeRowBounds, treeRowId]);
+
+    const rowNode = inlineDragEnabled ? (
         <Animated.View
             ref={wrapperRef}
             collapsable={false}
             style={animatedStyle}
             pointerEvents={rowPointerEvents}
-            onLayout={() => onRegisterTreeRowBounds(treeRowId, wrapperRef.current)}
+            onLayout={handleRowLayout}
         >
-            <SessionListDropIndicator
-                targetId={treeRowId}
-                visual={activeDropVisual}
-            />
             {sessionItem}
         </Animated.View>
+    ) : (
+        <View
+            ref={wrapperRef}
+            collapsable={false}
+            pointerEvents={rowPointerEvents}
+            onLayout={handleRowLayout}
+        >
+            {sessionItem}
+        </View>
     );
 
     if (isIos && reorderGesture) {

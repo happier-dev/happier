@@ -9,13 +9,21 @@ const resolveSessionTargetServerIdSpy = vi.hoisted(() =>
     vi.fn<(sessionId: string, fallbackServerId?: string | null) => string | null>(() => 'server-canonical'),
 );
 const useExecutionRunsBackendsForSessionSpy = vi.hoisted(() =>
-    vi.fn((..._args: unknown[]) => ({ claude: { available: true, intents: ['review'] } })),
+    vi.fn<(...args: unknown[]) => { claude: { available: true; intents: ['review'] } }>(
+        () => ({ claude: { available: true, intents: ['review'] } }),
+    ),
 );
 const useSessionExecutionRunsSupportedSpy = vi.hoisted(() =>
-    vi.fn((_sessionId: string, _serverId?: string | null) => true),
+    vi.fn<(sessionId: string, serverId?: string | null) => boolean>(() => true),
+);
+const resumeCapabilityOptionsSpy = vi.hoisted(() =>
+    vi.fn<(args: unknown) => { resumeCapabilityOptions: unknown[] }>(() => ({ resumeCapabilityOptions: [] })),
 );
 const preferredServerIdState = vi.hoisted(() => ({
     value: 'server-canonical' as string | null,
+}));
+const sessionMachineTargetState = vi.hoisted(() => ({
+    value: null as null | { machineId: string; basePath: string },
 }));
 
 const sessionState = vi.hoisted(() => ({
@@ -42,6 +50,10 @@ vi.mock('@/hooks/server/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({ machineReachable: true }),
 }));
 
+vi.mock('@/components/sessions/model/useSessionMachineTarget', () => ({
+    useSessionMachineTarget: () => sessionMachineTargetState.value,
+}));
+
 vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
     useExecutionRunsBackendsForSession: (sessionId: string, serverId?: string | null) =>
         useExecutionRunsBackendsForSessionSpy(sessionId, serverId),
@@ -53,7 +65,7 @@ vi.mock('@/hooks/server/useSessionExecutionRunsSupported', () => ({
 }));
 
 vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
-    useResumeCapabilityOptions: () => ({ resumeCapabilityOptions: [] }),
+    useResumeCapabilityOptions: (args: unknown) => resumeCapabilityOptionsSpy(args),
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
@@ -84,7 +96,9 @@ describe('useSessionExecutionRunLaunchability', () => {
         resolveSessionTargetServerIdSpy.mockReset();
         useExecutionRunsBackendsForSessionSpy.mockReset();
         useSessionExecutionRunsSupportedSpy.mockReset();
+        resumeCapabilityOptionsSpy.mockReset();
         preferredServerIdState.value = 'server-canonical';
+        sessionMachineTargetState.value = null;
         sessionState.value = {
             id: 'session-1',
             active: true,
@@ -134,6 +148,29 @@ describe('useSessionExecutionRunLaunchability', () => {
         expect(useExecutionRunsBackendsForSessionSpy).toHaveBeenCalledWith('session-1', 'server-explicit');
         expect(hook.getCurrent().sessionServerId).toBe('server-explicit');
 
+        await hook.unmount();
+    });
+
+    it('builds resume capability options from the resolved session machine target', async () => {
+        sessionMachineTargetState.value = { machineId: 'machine-reachable', basePath: '/tmp/reachable' };
+        sessionState.value = {
+            id: 'session-1',
+            active: false,
+            serverId: 'server-explicit',
+            metadata: {
+                flavor: 'claude',
+                machineId: 'machine-stale',
+                path: '/tmp/stale',
+            },
+        } as any;
+
+        const { useSessionExecutionRunLaunchability } = await import('./useSessionExecutionRunLaunchability');
+        const hook = await renderHook(() => useSessionExecutionRunLaunchability('session-1', sessionState.value));
+
+        expect(resumeCapabilityOptionsSpy).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'machine-reachable',
+            enabled: true,
+        }));
         await hook.unmount();
     });
 });

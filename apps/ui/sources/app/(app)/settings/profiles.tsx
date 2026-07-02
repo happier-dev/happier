@@ -9,7 +9,8 @@ import { t } from '@/text';
 import { Modal } from '@/modal';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { DEFAULT_PROFILES, getBuiltInProfileNameKey, resolveProfileById } from '@/sync/domains/profiles/profileUtils';
+import { DEFAULT_PROFILES, getBuiltInProfileNameKey, isProfileEnabled, resolveProfileById, setProfileEnabledOverride } from '@/sync/domains/profiles/profileUtils';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { ProfileEditForm } from '@/components/profiles/edit';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -36,6 +37,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
     const [profiles, setProfiles] = useSettingMutable('profiles');
     const [lastUsedProfile, setLastUsedProfile] = useSettingMutable('lastUsedProfile');
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');
+    const [profileEnabledById, setProfileEnabledById] = useSettingMutable('profileEnabledById');
     const [editingProfile, setEditingProfile] = React.useState<AIBackendProfile | null>(null);
     const [showAddForm, setShowAddForm] = React.useState(false);
     const [isEditingDirty, setIsEditingDirty] = React.useState(false);
@@ -230,6 +232,24 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
         setLastUsedProfile(profileId);
     };
 
+    const buildProfileEnablementActions = React.useCallback((profile: AIBackendProfile): ItemAction[] => {
+        const enabled = isProfileEnabled(profile, profileEnabledById);
+        return [
+            {
+                id: 'profileEnabled',
+                title: enabled ? t('common.enabled') : t('common.disabled'),
+                icon: enabled ? 'eye-outline' : 'eye-off-outline',
+                onPress: () => {
+                    setProfileEnabledById(setProfileEnabledOverride(profileEnabledById, profile, !enabled));
+                },
+            },
+        ];
+    }, [profileEnabledById, setProfileEnabledById]);
+
+    const getProfileEnablementSubtitle = React.useCallback((profile: AIBackendProfile) => {
+        return isProfileEnabled(profile, profileEnabledById) ? null : t('common.disabled');
+    }, [profileEnabledById]);
+
     function handleSaveProfile(profile: AIBackendProfile): boolean {
         // Profile validation - ensure name is not empty
         if (!profile.name || profile.name.trim() === '') {
@@ -325,6 +345,8 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                 customProfiles={profiles}
                 favoriteProfileIds={favoriteProfileIds}
                 onFavoriteProfileIdsChange={setFavoriteProfileIds}
+                profileEnabledById={profileEnabledById}
+                includeDisabledProfiles
                 selectedProfileId={selectedProfileId ?? null}
                 onPressProfile={(profile) => handleEditProfile(profile)}
                 machineId={null}
@@ -333,6 +355,8 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                 onEditProfile={(profile) => handleEditProfile(profile)}
                 onDuplicateProfile={(profile) => handleDuplicateProfile(profile)}
                 onDeleteProfile={(profile) => { void handleDeleteProfile(profile); }}
+                extraActions={buildProfileEnablementActions}
+                getProfileSubtitleExtra={getProfileEnablementSubtitle}
                 onSecretBadgePress={(profile) => {
                     const required = getRequiredSecretEnvVarNames(profile);
                     if (required.length <= 1) {

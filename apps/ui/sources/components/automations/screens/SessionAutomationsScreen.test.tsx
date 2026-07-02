@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
 import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
+import type { StorageState } from '@/sync/store/types';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -24,7 +25,9 @@ const automationsState = vi.hoisted(() => ({
 const sessionState = vi.hoisted(() => ({
     value: null as any,
 }));
-const getStateSpy = vi.hoisted(() => vi.fn());
+const storageState = vi.hoisted(() => ({
+    value: {} as Partial<StorageState>,
+}));
 const settingsState = vi.hoisted(() => ({
     value: {} as Record<string, unknown>,
 }));
@@ -75,9 +78,20 @@ installAutomationScreensCommonModuleMocks({
             useAutomations: () => automationsState.list,
             useSession: () => sessionState.value,
             useSettings: () => settingsState.value,
-            storage: {
-                getState: () => getStateSpy(),
-            },
+            storage: Object.assign(
+                ((selector?: (value: StorageState) => unknown) => (
+                    typeof selector === 'function'
+                        ? selector(storageState.value as StorageState)
+                        : (storageState.value as StorageState)
+                )),
+                {
+                    getState: () => storageState.value as StorageState,
+                    getInitialState: () => storageState.value as StorageState,
+                    setState: () => undefined,
+                    subscribe: () => () => undefined,
+                    destroy: () => undefined,
+                },
+            ),
         });
     },
     text: async () => {
@@ -101,12 +115,27 @@ installAutomationScreensCommonModuleMocks({
 });
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
-    useHydrateSessionForRoute: () => hydrateReadyState.ready,
+    useHydrateSessionForRoute: (sessionId: string) => hydrateReadyState.ready
+        ? { kind: 'available', sessionId }
+        : { kind: 'loading', sessionId, reason: 'store-miss' },
 }));
 
 vi.mock('@/sync/sync', () => ({
     sync: syncSpies,
 }));
+
+function setStorageStateForSession(input: Readonly<{
+    session: any;
+    machines?: Record<string, unknown>;
+    getProjectForSession?: (sessionId: string) => unknown;
+}>) {
+    const sessionId = String(input.session?.id ?? '');
+    storageState.value = {
+        sessions: sessionId ? { [sessionId]: input.session } : {},
+        machines: (input.machines ?? {}) as StorageState['machines'],
+        getProjectForSession: input.getProjectForSession as StorageState['getProjectForSession'] ?? (() => null),
+    };
+}
 
 describe('SessionAutomationsScreen', () => {
     beforeEach(() => {
@@ -117,18 +146,32 @@ describe('SessionAutomationsScreen', () => {
             encryptionMode: 'plain',
             metadata: {
                 machineId: 'm1',
+                path: '/tmp/project',
                 flavor: 'claude',
                 claudeSessionId: 'claude-session-1',
             },
         };
         settingsState.value = {};
         hydrateReadyState.ready = true;
-        getStateSpy.mockImplementation(() => ({
-            sessions: {
-                s1: sessionState.value,
+        setStorageStateForSession({
+            session: sessionState.value,
+            machines: {
+                m1: {
+                    id: 'm1',
+                    active: true,
+                    activeAt: 10,
+                    metadata: { host: 'mbp-host' },
+                },
             },
-            getProjectForSession: () => null,
-        }));
+            getProjectForSession: (sessionId: string) => sessionId === 's1'
+                ? {
+                    key: {
+                        machineId: 'm1',
+                        path: '/tmp/project',
+                    },
+                }
+                : null,
+        });
         routerPushSpy.mockReset();
         modalAlertSpy.mockReset();
         navigateWithBlurOnWebSpy.mockClear();
@@ -190,16 +233,13 @@ describe('SessionAutomationsScreen', () => {
             active: false,
             encryptionMode: 'plain',
             metadata: {
-                machineId: 'm-stale',
                 path: '/tmp/project',
                 flavor: 'claude',
                 claudeSessionId: 'claude-session-1',
             },
         };
-        getStateSpy.mockImplementation(() => ({
-            sessions: {
-                s1: sessionState.value,
-            },
+        setStorageStateForSession({
+            session: sessionState.value,
             machines: {
                 'm-target': {
                     id: 'm-target',
@@ -216,7 +256,7 @@ describe('SessionAutomationsScreen', () => {
                     },
                 }
                 : null,
-        }));
+        });
 
         const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
 
@@ -242,10 +282,29 @@ describe('SessionAutomationsScreen', () => {
             encryptionMode: 'plain',
             metadata: {
                 machineId: 'm1',
-                flavor: 'pi',
-                piSessionId: 'pi-session-1',
+                path: '/tmp/project',
+                flavor: 'not-a-real-agent',
             },
         };
+        setStorageStateForSession({
+            session: sessionState.value,
+            machines: {
+                m1: {
+                    id: 'm1',
+                    active: true,
+                    activeAt: 10,
+                    metadata: { host: 'mbp-host' },
+                },
+            },
+            getProjectForSession: (sessionId: string) => sessionId === 's1'
+                ? {
+                    key: {
+                        machineId: 'm1',
+                        path: '/tmp/project',
+                    },
+                }
+                : null,
+        });
 
         const { SessionAutomationsScreen } = await import('./SessionAutomationsScreen');
 

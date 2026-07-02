@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 import {
     AGENT_IDS as SHARED_AGENT_IDS,
-    CANONICAL_AGENT_IDS as SHARED_CANONICAL_AGENT_IDS,
+    AGENT_PROVIDER_IDS as SHARED_AGENT_PROVIDER_IDS,
     getAgentCore as getSharedAgentCore,
     getAgentModelConfig,
     getProviderCliInstallGuideUrl,
@@ -27,7 +27,7 @@ describe('agents/registryCore', () => {
         expect(Array.isArray(AGENT_IDS)).toBe(true);
         expect(AGENT_IDS.length).toBeGreaterThan(0);
         expect([...AGENT_IDS].sort()).toEqual([...SHARED_AGENT_IDS].sort());
-        expect([...CANONICAL_AGENT_IDS].sort()).toEqual([...SHARED_CANONICAL_AGENT_IDS].sort());
+        expect([...CANONICAL_AGENT_IDS].sort()).toEqual([...SHARED_AGENT_PROVIDER_IDS].sort());
     });
 
     it('exports only agent ids that have a UI core config', () => {
@@ -94,6 +94,10 @@ describe('agents/registryCore', () => {
         expect(claude.cli.detectKey).toBeTruthy();
     });
 
+    it('preserves Qwen quiet unknown-tool rendering from the generated projection', () => {
+        expect(getUiAgentCore('qwen').toolRendering.hideUnknownToolsByDefault).toBe(true);
+    });
+
     it('provides core config for kilo', () => {
         const kilo = getUiAgentCore('kilo');
         expect(kilo.id).toBe('kilo');
@@ -104,6 +108,7 @@ describe('agents/registryCore', () => {
         const pi = getUiAgentCore('pi');
         expect(pi.id).toBe('pi');
         expect(pi.cli.detectKey).toBeTruthy();
+        expect(pi.runtimeInput?.inFlightSteerSupported).toBe(true);
     });
 
     it('provides core config for ohMyPi', () => {
@@ -154,14 +159,13 @@ describe('agents/registryCore', () => {
     });
 
     it('surfaces shared tools delivery config from @happier-dev/agents', () => {
-        expect(buildAgentToolsUiConfig({ agentId: 'claude' })).toEqual({
-            delivery: 'native_mcp',
-            support: 'supported',
-        });
-        expect(buildAgentToolsUiConfig({ agentId: 'gemini' })).toEqual({
-            delivery: 'shell_bridge',
-            support: 'experimental',
-        });
+        for (const agentId of ['claude', 'gemini', 'cursor'] as const) {
+            const sharedTools = getSharedAgentCore(agentId).tools;
+            expect(buildAgentToolsUiConfig({ agentId })).toEqual({
+                delivery: sharedTools?.delivery ?? 'unsupported',
+                support: sharedTools?.support ?? 'unsupported',
+            });
+        }
     });
 
     it('reads model selection config from @happier-dev/agents', () => {

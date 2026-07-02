@@ -140,7 +140,7 @@ export async function playAudioBytesWithStopper(opts: {
 
   const { createAudioPlayer } = await import('expo-audio');
   const ext = opts.format === 'wav' ? '.wav' : '.mp3';
-  const { File, Paths, deleteAsync } = await import('expo-file-system');
+  const { File, Paths } = await import('expo-file-system');
   const file = new File(Paths.cache, `happier-voice-${Date.now()}${ext}`);
   await file.write(new Uint8Array(opts.bytes));
 
@@ -159,7 +159,7 @@ export async function playAudioBytesWithStopper(opts: {
       // ignore
     }
     try {
-      await deleteAsync(file.uri, { idempotent: true });
+      await file.delete();
     } catch {
       // ignore
     }

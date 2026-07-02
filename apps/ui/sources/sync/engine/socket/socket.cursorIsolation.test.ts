@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import * as persistence from '@/sync/domains/state/persistence';
 import { storage } from '@/sync/domains/state/storage';
@@ -152,6 +153,31 @@ describe('socket update handling cursor isolation', () => {
         expect(applySessions).not.toHaveBeenCalled();
     });
 
+    it('does not let newer legacy activity thinking override a terminal turn projection', () => {
+        const sessionId = 's_terminal_activity';
+        storage.getState().applySessions([{
+            ...buildSession(sessionId),
+            thinking: false,
+            thinkingAt: 200,
+            updatedAt: 200,
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: 200,
+        }]);
+
+        const updates = new Map<string, any>([
+            [sessionId, { type: 'activity', id: sessionId, active: true, activeAt: 300, thinking: true }],
+        ]);
+        const applySessions = vi.fn();
+
+        flushActivityUpdates({ updates, applySessions });
+
+        expect(applySessions).toHaveBeenCalledTimes(1);
+        const updatedSession = applySessions.mock.calls[0]?.[0]?.[0] as Session;
+        expect(updatedSession.activeAt).toBe(300);
+        expect(updatedSession.thinking).toBe(false);
+        expect(updatedSession.latestTurnStatus).toBe('completed');
+    });
+
     it('applies activity active=false updates even if activeAt < updatedAt', async () => {
         const sessionId = 's_inactive_turnoff';
         storage.getState().applySessions([{
@@ -176,5 +202,40 @@ describe('socket update handling cursor isolation', () => {
         expect(updatedSession.activeAt).toBe(150);
         expect(updatedSession.thinking).toBe(false);
         expect(updatedSession.thinkingAt).toBe(150);
+    });
+
+    it('patches list-only session rows from activity updates', () => {
+        const sessionId = 's_renderable_only';
+        storage.setState({
+            sessions: {},
+            sessionMessages: {},
+            sessionPending: {},
+            sessionListRenderables: {
+                [sessionId]: buildSessionListRenderableFromSession({
+                    ...buildSession(sessionId),
+                    active: true,
+                    activeAt: 100,
+                    thinking: false,
+                    thinkingAt: 0,
+                }),
+            },
+            isDataReady: true,
+        } as never);
+
+        const updates = new Map<string, any>([
+            [sessionId, { type: 'activity', id: sessionId, active: true, activeAt: 200, thinking: true }],
+        ]);
+        const applySessions = vi.fn();
+
+        flushActivityUpdates({ updates, applySessions });
+
+        expect(applySessions).not.toHaveBeenCalled();
+        expect(storage.getState().sessionListRenderables[sessionId]).toMatchObject({
+            active: true,
+            activeAt: 200,
+            thinking: true,
+            thinkingAt: 200,
+            presence: 'online',
+        });
     });
 });

@@ -1,21 +1,32 @@
 import React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { createDeferred, flushHookEffects, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const chainSyncTuningState = vi.hoisted(() => ({
+    transcriptFlashListEstimatedItemSize: 120,
+    transcriptBackwardPrefetchThresholdPx: 800,
+    transcriptOlderLoadCooldownMs: 2500,
+    transcriptMaxTurnEntriesPerListItem: 8,
+}));
+
 vi.mock('@/sync/sync', () => ({
     sync: {
-        getSyncTuning: () => ({
-            transcriptFlashListEstimatedItemSize: 120,
-        }),
+        getSyncTuning: () => chainSyncTuningState,
     },
 }));
 
 vi.mock('@/components/sessions/transcript/MessageView', () => ({
     MessageView: () => null,
+    MessageViewWithSessionCommon: () => null,
+}));
+
+vi.mock('@/components/sessions/transcript/toolCalls/ToolCallsGroupRow', () => ({
+    ToolCallsGroupRow: () => null,
+    ToolCallsGroupRowWithSessionCommon: () => null,
 }));
 
 let scrollToEndSpy: ReturnType<typeof vi.fn> | null = null;
@@ -62,6 +73,33 @@ describe('ChainTranscriptList', () => {
         standardCleanup();
     });
 
+    beforeEach(() => {
+        chainSyncTuningState.transcriptFlashListEstimatedItemSize = 120;
+        chainSyncTuningState.transcriptBackwardPrefetchThresholdPx = 800;
+        chainSyncTuningState.transcriptOlderLoadCooldownMs = 2500;
+        chainSyncTuningState.transcriptMaxTurnEntriesPerListItem = 8;
+    });
+
+    it('throttles web FlashList scroll events above one frame to reduce scroll-render churn', async () => {
+        const { Platform } = await import('react-native');
+        const originalPlatform = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+        try {
+            scrollToIndexShouldReject = false;
+            const screen = await renderChainTranscriptList({
+                sessionId: 's1',
+                messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+                metadata: null,
+                interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+            });
+
+            const list = screen.findByType('FlashList' as any);
+            expect(list.props.scrollEventThrottle).toBe(32);
+        } finally {
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
+        }
+    });
+
     it('does not pass deprecated estimatedItemSize to FlashList v2', async () => {
         scrollToIndexShouldReject = false;
         const screen = await renderChainTranscriptList({
@@ -87,6 +125,10 @@ describe('ChainTranscriptList', () => {
         });
 
         const list = getFlashList(screen);
+        const initialScrollToIndexSpy = scrollToIndexSpy;
+        if (!initialScrollToIndexSpy) {
+            throw new Error('Expected FlashList ref to provide scrollToIndex');
+        }
 
         await act(async () => {
             invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 300 } } });
@@ -94,7 +136,7 @@ describe('ChainTranscriptList', () => {
             await settleListEffects();
         });
 
-        expect(scrollToIndexSpy).toHaveBeenCalledWith(
+        expect(initialScrollToIndexSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 index: 0,
                 animated: false,
@@ -118,6 +160,14 @@ describe('ChainTranscriptList', () => {
         });
 
         const list = getFlashList(screen);
+        const initialScrollToIndexSpy = scrollToIndexSpy;
+        const initialScrollToOffsetSpy = scrollToOffsetSpy;
+        if (!initialScrollToIndexSpy) {
+            throw new Error('Expected FlashList ref to provide scrollToIndex');
+        }
+        if (!initialScrollToOffsetSpy) {
+            throw new Error('Expected FlashList ref to provide scrollToOffset');
+        }
 
         await act(async () => {
             invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 300 } } });
@@ -125,19 +175,23 @@ describe('ChainTranscriptList', () => {
             await settleListEffects(2);
         });
 
-        expect(scrollToIndexSpy).toHaveBeenCalledWith(
+        expect(initialScrollToIndexSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 index: 0,
                 animated: false,
                 viewPosition: 1,
             }),
         );
-        expect(scrollToOffsetSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
+        const scrollToOffsetCalls = [
+            ...initialScrollToOffsetSpy.mock.calls,
+            ...(scrollToOffsetSpy && scrollToOffsetSpy !== initialScrollToOffsetSpy ? scrollToOffsetSpy.mock.calls : []),
+        ];
+        expect(scrollToOffsetCalls).toEqual(expect.arrayContaining([
+            [expect.objectContaining({
                 offset: 0,
                 animated: false,
-            }),
-        );
+            })],
+        ]));
         expect(scrollToEndSpy).not.toHaveBeenCalled();
     });
 
@@ -167,14 +221,14 @@ describe('ChainTranscriptList', () => {
             list.props.onContentSizeChange(0, 1000);
             list.props.onScroll({
                 nativeEvent: {
-                    contentOffset: { y: 0 },
+                    contentOffset: { y: 100 },
                     contentSize: { height: 1000 },
                     layoutMeasurement: { height: 500 },
                 },
             });
             list.props.onScroll({
                 nativeEvent: {
-                    contentOffset: { y: 0 },
+                    contentOffset: { y: 100 },
                     contentSize: { height: 1000 },
                     layoutMeasurement: { height: 500 },
                 },
@@ -183,7 +237,14 @@ describe('ChainTranscriptList', () => {
         });
 
         expect(loadOlder).toHaveBeenCalledTimes(1);
-        deferred.resolve({ loaded: 1, hasMore: true, status: 'loaded' });
+        // Invariant H: the older-load indicator is visible while the user-triggered load is in flight…
+        expect(screen.root.findAllByProps({ testID: 'transcript-older-load-progress-overlay' }).length).toBeGreaterThan(0);
+        await act(async () => {
+            deferred.resolve({ loaded: 1, hasMore: true, status: 'loaded' });
+            await settleListEffects();
+        });
+        // …and settles once the load resolves.
+        expect(screen.root.findAllByProps({ testID: 'transcript-older-load-progress-overlay' }).length).toBe(0);
     });
 
     it('loads older when scrolled near the top (even if onStartReached is not fired)', async () => {
@@ -210,7 +271,7 @@ describe('ChainTranscriptList', () => {
             list.props.onContentSizeChange(0, 1000);
             list.props.onScroll({
                 nativeEvent: {
-                    contentOffset: { y: 0 },
+                    contentOffset: { y: 100 },
                     contentSize: { height: 1000 },
                     layoutMeasurement: { height: 500 },
                 },
@@ -251,7 +312,7 @@ describe('ChainTranscriptList', () => {
         await act(async () => {
             invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 500 } } });
             list.props.onContentSizeChange(0, 1000);
-            list.props.onScroll({ nativeEvent: { contentOffset: { y: 0 } } });
+            list.props.onScroll({ nativeEvent: { contentOffset: { y: 100 } } });
             await settleListEffects();
             expect(loadOlder).toHaveBeenCalledTimes(1);
             const loadOlderPromise = loadOlder.mock.results[0]?.value as Promise<unknown> | undefined;
@@ -264,6 +325,164 @@ describe('ChainTranscriptList', () => {
         });
 
         expect(loadOlder).toHaveBeenCalledTimes(1);
+    });
+
+    it('requires a threshold exit and re-entry before chaining another older-page load (anti-burst)', async () => {
+        vi.useFakeTimers({ now: new Date(0) });
+        try {
+            scrollToIndexShouldReject = false;
+            const loadOlder = vi.fn(async () => ({ loaded: 1, hasMore: true, status: 'loaded' as const }));
+
+            const screen = await renderChainTranscriptList({
+                sessionId: 's1',
+                messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+                metadata: null,
+                interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+                loadOlder,
+            });
+
+            const list = getFlashList(screen);
+            const scrollTo = async (y: number) => {
+                await act(async () => {
+                    list.props.onScroll({
+                        nativeEvent: {
+                            contentOffset: { y },
+                            contentSize: { height: 1000 },
+                            layoutMeasurement: { height: 500 },
+                        },
+                    });
+                    await settleListEffects();
+                });
+            };
+            await act(async () => {
+                invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 500 } } });
+                list.props.onContentSizeChange(0, 1000);
+                await settleListEffects();
+            });
+
+            await scrollTo(100);
+            expect(loadOlder).toHaveBeenCalledTimes(1);
+
+            // Parked inside the threshold: cooldown elapsing alone never re-arms (E6 anti-burst).
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(5000);
+            });
+            await scrollTo(120);
+            expect(loadOlder).toHaveBeenCalledTimes(1);
+
+            // An observed threshold exit -> re-enter re-arms the machine for exactly one more load.
+            await scrollTo(900);
+            await scrollTo(100);
+            expect(loadOlder).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('re-arms during cooldown only after an observed threshold exit and re-entry', async () => {
+        vi.useFakeTimers({ now: new Date(0) });
+        try {
+            scrollToIndexShouldReject = false;
+            const loadOlder = vi.fn(async () => ({ loaded: 1, hasMore: true, status: 'loaded' as const }));
+
+            const screen = await renderChainTranscriptList({
+                sessionId: 's1',
+                messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+                metadata: null,
+                interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+                loadOlder,
+            });
+
+            const list = getFlashList(screen);
+            const scrollTo = async (y: number) => {
+                await act(async () => {
+                    list.props.onScroll({
+                        nativeEvent: {
+                            contentOffset: { y },
+                            contentSize: { height: 1000 },
+                            layoutMeasurement: { height: 500 },
+                        },
+                    });
+                    await settleListEffects();
+                });
+            };
+            await act(async () => {
+                invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 500 } } });
+                list.props.onContentSizeChange(0, 1000);
+                await settleListEffects();
+            });
+
+            await scrollTo(100);
+            expect(loadOlder).toHaveBeenCalledTimes(1);
+
+            // Exit -> re-enter while the cooldown is still running: no immediate load…
+            await scrollTo(900);
+            await scrollTo(100);
+            expect(loadOlder).toHaveBeenCalledTimes(1);
+
+            // …but the re-arm is honored when the cooldown elapses.
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(2500);
+            });
+            expect(loadOlder).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('uses configured backward prefetch pixels for near-top loading', async () => {
+        chainSyncTuningState.transcriptBackwardPrefetchThresholdPx = 400;
+        scrollToIndexShouldReject = false;
+        const { ChainTranscriptList } = await import('./ChainTranscriptList');
+        const loadOlder = vi.fn(async () => ({ loaded: 1, hasMore: true, status: 'loaded' as const }));
+
+        const screen = await renderScreen(
+            React.createElement(ChainTranscriptList, {
+                sessionId: 's1',
+                messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+                metadata: null,
+                interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+                loadOlder,
+            }),
+        );
+
+        const list = getFlashList(screen);
+        await act(async () => {
+            invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 500 } } });
+            list.props.onContentSizeChange(0, 1000);
+            list.props.onScroll({
+                nativeEvent: {
+                    contentOffset: { y: 350 },
+                    contentSize: { height: 1000 },
+                    layoutMeasurement: { height: 500 },
+                },
+            });
+            await settleListEffects();
+        });
+
+        expect(loadOlder).toHaveBeenCalledTimes(1);
+    });
+
+    it('derives the start-reached threshold from the configured pixel distance', async () => {
+        chainSyncTuningState.transcriptBackwardPrefetchThresholdPx = 250;
+        scrollToIndexShouldReject = false;
+        const screen = await renderChainTranscriptList({
+            sessionId: 's1',
+            messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+            metadata: null,
+            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+            loadOlder: vi.fn(async () => ({ loaded: 1, hasMore: true, status: 'loaded' as const })),
+        });
+
+        const list = getFlashList(screen);
+        expect(list.props.onStartReachedThreshold).toBe(0.2);
+
+        await act(async () => {
+            invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 500 } } });
+            await settleListEffects();
+        });
+
+        expect(getFlashList(screen).props.onStartReachedThreshold).toBe(0.5);
     });
 
     it('does not load older while pinned at the bottom of a short transcript', async () => {
@@ -286,6 +505,58 @@ describe('ChainTranscriptList', () => {
                 nativeEvent: {
                     contentOffset: { y: 100 },
                     contentSize: { height: 600 },
+                    layoutMeasurement: { height: 500 },
+                },
+            });
+            await settleListEffects();
+        });
+
+        expect(loadOlder).not.toHaveBeenCalled();
+    });
+
+    it('does not let onStartReached bypass the pinned short-transcript guard', async () => {
+        scrollToIndexShouldReject = false;
+        const loadOlder = vi.fn(async () => ({ loaded: 1, hasMore: true, status: 'loaded' as const }));
+
+        const screen = await renderChainTranscriptList({
+            sessionId: 's1',
+            messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+            metadata: null,
+            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+            loadOlder,
+        });
+
+        const list = getFlashList(screen);
+        await act(async () => {
+            invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 500 } } });
+            list.props.onContentSizeChange(0, 400);
+            list.props.onStartReached();
+            await settleListEffects();
+        });
+
+        expect(loadOlder).not.toHaveBeenCalled();
+    });
+
+    it('suspends older loads while the observed offset is at or below zero', async () => {
+        scrollToIndexShouldReject = false;
+        const loadOlder = vi.fn(async () => ({ loaded: 1, hasMore: true, status: 'loaded' as const }));
+
+        const screen = await renderChainTranscriptList({
+            sessionId: 's1',
+            messages: [{ kind: 'agent-text', id: 'm1', localId: null, createdAt: 1, text: 'hi', isThinking: false }],
+            metadata: null,
+            interaction: { canSendMessages: true, canApprovePermissions: true, disableToolNavigation: true },
+            loadOlder,
+        });
+
+        const list = getFlashList(screen);
+        await act(async () => {
+            invokeTestInstanceHandler(list, 'onLayout', { nativeEvent: { layout: { height: 500 } } });
+            list.props.onContentSizeChange(0, 1000);
+            list.props.onScroll({
+                nativeEvent: {
+                    contentOffset: { y: 0 },
+                    contentSize: { height: 1000 },
                     layoutMeasurement: { height: 500 },
                 },
             });

@@ -1,5 +1,4 @@
 import Constants from 'expo-constants';
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 import { deletePushToken as deletePushTokenApi, registerPushToken as registerPushTokenApi } from '@/sync/api/session/apiPush';
@@ -17,6 +16,7 @@ import { serverFetch } from '@/sync/http/client';
 import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 import { deriveSettingsSecretsKey, sealSecretsDeep } from '@/sync/encryption/secretSettings';
 import { loadLastRegisteredExpoPushToken, saveLastRegisteredExpoPushToken } from '@/sync/domains/state/pushTokenRegistration';
+import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
 
 export async function handleUpdateAccountSocketUpdate(params: {
     accountUpdate: any;
@@ -191,6 +191,15 @@ export async function registerPushTokenIfAvailable(params: {
 
     // Only register on mobile platforms
     if (Platform.OS === 'web') {
+        return;
+    }
+
+    let Notifications: ExpoNotificationsModule;
+    try {
+        Notifications = await loadExpoNotifications();
+    } catch (error) {
+        const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+        log.log('Push notifications unavailable: ' + message);
         return;
     }
 

@@ -96,6 +96,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
     > & Readonly<{
         selectedBackendTargetKey: string;
         selectedBackendEntryTargetKey?: string;
+        agentPickerSelectedOptionId?: string | null;
         modelOptionsProbeState: ModelOptionsProbeState;
         acpSessionModeProbeState: AcpSessionModeProbeState;
         acpConfigOptionsProbeState: AcpConfigOptionsProbeState;
@@ -146,6 +147,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
     const {
         selectedBackendTargetKey,
         selectedBackendEntryTargetKey,
+        agentPickerSelectedOptionId,
         modelOptionsProbeState,
         acpSessionModeProbeState,
         acpConfigOptionsProbeState,
@@ -162,7 +164,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         ...agentProps,
         ...params.machine,
         ...params.footer,
-        agentPickerSelectedOptionId: selectedBackendEntryTargetKey ?? selectedBackendTargetKey,
+        agentPickerSelectedOptionId: agentPickerSelectedOptionId ?? selectedBackendEntryTargetKey ?? selectedBackendTargetKey,
         modelOptionsProbe: {
             phase: modelOptionsProbeState.phase,
             onRefresh: modelOptionsProbeState.onRefresh,

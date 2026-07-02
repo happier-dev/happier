@@ -43,6 +43,7 @@ export function CodeLineRow(props: {
     pressLineWhenNotSelectable?: boolean;
     onPressAddComment?: (line: CodeLine) => void;
     commentActive?: boolean;
+    showInactiveCommentAffordance?: boolean;
     wrapLines?: boolean;
     showLineNumbers?: boolean;
     showPrefix?: boolean;
@@ -72,7 +73,10 @@ export function CodeLineRow(props: {
     const [isHovered, setIsHovered] = React.useState(false);
     const commentActive = props.commentActive === true;
     const highlighted = props.highlighted === true;
-    const canShowCommentAffordance = Boolean(onPressAddComment) && !line.renderIsHeaderLine;
+    const showInactiveCommentAffordance = props.showInactiveCommentAffordance !== false;
+    const canShowCommentAffordance = Boolean(onPressAddComment)
+        && !line.renderIsHeaderLine
+        && (commentActive || showInactiveCommentAffordance);
     const commentAffordanceVisible = isWeb ? (isHovered || commentActive) : true;
 
     const intraLineSegments = (Array.isArray(line.renderIntraLineDiffSegments) && line.renderIntraLineDiffSegments.length > 0)

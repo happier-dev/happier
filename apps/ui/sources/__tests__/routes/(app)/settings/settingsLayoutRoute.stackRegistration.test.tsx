@@ -116,7 +116,7 @@ vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => true,
 }));
 
-vi.mock('@/agents/providers/catalog/providerSettingsCatalog', () => ({
+vi.mock('@/agents/catalog/providerSettingsCatalog', () => ({
     PROVIDER_SETTINGS_DESCRIPTORS: [],
     PROVIDER_SETTINGS_PLUGINS: [],
     PROVIDER_SETTINGS_BEHAVIORS: [],

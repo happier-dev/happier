@@ -1081,4 +1081,178 @@ describe('FileActionToolbar', () => {
         expect(findChildByTestId(changeActions, 'file-details-stage-file')).toBeTruthy();
         expect(findChildByTestId(changeActions, 'file-discard-action')).toBeTruthy();
     });
+
+    it('repurposes the view dropdown into the Raw/Rich edit-mode menu when editing a markdown file (I3)', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+        const onMarkdownEditMode = vi.fn();
+        const onDisplayMode = vi.fn();
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'file',
+                onDisplayMode,
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: false,
+                hasIncludedDelta: false,
+                scmWriteEnabled: false,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: false,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                fileEditorEnabled: true,
+                isEditingFile: true,
+                fileEditorDirty: false,
+                onSaveEditingFile: () => {},
+                onCancelEditingFile: () => {},
+                showMarkdownEditToggle: true,
+                markdownEditMode: 'rich',
+                onMarkdownEditMode,
+                markdownRichEligible: true,
+                markdownRichDisabledReason: undefined,
+            }),
+        );
+
+        // The dropdown is now the edit-mode selector (Raw/Rich), not the view menu.
+        expect(screen.findByTestId('markdown-edit-mode-menu')).toBeTruthy();
+        expect(screen.findByTestId('file-details-view-mode-menu')).toBeNull();
+
+        const menu = screen.findByType('DropdownMenu' as any);
+        expect(menu?.props.items.map((item: any) => item.id)).toEqual(['raw', 'rich']);
+        expect(menu?.props.selectedId).toBe('rich');
+        // Rich is eligible -> not disabled.
+        expect(menu?.props.items.find((item: any) => item.id === 'rich')?.disabled).toBeFalsy();
+
+        menu?.props.onSelect('raw');
+        expect(onMarkdownEditMode).toHaveBeenCalledWith('raw');
+        // The view (file/diff/markdown) cannot be changed via this menu while editing.
+        expect(onDisplayMode).not.toHaveBeenCalled();
+    });
+
+    it('disables the Rich option with the reason as a subtitle when rich is ineligible', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'file',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: false,
+                hasIncludedDelta: false,
+                scmWriteEnabled: false,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: false,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                fileEditorEnabled: true,
+                isEditingFile: true,
+                onSaveEditingFile: () => {},
+                onCancelEditingFile: () => {},
+                showMarkdownEditToggle: true,
+                // Rich is the stored PREFERENCE but the file is ineligible, so the
+                // editor renders Raw — the dropdown must reflect the effective mode.
+                markdownEditMode: 'rich',
+                onMarkdownEditMode: () => {},
+                markdownRichEligible: false,
+                markdownRichDisabledReason: 'footnotes',
+            }),
+        );
+
+        const menu = screen.findByType('DropdownMenu' as any);
+        const richItem = menu?.props.items.find((item: any) => item.id === 'rich');
+        expect(richItem?.disabled).toBe(true);
+        expect(richItem?.subtitle).toBe('settingsSourceControl.markdownEditMode.disabledReason.footnotes');
+        // Effective mode is Raw (rich ineligible) — NOT the 'rich' preference.
+        expect(menu?.props.selectedId).toBe('raw');
+    });
+
+    it('does not repurpose the dropdown into edit-mode when showMarkdownEditToggle is false', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'file',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: false,
+                hasIncludedDelta: false,
+                scmWriteEnabled: false,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: false,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                fileEditorEnabled: true,
+                isEditingFile: true,
+                onSaveEditingFile: () => {},
+                onCancelEditingFile: () => {},
+                showMarkdownEditToggle: false,
+                markdownEditMode: 'rich',
+                onMarkdownEditMode: () => {},
+            }),
+        );
+
+        expect(screen.findByTestId('markdown-edit-mode-menu')).toBeNull();
+    });
+
+    it('does not repurpose the dropdown into edit-mode when not editing', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+
+        const screen = await renderScreen(
+            React.createElement(FileActionToolbar as any, {
+                theme,
+                displayMode: 'file',
+                onDisplayMode: () => {},
+                diffMode: 'pending',
+                onDiffMode: () => {},
+                hasPendingDelta: false,
+                hasIncludedDelta: false,
+                scmWriteEnabled: false,
+                includeExcludeEnabled: false,
+                virtualSelectionEnabled: false,
+                isSelectedForCommit: false,
+                lineSelectionEnabled: false,
+                selectedLineCount: 0,
+                isApplyingStage: false,
+                inFlightScmOperation: null,
+                onStageFile: () => {},
+                onUnstageFile: () => {},
+                onApplySelectedLines: () => {},
+                onClearSelection: () => {},
+                fileEditorEnabled: true,
+                isEditingFile: false,
+                onStartEditingFile: () => {},
+                showMarkdownEditToggle: true,
+                markdownEditMode: 'rich',
+                onMarkdownEditMode: () => {},
+            }),
+        );
+
+        expect(screen.findByTestId('markdown-edit-mode-menu')).toBeNull();
+    });
 });

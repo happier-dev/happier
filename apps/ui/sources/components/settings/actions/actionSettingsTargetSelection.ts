@@ -1,7 +1,10 @@
 import {
+    ACTION_TOOL_EXPOSURE_SURFACES,
     isActionSettingsOptInPlacement,
     type ActionId,
     type ActionSurfaces,
+    type ActionToolExposureMode,
+    type ActionToolExposureSurface,
     type ActionUiPlacement,
     type ActionsSettingsV1,
 } from '@happier-dev/protocol';
@@ -15,6 +18,7 @@ type MutableActionSettingsEntry = {
     disabledSurfaces: Array<keyof ActionSurfaces>;
     disabledPlacements: ActionUiPlacement[];
     approvalRequiredSurfaces: Array<keyof ActionSurfaces>;
+    toolExposureModes: Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>>;
 };
 
 export function sortUniqueActionSettingsValues<T extends string>(values: readonly T[]): T[] {
@@ -29,7 +33,21 @@ export function getMutableActionSettingsEntry(settings: ActionsSettingsV1, actio
         disabledSurfaces: [...(entry?.disabledSurfaces ?? [])],
         disabledPlacements: [...(entry?.disabledPlacements ?? [])],
         approvalRequiredSurfaces: [...(entry?.approvalRequiredSurfaces ?? [])],
+        toolExposureModes: { ...(entry?.toolExposureModes ?? {}) },
     };
+}
+
+function normalizeToolExposureModes(
+    modes: Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>>,
+): Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>> {
+    const normalized: Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>> = {};
+    for (const surface of ACTION_TOOL_EXPOSURE_SURFACES) {
+        const mode = modes[surface];
+        if (mode === 'direct' || mode === 'discoverable_only') {
+            normalized[surface] = mode;
+        }
+    }
+    return normalized;
 }
 
 function normalizeEntry(entry: MutableActionSettingsEntry) {
@@ -37,6 +55,8 @@ function normalizeEntry(entry: MutableActionSettingsEntry) {
     const disabledSurfaces = sortUniqueActionSettingsValues(entry.disabledSurfaces);
     const disabledPlacements = sortUniqueActionSettingsValues(entry.disabledPlacements);
     const approvalRequiredSurfaces = sortUniqueActionSettingsValues(entry.approvalRequiredSurfaces);
+    const toolExposureModes = normalizeToolExposureModes(entry.toolExposureModes);
+    const hasToolExposureModes = Object.keys(toolExposureModes).length > 0;
 
     const normalized = {
         ...(entry.enabled === false ? { enabled: false as const } : {}),
@@ -44,6 +64,7 @@ function normalizeEntry(entry: MutableActionSettingsEntry) {
         disabledSurfaces,
         disabledPlacements,
         approvalRequiredSurfaces,
+        ...(hasToolExposureModes ? { toolExposureModes } : {}),
     };
 
     if (
@@ -52,6 +73,7 @@ function normalizeEntry(entry: MutableActionSettingsEntry) {
         && disabledSurfaces.length === 0
         && disabledPlacements.length === 0
         && approvalRequiredSurfaces.length === 0
+        && !hasToolExposureModes
     ) {
         return null;
     }
@@ -62,7 +84,7 @@ function normalizeEntry(entry: MutableActionSettingsEntry) {
 export function writeActionSettingsEntry(settings: ActionsSettingsV1, actionId: ActionId, entry: MutableActionSettingsEntry): ActionsSettingsV1 {
     const normalizedSettings = normalizeActionsSettings(settings);
     const normalizedEntry = normalizeEntry(entry);
-    const nextActions = { ...normalizedSettings.actions };
+    const nextActions: Record<string, unknown> = { ...normalizedSettings.actions };
 
     if (normalizedEntry) {
         nextActions[actionId] = normalizedEntry;
@@ -72,7 +94,7 @@ export function writeActionSettingsEntry(settings: ActionsSettingsV1, actionId: 
 
     return {
         v: 1,
-        actions: nextActions,
+        actions: nextActions as ActionsSettingsV1['actions'],
     };
 }
 

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import type { FeatureId, FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
 
-import { useSettings } from '@/sync/domains/state/storage';
 import {
     useServerFeaturesMainSelectionSnapshot,
     useServerFeaturesRuntimeSnapshot,
@@ -10,6 +9,7 @@ import {
 import { resolveFeatureDecisionSnapshotStrategy } from '@/sync/domains/features/featureDecisionProbeStrategy';
 import { useEffectiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 import type { FeatureScopeParams } from './featureScope';
+import { useFeatureLocalPolicySettings } from './useFeatureLocalPolicySettings';
 
 export type FeatureDetailsScopeParams = FeatureScopeParams;
 
@@ -22,7 +22,7 @@ type FeatureDetailsParams<T> = Readonly<{
 }>;
 
 export function useFeatureDetails<T>(params: FeatureDetailsParams<T>): T {
-    const settings = useSettings();
+    const settings = useFeatureLocalPolicySettings();
     const selection = useEffectiveServerSelection();
     const scopeKind = params.scope?.scopeKind ?? 'main_selection';
     const snapshotStrategy = resolveFeatureDecisionSnapshotStrategy({

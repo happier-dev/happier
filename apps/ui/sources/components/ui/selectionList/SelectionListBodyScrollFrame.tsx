@@ -72,6 +72,7 @@ export function SelectionListBodyScrollFrame(props: Readonly<{
     fadeBottomTestId: string;
     listboxAria: ListboxAriaProps;
     scrollTargetOptionId: string | null;
+    showsVerticalScrollIndicator: boolean;
     children: React.ReactNode;
 }>): React.ReactElement {
     const fades = useScrollEdgeFades({
@@ -103,7 +104,7 @@ export function SelectionListBodyScrollFrame(props: Readonly<{
                     style={styles.bodyScroll}
                     contentContainerStyle={styles.bodyScrollContent}
                     keyboardShouldPersistTaps="handled"
-                    showsVerticalScrollIndicator={false}
+                    showsVerticalScrollIndicator={props.showsVerticalScrollIndicator}
                     onLayout={(event) => {
                         fades.onViewportLayout(event);
                         scrollIntoView.onViewportLayout(event);

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { fetchAndApplySessionById } from './sessionById';
+import { fetchAndApplySessionById, type SessionByIdEncryption } from './sessionById';
 
 const onAgentRequest = vi.fn();
 
@@ -70,13 +70,17 @@ describe('fetchAndApplySessionById', () => {
 
   it('falls back to scanning /v2/sessions when the single-session route is missing', async () => {
     const applySessions = vi.fn();
-    const request = vi.fn(async (path: string) => {
+    const request = vi.fn(async (path: string, _init: RequestInit) => {
       if (path === '/v2/sessions/s_legacy') {
         return new Response(JSON.stringify({
           error: 'Not found',
           path: '/v2/sessions/s_legacy',
           method: 'GET',
         }), { status: 404 });
+      }
+
+      if (path === '/v1/sessions/s_legacy/turns') {
+        return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
       }
 
       expect(path).toBe('/v2/sessions?limit=200');
@@ -127,6 +131,86 @@ describe('fetchAndApplySessionById', () => {
     expect(request.mock.calls.map((call) => call[0])).toEqual([
       '/v2/sessions/s_legacy',
       '/v2/sessions?limit=200',
+      '/v1/sessions/s_legacy/turns',
+    ]);
+  });
+
+  it('hydrates session turn projection for rollback read models', async () => {
+    const applySessions = vi.fn();
+    const request = vi.fn(async (path: string) => {
+      if (path === '/v2/sessions/s1') {
+        return new Response(JSON.stringify({
+          session: {
+            id: 's1',
+            createdAt: 1,
+            updatedAt: 2,
+            seq: 3,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            dataEncryptionKey: null,
+            metadataVersion: 1,
+            metadata: JSON.stringify({ readStateV1: null }),
+            agentStateVersion: 1,
+            agentState: JSON.stringify({ controlledByUser: true }),
+            share: null,
+          },
+        }), { status: 200 });
+      }
+
+      expect(path).toBe('/v1/sessions/s1/turns');
+      return new Response(JSON.stringify({
+        v: 1,
+        sessionId: 's1',
+        latestTurnId: 'turn-1',
+        updatedAt: 4,
+        turns: [
+          {
+            turnId: 'turn-1',
+            status: 'completed',
+            startedAt: 1,
+            updatedAt: 4,
+            terminalAt: 4,
+            transcriptAnchors: {
+              startUserMessageSeq: 1,
+              userMessageSeqs: [1, 3],
+              startSeqInclusive: 1,
+              endSeqInclusive: 4,
+            },
+            rollback: { state: 'eligible', updatedAt: 4 },
+          },
+        ],
+      }), { status: 200 });
+    });
+
+    const result = await fetchAndApplySessionById({
+      sessionId: 's1',
+      credentials: { token: 't' } as any,
+      encryption: {
+        decryptEncryptionKey: async () => null,
+        initializeSessions: async () => {},
+        getSessionEncryption: () => null,
+      },
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      applySessions,
+      log: { log: () => {} },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(request.mock.calls.map((call) => call[0])).toEqual([
+      '/v2/sessions/s1',
+      '/v1/sessions/s1/turns',
+    ]);
+    expect(applySessions).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 's1',
+        sessionTurns: expect.objectContaining({
+          latestTurnId: 'turn-1',
+          turns: [expect.objectContaining({ turnId: 'turn-1' })],
+        }),
+        rollbackEligibleTurnStarts: [1],
+      }),
     ]);
   });
 
@@ -147,6 +231,10 @@ describe('fetchAndApplySessionById', () => {
           path: '/v2/sessions',
           method: 'GET',
         }), { status: 404 });
+      }
+
+      if (path === '/v1/sessions/s_legacy_v1/turns') {
+        return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
       }
 
       expect(path).toBe('/v1/sessions');
@@ -196,6 +284,7 @@ describe('fetchAndApplySessionById', () => {
       '/v2/sessions/s_legacy_v1',
       '/v2/sessions?limit=200',
       '/v1/sessions',
+      '/v1/sessions/s_legacy_v1/turns',
     ]);
   });
 
@@ -652,5 +741,238 @@ describe('fetchAndApplySessionById', () => {
         agentState: { controlledByUser: true },
       }),
     ]);
+  });
+
+  it('coalesces concurrent session detail HTTP reads for the same request transport', async () => {
+    const detailGate = createDeferred<void>();
+    let detailRequests = 0;
+    const request = vi.fn(async (path: string) => {
+      if (path === '/v2/sessions/s_coalesced') {
+        detailRequests += 1;
+        await detailGate.promise;
+        return new Response(JSON.stringify({
+          session: {
+            id: 's_coalesced',
+            createdAt: 1,
+            updatedAt: 2,
+            seq: 3,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            dataEncryptionKey: null,
+            metadataVersion: 1,
+            metadata: JSON.stringify({ readStateV1: null }),
+            agentStateVersion: 1,
+            agentState: JSON.stringify({ controlledByUser: true }),
+            share: null,
+          },
+        }), { status: 200 });
+      }
+
+      if (path === '/v1/sessions/s_coalesced/turns') {
+        return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
+      }
+
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const encryption = {
+      decryptEncryptionKey: async () => null,
+      initializeSessions: async () => {},
+      getSessionEncryption: () => null,
+    } satisfies SessionByIdEncryption;
+    const baseParams = {
+      sessionId: 's_coalesced',
+      credentials: { token: 't' } as any,
+      encryption,
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      log: { log: () => {} },
+    };
+
+    const firstApplySessions = vi.fn();
+    const secondApplySessions = vi.fn();
+    const first = fetchAndApplySessionById({ ...baseParams, applySessions: firstApplySessions });
+    const second = fetchAndApplySessionById({ ...baseParams, applySessions: secondApplySessions });
+
+    await expect.poll(() => detailRequests, { timeout: 100 }).toBe(1);
+    detailGate.resolve();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ ok: true }),
+      expect.objectContaining({ ok: true }),
+    ]);
+    expect(request.mock.calls.filter((call) => call[0] === '/v2/sessions/s_coalesced')).toHaveLength(1);
+    expect(firstApplySessions).toHaveBeenCalledWith([expect.objectContaining({ id: 's_coalesced' })]);
+    expect(secondApplySessions).toHaveBeenCalledWith([expect.objectContaining({ id: 's_coalesced' })]);
+  });
+
+  it('coalesces concurrent scoped session detail HTTP reads across request wrappers', async () => {
+    const detailGate = createDeferred<void>();
+    let detailRequests = 0;
+    const createRequest = () => vi.fn(async (path: string) => {
+      if (path === '/v2/sessions/s_scoped_coalesced') {
+        detailRequests += 1;
+        await detailGate.promise;
+        return new Response(JSON.stringify({
+          session: {
+            id: 's_scoped_coalesced',
+            createdAt: 1,
+            updatedAt: 2,
+            seq: 3,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            dataEncryptionKey: null,
+            metadataVersion: 1,
+            metadata: JSON.stringify({ readStateV1: null }),
+            agentStateVersion: 1,
+            agentState: JSON.stringify({ controlledByUser: true }),
+            share: null,
+          },
+        }), { status: 200 });
+      }
+
+      if (path === '/v1/sessions/s_scoped_coalesced/turns') {
+        return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 });
+      }
+
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const encryption = {
+      decryptEncryptionKey: async () => null,
+      initializeSessions: async () => {},
+      getSessionEncryption: () => null,
+    } satisfies SessionByIdEncryption;
+    const baseParams = {
+      sessionId: 's_scoped_coalesced',
+      serverId: 'server-a',
+      credentials: { token: 't' } as any,
+      encryption,
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      log: { log: () => {} },
+    };
+
+    const firstApplySessions = vi.fn();
+    const secondApplySessions = vi.fn();
+    const first = fetchAndApplySessionById({
+      ...baseParams,
+      request: createRequest(),
+      applySessions: firstApplySessions,
+    });
+    const second = fetchAndApplySessionById({
+      ...baseParams,
+      request: createRequest(),
+      applySessions: secondApplySessions,
+    });
+
+    await expect.poll(() => detailRequests, { timeout: 100 }).toBe(1);
+    detailGate.resolve();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ ok: true }),
+      expect.objectContaining({ ok: true }),
+    ]);
+    expect(detailRequests).toBe(1);
+    expect(firstApplySessions).toHaveBeenCalledWith([expect.objectContaining({ id: 's_scoped_coalesced' })]);
+    expect(secondApplySessions).toHaveBeenCalledWith([expect.objectContaining({ id: 's_scoped_coalesced' })]);
+  });
+
+  it('can hydrate the session shell without fetching the turns projection', async () => {
+    const request = vi.fn(async (path: string) => {
+      if (path === '/v2/sessions/s_shell_only') {
+        return new Response(JSON.stringify({
+          session: {
+            id: 's_shell_only',
+            createdAt: 1,
+            updatedAt: 2,
+            seq: 3,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            dataEncryptionKey: null,
+            metadataVersion: 1,
+            metadata: JSON.stringify({ readStateV1: null }),
+            agentStateVersion: 1,
+            agentState: JSON.stringify({ controlledByUser: true }),
+            share: null,
+          },
+        }), { status: 200 });
+      }
+
+      if (path === '/v1/sessions/s_shell_only/turns') {
+        throw new Error('turns projection should not be fetched for shell-only hydration');
+      }
+
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const result = await fetchAndApplySessionById({
+      sessionId: 's_shell_only',
+      credentials: { token: 't' } as any,
+      encryption: {
+        decryptEncryptionKey: async () => null,
+        initializeSessions: async () => {},
+        getSessionEncryption: () => null,
+      },
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      applySessions: vi.fn(),
+      log: { log: () => {} },
+      includeTurnsProjection: false,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(request.mock.calls.map((call) => call[0])).toEqual(['/v2/sessions/s_shell_only']);
+  });
+
+  it('uses browser-CORS-safe headers for targeted session detail reads', async () => {
+    const request = vi.fn(async (path: string, _init: RequestInit) => {
+      if (path === '/v2/sessions/s_purpose') {
+        return new Response(JSON.stringify({
+          session: {
+            id: 's_purpose',
+            createdAt: 1,
+            updatedAt: 2,
+            seq: 3,
+            active: true,
+            activeAt: 2,
+            encryptionMode: 'plain',
+            dataEncryptionKey: null,
+            metadataVersion: 1,
+            metadata: JSON.stringify({ readStateV1: null }),
+            agentStateVersion: 1,
+            agentState: JSON.stringify({ controlledByUser: true }),
+            share: null,
+          },
+        }), { status: 200 });
+      }
+
+      throw new Error(`unexpected path ${path}`);
+    });
+
+    const result = await fetchAndApplySessionById({
+      sessionId: 's_purpose',
+      credentials: { token: 't' } as any,
+      encryption: {
+        decryptEncryptionKey: async () => null,
+        initializeSessions: async () => {},
+        getSessionEncryption: () => null,
+      },
+      sessionDataKeys: new Map<string, Uint8Array>(),
+      request,
+      applySessions: vi.fn(),
+      log: { log: () => {} },
+      includeTurnsProjection: false,
+    });
+
+    expect(result.ok).toBe(true);
+    const headers = request.mock.calls[0]?.[1]?.headers as Record<string, string> | undefined;
+    expect(headers).toEqual(expect.objectContaining({
+      Authorization: 'Bearer t',
+      'Content-Type': 'application/json',
+    }));
+    expect(headers).not.toHaveProperty('X-Happier-Request-Purpose');
   });
 });

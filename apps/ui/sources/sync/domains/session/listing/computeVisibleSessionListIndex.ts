@@ -5,17 +5,37 @@ import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetr
 import { applySessionListIndexPresentation } from './sessionListIndexPresentation';
 import {
     applySessionListAttentionPlacementWithinGroups,
+    applySessionListWorkingPlacementWithinGroups,
     buildSessionListAttentionPlacement,
+    buildSessionListWorkingPlacement,
     normalizeSessionListAttentionPlacementMode,
+    normalizeSessionListWorkingPlacementMode,
     type SessionListAttentionPlacementOptions,
+    type SessionListWorkingPlacementOptions,
 } from './sessionListAttentionPlacement';
+import {
+    applySessionWorkspaceOrderV1ToIndex,
+    type SessionWorkspaceOrderV1,
+} from './sessionWorkspaceOrderStateV1';
 import { normalizeTrimmedStringArrayWithSharedEmpty } from './normalizeTrimmedStringArrayWithSharedEmpty';
 import { normalizeSessionListKeyParts } from './sessionListKeyNormalization';
 import { normalizeTrimmedString } from './normalizeTrimmedString';
 import type { SessionListRenderableSession } from './sessionListRenderable';
 import { buildSessionFolderWorkspaceRefKey } from '@/sync/domains/session/folders/workspaceRefs';
+import {
+    buildSessionListSessionOrderingKey,
+    compareSessionListSessionOrderingKeys,
+    normalizeSessionListFolderSortModeV1,
+    normalizeSessionListOrderingModeV1,
+    resolveEffectiveSessionListFolderSortMode,
+    resolveEffectiveSessionListOrderingModeForGroup,
+    type SessionListFolderSortModeV1,
+    type SessionListOrderingModeV1,
+    type SessionListSessionOrderingKey,
+    type SessionListOrderingSectionMode,
+} from './sessionListOrderingRules';
 
-export type SessionListOrderingModeV1 = 'custom' | 'created' | 'updated';
+export type { SessionListFolderSortModeV1, SessionListOrderingModeV1 } from './sessionListOrderingRules';
 
 export type ComputeVisibleSessionListIndexParams = Readonly<{
     source: ReadonlyArray<SessionListIndexItem> | null;
@@ -23,14 +43,19 @@ export type ComputeVisibleSessionListIndexParams = Readonly<{
     hideInactiveSessions: boolean;
     pinnedSessionKeysV1: ReadonlyArray<string>;
     sessionListGroupOrderV1: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
+    sessionWorkspaceOrderV1?: SessionWorkspaceOrderV1;
     sessionListOrderingModeV1?: SessionListOrderingModeV1;
+    sessionListSectionModeV1?: SessionListOrderingSectionMode;
+    sessionListFolderSortModeV1?: SessionListFolderSortModeV1;
     attentionPlacement?: SessionListAttentionPlacementOptions;
+    workingPlacement?: SessionListWorkingPlacementOptions;
     presentation: Readonly<{
         enabled: boolean;
         presentation: ServerSelectionPresentation;
         selectedServerIds?: ReadonlyArray<string>;
     }>;
     storageFilterApplied?: boolean;
+    nowMs?: number;
 }>;
 
 const PINNED_GROUP_KEY_V1 = 'pinned-v1';
@@ -51,6 +76,10 @@ function resolveSessionRowForItem(
     return resolveSessionRow(serverId, sessionId);
 }
 
+function isPrimarySessionListSectionHeader(item: Extract<SessionListIndexItem, { type: 'header' }>): boolean {
+    return item.headerKind === 'active' || item.headerKind === 'inactive' || item.headerKind === 'sessions';
+}
+
 function inspectVisibleSessionListSourceState(
     items: ReadonlyArray<SessionListIndexItem>,
     resolveSessionRow: ComputeVisibleSessionListIndexParams['resolveSessionRow'],
@@ -62,7 +91,7 @@ function inspectVisibleSessionListSourceState(
 
     for (const item of items) {
         if (item.type === 'header') {
-            if (item.headerKind === 'active' || item.headerKind === 'inactive') {
+            if (isPrimarySessionListSectionHeader(item)) {
                 pendingSectionHeader = item;
                 pendingGroupHeader = null;
             } else {
@@ -123,6 +152,20 @@ function countSessionItems(items: ReadonlyArray<SessionListIndexItem>): number {
     return count;
 }
 
+function hasNonCustomEffectiveSessionOrdering(
+    source: ReadonlyArray<SessionListIndexItem>,
+    orderingMode: SessionListOrderingModeV1,
+    sectionMode: SessionListOrderingSectionMode,
+): boolean {
+    for (const item of source) {
+        if (item.type !== 'session') continue;
+        if (resolveEffectiveOrderingModeForSessionItem(item, orderingMode, sectionMode) !== 'custom') {
+            return true;
+        }
+    }
+    return false;
+}
+
 function nowMs(): number {
     const perf = (globalThis as unknown as { performance?: { now?: () => number } }).performance;
     if (typeof perf?.now === 'function') {
@@ -131,103 +174,127 @@ function nowMs(): number {
     return Date.now();
 }
 
-function compareSessionItemsByOrderingMode(
-    a: Extract<SessionListIndexItem, { type: 'session' }>,
-    b: Extract<SessionListIndexItem, { type: 'session' }>,
+type SessionIndexItem = Extract<SessionListIndexItem, { type: 'session' }>;
+
+function resolveEffectiveOrderingModeForSessionItem(
+    item: SessionIndexItem,
     orderingMode: SessionListOrderingModeV1,
+    sectionMode: SessionListOrderingSectionMode,
+): SessionListOrderingModeV1 {
+    return resolveEffectiveSessionListOrderingModeForGroup({
+        section: sectionMode === 'single' ? 'sessions' : item.section,
+        sectionMode,
+        groupKind: item.groupKind,
+        userOrderingMode: orderingMode,
+    });
+}
+
+function resolveSessionOrderingScopeKey(item: SessionIndexItem, sectionMode: SessionListOrderingSectionMode): string | null {
+    const groupKey = normalizeTrimmedString(item.groupKey);
+    if (!groupKey) return null;
+    const section = sectionMode === 'single'
+        ? 'sessions'
+        : normalizeTrimmedString(item.section) || 'active';
+    return `${section}\u0000${groupKey}`;
+}
+
+function buildOrderingKeyCache(
+    sessions: ReadonlyArray<SessionIndexItem>,
     resolveSessionRow: ComputeVisibleSessionListIndexParams['resolveSessionRow'],
+): Map<SessionIndexItem, SessionListSessionOrderingKey> {
+    const cache = new Map<SessionIndexItem, SessionListSessionOrderingKey>();
+    for (const item of sessions) {
+        cache.set(item, buildSessionListSessionOrderingKey({
+            item,
+            row: resolveSessionRowForItem(item, resolveSessionRow),
+        }));
+    }
+    return cache;
+}
+
+function compareSessionItemsByOrderingKey(
+    a: SessionIndexItem,
+    b: SessionIndexItem,
+    orderingMode: SessionListOrderingModeV1,
+    keyCache: ReadonlyMap<SessionIndexItem, SessionListSessionOrderingKey>,
 ): number {
-    const rowA = resolveSessionRowForItem(a, resolveSessionRow);
-    const rowB = resolveSessionRowForItem(b, resolveSessionRow);
-
-    const updatedA = rowA?.updatedAt ?? 0;
-    const updatedB = rowB?.updatedAt ?? 0;
-    const createdA = rowA?.createdAt ?? 0;
-    const createdB = rowB?.createdAt ?? 0;
-
-    if (orderingMode === 'updated') {
-        if (updatedB !== updatedA) {
-            return updatedB - updatedA;
-        }
-    } else if (orderingMode === 'created') {
-        if (createdB !== createdA) {
-            return createdB - createdA;
-        }
-    } else {
-        if (createdB !== createdA) {
-            return createdB - createdA;
-        }
-    }
-
-    if (orderingMode === 'updated' && createdB !== createdA) {
-        return createdB - createdA;
-    }
-
-    const aId = normalizeTrimmedString(a.sessionId);
-    const bId = normalizeTrimmedString(b.sessionId);
-    return aId.localeCompare(bId);
+    const keyA = keyCache.get(a);
+    const keyB = keyCache.get(b);
+    if (!keyA || !keyB) return 0;
+    return compareSessionListSessionOrderingKeys(keyA, keyB, orderingMode);
 }
 
 function isSessionListIndexItemsAlreadyOrderedByOrderingMode(
     source: ReadonlyArray<SessionListIndexItem>,
     orderingMode: SessionListOrderingModeV1,
+    sectionMode: SessionListOrderingSectionMode,
     resolveSessionRow: ComputeVisibleSessionListIndexParams['resolveSessionRow'],
 ): boolean {
-    const lastSessionByGroupKey = new Map<string, Extract<SessionListIndexItem, { type: 'session' }>>();
+    const lastSessionByScopeKey = new Map<string, SessionIndexItem>();
+    const keyCache = new Map<SessionIndexItem, SessionListSessionOrderingKey>();
 
     for (const item of source) {
         if (item.type !== 'session') continue;
 
-        const groupKey = normalizeTrimmedString(item.groupKey);
-        if (!groupKey) continue;
+        const scopeKey = resolveSessionOrderingScopeKey(item, sectionMode);
+        if (!scopeKey) continue;
+        const effectiveMode = resolveEffectiveOrderingModeForSessionItem(item, orderingMode, sectionMode);
+        if (effectiveMode === 'custom') continue;
+        keyCache.set(item, buildSessionListSessionOrderingKey({
+            item,
+            row: resolveSessionRowForItem(item, resolveSessionRow),
+        }));
 
-        const previous = lastSessionByGroupKey.get(groupKey);
-        if (previous && compareSessionItemsByOrderingMode(previous, item, orderingMode, resolveSessionRow) > 0) {
+        const previous = lastSessionByScopeKey.get(scopeKey);
+        if (previous && compareSessionItemsByOrderingKey(previous, item, effectiveMode, keyCache) > 0) {
             return false;
         }
 
-        lastSessionByGroupKey.set(groupKey, item);
+        lastSessionByScopeKey.set(scopeKey, item);
     }
 
-    return lastSessionByGroupKey.size > 0;
+    return lastSessionByScopeKey.size > 0;
 }
 
 function sortSessionListIndexItemsByOrderingMode(
     source: ReadonlyArray<SessionListIndexItem>,
     orderingMode: SessionListOrderingModeV1,
+    sectionMode: SessionListOrderingSectionMode,
     resolveSessionRow: ComputeVisibleSessionListIndexParams['resolveSessionRow'],
 ): SessionListIndexItem[] {
-    if (orderingMode === 'custom') {
+    if (isSessionListIndexItemsAlreadyOrderedByOrderingMode(source, orderingMode, sectionMode, resolveSessionRow)) {
         return source as SessionListIndexItem[];
     }
 
-    if (isSessionListIndexItemsAlreadyOrderedByOrderingMode(source, orderingMode, resolveSessionRow)) {
-        return source as SessionListIndexItem[];
-    }
-
-    const sessionsByGroupKey = new Map<string, Array<Extract<SessionListIndexItem, { type: 'session' }>>>();
+    const sessionsByScopeKey = new Map<string, SessionIndexItem[]>();
+    const effectiveModeByScopeKey = new Map<string, SessionListOrderingModeV1>();
     for (const item of source) {
         if (item.type !== 'session') continue;
-        const groupKey = normalizeTrimmedString(item.groupKey);
-        if (!groupKey) continue;
-        if (!sessionsByGroupKey.has(groupKey)) {
-            sessionsByGroupKey.set(groupKey, []);
+        const scopeKey = resolveSessionOrderingScopeKey(item, sectionMode);
+        if (!scopeKey) continue;
+        const effectiveMode = resolveEffectiveOrderingModeForSessionItem(item, orderingMode, sectionMode);
+        if (effectiveMode === 'custom') continue;
+        if (!sessionsByScopeKey.has(scopeKey)) {
+            sessionsByScopeKey.set(scopeKey, []);
+            effectiveModeByScopeKey.set(scopeKey, effectiveMode);
         }
-        sessionsByGroupKey.get(groupKey)!.push(item);
+        sessionsByScopeKey.get(scopeKey)!.push(item);
     }
 
-    const sortedByGroupKey = new Map<string, Array<Extract<SessionListIndexItem, { type: 'session' }>>>();
-    for (const [groupKey, sessions] of sessionsByGroupKey.entries()) {
+    const sortedByScopeKey = new Map<string, SessionIndexItem[]>();
+    for (const [scopeKey, sessions] of sessionsByScopeKey.entries()) {
         if (sessions.length < 2) continue;
-        const next = [...sessions].sort((a, b) => compareSessionItemsByOrderingMode(a, b, orderingMode, resolveSessionRow));
-        sortedByGroupKey.set(groupKey, next);
+        const effectiveMode = effectiveModeByScopeKey.get(scopeKey) ?? orderingMode;
+        const keyCache = buildOrderingKeyCache(sessions, resolveSessionRow);
+        const next = [...sessions].sort((a, b) => compareSessionItemsByOrderingKey(a, b, effectiveMode, keyCache));
+        sortedByScopeKey.set(scopeKey, next);
     }
 
-    if (sortedByGroupKey.size === 0) {
+    if (sortedByScopeKey.size === 0) {
         return source as SessionListIndexItem[];
     }
 
-    const indicesByGroupKey = new Map<string, number>();
+    const indicesByScopeKey = new Map<string, number>();
     const out: SessionListIndexItem[] = [];
     let didChange = false;
     for (const item of source) {
@@ -235,19 +302,23 @@ function sortSessionListIndexItemsByOrderingMode(
             out.push(item);
             continue;
         }
-        const groupKey = normalizeTrimmedString(item.groupKey);
-        const replacementList = groupKey ? sortedByGroupKey.get(groupKey) : undefined;
+        const scopeKey = resolveSessionOrderingScopeKey(item, sectionMode);
+        if (!scopeKey) {
+            out.push(item);
+            continue;
+        }
+        const replacementList = sortedByScopeKey.get(scopeKey);
         if (!replacementList) {
             out.push(item);
             continue;
         }
-        const index = indicesByGroupKey.get(groupKey) ?? 0;
+        const index = indicesByScopeKey.get(scopeKey) ?? 0;
         const replacement = replacementList[index] ?? item;
         if (replacement !== item) {
             didChange = true;
         }
         out.push(replacement);
-        indicesByGroupKey.set(groupKey, index + 1);
+        indicesByScopeKey.set(scopeKey, index + 1);
     }
 
     return didChange ? out : (source as SessionListIndexItem[]);
@@ -282,12 +353,82 @@ function reorderSessionItemsByKeys(
         }
     }
 
-    for (const item of items) {
-        if (used.has(item)) continue;
-        out.push(item);
+    const unordered = items.filter((item) => !used.has(item));
+    return [...unordered, ...out];
+}
+
+function reorderPinnedSessionItemsByStructuralKeys(
+    items: ReadonlyArray<SessionIndexItem>,
+    structuralKeys: ReadonlyArray<string> | undefined,
+    fallbackKeys: ReadonlyArray<string> | undefined,
+): SessionIndexItem[] {
+    if (items.length < 2) {
+        return [...items];
     }
 
-    return out;
+    const byKey = new Map<string, SessionIndexItem>();
+    for (const item of items) {
+        const key = normalizeSessionListKeyParts(item.serverId, item.sessionId).sessionKey;
+        if (key) {
+            byKey.set(key, item);
+        }
+    }
+
+    const out: SessionIndexItem[] = [];
+    const used = new Set<SessionIndexItem>();
+    const appendKnownKeys = (keys: ReadonlyArray<string> | undefined) => {
+        for (const key of keys ?? []) {
+            const normalized = normalizeTrimmedString(key);
+            if (!normalized) continue;
+            const found = byKey.get(normalized);
+            if (found && !used.has(found)) {
+                out.push(found);
+                used.add(found);
+            }
+        }
+    };
+
+    appendKnownKeys(structuralKeys);
+    appendKnownKeys(fallbackKeys);
+
+    const remaining = items
+        .filter((item) => !used.has(item))
+        .sort((a, b) => {
+            const keyA = normalizeSessionListKeyParts(a.serverId, a.sessionId).sessionKey || a.sessionId;
+            const keyB = normalizeSessionListKeyParts(b.serverId, b.sessionId).sessionKey || b.sessionId;
+            return keyA.localeCompare(keyB);
+        });
+    return [...out, ...remaining];
+}
+
+function orderPinnedSessionItems(params: Readonly<{
+    items: ReadonlyArray<SessionIndexItem>;
+    structuralKeys: ReadonlyArray<string> | undefined;
+    fallbackKeys: ReadonlyArray<string> | undefined;
+    orderingMode: SessionListOrderingModeV1;
+    resolveSessionRow: ComputeVisibleSessionListIndexParams['resolveSessionRow'];
+}>): SessionIndexItem[] {
+    if (params.orderingMode === 'custom') {
+        return reorderPinnedSessionItemsByStructuralKeys(
+            params.items,
+            params.structuralKeys,
+            params.fallbackKeys,
+        );
+    }
+
+    return sortSessionListIndexItemsByOrderingMode(
+        params.items,
+        params.orderingMode,
+        'single',
+        params.resolveSessionRow,
+    ) as SessionIndexItem[];
+}
+
+function isManualSessionOrderSupported(
+    item: Extract<SessionListIndexItem, { type: 'session' }>,
+    sectionMode: SessionListOrderingSectionMode,
+): boolean {
+    return resolveEffectiveOrderingModeForSessionItem(item, 'custom', sectionMode) === 'custom';
 }
 
 function buildFolderOrderKey(folderIdRaw: unknown): string | null {
@@ -379,6 +520,24 @@ function collectDirectChildOrderEntries(
     return entries;
 }
 
+function collectDirectFolderOrderEntries(
+    items: ReadonlyArray<SessionListIndexItem>,
+    groupKey: string,
+): ChildOrderEntry[] {
+    const entries: ChildOrderEntry[] = [];
+    for (let index = 0; index < items.length; index += 1) {
+        const item = items[index]!;
+        if (item.type !== 'header' || item.headerKind !== 'folder') continue;
+        if (resolveFolderParentGroupKeyFromVisibleItems({ items, itemIndex: index, folder: item }) !== groupKey) continue;
+        const key = buildListItemOrderKey(item);
+        if (!key) continue;
+        const end = findFolderBlockEnd(items, index, readFolderDepth(item));
+        entries.push({ key, start: index, end });
+        index = end - 1;
+    }
+    return entries;
+}
+
 function reorderEntriesByKeys(
     entries: ReadonlyArray<ChildOrderEntry>,
     keys: ReadonlyArray<string>,
@@ -395,10 +554,51 @@ function reorderEntriesByKeys(
             used.add(found);
         }
     }
+    const unordered = entries.filter((entry) => !used.has(entry));
+    return [...unordered, ...out];
+}
+
+function splitChildOrderEntriesIntoContiguousRuns(entries: ReadonlyArray<ChildOrderEntry>): ChildOrderEntry[][] {
+    const runs: ChildOrderEntry[][] = [];
     for (const entry of entries) {
-        if (!used.has(entry)) out.push(entry);
+        const current = runs[runs.length - 1];
+        const previous = current?.[current.length - 1];
+        if (!current || !previous || previous.end !== entry.start) {
+            runs.push([entry]);
+            continue;
+        }
+        current.push(entry);
     }
-    return out;
+    return runs;
+}
+
+function applyChildOrderEntryRuns(
+    source: ReadonlyArray<SessionListIndexItem>,
+    entries: ReadonlyArray<ChildOrderEntry>,
+    keys: ReadonlyArray<string>,
+): SessionListIndexItem[] {
+    const runs = splitChildOrderEntriesIntoContiguousRuns(entries).filter((run) => run.length >= 2);
+    if (runs.length === 0) {
+        return source as SessionListIndexItem[];
+    }
+
+    const out: SessionListIndexItem[] = [];
+    let cursor = 0;
+    let didChange = false;
+    for (const run of runs) {
+        const reordered = reorderEntriesByKeys(run, keys);
+        const firstEntry = run[0]!;
+        const lastEntry = run[run.length - 1]!;
+        out.push(...source.slice(cursor, firstEntry.start));
+        const activeRun = reordered.every((entry, index) => entry === run[index]) ? run : reordered;
+        if (activeRun !== run) {
+            didChange = true;
+        }
+        out.push(...activeRun.flatMap((entry) => source.slice(entry.start, entry.end)));
+        cursor = lastEntry.end;
+    }
+    out.push(...source.slice(cursor));
+    return didChange ? out : (source as SessionListIndexItem[]);
 }
 
 function applyMixedChildOrderingForGroup(
@@ -413,18 +613,7 @@ function applyMixedChildOrderingForGroup(
     if (entries.length < 2) {
         return source as SessionListIndexItem[];
     }
-    const reordered = reorderEntriesByKeys(entries, keys);
-    if (reordered.every((entry, index) => entry === entries[index])) {
-        return source as SessionListIndexItem[];
-    }
-
-    const firstEntry = entries[0]!;
-    const lastEntry = entries[entries.length - 1]!;
-    return [
-        ...source.slice(0, firstEntry.start),
-        ...reordered.flatMap((entry) => source.slice(entry.start, entry.end)),
-        ...source.slice(lastEntry.end),
-    ];
+    return applyChildOrderEntryRuns(source, entries, keys);
 }
 
 function applyMixedChildOrdering(
@@ -440,32 +629,69 @@ function applyMixedChildOrdering(
     return out;
 }
 
-function applySessionOnlyGroupOrdering(
+function applyFoldersFirstStructuralOrderingForGroup(
+    source: ReadonlyArray<SessionListIndexItem>,
+    groupKey: string,
+    keys: ReadonlyArray<string>,
+): SessionListIndexItem[] {
+    if (!keys.some((key) => typeof key === 'string' && key.startsWith('folder:'))) {
+        return source as SessionListIndexItem[];
+    }
+    const entries = collectDirectFolderOrderEntries(source, groupKey);
+    if (entries.length < 2) {
+        return source as SessionListIndexItem[];
+    }
+    return applyChildOrderEntryRuns(source, entries, keys);
+}
+
+function applyFoldersFirstStructuralOrdering(
     source: ReadonlyArray<SessionListIndexItem>,
     orderByGroupKey: Readonly<Record<string, ReadonlyArray<string> | undefined>>,
 ): SessionListIndexItem[] {
-    const sessionsByGroup = new Map<string, Array<Extract<SessionListIndexItem, { type: 'session' }>>>();
+    let out = source as SessionListIndexItem[];
+    for (const [groupKeyRaw, keys] of Object.entries(orderByGroupKey)) {
+        const groupKey = String(groupKeyRaw ?? '').trim();
+        if (!groupKey || !keys || keys.length === 0) continue;
+        out = applyFoldersFirstStructuralOrderingForGroup(out, groupKey, keys);
+    }
+    return out;
+}
+
+function applySessionOnlyGroupOrdering(
+    source: ReadonlyArray<SessionListIndexItem>,
+    orderByGroupKey: Readonly<Record<string, ReadonlyArray<string> | undefined>>,
+    sectionMode: SessionListOrderingSectionMode,
+): SessionListIndexItem[] {
+    const sessionsByScope = new Map<string, {
+        groupKey: string;
+        items: Array<Extract<SessionListIndexItem, { type: 'session' }>>;
+    }>();
 
     for (const item of source) {
         if (item.type !== 'session') continue;
+        if (!isManualSessionOrderSupported(item, sectionMode)) continue;
         const groupKey = typeof item.groupKey === 'string' ? item.groupKey : '';
         if (!groupKey) continue;
-        if (!sessionsByGroup.has(groupKey)) sessionsByGroup.set(groupKey, []);
-        sessionsByGroup.get(groupKey)!.push(item);
+        const scopeKey = resolveSessionOrderingScopeKey(item, sectionMode);
+        if (!scopeKey) continue;
+        if (!sessionsByScope.has(scopeKey)) {
+            sessionsByScope.set(scopeKey, { groupKey, items: [] });
+        }
+        sessionsByScope.get(scopeKey)!.items.push(item);
     }
 
-    const reorderedByGroup = new Map<string, Array<Extract<SessionListIndexItem, { type: 'session' }>>>();
-    for (const [groupKey, items] of sessionsByGroup.entries()) {
+    const reorderedByScope = new Map<string, Array<Extract<SessionListIndexItem, { type: 'session' }>>>();
+    for (const [scopeKey, { groupKey, items }] of sessionsByScope.entries()) {
         const keys = orderByGroupKey[groupKey];
         if (!keys || keys.length === 0) continue;
-        reorderedByGroup.set(groupKey, reorderSessionItemsByKeys(items, keys));
+        reorderedByScope.set(scopeKey, reorderSessionItemsByKeys(items, keys));
     }
 
-    if (reorderedByGroup.size === 0) {
+    if (reorderedByScope.size === 0) {
         return source as SessionListIndexItem[];
     }
 
-    const indicesByGroup = new Map<string, number>();
+    const indicesByScope = new Map<string, number>();
     const out: SessionListIndexItem[] = [];
     let didChange = false;
     for (const item of source) {
@@ -473,30 +699,54 @@ function applySessionOnlyGroupOrdering(
             out.push(item);
             continue;
         }
-        const groupKey = typeof item.groupKey === 'string' ? item.groupKey : '';
-        const replacementList = reorderedByGroup.get(groupKey);
+        const scopeKey = resolveSessionOrderingScopeKey(item, sectionMode);
+        if (!scopeKey) {
+            out.push(item);
+            continue;
+        }
+        const replacementList = reorderedByScope.get(scopeKey);
         if (!replacementList) {
             out.push(item);
             continue;
         }
-        const index = indicesByGroup.get(groupKey) ?? 0;
+        const index = indicesByScope.get(scopeKey) ?? 0;
         const replacement = replacementList[index] ?? item;
         if (replacement !== item) {
             didChange = true;
         }
         out.push(replacement);
-        indicesByGroup.set(groupKey, index + 1);
+        indicesByScope.set(scopeKey, index + 1);
     }
 
     return didChange ? out : (source as SessionListIndexItem[]);
 }
 
-function applyGroupOrdering(
+function applySessionListStructuralGroupOrder(
     source: ReadonlyArray<SessionListIndexItem>,
     orderByGroupKey: Readonly<Record<string, ReadonlyArray<string> | undefined>>,
+    folderSortMode: SessionListFolderSortModeV1,
 ): SessionListIndexItem[] {
-    const sessionOrdered = applySessionOnlyGroupOrdering(source, orderByGroupKey);
-    return applyMixedChildOrdering(sessionOrdered, orderByGroupKey);
+    return folderSortMode === 'mixed'
+        ? applyMixedChildOrdering(source, orderByGroupKey)
+        : applyFoldersFirstStructuralOrdering(source, orderByGroupKey);
+}
+
+function applySessionListSessionSiblingOrder(
+    source: ReadonlyArray<SessionListIndexItem>,
+    orderByGroupKey: Readonly<Record<string, ReadonlyArray<string> | undefined>>,
+    sectionMode: SessionListOrderingSectionMode,
+): SessionListIndexItem[] {
+    return applySessionOnlyGroupOrdering(source, orderByGroupKey, sectionMode);
+}
+
+function applySessionListIndexGroupOrdering(
+    source: ReadonlyArray<SessionListIndexItem>,
+    orderByGroupKey: Readonly<Record<string, ReadonlyArray<string> | undefined>>,
+    folderSortMode: SessionListFolderSortModeV1,
+    sectionMode: SessionListOrderingSectionMode,
+): SessionListIndexItem[] {
+    const sessionOrdered = applySessionListSessionSiblingOrder(source, orderByGroupKey, sectionMode);
+    return applySessionListStructuralGroupOrder(sessionOrdered, orderByGroupKey, folderSortMode);
 }
 
 type VisibleSessionListHeaderState = {
@@ -536,7 +786,7 @@ function pruneOrphanHeaders(items: ReadonlyArray<SessionListIndexItem>): Session
     for (const item of items) {
         if (item.type === 'header') {
             flushPendingFolderHeaders({ out, headerState });
-            if (item.headerKind === 'active' || item.headerKind === 'inactive') {
+            if (isPrimarySessionListSectionHeader(item)) {
                 headerState.pendingSectionHeader = item;
                 headerState.pendingGroupHeaders = [];
             } else {
@@ -572,7 +822,7 @@ function filterHideInactiveSessions(
     for (const item of items) {
         if (item.type === 'header') {
             flushPendingFolderHeaders({ out, headerState });
-            if (item.headerKind === 'active' || item.headerKind === 'inactive') {
+            if (isPrimarySessionListSectionHeader(item)) {
                 headerState.pendingSectionHeader = item;
                 headerState.pendingGroupHeaders = [];
             } else {
@@ -588,7 +838,7 @@ function filterHideInactiveSessions(
                 continue;
             }
             if (headerState.pendingSectionHeader) {
-                if (headerState.pendingSectionHeader.headerKind === 'active') {
+                if (headerState.pendingSectionHeader.headerKind !== 'inactive') {
                     out.push(headerState.pendingSectionHeader);
                 }
                 headerState.pendingSectionHeader = null;
@@ -605,62 +855,109 @@ function filterHideInactiveSessions(
     return out;
 }
 
+function applyPinnedSessionListIndexFlags(params: Readonly<{
+    ordered: ReadonlyArray<SessionListIndexItem>;
+    pinnedSessionKeys: ReadonlyArray<string>;
+}>): SessionListIndexItem[] {
+    if (params.pinnedSessionKeys.length === 0 || params.ordered.length === 0) {
+        return params.ordered as SessionListIndexItem[];
+    }
+
+    const pinnedSet = new Set(params.pinnedSessionKeys);
+    let changed = false;
+    const next = params.ordered.map((item) => {
+        if (item.type !== 'session') return item;
+        const key = normalizeSessionListKeyParts(item.serverId, item.sessionId).sessionKey;
+        if (!key || !pinnedSet.has(key)) return item;
+        if (item.pinned === true && item.variant === 'default') return item;
+        changed = true;
+        return {
+            ...item,
+            pinned: true,
+            variant: 'default' as const,
+        };
+    });
+
+    return changed ? next : params.ordered as SessionListIndexItem[];
+}
+
 function computeVisibleSessionListIndexUnmeasured(
     params: ComputeVisibleSessionListIndexParams,
 ): SessionListIndexItem[] | null {
     const source = params.source;
     if (!source) return null;
 
-    const sessionListOrderingModeV1 = params.sessionListOrderingModeV1 ?? 'custom';
+    const sessionListOrderingModeV1 = normalizeSessionListOrderingModeV1(params.sessionListOrderingModeV1);
+    const sessionListSectionModeV1: SessionListOrderingSectionMode = params.sessionListSectionModeV1 === 'single'
+        ? 'single'
+        : 'activity';
+    const sessionListFolderSortModeV1 = resolveEffectiveSessionListFolderSortMode({
+        orderingMode: sessionListOrderingModeV1,
+        folderSortMode: normalizeSessionListFolderSortModeV1(params.sessionListFolderSortModeV1),
+    });
     const pinnedSessionKeys = normalizeTrimmedStringArrayWithSharedEmpty(params.pinnedSessionKeysV1);
     const presentationEnabled = params.presentation.enabled === true;
     const attentionPlacementMode = normalizeSessionListAttentionPlacementMode(params.attentionPlacement?.mode);
     const attentionPlacementEnabled = attentionPlacementMode !== 'off';
+    const workingPlacementMode = normalizeSessionListWorkingPlacementMode(params.workingPlacement?.mode);
+    const workingPlacementEnabled = workingPlacementMode !== 'off';
+    const placementNowMs = params.nowMs ?? Date.now();
     const noOrderingOverrides = !Object.values(params.sessionListGroupOrderV1 ?? {}).some(
+        (keys) => Array.isArray(keys) && keys.length > 0,
+    ) && !Object.values(params.sessionWorkspaceOrderV1 ?? {}).some(
         (keys) => Array.isArray(keys) && keys.length > 0,
     );
     const sourceState = inspectVisibleSessionListSourceState(source, params.resolveSessionRow);
+    const hasNonCustomSessionOrdering = hasNonCustomEffectiveSessionOrdering(source, sessionListOrderingModeV1, sessionListSectionModeV1);
 
     if (
         sessionListOrderingModeV1 === 'custom'
         && !params.hideInactiveSessions
         && pinnedSessionKeys.length === 0
         && !attentionPlacementEnabled
+        && !workingPlacementEnabled
         && !presentationEnabled
         && noOrderingOverrides
         && !sourceState.hasArchivedSessionItems
         && !sourceState.hasOrphanHeaders
+        && !hasNonCustomSessionOrdering
     ) {
         return source as SessionListIndexItem[];
     }
 
+    const orderedByWorkspace = applySessionWorkspaceOrderV1ToIndex(source, params.sessionWorkspaceOrderV1 ?? {});
     const orderedByGroup =
         sessionListOrderingModeV1 === 'custom'
-            ? applyGroupOrdering(source, params.sessionListGroupOrderV1 ?? {})
-            : source;
+            ? applySessionListIndexGroupOrdering(orderedByWorkspace, params.sessionListGroupOrderV1 ?? {}, sessionListFolderSortModeV1, sessionListSectionModeV1)
+            : applySessionListStructuralGroupOrder(orderedByWorkspace, params.sessionListGroupOrderV1 ?? {}, sessionListFolderSortModeV1);
     if (
         sessionListOrderingModeV1 === 'custom'
         && orderedByGroup === source
         && !params.hideInactiveSessions
         && pinnedSessionKeys.length === 0
         && !attentionPlacementEnabled
+        && !workingPlacementEnabled
         && !presentationEnabled
         && !sourceState.hasArchivedSessionItems
         && !sourceState.hasOrphanHeaders
+        && !hasNonCustomSessionOrdering
     ) {
         return source as SessionListIndexItem[];
     }
 
-    const ordered =
-        sessionListOrderingModeV1 === 'custom'
-            ? orderedByGroup
-            : sortSessionListIndexItemsByOrderingMode(source, sessionListOrderingModeV1, params.resolveSessionRow);
+    const ordered = sortSessionListIndexItemsByOrderingMode(
+        orderedByGroup,
+        sessionListOrderingModeV1,
+        sessionListSectionModeV1,
+        params.resolveSessionRow,
+    );
     if (
         sessionListOrderingModeV1 !== 'custom'
         && ordered === source
         && !params.hideInactiveSessions
         && pinnedSessionKeys.length === 0
         && !attentionPlacementEnabled
+        && !workingPlacementEnabled
         && !presentationEnabled
         && !sourceState.hasArchivedSessionItems
         && !sourceState.hasOrphanHeaders
@@ -673,11 +970,13 @@ function computeVisibleSessionListIndexUnmeasured(
         && params.hideInactiveSessions
         && pinnedSessionKeys.length === 0
         && !attentionPlacementEnabled
+        && !workingPlacementEnabled
         && !presentationEnabled
         && noOrderingOverrides
         && !sourceState.hasArchivedSessionItems
         && !sourceState.hasOrphanHeaders
         && !sourceState.hasInactiveSessionsThatNeedFiltering
+        && !hasNonCustomSessionOrdering
     ) {
         return source as SessionListIndexItem[];
     }
@@ -688,11 +987,36 @@ function computeVisibleSessionListIndexUnmeasured(
         return row?.archivedAt == null;
     });
 
+    const orderedWithPinnedFlags = applyPinnedSessionListIndexFlags({
+        ordered: orderedWithoutArchived,
+        pinnedSessionKeys,
+    });
+
+    const globalAttentionSource = pruneOrphanHeaders(orderedWithPinnedFlags);
+    const attentionPlacement = buildSessionListAttentionPlacement({
+        source: globalAttentionSource,
+        options: params.attentionPlacement,
+        resolveSessionRow: params.resolveSessionRow,
+        nowMs: placementNowMs,
+    });
+    const orderedWithoutGlobalAttention = attentionPlacement
+        ? pruneOrphanHeaders(attentionPlacement.remainder)
+        : orderedWithPinnedFlags;
+    const workingPlacement = buildSessionListWorkingPlacement({
+        source: pruneOrphanHeaders(orderedWithoutGlobalAttention),
+        options: params.workingPlacement,
+        resolveSessionRow: params.resolveSessionRow,
+        nowMs: placementNowMs,
+    });
+    const orderedWithoutGlobalWorking = workingPlacement
+        ? pruneOrphanHeaders(workingPlacement.remainder)
+        : orderedWithoutGlobalAttention;
+
     const pinnedSet = new Set(pinnedSessionKeys);
     const pinnedSessions: Array<Extract<SessionListIndexItem, { type: 'session' }>> = [];
     const remainder: SessionListIndexItem[] = [];
 
-    for (const item of orderedWithoutArchived) {
+    for (const item of orderedWithoutGlobalWorking) {
         if (item.type !== 'session') {
             remainder.push(item);
             continue;
@@ -716,28 +1040,32 @@ function computeVisibleSessionListIndexUnmeasured(
             ? { type: 'header', title: 'Pinned', headerKind: 'pinned', groupKey: PINNED_GROUP_KEY_V1 }
             : null;
 
-    const pinnedOrdered =
-        sessionListOrderingModeV1 === 'custom'
-            ? reorderSessionItemsByKeys(
-                pinnedSessions,
-                params.sessionListGroupOrderV1?.[PINNED_GROUP_KEY_V1],
-            )
-            : sortSessionListIndexItemsByOrderingMode(pinnedSessions, sessionListOrderingModeV1, params.resolveSessionRow);
-
-    const remainderPruned = pruneOrphanHeaders(remainder);
-    const attentionPlacement = buildSessionListAttentionPlacement({
-        source: remainderPruned,
-        options: params.attentionPlacement,
+    const pinnedOrdered = orderPinnedSessionItems({
+        items: pinnedSessions,
+        structuralKeys: params.sessionListGroupOrderV1?.[PINNED_GROUP_KEY_V1],
+        fallbackKeys: pinnedSessionKeys,
+        orderingMode: sessionListOrderingModeV1,
         resolveSessionRow: params.resolveSessionRow,
     });
-    const remainderAfterAttention = attentionPlacement
-        ? attentionPlacement.remainder
-        : applySessionListAttentionPlacementWithinGroups({
+
+    const remainderPruned = pruneOrphanHeaders(remainder);
+    const remainderAfterWorking = workingPlacement
+        ? remainderPruned
+        : applySessionListWorkingPlacementWithinGroups({
             source: remainderPruned,
+            options: params.workingPlacement,
+            resolveSessionRow: params.resolveSessionRow,
+            nowMs: placementNowMs,
+        });
+    const remainderAfterAttention = attentionPlacement
+        ? remainderAfterWorking
+        : applySessionListAttentionPlacementWithinGroups({
+            source: remainderAfterWorking,
             options: params.attentionPlacement,
             resolveSessionRow: params.resolveSessionRow,
+            nowMs: placementNowMs,
         });
-    const remainderAfterAttentionPruned = attentionPlacement ? pruneOrphanHeaders(remainderAfterAttention) : remainderAfterAttention;
+    const remainderAfterAttentionPruned = attentionPlacement || workingPlacement ? pruneOrphanHeaders(remainderAfterAttention) : remainderAfterAttention;
     const remainderFiltered = params.hideInactiveSessions
         ? filterHideInactiveSessions(remainderAfterAttentionPruned, params.resolveSessionRow)
         : remainderAfterAttentionPruned;
@@ -749,8 +1077,9 @@ function computeVisibleSessionListIndexUnmeasured(
     });
 
     return [
-        ...(pinnedHeader ? [pinnedHeader, ...pinnedOrdered] : []),
         ...(attentionPlacement ? attentionPlacement.attentionItems : []),
+        ...(workingPlacement ? workingPlacement.workingItems : []),
+        ...(pinnedHeader ? [pinnedHeader, ...pinnedOrdered] : []),
         ...remainderPresented,
     ];
 }
@@ -781,6 +1110,9 @@ export function computeVisibleSessionListIndex(
             attentionPlacementEnabled: normalizeSessionListAttentionPlacementMode(params.attentionPlacement?.mode) === 'off' ? 0 : 1,
             attentionPlacementGlobal: normalizeSessionListAttentionPlacementMode(params.attentionPlacement?.mode) === 'global' ? 1 : 0,
             attentionPlacementWithinGroups: normalizeSessionListAttentionPlacementMode(params.attentionPlacement?.mode) === 'withinGroups' ? 1 : 0,
+            workingPlacementEnabled: normalizeSessionListWorkingPlacementMode(params.workingPlacement?.mode) === 'off' ? 0 : 1,
+            workingPlacementGlobal: normalizeSessionListWorkingPlacementMode(params.workingPlacement?.mode) === 'global' ? 1 : 0,
+            workingPlacementWithinGroups: normalizeSessionListWorkingPlacementMode(params.workingPlacement?.mode) === 'withinGroups' ? 1 : 0,
             presentationEnabled: params.presentation.enabled === true ? 1 : 0,
             storageFilter: params.storageFilterApplied === true ? 1 : 0,
         },

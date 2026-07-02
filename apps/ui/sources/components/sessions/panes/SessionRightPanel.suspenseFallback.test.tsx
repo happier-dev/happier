@@ -75,7 +75,9 @@ describe('SessionRightPanel (suspense fallback)', () => {
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />)).tree;
 
-        // When the active tab suspends, we should still render a visible loading indicator.
-        expect(tree!.findAllByType('ActivityIndicator' as any).length).toBeGreaterThan(0);
+        // When the active tab suspends, we should still render the loading fallback content.
+        const textNodes = tree!.findAllByType('Text' as any);
+        const hasLoading = textNodes.some((n) => String(n.props.children).includes('common.loading'));
+        expect(hasLoading).toBe(true);
     });
 });

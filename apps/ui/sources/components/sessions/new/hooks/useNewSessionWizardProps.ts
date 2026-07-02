@@ -143,7 +143,7 @@ export function useNewSessionWizardProps(params: Readonly<{
     resumeSessionId: string;
     resumePopover?: NewSessionWizardFooterProps['resumePopover'];
     isResumeSupportChecking: boolean;
-    sessionPromptInputMaxHeight: number;
+    sessionPromptInputMaxHeight?: number;
     agentInputExtraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
     attachmentFlowId?: string | null;
     sectionPresentation?: NewSessionWizardProps['sectionPresentation'];

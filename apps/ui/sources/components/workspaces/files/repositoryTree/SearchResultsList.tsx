@@ -11,6 +11,7 @@ import { t } from '@/text';
 import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
 import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { FlashList } from '@/components/ui/lists/flashListCompat/FlashListCompat';
 
 type SearchResultsListProps = {
     theme: any;
@@ -24,6 +25,14 @@ type SearchResultsListProps = {
     onScroll?: ScrollViewProps['onScroll'];
     scrollEventThrottle?: number;
 };
+
+const SEARCH_RESULTS_ESTIMATED_ITEM_SIZE = 38;
+const NATIVE_SEARCH_RESULTS_INITIAL_RENDER_COUNT = 12;
+const NATIVE_SEARCH_RESULTS_RENDER_BATCH_COUNT = 12;
+const WEB_SEARCH_RESULTS_INITIAL_RENDER_COUNT = 32;
+const WEB_SEARCH_RESULTS_RENDER_BATCH_COUNT = 32;
+const searchResultListStyle = { flex: 1, minHeight: 0 } as const;
+const searchResultContentContainerStyle = { paddingBottom: 20 } as const;
 
 function renderFileIconForSearch(file: FileItem, theme: any) {
     if (file.fileType === 'folder') {
@@ -46,6 +55,108 @@ export const SearchResultsList = React.memo(({
     onScroll,
     scrollEventThrottle,
 }: SearchResultsListProps) => {
+    const keyExtractor = React.useCallback((file: FileItem) => `file-${file.fullPath}`, []);
+    const listHeaderComponent = React.useMemo(() => (
+        Boolean(searchQuery) ? (
+            <View
+                style={{
+                    backgroundColor: theme.colors.surface.inset,
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                    borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
+                    borderBottomColor: theme.colors.border.default,
+                }}
+            >
+                <Text
+                    style={{
+                        fontSize: 14,
+                        fontWeight: '600',
+                        color: theme.colors.text.link,
+                        ...Typography.default(),
+                    }}
+                >
+                    {t('files.searchResults', { count: searchResults.length })}
+                </Text>
+            </View>
+        ) : null
+    ), [
+        searchQuery,
+        searchResults.length,
+        theme.colors.border.default,
+        theme.colors.surface.inset,
+        theme.colors.text.link,
+    ]);
+
+    const renderItem = React.useCallback(({ item: file, index }: { item: FileItem; index: number }) => (
+        <Item
+            title={(
+                <InlineRepoPathLabel
+                    fileName={file.fileName}
+                    filePath={file.filePath}
+                    fullPath={file.fullPath}
+                    nameSuffix={file.fileType === 'folder' ? '/' : undefined}
+                    nameMaxWidth={220}
+                    pathTextStyle={{
+                        fontSize: 13,
+                        color: theme.colors.text.secondary,
+                        ...Typography.default(),
+                    }}
+                    nameTextStyle={{
+                        fontSize: 13,
+                        color: theme.colors.text.primary,
+                        ...Typography.default('semiBold'),
+                    }}
+                />
+            )}
+            rightElement={null}
+            icon={renderFileIconForSearch(file, theme)}
+            density="compact"
+            onPress={file.fileType === 'file' ? () => onFilePress(file) : undefined}
+            onDoublePress={
+                file.fileType === 'file' && onFilePressPinned
+                    ? () => onFilePressPinned(file)
+                    : undefined
+            }
+            showChevron={false}
+            showDivider={index < searchResults.length - 1}
+            style={{
+                paddingHorizontal: 12,
+            }}
+        />
+    ), [
+        onFilePress,
+        onFilePressPinned,
+        searchResults.length,
+        theme,
+    ]);
+
+    const sharedListProps = {
+        data: searchResults,
+        keyExtractor,
+        style: searchResultListStyle,
+        ListHeaderComponent: listHeaderComponent,
+        contentContainerStyle: searchResultContentContainerStyle,
+        renderItem,
+        initialNumToRender: Platform.OS === 'web'
+            ? Math.min(WEB_SEARCH_RESULTS_INITIAL_RENDER_COUNT, searchResults.length)
+            : Math.min(NATIVE_SEARCH_RESULTS_INITIAL_RENDER_COUNT, searchResults.length),
+        maxToRenderPerBatch: Platform.OS === 'web'
+            ? WEB_SEARCH_RESULTS_RENDER_BATCH_COUNT
+            : NATIVE_SEARCH_RESULTS_RENDER_BATCH_COUNT,
+        windowSize: 7,
+        removeClippedSubviews: Platform.OS !== 'web',
+        onLayout,
+        onContentSizeChange,
+        onScroll,
+        scrollEventThrottle: scrollEventThrottle ?? 16,
+        getItemLayout: Platform.OS === 'web'
+            ? (_data: unknown, index: number) => {
+                const length = SEARCH_RESULTS_ESTIMATED_ITEM_SIZE;
+                return { length, offset: length * index, index };
+            }
+            : undefined,
+    } as const;
+
     if (isSearching) {
         return (
             <View
@@ -116,91 +227,18 @@ export const SearchResultsList = React.memo(({
         );
     }
 
+    if (Platform.OS !== 'web') {
+        return (
+            <FlashList
+                {...sharedListProps}
+                estimatedItemSize={SEARCH_RESULTS_ESTIMATED_ITEM_SIZE}
+            />
+        );
+    }
+
     return (
         <FlatList
-            data={searchResults}
-            keyExtractor={(file) => `file-${file.fullPath}`}
-            style={{ flex: 1, minHeight: 0 }}
-            ListHeaderComponent={
-                Boolean(searchQuery) ? (
-                    <View
-                        style={{
-                            backgroundColor: theme.colors.surface.inset,
-                            paddingHorizontal: 16,
-                            paddingVertical: 12,
-                            borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                            borderBottomColor: theme.colors.border.default,
-                        }}
-                    >
-                        <Text
-                            style={{
-                                fontSize: 14,
-                                fontWeight: '600',
-                                color: theme.colors.text.link,
-                                ...Typography.default(),
-                            }}
-                        >
-                            {t('files.searchResults', { count: searchResults.length })}
-                        </Text>
-                    </View>
-                ) : null
-            }
-            contentContainerStyle={{ paddingBottom: 20 }}
-            renderItem={({ item: file, index }) => {
-                return (
-                    <Item
-                        title={(
-                            <InlineRepoPathLabel
-                                fileName={file.fileName}
-                                filePath={file.filePath}
-                                fullPath={file.fullPath}
-                                nameSuffix={file.fileType === 'folder' ? '/' : undefined}
-                                nameMaxWidth={220}
-                                pathTextStyle={{
-                                    fontSize: 13,
-                                    color: theme.colors.text.secondary,
-                                    ...Typography.default(),
-                                }}
-                                nameTextStyle={{
-                                    fontSize: 13,
-                                    color: theme.colors.text.primary,
-                                    ...Typography.default('semiBold'),
-                                }}
-                            />
-                        )}
-                        rightElement={null}
-                        icon={renderFileIconForSearch(file, theme)}
-                        density="compact"
-                        onPress={file.fileType === 'file' ? () => onFilePress(file) : undefined}
-                        onDoublePress={
-                            file.fileType === 'file' && onFilePressPinned
-                                ? () => onFilePressPinned(file)
-                                : undefined
-                        }
-                        showChevron={false}
-                        showDivider={index < searchResults.length - 1}
-                        style={{
-                            paddingHorizontal: 12,
-                        }}
-                    />
-                );
-            }}
-            initialNumToRender={Math.min(32, searchResults.length)}
-            maxToRenderPerBatch={32}
-            windowSize={7}
-            removeClippedSubviews={Platform.OS !== 'web'}
-            onLayout={onLayout}
-            onContentSizeChange={onContentSizeChange}
-            onScroll={onScroll}
-            scrollEventThrottle={scrollEventThrottle ?? 16}
-            getItemLayout={
-                Platform.OS === 'web'
-                    ? (_data, index) => {
-                        const length = 38;
-                        return { length, offset: length * index, index };
-                    }
-                    : undefined
-            }
+            {...sharedListProps}
         />
     );
 });

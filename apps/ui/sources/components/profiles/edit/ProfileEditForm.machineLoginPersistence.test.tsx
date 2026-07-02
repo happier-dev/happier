@@ -158,6 +158,7 @@ function buildProfile(): AIBackendProfile {
         authMode: 'machineLogin',
         envVarRequirements: [],
         isBuiltIn: false,
+        defaultEnabled: true,
         createdAt: 0,
         updatedAt: 0,
         version: '1.0.0',

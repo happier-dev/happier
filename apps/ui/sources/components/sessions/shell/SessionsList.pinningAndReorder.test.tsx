@@ -11,7 +11,9 @@ import {
 } from '@/dev/testkit';
 import { createCapturingFlatListMock } from '@/dev/testkit/mocks/flashList';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
-import { buildSessionListIndexFromViewData } from '@/sync/domains/sessionList/sessionListIndex';
+import { buildSessionListIndexFromViewData, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import type { SessionListReachabilityRenderable } from '@/sync/domains/state/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -74,6 +76,13 @@ function findSessionFromVisibleViewData(sessionId: string): any | null {
     return null;
 }
 
+function findSessionListRenderable(sessionId: string): SessionListRenderableSession | null {
+    return (findSessionFromVisibleViewData(sessionId)
+        ?? (sessionId === 'sess_a' ? sessionA : null)
+        ?? (sessionId === 'sess_b' ? sessionB : null)
+        ?? (sessionId === 'sess_live_1' ? sessionLive1 : null)) as SessionListRenderableSession | null;
+}
+
 installSessionShellCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -114,6 +123,7 @@ installSessionShellCommonModuleMocks({
                     if (key === 'compactSessionViewMinimal') return false;
                     if (key === 'sessionTagsEnabled') return true;
                     if (key === 'hideInactiveSessions') return hideInactiveSessions;
+                    if (key === 'workspacePathDisplayModeV1') return 'path';
                     return null;
                 },
                 useHasUnreadMessages: () => false,
@@ -130,6 +140,9 @@ installSessionShellCommonModuleMocks({
                     connectedServicesV2: [],
                 }),
                 useAllMachines: () => mockMachinesState.current,
+                useMachineDisplayById: () => Object.fromEntries(
+                    mockMachinesState.current.map((machine) => [machine.id, machine]),
+                ),
                 useSettingMutable: (key: string) => {
                     if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
                     if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
@@ -138,10 +151,7 @@ installSessionShellCommonModuleMocks({
                     return [null, vi.fn()];
                 },
                 useSessionListRenderableWithServerScope: (_serverId: any, sessionId: string) => {
-                    return findSessionFromVisibleViewData(sessionId)
-                        ?? (sessionId === 'sess_a' ? (sessionA as any) : null)
-                        ?? (sessionId === 'sess_b' ? (sessionB as any) : null)
-                        ?? (sessionId === 'sess_live_1' ? (sessionLive1 as any) : null);
+                    return findSessionListRenderable(sessionId);
                 },
                 useSessionListRowStateByServerId: () => ({
                     server_a: {
@@ -155,6 +165,39 @@ installSessionShellCommonModuleMocks({
                         )),
                     },
                 }) as any,
+                useSessionListReachabilityRenderablesForItems: (
+                    items: readonly SessionListIndexItem[] | null | undefined,
+                ): ReadonlyMap<string, SessionListReachabilityRenderable> => {
+                    const renderables = new Map<string, SessionListReachabilityRenderable>();
+                    for (const item of items ?? []) {
+                        if (item?.type !== 'session') continue;
+                        const serverId = String(item.serverId ?? '').trim();
+                        const sessionId = String(item.sessionId ?? '').trim();
+                        if (!serverId || !sessionId) continue;
+                        const session = findSessionListRenderable(sessionId);
+                        if (!session) continue;
+                        renderables.set(`${serverId}\u0000${sessionId}`, {
+                            id: sessionId,
+                            metadata: session.metadata ?? null,
+                        });
+                    }
+                    return renderables;
+                },
+                useSessionListRowRenderablesForItems: (
+                    items: readonly SessionListIndexItem[] | null | undefined,
+                ): ReadonlyMap<string, SessionListRenderableSession> => {
+                    const renderables = new Map<string, SessionListRenderableSession>();
+                    for (const item of items ?? []) {
+                        if (item?.type !== 'session') continue;
+                        const serverId = String(item.serverId ?? '').trim();
+                        const sessionId = String(item.sessionId ?? '').trim();
+                        if (!serverId || !sessionId) continue;
+                        const session = findSessionListRenderable(sessionId);
+                        if (!session) continue;
+                        renderables.set(`${serverId}:${sessionId}`, session);
+                    }
+                    return renderables;
+                },
             },
         });
     },
@@ -165,20 +208,24 @@ vi.mock('react-native-gesture-handler', async () => {
     return createGestureHandlerMock();
 });
 
-vi.mock('react-native-reanimated', () => ({
-    default: { View: (props: any) => React.createElement('Animated.View', props) },
-    useSharedValue: (init: any) => ({ value: init }),
-    useAnimatedStyle: (fn: () => any) => fn(),
-    withSpring: (value: any) => value,
-}));
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
 
 vi.mock('react-native-worklets', () => ({
     scheduleOnRN: (fn: (...args: any[]) => void, ...args: any[]) => fn(...args),
 }));
 
-vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
+vi.mock('react-native-safe-area-context', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('react-native-safe-area-context')>();
+    const React = await import('react');
+    return {
+        ...actual,
+        SafeAreaInsetsContext: actual.SafeAreaInsetsContext ?? React.createContext({ top: 0, bottom: 0, left: 0, right: 0 }),
+        useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+    };
+});
 
 vi.mock('@/components/account/RecoveryKeyReminderBanner', () => ({
     RecoveryKeyReminderBanner: 'RecoveryKeyReminderBanner',
@@ -453,6 +500,70 @@ describe('SessionsList pinning + per-group ordering', () => {
         expect(stopPropagation).toHaveBeenCalledTimes(1);
     });
 
+    it('uses coarser web scroll events for session-list scrolling', async () => {
+        await renderSessionsList();
+
+        expect(capturedRootFlatListProps?.scrollEventThrottle).toBe(32);
+    });
+
+    it('disables web FlatList virtualization for first-page-sized lists', async () => {
+        await renderSessionsList();
+
+        expect(capturedRootFlatListProps?.disableVirtualization).toBe(true);
+    });
+
+    it('disables web FlatList virtualization for medium lists', async () => {
+        const header = expectPresent(
+            mockVisibleSessionListViewData.find((item) => item.type === 'header'),
+            'expected header item',
+        );
+        mockVisibleSessionListViewData = [
+            header,
+            ...Array.from({ length: 100 }, (_, index) => ({
+                type: 'session',
+                session: {
+                    ...sessionA,
+                    id: `sess_medium_${index}`,
+                    updatedAt: sessionA.updatedAt + index,
+                },
+                groupKey,
+                groupKind: 'date',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            })),
+        ];
+
+        await renderSessionsList();
+
+        expect(capturedRootFlatListProps?.disableVirtualization).toBe(true);
+    });
+
+    it('keeps web FlatList virtualization enabled for large lists', async () => {
+        const header = expectPresent(
+            mockVisibleSessionListViewData.find((item) => item.type === 'header'),
+            'expected header item',
+        );
+        mockVisibleSessionListViewData = [
+            header,
+            ...Array.from({ length: 130 }, (_, index) => ({
+                type: 'session',
+                session: {
+                    ...sessionA,
+                    id: `sess_large_${index}`,
+                    updatedAt: sessionA.updatedAt + index,
+                },
+                groupKey,
+                groupKind: 'date',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            })),
+        ];
+
+        await renderSessionsList();
+
+        expect(capturedRootFlatListProps?.disableVirtualization).toBe(false);
+    });
+
     it('passes session tags from settings into session items when enabled', async () => {
         sessionTagsV1 = { 'server_a:sess_a': ['important'] };
         const screen = await renderSessionsList();
@@ -600,7 +711,7 @@ describe('SessionsList pinning + per-group ordering', () => {
 
         const screen = await renderSessionsList();
 
-        expect(findTestInstanceByTypeContainingText(screen.root, 'Text', '~/repoA')).toBeTruthy();
+        expect(screen.findAll((node) => node.props?.accessibilityLabel === '~/repoA')).toHaveLength(1);
 
         const row1 = expectPresent(
             findSessionItem(screen, 'sess_p1'),

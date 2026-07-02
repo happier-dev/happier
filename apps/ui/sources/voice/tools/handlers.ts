@@ -10,6 +10,7 @@ import {
 import { trackPermissionResponse } from '@/track';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resolveAgentRequestKind, type AgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
 import { listPendingPermissionRequests, listPendingUserActionRequests } from '@/utils/sessions/sessionUtils';
@@ -345,7 +346,7 @@ export function createVoiceToolHandlers(
 
     const targetServerId = resolvePreferredServerIdForSessionId(sessionId);
     const activeServerId = normalizeId(getActiveServerSnapshot().serverId);
-    const isActiveServer = !targetServerId || targetServerId === activeServerId;
+    const isActiveServer = !targetServerId || areServerProfileIdentifiersEquivalent(targetServerId, activeServerId);
     if (isActiveServer) {
       const encryption = (sync as unknown as { encryption?: { getSessionEncryption?: (id: string) => unknown } }).encryption?.getSessionEncryption?.(sessionId) ?? null;
       if (!encryption) {

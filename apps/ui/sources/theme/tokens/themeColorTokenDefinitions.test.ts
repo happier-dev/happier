@@ -67,6 +67,7 @@ const requiredTokenIds = [
     'control.input.background',
     'control.input.foreground',
     'control.input.placeholder',
+    'composer.chipTint',
     'control.switch.track.active',
     'control.switch.track.inactive',
     'control.switch.thumb.active',

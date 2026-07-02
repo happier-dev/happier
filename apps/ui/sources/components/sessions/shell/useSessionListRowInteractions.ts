@@ -1,23 +1,38 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { useSharedValue } from 'react-native-reanimated';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import {
     measureWindowBounds,
-    type TreeDropResult,
-    type TreeInstructionVisual,
-    type WindowBounds,
+    TREE_DROP_OVERLAY_KIND_NONE,
+    useTreeDropAutoscroll,
+    useTreeDropRegistry,
+    windowBoundsToContentBounds,
+    type TreeContentRow,
+    type TreeDropMeasurableRef,
+    type TreeDropOverlayKind,
+    type TreeDropOverlaySharedValues,
+    type TreeViewportMetrics,
 } from '@/components/ui/treeDragDrop';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import type { SessionFoldersV1 } from '@/sync/domains/session/folders';
-import { setSessionFolderAssignment } from '@/sync/ops/sessionFolders';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import type {
+    SessionListOrderingModeV1,
+    SessionListOrderingSectionMode,
+} from '@/sync/domains/session/listing/sessionListOrderingRules';
+import { setSessionFolderAssignment } from '@/sync/ops/sessionFolders';
 
 import { applySessionListTreeDropOperation } from './commit/applySessionListTreeDropOperation';
+import { commitSessionListDragIntent } from './drag/commitSessionListDragIntent';
+import { buildSessionListDragIntent } from './drag/sessionListDragIntent';
+import { buildSessionListDragSnapshot } from './drag/sessionListDragSnapshot';
+import { resolveSessionListDragPointer } from './drag/resolveSessionListDragPointer';
+import type { SessionListDragSnapshot } from './drag/_types';
 import { buildSessionListDragSource } from './drop-resolution/buildSessionListDragSource';
 import { buildSessionListTreeRows } from './drop-resolution/buildSessionListTreeRows';
-import { resolveSessionListInstruction } from './drop-resolution/resolveSessionListInstruction';
 import { treeRowId } from './drop-resolution/treeRowId';
 import {
     buildSessionListKeyboardMoveResult,
@@ -28,24 +43,27 @@ import {
     type SessionListMoveSheetTarget,
 } from './move-sheet/buildSessionListMoveSheetTargets';
 import { setTagsForSession } from './sessionTagUtils';
-import {
-    SESSION_INLINE_DRAG_VISUAL_KIND_NONE,
-    type SessionInlineDragVisualKind,
-    type SessionInlineDragVisualSharedValues,
-    type UseSessionInlineDragDropResultEvent,
-    type UseSessionInlineDragResolveDropResultEvent,
+import type {
+    UseSessionInlineDragCancelEvent,
+    UseSessionInlineDragDropResultEvent,
+    UseSessionInlineDragResolveDropResultEvent,
+    UseSessionInlineDragResolvedDrop,
 } from './useSessionInlineDrag';
 import type {
     RegisterSessionListTreeRowBounds,
     UnregisterSessionListTreeRowBounds,
 } from './SessionListHeaderFrame';
 
-const IDLE_TREE_DROP_RESULT: TreeDropResult = Object.freeze({
-    instruction: Object.freeze({ kind: 'idle' }),
-    visual: Object.freeze({ kind: 'none' }),
+const IDLE_RESOLVED_DROP: UseSessionInlineDragResolvedDrop = Object.freeze({
+    result: Object.freeze({
+        instruction: Object.freeze({ kind: 'idle' }),
+        visual: Object.freeze({ kind: 'none' }),
+    }),
+    geometry: Object.freeze({ kind: 'none' }),
 });
 
 function resolveSessionListSourceRowIdFromDragKey(sessionKey: string): string {
+    if (sessionKey.startsWith('workspace-root:')) return sessionKey;
     if (sessionKey.startsWith('folder:')) return sessionKey;
     const separatorIndex = sessionKey.indexOf(':');
     if (separatorIndex <= 0) return `session:${sessionKey}`;
@@ -60,79 +78,210 @@ type SessionFolderAssignableSessionItem = Readonly<{
     serverId?: string;
 }>;
 
+type SessionListFolderSortModeV1 = 'foldersFirst' | 'mixed';
+
 export type UseSessionListRowInteractionsInput = Readonly<{
     folderActionsEnabled: boolean;
     sessionFoldersV1: SessionFoldersV1;
     listItems: ReadonlyArray<SessionListIndexItem> | null;
     currentGroupOrderMap: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
+    currentWorkspaceOrderMap: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
+    sessionListFolderSortModeV1?: SessionListFolderSortModeV1;
+    sessionListOrderingModeV1: SessionListOrderingModeV1;
+    sessionListSectionModeV1: SessionListOrderingSectionMode;
     setSessionListGroupOrderV1: (value: Record<string, string[]>) => void;
+    setSessionWorkspaceOrderV1: (value: Record<string, string[]>) => void;
     setSessionFoldersV1: (value: SessionFoldersV1) => void;
     pinnedKeyList: ReadonlyArray<string>;
     pinnedKeySet: ReadonlySet<string>;
     setPinnedSessionKeysV1: (value: string[]) => void;
     sessionTags: Readonly<Record<string, string[]>>;
     setSessionTagsV1: (value: Record<string, string[]>) => void;
+    scrollToOffset?: (offsetY: number) => void;
 }>;
 
 export function useSessionListRowInteractions(input: UseSessionListRowInteractionsInput) {
     const [draggingSessionKey, setDraggingSessionKey] = React.useState<string | null>(null);
+    const [activeDragSnapshot, setActiveDragSnapshot] = React.useState<SessionListDragSnapshot | null>(null);
     const [nativeContextMenuSessionKey, setNativeContextMenuSessionKey] = React.useState<string | null>(null);
-    const [activeDropTargetId, setActiveDropTargetId] = React.useState<string | null>(null);
-    const [activeDropVisual, setActiveDropVisual] = React.useState<TreeInstructionVisual>(IDLE_TREE_DROP_RESULT.visual);
-    const activeDropTargetIdRef = React.useRef<string | null>(null);
-    const treeRowBoundsRef = React.useRef(new Map<string, WindowBounds>());
+    const nativeListScrollInteractionActiveRef = React.useRef(false);
 
-    const rawDropVisualKind = useSharedValue<SessionInlineDragVisualKind>(SESSION_INLINE_DRAG_VISUAL_KIND_NONE);
-    const rawDropVisualTargetId = useSharedValue<string | null>(null);
-    const rawDropVisualEdge = useSharedValue<'top' | 'bottom' | null>(null);
-    const rawDropVisualDepth = useSharedValue(0);
-    const dropVisual = React.useMemo<SessionInlineDragVisualSharedValues>(() => ({
-        visualKind: rawDropVisualKind,
-        visualTargetId: rawDropVisualTargetId,
-        visualEdge: rawDropVisualEdge,
-        visualDepth: rawDropVisualDepth,
-    }), [rawDropVisualDepth, rawDropVisualEdge, rawDropVisualKind, rawDropVisualTargetId]);
+    const activeDragSnapshotRef = React.useRef<SessionListDragSnapshot | null>(null);
+    const dropGeometryRegistry = useTreeDropRegistry();
 
-    const listItemsRef = React.useRef(input.listItems);
-    listItemsRef.current = input.listItems;
+    const overlayVisible = useSharedValue(0);
+    const overlayKind = useSharedValue<TreeDropOverlayKind>(TREE_DROP_OVERLAY_KIND_NONE);
+    const overlayTop = useSharedValue(0);
+    const overlayHeight = useSharedValue(0);
+    const overlayLeft = useSharedValue(0);
+    const overlayRight = useSharedValue(0);
+    const overlayDepth = useSharedValue(0);
+    const dropOverlayShared = React.useMemo<TreeDropOverlaySharedValues>(() => ({
+        overlayVisible,
+        overlayKind,
+        overlayTop,
+        overlayHeight,
+        overlayLeft,
+        overlayRight,
+        overlayDepth,
+    }), [overlayDepth, overlayHeight, overlayKind, overlayLeft, overlayRight, overlayTop, overlayVisible]);
+
+    const autoscrollActive = useSharedValue(false);
+    const autoscrollPointerY = useSharedValue<number | null>(null);
+    const autoscrollViewportTopY = useSharedValue(0);
+    const autoscrollViewportHeight = useSharedValue(0);
+    const autoscrollScrollOffsetY = useSharedValue(0);
+    const autoscrollContentHeight = useSharedValue(0);
+
+    const viewportWindowYRef = React.useRef(0);
+    const viewportWindowXRef = React.useRef(0);
+    const viewportHeightRef = React.useRef(0);
+    const scrollOffsetYRef = React.useRef(0);
+    const measuredRowRefsRef = React.useRef(new Map<string, TreeDropMeasurableRef>());
+
+    const noopScrollToOffset = React.useCallback(() => {}, []);
+    const scrollToOffset = input.scrollToOffset ?? noopScrollToOffset;
+
+    useTreeDropAutoscroll({
+        isActive: autoscrollActive,
+        pointerY: autoscrollPointerY,
+        viewportTopY: autoscrollViewportTopY,
+        viewportHeight: autoscrollViewportHeight,
+        scrollOffsetY: autoscrollScrollOffsetY,
+        contentHeight: autoscrollContentHeight,
+        scrollToOffset,
+    });
+
+    const listItemsRef = React.useRef(input.listItems ?? []);
+    listItemsRef.current = input.listItems ?? [];
     const groupOrderRef = React.useRef(input.currentGroupOrderMap);
     groupOrderRef.current = input.currentGroupOrderMap;
+    const workspaceOrderRef = React.useRef(input.currentWorkspaceOrderMap);
+    workspaceOrderRef.current = input.currentWorkspaceOrderMap;
     const sessionFoldersV1Ref = React.useRef(input.sessionFoldersV1);
     sessionFoldersV1Ref.current = input.sessionFoldersV1;
+    const folderSortModeRef = React.useRef(input.sessionListFolderSortModeV1);
+    folderSortModeRef.current = input.sessionListFolderSortModeV1;
+    const sessionListOrderingModeV1Ref = React.useRef(input.sessionListOrderingModeV1);
+    sessionListOrderingModeV1Ref.current = input.sessionListOrderingModeV1;
+    const sessionListSectionModeV1Ref = React.useRef(input.sessionListSectionModeV1);
+    sessionListSectionModeV1Ref.current = input.sessionListSectionModeV1;
+    const folderActionsEnabledRef = React.useRef(input.folderActionsEnabled);
+    folderActionsEnabledRef.current = input.folderActionsEnabled;
     const setSessionFoldersV1Ref = React.useRef(input.setSessionFoldersV1);
     setSessionFoldersV1Ref.current = input.setSessionFoldersV1;
     const setSessionListGroupOrderV1Ref = React.useRef(input.setSessionListGroupOrderV1);
     setSessionListGroupOrderV1Ref.current = input.setSessionListGroupOrderV1;
+    const setSessionWorkspaceOrderV1Ref = React.useRef(input.setSessionWorkspaceOrderV1);
+    setSessionWorkspaceOrderV1Ref.current = input.setSessionWorkspaceOrderV1;
+    const pinnedKeyListRef = React.useRef(input.pinnedKeyList);
+    pinnedKeyListRef.current = input.pinnedKeyList;
+    const pinnedKeySetRef = React.useRef(input.pinnedKeySet);
+    pinnedKeySetRef.current = input.pinnedKeySet;
+    const setPinnedSessionKeysV1Ref = React.useRef(input.setPinnedSessionKeysV1);
+    setPinnedSessionKeysV1Ref.current = input.setPinnedSessionKeysV1;
+    const sessionTagsRef = React.useRef(input.sessionTags);
+    sessionTagsRef.current = input.sessionTags;
+    const setSessionTagsV1Ref = React.useRef(input.setSessionTagsV1);
+    setSessionTagsV1Ref.current = input.setSessionTagsV1;
+
+    const readViewportMetrics = React.useCallback((): TreeViewportMetrics => ({
+        viewportWindowY: viewportWindowYRef.current,
+        viewportWindowX: viewportWindowXRef.current,
+        scrollOffsetY: scrollOffsetYRef.current,
+        viewportHeight: viewportHeightRef.current,
+    }), []);
 
     const clearDragState = React.useCallback(() => {
-        activeDropTargetIdRef.current = null;
-        setActiveDropTargetId(null);
+        activeDragSnapshotRef.current = null;
+        setActiveDragSnapshot(null);
         setDraggingSessionKey(null);
-        setActiveDropVisual(IDLE_TREE_DROP_RESULT.visual);
-    }, []);
+        autoscrollActive.value = false;
+        autoscrollPointerY.value = null;
+        overlayVisible.value = 0;
+        overlayKind.value = TREE_DROP_OVERLAY_KIND_NONE;
+    }, [autoscrollActive, autoscrollPointerY, overlayKind, overlayVisible]);
+
+    const registerRowContentGeometry = React.useCallback((rowId: string, ref: TreeDropMeasurableRef | null) => {
+        if (!ref) return;
+        const snapshot = activeDragSnapshotRef.current;
+        if (!snapshot) return;
+        const topologyRow = snapshot.topology.rows.find((row) => row.rowId === rowId);
+        if (!topologyRow) return;
+        void measureWindowBounds(ref).then((windowBounds) => {
+            if (!windowBounds) return;
+            const contentBounds = windowBoundsToContentBounds(windowBounds, readViewportMetrics());
+            if (!contentBounds) return;
+            if (activeDragSnapshotRef.current !== snapshot) return;
+            const row: TreeContentRow = {
+                id: topologyRow.rowId,
+                parentId: topologyRow.parentRowId,
+                containerId: topologyRow.containerId,
+                depth: topologyRow.depth,
+                kind: topologyRow.kind,
+                bounds: contentBounds,
+            };
+            dropGeometryRegistry.registerRow(row);
+        });
+    }, [dropGeometryRegistry, readViewportMetrics]);
 
     const registerTreeRowBounds = React.useCallback<RegisterSessionListTreeRowBounds>((rowId, ref) => {
-        void measureWindowBounds(ref).then((bounds) => {
-            if (!bounds) return;
-            treeRowBoundsRef.current.set(rowId, bounds);
-        });
-    }, []);
+        if (ref) {
+            measuredRowRefsRef.current.set(rowId, ref);
+        } else {
+            measuredRowRefsRef.current.delete(rowId);
+        }
+        registerRowContentGeometry(rowId, ref);
+    }, [registerRowContentGeometry]);
 
     const unregisterTreeRowBounds = React.useCallback<UnregisterSessionListTreeRowBounds>((rowId) => {
-        treeRowBoundsRef.current.delete(rowId);
-    }, []);
+        measuredRowRefsRef.current.delete(rowId);
+        dropGeometryRegistry.unregisterRow(rowId);
+    }, [dropGeometryRegistry]);
 
-    const buildCurrentSessionListTree = React.useCallback(() => buildSessionListTreeRows({
-        items: listItemsRef.current ?? [],
-        rowBoundsById: treeRowBoundsRef.current,
-    }), []);
+    const remeasureAllRegisteredRows = React.useCallback(() => {
+        for (const [rowId, ref] of measuredRowRefsRef.current) {
+            registerRowContentGeometry(rowId, ref);
+        }
+    }, [registerRowContentGeometry]);
+
+    const handleTreeScroll = React.useCallback((event: { nativeEvent?: { contentOffset?: { y?: number } } }) => {
+        const nextOffset = Number(event.nativeEvent?.contentOffset?.y ?? 0);
+        if (!Number.isFinite(nextOffset)) return;
+        scrollOffsetYRef.current = nextOffset;
+        autoscrollScrollOffsetY.value = nextOffset;
+    }, [autoscrollScrollOffsetY]);
+
+    const handleTreeContentSizeChange = React.useCallback((_width: number, height: number) => {
+        if (!Number.isFinite(height)) return;
+        autoscrollContentHeight.value = Math.max(0, height);
+    }, [autoscrollContentHeight]);
+
+    const handleTreeListLayout = React.useCallback((event: { nativeEvent?: { layout?: { height?: number } } }) => {
+        const height = Number(event.nativeEvent?.layout?.height ?? 0);
+        if (Number.isFinite(height)) {
+            viewportHeightRef.current = Math.max(0, height);
+            autoscrollViewportHeight.value = Math.max(0, height);
+        }
+    }, [autoscrollViewportHeight]);
+
+    const handleTreeViewportMeasure = React.useCallback((ref: TreeDropMeasurableRef | null) => {
+        void measureWindowBounds(ref).then((bounds) => {
+            if (!bounds) return;
+            viewportWindowYRef.current = bounds.y;
+            viewportWindowXRef.current = bounds.x;
+            viewportHeightRef.current = bounds.height;
+            autoscrollViewportTopY.value = bounds.y;
+            autoscrollViewportHeight.value = bounds.height;
+        });
+    }, [autoscrollViewportHeight, autoscrollViewportTopY]);
 
     const persistSessionFolderAssignmentByIds = React.useCallback(async (assignment: Readonly<{
         serverId: string;
         sessionId: string;
         folderId: string | null;
     }>) => {
-        if (!input.folderActionsEnabled) return;
+        if (!folderActionsEnabledRef.current) return;
         const serverProfile = getServerProfileById(assignment.serverId);
         if (!serverProfile) throw new Error('Missing server profile for session folder assignment');
         const credentials = await TokenStorage.getCredentialsForServerUrl(serverProfile.serverUrl, { serverId: serverProfile.id });
@@ -144,99 +293,121 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
             sessionId: assignment.sessionId,
             folderId: assignment.folderId,
         });
-    }, [input.folderActionsEnabled]);
+    }, []);
 
-    const pendingTreeDropRef = React.useRef<Readonly<{
-        tree: ReturnType<typeof buildSessionListTreeRows>;
-        source: ReturnType<typeof buildSessionListDragSource>;
-        result: TreeDropResult;
-    }> | null>(null);
-    const [, runPendingTreeDrop] = useHappyAction(async () => {
-        const pending = pendingTreeDropRef.current;
-        pendingTreeDropRef.current = null;
-        if (!pending) return;
-        await applySessionListTreeDropOperation({
-            tree: pending.tree,
-            source: pending.source,
-            result: pending.result,
+    const pendingDragIntentRef = React.useRef<ReturnType<typeof buildSessionListDragIntent> | null>(null);
+    const [, runPendingDragCommit] = useHappyAction(async () => {
+        const intent = pendingDragIntentRef.current;
+        pendingDragIntentRef.current = null;
+        if (!intent) return;
+        await commitSessionListDragIntent({
+            intent,
             context: {
+                latestItems: listItemsRef.current,
                 sessionFoldersV1: sessionFoldersV1Ref.current,
                 sessionListGroupOrderV1: groupOrderRef.current,
+                sessionWorkspaceOrderV1: workspaceOrderRef.current,
+                sessionListFolderSortModeV1: folderSortModeRef.current,
+                sessionListOrderingModeV1: sessionListOrderingModeV1Ref.current,
+                sessionListSectionModeV1: sessionListSectionModeV1Ref.current,
                 now: () => Date.now(),
                 setSessionFoldersV1: setSessionFoldersV1Ref.current,
                 setSessionListGroupOrderV1: setSessionListGroupOrderV1Ref.current,
+                setSessionWorkspaceOrderV1: setSessionWorkspaceOrderV1Ref.current,
                 setSessionFolderAssignment: persistSessionFolderAssignmentByIds,
             },
         });
     }, { mode: 'drop' });
 
-    const resolveTreeDropResult = React.useCallback((event: UseSessionInlineDragResolveDropResultEvent): TreeDropResult => {
+    const resolveDropResult = React.useCallback((event: UseSessionInlineDragResolveDropResultEvent): UseSessionInlineDragResolvedDrop => {
+        const snapshot = activeDragSnapshotRef.current;
+        autoscrollPointerY.value = event.pointer?.y ?? null;
+        if (!snapshot) return IDLE_RESOLVED_DROP;
         try {
-            const tree = buildCurrentSessionListTree();
-            const source = buildSessionListDragSource({
-                tree,
-                sourceRowId: resolveSessionListSourceRowIdFromDragKey(event.sessionKey),
-            });
-            return resolveSessionListInstruction({
-                tree,
-                source,
+            return resolveSessionListDragPointer({
+                snapshot,
+                registry: dropGeometryRegistry,
                 pointer: event.pointer,
-                foldersFeatureEnabled: input.folderActionsEnabled,
+                viewport: readViewportMetrics(),
             });
         } catch {
-            return IDLE_TREE_DROP_RESULT;
+            return IDLE_RESOLVED_DROP;
         }
-    }, [buildCurrentSessionListTree, input.folderActionsEnabled]);
+    }, [autoscrollPointerY, dropGeometryRegistry, readViewportMetrics]);
 
     const commitTreeDropResult = React.useCallback((event: UseSessionInlineDragDropResultEvent) => {
+        const snapshot = activeDragSnapshotRef.current;
         try {
-            const tree = buildCurrentSessionListTree();
-            const source = buildSessionListDragSource({
-                tree,
-                sourceRowId: resolveSessionListSourceRowIdFromDragKey(event.sessionKey),
-            });
-            pendingTreeDropRef.current = {
-                tree,
-                source,
+            if (!snapshot) return;
+            const intent = buildSessionListDragIntent({
                 result: event.result,
-            };
-            runPendingTreeDrop();
+                sourceRowId: snapshot.source.sourceRowId,
+                sourceKind: snapshot.source.kind,
+                snapshotSignature: snapshot.signature,
+            });
+            pendingDragIntentRef.current = intent;
+            runPendingDragCommit();
         } finally {
             clearDragState();
         }
-    }, [buildCurrentSessionListTree, clearDragState, runPendingTreeDrop]);
+    }, [clearDragState, runPendingDragCommit]);
 
     const handleDragStart = React.useCallback((sessionKey: string) => {
+        let snapshot: SessionListDragSnapshot;
+        try {
+            snapshot = buildSessionListDragSnapshot({
+                items: listItemsRef.current,
+                viewItems: listItemsRef.current,
+                sessionDragKey: sessionKey,
+                foldersFeatureEnabled: input.folderActionsEnabled,
+            });
+        } catch {
+            clearDragState();
+            return;
+        }
+        activeDragSnapshotRef.current = snapshot;
+        setActiveDragSnapshot(snapshot);
         setNativeContextMenuSessionKey(null);
         setDraggingSessionKey(sessionKey);
-        activeDropTargetIdRef.current = null;
-        setActiveDropTargetId(null);
-        setActiveDropVisual(IDLE_TREE_DROP_RESULT.visual);
-    }, []);
+        remeasureAllRegisteredRows();
+        autoscrollActive.value = true;
+        autoscrollPointerY.value = null;
+    }, [autoscrollActive, autoscrollPointerY, clearDragState, input.folderActionsEnabled, remeasureAllRegisteredRows]);
 
-    const handleDragUpdate = React.useCallback((event: UseSessionInlineDragDropResultEvent) => {
-        setActiveDropVisual(event.result.visual);
-        const nextId = event.result.visual.kind === 'outline' ? event.result.visual.targetId : null;
-        if (activeDropTargetIdRef.current === nextId) return;
-        activeDropTargetIdRef.current = nextId;
-        setActiveDropTargetId(nextId);
-    }, []);
+    const handleDragUpdate = React.useCallback((_event: UseSessionInlineDragDropResultEvent) => {}, []);
+    const handleDragCancel = React.useCallback((_event?: UseSessionInlineDragCancelEvent) => {
+        clearDragState();
+    }, [clearDragState]);
 
     const handleTogglePinnedSessionKey = React.useCallback((sessionKey: string) => {
-        if (input.pinnedKeySet.has(sessionKey)) {
-            input.setPinnedSessionKeysV1(input.pinnedKeyList.filter((key) => key !== sessionKey));
+        const pinnedKeyList = pinnedKeyListRef.current;
+        if (pinnedKeySetRef.current.has(sessionKey)) {
+            setPinnedSessionKeysV1Ref.current(pinnedKeyList.filter((key) => key !== sessionKey));
         } else {
-            input.setPinnedSessionKeysV1([...input.pinnedKeyList, sessionKey]);
+            setPinnedSessionKeysV1Ref.current([...pinnedKeyList, sessionKey]);
         }
-    }, [input.pinnedKeyList, input.pinnedKeySet, input.setPinnedSessionKeysV1]);
+    }, []);
 
     const handleSetTagsSessionKey = React.useCallback((sessionKey: string, newTags: string[]) => {
-        const nextTags = setTagsForSession(input.sessionTags, sessionKey, newTags);
-        if (nextTags === input.sessionTags) return;
-        input.setSessionTagsV1(nextTags);
-    }, [input.sessionTags, input.setSessionTagsV1]);
+        const sessionTags = sessionTagsRef.current;
+        const nextTags = setTagsForSession(sessionTags, sessionKey, newTags);
+        if (nextTags === sessionTags) return;
+        setSessionTagsV1Ref.current(nextTags);
+    }, []);
+
+    const handleNativeListScrollInteractionStart = React.useCallback(() => {
+        if (Platform.OS !== 'ios') return;
+        nativeListScrollInteractionActiveRef.current = true;
+        setNativeContextMenuSessionKey(null);
+    }, []);
+
+    const handleNativeListScrollInteractionEnd = React.useCallback(() => {
+        if (Platform.OS !== 'ios') return;
+        nativeListScrollInteractionActiveRef.current = false;
+    }, []);
 
     const handleNativeContextMenuOpenChangeSessionKey = React.useCallback((sessionKey: string, next: boolean) => {
+        if (next && nativeListScrollInteractionActiveRef.current) return;
         setNativeContextMenuSessionKey((prev) => {
             if (next) return sessionKey;
             return prev === sessionKey ? null : prev;
@@ -272,21 +443,54 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         runPendingFolderAssignment();
     }, [runPendingFolderAssignment]);
 
+    const buildLatestGeometryFreeTree = React.useCallback(() => buildSessionListTreeRows({
+        items: listItemsRef.current,
+    }), []);
+
     const resolveMoveSheetTargets = React.useCallback((sourceRowId: string): readonly SessionListMoveSheetTarget[] => {
         if (!input.folderActionsEnabled) return [];
         try {
-            const tree = buildCurrentSessionListTree();
+            const tree = buildLatestGeometryFreeTree();
             const source = buildSessionListDragSource({ tree, sourceRowId });
             return buildSessionListMoveSheetTargets({ tree, source });
         } catch {
             return [];
         }
-    }, [buildCurrentSessionListTree, input.folderActionsEnabled]);
+    }, [buildLatestGeometryFreeTree, input.folderActionsEnabled]);
+
+    const pendingTreeDropRef = React.useRef<Readonly<{
+        tree: ReturnType<typeof buildSessionListTreeRows>;
+        source: ReturnType<typeof buildSessionListDragSource>;
+        result: ReturnType<typeof buildSessionListKeyboardMoveResult> | SessionListMoveSheetTarget['result'];
+    }> | null>(null);
+    const [, runPendingTreeDrop] = useHappyAction(async () => {
+        const pending = pendingTreeDropRef.current;
+        pendingTreeDropRef.current = null;
+        if (!pending) return;
+        await applySessionListTreeDropOperation({
+            tree: pending.tree,
+            source: pending.source,
+            result: pending.result,
+            context: {
+                sessionFoldersV1: sessionFoldersV1Ref.current,
+                sessionListGroupOrderV1: groupOrderRef.current,
+                sessionWorkspaceOrderV1: workspaceOrderRef.current,
+                sessionListFolderSortModeV1: folderSortModeRef.current,
+                sessionListOrderingModeV1: sessionListOrderingModeV1Ref.current,
+                sessionListSectionModeV1: sessionListSectionModeV1Ref.current,
+                now: () => Date.now(),
+                setSessionFoldersV1: setSessionFoldersV1Ref.current,
+                setSessionListGroupOrderV1: setSessionListGroupOrderV1Ref.current,
+                setSessionWorkspaceOrderV1: setSessionWorkspaceOrderV1Ref.current,
+                setSessionFolderAssignment: persistSessionFolderAssignmentByIds,
+            },
+        });
+    }, { mode: 'drop' });
 
     const applyMoveSheetTarget = React.useCallback((sourceRowId: string, target: SessionListMoveSheetTarget) => {
         if (target.disabled) return;
         try {
-            const tree = buildCurrentSessionListTree();
+            const tree = buildLatestGeometryFreeTree();
             const source = buildSessionListDragSource({ tree, sourceRowId });
             pendingTreeDropRef.current = {
                 tree,
@@ -297,17 +501,21 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         } finally {
             clearDragState();
         }
-    }, [buildCurrentSessionListTree, clearDragState, runPendingTreeDrop]);
+    }, [buildLatestGeometryFreeTree, clearDragState, runPendingTreeDrop]);
 
     const applyKeyboardMove = React.useCallback((
         sourceRowId: string,
         direction: SessionListKeyboardMoveDirection,
-    ): TreeDropResult | null => {
+    ): ReturnType<typeof buildSessionListKeyboardMoveResult> | null => {
         if (!input.folderActionsEnabled) return null;
         try {
-            const tree = buildCurrentSessionListTree();
+            const tree = buildLatestGeometryFreeTree();
             const source = buildSessionListDragSource({ tree, sourceRowId });
-            const result = buildSessionListKeyboardMoveResult({ tree, source, direction });
+            const result = buildSessionListKeyboardMoveResult({
+                tree,
+                source,
+                direction,
+            });
             pendingTreeDropRef.current = {
                 tree,
                 source,
@@ -320,25 +528,32 @@ export function useSessionListRowInteractions(input: UseSessionListRowInteractio
         } finally {
             clearDragState();
         }
-    }, [buildCurrentSessionListTree, clearDragState, input.folderActionsEnabled, runPendingTreeDrop]);
+    }, [buildLatestGeometryFreeTree, clearDragState, input.folderActionsEnabled, runPendingTreeDrop]);
 
     return {
-        activeDropTargetId,
-        activeDropVisual,
+        activeDragSnapshot,
         applyKeyboardMove,
         applyMoveSheetTarget,
         draggingSessionKey,
-        dropVisual,
+        dropOverlayShared,
+        handleDragCancel,
         handleDragStart,
         handleDragUpdate,
         handleFolderHeaderTreeDropResult: commitTreeDropResult,
+        handleTreeContentSizeChange,
         handleTreeDropResult: commitTreeDropResult,
+        handleTreeListLayout,
+        handleTreeScroll,
+        handleTreeViewportMeasure,
         handleTogglePinnedSessionKey,
         handleSetTagsSessionKey,
+        handleNativeListScrollInteractionEnd,
+        handleNativeListScrollInteractionStart,
         nativeContextMenuSessionKey,
         registerTreeRowBounds,
         resolveMoveSheetTargets,
-        resolveTreeDropResult,
+        resolveDropResult,
+        resolveTreeDropResult: resolveDropResult,
         scheduleSessionFolderAssignment,
         setNativeContextMenuSessionKey,
         unregisterTreeRowBounds,

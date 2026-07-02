@@ -25,9 +25,13 @@ describe('session header menu item translation caching', () => {
         const englishSortByTitle = t('settingsSession.sessionList.menuSections.sortBy');
         const english = resolveSessionsListHeaderMenuItems({
             orderingMode: 'custom',
+            sectionMode: 'activity',
             activeGrouping: 'project',
             inactiveGrouping: 'date',
             isHideInactiveSessionsEnabled: false,
+            showFolderViewMode: true,
+            folderViewMode: 'tree',
+            folderSortMode: 'foldersFirst',
             actionIconColor: '#000',
         });
 
@@ -36,9 +40,13 @@ describe('session header menu item translation caching', () => {
         const spanishSortByTitle = t('settingsSession.sessionList.menuSections.sortBy');
         const spanish = resolveSessionsListHeaderMenuItems({
             orderingMode: 'custom',
+            sectionMode: 'activity',
             activeGrouping: 'project',
             inactiveGrouping: 'date',
             isHideInactiveSessionsEnabled: false,
+            showFolderViewMode: true,
+            folderViewMode: 'tree',
+            folderSortMode: 'foldersFirst',
             actionIconColor: '#000',
         });
 
@@ -50,30 +58,50 @@ describe('session header menu item translation caching', () => {
         expect(spanish.find((item) => item.id === 'custom')?.category).not.toBe(englishSortByTitle);
     });
 
+    it('exposes stable session ordering mode selectors', () => {
+        const items = resolveSessionsListHeaderMenuItems({
+            orderingMode: 'custom',
+            sectionMode: 'activity',
+            activeGrouping: 'project',
+            inactiveGrouping: 'date',
+            isHideInactiveSessionsEnabled: false,
+            showFolderViewMode: true,
+            folderViewMode: 'tree',
+            folderSortMode: 'foldersFirst',
+            actionIconColor: '#000',
+        });
+
+        expect(items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'custom', testID: 'session-list-ordering-mode-custom' }),
+            expect.objectContaining({ id: 'created', testID: 'session-list-ordering-mode-created' }),
+            expect.objectContaining({ id: 'updated', testID: 'session-list-ordering-mode-updated' }),
+        ]));
+    });
+
     it('refreshes project group header labels after the preferred language changes', () => {
         setPreferredLanguageFromSettings('en');
-        const englishOpenProjectTitle = t('sessionsList.openProject');
+        const englishAddFolderTitle = t('sessionsList.addFolder');
         const english = resolveProjectGroupHeaderMenuItems({
             menuEnabled: true,
-            canOpenProject: true,
-            canAddFolder: false,
+            canOpenProject: false,
+            canAddFolder: true,
             hasCustomLabel: true,
             actionIconColor: '#000',
         });
 
         setPreferredLanguageFromSettings('es');
-        const spanishOpenProjectTitle = t('sessionsList.openProject');
+        const spanishAddFolderTitle = t('sessionsList.addFolder');
         const spanish = resolveProjectGroupHeaderMenuItems({
             menuEnabled: true,
-            canOpenProject: true,
-            canAddFolder: false,
+            canOpenProject: false,
+            canAddFolder: true,
             hasCustomLabel: true,
             actionIconColor: '#000',
         });
 
-        expect(english.find((item) => item.id === 'openProject')?.title).toBe(englishOpenProjectTitle);
-        expect(spanish.find((item) => item.id === 'openProject')?.title).toBe(spanishOpenProjectTitle);
-        expect(spanish.find((item) => item.id === 'openProject')?.title).not.toBe(englishOpenProjectTitle);
+        expect(english.find((item) => item.id === 'addFolder')?.title).toBe(englishAddFolderTitle);
+        expect(spanish.find((item) => item.id === 'addFolder')?.title).toBe(spanishAddFolderTitle);
+        expect(spanish.find((item) => item.id === 'addFolder')?.title).not.toBe(englishAddFolderTitle);
     });
 
     it('refreshes session view header action labels after the preferred language changes', () => {

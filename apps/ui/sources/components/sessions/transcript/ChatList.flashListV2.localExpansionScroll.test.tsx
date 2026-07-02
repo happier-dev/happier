@@ -115,6 +115,10 @@ vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
         renderedTurnViewProps.push(props);
         return React.createElement('TurnView', props);
     },
+    TurnViewWithSessionCommon: (props: any) => {
+        renderedTurnViewProps.push(props);
+        return React.createElement('TurnView', props);
+    },
 }));
 
 vi.mock('@/components/sessions/transcript/toolCalls/ToolCallsGroupRow', () => ({
@@ -130,10 +134,33 @@ vi.mock('@/components/sessions/transcript/toolCalls/ToolCallsGroupRow', () => ({
         },
         null,
     ),
+    ToolCallsGroupRowWithSessionCommon: (props: any) => React.createElement(
+        Pressable,
+        {
+            testID: 'transcript-tool-calls-header',
+            onPress: () => props.onSetExpanded({
+                toolCallsGroupId: props.toolCallsGroupId,
+                toolMessageIds: props.toolMessageIds,
+                expanded: !props.expanded,
+            }),
+        },
+        null,
+    ),
 }));
 
 vi.mock('./MessageView', () => ({
     MessageView: (props: any) => {
+        renderedMessageViewProps.push(props);
+        return React.createElement(
+            Pressable,
+            {
+                testID: props.onThinkingExpandedChange ? 'transcript-thinking-header' : `transcript-message-${props.message?.id ?? 'unknown'}`,
+                onPress: props.onThinkingExpandedChange ? () => props.onThinkingExpandedChange(!(props.thinkingExpanded === true)) : undefined,
+            },
+            null,
+        );
+    },
+    MessageViewWithSessionCommon: (props: any) => {
         renderedMessageViewProps.push(props);
         return React.createElement(
             Pressable,

@@ -5,6 +5,7 @@ import { FileActionToolbar, type FileDiffMode, type FileDisplayMode } from '@/co
 import { FileBinaryState, FileErrorState, FileLoadingState } from '@/components/workspaces/files/file/FileScreenState';
 import { FileContentPanel } from '@/components/workspaces/files/file/FileContentPanel';
 import { FileEditorPanel } from '@/components/workspaces/files/file/editor/FileEditorPanel';
+import { RichMarkdownEditorPanel } from '@/components/ui/markdown/editor/RichMarkdownEditorPanel';
 import { WorkspaceFileDownloadButton } from '@/components/workspaces/files/file/WorkspaceFileDownloadButton';
 import { WorkspaceAugmentedScmChangeDiscardButton } from '@/components/workspaces/files/details/sessionAugmentation/WorkspaceAugmentedScmChangeDiscardButton';
 
@@ -30,6 +31,8 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 
 import { refreshWorkspaceFileDetails, type WorkspaceFileDetailsFileContent } from '@/components/workspaces/files/details/workspaceFileDetails/refreshWorkspaceFileDetails';
 import { useWorkspaceFileEditorState } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceFileEditorState';
+import { useMarkdownFileEditMode } from '@/components/workspaces/files/details/workspaceFileDetails/useMarkdownFileEditMode';
+import { SlideTransitionSwitch } from '@/components/ui/motion/SlideTransitionSwitch';
 import {
     useProjectForSession,
     useSession,
@@ -129,6 +132,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
     const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
     const fileEditorFeatureEnabled = useFeatureEnabled('files.editor');
+    const markdownRichEditorFeatureEnabled = useFeatureEnabled('files.markdownRichEditor');
     const showLineNumbers = useSetting('showLineNumbers');
     const wrapLinesInDiffs = useSetting('wrapLinesInDiffs');
     const filesEditorAutoSave = useSetting('filesEditorAutoSave');
@@ -344,16 +348,6 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
     );
 
     React.useEffect(() => {
-        setDisplayMode(resolveFileDetailsDisplayMode({
-            persistedEditing: persistedDraft?.isEditingFile === true,
-            deepLinkSource: deepLinkAnchor?.source ?? null,
-            hasRenderableDiff,
-            hasFileContent: Boolean(fileContent),
-            markdownPreviewAvailable,
-        }));
-    }, [deepLinkAnchor?.source, fileContent, hasRenderableDiff, markdownPreviewAvailable, persistedDraft?.isEditingFile]);
-
-    React.useEffect(() => {
         if (!deepLinkAnchor) {
             setJumpToAnchor(null);
             return;
@@ -430,6 +424,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         editorSeedText,
         editorHandleRef,
         onEditorChange,
+        getEditorText,
         isSavingEdits,
         editorDirty,
         fileChangedExternally,
@@ -458,6 +453,43 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         persistedDraft: persistedDraft ?? null,
         persistDraft,
     });
+
+    // Raw <-> Rich edit-mode state for markdown files (Lane I / R-A20). Owns the
+    // flush-then-reseed dance + eligibility so this view stays thin; the rich
+    // editor mounts only under `displayMode === 'file' && isEditingFile` (D5).
+    const {
+        markdownEditMode,
+        richEligible: markdownRichEligible,
+        richDisabledReason: markdownRichDisabledReason,
+        seedText: markdownSeedText,
+        resetKey: markdownResetKey,
+        onToggle: onMarkdownEditMode,
+        onUnavailable: onMarkdownEditorUnavailable,
+    } = useMarkdownFileEditMode({
+        filePath,
+        editorSeedText,
+        editorResetKey,
+        editorHandleRef,
+        onEditorChange,
+        getEditorText,
+    });
+
+    // `.md` and `.mdx` both flow through the markdown seed machinery (so the raw
+    // editor reseeds consistently), but rich editing — and therefore the Raw<->Rich
+    // toggle — is offered ONLY for plain `.md` (R-A1: `.mdx` stays raw/preview-only).
+    const isMarkdownFile = language === 'markdown' || language === 'mdx';
+    const showMarkdownEditToggle = markdownRichEditorFeatureEnabled === true && language === 'markdown';
+    const useRichMarkdownEditor = showMarkdownEditToggle && markdownEditMode === 'rich' && markdownRichEligible;
+
+    React.useEffect(() => {
+        setDisplayMode(resolveFileDetailsDisplayMode({
+            persistedEditing: isEditingFile || persistedDraft?.isEditingFile === true,
+            deepLinkSource: deepLinkAnchor?.source ?? null,
+            hasRenderableDiff,
+            hasFileContent: Boolean(fileContent),
+            markdownPreviewAvailable,
+        }));
+    }, [deepLinkAnchor?.source, fileContent, hasRenderableDiff, isEditingFile, markdownPreviewAvailable, persistedDraft?.isEditingFile]);
 
     const handleStartEditingFile = React.useCallback(() => {
         props.onStartEditingFile?.();
@@ -664,6 +696,11 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                     onStartEditingFile={handleStartEditingFile}
                     onCancelEditingFile={cancelEditingFile}
                     onSaveEditingFile={saveFileEdits}
+                    showMarkdownEditToggle={showMarkdownEditToggle}
+                    markdownEditMode={markdownEditMode}
+                    onMarkdownEditMode={onMarkdownEditMode}
+                    markdownRichEligible={markdownRichEligible}
+                    markdownRichDisabledReason={markdownRichDisabledReason}
                 />
                 {previewTooLarge && error ? (
                     <View
@@ -695,12 +732,46 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                     ...(constrainWidth ? { maxWidth: layout.maxWidth, alignSelf: 'center' } : { maxWidth: '100%' }),
                 }}
             >
-                {displayMode === 'file' && isEditingFile ? (
+                {displayMode === 'file' && isEditingFile && showMarkdownEditToggle ? (
+                    // Plain `.md` editing: Raw<->Rich can swap, so crossfade the body
+                    // switch keyed on `markdownEditMode` (R-A20 / §4.5). Only the active
+                    // child mounts while not transitioning, so the surface tree stays
+                    // single-mounted (preserving the existing editor testIDs/behavior).
+                    <SlideTransitionSwitch
+                        contentKey={markdownEditMode}
+                        direction={markdownEditMode === 'rich' ? 'forward' : 'backward'}
+                    >
+                        {useRichMarkdownEditor ? (
+                            <RichMarkdownEditorPanel
+                                resetKey={markdownResetKey}
+                                editorRef={editorHandleRef}
+                                value={markdownSeedText}
+                                onChange={onEditorChange}
+                                onUnavailable={onMarkdownEditorUnavailable}
+                                changeDebounceMs={typeof filesEditorChangeDebounceMs === 'number' ? filesEditorChangeDebounceMs : undefined}
+                                bridgeMaxChunkBytes={typeof filesEditorBridgeMaxChunkBytes === 'number' ? filesEditorBridgeMaxChunkBytes : undefined}
+                            />
+                        ) : (
+                            <FileEditorPanel
+                                theme={theme}
+                                resetKey={markdownResetKey}
+                                editorRef={editorHandleRef}
+                                value={markdownSeedText}
+                                language={language}
+                                onChange={onEditorChange}
+                                wrapLines={wrapLinesInDiffs}
+                                showLineNumbers={showLineNumbers}
+                                changeDebounceMs={typeof filesEditorChangeDebounceMs === 'number' ? filesEditorChangeDebounceMs : undefined}
+                                bridgeMaxChunkBytes={typeof filesEditorBridgeMaxChunkBytes === 'number' ? filesEditorBridgeMaxChunkBytes : undefined}
+                            />
+                        )}
+                    </SlideTransitionSwitch>
+                ) : displayMode === 'file' && isEditingFile ? (
                     <FileEditorPanel
                         theme={theme}
-                        resetKey={String(editorResetKey)}
+                        resetKey={isMarkdownFile ? markdownResetKey : String(editorResetKey)}
                         editorRef={editorHandleRef}
-                        value={editorSeedText}
+                        value={isMarkdownFile ? markdownSeedText : editorSeedText}
                         language={language}
                         onChange={onEditorChange}
                         wrapLines={wrapLinesInDiffs}

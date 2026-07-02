@@ -15,6 +15,7 @@ import {
     runDynamicModelProbeDedupe,
     writeDynamicModelProbeCacheError,
     writeDynamicModelProbeCacheSuccess,
+    writeDynamicModelProbeCacheTransientSuccess,
 } from '@/sync/domains/models/dynamicModelProbeCache';
 import {
     buildNewSessionCapabilityProbeContextKey,
@@ -22,6 +23,7 @@ import {
     type NewSessionCapabilityProbeContext,
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
+import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { scheduleProbedResourceRetryAfterExpiry } from './probedResourceRetrySchedule';
 
 export function useNewSessionPreflightModelsState(params: Readonly<{
@@ -48,6 +50,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     const [refreshNonce, setRefreshNonce] = React.useState(0);
     const lastHandledRefreshNonceRef = React.useRef(0);
     const preflightModelsRef = React.useRef<PreflightModelList | null>(null);
+    const preflightModelsCacheableRef = React.useRef(true);
     const refreshedAtRef = React.useRef<number | null>(null);
     const lastScopeKeyRef = React.useRef<string | null>(null);
     const staticFallbackRetryRef = React.useRef<Readonly<{ scopeKey: string | null; attempts: number }> | null>(null);
@@ -131,18 +134,24 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
     React.useEffect(() => {
         if (!preflightModelsKey) {
             setPreflightModels(null);
+            preflightModelsRef.current = null;
+            preflightModelsCacheableRef.current = true;
             setPreflightModelsTargetKey(null);
             setProbePhase('idle');
             setRefreshedAt(null);
+            refreshedAtRef.current = null;
             lastScopeKeyRef.current = probeScopeKey;
             return;
         }
 
         if (!agentType) {
             setPreflightModels(null);
+            preflightModelsRef.current = null;
+            preflightModelsCacheableRef.current = true;
             setPreflightModelsTargetKey(null);
             setProbePhase('idle');
             setRefreshedAt(null);
+            refreshedAtRef.current = null;
             return;
         }
 
@@ -155,6 +164,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 setPreflightModels(null);
                 setPreflightModelsTargetKey(null);
                 preflightModelsRef.current = null;
+                preflightModelsCacheableRef.current = true;
             }
             if (refreshedAtRef.current !== null) {
                 setRefreshedAt(null);
@@ -172,17 +182,23 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
         const cacheEntry = readDynamicModelProbeCache(preflightModelsKey);
         const cached = cacheEntry?.kind === 'success' ? cacheEntry.value : null;
+        const cachedCanPersist = cacheEntry?.kind === 'success' && cacheEntry.cacheable !== false;
         const scopeStable = lastScopeKeyRef.current !== null && probeScopeKey !== null && lastScopeKeyRef.current === probeScopeKey;
         lastScopeKeyRef.current = probeScopeKey;
         if (cached) {
             setPreflightModels(cached);
+            preflightModelsRef.current = cached;
+            preflightModelsCacheableRef.current = cachedCanPersist;
             setPreflightModelsTargetKey(backendTargetKey);
-            setRefreshedAt(cacheEntry?.updatedAt ?? null);
+            const cachedUpdatedAt = cacheEntry?.updatedAt ?? null;
+            setRefreshedAt(cachedUpdatedAt);
+            refreshedAtRef.current = cachedUpdatedAt;
         } else if (!scopeStable) {
             // Engine/machine/server scope changed: clear any previous list to avoid showing the wrong provider's models.
             setPreflightModels(null);
             setPreflightModelsTargetKey(null);
             preflightModelsRef.current = null;
+            preflightModelsCacheableRef.current = true;
             refreshedAtRef.current = null;
             setRefreshedAt(null);
         }
@@ -215,18 +231,19 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 list: PreflightModelList;
                 cacheable: boolean;
             }> | null>(preflightModelsKey, async () => {
-                    const res = await machineCapabilitiesInvoke(params.selectedMachineId!, {
-                        id: `cli.${agentType}` as any,
-                        method: 'probeModels',
-                        params: {
-                            timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
-                            ...(backendTargetForProbe ? { backendTarget: backendTargetForProbe } : {}),
-                            ...(probeContextCapabilityParams ? probeContextCapabilityParams : {}),
-                            ...(cwd ? { cwd } : {}),
-                        },
-                    }, {
-                        serverId: params.capabilityServerId,
-                    });
+                const capabilityId: CapabilityId = `cli.${agentType}`;
+                const res = await machineCapabilitiesInvoke(params.selectedMachineId!, {
+                    id: capabilityId,
+                    method: 'probeModels',
+                    params: {
+                        timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
+                        ...(backendTargetForProbe ? { backendTarget: backendTargetForProbe } : {}),
+                        ...(probeContextCapabilityParams ? probeContextCapabilityParams : {}),
+                        ...(cwd ? { cwd } : {}),
+                    },
+                }, {
+                    serverId: params.capabilityServerId,
+                });
 
                 if (!res.supported) return null;
                 if (!res.response.ok) return null;
@@ -251,15 +268,19 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 staticFallbackRetryRef.current = { scopeKey: probeScopeKey, attempts: 0 };
                 writeDynamicModelProbeCacheSuccess(preflightModelsKey, list, commitNowMs);
                 setPreflightModels(list);
+                preflightModelsCacheableRef.current = true;
                 setPreflightModelsTargetKey(backendTargetKey);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
                 return;
             }
             if (list && attempt?.cacheable === false && !cached) {
-                // Show the list (useful fallback) but retry soon; do not persist across app restarts.
+                // Show the list (useful fallback) and retain it for same-runtime remounts, but retry soon
+                // and do not persist it across app restarts.
+                writeDynamicModelProbeCacheTransientSuccess(preflightModelsKey, list, commitNowMs);
                 writeDynamicModelProbeCacheError(preflightModelsKey, commitNowMs);
                 setPreflightModels(list);
+                preflightModelsCacheableRef.current = false;
                 setPreflightModelsTargetKey(backendTargetKey);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
@@ -279,8 +300,11 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
             if (cached) {
                 // Keep stale-but-usable model lists sticky if a refresh probe fails.
-                writeDynamicModelProbeCacheSuccess(preflightModelsKey, cached, commitNowMs);
+                if (cachedCanPersist) {
+                    writeDynamicModelProbeCacheSuccess(preflightModelsKey, cached, commitNowMs);
+                }
                 setPreflightModels(cached);
+                preflightModelsCacheableRef.current = cachedCanPersist;
                 setPreflightModelsTargetKey(backendTargetKey);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
@@ -291,7 +315,11 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             const staleUpdatedAt = refreshedAtRef.current;
             if (stale && staleUpdatedAt) {
                 // When switching cwd/worktree, keep the last usable list on screen even if the new probe fails.
-                writeDynamicModelProbeCacheSuccess(preflightModelsKey, stale, commitNowMs);
+                if (preflightModelsCacheableRef.current) {
+                    writeDynamicModelProbeCacheSuccess(preflightModelsKey, stale, commitNowMs);
+                } else {
+                    writeDynamicModelProbeCacheTransientSuccess(preflightModelsKey, stale, commitNowMs);
+                }
                 setPreflightModels(stale);
                 setPreflightModelsTargetKey(backendTargetKey);
                 setRefreshedAt(commitNowMs);

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useIsTablet } from '@/utils/platform/responsive';
-import { useRouter } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
 import { SessionGettingStartedGuidance } from '@/components/sessions/guidance/SessionGettingStartedGuidance';
 import { useSessionListStorageKind } from '@/components/sessions/model/useSessionListStorageKind';
 import { SessionsListStorageChrome } from '@/components/sessions/shell/SessionsListStorageChrome';
@@ -31,6 +31,11 @@ import { Text } from '@/components/ui/text/Text';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import type { FeatureId } from '@happier-dev/protocol';
 import { SessionsListPaneContent } from '@/components/sessions/shell/SessionsListPaneContent';
+import {
+    resolveSidebarSessionListSurfaceInteractive,
+    resolveSessionListSurfaceOwnership,
+    SESSION_LIST_SURFACE_OWNER_SIDEBAR,
+} from '@/components/sessions/shell/surface/sessionListSurfaceOwnership';
 import { useMainAppTabState } from '@/components/navigation/mobile/chrome/MainAppTabStateProvider';
 
 
@@ -215,12 +220,19 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const { externalSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
     const isTablet = useIsTablet();
     const router = useRouter();
+    const pathname = usePathname();
 
     const handleNewSession = React.useCallback(() => {
         router.push('/new');
     }, [router]);
 
     if (variant === 'sidebar') {
+        const surfaceOwnership = resolveSessionListSurfaceOwnership({
+            ownerKey: SESSION_LIST_SURFACE_OWNER_SIDEBAR,
+            interactiveOwnerKey: SESSION_LIST_SURFACE_OWNER_SIDEBAR,
+            visible: true,
+            interactive: resolveSidebarSessionListSurfaceInteractive(pathname),
+        });
         const storageChrome = (
             <SessionsListStorageChrome
                 externalSessionsEnabled={externalSessionsEnabled}
@@ -234,7 +246,11 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
                 <View style={styles.sidebarContainer}>
                     {storageChrome}
                     <View style={styles.sidebarContentContainer}>
-                        <SessionsListPaneContent storageKind={storageKind} fallbackGuidanceVariant="sidebar" />
+                        <SessionsListPaneContent
+                            storageKind={storageKind}
+                            fallbackGuidanceVariant="sidebar"
+                            surfaceOwnership={surfaceOwnership}
+                        />
                     </View>
                 </View>
                 <FABWide onPress={handleNewSession} />
@@ -287,14 +303,14 @@ const PhoneMainView = React.memo((props: Readonly<{
     const renderTabContent = React.useCallback(() => {
         switch (activeTab) {
             case 'inbox':
-                return inboxEnabled ? <InboxView /> : <SessionsListWrapper />;
+                return inboxEnabled ? <InboxView /> : <SessionsListWrapper pathname="/" />;
             case 'friends':
-                return friendsEnabled ? <FriendsView /> : <SessionsListWrapper />;
+                return friendsEnabled ? <FriendsView /> : <SessionsListWrapper pathname="/" />;
             case 'projects':
                 return <ProjectsListView />;
             case 'sessions':
             default:
-                return <SessionsListWrapper />;
+                return <SessionsListWrapper pathname="/" />;
         }
     }, [activeTab, friendsEnabled, inboxEnabled]);
 

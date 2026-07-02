@@ -62,6 +62,10 @@ function mockSessionsDomainBoundaries() {
         },
     }));
     vi.doMock('@/sync/domains/models/modelOptions', () => ({
+    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
+        options?.find?.((option: any) => option.value === effectiveModelId)
+            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
+            ?? null,
         isModelSelectableForSession: vi.fn(() => true),
     }));
     vi.doMock('@/agents/catalog/catalog', () => ({
@@ -104,7 +108,64 @@ function createHarness(createSessionsDomain: any) {
 }
 
 describe('sessions domain: renderable patches', () => {
-    it('persists warm cache when patching unhydrated session list renderables', async () => {
+    it('merges append-page renderables without removing existing list rows omitted from the page', async () => {
+        mockSessionsDomainBoundaries();
+
+        const { syncPerformanceTelemetry } = await import('../../runtime/syncPerformanceTelemetry');
+        const { buildSessionListRenderableFromSession } = await import('../../domains/session/listing/sessionListRenderable');
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+        const buildRenderable = (id: string, createdAt: number) => buildSessionListRenderableFromSession({
+            id,
+            seq: createdAt,
+            createdAt,
+            updatedAt: createdAt,
+            active: false,
+            activeAt: createdAt,
+            metadata: {
+                machineId: `machine-${id}`,
+                host: `host-${id}`,
+                path: `/repo/${id}`,
+            },
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 0,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } satisfies Session);
+
+        domain.replaceSessionListRenderables([buildRenderable('s_existing', 10)]);
+        const storedExisting = get().sessionListRenderables.s_existing;
+        syncPerformanceTelemetry.configure({ enabled: true, slowThresholdMs: 0 });
+        syncPerformanceTelemetry.reset();
+
+        domain.mergeSessionListRenderables([buildRenderable('s_appended', 5)]);
+
+        expect(get().sessionListRenderables.s_existing).toBe(storedExisting);
+        expect(get().sessionListRenderables.s_appended).toEqual(expect.objectContaining({
+            id: 's_appended',
+            createdAt: 5,
+        }));
+        const activeServerIndex = get().sessionListIndexByServerId.server_1 ?? [];
+        expect(activeServerIndex.filter((item: any) => item.type === 'session').map((item: any) => item.sessionId)).toEqual([
+            's_existing',
+            's_appended',
+        ]);
+        const events = syncPerformanceTelemetry.snapshot().events;
+        expect(events.some((event) => event.name === 'sync.store.sessions.renderables.replace')).toBe(false);
+        expect(events.find((event) => event.name === 'sync.store.sessions.renderables.merge')?.fields).toMatchObject({
+            incoming: 1,
+            previous: 1,
+            changed: 1,
+            removed: 0,
+            indexRebuild: 1,
+        });
+        syncPerformanceTelemetry.configure({ enabled: false });
+    });
+
+    it('defers warm cache persistence when patching unhydrated session list renderables', async () => {
+        vi.useFakeTimers();
         mockSessionsDomainBoundaries();
 
         const warmCache = await import('../../domains/state/warmCachePersistence');
@@ -113,53 +174,61 @@ describe('sessions domain: renderable patches', () => {
         const { createSessionsDomain } = await import('./sessions');
         const { get, domain } = createHarness(createSessionsDomain);
 
-        domain.replaceSessionListRenderables([buildSessionListRenderableFromSession({
-            id: 's1',
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 10,
-            active: true,
-            activeAt: 10,
-            metadata: null,
-            metadataVersion: 0,
-            agentState: null,
-            agentStateVersion: 0,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 'online',
-        } as any)]);
+        try {
+            domain.replaceSessionListRenderables([buildSessionListRenderableFromSession({
+                id: 's1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 10,
+                active: true,
+                activeAt: 10,
+                metadata: null,
+                metadataVersion: 0,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+            } as any)]);
 
-        expect(get().sessions['s1']).toBeUndefined();
-        expect(get().sessionListRenderables['s1']?.active).toBe(true);
-        syncPerformanceTelemetry.configure({ enabled: true, slowThresholdMs: 0 });
-        syncPerformanceTelemetry.reset();
+            expect(get().sessions['s1']).toBeUndefined();
+            expect(get().sessionListRenderables['s1']?.active).toBe(true);
+            syncPerformanceTelemetry.configure({ enabled: true, slowThresholdMs: 0 });
+            syncPerformanceTelemetry.reset();
 
-        domain.applySessionListRenderablePatches([
-            { sessionId: 's1', patch: { active: false, activeAt: 20, presence: 20 } },
-        ]);
+            domain.applySessionListRenderablePatches([
+                { sessionId: 's1', patch: { active: false, activeAt: 20, presence: 20 } },
+            ]);
 
-        expect(get().sessionListRenderables['s1']?.active).toBe(false);
-        const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
-        expect(saveWarmCache).toHaveBeenCalledTimes(2);
-        const lastCall = saveWarmCache.mock.calls.at(-1);
-        const entries = lastCall?.[2] as Record<string, any>;
-        expect(entries?.s1?.active).toBe(false);
-        expect(entries?.s1?.activeAt).toBe(20);
-        const indexRebuildEvent = syncPerformanceTelemetry.snapshot().events.find(
-            (candidate) => candidate.name === 'sync.store.sessions.renderables.patch.indexRebuild',
-        );
-        expect(indexRebuildEvent?.count).toBe(1);
-        expect(indexRebuildEvent?.fields.renderables).toBe(1);
-        const patchEvent = syncPerformanceTelemetry.snapshot().events.find(
-            (candidate) => candidate.name === 'sync.store.sessions.renderables.patch',
-        );
-        expect(patchEvent?.fields.listViewFieldChanges).toBe(1);
-        const warmCacheEvent = syncPerformanceTelemetry.snapshot().events.find(
-            (candidate) => candidate.name === 'sync.store.sessions.renderables.patch.warmCache',
-        );
-        expect(warmCacheEvent?.count).toBe(1);
-        expect(warmCacheEvent?.fields.renderables).toBe(1);
-        syncPerformanceTelemetry.configure({ enabled: false });
+            expect(get().sessionListRenderables['s1']?.active).toBe(false);
+            expect(get().sessionListIndexByServerId['server_1']).not.toBeUndefined();
+            const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(1_000);
+            expect(saveWarmCache).toHaveBeenCalledTimes(2);
+            const lastCall = saveWarmCache.mock.calls.at(-1);
+            const entries = lastCall?.[2] as Record<string, any>;
+            expect(entries?.s1?.active).toBe(false);
+            expect(entries?.s1?.activeAt).toBe(20);
+            const indexRebuildEvent = syncPerformanceTelemetry.snapshot().events.find(
+                (candidate) => candidate.name === 'sync.store.sessions.renderables.patch.indexRebuild',
+            );
+            expect(indexRebuildEvent?.count).toBe(1);
+            expect(indexRebuildEvent?.fields.renderables).toBe(1);
+            const patchEvent = syncPerformanceTelemetry.snapshot().events.find(
+                (candidate) => candidate.name === 'sync.store.sessions.renderables.patch',
+            );
+            expect(patchEvent?.fields.listViewFieldChanges).toBe(1);
+            const warmCacheEvent = syncPerformanceTelemetry.snapshot().events.find(
+                (candidate) => candidate.name === 'sync.store.sessions.renderables.patch.warmCache.deferred',
+            );
+            expect(warmCacheEvent?.count).toBe(1);
+            expect(warmCacheEvent?.fields.renderables).toBe(1);
+        } finally {
+            syncPerformanceTelemetry.configure({ enabled: false });
+            vi.useRealTimers();
+        }
     });
 
     it('preserves warm-cache payload for non-semantic renderable patches', async () => {

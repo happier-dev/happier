@@ -64,7 +64,7 @@ import { RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { runMachineScmRpc, scmFallbackError } from './scm/machineScm';
 import { resolveMachineAbsolutePath } from '@/sync/domains/fileSystem/resolveMachineAbsolutePath';
-import { readMachineTargetForSession } from './sessionMachineTarget';
+import { readMachineControlTargetForSession } from './sessionMachineTarget';
 
 async function callScmPreferMachine<
     T extends { success: boolean; error?: string; errorCode?: string },
@@ -74,7 +74,7 @@ async function callScmPreferMachine<
     method: string,
     request: R,
 ): Promise<T> {
-    const machineTarget = readMachineTargetForSession(sessionId);
+    const machineTarget = readMachineControlTargetForSession(sessionId);
 
     if (!machineTarget) {
         return {

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderSettingsView, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderSettingsView, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -232,17 +232,20 @@ vi.mock('@/utils/system/requestReview', () => ({
 afterEach(() => {
     standardCleanup();
     routerPushSpy.mockClear();
+    vi.useRealTimers();
 });
 
 describe('SettingsView plugin marketplace entry', () => {
     it('routes the curated plugin discovery entry to the new descriptor-only surface', async () => {
+        vi.useFakeTimers();
         const { SettingsView } = await import('./SettingsView');
         const screen = await renderSettingsView(React.createElement(SettingsView));
 
-        const items = screen.findAllByType('Item' as any);
-        const marketplaceItem = items.find((item: any) => item?.props?.title === 'settingsPlugins.title');
+        await flushHookEffects({ cycles: 4, runAllTimers: true });
 
+        const marketplaceItem = screen.findRow('settings-plugin-marketplace-item');
         expect(marketplaceItem).toBeTruthy();
+        expect(marketplaceItem?.props.title).toBe('settingsPlugins.title');
         expect(marketplaceItem?.props.subtitle).toBe('settingsPlugins.subtitle');
 
         marketplaceItem?.props.onPress?.();

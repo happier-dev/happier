@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -173,5 +174,46 @@ describe('WorkspaceRepositoryTreeList', () => {
         expect(latestFilesystemBrowserProps.current?.rootLoading).toBe(true);
         expect(latestFilesystemBrowserProps.current?.showInlineLoadingHeader).toBe(false);
         expect(screen.findAllByTestId(`repository-tree-row-${toTestIdSafeValue('src')}`).length).toBeGreaterThan(0);
+    });
+
+    it('keeps file browser row plumbing stable when equivalent row actions change identity', async () => {
+        const { WorkspaceRepositoryTreeList } = await import('./WorkspaceRepositoryTreeList');
+
+        function Wrapper() {
+            const [version, setVersion] = React.useState(0);
+            const renderRowActions = React.useCallback((_node: any) => {
+                void version;
+                return null;
+            }, [version]);
+            return (
+                <>
+                    <WorkspaceRepositoryTreeList
+                        theme={theme}
+                        workspaceCacheKey="server:m1:/repo"
+                        machineId="m1"
+                        rootPath="/repo"
+                        expandedPaths={[]}
+                        onExpandedPathsChange={() => {}}
+                        onOpenFile={() => {}}
+                        renderRowActions={renderRowActions}
+                    />
+                    {React.createElement('Pressable' as any, {
+                        testID: 'rerender-parent',
+                        onPress: () => setVersion((value) => value + 1),
+                    })}
+                </>
+            );
+        }
+
+        const screen = await renderScreen(<Wrapper />);
+        const before = latestFilesystemBrowserProps.current;
+
+        await act(async () => {
+            screen.pressByTestId('rerender-parent');
+        });
+        const after = latestFilesystemBrowserProps.current;
+
+        expect(after?.renderRow).toBe(before?.renderRow);
+        expect(after?.extraData).toBe(before?.extraData);
     });
 });

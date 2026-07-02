@@ -21,6 +21,7 @@ vi.mock('../api/session/apiSocket', () => ({
 
 vi.mock('./sessionMachineTarget', () => ({
     readMachineTargetForSession,
+    readMachineControlTargetForSession: readMachineTargetForSession,
 }));
 
 vi.mock('../domains/fileSystem/resolveMachineAbsolutePath', () => ({

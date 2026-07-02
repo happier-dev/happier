@@ -47,7 +47,7 @@ import {
     useMachineDoctorSnapshotCollection,
 } from '@/components/machines/doctorSnapshot/useMachineDoctorSnapshotCollection';
 import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
-import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
 import {
     readMachineWindowsRemoteSessionLaunchMode,
@@ -279,7 +279,7 @@ export default function MachineDetailScreen() {
     React.useEffect(() => {
         if (!requestedServerId) return;
         const currentServerId = getActiveServerId();
-        if (currentServerId === requestedServerId) return;
+        if (areServerProfileIdentifiersEquivalent(currentServerId, requestedServerId)) return;
 
         let cancelled = false;
         setIsServerSwitching(true);
@@ -359,7 +359,7 @@ export default function MachineDetailScreen() {
     const machineDoctorSnapshotSwitchReady = Boolean(
         machineId
         && !isServerSwitching
-        && (!requestedServerId || requestedServerId === activeServerId),
+        && (!requestedServerId || areServerProfileIdentifiersEquivalent(requestedServerId, activeServerId)),
     );
     const canPrefetchMachineDoctorSnapshot = machineDoctorSnapshotSwitchReady;
     const machineDoctorSnapshotTargets = useMemo(() => {
@@ -528,7 +528,7 @@ export default function MachineDetailScreen() {
                 kind: 'card',
                 title: t('machine.replacementRepair.pickerTitle'),
                 testID: 'machine-replacement-picker-modal',
-                layout: 'fill',
+                scrollHost: 'body',
                 bodyScroll: 'auto',
                 dimensions: { width: 520, maxHeightRatio: 0.86, size: 'md' },
             },

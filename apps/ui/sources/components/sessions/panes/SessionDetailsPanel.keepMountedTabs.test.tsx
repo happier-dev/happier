@@ -31,8 +31,31 @@ const fakeDomNode = {
     scrollLeft: 0,
 };
 
-function createScopeState() {
+type ScopeStateFixture = Readonly<{
+    right: Readonly<{
+        isOpen: boolean;
+        activeTabId: string | null;
+    }>;
+    details: Readonly<{
+        isOpen: boolean;
+        activeTabKey: string;
+        tabs: ReadonlyArray<Readonly<{
+            key: string;
+            kind: string;
+            title: string;
+            isPinned: boolean;
+            isPreview: boolean;
+            resource: Readonly<{ kind: string; path?: string }>;
+        }>>;
+    }>;
+}>;
+
+function createScopeState(): ScopeStateFixture {
     return {
+        right: {
+            isOpen: false,
+            activeTabId: null,
+        },
         details: {
             isOpen: true,
             activeTabKey: 'file:a',
@@ -99,11 +122,15 @@ vi.mock('@/components/ui/media/FileIcon', () => ({
 }));
 
 const unpinDetailsTab = vi.fn();
+const openRight = vi.fn();
+const closeRight = vi.fn();
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
     useAppPaneScope: () => ({
         closeDetails: vi.fn(),
         closeDetailsTab: vi.fn(),
+        openRight,
+        closeRight,
         pinDetailsTab: vi.fn(),
         unpinDetailsTab,
         setActiveDetailsTab: vi.fn(),
@@ -125,6 +152,9 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
         lastScrollLockBypassEl = null;
         addEventListenerSpy.mockClear();
         removeEventListenerSpy.mockClear();
+        openRight.mockClear();
+        closeRight.mockClear();
+        unpinDetailsTab.mockClear();
         wheelHandlers.length = 0;
         touchMoveHandlers.length = 0;
     });
@@ -216,6 +246,31 @@ describe('SessionDetailsPanel (keep mounted tabs)', () => {
 
         expect(screen.findByTestId('session-details-tab-file-icon-file_a')).toBeTruthy();
         expect(findTestInstanceByTypeWithProps(tab, 'Octicons', { name: 'file' })).toBeUndefined();
+    });
+
+    it('opens the right pane from the details panel header when it is closed', async () => {
+        const screen = await renderSessionDetailsPanel();
+
+        await screen.pressByTestId('session-details-right-pane-toggle');
+
+        expect(openRight).toHaveBeenCalledTimes(1);
+        expect(closeRight).not.toHaveBeenCalled();
+    });
+
+    it('closes the right pane from the details panel header when it is open', async () => {
+        scopeState = {
+            ...scopeState,
+            right: {
+                isOpen: true,
+                activeTabId: 'files',
+            },
+        };
+        const screen = await renderSessionDetailsPanel();
+
+        await screen.pressByTestId('session-details-right-pane-toggle');
+
+        expect(closeRight).toHaveBeenCalledTimes(1);
+        expect(openRight).not.toHaveBeenCalled();
     });
 
     it('renders preview tab pin action as a pin icon (not pin-slash)', async () => {

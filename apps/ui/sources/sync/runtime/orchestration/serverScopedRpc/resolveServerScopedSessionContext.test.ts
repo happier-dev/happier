@@ -15,9 +15,12 @@ vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
   createEncryptionFromAuthCredentials: (...args: unknown[]) => createEncryptionSpy(...args),
 }));
 
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-  listServerProfiles: (...args: unknown[]) => listServerProfilesSpy(...args),
-}));
+vi.mock('@/sync/domains/server/serverProfiles', async () => {
+  const { createServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
+  return createServerProfilesModuleMock({
+    listServerProfiles: (...args: unknown[]) => listServerProfilesSpy(...args),
+  });
+});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: (...args: unknown[]) => getActiveServerSnapshotSpy(...args),
@@ -45,6 +48,32 @@ describe('resolveServerScopedSessionContext', () => {
       scope: 'active',
       timeoutMs: 30000,
     });
+  });
+
+  it('returns active scope when the target profile id aliases the active durable server identity', async () => {
+    getActiveServerSnapshotSpy.mockReturnValue({
+      serverId: 'srv_server_a',
+      serverUrl: 'https://server-a.example.test',
+      generation: 1,
+    });
+    listServerProfilesSpy.mockReturnValue([
+      {
+        id: 'localhost-52753',
+        serverIdentityId: 'srv_server_a',
+        serverUrl: 'https://server-a.example.test',
+        name: 'Server A',
+      },
+    ]);
+    getCredentialsSpy.mockResolvedValue({ token: 'token-a', secret: 'secret-a' });
+
+    const { resolveServerScopedSessionContext } = await import('./resolveServerScopedSessionContext');
+    const context = await resolveServerScopedSessionContext({ serverId: 'localhost-52753' });
+
+    expect(context).toEqual({
+      scope: 'active',
+      timeoutMs: 30000,
+    });
+    expect(getCredentialsSpy).not.toHaveBeenCalled();
   });
 
   it('returns scoped context with credentials and encryption when target differs from active server', async () => {

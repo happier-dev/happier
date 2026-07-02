@@ -137,4 +137,76 @@ describe('sessions domain: drafts', () => {
 
     expect(get().sessions.s_new?.draft).toBe('hello');
   });
+
+  it('preserves persisted drafts for unloaded sessions when updating a loaded session draft', () => {
+    const { get, domain } = createHarness();
+
+    domain.updateSessionDraft('s_unloaded', 'keep this draft');
+    expect(loadSessionDrafts()).toEqual({ s_unloaded: 'keep this draft' });
+
+    domain.applySessions([
+      {
+        id: 's_loaded',
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        active: true,
+        activeAt: 1,
+        metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+        metadataVersion: 1,
+        agentState: null,
+        agentStateVersion: 0,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 1,
+      } as any,
+    ]);
+
+    expect(get().sessions.s_unloaded).toBeUndefined();
+
+    domain.updateSessionDraft('s_loaded', 'loaded draft');
+
+    expect(loadSessionDrafts()).toEqual({
+      s_unloaded: 'keep this draft',
+      s_loaded: 'loaded draft',
+    });
+  });
+
+  it('preserves persisted drafts for unloaded sessions when clearing a loaded session draft', () => {
+    const { get, domain } = createHarness();
+
+    domain.updateSessionDraft('s_unloaded', 'keep this draft');
+    expect(loadSessionDrafts()).toEqual({ s_unloaded: 'keep this draft' });
+
+    domain.applySessions([
+      {
+        id: 's_loaded',
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        active: true,
+        activeAt: 1,
+        metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+        metadataVersion: 1,
+        agentState: null,
+        agentStateVersion: 0,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 1,
+      } as any,
+    ]);
+
+    domain.updateSessionDraft('s_loaded', 'loaded draft');
+    expect(loadSessionDrafts()).toEqual({
+      s_unloaded: 'keep this draft',
+      s_loaded: 'loaded draft',
+    });
+
+    domain.updateSessionDraft('s_loaded', '');
+
+    expect(get().sessions.s_loaded?.draft).toBeNull();
+    expect(loadSessionDrafts()).toEqual({
+      s_unloaded: 'keep this draft',
+    });
+  });
 });

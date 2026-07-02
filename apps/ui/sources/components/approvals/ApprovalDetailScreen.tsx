@@ -269,6 +269,13 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
         {parsed.status === 'open' && (
           <View style={styles.actionsRow}>
             <RoundButton
+              testID="approvals.approve"
+              size="normal"
+              title={t('approvals.approve')}
+              disabled={isDeciding}
+              onPress={() => decide('approve')}
+            />
+            <RoundButton
               testID="approvals.reject"
               size="normal"
               title={t('approvals.reject')}
@@ -276,13 +283,6 @@ export const ApprovalDetailScreen = React.memo((props: Readonly<{ artifactId: st
               style={{ backgroundColor: theme.colors.state.danger.foreground }}
               textStyle={{ color: theme.colors.button.primary.tint }}
               onPress={() => decide('reject')}
-            />
-            <RoundButton
-              testID="approvals.approve"
-              size="normal"
-              title={t('approvals.approve')}
-              disabled={isDeciding}
-              onPress={() => decide('approve')}
             />
           </View>
         )}

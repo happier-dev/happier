@@ -24,7 +24,11 @@ import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import sodium from '@/encryption/libsodium.lib';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
-import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import {
+    areServerProfileIdentifiersEquivalent,
+    getServerProfileById,
+    resolveServerProfileScopeId,
+} from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 
@@ -79,13 +83,13 @@ function resolveTargetServer(serverId: string | null | undefined): TargetServer 
     const activeServerId = normalizeId(active.serverId);
     const requestedServerId = normalizeId(serverId) || activeServerId;
     if (!requestedServerId) return null;
-    if (requestedServerId === activeServerId) {
+    if (areServerProfileIdentifiersEquivalent(requestedServerId, activeServerId)) {
         const serverUrl = normalizeBaseUrl(active.serverUrl);
-        return serverUrl ? { serverId: requestedServerId, serverUrl } : null;
+        return serverUrl ? { serverId: activeServerId, serverUrl } : null;
     }
-    const profile = listServerProfiles().find((candidate) => normalizeId(candidate.id) === requestedServerId) ?? null;
+    const profile = getServerProfileById(requestedServerId);
     const serverUrl = normalizeBaseUrl(profile?.serverUrl ?? '');
-    return profile && serverUrl ? { serverId: profile.id, serverUrl } : null;
+    return profile && serverUrl ? { serverId: resolveServerProfileScopeId(profile), serverUrl } : null;
 }
 
 function readEndpointFromMachineState(input: Readonly<{

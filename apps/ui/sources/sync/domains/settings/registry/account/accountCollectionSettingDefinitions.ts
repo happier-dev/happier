@@ -2,6 +2,7 @@ import { buildSettingArtifacts, defineSettingDefinitions, WorkspaceRefV1Schema }
 import { z } from 'zod';
 
 import { FavoriteModelSelectionV1Schema } from '@/sync/domains/models/favoriteModelSelections';
+import { FavoriteBackendTargetKeysV1Schema } from '@/sync/domains/session/authoring/favoriteBackendTargets';
 import { SessionFoldersV1Schema } from '@/sync/domains/session/folders';
 import { SessionSplitCanvasLayoutsSchema } from '@/sync/domains/session/sessionSplitCanvasPersistence';
 
@@ -145,6 +146,20 @@ export const ACCOUNT_COLLECTION_SETTING_DEFINITIONS = defineSettingDefinitions({
             serializeCurrent: arrayCount,
         },
     },
+    favoriteBackendTargetKeysV1: {
+        schema: FavoriteBackendTargetKeysV1Schema,
+        default: [],
+        description: 'User-defined favorite new-session engines for quick access in engine selection',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'person',
+            serializeCurrent: arrayCount,
+        },
+    },
     pinnedSessionKeysV1: {
         schema: z.array(z.string()).default([]),
         default: [],
@@ -233,6 +248,20 @@ export const ACCOUNT_COLLECTION_SETTING_DEFINITIONS = defineSettingDefinitions({
         schema: z.record(z.string(), z.array(z.string())).default({}),
         default: {},
         description: 'Manual ordering overrides by groupKey',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'person',
+            serializeCurrentProperties: buildSessionListGroupOrderSummaryProperties,
+        },
+    },
+    sessionWorkspaceOrderV1: {
+        schema: z.record(z.string(), z.array(z.string())).default({}),
+        default: {},
+        description: 'Manual workspace ordering overrides by server scope',
         storageScope: 'account',
         analytics: {
             trackCurrentState: true,

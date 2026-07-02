@@ -95,7 +95,6 @@ export function normalizeSessionPathForComparison(pathInput: unknown, homeDirInp
 export type SessionMachineTargetPeer = Readonly<{
     id: string;
     active?: boolean;
-    updatedAt?: number;
     machineId?: string | null;
     hostHint?: string | null;
     path?: string | null;
@@ -132,7 +131,41 @@ export function resolveSessionMachineRpcTarget(input: Readonly<{
     if (primaryResolved) {
         return { machineId: primaryResolved, basePath };
     }
+
+    const peerSessions = input.peerSessions ?? [];
+    if (peerSessions.length === 0) return null;
+
+    const comparableBasePath = normalizeNonEmptyString(input.comparableBasePath);
+    const candidates = input.peerSessionsSorted === true
+        ? peerSessions
+        : [...peerSessions].sort(compareSessionMachineTargetPeers);
+    for (const peer of candidates) {
+        if (peer.id === input.sessionId) continue;
+        if (input.peerSessionsComparablePathFiltered !== true && comparableBasePath) {
+            const peerComparablePath = normalizeNonEmptyString(peer.comparablePath)
+                ?? normalizeSessionPathForComparison(peer.projectPath ?? peer.path, peer.homeDir);
+            if (peerComparablePath !== comparableBasePath) continue;
+        }
+        const peerMachineId = normalizeNonEmptyString(peer.projectMachineId);
+        const peerResolved = resolveSessionReachableMachineIdWithContext({
+            machineId: peerMachineId,
+            hostHint: peer.hostHint ?? null,
+            machineResolutionContext,
+        });
+        if (peerResolved) {
+            return { machineId: peerResolved, basePath };
+        }
+    }
     return null;
+}
+
+function compareSessionMachineTargetPeers(
+    left: SessionMachineTargetPeer,
+    right: SessionMachineTargetPeer,
+): number {
+    const activeDelta = Number(right.active === true) - Number(left.active === true);
+    if (activeDelta !== 0) return activeDelta;
+    return left.id.localeCompare(right.id);
 }
 
 function resolveSessionReachableMachineIdWithContext(input: Readonly<{

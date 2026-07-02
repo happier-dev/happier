@@ -59,4 +59,21 @@ describe('native theme preference transition controller', () => {
         expect(mutation).toHaveBeenCalledOnce();
         expect(showOverlay).not.toHaveBeenCalled();
     });
+
+    it('hides the overlay when the reveal animation fails after mounting it', async () => {
+        const hideOverlay = vi.fn();
+        const controller = createNativeThemePreferenceTransitionController({
+            animateOverlay: async () => {
+                throw new Error('animation failed');
+            },
+            captureSurface: async () => 'file://theme-before.png',
+            hideOverlay,
+            showOverlay: vi.fn(),
+            waitForFrame: vi.fn(),
+        });
+
+        await expect(controller.run(vi.fn())).rejects.toThrow('animation failed');
+
+        expect(hideOverlay).toHaveBeenCalledOnce();
+    });
 });

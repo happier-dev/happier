@@ -27,6 +27,44 @@ installNewSessionScreenModelCommonModuleMocks({
     },
 });
 
+vi.mock('@/agents/registry/AgentIcon', () => ({
+    AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
+}));
+
+vi.mock('@/agents/registry/registryUi', () => ({
+    getAgentPickerIconScale: () => 1,
+}));
+
+vi.mock('@/agents/registry/registryUiBehavior', () => ({
+    resolveAgentUiBehavior: () => ({
+        permissions: {
+            footer: {
+                usePermissionUpdates: false,
+                forceReadOnlyAfterStop: true,
+                supportsExecPolicyAmendment: false,
+                stopHandling: 'denyAndAbortRun',
+            },
+        },
+        newSession: {
+            supportsTranscriptStorageMode: () => false,
+        },
+    }),
+    resolveAgentUiBehaviorFromFlavor: () => null,
+    getAgentResumeExperimentsFromSettings: () => ({ enabled: true, switches: {} }),
+    buildResumeCapabilityOptionsFromUiState: (opts: { settings: unknown }) => ({ accountSettings: opts.settings }),
+    getNewSessionPreflightIssues: () => [],
+    buildNewSessionOptionsFromUiState: () => null,
+    canSelectAgentWithoutDetectedCli: () => false,
+    getNewSessionAgentInputExtraActionChips: () => undefined,
+    getNewSessionRelevantInstallableDepKeys: () => [],
+    buildSpawnSessionExtrasFromUiState: () => ({}),
+    buildSpawnEnvironmentVariablesFromUiState: (opts: { environmentVariables?: Record<string, string> }) => opts.environmentVariables,
+    buildResumeSessionExtrasFromUiState: () => ({}),
+    buildWakeResumeExtras: () => ({}),
+    supportsDetectedMcpConfigScan: () => false,
+    supportsEditableSessionGoals: () => false,
+}));
+
 vi.mock('@/components/sessions/new/components/NewSessionEngineOptionDetail', () => ({
     NewSessionEngineOptionDetail: (props: Record<string, unknown>) => React.createElement('NewSessionEngineOptionDetail', props),
 }));
@@ -116,6 +154,108 @@ describe('useNewSessionAgentPickerControls', () => {
         ]);
     });
 
+    it('orders favorite engines first and exposes row toggle actions without selecting the engine', async () => {
+        const setFavoriteBackendTargetKeys = vi.fn();
+        const setBackendTarget = vi.fn();
+        const claudeEntry = createBuiltInBackendEntry('claude', 'Claude', null);
+        const codexEntry = createBuiltInBackendEntry('codex', 'Codex', null);
+
+        const hook = await renderHook(() => useNewSessionAgentPickerControls({
+            useProfiles: false,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            resolvedBackendEntries: [claudeEntry, codexEntry],
+            getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: () => true,
+            selectedBackendEntry: claudeEntry,
+            selectedBackendTargetKey: claudeEntry.backendTargetKey,
+            setBackendTarget,
+            modelMode: 'default',
+            setModelMode: vi.fn() as any,
+            acpSessionModeId: null,
+            setAcpSessionModeId: vi.fn() as any,
+            sessionConfigOptionOverrides: null,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            selectedPath: '/repo',
+            settings: {} as any,
+            favoriteBackendTargetKeys: [codexEntry.backendTargetKey],
+            setFavoriteBackendTargetKeys,
+        }));
+
+        expect(hook.getCurrent().agentPickerOptions?.map((option) => option.id)).toEqual([
+            codexEntry.backendTargetKey,
+            claudeEntry.backendTargetKey,
+        ]);
+
+        const claudeOption = hook.getCurrent().agentPickerOptions?.find((option) => option.id === claudeEntry.backendTargetKey);
+        const claudeAction = (claudeOption as { railAction?: { selected: boolean; onPress: () => void } } | undefined)?.railAction;
+        expect(claudeAction?.selected).toBe(false);
+
+        claudeAction?.onPress();
+
+        expect(setFavoriteBackendTargetKeys).toHaveBeenCalledWith([codexEntry.backendTargetKey, claudeEntry.backendTargetKey]);
+        expect(setBackendTarget).not.toHaveBeenCalled();
+
+        const codexOption = hook.getCurrent().agentPickerOptions?.find((option) => option.id === codexEntry.backendTargetKey);
+        const codexAction = (codexOption as { railAction?: { selected: boolean; onPress: () => void } } | undefined)?.railAction;
+        expect(codexAction?.selected).toBe(true);
+
+        codexAction?.onPress();
+
+        expect(setFavoriteBackendTargetKeys).toHaveBeenLastCalledWith([]);
+    });
+
+    it('remembers the favorites rail as the focused picker view independently from the selected engine', async () => {
+        const onRememberAgentPickerView = vi.fn();
+        const claudeEntry = createBuiltInBackendEntry('claude', 'Claude', null);
+        const codexEntry = createBuiltInBackendEntry('codex', 'Codex', null);
+
+        const hook = await renderHook(() => useNewSessionAgentPickerControls({
+            useProfiles: false,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            resolvedBackendEntries: [claudeEntry, codexEntry],
+            getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: () => true,
+            selectedBackendEntry: claudeEntry,
+            selectedBackendTargetKey: claudeEntry.backendTargetKey,
+            setBackendTarget: vi.fn(),
+            modelMode: 'default',
+            setModelMode: vi.fn() as any,
+            acpSessionModeId: null,
+            setAcpSessionModeId: vi.fn() as any,
+            sessionConfigOptionOverrides: null,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            selectedPath: '/repo',
+            settings: {} as any,
+            favoriteModelSelections: [
+                { backendTargetKey: codexEntry.backendTargetKey, builtInAgentId: 'codex', modelId: 'gpt-5.4' },
+            ],
+            setFavoriteModelSelections: vi.fn(),
+            rememberedAgentPickerView: { kind: 'favoriteModels' },
+            onRememberAgentPickerView,
+        }));
+
+        expect(hook.getCurrent().agentPickerSelectedOptionId).toBe('favorite-models');
+
+        const favoriteOption = hook.getCurrent().agentPickerOptions?.find((option) => option.id === 'favorite-models');
+        favoriteOption?.onSelectImmediate?.();
+
+        expect(onRememberAgentPickerView).toHaveBeenCalledWith({ kind: 'favoriteModels' });
+
+        const codexOption = hook.getCurrent().agentPickerOptions?.find((option) => option.id === codexEntry.backendTargetKey);
+        codexOption?.onSelectImmediate?.();
+
+        expect(onRememberAgentPickerView).toHaveBeenLastCalledWith({
+            kind: 'backend',
+            backendTargetKey: codexEntry.backendTargetKey,
+        });
+    });
+
     it('adds a favorites rail option when favorite model selections exist', async () => {
         const claudeEntry = createBuiltInBackendEntry('claude', 'Claude', null);
         const codexEntry = createBuiltInBackendEntry('codex', 'Codex', null);
@@ -198,13 +338,21 @@ describe('useNewSessionAgentPickerControls', () => {
         ), { initialProps: initialParams });
 
         const favoriteDetail = hook.getCurrent().agentPickerOptions?.[0]?.renderDetailContent?.() as React.ReactElement<{
-            onSelectFavoriteModel?: (entry: ResolvedBackendCatalogEntry, modelId: string) => void;
+            onSelectFavoriteModel?: (entry: ResolvedBackendCatalogEntry, modelId: string, configOverrides?: Readonly<Record<string, string>>) => void;
         }> | undefined;
 
-        favoriteDetail?.props?.onSelectFavoriteModel?.(codexEntry, 'gpt-5.5');
+        favoriteDetail?.props?.onSelectFavoriteModel?.(codexEntry, 'gpt-5.5', { reasoning_effort: 'high' });
 
         expect(setBackendTarget).toHaveBeenCalledWith(codexEntry.backendTarget);
         expect(setModelMode).toHaveBeenCalledWith('gpt-5.5');
+        expect(initialParams.setSessionConfigOptionOverrides).toHaveBeenCalledWith(expect.objectContaining({
+            overrides: {
+                reasoning_effort: {
+                    updatedAt: expect.any(Number),
+                    value: 'high',
+                },
+            },
+        }));
 
         await hook.rerender({
             ...initialParams,

@@ -25,12 +25,14 @@ const ConnectedServiceQuotasV3ResponseSchema = z.object({
 export async function getConnectedServiceQuotaSnapshotPlain(
   credentials: AuthCredentials,
   params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
+  opts?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<ConnectedServiceQuotaSnapshotV1 | null> {
   return await backoff(async () => {
     const response = await serverFetch(
       `/v3/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/quotas`,
       {
         method: 'GET',
+        signal: opts?.signal,
         headers: {
           Authorization: `Bearer ${credentials.token}`,
           'Content-Type': 'application/json',
@@ -107,4 +109,3 @@ export async function requestConnectedServiceQuotaSnapshotRefreshV3(
     return true;
   });
 }
-

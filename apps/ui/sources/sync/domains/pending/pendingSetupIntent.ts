@@ -1,5 +1,7 @@
 import { MMKV } from 'react-native-mmkv';
 
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { serverAccountScopedStorageKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { fromRecord, toRecord, type PendingSetupIntent } from './pendingSetupIntent.shared';
 import { getActivePendingServerUrl, isPendingServerUrlActive, normalizePendingServerUrl, pendingServerScopedKey } from './pendingServerScopedKeys';
@@ -8,23 +10,18 @@ const scope = readStorageScopeFromEnv();
 const storage = new MMKV({ id: scopedStorageId('pending-setup-intent', scope) });
 const KEY_RECORD = 'record';
 const KEY_RECORD_PREFIX = 'record:v2';
+const KEY_SERVER_RECORD_PREFIX = 'record:server:v1';
 
 function resolveIntentServerUrl(value: PendingSetupIntent): string | null {
     return normalizePendingServerUrl(value.relayUrl) ?? getActivePendingServerUrl();
 }
 
-export function setPendingSetupIntent(value: PendingSetupIntent): void {
-    const serverUrl = resolveIntentServerUrl(value);
-    if (!serverUrl) return;
-    const record = toRecord({ ...value, relayUrl: normalizePendingServerUrl(value.relayUrl) ?? serverUrl });
-    if (!record) return;
-    storage.set(pendingServerScopedKey(KEY_RECORD_PREFIX, serverUrl), JSON.stringify(record));
+function resolveActiveServerScopedKey(): string | null {
+    const activeServerUrl = getActivePendingServerUrl();
+    return activeServerUrl ? pendingServerScopedKey(KEY_SERVER_RECORD_PREFIX, activeServerUrl) : null;
 }
 
-export function getPendingSetupIntent(): PendingSetupIntent | null {
-    const activeServerUrl = getActivePendingServerUrl();
-    if (!activeServerUrl) return null;
-    const key = pendingServerScopedKey(KEY_RECORD_PREFIX, activeServerUrl);
+function readRecord(key: string): PendingSetupIntent | null {
     const raw = storage.getString(key);
     if (!raw) return null;
     try {
@@ -41,10 +38,39 @@ export function getPendingSetupIntent(): PendingSetupIntent | null {
     }
 }
 
+export function setPendingSetupIntent(value: PendingSetupIntent): void {
+    const activeScope = getActiveServerAccountScope();
+    const serverUrl = resolveIntentServerUrl(value);
+    if (!serverUrl || !isPendingServerUrlActive(serverUrl)) return;
+    const record = toRecord({ ...value, relayUrl: normalizePendingServerUrl(value.relayUrl) ?? serverUrl });
+    if (!record) return;
+    if (activeScope) {
+        storage.set(serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope), JSON.stringify(record));
+        const serverScopedKey = resolveActiveServerScopedKey();
+        if (serverScopedKey) storage.delete(serverScopedKey);
+        return;
+    }
+    storage.set(pendingServerScopedKey(KEY_SERVER_RECORD_PREFIX, serverUrl), JSON.stringify(record));
+}
+
+export function getPendingSetupIntent(): PendingSetupIntent | null {
+    const activeScope = getActiveServerAccountScope();
+    if (activeScope) {
+        const record = readRecord(serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope));
+        if (record) return record;
+    }
+    const serverScopedKey = resolveActiveServerScopedKey();
+    return serverScopedKey ? readRecord(serverScopedKey) : null;
+}
+
 export function clearPendingSetupIntent(): void {
-    const activeServerUrl = getActivePendingServerUrl();
-    if (activeServerUrl) {
-        storage.delete(pendingServerScopedKey(KEY_RECORD_PREFIX, activeServerUrl));
+    const activeScope = getActiveServerAccountScope();
+    if (activeScope) {
+        storage.delete(serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope));
+    }
+    const serverScopedKey = resolveActiveServerScopedKey();
+    if (serverScopedKey) {
+        storage.delete(serverScopedKey);
     }
     const legacy = storage.getString(KEY_RECORD);
     if (!legacy) return;
@@ -55,5 +81,26 @@ export function clearPendingSetupIntent(): void {
         }
     } catch {
         storage.delete(KEY_RECORD);
+    }
+}
+
+export function migratePendingSetupIntentScopes(
+    scope: ServerAccountScope,
+    legacyScopes: readonly ServerAccountScope[],
+): void {
+    const canonicalKey = serverAccountScopedStorageKey(KEY_RECORD_PREFIX, scope);
+    let hasCanonicalRecord = readRecord(canonicalKey) !== null;
+    for (const legacyScope of legacyScopes) {
+        if (legacyScope.serverId === scope.serverId && legacyScope.accountId === scope.accountId) continue;
+        const legacyKey = serverAccountScopedStorageKey(KEY_RECORD_PREFIX, legacyScope);
+        const legacyRecord = readRecord(legacyKey);
+        if (!hasCanonicalRecord && legacyRecord) {
+            const record = toRecord(legacyRecord);
+            if (record) {
+                storage.set(canonicalKey, JSON.stringify(record));
+                hasCanonicalRecord = true;
+            }
+        }
+        storage.delete(legacyKey);
     }
 }

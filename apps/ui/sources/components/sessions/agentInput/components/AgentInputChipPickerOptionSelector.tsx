@@ -2,23 +2,44 @@ import React from "react";
 import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from "@expo/vector-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import Color from "color";
 
-import { shadowLevelStyle } from "@/shadowElevation";
 import { Typography } from "@/constants/Typography";
 import { Text } from "@/components/ui/text/Text";
 import { normalizeNodeForView } from "@/components/ui/rendering/normalizeNodeForView";
 import { AgentInputChipPickerTopSelector } from "./AgentInputChipPickerTopSelector";
+import {
+  AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE,
+  AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
+  createAgentInputChipPickerOptionTransientStyles,
+  type AgentInputChipPickerOptionTransientStyles,
+} from "./agentInputChipPickerOptionStyles";
 
 import type {
   AgentInputChipPickerOption,
   AgentInputChipPickerOptionSection,
 } from "./AgentInputChipPickerTypes";
 
+const RAIL_ACTION_SIZE = 20;
+
 type WebHoverablePressableState = Readonly<{
   pressed: boolean;
   hovered?: boolean;
 }>;
+
+type WebClickableViewProps = React.ComponentPropsWithRef<typeof View> & {
+  onClick?: (event?: unknown) => void;
+  onKeyDown?: (event: {
+    key?: string;
+    preventDefault?: () => void;
+    stopPropagation?: () => void;
+    nativeEvent?: { stopPropagation?: () => void };
+  }) => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+  tabIndex?: number;
+};
+
+const WebClickableView = View as unknown as React.ComponentType<WebClickableViewProps>;
 
 export type AgentInputChipPickerOptionSelectorProps = Readonly<{
   sections: ReadonlyArray<AgentInputChipPickerOptionSection>;
@@ -28,6 +49,14 @@ export type AgentInputChipPickerOptionSelectorProps = Readonly<{
   variant: "rail" | "stacked";
 }>;
 
+export function shouldShowAgentInputChipPickerRailAction(params: Readonly<{
+  canRender: boolean;
+  hovered: boolean;
+  focused: boolean;
+}>): boolean {
+  return params.canRender && params.hovered;
+}
+
 export function AgentInputChipPickerOptionSelector(
   props: AgentInputChipPickerOptionSelectorProps,
 ) {
@@ -35,34 +64,12 @@ export function AgentInputChipPickerOptionSelector(
   const styles = stylesheet;
   const selectedIndicatorColor = theme.dark ? theme.colors.text.primary : theme.colors.button.primary.background;
   const transientStyles = React.useMemo(() => ({
+    ...createAgentInputChipPickerOptionTransientStyles(theme),
     optionRowCompact: {
       minHeight: 44,
       paddingVertical: 6,
     },
-    optionRowFocused: {
-      backgroundColor: theme.colors.surface.base,
-      ...shadowLevelStyle(theme.colors.shadowLevels[1]),
-    },
-    optionRowHovered: {
-      backgroundColor: (() => {
-        try {
-          return Color(theme.colors.surface.base).alpha(0.8).rgb().string();
-        } catch {
-          return theme.colors.surface.pressed;
-        }
-      })(),
-    },
-    optionRowPressed: {
-      opacity: 0.82,
-    },
-    optionRowDisabled: {
-      opacity: 0.45,
-    },
-  }), [
-    theme.colors.shadowLevels,
-    theme.colors.surface.base,
-    theme.colors.surface.pressed,
-  ]);
+  }), [theme]);
 
   if (props.variant === "stacked") {
     return (
@@ -122,17 +129,7 @@ type AgentInputChipPickerOptionSelectorTransientStyles = Readonly<{
     minHeight: number;
     paddingVertical: number;
   }>;
-  optionRowFocused: Readonly<Record<string, unknown>>;
-  optionRowHovered: Readonly<{
-    backgroundColor: string;
-  }>;
-  optionRowPressed: Readonly<{
-    opacity: number;
-  }>;
-  optionRowDisabled: Readonly<{
-    opacity: number;
-  }>;
-}>;
+}> & AgentInputChipPickerOptionTransientStyles;
 
 function AgentInputChipPickerOptionButton(
   props: AgentInputChipPickerOptionButtonProps,
@@ -140,37 +137,49 @@ function AgentInputChipPickerOptionButton(
   const styles = stylesheet;
   const testID = `agent-input-chip-picker.option:${props.option.id}`;
   const normalizedSubtitle = props.option.subtitle?.trim();
+  const [hovered, setHovered] = React.useState(false);
   const shouldShowSubtitle =
     !props.compact &&
     Boolean(normalizedSubtitle) &&
     normalizedSubtitle?.toLowerCase() !== props.option.label.trim().toLowerCase();
+  const shouldRenderRailAction = Platform.OS === "web" && Boolean(props.option.railAction);
+  const shouldShowRailAction = shouldShowAgentInputChipPickerRailAction({
+    canRender: shouldRenderRailAction,
+    hovered,
+    focused: props.focused,
+  });
+  const buildOptionRowStyle = (state: WebHoverablePressableState) => {
+    const { pressed } = state;
+    // RN Web exposes `hovered` in the Pressable state callback, but `react-native` types do not model it.
+    const stateHovered = state.hovered === true;
+    const rowHovered = hovered || stateHovered;
+    return [
+      styles.optionRow,
+      props.compact ? props.transientStyles.optionRowCompact : null,
+      Platform.OS === "web"
+        && rowHovered
+        && !props.focused
+        && !props.option.disabled
+        && !props.option.muted
+        ? props.transientStyles.optionRowHovered
+        : null,
+      props.focused ? props.transientStyles.optionRowFocused : null,
+      pressed ? props.transientStyles.optionRowPressed : null,
+      (props.option.disabled || props.option.muted) ? props.transientStyles.optionRowDisabled : null,
+    ];
+  };
+  const activateFromWebEvent = (event?: unknown) => {
+    const maybeEvent = event as {
+      stopPropagation?: () => void;
+      nativeEvent?: { stopPropagation?: () => void };
+    } | undefined;
+    try { maybeEvent?.stopPropagation?.(); } catch {}
+    try { maybeEvent?.nativeEvent?.stopPropagation?.(); } catch {}
+    props.onPress();
+  };
 
-  return (
-    <Pressable
-      testID={testID}
-      accessibilityRole="button"
-      accessibilityLabel={props.option.label}
-      onPress={props.onPress}
-      style={(state) => {
-        const { pressed } = state;
-        // RN Web exposes `hovered` in the Pressable state callback, but `react-native` types do not model it.
-        const hovered = (state as WebHoverablePressableState).hovered === true;
-        return [
-          styles.optionRow,
-          props.compact ? props.transientStyles.optionRowCompact : null,
-          Platform.OS === "web"
-            && hovered
-            && !props.focused
-            && !props.option.disabled
-            && !props.option.muted
-            ? props.transientStyles.optionRowHovered
-            : null,
-          props.focused ? props.transientStyles.optionRowFocused : null,
-          pressed ? props.transientStyles.optionRowPressed : null,
-          (props.option.disabled || props.option.muted) ? props.transientStyles.optionRowDisabled : null,
-        ];
-      }}
-    >
+  const content = (
+    <>
       <View style={styles.optionLeft}>
         {props.option.icon ? (
           <View style={styles.optionIcon}>
@@ -184,12 +193,73 @@ function AgentInputChipPickerOptionButton(
           ) : null}
         </View>
       </View>
-      <Ionicons
-        name="checkmark-outline"
-        size={14}
-        color={props.checkColor}
-        style={props.selected ? null : { opacity: 0 }}
-      />
+      <View style={styles.optionRight}>
+        {shouldRenderRailAction && props.option.railAction ? (
+          <Pressable
+            testID={props.option.railAction.testID}
+            accessibilityRole="button"
+            accessibilityLabel={props.option.railAction.accessibilityLabel}
+            accessibilityState={{
+              disabled: !shouldShowRailAction || props.option.railAction.disabled === true,
+              selected: props.option.railAction.selected === true,
+            }}
+            disabled={!shouldShowRailAction || props.option.railAction.disabled === true}
+            hitSlop={4}
+            onPress={(event) => {
+              event?.stopPropagation?.();
+              props.option.railAction?.onPress();
+            }}
+            style={[
+              styles.railAction,
+              shouldShowRailAction ? null : styles.railActionHidden,
+            ]}
+          >
+            {normalizeNodeForView(props.option.railAction.icon)}
+          </Pressable>
+        ) : null}
+        <Ionicons
+          name="checkmark-outline"
+          size={14}
+          color={props.checkColor}
+          style={props.selected ? null : { opacity: 0 }}
+        />
+      </View>
+    </>
+  );
+
+  if (shouldRenderRailAction) {
+    return (
+      <WebClickableView
+        testID={testID}
+        accessibilityLabel={props.option.label}
+        onClick={activateFromWebEvent}
+        onKeyDown={(event) => {
+          const key = String(event?.key ?? "");
+          if (key !== "Enter" && key !== " ") return;
+          event?.preventDefault?.();
+          activateFromWebEvent(event);
+        }}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        tabIndex={0}
+        style={buildOptionRowStyle({ pressed: false })}
+      >
+        {content}
+      </WebClickableView>
+    );
+  }
+
+  return (
+    <Pressable
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={props.option.label}
+      onPress={props.onPress}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      style={(state) => buildOptionRowStyle(state as WebHoverablePressableState)}
+    >
+      {content}
     </Pressable>
   );
 }
@@ -218,7 +288,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   optionRow: {
     minHeight: 36,
-    borderRadius: 12,
+    borderRadius: AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
     borderWidth: 0,
     paddingHorizontal: 8,
     paddingVertical: 6,
@@ -235,14 +305,29 @@ const stylesheet = StyleSheet.create((theme) => ({
     gap: 8,
   },
   optionIcon: {
-    width: 18,
-    height: 18,
+    width: AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE,
+    height: AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE,
     alignItems: "center",
     justifyContent: "center",
   },
   optionTextBlock: {
     flex: 1,
     gap: 0,
+  },
+  optionRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 6,
+  },
+  railAction: {
+    width: RAIL_ACTION_SIZE,
+    height: RAIL_ACTION_SIZE,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  railActionHidden: {
+    opacity: 0,
   },
   optionLabel: {
     fontSize: 14,

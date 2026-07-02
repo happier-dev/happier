@@ -1,8 +1,13 @@
 import { vi } from 'vitest';
 
+type StorageModule = typeof import('@/sync/domains/state/storage');
+type RegistryUiBehaviorModule = typeof import('@/agents/registry/registryUiBehavior');
 type SessionShellModuleFactory = () => unknown | Promise<unknown>;
 type SessionShellImportOriginal = <T = unknown>() => Promise<T>;
 type SessionShellStorageModuleFactory = (importOriginal: SessionShellImportOriginal) => unknown | Promise<unknown>;
+type SessionShellRegistryUiBehaviorModuleFactory =
+    () => Partial<RegistryUiBehaviorModule> | Promise<Partial<RegistryUiBehaviorModule>>;
+type SessionDraftTextSnapshot = Readonly<{ sessionId: string; text: string }>;
 
 type InstallSessionShellCommonModuleMocksOptions = Readonly<{
     reactNative?: SessionShellModuleFactory;
@@ -10,6 +15,7 @@ type InstallSessionShellCommonModuleMocksOptions = Readonly<{
     text?: SessionShellModuleFactory;
     modal?: SessionShellModuleFactory;
     router?: SessionShellModuleFactory;
+    registryUiBehavior?: SessionShellRegistryUiBehaviorModuleFactory;
     storage?: SessionShellStorageModuleFactory;
 }>;
 
@@ -20,8 +26,10 @@ const sessionShellModuleState = vi.hoisted(() => ({
         text: undefined as SessionShellModuleFactory | undefined,
         modal: undefined as SessionShellModuleFactory | undefined,
         router: undefined as SessionShellModuleFactory | undefined,
+        registryUiBehavior: undefined as SessionShellRegistryUiBehaviorModuleFactory | undefined,
         storage: undefined as SessionShellStorageModuleFactory | undefined,
     },
+    draftStateBySessionId: new Map<string, { currentValue: string }>(),
 }));
 
 export function installSessionShellCommonModuleMocks(
@@ -33,6 +41,7 @@ export function installSessionShellCommonModuleMocks(
         text: options.text,
         modal: options.modal,
         router: options.router,
+        registryUiBehavior: options.registryUiBehavior,
         storage: options.storage,
     };
 
@@ -86,13 +95,106 @@ export function installSessionShellCommonModuleMocks(
         return createExpoRouterMock().module;
     });
 
-    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    vi.mock('@/agents/registry/registryUiBehavior', async () => {
         const activeOptions = sessionShellModuleState.options;
-        if (activeOptions.storage) {
-            return await activeOptions.storage(importOriginal);
+        if (activeOptions.registryUiBehavior) {
+            return await activeOptions.registryUiBehavior();
         }
 
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({});
+        return {
+            buildResumeCapabilityOptionsFromUiState: () => ({}),
+            buildNewSessionOptionsFromUiState: () => ({}),
+            canSelectAgentWithoutDetectedCli: () => false,
+            getNewSessionAgentInputExtraActionChips: () => [],
+            buildSpawnEnvironmentVariablesFromUiState: () => ({}),
+            buildResumeSessionExtrasFromUiState: () => ({}),
+            buildSpawnSessionExtrasFromUiState: () => ({}),
+            buildWakeResumeExtras: () => ({}),
+            getAgentResumeExperimentsFromSettings: () => ({ enabled: true, switches: {} }),
+            getNewSessionPreflightIssues: () => [],
+            getNewSessionRelevantInstallableDepKeys: () => [],
+            resolveAgentUiBehavior: () => ({}),
+            resolveAgentUiBehaviorFromFlavor: () => ({}),
+            supportsDetectedMcpConfigScan: () => false,
+            supportsEditableSessionGoals: () => false,
+        } satisfies Partial<RegistryUiBehaviorModule>;
     });
+
+    vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const defaultStorageModule = createStorageModuleStub({});
+        const activeOptions = sessionShellModuleState.options;
+        if (activeOptions.storage) {
+            const providedStorageModule = await activeOptions.storage(importOriginal) as Partial<StorageModule>;
+            const storage = providedStorageModule.storage ?? defaultStorageModule.storage;
+            return {
+                ...defaultStorageModule,
+                ...providedStorageModule,
+                storage,
+                getStorage: providedStorageModule.getStorage ?? (() => storage),
+            } satisfies Partial<StorageModule>;
+        }
+
+        return defaultStorageModule;
+    });
+
+    vi.mock('@/hooks/session/useDraft', () => ({
+        useDraft: (sessionId: string, value: string, onChange: (text: string) => void) => {
+            const stateKey = String(sessionId ?? '');
+            let state = sessionShellModuleState.draftStateBySessionId.get(stateKey);
+            if (!state) {
+                state = { currentValue: value };
+                sessionShellModuleState.draftStateBySessionId.set(stateKey, state);
+            }
+            state.currentValue = value;
+            const update = (text: string) => {
+                state.currentValue = text;
+                onChange(text);
+            };
+            return {
+                clearDraft: vi.fn(() => {
+                    update('');
+                }),
+                clearDraftIfCurrentValueMatches: vi.fn((expectedValue: string) => {
+                    if (state.currentValue !== expectedValue) return false;
+                    update('');
+                    return true;
+                }),
+                clearDraftForSessionIfCurrentValueMatches: vi.fn((snapshot: SessionDraftTextSnapshot) => {
+                    if (snapshot.sessionId !== sessionId || state.currentValue !== snapshot.text) return false;
+                    update('');
+                    return true;
+                }),
+                setDraftValue: vi.fn((nextValueOrUpdater: string | ((currentValue: string) => string)) => {
+                    update(typeof nextValueOrUpdater === 'function'
+                        ? nextValueOrUpdater(state.currentValue)
+                        : nextValueOrUpdater);
+                }),
+                restoreDraft: vi.fn((draft: string) => {
+                    update(draft);
+                }),
+                restoreDraftForSessionIfCurrentValueMatches: vi.fn((
+                    snapshot: SessionDraftTextSnapshot,
+                    expectedCurrentValue: string,
+                ) => {
+                    if (snapshot.sessionId !== sessionId || state.currentValue !== expectedCurrentValue) return false;
+                    update(snapshot.text);
+                    return true;
+                }),
+                restoreComposerSnapshot: vi.fn((snapshot: SessionDraftTextSnapshot) => {
+                    if (snapshot.sessionId === sessionId) {
+                        update(snapshot.text);
+                    }
+                }),
+            };
+        },
+    }));
+}
+
+export function readSessionShellDraftTextForTest(sessionId: string): string | undefined {
+    return sessionShellModuleState.draftStateBySessionId.get(sessionId)?.currentValue;
+}
+
+export function resetSessionShellDraftStateForTest(): void {
+    sessionShellModuleState.draftStateBySessionId.clear();
 }

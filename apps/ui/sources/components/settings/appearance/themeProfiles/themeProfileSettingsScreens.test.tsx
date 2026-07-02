@@ -27,8 +27,7 @@ const shared = vi.hoisted(() => ({
     routerPush: vi.fn(),
     routerBack: vi.fn(),
     clipboardSetStringAsync: vi.fn(),
-    fileSystemReadAsStringAsync: vi.fn(),
-    fileSystemWriteAsStringAsync: vi.fn(),
+    fileSystemFiles: new Map<string, string>(),
     sharingShareAsync: vi.fn(),
     nativePickFiles: vi.fn(),
     updateTheme: vi.fn(),
@@ -71,12 +70,44 @@ vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 vi.mock('expo-status-bar', () => ({ setStatusBarStyle: shared.setStatusBarStyle }));
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: shared.setSystemBackgroundColorAsync }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: shared.clipboardSetStringAsync }));
-vi.mock('expo-file-system/legacy', () => ({
-    EncodingType: { UTF8: 'utf8' },
-    cacheDirectory: 'file:///cache/',
-    readAsStringAsync: shared.fileSystemReadAsStringAsync,
-    writeAsStringAsync: shared.fileSystemWriteAsStringAsync,
-}));
+vi.mock('expo-file-system', () => {
+    const joinFileUri = (...segments: string[]): string => {
+        const [first = '', ...rest] = segments;
+        return rest.reduce((current, segment) => `${current.replace(/\/+$/, '')}/${segment.replace(/^\/+/, '')}`, first);
+    };
+    class ExpoFileMock {
+        readonly uri: string;
+        constructor(...segments: string[]) {
+            this.uri = joinFileUri(...segments);
+        }
+        get exists() {
+            return shared.fileSystemFiles.has(this.uri);
+        }
+        async text() {
+            const value = shared.fileSystemFiles.get(this.uri);
+            if (typeof value !== 'string') throw new Error(`missing file: ${this.uri}`);
+            return value;
+        }
+        write(payload: string) {
+            shared.fileSystemFiles.set(this.uri, payload);
+        }
+        delete() {
+            shared.fileSystemFiles.delete(this.uri);
+        }
+    }
+    return {
+        File: ExpoFileMock,
+        Paths: {
+            cache: 'file:///cache/',
+            document: 'file:///documents/',
+        },
+        readAsStringAsync: vi.fn(() => { throw new Error('legacy readAsStringAsync should not be used'); }),
+        writeAsStringAsync: vi.fn(() => { throw new Error('legacy writeAsStringAsync should not be used'); }),
+    };
+});
+vi.mock('expo-file-system/legacy', () => {
+    throw new Error('expo-file-system/legacy should not be imported');
+});
 vi.mock('expo-sharing', () => ({ shareAsync: shared.sharingShareAsync }));
 vi.mock('@/utils/files/nativePickFiles', () => ({ nativePickFiles: shared.nativePickFiles }));
 vi.mock('expo-router', async () => {
@@ -197,8 +228,7 @@ afterEach(() => {
     shared.routerPush.mockClear();
     shared.routerBack.mockClear();
     shared.clipboardSetStringAsync.mockReset();
-    shared.fileSystemReadAsStringAsync.mockReset();
-    shared.fileSystemWriteAsStringAsync.mockReset();
+    shared.fileSystemFiles.clear();
     shared.sharingShareAsync.mockReset();
     shared.nativePickFiles.mockReset();
     shared.nativePickFiles.mockResolvedValue([]);
@@ -283,9 +313,10 @@ describe('Theme profile settings screen', () => {
         const builtInDropdown = await findBuiltInThemesDropdown(screen);
         const premiumDarkItem = builtInDropdown!.props.items.find((item: { id: string }) => item.id === 'premiumDark');
         const duplicateAction = findRowActionsInNode(premiumDarkItem.rightElement).find((action) => action.id === 'duplicate-premiumDark');
+        expect(duplicateAction?.onPress).toBeTypeOf('function');
 
         await act(async () => {
-            duplicateAction!.onPress();
+            duplicateAction?.onPress?.();
         });
 
         const [clone] = getThemeProfiles().profiles;
@@ -351,6 +382,7 @@ describe('Theme profile editor', () => {
         expect(screen.findByTestId('settings-theme-profile-editor')).not.toBeNull();
         expect(screen.findByTestId('settings-theme-color-token-dark-background.canvas')).not.toBeNull();
         expect(screen.findRowByTitle('Canvas background')?.props.subtitle).toBe('App, root, screen, and settings-list backdrop color.');
+        expect(screen.findRowByTitle('settingsAppearance.themeProfiles.groups.composer')).not.toBeNull();
         expect(screen.findByTestId('settings-theme-editor-mode:dark')).toBeNull();
         expect(screen.findRowByTitle('settingsAppearance.themeProfiles.editorMode')).toBeNull();
     });
@@ -631,6 +663,18 @@ describe('Theme profile import and export screens', () => {
         expect(getThemeProfiles().profiles[0]?.overrides.light['background.canvas']).toBe('#123456');
     });
 
+    it('imports a native theme JSON file through Expo File', async () => {
+        const json = exportThemeProfileToJson(baseProfile('shared', { light: { 'background.canvas': '#123456' }, dark: {} }));
+        shared.fileSystemFiles.set('file:///picked/theme.json', json);
+        shared.nativePickFiles.mockResolvedValueOnce([{ kind: 'native', uri: 'file:///picked/theme.json', name: 'theme.json', mimeType: 'application/json' }]);
+        const screen = await renderImportScreen();
+
+        await screen.pressByTestIdAsync('settings-theme-profile-import-file');
+        await screen.pressByTestIdAsync('settings-theme-profile-import-submit');
+
+        expect(getThemeProfiles().profiles[0]?.overrides.light['background.canvas']).toBe('#123456');
+    });
+
     it('shows the supported import formats hint on the import screen', async () => {
         const screen = await renderImportScreen();
 
@@ -688,12 +732,9 @@ describe('Theme profile import and export screens', () => {
 
         await screen.pressByTestIdAsync('settings-theme-profile-export-download');
 
-        expect(shared.fileSystemWriteAsStringAsync).toHaveBeenCalledWith(
-            expect.stringContaining('happier-theme-profile-ocean.json'),
-            expect.stringContaining('happier.themeProfile'),
-            expect.any(Object),
-        );
-        expect(shared.sharingShareAsync).toHaveBeenCalled();
+        const exportedUri = 'file:///cache/happier-theme-profile-ocean.json';
+        expect(shared.fileSystemFiles.get(exportedUri)).toContain('happier.themeProfile');
+        expect(shared.sharingShareAsync).toHaveBeenCalledWith(exportedUri, expect.any(Object));
     });
 
     it('does not export an arbitrary custom profile when no profile is selected for export', async () => {

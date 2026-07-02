@@ -63,6 +63,14 @@ vi.mock('@/components/pets/runtime/PetAppShellCompanionMount', () => ({
     }),
 }));
 
+vi.mock('@/changelog/releaseNotes', () => ({
+    ReleaseNotesAutoShowMount: () => {
+        return React.createElement('ReleaseNotesAutoShowMount', {
+            testID: 'release-notes-auto-show-mount',
+        });
+    },
+}));
+
 installRootLayoutRouteCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');

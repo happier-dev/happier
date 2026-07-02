@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { registerStorageStateReader } from '@/sync/domains/state/storageStateReaderBridge';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
 const trackPermissionResponse = vi.fn();
@@ -23,7 +24,7 @@ const sessionRpcWithServerScope = vi.fn();
 const teleportVoiceAgentToSessionRoot = vi.fn();
 
 function createBaseState(): any {
-  const base: any = {
+  return {
     sessions: {
       s1: {
         id: 's1',
@@ -71,6 +72,17 @@ function createBaseState(): any {
         metadata: { path: '/tmp/matrix', machineId: 'm1', host: 'a-host', name: 'leeroy' },
       },
     },
+    sessionListIndexByServerId: {
+      'server-a': [
+        { type: 'session', sessionId: 's1', serverId: 'server-a', serverName: 'Server A' },
+        { type: 'session', sessionId: 's2', serverId: 'server-a', serverName: 'Server A' },
+        { type: 'session', sessionId: 's_visible_only', serverId: 'server-a', serverName: 'Server A' },
+        { type: 'session', sessionId: 's_matrix', serverId: 'server-a', serverName: 'Server A' },
+      ],
+      'server-b': [
+        { type: 'session', sessionId: 's_other', serverId: 'server-b', serverName: 'Server B' },
+      ],
+    },
     sessionListRenderables: {
       s_visible_only: {
         id: 's_visible_only',
@@ -78,7 +90,7 @@ function createBaseState(): any {
         updatedAt: 75,
         activeAt: 75,
         createdAt: 70,
-        seq: 1,
+        seq: 2,
         metadataVersion: 1,
         agentStateVersion: 1,
         thinking: false,
@@ -101,12 +113,6 @@ function createBaseState(): any {
         metadata: { summaryText: 'Session QA Voice Matrix', path: '/tmp/matrix' },
       },
     },
-    sessionListIndexByServerId: {
-      'server-a': [
-        { type: 'session', sessionId: 's_visible_only', serverId: 'server-a', serverName: 'Server A' },
-        { type: 'session', sessionId: 's_matrix', serverId: 'server-a', serverName: 'Server A' },
-      ],
-    },
     concurrentSessionListCacheByServerId: {
       'server-b': {
         serverName: 'Server B',
@@ -123,8 +129,8 @@ function createBaseState(): any {
       },
     },
     machines: {
-      m1: { id: 'm1', metadata: { host: 'a-host' } },
-      m2: { id: 'm2', metadata: { host: 'b-host' } },
+      m1: { id: 'm1', active: true, metadata: { host: 'a-host' }, spawnReadinessStatus: 'ready' },
+      m2: { id: 'm2', active: true, metadata: { host: 'b-host' }, spawnReadinessStatus: 'ready' },
     },
     sessionMessages: {
       s1: {
@@ -183,24 +189,10 @@ function createBaseState(): any {
       ],
     },
   };
-
-  base.concurrentSessionListCacheByServerId = {
-    'server-a': {
-      serverName: 'Server A',
-      sessions: {
-        s1: base.sessions.s1,
-        s2: base.sessions.s2,
-        sys_voice: base.sessions.sys_voice,
-        s_matrix: base.sessions.s_matrix,
-      },
-    },
-    ...base.concurrentSessionListCacheByServerId,
-  };
-
-  return base;
 }
 
 let state: any = createBaseState();
+const readMockStorageState = () => ({ ...state, applySettingsLocal });
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -264,6 +256,11 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-a' }),
 }));
 
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+  areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
+  getServerProfileById: (_serverId: unknown) => null,
+}));
+
 vi.mock('@/auth/context/AuthContext', () => ({
   getCurrentAuth: () => ({ refreshFromActiveServer }),
 }));
@@ -279,6 +276,7 @@ vi.mock('expo-router', async () => {
 describe('voice tool handlers', () => {
   beforeEach(() => {
     state = createBaseState();
+    registerStorageStateReader(readMockStorageState);
     trackPermissionResponse.mockReset();
     sendMessage.mockReset();
     ensureSessionVisibleForMessageRoute.mockReset();
@@ -311,25 +309,13 @@ describe('voice tool handlers', () => {
 
     expect(JSON.parse(result)).toMatchObject({ ok: true });
     expect(sendSessionMessageWithServerScope).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 's1', message: 'hi' }));
+
   });
 
-  it('can start a review via review.start action (intent-specific)', async () => {
-    executionRunStart.mockResolvedValue({ runId: 'run_1', callId: 'c1', sidechainId: 's1' });
-
+  it('does not expose review.start when the review action is not voice-enabled', async () => {
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
-
-    const res = await tools.startReview({ engineIds: ['claude'], instructions: 'Review.', changeType: 'committed', base: { kind: 'none' } });
-    expect(executionRunStart).toHaveBeenCalledWith(
-      's1',
-      expect.objectContaining({
-        intent: 'review',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-        intentInput: expect.objectContaining({ engineId: 'claude' }),
-      }),
-      { serverId: 'server-a' },
-    );
-    expect(JSON.parse(res)).toMatchObject({ ok: true });
+    expect(tools.startReview).toBeUndefined();
   });
 
   it('can apply an execution run action via sessionExecutionRunAction', async () => {
@@ -600,25 +586,10 @@ describe('voice tool handlers', () => {
     expect(routerNavigate).toHaveBeenCalledWith('/session/s_other', expect.any(Object));
   });
 
-  it('switches server before starting an execution run when targeting a session from another server cache', async () => {
-    setActiveServerAndSwitch.mockResolvedValue(true);
-    executionRunStart.mockResolvedValue({ runId: 'run_x', callId: 'c1', sidechainId: 'sc1' });
-
+  it('does not expose review.start for cross-server sessions when the action is not voice-enabled', async () => {
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : null) });
-
-    const res = await tools.startReview({ sessionId: 's_other', engineIds: ['claude'], instructions: 'Review.', changeType: 'committed', base: { kind: 'none' } });
-    expect(setActiveServerAndSwitch).not.toHaveBeenCalled();
-    expect(executionRunStart).toHaveBeenCalledWith(
-      's_other',
-      expect.objectContaining({
-        intent: 'review',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-        intentInput: expect.objectContaining({ sessionId: 's_other' }),
-      }),
-      { serverId: 'server-b' },
-    );
-    expect(JSON.parse(res)).toMatchObject({ ok: true });
+    expect(tools.startReview).toBeUndefined();
   });
 
   it('increments agent transcript epoch when resetting the global agent and persistence is enabled', async () => {
@@ -680,9 +651,9 @@ describe('voice tool handlers', () => {
     expect(JSON.parse(result)).toMatchObject({ ok: true });
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
       sessionId: 's1',
+      serverId: 'server-a',
       method: 'permission',
       payload: { id: 'req_permission', approved: true },
-      serverId: 'server-a',
     });
   });
 
@@ -697,9 +668,9 @@ describe('voice tool handlers', () => {
     expect(JSON.parse(result)).toMatchObject({ ok: true });
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
       sessionId: 's1',
+      serverId: 'server-a',
       method: 'permission',
       payload: { id: 'req_b', approved: true },
-      serverId: 'server-a',
     });
     expect(trackPermissionResponse).toHaveBeenCalledWith(true);
   });
@@ -719,7 +690,7 @@ describe('voice tool handlers', () => {
     expect(trackPermissionResponse).not.toHaveBeenCalled();
   });
 
-  it('falls back to the unique synced session with a pending permission request when the resolved session has none', async () => {
+  it('answers a transcript-backed permission request in the resolved session', async () => {
     state.sessions.sys_voice.agentState.requests = {};
     state.sessions.s1.agentState.requests = {};
     state.sessions.s2.agentState.requests = {};
@@ -746,16 +717,16 @@ describe('voice tool handlers', () => {
     sessionRpcWithServerScope.mockResolvedValue({ ok: true });
 
     const { createVoiceToolHandlers } = await import('./handlers');
-    const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 'sys_voice') });
+    const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
 
     const result = await tools.processPermissionRequest({ decision: 'allow' });
 
     expect(JSON.parse(result)).toMatchObject({ ok: true, sessionId: 's1', requestId: 'req_permission' });
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
       sessionId: 's1',
+      serverId: 'server-a',
       method: 'permission',
       payload: { id: 'req_permission', approved: true },
-      serverId: 'server-a',
     });
   });
 
@@ -831,9 +802,9 @@ describe('voice tool handlers', () => {
     });
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
       sessionId: 's1',
+      serverId: 'server-a',
       method: 'permission',
       payload: { id: 'acp-fs-write:64154962-012d-4d95-8211-b65855cc7476', approved: true },
-      serverId: 'server-a',
     });
   });
 
@@ -928,9 +899,9 @@ describe('voice tool handlers', () => {
     expect(JSON.parse(result)).toMatchObject({ ok: true });
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
       sessionId: 's1',
+      serverId: 'server-a',
       method: 'permission',
       payload: { id: 'req_question', approved: true, answers: { 'Continue?': 'Yes' } },
-      serverId: 'server-a',
     });
   });
 
@@ -973,7 +944,6 @@ describe('voice tool handlers', () => {
           approved: false,
           answers: { 'May I create QA_DENY_PATH.txt?': `No, don't create it` },
         },
-        serverId: 'server-a',
       }),
     );
   });
@@ -995,13 +965,13 @@ describe('voice tool handlers', () => {
     expect(JSON.parse(result)).toMatchObject({ ok: true });
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
       sessionId: 's1',
+      serverId: 'server-a',
       method: 'permission',
       payload: {
         id: 'req_exit_plan',
         approved: false,
         reason: 'The plan needs another pass before exiting plan mode.',
       },
-      serverId: 'server-a',
     });
   });
 
@@ -1021,7 +991,7 @@ describe('voice tool handlers', () => {
     expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'permission_request_not_found' });
   });
 
-  it('falls back to the unique synced session with a pending user-action request when the resolved session has none', async () => {
+  it('answers a transcript-backed user-action request in the resolved session', async () => {
     state.sessions.sys_voice.agentState.requests = {};
     state.sessions.s1.agentState.requests = {};
     state.sessions.s2.agentState.requests = {};
@@ -1048,7 +1018,7 @@ describe('voice tool handlers', () => {
     sessionRpcWithServerScope.mockResolvedValue({ ok: true });
 
     const { createVoiceToolHandlers } = await import('./handlers');
-    const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 'sys_voice') });
+    const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
 
     const result = await (tools as any).answerUserActionRequest({
       answers: [{ question: 'Continue?', answer: 'Yes' }],
@@ -1057,9 +1027,9 @@ describe('voice tool handlers', () => {
     expect(JSON.parse(result)).toMatchObject({ ok: true, sessionId: 's1', requestId: 'req_question' });
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
       sessionId: 's1',
+      serverId: 'server-a',
       method: 'permission',
       payload: { id: 'req_question', approved: true, answers: { 'Continue?': 'Yes' } },
-      serverId: 'server-a',
     });
   });
 
@@ -1187,6 +1157,7 @@ describe('voice tool handlers', () => {
     expect(s2?.lastMessagePreview?.text).toContain('Tool: read');
     expect(s2?.lastMessagePreview?.text).not.toContain('/Users/alice/SecretRepo/README.md');
     expect(s2?.lastMessagePreview?.text).not.toContain('Args:');
+
   });
 
   it('includes cached sessions from other servers in listSessions (with serverId)', async () => {
@@ -1246,9 +1217,8 @@ describe('voice tool handlers', () => {
     });
   });
 
-  it('falls back to the raw session title when the visible cache is unavailable', async () => {
-    state.sessionListIndexByServerId = {};
-    state.sessionListRenderables = {};
+  it('uses session list renderables as a fallback human title source when raw sessions are stale', async () => {
+    state.sessionListViewData = null;
 
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
@@ -1260,46 +1230,33 @@ describe('voice tool handlers', () => {
     expect(matrix).toBeTruthy();
     expect(matrix).toMatchObject({
       id: 's_matrix',
-      title: 'leeroy',
+      title: 'Session QA Voice Matrix',
     });
   });
 
   it('uses a larger default session list page when limit is omitted so older visible titles stay discoverable', async () => {
-    state.sessionListRenderables = {
-      ...Object.fromEntries(
-        Array.from({ length: 30 }, (_, index) => {
-          const id = `s_recent_${index + 1}`;
-          return [
-            id,
-            {
-              id,
-              active: true,
-              updatedAt: 1000 - index,
-              presence: 'online',
-              metadata: { summaryText: `Recent session ${index + 1}`, path: `/tmp/recent-${index + 1}` },
-            },
-          ];
-        }),
-      ),
-      s_matrix: {
-        id: 's_matrix',
-        active: false,
-        updatedAt: 60,
-        presence: 'offline',
-        metadata: { summaryText: 'Session QA Voice Matrix', path: '/tmp/matrix' },
+    state.sessionListViewData = [
+      ...Array.from({ length: 30 }, (_, index) => ({
+        type: 'session',
+        session: {
+          id: `s_recent_${index + 1}`,
+          active: true,
+          updatedAt: 1000 - index,
+          presence: 'online',
+          metadata: { summaryText: `Recent session ${index + 1}`, path: `/tmp/recent-${index + 1}` },
+        },
+      })),
+      {
+        type: 'session',
+        session: {
+          id: 's_matrix',
+          active: false,
+          updatedAt: 60,
+          presence: 'offline',
+          metadata: { summaryText: 'Session QA Voice Matrix', path: '/tmp/matrix' },
+        },
       },
-    };
-    state.sessionListIndexByServerId = {
-      'server-a': [
-        ...Array.from({ length: 30 }, (_, index) => ({
-          type: 'session' as const,
-          sessionId: `s_recent_${index + 1}`,
-          serverId: 'server-a',
-          serverName: 'Server A',
-        })),
-        { type: 'session' as const, sessionId: 's_matrix', serverId: 'server-a', serverName: 'Server A' },
-      ],
-    };
+    ];
 
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
@@ -1428,13 +1385,13 @@ describe('voice tool handlers', () => {
     expect(parsed.recentMessages).toBeUndefined();
   });
 
-  it('respects actionsSettingsV1 disabledSurfaces for voice surface', async () => {
-    // Configure settings to disable session.message.send for voice surface
+  it('respects actionsSettingsV1 disabledSurfaces for voice_tool surface', async () => {
+    // Configure settings to disable session.message.send for voice_tool surface
     state.settings.actionsSettingsV1 = {
       v: 1,
       actions: {
         'session.message.send': {
-          disabledSurfaces: ['voice'],
+          disabledSurfaces: ['voice_tool'],
         },
       },
     };
@@ -1445,7 +1402,7 @@ describe('voice tool handlers', () => {
     const result = await tools.sendSessionMessage({ message: 'hi' });
     const parsed = JSON.parse(result);
 
-    // Should fail because action is disabled for voice surface
+    // Should fail because action is disabled for voice_tool surface
     expect(parsed.ok).toBe(false);
     expect(parsed.errorCode).toBe('action_disabled');
     expect(sendSessionMessageWithServerScope).not.toHaveBeenCalled();

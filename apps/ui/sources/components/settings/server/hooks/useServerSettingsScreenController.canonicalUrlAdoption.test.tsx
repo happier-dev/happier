@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { installServerSettingsHooksCommonModuleMocks } from './serverSettingsHooksTestHelpers';
 
 
@@ -50,7 +51,7 @@ vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
     switchConnectionToActiveServer: vi.fn(async () => {}),
 }));
 
-const upsertServerProfileMock = vi.fn((..._args: unknown[]) => ({
+const upsertServerProfileMock = vi.fn((..._args: unknown[]): ServerProfile => ({
     id: 'p0',
     serverUrl: 'http://example.test',
     name: 'Example',
@@ -58,6 +59,13 @@ const upsertServerProfileMock = vi.fn((..._args: unknown[]) => ({
     updatedAt: 0,
     lastUsedAt: 0,
 }));
+const getServerProfileByIdMock = vi.fn((id: string) => {
+    const profile = upsertServerProfileMock.mock.results
+        .map((result) => result.value)
+        .reverse()
+        .find((value) => value?.id === id);
+    return profile ?? null;
+});
 const removeServerProfileMock = vi.fn((..._args: unknown[]) => undefined);
 const setActiveServerIdMock = vi.fn((..._args: unknown[]) => undefined);
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
@@ -65,6 +73,7 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     listServerProfiles: () => [],
     getActiveServerId: () => '',
     getDeviceDefaultServerId: () => '',
+    getServerProfileById: (...args: [string]) => getServerProfileByIdMock(...args),
     getTabActiveServerId: () => null,
     getResetToDefaultServerId: () => '',
     clearTabActiveServerId: vi.fn(),
@@ -72,6 +81,7 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     setActiveServerId: (...args: unknown[]) => setActiveServerIdMock(...args),
     upsertServerProfile: (...args: unknown[]) => upsertServerProfileMock(...args),
     removeServerProfile: (...args: unknown[]) => removeServerProfileMock(...args),
+    resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => profile.serverIdentityId ?? profile.id,
 }));
 
 vi.mock('@/sync/domains/server/serverConfig', () => ({
@@ -137,6 +147,28 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
 }));
 
 describe('useServerSettingsScreenController (canonical URL adoption)', () => {
+    beforeEach(() => {
+        refreshFromActiveServerMock.mockClear();
+        modalConfirmMock.mockClear();
+        upsertServerProfileMock.mockReset();
+        getServerProfileByIdMock.mockReset();
+        removeServerProfileMock.mockReset();
+        setActiveServerIdMock.mockReset();
+        runtimeFetchMock.mockClear();
+        getServerFeaturesSnapshotMock.mockReset();
+        getServerFeaturesSnapshotMock.mockResolvedValue({
+            status: 'ready',
+            features: {
+                features: {},
+                capabilities: {
+                    server: {
+                        canonicalServerUrl: 'https://canonical.example.test',
+                    },
+                },
+            },
+        });
+    });
+
     it('offers to adopt canonicalServerUrl from /v1/features and migrates the stored profile', async () => {
         upsertServerProfileMock
             .mockReturnValueOnce({ id: 'p1', serverUrl: 'http://127.0.0.1:3005', name: 'Local', createdAt: 0, updatedAt: 0, lastUsedAt: 0 })
@@ -168,5 +200,56 @@ describe('useServerSettingsScreenController (canonical URL adoption)', () => {
         );
         expect(removeServerProfileMock).toHaveBeenCalledWith('p1');
         expect(setActiveServerIdMock).toHaveBeenCalledWith('p2', expect.anything());
+    });
+
+    it('activates the stable server identity id after canonical adoption learns one', async () => {
+        upsertServerProfileMock
+            .mockReturnValueOnce({
+                id: 'p1',
+                serverUrl: 'http://127.0.0.1:3005',
+                name: 'Local',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+            })
+            .mockReturnValueOnce({
+                id: 'p2',
+                serverUrl: 'https://canonical.example.test',
+                name: 'Local',
+                serverIdentityId: 'srv_identity_manual',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+            });
+        getServerProfileByIdMock.mockReturnValueOnce({
+            id: 'p2',
+            serverUrl: 'https://canonical.example.test',
+            name: 'Local',
+            serverIdentityId: 'srv_identity_manual',
+            createdAt: 0,
+            updatedAt: 0,
+            lastUsedAt: 0,
+        });
+
+        const { useServerSettingsScreenController } = await import('./useServerSettingsScreenController');
+
+        let value: any = null;
+        function Probe() {
+            value = useServerSettingsScreenController();
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        await act(async () => {
+            value.onChangeUrl('http://127.0.0.1:3005');
+            value.onChangeName('Local');
+        });
+
+        await act(async () => {
+            await value.onAddServer();
+        });
+
+        expect(setActiveServerIdMock).toHaveBeenCalledWith('srv_identity_manual', expect.anything());
     });
 });

@@ -6,7 +6,7 @@ import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getRes
 
 import { useNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
 
-function createBuiltInBackendEntry(backendId: 'claude' | 'codex', title: string): ResolvedBackendCatalogEntry {
+function createBuiltInBackendEntry(backendId: 'claude' | 'codex' | 'kimi', title: string): ResolvedBackendCatalogEntry {
     const backendTarget = { kind: 'backend' as const, backendId };
     return {
         backendTarget,
@@ -105,6 +105,39 @@ describe('useNewSessionAgentPickerEngineSelectionState', () => {
                     },
                 },
             }),
+        });
+    });
+
+    it('clears ACP session mode when selecting a backend that does not expose session modes', async () => {
+        const claudeEntry = createBuiltInBackendEntry('claude', 'Claude');
+        const kimiEntry = createBuiltInBackendEntry('kimi', 'Kimi');
+        const setAcpSessionModeId = vi.fn();
+        const onRememberEngineSelection = vi.fn();
+
+        const hook = await renderHook(() => useNewSessionAgentPickerEngineSelectionState({
+            selectedBackendEntry: claudeEntry,
+            selectedBackendTargetKey: claudeEntry.backendTargetKey,
+            modelMode: 'default',
+            acpSessionModeId: 'plan',
+            sessionConfigOptionOverrides: null,
+            setBackendTarget: vi.fn(),
+            setModelMode: vi.fn() as any,
+            setAcpSessionModeId: setAcpSessionModeId as any,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            onRememberEngineSelection,
+        } as any));
+
+        hook.getCurrent().selectEngineSelection(kimiEntry, {
+            modelId: 'kimi-code/kimi-for-coding',
+            sessionModeId: 'default',
+            configOverrides: {},
+        });
+
+        expect(setAcpSessionModeId).toHaveBeenCalledWith(null);
+        expect(onRememberEngineSelection).toHaveBeenCalledWith(kimiEntry.backendTarget, {
+            modelId: 'kimi-code/kimi-for-coding',
+            acpSessionModeId: null,
+            sessionConfigOptionOverrides: null,
         });
     });
 });

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '../state/storageTypes';
-import { computeSessionConfigOptionControls } from './configOptionsControl';
+import { computeSessionConfigOptionControls,
+    computeSessionConfigOptionControlsForProvider,
+} from './configOptionsControl';
 
 function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
     return {
@@ -51,6 +53,72 @@ describe('computeSessionConfigOptionControls', () => {
             option: { id: 'telemetry', currentValue: 'false' },
             requestedValue: 'true',
             effectiveValue: 'true',
+            isPending: true,
+        });
+    });
+
+    it('ignores requested select values that are not valid options', () => {
+        const metadata = createMetadata({
+            sessionConfigOptionsV1: {
+                v: 1,
+                provider: 'opencode',
+                updatedAt: 1,
+                configOptions: [{
+                    id: 'reasoning_effort',
+                    name: 'Reasoning effort',
+                    type: 'select',
+                    currentValue: 'medium',
+                    options: [
+                        { value: 'low', name: 'Low' },
+                        { value: 'medium', name: 'Medium' },
+                        { value: 'high', name: 'High' },
+                    ],
+                }],
+            },
+            sessionConfigOptionOverridesV1: {
+                v: 1,
+                updatedAt: 2,
+                overrides: { reasoning_effort: { updatedAt: 2, value: 'xhigh' } },
+            },
+        });
+
+        const res = computeSessionConfigOptionControls({ agentId: 'opencode', metadata });
+        expect(res?.[0]).toMatchObject({
+            option: { id: 'reasoning_effort', currentValue: 'medium' },
+            effectiveValue: 'medium',
+            isPending: false,
+        });
+        expect(res?.[0]?.requestedValue).toBeUndefined();
+    });
+
+    it('keeps requested select values that are valid options', () => {
+        const metadata = createMetadata({
+            sessionConfigOptionsV1: {
+                v: 1,
+                provider: 'opencode',
+                updatedAt: 1,
+                configOptions: [{
+                    id: 'reasoning_effort',
+                    name: 'Reasoning effort',
+                    type: 'select',
+                    currentValue: 'medium',
+                    options: [
+                        { value: 'medium', name: 'Medium' },
+                        { value: 'high', name: 'High' },
+                    ],
+                }],
+            },
+            sessionConfigOptionOverridesV1: {
+                v: 1,
+                updatedAt: 2,
+                overrides: { reasoning_effort: { updatedAt: 2, value: 'high' } },
+            },
+        });
+
+        const res = computeSessionConfigOptionControls({ agentId: 'opencode', metadata });
+        expect(res?.[0]).toMatchObject({
+            requestedValue: 'high',
+            effectiveValue: 'high',
             isPending: true,
         });
     });
@@ -199,5 +267,63 @@ describe('computeSessionConfigOptionControls', () => {
             effectiveValue: 'true',
             isPending: true,
         });
+    });
+});
+
+describe('overriding boolean option dimming (ultracode)', () => {
+    it('marks reasoning_effort disabled while ultracode is effectively on', () => {
+        const controls = computeSessionConfigOptionControlsForProvider({
+            providerId: 'claude',
+            configOptions: [
+                {
+                    id: 'reasoning_effort',
+                    name: 'Thinking',
+                    type: 'select',
+                    currentValue: 'high',
+                    options: [
+                        { value: 'high', name: 'High' },
+                        { value: 'xhigh', name: 'XHigh' },
+                    ],
+                },
+                {
+                    id: 'ultracode',
+                    name: 'Ultracode',
+                    type: 'boolean',
+                    currentValue: 'false',
+                },
+            ],
+            overrides: { ultracode: { value: 'true' } },
+        });
+
+        const effort = controls?.find((control) => control.option.id === 'reasoning_effort');
+        expect(effort?.disabled).toBe(true);
+        expect(effort?.disabledByOptionName).toBe('Ultracode');
+        const ultracode = controls?.find((control) => control.option.id === 'ultracode');
+        expect(ultracode?.disabled).toBeUndefined();
+    });
+
+    it('keeps reasoning_effort enabled while ultracode is off', () => {
+        const controls = computeSessionConfigOptionControlsForProvider({
+            providerId: 'claude',
+            configOptions: [
+                {
+                    id: 'reasoning_effort',
+                    name: 'Thinking',
+                    type: 'select',
+                    currentValue: 'high',
+                    options: [{ value: 'high', name: 'High' }],
+                },
+                {
+                    id: 'ultracode',
+                    name: 'Ultracode',
+                    type: 'boolean',
+                    currentValue: 'false',
+                },
+            ],
+        });
+
+        const effort = controls?.find((control) => control.option.id === 'reasoning_effort');
+        expect(effort?.disabled).toBeUndefined();
+        expect(effort?.disabledByOptionName).toBeUndefined();
     });
 });

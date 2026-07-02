@@ -12,7 +12,12 @@ import type {
     SessionListRenderableSession,
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import { preserveSessionRuntimeLocalMetadata } from '@/sync/domains/session/preserveSessionRuntimeLocalMetadata';
-import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import {
+    buildSessionListRenderableFromSession,
+    resolveSessionListReadableSeq,
+} from '@/sync/domains/session/listing/sessionListRenderable';
+import { resolveSessionRuntimePresenceFields } from '@/sync/domains/session/attention/runtimePresentation';
+import { readRollbackEligibleTurnStarts } from '@/sync/domains/session/rollback/rollbackEligibleTurnStarts';
 import type { SessionListCacheEntryV1 } from '@/sync/domains/state/warmCachePersistence';
 import {
     buildSessionListRenderableFromCacheEntry,
@@ -53,6 +58,12 @@ type HydratedSession = Omit<Session, 'presence'> & {
     presence?: 'online' | number;
     metadataUnavailable?: boolean;
 };
+export type SessionListFetchResult = Readonly<{
+    sessionIds: string[];
+    nextCursor: string | null;
+    hasNext: boolean;
+    source: 'v2' | 'v1';
+}>;
 type HydrationApplyFlushReason = 'size' | 'timer' | 'required' | 'final' | 'manual';
 type CurrentSessionListRenderableLookup = (sessionId: string) => SessionListRenderableSession | null | undefined;
 type HydratedSessionApplyBatcherStats = Readonly<{
@@ -70,6 +81,7 @@ type BackgroundHydrationAttribution = {
     maxScheduleWaitMs: number;
     rowWorkMs: number;
     yieldMs: number;
+    gateWaitMs: number;
     decryptRowMs: number;
     applyEnqueueMs: number;
     finalFlushMs: number;
@@ -86,6 +98,10 @@ const activeSessionListDataKeyHydrationControllers = new WeakMap<SessionDataKeyH
 function normalizeSessionListAbortKey(params: Readonly<{
     serverId?: string | null;
     sessionListPath?: string;
+    sessionListCursor?: string | null;
+    sessionListPageSize?: number;
+    sessionListMaxPages?: number;
+    includeActiveSessionRows?: boolean;
 }>): string {
     const serverId = String(params.serverId ?? '').trim() || NO_SERVER_ID_ABORT_KEY;
     const sessionListPath = String(params.sessionListPath ?? '').trim() || DEFAULT_SESSION_LIST_PATH;
@@ -110,26 +126,79 @@ function createSessionListDataKeyHydrationAbortController(params: Readonly<{
     return controller;
 }
 
+function normalizeSessionListPinnedSessionIds(values: ReadonlyArray<string> | undefined): string[] {
+    if (!values) return [];
+    const seen = new Set<string>();
+    const ids: string[] = [];
+    for (const value of values) {
+        const id = String(value ?? '').trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        ids.push(id);
+    }
+    return ids;
+}
+
+function buildSessionListInitialPath(params: {
+    pinnedSessionIds: readonly string[];
+    includeAttentionRows: boolean;
+}): string | undefined {
+    const query: string[] = [];
+    if (params.pinnedSessionIds.length > 0) {
+        query.push(`pinnedSessionIds=${encodeURIComponent(params.pinnedSessionIds.join(','))}`);
+    }
+    if (params.includeAttentionRows) {
+        query.push('includeAttention=true');
+    }
+    return query.length > 0 ? `/v2/sessions?${query.join('&')}` : undefined;
+}
+
 function normalizeAccessLevel(accessLevel: unknown): 'view' | 'edit' | 'admin' | undefined {
     return accessLevel === 'view' || accessLevel === 'edit' || accessLevel === 'admin' ? accessLevel : undefined;
 }
 
 function normalizeLastViewedSessionSeq(value: number | null | undefined): number | null {
+    return normalizeSessionListSeq(value);
+}
+
+function normalizeSessionListSeq(value: number | null | undefined): number | null {
     return typeof value === 'number' && Number.isFinite(value)
         ? Math.max(0, Math.trunc(value))
         : null;
+}
+
+function normalizeSessionListTimestamp(value: number | null | undefined): number | null {
+    return typeof value === 'number' && Number.isFinite(value)
+        ? Math.max(0, Math.trunc(value))
+        : null;
+}
+
+function isSessionListRowAttentionHydrationPriority(row: SessionListRow): boolean {
+    if ((row.pendingPermissionRequestCount ?? 0) > 0 || (row.pendingUserActionRequestCount ?? 0) > 0) {
+        return true;
+    }
+    if (row.latestTurnStatus === 'failed' && row.lastRuntimeIssue != null) {
+        return true;
+    }
+    const latestReadyEventSeq = normalizeSessionListSeq(row.latestReadyEventSeq);
+    return latestReadyEventSeq !== null
+        && latestReadyEventSeq > (normalizeSessionListSeq(row.lastViewedSessionSeq) ?? 0);
 }
 
 function buildRenderableFromRowAndCache(
     row: SessionListRow,
     cachedEntry: SessionListCacheEntryV1 | undefined,
     existingSession?: Session | null | undefined,
+    currentRenderable?: SessionListRenderableSession | null | undefined,
 ): SessionListRenderableSession {
     const metadataMatches = cachedEntry?.metadataVersion === row.metadataVersion;
     const agentStateMatches = cachedEntry?.agentStateVersion === row.agentStateVersion;
-    const existingRenderable = existingSession ? buildSessionListRenderableFromSession(existingSession) : undefined;
+    const existingSessionRenderable = existingSession
+        ? buildSessionListRenderableFromSession(existingSession, currentRenderable ?? undefined)
+        : undefined;
+    const existingRenderable = currentRenderable ?? existingSessionRenderable;
     const existingMetadataMatches = existingSession?.metadataVersion === row.metadataVersion
-        && existingRenderable?.metadata != null;
+        && existingSessionRenderable?.metadata != null;
     const existingAgentStateMatches = existingSession?.agentStateVersion === row.agentStateVersion;
     const cachedRenderableMetadata: SessionListRenderableMetadata | null = isSessionListCacheEntryMetadataUsable(cachedEntry)
         ? {
@@ -150,7 +219,7 @@ function buildRenderableFromRowAndCache(
     const renderableMetadata = useMatchingCacheMetadata || useStaleCacheMetadata
         ? cachedRenderableMetadata
         : useExistingSessionMetadata
-            ? existingRenderable?.metadata ?? null
+            ? existingSessionRenderable?.metadata ?? null
             : null;
     const hasPendingPermissionRequests =
         typeof row.pendingPermissionRequestCount === 'number'
@@ -169,18 +238,62 @@ function buildRenderableFromRowAndCache(
                     ? existingRenderable?.hasPendingUserActionRequests === true
                     : undefined;
     const lastViewedSessionSeq = normalizeLastViewedSessionSeq(row.lastViewedSessionSeq);
-    const hasUnreadMessages = computeHasUnreadActivity({
-        sessionSeq: row.seq ?? 0,
+    const latestReadyEventSeq =
+        normalizeLastViewedSessionSeq(row.latestReadyEventSeq)
+        ?? existingRenderable?.latestReadyEventSeq
+        ?? normalizeLastViewedSessionSeq(cachedEntry?.latestReadyEventSeq)
+        ?? null;
+    const latestReadyEventAt =
+        normalizeSessionListTimestamp(row.latestReadyEventAt)
+        ?? existingRenderable?.latestReadyEventAt
+        ?? normalizeSessionListTimestamp(cachedEntry?.latestReadyEventAt)
+        ?? null;
+    const pendingRequestObservedAt =
+        normalizeSessionListTimestamp(row.pendingRequestObservedAt)
+        ?? normalizeSessionListTimestamp(existingRenderable?.pendingRequestObservedAt)
+        ?? normalizeSessionListTimestamp(cachedEntry?.pendingRequestObservedAt)
+        ?? null;
+    const latestTurnStatus = row.latestTurnStatus ?? null;
+    const latestTurnStatusObservedAt = row.latestTurnStatusObservedAt ?? null;
+    const runtimePresence = resolveSessionRuntimePresenceFields({
+        thinking: typeof row.thinking === 'boolean'
+            ? row.thinking
+            : existingRenderable?.thinking === true,
+        thinkingAt:
+            normalizeSessionListTimestamp(row.thinkingAt)
+            ?? normalizeSessionListTimestamp(existingRenderable?.thinkingAt)
+            ?? 0,
+        latestTurnStatus,
+        latestTurnStatusObservedAt,
+    });
+    const readableSeq = resolveSessionListReadableSeq({
+        seq: row.seq,
+        latestTurnStatus: row.latestTurnStatus ?? null,
+        latestReadyEventSeq,
+    }, undefined);
+    const computedHasUnreadMessages = computeHasUnreadActivity({
+        sessionSeq: readableSeq,
         pendingActivityAt: 0,
         lastViewedSessionSeq: lastViewedSessionSeq ?? undefined,
         lastViewedPendingActivityAt: undefined,
     });
+    const hasUnreadMessages =
+        computedHasUnreadMessages
+        || (
+            readableSeq <= 0
+            && (cachedEntry?.hasUnreadMessages === true || existingRenderable?.hasUnreadMessages === true)
+        );
+    const rowRecord = row as Record<string, unknown>;
+    const rollbackEligibleTurnStarts = Object.prototype.hasOwnProperty.call(rowRecord, 'rollbackEligibleTurnStarts')
+        ? readRollbackEligibleTurnStarts(rowRecord.rollbackEligibleTurnStarts) ?? null
+        : existingRenderable?.rollbackEligibleTurnStarts ?? null;
 
     return {
         id: row.id,
         seq: row.seq,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
+        meaningfulActivityAt: row.meaningfulActivityAt ?? row.createdAt,
         active: row.active,
         activeAt: row.activeAt,
         archivedAt: row.archivedAt ?? null,
@@ -192,13 +305,20 @@ function buildRenderableFromRowAndCache(
             : row.metadataVersion,
         agentStateVersion: row.agentStateVersion,
         metadata: renderableMetadata,
-        thinking: false,
-        thinkingAt: 0,
+        thinking: runtimePresence.thinking,
+        thinkingAt: runtimePresence.thinkingAt,
         presence: row.active ? 'online' : row.activeAt,
         accessLevel: normalizeAccessLevel(row.share?.accessLevel),
         canApprovePermissions: row.share?.canApprovePermissions ?? undefined,
         hasPendingPermissionRequests,
         hasPendingUserActionRequests,
+        latestTurnStatus,
+        latestTurnStatusObservedAt,
+        latestReadyEventSeq,
+        latestReadyEventAt,
+        lastRuntimeIssue: row.lastRuntimeIssue ?? null,
+        rollbackEligibleTurnStarts,
+        pendingRequestObservedAt,
         hasUnreadMessages,
     };
 }
@@ -207,13 +327,41 @@ function buildRenderableFromCachedEntry(cachedEntry: SessionListCacheEntryV1): S
     return buildSessionListRenderableFromCacheEntry(cachedEntry);
 }
 
+function isCurrentRenderableCompleteForWarmHydration(
+    row: SessionListRow,
+    currentRenderable: SessionListRenderableSession | null | undefined,
+): boolean {
+    if (!currentRenderable) return false;
+    if (currentRenderable.seq < row.seq) return false;
+    if (currentRenderable.updatedAt < row.updatedAt) return false;
+    if (currentRenderable.metadataVersion < row.metadataVersion) return false;
+    if (currentRenderable.agentStateVersion < row.agentStateVersion) return false;
+    if ((currentRenderable.archivedAt ?? null) !== (row.archivedAt ?? null)) return false;
+    if (row.metadata != null && currentRenderable.metadata == null) return false;
+    if (
+        row.agentState != null
+        && (
+            typeof currentRenderable.hasPendingPermissionRequests !== 'boolean'
+            || typeof currentRenderable.hasPendingUserActionRequests !== 'boolean'
+        )
+    ) {
+        return false;
+    }
+    return true;
+}
+
 function needsWarmHydration(params: {
     row: SessionListRow;
     cachedEntry: SessionListCacheEntryV1 | undefined;
     existingSession?: Session | null | undefined;
+    currentRenderable?: SessionListRenderableSession | null | undefined;
+    isRequiredHydrationRow?: boolean;
 }): boolean {
     const { row, cachedEntry, existingSession } = params;
-    if (!existingSession) return true;
+    if (!existingSession) {
+        if (params.isRequiredHydrationRow) return true;
+        return !isCurrentRenderableCompleteForWarmHydration(row, params.currentRenderable);
+    }
     if (row.metadata != null && existingSession.metadata == null) return true;
     if (!cachedEntry) return true;
     if (cachedEntry.metadataVersion !== row.metadataVersion) return true;
@@ -270,6 +418,10 @@ function countBackgroundRows(totalRows: number, requiredRows: number): number {
     return Math.max(0, totalRows - Math.max(0, requiredRows));
 }
 
+function isDeferrableHydrationReason(reason: string | undefined): boolean {
+    return reason === 'eager' || reason === 'background';
+}
+
 function createBackgroundHydrationAttribution(): BackgroundHydrationAttribution {
     return {
         startedRows: 0,
@@ -282,6 +434,7 @@ function createBackgroundHydrationAttribution(): BackgroundHydrationAttribution 
         maxScheduleWaitMs: 0,
         rowWorkMs: 0,
         yieldMs: 0,
+        gateWaitMs: 0,
         decryptRowMs: 0,
         applyEnqueueMs: 0,
         finalFlushMs: 0,
@@ -290,7 +443,7 @@ function createBackgroundHydrationAttribution(): BackgroundHydrationAttribution 
 
 function addBackgroundHydrationDuration(
     attribution: BackgroundHydrationAttribution,
-    key: 'scheduleWaitMs' | 'rowWorkMs' | 'yieldMs' | 'decryptRowMs' | 'applyEnqueueMs' | 'finalFlushMs',
+    key: 'scheduleWaitMs' | 'rowWorkMs' | 'yieldMs' | 'gateWaitMs' | 'decryptRowMs' | 'applyEnqueueMs' | 'finalFlushMs',
     durationMs: number,
 ): void {
     const safeDurationMs = Math.max(0, Number.isFinite(durationMs) ? durationMs : 0);
@@ -306,12 +459,14 @@ function recordBackgroundHydrationAttribution(params: Readonly<{
     requiredRows: number;
     backgroundRows: number;
     concurrencyLimit: number;
+    yieldEveryRows: number;
     applyBatchSize: number;
     applyFlushDelayMs: number;
     attribution: BackgroundHydrationAttribution;
 }>): void {
     const wallMs = Math.max(0, nowMs() - params.startedAtMs);
     const measuredWorkMs = params.attribution.yieldMs
+        + params.attribution.gateWaitMs
         + params.attribution.decryptRowMs
         + params.attribution.applyEnqueueMs
         + params.attribution.finalFlushMs;
@@ -320,6 +475,7 @@ function recordBackgroundHydrationAttribution(params: Readonly<{
         requiredRows: params.requiredRows,
         backgroundRows: params.backgroundRows,
         concurrencyLimit: params.concurrencyLimit,
+        yieldEveryRows: params.yieldEveryRows,
         applyBatchSize: params.applyBatchSize,
         applyFlushDelayMs: params.applyFlushDelayMs,
         startedRows: params.attribution.startedRows,
@@ -332,6 +488,7 @@ function recordBackgroundHydrationAttribution(params: Readonly<{
         maxScheduleWaitMs: params.attribution.maxScheduleWaitMs,
         rowWorkMs: params.attribution.rowWorkMs,
         yieldMs: params.attribution.yieldMs,
+        gateWaitMs: params.attribution.gateWaitMs,
         decryptRowMs: params.attribution.decryptRowMs,
         applyEnqueueMs: params.attribution.applyEnqueueMs,
         finalFlushMs: params.attribution.finalFlushMs,
@@ -654,17 +811,34 @@ async function decryptSessionRow(
                     decryptedState.metadata,
                 );
 
+                const latestTurnStatus = row.latestTurnStatus ?? null;
+                const latestTurnStatusObservedAt = row.latestTurnStatusObservedAt ?? null;
+                const runtimePresence = resolveSessionRuntimePresenceFields({
+                    thinking: row.thinking === true,
+                    thinkingAt: normalizeSessionListTimestamp(row.thinkingAt) ?? 0,
+                    latestTurnStatus,
+                    latestTurnStatusObservedAt,
+                });
+
                 return {
                     ...row,
                     serverId: typeof serverId === 'string' && serverId.trim().length > 0 ? serverId.trim() : undefined,
                     encryptionMode,
-                    thinking: false,
-                    thinkingAt: 0,
+                    thinking: runtimePresence.thinking,
+                    thinkingAt: runtimePresence.thinkingAt,
                     metadata: mergedMetadata,
                     agentState: decryptedState.agentState,
                     metadataUnavailable: row.metadata != null && mergedMetadata == null,
                     accessLevel: normalizeAccessLevel(row.share?.accessLevel),
                     canApprovePermissions: row.share?.canApprovePermissions ?? undefined,
+                    latestTurnStatus,
+                    latestTurnStatusObservedAt,
+                    latestReadyEventSeq: normalizeLastViewedSessionSeq(row.latestReadyEventSeq),
+                    latestReadyEventAt: normalizeSessionListTimestamp(row.latestReadyEventAt),
+                    rollbackEligibleTurnStarts: readRollbackEligibleTurnStarts(
+                        (row as Record<string, unknown>).rollbackEligibleTurnStarts,
+                    ) ?? null,
+                    pendingRequestObservedAt: normalizeSessionListTimestamp(row.pendingRequestObservedAt),
                     presence: row.active ? 'online' : row.activeAt,
                 };
             } catch (error) {
@@ -900,6 +1074,13 @@ function scheduleReadStateRepair(params: {
 export async function fetchAndApplySessions(params: {
     serverId?: string | null;
     sessionListPath?: string;
+    sessionListCursor?: string | null;
+    sessionListPageSize?: number;
+    sessionListMaxPages?: number;
+    includeActiveSessionRows?: boolean;
+    includeSessionListAttentionRows?: boolean;
+    sessionListPinnedSessionIds?: ReadonlyArray<string>;
+    priorityHydrationSessionIds?: ReadonlyArray<string>;
     credentials: AuthCredentials;
     encryption: SessionListEncryption;
     sessionDataKeys: Map<string, Uint8Array>;
@@ -918,7 +1099,10 @@ export async function fetchAndApplySessions(params: {
     sessionListEagerHydrationCount?: number;
     sessionListHydrationConcurrencyLimit?: number;
     sessionListBackgroundHydrationConcurrencyLimit?: number;
+    sessionListBackgroundHydrationMaxRows?: number;
     sessionListBackgroundHydrationYieldDelayMs?: number;
+    sessionListBackgroundHydrationYieldEveryRows?: number;
+    sessionListBackgroundHydrationGate?: () => Promise<void>;
     sessionListBackgroundHydrationApplyBatchSize?: number;
     sessionListBackgroundHydrationApplyFlushDelayMs?: number;
     sessionListBackgroundHydrationYield?: () => Promise<void>;
@@ -926,17 +1110,20 @@ export async function fetchAndApplySessions(params: {
     shouldContinue?: () => boolean;
     repairInvalidReadStateV1: (params: { sessionId: string; sessionSeqUpperBound: number }) => Promise<void>;
     log: { log: (message: string) => void };
-}): Promise<void> {
+}): Promise<SessionListFetchResult> {
     const { credentials, encryption, sessionDataKeys, applySessions, repairInvalidReadStateV1, log } = params;
     const snapshotStartedAtMs = nowMs();
     const request =
         params.request
         ?? ((path: string, init: RequestInit) => serverFetch(path, init, { includeAuth: false }));
 
-    const SESSION_LIST_LIMIT = 150;
+    const sessionListPageSize = Math.max(1, Math.min(200, Math.trunc(params.sessionListPageSize ?? 50)));
+    const sessionListMaxPages = Math.max(1, Math.trunc(params.sessionListMaxPages ?? 1));
     const sessions: V2SessionListResponse['sessions'] = [];
+    const seenSessionIds = new Set<string>();
     const concurrencyLimit = Math.max(1, Math.trunc(params.sessionListHydrationConcurrencyLimit ?? 4));
     const backgroundHydrationConcurrencyLimit = Math.max(1, Math.trunc(params.sessionListBackgroundHydrationConcurrencyLimit ?? 1));
+    const backgroundHydrationYieldEveryRows = Math.max(1, Math.trunc(params.sessionListBackgroundHydrationYieldEveryRows ?? 1));
     const backgroundHydrationApplyBatchSize = Math.max(1, Math.trunc(params.sessionListBackgroundHydrationApplyBatchSize ?? 1));
     const backgroundHydrationApplyFlushDelayMs = Math.max(0, Math.trunc(params.sessionListBackgroundHydrationApplyFlushDelayMs ?? 16));
     const backgroundHydrationYield = params.sessionListBackgroundHydrationYield
@@ -957,9 +1144,48 @@ export async function fetchAndApplySessions(params: {
     };
     let usedLegacyV1Snapshot = false;
 
-    let cursor: string | null = null;
-    while (sessions.length < SESSION_LIST_LIMIT) {
-        const pageLimit = Math.min(200, SESSION_LIST_LIMIT - sessions.length);
+    let cursor: string | null = params.sessionListCursor ?? null;
+    const seenCursors = new Set<string>();
+    let fetchedPages = 0;
+    let nextCursorForMore: string | null = cursor;
+    let hasNextForMore = false;
+    let source: 'v2' | 'v1' = 'v2';
+    const buildFetchResult = (): SessionListFetchResult => ({
+        sessionIds: sessions.map((session) => session.id),
+        nextCursor: nextCursorForMore,
+        hasNext: hasNextForMore,
+        source,
+    });
+    const appendRows = (rows: V2SessionListResponse['sessions']): void => {
+        for (const row of rows) {
+            if (seenSessionIds.has(row.id)) continue;
+            seenSessionIds.add(row.id);
+            sessions.push(row);
+        }
+    };
+
+    const pinnedSessionIds = normalizeSessionListPinnedSessionIds(params.sessionListPinnedSessionIds);
+    const initialSessionListPath = !cursor && !params.sessionListPath
+        ? buildSessionListInitialPath({
+            pinnedSessionIds,
+            includeAttentionRows: params.includeSessionListAttentionRows === true,
+        })
+        : undefined;
+
+    if (params.includeActiveSessionRows === true && !cursor && !params.sessionListPath) {
+        const activePage = await fetchSessionListPageCompat({
+            request,
+            token: credentials.token,
+            sessionListPath: '/v2/sessions/active',
+            cursor: null,
+            limit: 500,
+            allowLegacyV1Fallback: false,
+        });
+        appendRows(activePage.sessions);
+    }
+
+    while (fetchedPages < sessionListMaxPages) {
+        const pageLimit = sessionListPageSize;
         const fetchPageFields = {
             loadedSessions: sessions.length,
             limit: pageLimit,
@@ -976,10 +1202,10 @@ export async function fetchAndApplySessions(params: {
             async () => fetchSessionListPageCompat({
                 request: timedRequest,
                 token: credentials.token,
-                sessionListPath: params.sessionListPath,
+                sessionListPath: params.sessionListPath ?? initialSessionListPath,
                 cursor,
                 limit: pageLimit,
-                allowLegacyV1Fallback: params.sessionListPath ? false : undefined,
+                allowLegacyV1Fallback: (params.sessionListPath ?? initialSessionListPath) ? false : undefined,
                 telemetryFields: fetchPageFields,
             }),
         );
@@ -998,18 +1224,22 @@ export async function fetchAndApplySessions(params: {
                 sourceV1: page.source === 'v1' ? 1 : 0,
             },
             () => {
-                for (const row of page.sessions) {
-                    sessions.push(row);
-                }
+                appendRows(page.sessions);
+                source = page.source;
                 if (page.source === 'v1') {
                     usedLegacyV1Snapshot = true;
                 }
                 shouldStopAfterPage = !page.hasNext || !page.nextCursor || page.source === 'v1';
                 nextCursor = page.nextCursor;
+                nextCursorForMore = page.nextCursor;
+                hasNextForMore = page.hasNext === true && typeof page.nextCursor === 'string' && page.source === 'v2';
             },
         );
 
+        fetchedPages += 1;
         if (shouldStopAfterPage) break;
+        if (nextCursor && seenCursors.has(nextCursor)) break;
+        if (nextCursor) seenCursors.add(nextCursor);
         cursor = nextCursor;
     }
 
@@ -1048,6 +1278,7 @@ export async function fetchAndApplySessions(params: {
                     row,
                     cachedSessionListEntries[row.id],
                     params.getExistingSession?.(row.id),
+                    params.getCurrentSessionListRenderable?.(row.id),
                 )),
                 ...retainedCachedSessionIds.map((sessionId) => buildRenderableFromCachedEntry(cachedSessionListEntries[sessionId]!)),
             ],
@@ -1078,7 +1309,7 @@ export async function fetchAndApplySessions(params: {
     }
 
     if (!shouldContinue()) {
-        return;
+        return buildFetchResult();
     }
 
     const encryptionScope: EncryptionScopeInput = typeof params.serverId === 'string' && params.serverId.trim().length > 0
@@ -1114,7 +1345,7 @@ export async function fetchAndApplySessions(params: {
         }),
     );
     if (keyHydration.stale) {
-        return;
+        return buildFetchResult();
     }
     const { sessionKeys, sessionEncryptionClears } = keyHydration;
     for (const sessionId of sessionEncryptionClears) {
@@ -1136,6 +1367,15 @@ export async function fetchAndApplySessions(params: {
     }
 
     if (shouldApplyRenderables) {
+        const priorityHydrationSessionIds = new Set([
+            ...normalizeSessionListPinnedSessionIds(params.priorityHydrationSessionIds),
+            ...pinnedSessionIds,
+        ]);
+        for (const row of sessions) {
+            if (isSessionListRowAttentionHydrationPriority(row)) {
+                priorityHydrationSessionIds.add(row.id);
+            }
+        }
         const hydrationPriority = orderRowsForSessionListHydration({
             rows: sessions.filter((row) =>
                 canHydrateSessionRow({
@@ -1147,19 +1387,24 @@ export async function fetchAndApplySessions(params: {
                     row,
                     cachedEntry: cachedSessionListEntries[row.id],
                     existingSession: params.getExistingSession?.(row.id),
+                    currentRenderable: params.getCurrentSessionListRenderable?.(row.id),
+                    isRequiredHydrationRow: requiredHydrationSessionIds.has(row.id),
                 }),
             ),
             requiredSessionIds: requiredHydrationSessionIds,
             routeSessionIds: params.prioritizeSessionIds,
             activeSessionIds: params.activeSessionIds,
+            prioritySessionIds: priorityHydrationSessionIds,
             eagerHydrationCount: params.sessionListEagerHydrationCount,
+            maxBackgroundHydrationRows: params.sessionListBackgroundHydrationMaxRows,
         });
         const rowsNeedingHydration = hydrationPriority.rows;
+        const skippedBackgroundHydrationRows = hydrationPriority.reasonCounts.skippedBackground;
         syncPerformanceTelemetry.count(
             'sync.sessions.snapshot.hydrationPriority',
             hydrationPriority.reasonCounts,
         );
-        if (rowsNeedingHydration.length === 0) {
+        if (rowsNeedingHydration.length === 0 && skippedBackgroundHydrationRows === 0) {
             recordFullyHydratedListTelemetry({
                 snapshotStartedAtMs,
                 totalRows: sessions.length,
@@ -1221,6 +1466,7 @@ export async function fetchAndApplySessions(params: {
                     sessions: rowsNeedingHydration.length,
                     concurrencyLimit: backgroundHydrationConcurrencyLimit,
                     yieldDelayMs: params.sessionListBackgroundHydrationYieldDelayMs ?? 0,
+                    yieldEveryRows: backgroundHydrationYieldEveryRows,
                     applyBatchSize: backgroundHydrationApplyBatchSize,
                     applyFlushDelayMs: backgroundHydrationApplyFlushDelayMs,
                     requiredRows: requiredRowsNeedingHydration.length,
@@ -1230,6 +1476,15 @@ export async function fetchAndApplySessions(params: {
                 async () => {
                     const backgroundHydrationStartedAtMs = nowMs();
                     const taskQueuedAtMs = backgroundHydrationStartedAtMs;
+                    let backgroundRowsSinceLastYield = backgroundHydrationYieldEveryRows;
+                    const shouldYieldBeforeBackgroundRow = (): boolean => {
+                        if (backgroundRowsSinceLastYield < backgroundHydrationYieldEveryRows) return false;
+                        backgroundRowsSinceLastYield = 0;
+                        return true;
+                    };
+                    const markBackgroundRowProcessed = (): void => {
+                        backgroundRowsSinceLastYield += 1;
+                    };
                     const results = await runTasksWithLimit(
                         rowsNeedingHydration.map((row) => async () => {
                             const taskStartedAtMs = nowMs();
@@ -1241,6 +1496,8 @@ export async function fetchAndApplySessions(params: {
                             hydrationAttribution.startedRows += 1;
                             const rowStartedAtMs = taskStartedAtMs;
                             const isRequiredHydrationRow = pendingRequiredHydrationIds.has(row.id);
+                            const hydrationReason = hydrationPriority.reasonById.get(row.id);
+                            const shouldGateHydrationRow = !isRequiredHydrationRow && isDeferrableHydrationReason(hydrationReason);
                             return syncPerformanceTelemetry.measureAsync(
                                 'sync.sessions.snapshot.hydrationRow',
                                 {
@@ -1251,7 +1508,34 @@ export async function fetchAndApplySessions(params: {
                                 },
                                 async () => {
                                     try {
-                                        if (!isRequiredHydrationRow) {
+                                        if (!shouldContinue()) {
+                                            hydrationAttribution.cancelledRows += 1;
+                                            markRequiredHydrationResult(row, null);
+                                            return null;
+                                        }
+                                        if (shouldGateHydrationRow && params.sessionListBackgroundHydrationGate) {
+                                            const gateStartedAtMs = nowMs();
+                                            await syncPerformanceTelemetry.measureAsync(
+                                                'sync.sessions.snapshot.hydrationGate',
+                                                {
+                                                    rows: 1,
+                                                    eagerRows: hydrationReason === 'eager' ? 1 : 0,
+                                                    backgroundRows: hydrationReason === 'background' ? 1 : 0,
+                                                },
+                                                params.sessionListBackgroundHydrationGate,
+                                            );
+                                            addBackgroundHydrationDuration(
+                                                hydrationAttribution,
+                                                'gateWaitMs',
+                                                nowMs() - gateStartedAtMs,
+                                            );
+                                        }
+                                        if (!shouldContinue()) {
+                                            hydrationAttribution.cancelledRows += 1;
+                                            markRequiredHydrationResult(row, null);
+                                            return null;
+                                        }
+                                        if (!isRequiredHydrationRow && shouldYieldBeforeBackgroundRow()) {
                                             const yieldStartedAtMs = nowMs();
                                             await syncPerformanceTelemetry.measureAsync(
                                                 'sync.sessions.snapshot.hydrationYield',
@@ -1343,6 +1627,9 @@ export async function fetchAndApplySessions(params: {
                                         rejectPendingRequiredHydration(error);
                                         throw error;
                                     } finally {
+                                        if (!isRequiredHydrationRow) {
+                                            markBackgroundRowProcessed();
+                                        }
                                         hydrationAttribution.completedRows += 1;
                                         addBackgroundHydrationDuration(
                                             hydrationAttribution,
@@ -1362,7 +1649,7 @@ export async function fetchAndApplySessions(params: {
                         'finalFlushMs',
                         nowMs() - finalFlushStartedAtMs,
                     );
-                    if (shouldContinue()) {
+                    if (shouldContinue() && skippedBackgroundHydrationRows === 0) {
                         const batcherStats = hydratedSessionBatcher.getStats();
                         recordFullyHydratedListTelemetry({
                             snapshotStartedAtMs,
@@ -1382,6 +1669,7 @@ export async function fetchAndApplySessions(params: {
                         requiredRows: requiredRowsNeedingHydration.length,
                         backgroundRows: countBackgroundRows(rowsNeedingHydration.length, requiredRowsNeedingHydration.length),
                         concurrencyLimit: backgroundHydrationConcurrencyLimit,
+                        yieldEveryRows: backgroundHydrationYieldEveryRows,
                         applyBatchSize: backgroundHydrationApplyBatchSize,
                         applyFlushDelayMs: backgroundHydrationApplyFlushDelayMs,
                         attribution: hydrationAttribution,
@@ -1407,7 +1695,7 @@ export async function fetchAndApplySessions(params: {
                     async () => requiredHydrationPromise,
                 );
                 if (!shouldContinue()) {
-                    return;
+                    return buildFetchResult();
                 }
                 hydratedSessionBatcher.flush('required');
                 if (requiredRowsNeedingHydration.length > 0) {
@@ -1427,7 +1715,7 @@ export async function fetchAndApplySessions(params: {
         }
 
         log.log(`📥 fetchSessions completed - rendered ${appliedRenderableCount} session list rows before selective hydration`);
-        return;
+        return buildFetchResult();
     }
 
     const decryptedResults = await syncPerformanceTelemetry.measureAsync(
@@ -1452,7 +1740,7 @@ export async function fetchAndApplySessions(params: {
     const decryptedSessions = decryptedResults.filter((session): session is NonNullable<typeof session> => Boolean(session));
 
     if (!shouldContinue()) {
-        return;
+        return buildFetchResult();
     }
 
     const appliedSessions = applyHydratedSessions({
@@ -1469,4 +1757,5 @@ export async function fetchAndApplySessions(params: {
     });
 
     log.log(`📥 fetchSessions completed - processed ${decryptedSessions.length} sessions`);
+    return buildFetchResult();
 }

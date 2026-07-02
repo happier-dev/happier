@@ -12,7 +12,16 @@ import { installAgentInputCommonModuleMocks } from '../agentInputTestHelpers';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let capturedDropdownMenuProps: Record<string, unknown> | null = null;
-const boundaryRef = { current: { nodeType: 'Boundary' } } as React.RefObject<any>;
+let capturedHorizontalRowProps: Record<string, unknown> | null = null;
+
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (!style) return {};
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map(flattenStyle));
+    }
+    if (typeof style === 'object') return style as Record<string, unknown>;
+    return {};
+}
 
 installAgentInputCommonModuleMocks({
     reactNative: () => createReactNativeWebMock({
@@ -40,16 +49,17 @@ installAgentInputCommonModuleMocks({
     }),
 });
 
-vi.mock('@/components/ui/popover', () => ({
-    usePopoverBoundaryRef: () => boundaryRef,
-    usePopoverPortalTarget: () => ({ rootRef: { current: null }, layout: { width: 0, height: 0 } }),
-    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: Record<string, unknown>) => {
         capturedDropdownMenuProps = props;
         return React.createElement('DropdownMenu', props);
+    },
+}));
+
+vi.mock('@/components/ui/scroll/HorizontalScrollableRow', () => ({
+    HorizontalScrollableRow: (props: Record<string, unknown> & { children?: React.ReactNode }) => {
+        capturedHorizontalRowProps = props;
+        return React.createElement('HorizontalScrollableRow', props, props.children);
     },
 }));
 
@@ -58,11 +68,13 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 describe('AgentInputChipPickerTopSelector', () => {
-    it('uses the shared item trigger while forwarding the surrounding popover boundary', async () => {
+    it('renders a one-tap icon rail using the shared horizontal scroll row', async () => {
         const { AgentInputChipPickerTopSelector } = await import('./AgentInputChipPickerTopSelector');
         capturedDropdownMenuProps = null;
+        capturedHorizontalRowProps = null;
+        const onFocusOption = vi.fn();
 
-        await renderScreen(<AgentInputChipPickerTopSelector
+        const screen = await renderScreen(<AgentInputChipPickerTopSelector
                     sections={[
                         {
                             id: 'providers',
@@ -75,36 +87,37 @@ describe('AgentInputChipPickerTopSelector', () => {
                     ]}
                     focusedOptionId="codex"
                     selectedOptionId="codex"
-                    onFocusOption={() => undefined}
+                    onFocusOption={onFocusOption}
                 />);
 
-        const dropdownMenuProps = capturedDropdownMenuProps as any;
-
-        expect(dropdownMenuProps).toEqual(expect.objectContaining({
-            popoverBoundaryRef: boundaryRef,
-        }));
-        expect(dropdownMenuProps.trigger).toBeUndefined();
-        expect(dropdownMenuProps.itemTrigger).toEqual(expect.objectContaining({
-            title: 'Codex',
-            icon: expect.any(Object),
-            subtitleFormatter: expect.any(Function),
-            showSelectedDetail: false,
-            itemProps: expect.objectContaining({
-                testID: 'agent-input-chip-picker.top-selector-trigger',
-                style: expect.objectContaining({
-                    paddingHorizontal: 0,
-                }),
-            }),
-        }));
-        expect(dropdownMenuProps.itemTrigger.subtitleFormatter()).toBe('OpenAI');
-        expect(dropdownMenuProps.items[0]).toEqual(expect.objectContaining({
-            icon: expect.any(Object),
-            testID: 'agent-input-chip-picker.option:codex',
+        expect(capturedDropdownMenuProps).toBeNull();
+        expect(capturedHorizontalRowProps).toEqual(expect.objectContaining({
+            testID: 'agent-input-chip-picker.top-selector-scroll',
+            contentTestID: 'agent-input-chip-picker.top-selector-content',
+            fadeColor: expect.any(String),
+            indicatorColor: expect.any(String),
         }));
 
-        const triggerIconChild = (dropdownMenuProps.itemTrigger.icon as any).props.children;
-        expect(triggerIconChild.props.size).toBe(18);
-        const menuIconChild = (dropdownMenuProps.items[0].icon as any).props.children;
-        expect(menuIconChild.props.size).toBe(18);
+        const codexButton = screen.findByTestId('agent-input-chip-picker.top-selector-option:codex');
+        const claudeButton = screen.findByTestId('agent-input-chip-picker.top-selector-option:claude');
+
+        expect(codexButton).toBeTruthy();
+        expect(claudeButton).toBeTruthy();
+        expect(codexButton?.props.accessibilityLabel).toBe('Codex');
+        expect(claudeButton?.props.accessibilityLabel).toBe('Claude');
+
+        const codexStyle = flattenStyle(codexButton?.props.style({ pressed: false }));
+        const claudeStyle = flattenStyle(claudeButton?.props.style({ pressed: false }));
+        expect(codexStyle.width).toBe(36);
+        expect(codexStyle.height).toBe(36);
+        expect(codexStyle.backgroundColor).toEqual(expect.any(String));
+        expect(Boolean(codexStyle.boxShadow || codexStyle.elevation)).toBe(true);
+        expect(claudeStyle.backgroundColor).toBe('transparent');
+
+        const codexIconChild = codexButton?.props.children.props.children;
+        expect(codexIconChild.props.size).toBe(18);
+
+        await screen.pressByTestIdAsync('agent-input-chip-picker.top-selector-option:claude');
+        expect(onFocusOption).toHaveBeenCalledWith('claude');
     });
 });

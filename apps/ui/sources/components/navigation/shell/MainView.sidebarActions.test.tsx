@@ -13,6 +13,9 @@ const setSessionsListStorageTabSpy = vi.hoisted(() => vi.fn());
 const sessionListState = vi.hoisted(() => ({
     data: [] as any[] | null,
 }));
+const navigationState = vi.hoisted(() => ({
+    pathname: '/',
+}));
 
 const externalSessionsFeatureState = vi.hoisted(() => ({
     enabled: false,
@@ -20,6 +23,7 @@ const externalSessionsFeatureState = vi.hoisted(() => ({
 
 const mainAppTabStateMock = vi.hoisted(() => ({
     shouldThrow: false,
+    activeTab: 'sessions' as 'sessions' | 'projects' | 'inbox' | 'friends' | 'settings',
 }));
 
 const localSettingsState = vi.hoisted(() => ({
@@ -37,7 +41,9 @@ installNavigationShellCommonModuleMocks({
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const expoRouterMock = createExpoRouterMock({
             router: { push: routerPushSpy },
-            pathname: '/',
+            get pathname() {
+                return navigationState.pathname;
+            },
         });
         return expoRouterMock.module;
     },
@@ -103,7 +109,7 @@ vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', () => (
             throw new Error('useMainAppTabState must be used within MainAppTabStateProvider');
         }
         return {
-            activeTab: 'sessions',
+            activeTab: mainAppTabStateMock.activeTab,
             setActiveTab: async () => {},
             isLoading: false,
         };
@@ -148,6 +154,10 @@ vi.mock('@/components/navigation/shell/InboxView', () => ({
 
 vi.mock('@/components/settings/shell/SettingsViewWrapper', () => ({
     SettingsViewWrapper: 'SettingsViewWrapper',
+}));
+
+vi.mock('@/components/projects/ProjectsListView', () => ({
+    ProjectsListView: 'ProjectsListView',
 }));
 
 vi.mock('@/components/sessions/shell/SessionsListWrapper', () => ({
@@ -201,6 +211,8 @@ describe('MainView sidebar actions', () => {
         localSettingsState.sessionsListStorageTab = 'persisted';
         gettingStartedState.kind = 'create_session';
         mainAppTabStateMock.shouldThrow = false;
+        mainAppTabStateMock.activeTab = 'sessions';
+        navigationState.pathname = '/';
         platformState.isTablet = true;
     });
 
@@ -232,12 +244,43 @@ describe('MainView sidebar actions', () => {
         expect(renderedHeaderRight.findAllByType('FABWide')).toHaveLength(0);
     });
 
+    it('pins the retained phone sessions surface to the root pathname across route changes', async () => {
+        platformState.isTablet = false;
+        mainAppTabStateMock.activeTab = 'sessions';
+        navigationState.pathname = '/session/session-1';
+
+        const tree = (await renderScreen(<MainView variant="phone" />)).tree;
+
+        const sessionsList = tree.findByType('SessionsListWrapper' as any);
+        expect(sessionsList.props.pathname).toBe('/');
+    });
+
     it('renders the sessions list pane content in the sidebar instead of the legacy guidance card', async () => {
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
 
-        expect(() => tree!.findByType('SessionsListPaneContent')).not.toThrow();
+        const pane = tree!.findByType('SessionsListPaneContent');
+        expect(pane.props.surfaceOwnership).toMatchObject({
+            ownerKey: 'sidebar',
+            visible: true,
+            interactive: true,
+            dataActive: true,
+        });
         expect(() => tree!.findByType('SessionGettingStartedGuidance')).toThrow();
+    });
+
+    it('keeps the sidebar sessions surface visible but non-interactive behind the new-session route', async () => {
+        navigationState.pathname = '/new';
+
+        const tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
+        const pane = tree.findByType('SessionsListPaneContent');
+
+        expect(pane.props.surfaceOwnership).toMatchObject({
+            ownerKey: 'sidebar',
+            visible: true,
+            interactive: false,
+            dataActive: true,
+        });
     });
 
     it('does not read the main app tab provider when rendering the sidebar variant', async () => {

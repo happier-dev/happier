@@ -1,6 +1,7 @@
 import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
 
 import { clampQuotaPct, deriveQuotaUtilizationPct } from './deriveQuotaUtilizationPct';
+import { selectComparableConnectedServiceQuotaMeters } from './connectedServiceQuotaGauge';
 
 export function computeConnectedServiceQuotaSummaryBadges(params: Readonly<{
   snapshot: ConnectedServiceQuotaSnapshotV1 | null;
@@ -11,12 +12,21 @@ export function computeConnectedServiceQuotaSummaryBadges(params: Readonly<{
 
   const meters = params.snapshot?.meters ?? [];
 
-  const badgesWithMeta = params.pinnedMeterIds.map((meterId, index) => {
+  const comparableMeterIds = params.strategy === 'min_remaining'
+    ? new Set(selectComparableConnectedServiceQuotaMeters(meters).map((meter) => meter.meterId))
+    : null;
+  const pinnedMeterIds = comparableMeterIds
+    ? params.pinnedMeterIds.filter((meterId) => comparableMeterIds.has(meterId))
+    : params.pinnedMeterIds;
+
+  const badgesWithMeta = pinnedMeterIds.map((meterId, index) => {
     const meter = meters.find((m) => m.meterId === meterId) ?? null;
     const label = meter?.label ?? meterId;
     const utilizationPct = meter ? deriveQuotaUtilizationPct(meter) : null;
-    const remainingPct = utilizationPct === null ? null : clampQuotaPct(100 - utilizationPct);
-    const text = remainingPct === null ? `${label} —` : `${label} ${Math.round(remainingPct)}%`;
+    const remainingPct = typeof meter?.remainingPct === 'number' && Number.isFinite(meter.remainingPct)
+      ? clampQuotaPct(meter.remainingPct)
+      : utilizationPct === null ? null : clampQuotaPct(100 - utilizationPct);
+    const text = remainingPct === null ? '—' : `${label} ${Math.round(remainingPct)}%`;
     return { meterId, text, remainingPct, index };
   });
 

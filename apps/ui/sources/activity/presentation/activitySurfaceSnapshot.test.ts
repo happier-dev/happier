@@ -27,6 +27,17 @@ describe('buildActivitySurfaceSnapshot', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: {
+                        controlledByUser: null,
+                        requests: {
+                            permission_1: {
+                                tool: 'Bash',
+                                kind: 'permission',
+                                arguments: { command: 'deploy' },
+                                createdAt: 950,
+                            },
+                        },
+                    },
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -41,6 +52,7 @@ describe('buildActivitySurfaceSnapshot', () => {
                     active: true,
                     presence: 'online',
                     thinking: true,
+                    thinkingAt: 950,
                     metadata: {
                         path: '/Users/tester/project/thinking',
                         host: 'tester.local',
@@ -104,6 +116,17 @@ describe('buildActivitySurfaceSnapshot', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: {
+                        controlledByUser: null,
+                        requests: {
+                            permission_1: {
+                                tool: 'Bash',
+                                kind: 'permission',
+                                arguments: { command: 'deploy' },
+                                createdAt: 950,
+                            },
+                        },
+                    },
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -115,7 +138,8 @@ describe('buildActivitySurfaceSnapshot', () => {
                     id: 'thinking',
                     active: true,
                     presence: 'online',
-                    thinking: true,
+                    lastViewedSessionSeq: 1,
+                    thinking: false,
                     metadata: {
                         path: '/Users/tester/project/thinking',
                         host: 'tester.local',
@@ -143,6 +167,17 @@ describe('buildActivitySurfaceSnapshot', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: {
+                        controlledByUser: null,
+                        requests: {
+                            permission_1: {
+                                tool: 'Bash',
+                                kind: 'permission',
+                                arguments: { command: 'deploy' },
+                                createdAt: 950,
+                            },
+                        },
+                    },
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',

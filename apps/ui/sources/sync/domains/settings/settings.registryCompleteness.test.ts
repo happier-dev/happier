@@ -71,6 +71,49 @@ describe('settings registry completeness', () => {
         expect(LOCAL_SETTING_ARTIFACTS.defaults).not.toHaveProperty('mobileWorkspaceExperienceV1');
     });
 
+    it('owns animated session-list working text as an account-synced display setting', async () => {
+        const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
+        const { LOCAL_SETTING_ARTIFACTS } = await import('./registry/local/localSettingDefinitions');
+
+        expect(ACCOUNT_SETTING_ARTIFACTS.definitions).toHaveProperty('sessionListWorkingStatusAnimatedTextEnabled');
+        expect(ACCOUNT_SETTING_ARTIFACTS.definitions.sessionListWorkingStatusAnimatedTextEnabled.storageScope).toBe('account');
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('sessionListWorkingStatusAnimatedTextEnabled', true);
+        expect(LOCAL_SETTING_ARTIFACTS.definitions).not.toHaveProperty('sessionListWorkingStatusAnimatedTextEnabled');
+        expect(LOCAL_SETTING_ARTIFACTS.defaults).not.toHaveProperty('sessionListWorkingStatusAnimatedTextEnabled');
+    });
+
+    it('owns provider usage gauge preferences as account-synced settings', async () => {
+        const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
+        const { LOCAL_SETTING_ARTIFACTS } = await import('./registry/local/localSettingDefinitions');
+
+        expect(ACCOUNT_SETTING_ARTIFACTS.definitions.sessionProviderUsageGaugeMode.storageScope).toBe('account');
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('sessionProviderUsageGaugeMode', 'auto');
+        expect(ACCOUNT_SETTING_ARTIFACTS.definitions.sessionProviderUsageGaugeWindowMode.storageScope).toBe('account');
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('sessionProviderUsageGaugeWindowMode', 'most_constrained');
+        expect(LOCAL_SETTING_ARTIFACTS.definitions).not.toHaveProperty('sessionProviderUsageGaugeMode');
+        expect(LOCAL_SETTING_ARTIFACTS.definitions).not.toHaveProperty('sessionProviderUsageGaugeWindowMode');
+    });
+
+    it('owns generic connected-service auth and provider state settings instead of the old Codex-only setting', async () => {
+        const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
+
+        expect(ACCOUNT_SETTING_ARTIFACTS.definitions).toHaveProperty('connectedServicesDefaultAuthByAgentIdV1');
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('connectedServicesDefaultAuthByAgentIdV1', {
+            v: 1,
+            bindingsByAgentId: {},
+        });
+        expect(ACCOUNT_SETTING_ARTIFACTS.definitions).toHaveProperty('connectedServicesProviderStateSharingSettingsV1');
+        expect(ACCOUNT_SETTING_ARTIFACTS.defaults).toHaveProperty('connectedServicesProviderStateSharingSettingsV1', {
+            v: 1,
+            defaults: {
+                configMode: 'linked',
+                stateMode: 'isolated',
+            },
+            byAgentId: {},
+            acknowledgedRisksByAgentId: {},
+        });
+    });
+
     it('owns keyboard shortcut preferences as account-synced settings while keeping session MRU local-only', async () => {
         const { ACCOUNT_SETTING_ARTIFACTS } = await import('./settings');
         const { LOCAL_SETTING_ARTIFACTS } = await import('./registry/local/localSettingDefinitions');

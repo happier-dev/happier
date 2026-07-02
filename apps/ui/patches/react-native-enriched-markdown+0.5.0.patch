@@ -160,6 +160,35 @@ index 9feea24..7c5d540 100644
    }
 
    companion object {
+diff --git a/node_modules/react-native-enriched-markdown/cpp/wasm/build.sh b/node_modules/react-native-enriched-markdown/cpp/wasm/build.sh
+index e60ff0d..0a14c68 100755
+--- a/node_modules/react-native-enriched-markdown/cpp/wasm/build.sh
++++ b/node_modules/react-native-enriched-markdown/cpp/wasm/build.sh
+@@ -42,13 +42,22 @@ emcc \
+   -Wswitch \
+   -s WASM=1 \
+   -s SINGLE_FILE=1 \
+-  -s EXPORTED_FUNCTIONS='["_parseMarkdown"]' \
+-  -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","UTF8ToString"]' \
++  -s SINGLE_FILE_BINARY_ENCODE=0 \
++  -s STACK_SIZE=8MB \
++  -s ALLOW_MEMORY_GROWTH=1 \
++  -s EXPORTED_FUNCTIONS='["_parseMarkdown","_malloc","_free"]' \
++  -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","UTF8ToString","stringToUTF8","lengthBytesUTF8"]' \
+   -s ENVIRONMENT='web' \
+   -s MODULARIZE=1 \
++  -s EXPORT_ES6=1 \
+   -s EXPORT_NAME='createMd4cModule' \
+   -o "$OUT_DIR/md4c.js"
+
++# Metro transforms the ES module into its own module wrapper before execution.
++# SINGLE_FILE=1 means md4c.js never needs to resolve its script URL, so remove
++# import.meta.url to keep the generated parser parseable inside that wrapper.
++perl -0pi -e 's/var _scriptName=import\.meta\.url;/var _scriptName="";/' "$OUT_DIR/md4c.js"
++
+ rm "$OUT_DIR/md4c.o"
+
+ echo "Done → $OUT_DIR/md4c.js"
 diff --git a/node_modules/react-native-enriched-markdown/ios/utils/ENRMTailFadeInAnimator.m b/node_modules/react-native-enriched-markdown/ios/utils/ENRMTailFadeInAnimator.m
 index e3630fb..4175787 100644
 --- a/node_modules/react-native-enriched-markdown/ios/utils/ENRMTailFadeInAnimator.m
@@ -376,17 +405,19 @@ index d8308e6..98e32e6 100644
  //# sourceMappingURL=index.web.js.map
 \ No newline at end of file
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js b/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js
-index c6c73b0..b114e15 100644
+index c6c73b0..7e3f0c7 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/EnrichedMarkdownText.js
-@@ -1,13 +1,16 @@
+@@ -1,13 +1,22 @@
  "use strict";
 
 -import { useState, useEffect, useMemo } from 'react';
 +import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
  import { normalizeMarkdownStyle } from "../normalizeMarkdownStyle.web.js";
- import { zeroTrailingMargins, parseErrorFallbackStyle, buildStyles } from "./styles.js";
- import { parseMarkdown } from "./parseMarkdown.js";
+-import { zeroTrailingMargins, parseErrorFallbackStyle, buildStyles } from "./styles.js";
+-import { parseMarkdown } from "./parseMarkdown.js";
++import { zeroTrailingMargins, buildStyles } from "./styles.js";
++import { parseMarkdown, parseMarkdownSyncIfReady } from "./parseMarkdown.js";
  import { RenderNode } from "./renderers/index.js";
  import { indexTaskItems, markInlineImages } from "./utils.js";
  import { loadKaTeX } from "./katex.js";
@@ -394,26 +425,65 @@ index c6c73b0..b114e15 100644
  import { jsx as _jsx } from "react/jsx-runtime";
 +const STREAMING_REVEAL_RANGE_TTL_MS = 260;
 +const STREAMING_REVEAL_CLEANUP_BUFFER_MS = 16;
++function prepareAstForRendering(ast) {
++  indexTaskItems(ast);
++  markInlineImages(ast);
++  markStreamingRevealOffsets(ast);
++  return ast;
++}
  export const EnrichedMarkdownText = ({
    markdown,
    markdownStyle = {},
-@@ -18,6 +21,7 @@ export const EnrichedMarkdownText = ({
+@@ -18,17 +27,26 @@ export const EnrichedMarkdownText = ({
    allowTrailingMargin = false,
    containerStyle,
    selectable = true,
 +  streamingAnimation = false,
++  renderRawFallback = true,
    dir,
    ...rest
  }) => {
-@@ -39,6 +43,7 @@ export const EnrichedMarkdownText = ({
+   const normalizedStyle = useMemo(() => normalizeMarkdownStyle(markdownStyle), [markdownStyle]);
+-  const [ast, setAst] = useState(null);
+-  const [katex, setKatex] = useState(null);
+-  const [parseError, setParseError] = useState(false);
+   const {
+     underline = false,
+     latexMath = true
+   } = md4cFlags;
++  const syncAst = useMemo(() => {
++    const parsed = parseMarkdownSyncIfReady(markdown, {
++      underline,
++      latexMath
++    });
++    return parsed ? prepareAstForRendering(parsed) : null;
++  }, [markdown, underline, latexMath]);
++  const [ast, setAst] = useState(syncAst);
++  const [katex, setKatex] = useState(null);
++  const [parseError, setParseError] = useState(false);
+   useEffect(() => {
+     let cancelled = false;
+     const katexPromise = latexMath ? loadKaTeX() : Promise.resolve(null);
+@@ -37,11 +55,9 @@ export const EnrichedMarkdownText = ({
+       latexMath
+     }), katexPromise]).then(([result, katexInstance]) => {
        if (!cancelled) {
-         indexTaskItems(result);
-         markInlineImages(result);
-+        markStreamingRevealOffsets(result);
+-        indexTaskItems(result);
+-        markInlineImages(result);
          setParseError(false);
          setKatex(katexInstance);
-         setAst(result);
-@@ -62,9 +67,55 @@ export const EnrichedMarkdownText = ({
+-        setAst(result);
++        setAst(prepareAstForRendering(result));
+       }
+     }).catch(error => {
+       if (!cancelled) {
+@@ -57,14 +73,61 @@ export const EnrichedMarkdownText = ({
+       cancelled = true;
+     };
+   }, [markdown, underline, latexMath]);
++  const renderedAst = syncAst ?? ast;
+   const callbacks = useMemo(() => ({
+     onLinkPress,
      onLinkLongPress,
      onTaskListItemPress
    }), [onLinkPress, onLinkLongPress, onTaskListItemPress]);
@@ -421,7 +491,7 @@ index c6c73b0..b114e15 100644
 +  const activeRevealRangesRef = useRef([]);
 +  const revealCleanupTimerRef = useRef(null);
 +  const [revealCleanupRevision, setRevealCleanupRevision] = useState(0);
-+  const currentComparisonText = useMemo(() => readRenderedComparisonText(ast), [ast]);
++  const currentComparisonText = useMemo(() => readRenderedComparisonText(renderedAst), [renderedAst]);
 +  const activeRevealRanges = useMemo(() => streamingAnimation ? updateStreamingRevealRanges({
 +    activeRanges: activeRevealRangesRef.current,
 +    previousComparisonText: previousComparisonTextRef.current,
@@ -471,16 +541,12 @@ index c6c73b0..b114e15 100644
    const lastChildStyle = useMemo(() => allowTrailingMargin ? normalizedStyle : zeroTrailingMargins(normalizedStyle), [normalizedStyle, allowTrailingMargin]);
    const styles = useMemo(() => buildStyles(normalizedStyle), [normalizedStyle]);
    const lastChildStyles = useMemo(() => buildStyles(lastChildStyle), [lastChildStyle]);
-@@ -87,7 +138,20 @@ export const EnrichedMarkdownText = ({
-       })
-     });
-   }
--  if (!ast) return null;
-+  if (!ast) {
-+    return /*#__PURE__*/_jsx("div", {
-+      style: wrapperStyle,
-+      dir: dir,
-+      ...rest,
+@@ -81,14 +144,41 @@ export const EnrichedMarkdownText = ({
+       style: wrapperStyle,
+       dir: dir,
+       ...rest,
+-      children: /*#__PURE__*/_jsx("pre", {
+-        style: parseErrorFallbackStyle,
 +      children: /*#__PURE__*/_jsx("p", {
 +        style: {
 +          ...lastChildStyles.paragraph,
@@ -490,20 +556,52 @@ index c6c73b0..b114e15 100644
 +      })
 +    });
 +  }
-   const children = ast.children ?? [];
++  if (!renderedAst) {
++    const fallbackParagraphStyle = {
++      ...lastChildStyles.paragraph,
++      whiteSpace: 'pre-wrap',
++      ...(renderRawFallback === 'hidden' ? {
++        visibility: 'hidden'
++      } : undefined)
++    };
++    if (!renderRawFallback) {
++      return /*#__PURE__*/_jsx("div", {
++        style: wrapperStyle,
++        dir: dir,
++        ...rest
++      });
++    }
++    return /*#__PURE__*/_jsx("div", {
++      style: wrapperStyle,
++      dir: dir,
++      ...rest,
++      children: /*#__PURE__*/_jsx("p", {
++        style: fallbackParagraphStyle,
+         children: markdown
+       })
+     });
+   }
+-  if (!ast) return null;
+-  const children = ast.children ?? [];
++  const children = renderedAst.children ?? [];
    const lastIdx = children.length - 1;
    return /*#__PURE__*/_jsx("div", {
+     style: wrapperStyle,
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js b/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
-index 7604c13..d6b2719 100644
+index 7604c13..3d0bb0a 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/parseMarkdown.js
-@@ -3,18 +3,46 @@
+@@ -3,30 +3,168 @@
  // Caching the Promise (not the resolved value) means concurrent callers share
  // a single WASM initialization — no duplicate loading.
  let parserPromise = null;
++let parserRuntime = null;
 +const PARSE_CACHE_MAX_ENTRIES = 48;
++const PARSE_CACHE_MAX_MARKDOWN_CHARS = 32000;
 +const parseCache = new Map();
++const parseResultCache = new Map();
 +const WASM_FACTORY_UNAVAILABLE_MESSAGE = 'WASM parser module did not export a factory';
++const WASM_INPUT_ALLOCATION_FAILED_MESSAGE = 'WASM parser failed to allocate markdown input';
 +function resolveMd4cModuleFactory(value) {
 +  if (typeof value === 'function') {
 +    return value;
@@ -525,8 +623,15 @@ index 7604c13..d6b2719 100644
 +        throw new Error(WASM_FACTORY_UNAVAILABLE_MESSAGE);
 +      }
 +      return factory();
-+    }).then(wasmModule => wasmModule.cwrap('parseMarkdown', 'string', ['string', 'number', 'number'])).catch(error => {
++    }).then(wasmModule => ({
++      parse: wasmModule.cwrap('parseMarkdown', 'string', ['number', 'number', 'number']),
++      wasmModule
++    })).then(runtime => {
++      parserRuntime = runtime;
++      return runtime;
++    }).catch(error => {
        parserPromise = null;
++      parserRuntime = null;
        throw error;
      });
    }
@@ -545,7 +650,47 @@ index 7604c13..d6b2719 100644
  function isASTNode(value) {
    return typeof value === 'object' && value !== null && 'type' in value && typeof value.type === 'string';
  }
-@@ -22,11 +50,34 @@ export async function parseMarkdown(markdown, {
++function shouldCacheParseResult(markdown) {
++  return markdown.length <= PARSE_CACHE_MAX_MARKDOWN_CHARS;
++}
++function buildCacheKey(markdown, underline, latexMath) {
++  return shouldCacheParseResult(markdown) ? `${underline ? 1 : 0}\0${latexMath ? 1 : 0}\0${markdown}` : null;
++}
++function rememberParsedResult(cacheKey, ast) {
++  if (!cacheKey) return;
++  parseResultCache.set(cacheKey, cloneAst(ast));
++  parseCache.delete(cacheKey);
++  while (parseResultCache.size > PARSE_CACHE_MAX_ENTRIES) {
++    const oldestKey = parseResultCache.keys().next().value;
++    if (typeof oldestKey !== 'string') break;
++    parseResultCache.delete(oldestKey);
++  }
++}
++function readCachedParsedResult(cacheKey) {
++  if (!cacheKey) return null;
++  const cached = parseResultCache.get(cacheKey);
++  if (!cached) return null;
++  parseResultCache.delete(cacheKey);
++  parseResultCache.set(cacheKey, cached);
++  return cloneAst(cached);
++}
++function parseMarkdownWithHeapInput(runtime, markdown, underline, latexMath) {
++  const {
++    wasmModule
++  } = runtime;
++  const inputBytes = wasmModule.lengthBytesUTF8(markdown) + 1;
++  const inputPointer = wasmModule._malloc(inputBytes);
++  if (!inputPointer) {
++    throw new Error(WASM_INPUT_ALLOCATION_FAILED_MESSAGE);
++  }
++  try {
++    wasmModule.stringToUTF8(markdown, inputPointer, inputBytes);
++    return runtime.parse(inputPointer, underline ? 1 : 0, latexMath ? 1 : 0);
++  } finally {
++    wasmModule._free(inputPointer);
++  }
++}
+ export async function parseMarkdown(markdown, {
    underline = false,
    latexMath = true
  } = {}) {
@@ -553,41 +698,76 @@ index 7604c13..d6b2719 100644
 -  const result = JSON.parse(parse(markdown, underline ? 1 : 0, latexMath ? 1 : 0));
 -  if (!isASTNode(result)) {
 -    throw new Error('WASM parser returned invalid AST');
-+  const cacheKey = `${underline ? 1 : 0}\0${latexMath ? 1 : 0}\0${markdown}`;
-+  const cached = parseCache.get(cacheKey);
-+  if (cached) {
-+    parseCache.delete(cacheKey);
-+    parseCache.set(cacheKey, cached);
-+    return cloneAst(await cached);
++  const cacheKey = buildCacheKey(markdown, underline, latexMath);
++  const cachedResult = readCachedParsedResult(cacheKey);
++  if (cachedResult) return cachedResult;
++  if (cacheKey) {
++    const cached = parseCache.get(cacheKey);
++    if (cached) {
++      parseCache.delete(cacheKey);
++      parseCache.set(cacheKey, cached);
++      return cloneAst(await cached);
++    }
 +  }
-+  const parsed = initializeParser().then(parse => {
-+    const result = JSON.parse(parse(markdown, underline ? 1 : 0, latexMath ? 1 : 0));
++  const parsed = initializeParser().then(runtime => {
++    const result = JSON.parse(parseMarkdownWithHeapInput(runtime, markdown, underline, latexMath));
 +    if (!isASTNode(result)) {
 +      throw new Error('WASM parser returned invalid AST');
 +    }
++    rememberParsedResult(cacheKey, result);
 +    return result;
 +  });
-+  parseCache.set(cacheKey, parsed);
-+  while (parseCache.size > PARSE_CACHE_MAX_ENTRIES) {
-+    const oldestKey = parseCache.keys().next().value;
-+    if (typeof oldestKey !== 'string') break;
-+    parseCache.delete(oldestKey);
-   }
--  return result;
++  if (cacheKey) {
++    parseCache.set(cacheKey, parsed);
++    while (parseCache.size > PARSE_CACHE_MAX_ENTRIES) {
++      const oldestKey = parseCache.keys().next().value;
++      if (typeof oldestKey !== 'string') break;
++      parseCache.delete(oldestKey);
++    }
++  }
 +  try {
 +    return cloneAst(await parsed);
 +  } catch (error) {
-+    parseCache.delete(cacheKey);
++    if (cacheKey) {
++      parseCache.delete(cacheKey);
++    }
++    parseCache.clear();
++    parseResultCache.clear();
++    parserPromise = null;
++    parserRuntime = null;
 +    throw error;
 +  }
++}
++export function parseMarkdownSyncIfReady(markdown, {
++  underline = false,
++  latexMath = true
++} = {}) {
++  const cacheKey = buildCacheKey(markdown, underline, latexMath);
++  const cachedResult = readCachedParsedResult(cacheKey);
++  if (cachedResult) return cachedResult;
++  if (!parserRuntime) return null;
++  try {
++    const result = JSON.parse(parseMarkdownWithHeapInput(parserRuntime, markdown, underline, latexMath));
++    if (!isASTNode(result)) {
++      throw new Error('WASM parser returned invalid AST');
++    }
++    rememberParsedResult(cacheKey, result);
++    return cloneAst(result);
++  } catch (error) {
++    if (cacheKey) {
++      parseCache.delete(cacheKey);
++      parseResultCache.delete(cacheKey);
++    }
++    return null;
+   }
+-  return result;
 +}
 +function cloneAst(ast) {
 +  return JSON.parse(JSON.stringify(ast));
  }
  //# sourceMappingURL=parseMarkdown.js.map
-\ No newline at end of file
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
-index 5bdaee9..463c0a0 100644
+index 5bdaee9..ab8bc37 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/BlockRenderers.js
 @@ -8,6 +8,9 @@ function ParagraphRenderer({
@@ -662,7 +842,7 @@ index 7c31c2b..5bc65a7 100644
  }
  function LinkRenderer({
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/ListRenderers.js b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/ListRenderers.js
-index 9433b81..0e012c0 100644
+index 9433b81..1950089 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/ListRenderers.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/ListRenderers.js
 @@ -70,11 +70,17 @@ function ListItemRenderer({
@@ -686,7 +866,7 @@ index 9433b81..0e012c0 100644
          checked: isChecked,
          onChange: handleChange,
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/index.js b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/index.js
-index 17a8464..cbc0766 100644
+index 17a8464..3190264 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/renderers/index.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/renderers/index.js
 @@ -24,7 +24,10 @@ export function RenderNode({
@@ -846,7 +1026,7 @@ index 0000000..ea71e63
 +}
 +//# sourceMappingURL=streamingReveal.js.map
 diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/styles.js b/node_modules/react-native-enriched-markdown/lib/module/web/styles.js
-index 1c5a293..f5df948 100644
+index 1c5a293..875211f 100644
 --- a/node_modules/react-native-enriched-markdown/lib/module/web/styles.js
 +++ b/node_modules/react-native-enriched-markdown/lib/module/web/styles.js
 @@ -101,6 +101,18 @@ function paragraphInBlockquoteStyle(style) {
@@ -888,10 +1068,10 @@ index 3513fc6..cc06a72 100644
  export type { MarkdownStyle, Md4cFlags } from './types/MarkdownStyle';
  export type { LinkPressEvent, LinkLongPressEvent, TaskListItemPressEvent, } from './types/events';
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownTextProps.web.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownTextProps.web.d.ts
-index 609252d..1b0181d 100644
+index 609252d..94d5df3 100644
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownTextProps.web.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/types/MarkdownTextProps.web.d.ts
-@@ -59,6 +59,14 @@ export interface EnrichedMarkdownTextProps extends Omit<HTMLAttributes<HTMLDivEl
+@@ -59,6 +59,23 @@ export interface EnrichedMarkdownTextProps extends Omit<HTMLAttributes<HTMLDivEl
       * @platform ios, android, web
       */
      selectable?: boolean;
@@ -903,20 +1083,29 @@ index 609252d..1b0181d 100644
 +     * @platform web
 +     */
 +    streamingAnimation?: boolean;
++    /**
++     * Controls the temporary raw markdown fallback while the async web parser is
++     * still resolving. Use "hidden" for scroll-anchored surfaces that need the
++     * fallback to reserve approximate layout without visibly painting raw
++     * markdown syntax.
++     * @default true
++     * @platform web
++     */
++    renderRawFallback?: boolean | 'hidden';
      /**
       * When false (default), removes trailing margin from the last element to
       * eliminate bottom spacing.
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/parseMarkdown.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/parseMarkdown.d.ts
-index 4643d20..01878dd 100644
+index 4643d20..ac0f571 100644
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/parseMarkdown.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/parseMarkdown.d.ts
-@@ -1,4 +1,5 @@
+@@ -1,4 +1,6 @@
  import type { ASTNode } from './types';
  import type { Md4cFlags } from '../types/MarkdownStyle';
 +export declare function preloadMarkdownRuntime(): Promise<void>;
  export declare function parseMarkdown(markdown: string, { underline, latexMath }?: Md4cFlags): Promise<ASTNode>;
++export declare function parseMarkdownSyncIfReady(markdown: string, { underline, latexMath }?: Md4cFlags): ASTNode | null;
  //# sourceMappingURL=parseMarkdown.d.ts.map
-\ No newline at end of file
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/streamingReveal.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/streamingReveal.d.ts
 new file mode 100644
 index 0000000..1249338
@@ -957,7 +1146,7 @@ index 0000000..1249338
 +    startOffset: number;
 +}>): ReactNode;
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/styles.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/styles.d.ts
-index d5629f6..90621d0 100644
+index d5629f6..2e100d7 100644
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/styles.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/styles.d.ts
 @@ -10,6 +10,8 @@ export declare const parseErrorFallbackStyle: CSSProperties;
@@ -970,7 +1159,7 @@ index d5629f6..90621d0 100644
      h2: CSSProperties;
      h3: CSSProperties;
 diff --git a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/types.d.ts b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/types.d.ts
-index 5bf4501..21ff3cb 100644
+index 5bf4501..980dfbe 100644
 --- a/node_modules/react-native-enriched-markdown/lib/typescript/src/web/types.d.ts
 +++ b/node_modules/react-native-enriched-markdown/lib/typescript/src/web/types.d.ts
 @@ -3,6 +3,7 @@ import type { MarkdownStyleInternal } from '../types/MarkdownStyleInternal';
@@ -1018,10 +1207,10 @@ index 4b4305c..c6aa6a4 100644
  export type { MarkdownStyle, Md4cFlags } from './types/MarkdownStyle';
  export type {
 diff --git a/node_modules/react-native-enriched-markdown/src/types/MarkdownTextProps.web.ts b/node_modules/react-native-enriched-markdown/src/types/MarkdownTextProps.web.ts
-index fa9d401..aa9e058 100644
+index fa9d401..90d9e21 100644
 --- a/node_modules/react-native-enriched-markdown/src/types/MarkdownTextProps.web.ts
 +++ b/node_modules/react-native-enriched-markdown/src/types/MarkdownTextProps.web.ts
-@@ -65,6 +65,14 @@ export interface EnrichedMarkdownTextProps
+@@ -65,6 +65,23 @@ export interface EnrichedMarkdownTextProps
     * @platform ios, android, web
     */
    selectable?: boolean;
@@ -1033,14 +1222,23 @@ index fa9d401..aa9e058 100644
 +   * @platform web
 +   */
 +  streamingAnimation?: boolean;
++  /**
++   * Controls the temporary raw markdown fallback while the async web parser is
++   * still resolving. Use "hidden" for scroll-anchored surfaces that need the
++   * fallback to reserve approximate layout without visibly painting raw
++   * markdown syntax.
++   * @default true
++   * @platform web
++   */
++  renderRawFallback?: boolean | 'hidden';
    /**
     * When false (default), removes trailing margin from the last element to
     * eliminate bottom spacing.
 diff --git a/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx b/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx
-index 70eb3a4..7f2efab 100644
+index 70eb3a4..aa2b7b7 100644
 --- a/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx
 +++ b/node_modules/react-native-enriched-markdown/src/web/EnrichedMarkdownText.tsx
-@@ -1,4 +1,11 @@
+@@ -1,17 +1,40 @@
 -import { useState, useEffect, useMemo, type CSSProperties } from 'react';
 +import {
 +  useState,
@@ -1053,7 +1251,14 @@ index 70eb3a4..7f2efab 100644
  import type { EnrichedMarkdownTextProps } from '../types/MarkdownTextProps.web';
  import { normalizeMarkdownStyle } from '../normalizeMarkdownStyle.web';
  import {
-@@ -12,6 +19,16 @@ import type { ASTNode, RendererCallbacks, RenderCapabilities } from './types';
+   zeroTrailingMargins,
+-  parseErrorFallbackStyle,
+   buildStyles,
+ } from './styles';
+-import { parseMarkdown } from './parseMarkdown';
++import { parseMarkdown, parseMarkdownSyncIfReady } from './parseMarkdown';
+ import { RenderNode } from './renderers';
+ import type { ASTNode, RendererCallbacks, RenderCapabilities } from './types';
  import { indexTaskItems, markInlineImages } from './utils';
  import { loadKaTeX } from './katex';
  import type { KaTeXInstance } from './katex';
@@ -1067,26 +1272,67 @@ index 70eb3a4..7f2efab 100644
 +
 +const STREAMING_REVEAL_RANGE_TTL_MS = 260;
 +const STREAMING_REVEAL_CLEANUP_BUFFER_MS = 16;
++
++function prepareAstForRendering(ast: ASTNode): ASTNode {
++  indexTaskItems(ast);
++  markInlineImages(ast);
++  markStreamingRevealOffsets(ast);
++  return ast;
++}
 
  export const EnrichedMarkdownText = ({
    markdown,
-@@ -23,6 +40,7 @@ export const EnrichedMarkdownText = ({
+@@ -23,6 +46,8 @@ export const EnrichedMarkdownText = ({
    allowTrailingMargin = false,
    containerStyle,
    selectable = true,
 +  streamingAnimation = false,
++  renderRawFallback = true,
    dir,
    ...rest
  }: EnrichedMarkdownTextProps) => {
-@@ -50,6 +68,7 @@ export const EnrichedMarkdownText = ({
-         if (!cancelled) {
-           indexTaskItems(result);
-           markInlineImages(result);
-+          markStreamingRevealOffsets(result);
+@@ -30,13 +55,16 @@ export const EnrichedMarkdownText = ({
+     () => normalizeMarkdownStyle(markdownStyle),
+     [markdownStyle]
+   );
++  const { underline = false, latexMath = true } = md4cFlags;
 
+-  const [ast, setAst] = useState<ASTNode | null>(null);
++  const syncAst = useMemo(() => {
++    const parsed = parseMarkdownSyncIfReady(markdown, { underline, latexMath });
++    return parsed ? prepareAstForRendering(parsed) : null;
++  }, [markdown, underline, latexMath]);
++  const [ast, setAst] = useState<ASTNode | null>(syncAst);
+   const [katex, setKatex] = useState<KaTeXInstance | null>(null);
+   const [parseError, setParseError] = useState<boolean>(false);
+
+-  const { underline = false, latexMath = true } = md4cFlags;
+-
+   useEffect(() => {
+     let cancelled = false;
+
+@@ -48,12 +76,9 @@ export const EnrichedMarkdownText = ({
+     ])
+       .then(([result, katexInstance]) => {
+         if (!cancelled) {
+-          indexTaskItems(result);
+-          markInlineImages(result);
+-
            setParseError(false);
            setKatex(katexInstance);
-@@ -78,7 +97,79 @@ export const EnrichedMarkdownText = ({
+-          setAst(result);
++          setAst(prepareAstForRendering(result));
+         }
+       })
+       .catch((error) => {
+@@ -73,12 +98,86 @@ export const EnrichedMarkdownText = ({
+     };
+   }, [markdown, underline, latexMath]);
+
++  const renderedAst = syncAst ?? ast;
++
+   const callbacks = useMemo<RendererCallbacks>(
+     () => ({ onLinkPress, onLinkLongPress, onTaskListItemPress }),
      [onLinkPress, onLinkLongPress, onTaskListItemPress]
    );
 
@@ -1098,8 +1344,8 @@ index 70eb3a4..7f2efab 100644
 +  );
 +  const [revealCleanupRevision, setRevealCleanupRevision] = useState(0);
 +  const currentComparisonText = useMemo(
-+    () => readRenderedComparisonText(ast),
-+    [ast]
++    () => readRenderedComparisonText(renderedAst),
++    [renderedAst]
 +  );
 +  const activeRevealRanges = useMemo(
 +    () =>
@@ -1167,14 +1413,11 @@ index 70eb3a4..7f2efab 100644
 
    const lastChildStyle = useMemo(
      () =>
-@@ -113,7 +204,20 @@ export const EnrichedMarkdownText = ({
-     );
-   }
-
--  if (!ast) return null;
-+  if (!ast) {
-+    return (
-+      <div style={wrapperStyle} dir={dir} {...rest}>
+@@ -108,14 +207,39 @@ export const EnrichedMarkdownText = ({
+   if (parseError) {
+     return (
+       <div style={wrapperStyle} dir={dir} {...rest}>
+-        <pre style={parseErrorFallbackStyle}>{markdown}</pre>
 +        <p
 +          style={{
 +            ...lastChildStyles.paragraph,
@@ -1183,31 +1426,75 @@ index 70eb3a4..7f2efab 100644
 +        >
 +          {markdown}
 +        </p>
+       </div>
+     );
+   }
+
+-  if (!ast) return null;
++  if (!renderedAst) {
++    const fallbackParagraphStyle = {
++      ...lastChildStyles.paragraph,
++      whiteSpace: 'pre-wrap',
++      ...(renderRawFallback === 'hidden' ? { visibility: 'hidden' as const } : undefined),
++    };
++
++    if (!renderRawFallback) {
++      return <div style={wrapperStyle} dir={dir} {...rest} />;
++    }
++
++    return (
++      <div style={wrapperStyle} dir={dir} {...rest}>
++        <p style={fallbackParagraphStyle}>
++          {markdown}
++        </p>
 +      </div>
 +    );
 +  }
 
-   const children = ast.children ?? [];
+-  const children = ast.children ?? [];
++  const children = renderedAst.children ?? [];
    const lastIdx = children.length - 1;
+
+   return (
 diff --git a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts b/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
-index 911e3f1..c299992 100644
+index 911e3f1..6da0772 100644
 --- a/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
 +++ b/node_modules/react-native-enriched-markdown/src/web/parseMarkdown.ts
-@@ -6,17 +6,45 @@ type ParseFn = (
+@@ -2,36 +2,100 @@ import type { ASTNode } from './types';
+ import type { Md4cFlags } from '../types/MarkdownStyle';
+
+ type ParseFn = (
+-  markdown: string,
++  markdownPointer: number,
    underline: number,
    latexMath: number
  ) => string;
-+type Md4cModuleFactory = () => Promise<{
++type Md4cModule = {
 +  cwrap(name: string, returnType: string, argTypes: string[]): ParseFn;
++  _malloc(size: number): number;
++  _free(pointer: number): void;
++  stringToUTF8(value: string, outputPointer: number, maxBytesToWrite: number): void;
++  lengthBytesUTF8(value: string): number;
++};
++type Md4cModuleFactory = () => Promise<Md4cModule>;
++type ParserRuntime = Readonly<{
++  parse: ParseFn;
++  wasmModule: Md4cModule;
 +}>;
 
  // Caching the Promise (not the resolved value) means concurrent callers share
  // a single WASM initialization — no duplicate loading.
- let parserPromise: Promise<ParseFn> | null = null;
+-let parserPromise: Promise<ParseFn> | null = null;
++let parserPromise: Promise<ParserRuntime> | null = null;
++let parserRuntime: ParserRuntime | null = null;
 +const PARSE_CACHE_MAX_ENTRIES = 48;
++const PARSE_CACHE_MAX_MARKDOWN_CHARS = 32_000;
 +const parseCache = new Map<string, Promise<ASTNode>>();
++const parseResultCache = new Map<string, ASTNode>();
 +const WASM_FACTORY_UNAVAILABLE_MESSAGE =
 +  'WASM parser module did not export a factory';
++const WASM_INPUT_ALLOCATION_FAILED_MESSAGE =
++  'WASM parser failed to allocate markdown input';
 +
 +function resolveMd4cModuleFactory(value: unknown): Md4cModuleFactory | null {
 +  if (typeof value === 'function') {
@@ -1225,10 +1512,14 @@ index 911e3f1..c299992 100644
 
  // SINGLE_FILE=1 inlines the WASM binary as base64 inside md4c.js, so no
  // network fetch is needed — only a one-time decode + compile on first call.
- function initializeParser(): Promise<ParseFn> {
+-function initializeParser(): Promise<ParseFn> {
++function initializeParser(): Promise<ParserRuntime> {
    if (!parserPromise) {
 -    parserPromise = import('./wasm/md4c')
 -      .then((module) => module.default())
+-      .then((wasmModule) =>
+-        wasmModule.cwrap('parseMarkdown', 'string', [
+-          'string',
 +    parserPromise = import('./wasm/md4c.js')
 +      .then((module) => {
 +        const factory = resolveMd4cModuleFactory(module);
@@ -1238,10 +1529,27 @@ index 911e3f1..c299992 100644
 +
 +        return factory();
 +      })
-       .then((wasmModule) =>
-         wasmModule.cwrap('parseMarkdown', 'string', [
-           'string',
-@@ -32,6 +60,22 @@ function initializeParser(): Promise<ParseFn> {
++      .then((wasmModule) => ({
++        parse: wasmModule.cwrap('parseMarkdown', 'string', [
+           'number',
+           'number',
+-        ])
+-      )
++          'number',
++        ]),
++        wasmModule,
++      }))
++      .then((runtime) => {
++        parserRuntime = runtime;
++        return runtime;
++      })
+       .catch((error) => {
+         parserPromise = null;
++        parserRuntime = null;
+         throw error;
+-      }) as Promise<ParseFn>;
++      }) as Promise<ParserRuntime>;
+   }
    return parserPromise;
  }
 
@@ -1264,25 +1572,91 @@ index 911e3f1..c299992 100644
  function isASTNode(value: unknown): value is ASTNode {
    return (
      typeof value === 'object' &&
-@@ -45,15 +89,41 @@ export async function parseMarkdown(
+@@ -41,19 +105,145 @@ function isASTNode(value: unknown): value is ASTNode {
+   );
+ }
+
++function shouldCacheParseResult(markdown: string): boolean {
++  return markdown.length <= PARSE_CACHE_MAX_MARKDOWN_CHARS;
++}
++
++function buildCacheKey(
++  markdown: string,
++  underline: boolean,
++  latexMath: boolean
++): string | null {
++  return shouldCacheParseResult(markdown)
++    ? `${underline ? 1 : 0}\u0000${latexMath ? 1 : 0}\u0000${markdown}`
++    : null;
++}
++
++function rememberParsedResult(cacheKey: string | null, ast: ASTNode): void {
++  if (!cacheKey) return;
++
++  parseResultCache.set(cacheKey, cloneAst(ast));
++  parseCache.delete(cacheKey);
++  while (parseResultCache.size > PARSE_CACHE_MAX_ENTRIES) {
++    const oldestKey = parseResultCache.keys().next().value;
++    if (typeof oldestKey !== 'string') break;
++    parseResultCache.delete(oldestKey);
++  }
++}
++
++function readCachedParsedResult(cacheKey: string | null): ASTNode | null {
++  if (!cacheKey) return null;
++
++  const cached = parseResultCache.get(cacheKey);
++  if (!cached) return null;
++  parseResultCache.delete(cacheKey);
++  parseResultCache.set(cacheKey, cached);
++  return cloneAst(cached);
++}
++
++function parseMarkdownWithHeapInput(
++  runtime: ParserRuntime,
++  markdown: string,
++  underline: boolean,
++  latexMath: boolean
++): string {
++  const { wasmModule } = runtime;
++  const inputBytes = wasmModule.lengthBytesUTF8(markdown) + 1;
++  const inputPointer = wasmModule._malloc(inputBytes);
++  if (!inputPointer) {
++    throw new Error(WASM_INPUT_ALLOCATION_FAILED_MESSAGE);
++  }
++
++  try {
++    wasmModule.stringToUTF8(markdown, inputPointer, inputBytes);
++    return runtime.parse(inputPointer, underline ? 1 : 0, latexMath ? 1 : 0);
++  } finally {
++    wasmModule._free(inputPointer);
++  }
++}
++
+ export async function parseMarkdown(
    markdown: string,
    { underline = false, latexMath = true }: Md4cFlags = {}
  ): Promise<ASTNode> {
 -  const parse = await initializeParser();
-+  const cacheKey = `${underline ? 1 : 0}\u0000${latexMath ? 1 : 0}\u0000${markdown}`;
-+  const cached = parseCache.get(cacheKey);
-+  if (cached) {
-+    parseCache.delete(cacheKey);
-+    parseCache.set(cacheKey, cached);
-+    return cloneAst(await cached);
-+  }
++  const cacheKey = buildCacheKey(markdown, underline, latexMath);
++  const cachedResult = readCachedParsedResult(cacheKey);
++  if (cachedResult) return cachedResult;
 
 -  const result: unknown = JSON.parse(
 -    parse(markdown, underline ? 1 : 0, latexMath ? 1 : 0)
 -  );
-+  const parsed = initializeParser().then((parse) => {
++  if (cacheKey) {
++    const cached = parseCache.get(cacheKey);
++    if (cached) {
++      parseCache.delete(cacheKey);
++      parseCache.set(cacheKey, cached);
++      return cloneAst(await cached);
++    }
++  }
++
++  const parsed = initializeParser().then((runtime) => {
 +    const result: unknown = JSON.parse(
-+      parse(markdown, underline ? 1 : 0, latexMath ? 1 : 0)
++      parseMarkdownWithHeapInput(runtime, markdown, underline, latexMath)
 +    );
 +
 +    if (!isASTNode(result)) {
@@ -1291,21 +1665,59 @@ index 911e3f1..c299992 100644
 
 -  if (!isASTNode(result)) {
 -    throw new Error('WASM parser returned invalid AST');
++    rememberParsedResult(cacheKey, result);
 +    return result;
 +  });
 +
-+  parseCache.set(cacheKey, parsed);
-+  while (parseCache.size > PARSE_CACHE_MAX_ENTRIES) {
-+    const oldestKey = parseCache.keys().next().value;
-+    if (typeof oldestKey !== 'string') break;
-+    parseCache.delete(oldestKey);
++  if (cacheKey) {
++    parseCache.set(cacheKey, parsed);
++    while (parseCache.size > PARSE_CACHE_MAX_ENTRIES) {
++      const oldestKey = parseCache.keys().next().value;
++      if (typeof oldestKey !== 'string') break;
++      parseCache.delete(oldestKey);
++    }
 +  }
 +
 +  try {
 +    return cloneAst(await parsed);
 +  } catch (error) {
-+    parseCache.delete(cacheKey);
++    if (cacheKey) {
++      parseCache.delete(cacheKey);
++    }
++    parseCache.clear();
++    parseResultCache.clear();
++    parserPromise = null;
++    parserRuntime = null;
 +    throw error;
++  }
++}
++
++export function parseMarkdownSyncIfReady(
++  markdown: string,
++  { underline = false, latexMath = true }: Md4cFlags = {}
++): ASTNode | null {
++  const cacheKey = buildCacheKey(markdown, underline, latexMath);
++  const cachedResult = readCachedParsedResult(cacheKey);
++  if (cachedResult) return cachedResult;
++  if (!parserRuntime) return null;
++
++  try {
++    const result: unknown = JSON.parse(
++      parseMarkdownWithHeapInput(parserRuntime, markdown, underline, latexMath)
++    );
++
++    if (!isASTNode(result)) {
++      throw new Error('WASM parser returned invalid AST');
++    }
++
++    rememberParsedResult(cacheKey, result);
++    return cloneAst(result);
++  } catch (error) {
++    if (cacheKey) {
++      parseCache.delete(cacheKey);
++      parseResultCache.delete(cacheKey);
++    }
++    return null;
    }
 +}
 

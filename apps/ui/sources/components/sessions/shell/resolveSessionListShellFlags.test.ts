@@ -10,6 +10,9 @@ describe('resolveSessionListShellFlags', () => {
             selectionPresentation: 'flat-with-badge' as const,
             isTablet: true,
             sessionListOrderingModeV1: 'custom' as const,
+            folderActionsEnabled: false,
+            folderViewMode: 'off' as const,
+            hasAnySessionFolderInAccount: false,
         };
 
         const first = resolveSessionListShellFlags(input);
@@ -19,6 +22,7 @@ describe('resolveSessionListShellFlags', () => {
         expect(first).toEqual({
             selectable: true,
             canReorderSessions: true,
+            canDragSessionRows: true,
             showPinnedServerBadge: true,
             showServerBadge: true,
         });
@@ -31,9 +35,13 @@ describe('resolveSessionListShellFlags', () => {
             selectionPresentation: 'flat-with-badge',
             isTablet: true,
             sessionListOrderingModeV1: 'custom',
+            folderActionsEnabled: false,
+            folderViewMode: 'off',
+            hasAnySessionFolderInAccount: false,
         })).toEqual({
             selectable: true,
             canReorderSessions: true,
+            canDragSessionRows: true,
             showPinnedServerBadge: true,
             showServerBadge: true,
         });
@@ -46,11 +54,56 @@ describe('resolveSessionListShellFlags', () => {
             selectionPresentation: 'grouped',
             isTablet: false,
             sessionListOrderingModeV1: 'updated',
+            folderActionsEnabled: false,
+            folderViewMode: 'off',
+            hasAnySessionFolderInAccount: false,
         })).toEqual({
             selectable: false,
             canReorderSessions: false,
+            canDragSessionRows: false,
             showPinnedServerBadge: false,
             showServerBadge: false,
         });
+    });
+
+    it('keeps row drag available in date mode only when folder tree operations can use it', () => {
+        expect(resolveSessionListShellFlags({
+            selectedServerCount: 1,
+            selectionEnabled: false,
+            selectionPresentation: 'grouped',
+            isTablet: false,
+            sessionListOrderingModeV1: 'updated',
+            folderActionsEnabled: true,
+            folderViewMode: 'tree',
+            hasAnySessionFolderInAccount: true,
+        })).toEqual({
+            selectable: false,
+            canReorderSessions: false,
+            canDragSessionRows: true,
+            showPinnedServerBadge: false,
+            showServerBadge: false,
+        });
+
+        expect(resolveSessionListShellFlags({
+            selectedServerCount: 1,
+            selectionEnabled: false,
+            selectionPresentation: 'grouped',
+            isTablet: false,
+            sessionListOrderingModeV1: 'updated',
+            folderActionsEnabled: true,
+            folderViewMode: 'tree',
+            hasAnySessionFolderInAccount: false,
+        }).canDragSessionRows).toBe(false);
+
+        expect(resolveSessionListShellFlags({
+            selectedServerCount: 1,
+            selectionEnabled: false,
+            selectionPresentation: 'grouped',
+            isTablet: false,
+            sessionListOrderingModeV1: 'updated',
+            folderActionsEnabled: true,
+            folderViewMode: 'off',
+            hasAnySessionFolderInAccount: true,
+        }).canDragSessionRows).toBe(false);
     });
 });

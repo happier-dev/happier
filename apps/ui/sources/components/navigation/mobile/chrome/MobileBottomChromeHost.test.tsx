@@ -66,6 +66,7 @@ const cockpitRegistrationState = vi.hoisted(() => ({
         terminalTabAvailable: boolean;
         switchSurface: ReturnType<typeof vi.fn>;
     },
+    setBottomChromeHeight: vi.fn(),
 }));
 const routerState = vi.hoisted(() => ({
     back: vi.fn(),
@@ -225,6 +226,42 @@ const storageMock = createStorageModuleStub({
         }
         return [null, vi.fn()];
     },
+    useSessionLastMobileSurface: (sessionId: string | null) => React.useSyncExternalStore(
+        (listener) => {
+            storageListeners.listeners.add(listener);
+            return () => {
+                storageListeners.listeners.delete(listener);
+            };
+        },
+        () => sessionId ? settingsState.sessionLastMobileSurfaceBySessionId?.[sessionId] ?? null : null,
+        () => sessionId ? settingsState.sessionLastMobileSurfaceBySessionId?.[sessionId] ?? null : null,
+    ),
+    usePersistSessionLastMobileSurface: () => (sessionId: string, surface: string) => {
+        settingsState.sessionLastMobileSurfaceBySessionId = {
+            ...(settingsState.sessionLastMobileSurfaceBySessionId ?? {}),
+            [sessionId]: surface,
+        };
+        storageMutators.setSessionLastMobileSurfaceBySessionId(settingsState.sessionLastMobileSurfaceBySessionId);
+        notifyStorageListeners();
+    },
+    useProjectLastMobileSurface: (workspaceRefId: string | null) => React.useSyncExternalStore(
+        (listener) => {
+            storageListeners.listeners.add(listener);
+            return () => {
+                storageListeners.listeners.delete(listener);
+            };
+        },
+        () => workspaceRefId ? settingsState.projectLastMobileSurfaceByWorkspaceRefId?.[workspaceRefId] ?? null : null,
+        () => workspaceRefId ? settingsState.projectLastMobileSurfaceByWorkspaceRefId?.[workspaceRefId] ?? null : null,
+    ),
+    usePersistProjectLastMobileSurface: () => (workspaceRefId: string, surface: string) => {
+        settingsState.projectLastMobileSurfaceByWorkspaceRefId = {
+            ...(settingsState.projectLastMobileSurfaceByWorkspaceRefId ?? {}),
+            [workspaceRefId]: surface,
+        };
+        storageMutators.setProjectLastMobileSurfaceByWorkspaceRefId(settingsState.projectLastMobileSurfaceByWorkspaceRefId);
+        notifyStorageListeners();
+    },
     useSettingMutable: (key: string) => {
         if (key === 'mobileWorkspaceExperienceV1') {
             return [
@@ -244,6 +281,7 @@ vi.mock('@/sync/domains/state/storage', () => storageMock);
 
 vi.mock('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry', () => ({
     useSessionCockpitChromeRegistration: () => cockpitRegistrationState.registration,
+    useSessionCockpitBottomChromeHeightSetter: () => cockpitRegistrationState.setBottomChromeHeight,
 }));
 
 function readSettingValue(key: string): unknown {
@@ -312,6 +350,7 @@ describe('MobileBottomChromeHost', () => {
         storageMutators.setProjectLastMobileSurfaceByWorkspaceRefId.mockReset();
         storageMutators.setMobileWorkspaceExperience.mockReset();
         cockpitRegistrationState.registration = null;
+        cockpitRegistrationState.setBottomChromeHeight.mockReset();
         animatedTimingState.timings = [];
         storageListeners.listeners.clear();
         searchParamsState.mobileSurface = undefined;
@@ -339,6 +378,29 @@ describe('MobileBottomChromeHost', () => {
 
         const bar = screen.tree.findByType('MainAppTabBar' as never);
         expect(bar.props.activeTab).toBe('sessions');
+    });
+
+    it('reports the rendered bottom chrome height to the session cockpit registry', async () => {
+        pathState.pathname = '/';
+        authState.isAuthenticated = true;
+        settingsState.mobileWorkspaceExperienceV1 = 'classic';
+        settingsState.sessionLastMobileSurfaceBySessionId = null;
+        settingsState.projectLastMobileSurfaceByWorkspaceRefId = null;
+        settingsState.embeddedTerminalDockLocation = 'sidebar';
+        deviceTypeState.value = 'phone';
+        featureState.terminalEmbeddedPtyEnabled = true;
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
+        const layoutView = screen.tree.findAllByType('View' as never)
+            .find((node) => typeof node.props.onLayout === 'function');
+
+        expect(layoutView).toBeTruthy();
+        await act(async () => {
+            layoutView?.props.onLayout({ nativeEvent: { layout: { height: 42.2 } } });
+        });
+
+        expect(cockpitRegistrationState.setBottomChromeHeight).toHaveBeenCalledWith(42.2);
     });
 
     it('ignores a press on the already selected main app tab', async () => {
@@ -396,6 +458,32 @@ describe('MobileBottomChromeHost', () => {
         expect(bar.props.sessionId).toBe('session-1');
         expect(bar.props.activeSurface).toBe('browse');
         expect(bar.props.terminalTabAvailable).toBe(true);
+    });
+
+    it('renders registered session cockpit chrome when the current session path is not a modeled surface route', async () => {
+        pathState.pathname = '/session/session-1/file/src%2Findex.ts';
+        authState.isAuthenticated = true;
+        settingsState.mobileWorkspaceExperienceV1 = 'cockpit';
+        settingsState.sessionLastMobileSurfaceBySessionId = null;
+        settingsState.projectLastMobileSurfaceByWorkspaceRefId = null;
+        settingsState.embeddedTerminalDockLocation = 'sidebar';
+        deviceTypeState.value = 'phone';
+        featureState.terminalEmbeddedPtyEnabled = true;
+        searchParamsState.mobileSurface = undefined;
+        searchParamsState.worktreeId = undefined;
+        cockpitRegistrationState.registration = {
+            sessionId: 'session-1',
+            activeSurface: 'browse',
+            terminalTabAvailable: true,
+            switchSurface: vi.fn(),
+        };
+
+        const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
+        const screen = await renderScreen(<MobileBottomChromeHost />);
+
+        const bar = screen.tree.findByType('SessionCockpitTabBar' as never);
+        expect(bar.props.sessionId).toBe('session-1');
+        expect(bar.props.activeSurface).toBe('browse');
     });
 
     it('shows session cockpit chrome when cockpit mode is enabled while already viewing a session', async () => {
@@ -690,7 +778,7 @@ describe('MobileBottomChromeHost', () => {
         expect(screen.tree.findAllByType('SessionCockpitTabBar' as never)).toHaveLength(1);
 
         pathState.pathname = '/';
-        settingsState.projectLastMobileSurfaceByWorkspaceRefId = {};
+        settingsState.mobileWorkspaceExperienceV1 = 'classic';
         await act(async () => {
             notifyStorageListeners();
         });

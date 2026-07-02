@@ -2,23 +2,46 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import {
+    TREE_DROP_OVERLAY_KIND_NONE,
+    type TreeDropOverlaySharedValues,
+} from '@/components/ui/treeDragDrop/ui/treeDropOverlayTypes';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import type { SessionStatus } from '@/utils/sessions/sessionUtils';
 import { lightTheme } from '@/theme';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import {
+    createModelBackedSessionItemTestComponent,
+    createSessionItemRowViewModel,
+} from './sessionItemRowViewModelTestFixture';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const useProfileSpy = vi.hoisted(() => vi.fn(() => ({ id: 'u1' })));
 const useSessionSpy = vi.hoisted(() => vi.fn(() => null));
-const useSessionListRenderableWithServerScopeSpy = vi.hoisted(() => vi.fn(() => null));
+const useSessionListRenderableWithServerScopeSpy = vi.hoisted(() =>
+    vi.fn<(serverId: string, sessionId: string) => SessionListRenderableSession | null>(() => null),
+);
+const formatShortRelativeTimeSpy = vi.hoisted(() => vi.fn((_timestamp: number) => '1m'));
 let hasUnreadMessagesValue = false;
 let platformOs: 'ios' | 'android' | 'web' = 'web';
 let workingIndicatorStyle: 'spinner' | 'pulse' = 'spinner';
 let sessionListIdentityDisplay: 'avatar' | 'agentLogo' | 'none' = 'avatar';
 let sessionListActiveColorMode: 'activityAndAttention' | 'attentionOnly' | 'allActive' = 'activityAndAttention';
 
-vi.mock('react-native-reanimated', () => ({}));
+vi.mock('react-native-reanimated', () => ({
+    Easing: {
+        bezier: () => 'bezier',
+        linear: 'linear',
+    },
+    default: { View: 'Animated.View' },
+    useSharedValue: (value: unknown) => ({ value }),
+    useAnimatedStyle: (factory: () => unknown) => factory(),
+    withSpring: (value: unknown) => value,
+}));
 
 vi.mock('react-native-gesture-handler', () => ({
+    GestureDetector: (props: any) => React.createElement('GestureDetector', props, props.children),
     Swipeable: 'Swipeable',
 }));
 
@@ -70,7 +93,6 @@ installSessionShellCommonModuleMocks({
             useProfile: useProfileSpy,
             useSession: useSessionSpy,
             useSessionListRenderableWithServerScope: useSessionListRenderableWithServerScopeSpy,
-            useSessionListActivityTimeLabel: () => '1m',
             useSessionListMeaningfulActivityAt: () => 60_000,
             useSetting: (key: string) => {
                 if (key === 'sessionListNarrowWorkingIndicatorStyle') return workingIndicatorStyle;
@@ -124,7 +146,7 @@ vi.mock('@/utils/errors/errors', () => ({
 }));
 
 vi.mock('@/utils/time/formatShortRelativeTime', () => ({
-    formatShortRelativeTime: () => '1m',
+    formatShortRelativeTime: formatShortRelativeTimeSpy,
 }));
 
 vi.mock('@/sync/ops', () => ({
@@ -146,19 +168,32 @@ vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: () => 'Session',
     getSessionSubtitle: () => 'Subtitle',
     getSessionAvatarId: () => 'avatar',
-    getSessionStatus: () => mockSessionStatus,
+    getSessionStatus: (session: { hasPendingPermissionRequests?: boolean; thinking?: boolean }) =>
+        session.thinking === true
+            ? {
+                  state: 'thinking',
+                  isConnected: true,
+                  statusText: 'Working on it',
+                  shouldShowStatus: true,
+                  statusColor: '#07f',
+                  statusDotColor: '#0f0',
+                  isPulsing: true,
+              }
+            : session.hasPendingPermissionRequests === true
+            ? {
+                  state: 'permission_required',
+                  isConnected: true,
+                  statusText: 'status.permissionRequired',
+                  shouldShowStatus: true,
+                  statusColor: '#f90',
+                  statusDotColor: '#f90',
+                  isPulsing: true,
+              }
+            : mockSessionStatus,
     useSessionStatus: () => mockSessionStatus,
 }));
 
-type MockSessionStatus = Readonly<{
-    state: 'thinking' | 'waiting';
-    isConnected: boolean;
-    statusText: string;
-    shouldShowStatus: boolean;
-    statusColor: string;
-    statusDotColor: string;
-    isPulsing: boolean;
-}>;
+type MockSessionStatus = SessionStatus;
 
 const defaultSessionStatus: MockSessionStatus = {
     state: 'thinking',
@@ -217,6 +252,32 @@ function findSessionTitleText(screen: Awaited<ReturnType<typeof renderScreen>>, 
     return screen.findAllByType('Text').find((node) => node.props.children === title);
 }
 
+function createTreeDropOverlaySharedValues(): TreeDropOverlaySharedValues {
+    return {
+        overlayVisible: { value: 0 },
+        overlayKind: { value: TREE_DROP_OVERLAY_KIND_NONE },
+        overlayTop: { value: 0 },
+        overlayHeight: { value: 0 },
+        overlayLeft: { value: 0 },
+        overlayRight: { value: 0 },
+        overlayDepth: { value: 0 },
+    };
+}
+
+async function importSessionItem() {
+    const { SessionItem } = await import('./SessionItem');
+    return createModelBackedSessionItemTestComponent(SessionItem, {
+        resolveRowViewModelOverrides: () => ({
+            sessionStatus: mockSessionStatus,
+            hasUnreadMessages: hasUnreadMessagesValue,
+            activityTimeLabel: '1m',
+            workingIndicatorMode: workingIndicatorStyle,
+            identityDisplay: sessionListIdentityDisplay,
+            activeColorMode: sessionListActiveColorMode,
+        }),
+    });
+}
+
 function styleEntries(style: unknown): unknown[] {
     return Array.isArray(style) ? style : [style];
 }
@@ -231,9 +292,12 @@ describe('SessionItem activity time', () => {
         mockSessionStatus = {
             ...defaultSessionStatus,
         };
+        formatShortRelativeTimeSpy.mockReset();
+        formatShortRelativeTimeSpy.mockImplementation(() => '1m');
         useProfileSpy.mockClear();
         useSessionSpy.mockClear();
-        useSessionListRenderableWithServerScopeSpy.mockClear();
+        useSessionListRenderableWithServerScopeSpy.mockReset();
+        useSessionListRenderableWithServerScopeSpy.mockReturnValue(null);
     });
 
     afterEach(() => {
@@ -241,7 +305,7 @@ describe('SessionItem activity time', () => {
     });
 
     it('renders the meaningful activity timestamp instead of the raw session updatedAt', async () => {
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -261,10 +325,42 @@ describe('SessionItem activity time', () => {
         expect(screen.getTextContent()).toContain('1m');
     });
 
-    it('passes a stable unread indicator test id to the avatar when the row has unread activity', async () => {
+    it('renders the row view model activity timestamp for date-grouped lists', async () => {
+        const updatedAt = 1_700_000_000_000 - 3 * 60 * 60 * 1000;
+        const meaningfulActivityAt = 1_700_000_000_000 - 5 * 60 * 60 * 1000;
+        formatShortRelativeTimeSpy.mockImplementation((timestamp: number) => timestamp === meaningfulActivityAt ? '5h' : 'unexpected');
+        const SessionItem = await importSessionItem();
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={{
+                    ...createSession('sess_updated_at'),
+                    createdAt: 1_700_000_000_000 - 5 * 60 * 60 * 1000,
+                    updatedAt,
+                    meaningfulActivityAt,
+                } as SessionListRenderableSession}
+                rowViewModelOverrides={{
+                    activityTimeLabel: '5h',
+                }}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('5h');
+        expect(screen.getTextContent()).not.toContain('1m');
+    });
+
+    it('keeps unread state out of the avatar because row attention owns the indicator', async () => {
         hasUnreadMessagesValue = true;
 
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -280,7 +376,109 @@ describe('SessionItem activity time', () => {
             />,
         );
 
-        expect(screen.findByType('Avatar' as any)?.props.unreadBadgeTestID).toBe('session-list-item-unread-indicator-sess_unread');
+        expect(screen.findByType('Avatar' as any)?.props).toMatchObject({
+            hasUnreadMessages: false,
+        });
+        expect(screen.findByType('Avatar' as any)?.props.unreadBadgeTestID).toBeUndefined();
+    });
+
+    it('renders a stable minimal unread attention indicator instead of an avatar badge', async () => {
+        hasUnreadMessagesValue = true;
+        mockSessionStatus = {
+            ...defaultSessionStatus,
+            state: 'waiting',
+            statusText: 'online',
+            shouldShowStatus: false,
+            isPulsing: false,
+        };
+        const SessionItem = await importSessionItem();
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('sess_unread_minimal')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={true}
+                compactMinimal={true}
+            />,
+        );
+
+        expect(screen.findByTestId('session-list-attention-indicator-sess_unread_minimal-trailing-unread')).toBeTruthy();
+        expect(screen.findByType('Avatar' as any)?.props.hasUnreadMessages).toBe(false);
+    });
+
+    it('shows ready-for-review status text for non-minimal completed unread turns', async () => {
+        hasUnreadMessagesValue = true;
+        mockSessionStatus = {
+            ...defaultSessionStatus,
+            state: 'waiting',
+            statusText: 'online',
+            shouldShowStatus: false,
+            isPulsing: false,
+        };
+        const SessionItem = await importSessionItem();
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={{
+                    ...createSession('sess_ready_for_review'),
+                    latestTurnStatus: 'completed',
+                    latestTurnStatusObservedAt: 1_000,
+                    meaningfulActivityAt: 1_000,
+                    latestReadyEventSeq: 10,
+                    lastViewedSessionSeq: 9,
+                    seq: 10,
+                } as SessionListRenderableSession}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                secondaryLineMode="path"
+                compact={false}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('status.readyForReview');
+        expect(screen.findByTestId('session-list-status-subtitle-sess_ready_for_review-ready')).toBeTruthy();
+    });
+
+    it('shows failed status text before stale working text when the primary turn failed', async () => {
+        hasUnreadMessagesValue = true;
+        const SessionItem = await importSessionItem();
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={{
+                    ...createSession('sess_failed_primary_turn'),
+                    thinking: true,
+                    thinkingAt: 1_000,
+                    latestTurnStatus: 'failed',
+                    latestTurnStatusObservedAt: 1_100,
+                    seq: 11,
+                } as SessionListRenderableSession}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                secondaryLineMode="status"
+                compact={false}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('status.error');
+        expect(screen.getTextContent()).not.toContain('Working on it');
+        expect(screen.findByTestId('session-list-status-subtitle-sess_failed_primary_turn-failed')).toBeTruthy();
     });
 
     it('renders inactive sessions with a monochrome avatar even when the daemon still reports connected', async () => {
@@ -289,7 +487,7 @@ describe('SessionItem activity time', () => {
             isConnected: true,
         };
 
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -317,7 +515,7 @@ describe('SessionItem activity time', () => {
     });
 
     it('uses readable title metrics in very compact rows', async () => {
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -345,7 +543,7 @@ describe('SessionItem activity time', () => {
 
     it('renders an 18px micro avatar in very compact web rows with title spacing', async () => {
         platformOs = 'web';
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -371,7 +569,7 @@ describe('SessionItem activity time', () => {
 
     it('uses a 20px micro avatar for very compact native phone rows', async () => {
         platformOs = 'ios';
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -394,7 +592,7 @@ describe('SessionItem activity time', () => {
 
     it('renders the selected agent logo in the same narrow identity slot', async () => {
         sessionListIdentityDisplay = 'agentLogo';
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -431,7 +629,7 @@ describe('SessionItem activity time', () => {
             statusDotColor: '#34C759',
             isPulsing: false,
         };
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -468,7 +666,7 @@ describe('SessionItem activity time', () => {
             statusDotColor: '#34C759',
             isPulsing: false,
         };
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -502,7 +700,7 @@ describe('SessionItem activity time', () => {
             statusDotColor: '#0f0',
             isPulsing: true,
         };
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -526,7 +724,7 @@ describe('SessionItem activity time', () => {
 
     it('hides the session list identity slot across row densities when identity display is none', async () => {
         sessionListIdentityDisplay = 'none';
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const detailed = await renderScreen(
             <SessionItem
@@ -576,7 +774,7 @@ describe('SessionItem activity time', () => {
             isPulsing: true,
         };
 
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -590,15 +788,18 @@ describe('SessionItem activity time', () => {
                 variant="default"
                 compact={true}
                 compactMinimal={true}
+                rowAttentionAnimationEnabled={false}
             />,
         );
 
-        const spinner = screen.findByTestId('session-item-trailing-working-spinner-sess_compact_active');
+        const spinner = screen.findByTestId('session-row-attention-indicator-spinner-sess_compact_active-trailing');
         expect(spinner).toBeTruthy();
-        expect(flattenStyle(spinner?.props.style)).toMatchObject({
+        const spinnerStyle = flattenStyle(spinner?.props.style);
+        expect(spinnerStyle).toMatchObject({
             width: 12,
             height: 12,
         });
+        expect(spinnerStyle.animationName).toBeUndefined();
         expect(screen.findAllByType('StatusDot')).toHaveLength(0);
         expect(screen.getTextContent()).not.toContain('Working on it');
         expect(screen.getTextContent()).not.toContain('1m');
@@ -615,7 +816,7 @@ describe('SessionItem activity time', () => {
             isPulsing: true,
         };
 
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -632,7 +833,7 @@ describe('SessionItem activity time', () => {
             />,
         );
         expect(screen.findByTestId('session-list-status-pill-sess_status_plain')).toBeNull();
-        const spinner = screen.findByTestId('session-list-status-working-spinner-sess_status_plain');
+        const spinner = screen.findByTestId('session-row-attention-indicator-spinner-sess_status_plain-secondary');
         expect(spinner).toBeTruthy();
         expect(flattenStyle(spinner?.props.style)).toMatchObject({
             width: 12,
@@ -641,7 +842,6 @@ describe('SessionItem activity time', () => {
         expect(screen.findAllByType('StatusDot')).toHaveLength(0);
         const statusText = screen.findAllByType('Text').find((node) => node.props.children === 'Working on it');
         const flat = flattenStyle(statusText?.props.style);
-        expect(flat.color).toBe('#07f');
         expect(flat.fontSize).toBe(12);
         expect(flat.lineHeight).toBe(16);
     });
@@ -658,7 +858,7 @@ describe('SessionItem activity time', () => {
             isPulsing: true,
         };
 
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -672,13 +872,15 @@ describe('SessionItem activity time', () => {
                 variant="default"
                 compact={false}
                 secondaryLineMode="status"
+                rowAttentionAnimationEnabled={false}
             />,
         );
 
         const dots = screen.findAllByType('StatusDot');
         expect(dots).toHaveLength(1);
-        expect(dots[0]?.props.color).toBe('#0f0');
+        expect(dots[0]?.props.testID).toBe('session-row-attention-indicator-dot-sess_status_plain_dot-secondary');
         expect(dots[0]?.props.isPulsing).toBe(true);
+        expect(dots[0]?.props.animationEnabled).toBe(false);
         expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
     });
 
@@ -693,7 +895,7 @@ describe('SessionItem activity time', () => {
             isPulsing: false,
         };
 
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -726,7 +928,7 @@ describe('SessionItem activity time', () => {
             isPulsing: false,
         };
 
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
             <SessionItem
@@ -747,8 +949,8 @@ describe('SessionItem activity time', () => {
         });
     });
 
-    it('uses the row-specific renderable selector and currentUserId prop without subscribing to profile or full session state', async () => {
-        const { SessionItem } = await import('./SessionItem');
+    it('uses the row view model and currentUserId prop without subscribing to profile or full session state', async () => {
+        const SessionItem = await importSessionItem();
 
         await renderScreen(
             <SessionItem
@@ -765,14 +967,238 @@ describe('SessionItem activity time', () => {
             />,
         );
 
-        expect(useSessionListRenderableWithServerScopeSpy).toHaveBeenCalledWith('server_a', 'sess_row_state');
+        expect(useSessionListRenderableWithServerScopeSpy).not.toHaveBeenCalled();
         expect(useSessionSpy).not.toHaveBeenCalled();
         expect(useProfileSpy).not.toHaveBeenCalled();
     });
 
+    it('renders from a row view model without subscribing to row renderables', async () => {
+        const SessionItem = await importSessionItem();
+        const rowSession = createSession('sess_model_backed');
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={createSession('stale_prop_session')}
+                rowViewModel={{
+                    groupKey: 'group:model',
+                    sessionKey: 'server_a:sess_model_backed',
+                    session: rowSession,
+                    sessionStatus: {
+                        state: 'waiting',
+                        isConnected: true,
+                        statusText: 'online',
+                        shouldShowStatus: false,
+                        statusColor: '#34C759',
+                        statusDotColor: '#34C759',
+                        isPulsing: false,
+                    },
+                    isIdentityLoading: false,
+                    nextRuntimeFreshnessAtMs: null,
+                    hasUnreadMessages: true,
+                    activityTimeLabel: '7m',
+                    workingIndicatorMode: 'pulse',
+                    identityDisplay: 'avatar',
+                    activeColorMode: 'attentionOnly',
+                    hideInactiveSessions: true,
+                    isFirst: true,
+                    isLast: true,
+                    isSingle: true,
+                    subtitleOverride: 'Model subtitle',
+                    subtitleEllipsizeMode: 'head',
+                    pinned: false,
+                    showServerBadge: true,
+                    selected: true,
+                    tags: [],
+                    secondaryLineMode: 'path',
+                }}
+                serverId="server_a"
+                serverName="Server A"
+                pinned={false}
+                selected={false}
+                isFirst={false}
+                isLast={false}
+                isSingle={false}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        expect(useSessionListRenderableWithServerScopeSpy).not.toHaveBeenCalled();
+        expect(screen.findByTestId('session-list-item-sess_model_backed')?.props.accessibilityState).toMatchObject({
+            selected: true,
+        });
+        expect(screen.findByType('Avatar' as any)?.props.hasUnreadMessages).toBe(false);
+        expect(screen.findByType('Avatar' as any)?.props.unreadBadgeTestID).toBeUndefined();
+        expect(screen.getTextContent()).toContain('7m');
+    });
+
+    it('uses list-row pending approval flags when the scoped store renderable is stale', async () => {
+        useSessionListRenderableWithServerScopeSpy.mockReturnValue({
+            ...createSession('sess_overlay_permission'),
+            hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: false,
+        });
+        mockSessionStatus = {
+            state: 'permission_required',
+            isConnected: true,
+            statusText: 'status.permissionRequired',
+            shouldShowStatus: true,
+            statusColor: '#f90',
+            statusDotColor: '#f90',
+            isPulsing: true,
+        };
+        const SessionItem = await importSessionItem();
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={{
+                    ...createSession('sess_overlay_permission'),
+                    hasPendingPermissionRequests: true,
+                    hasPendingUserActionRequests: false,
+                }}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                secondaryLineMode="status"
+                compact={false}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('status.permissionRequired');
+    });
+
+    it('uses overlaid permission state when the row view model session is stale', async () => {
+        const staleSession = {
+            ...createSession('sess_row_model_overlay_permission'),
+            hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: false,
+        };
+        const overlaidSession = {
+            ...staleSession,
+            hasPendingPermissionRequests: true,
+        };
+        mockSessionStatus = {
+            state: 'waiting',
+            isConnected: true,
+            statusText: 'Online',
+            shouldShowStatus: false,
+            statusColor: '#34C759',
+            statusDotColor: '#34C759',
+            isPulsing: false,
+        };
+        const SessionItem = await importSessionItem();
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={overlaidSession}
+                rowViewModel={createSessionItemRowViewModel({
+                    session: staleSession,
+                    overrides: {
+                        sessionStatus: mockSessionStatus,
+                        secondaryLineMode: 'status',
+                    },
+                })}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                secondaryLineMode="status"
+                compact={false}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('status.permissionRequired');
+        expect(screen.findByTestId(
+            'session-list-attention-indicator-sess_row_model_overlay_permission-secondary-permission_required',
+        )).toBeTruthy();
+    });
+
+    it('uses list placement action flags when the row view model session is stale', async () => {
+        const { SessionListSessionItem } = await import('./sessionListSessionItem');
+        const staleSession = {
+            ...createSession('sess_action_overlay'),
+            hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: false,
+        };
+        mockSessionStatus = {
+            state: 'waiting',
+            isConnected: true,
+            statusText: 'Online',
+            shouldShowStatus: false,
+            statusColor: '#34C759',
+            statusDotColor: '#34C759',
+            isPulsing: false,
+        };
+
+        const screen = await renderScreen(
+            <SessionListSessionItem
+                item={{
+                    type: 'session',
+                    sessionId: 'sess_action_overlay',
+                    serverId: 'server_a',
+                    groupKey: 'attention-promotion-v1',
+                    groupKind: 'attention',
+                    attentionPlacementReason: 'action_required',
+                    variant: 'default',
+                }}
+                rowViewModel={createSessionItemRowViewModel({
+                    session: staleSession,
+                    overrides: {
+                        sessionStatus: mockSessionStatus,
+                        secondaryLineMode: 'status',
+                    },
+                })}
+                rowHeight={42}
+                dragEnabled={false}
+                treeRowId="session:sess_action_overlay"
+                onDragStart={vi.fn()}
+                resolveDropResult={() => ({
+                    result: { instruction: { kind: 'idle' }, visual: { kind: 'none' } },
+                    geometry: { kind: 'none' },
+                })}
+                onDropResult={vi.fn()}
+                onTogglePinnedSessionKey={null}
+                onSetTagsSessionKey={null}
+                onNativeContextMenuOpenChangeSessionKey={null}
+                draggingSessionKey={null}
+                nativeContextMenuSessionKey={null}
+                dataIndex={0}
+                overlayShared={createTreeDropOverlaySharedValues()}
+                onRegisterTreeRowBounds={vi.fn()}
+                onUnregisterTreeRowBounds={vi.fn()}
+                currentUserId="u1"
+                allKnownTags={[]}
+                tagsEnabled={false}
+                compact={false}
+                compactMinimal={false}
+                rowAttentionAnimationEnabled={true}
+                folderMoveTargets={[]}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('status.actionRequired');
+        expect(screen.findByTestId(
+            'session-list-attention-indicator-sess_action_overlay-secondary-action_required',
+        )).toBeTruthy();
+    });
+
     it('uses start-side overflow ellipsis for path subtitles on web without reordering the path', async () => {
+        mockSessionStatus = {
+            ...defaultSessionStatus,
+            state: 'waiting',
+            statusText: 'Online',
+            shouldShowStatus: false,
+            isPulsing: false,
+        };
         platformOs = 'web';
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
         const sessionPath = '~/Documents/Development/happier/dev';
 
         const screen = await renderScreen(
@@ -816,8 +1242,15 @@ describe('SessionItem activity time', () => {
     });
 
     it('uses native head ellipsis for path subtitles outside web', async () => {
+        mockSessionStatus = {
+            ...defaultSessionStatus,
+            state: 'waiting',
+            statusText: 'Online',
+            shouldShowStatus: false,
+            isPulsing: false,
+        };
         platformOs = 'ios';
-        const { SessionItem } = await import('./SessionItem');
+        const SessionItem = await importSessionItem();
         const sessionPath = '~/Documents/Development/happier/dev';
 
         const screen = await renderScreen(
@@ -843,5 +1276,38 @@ describe('SessionItem activity time', () => {
         )[0];
 
         expect(subtitle?.props.ellipsizeMode).toBe('head');
+    });
+
+    it('shows the working indicator instead of only path and time in date-grouped rows', async () => {
+        workingIndicatorStyle = 'spinner';
+        mockSessionStatus = {
+            ...defaultSessionStatus,
+        };
+        const SessionItem = await importSessionItem();
+        const sessionPath = '~/Documents/Development/happier/dev';
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={{
+                    ...createSession('sess_date_working'),
+                    thinking: true,
+                    thinkingAt: 2,
+                }}
+                subtitleOverride={sessionPath}
+                secondaryLineMode="path"
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        expect(screen.findByTestId('session-row-attention-indicator-spinner-sess_date_working-secondary')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('Working on it');
+        expect(screen.getTextContent()).not.toContain(sessionPath);
     });
 });

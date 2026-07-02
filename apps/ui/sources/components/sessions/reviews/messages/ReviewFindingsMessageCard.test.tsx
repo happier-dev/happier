@@ -8,7 +8,7 @@ import { installSessionMessageCardCommonModuleMocks } from '@/components/session
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sessionExecutionRunActionSpy = vi.fn(async (..._args: any[]) => ({ ok: true }));
-const sendMessageSpy = vi.fn(async (..._args: any[]) => undefined);
+const submitMessageSpy = vi.fn(async (..._args: any[]) => undefined);
 const useExecutionRunsBackendsForSessionSpy = vi.fn<(...args: any[]) => any>((..._args: any[]) => null);
 const useSessionMessagesSpy = vi.fn<(...args: any[]) => any>((..._args: any[]) => ({ messages: [], isLoaded: true }));
 
@@ -87,9 +87,9 @@ installSessionMessageCardCommonModuleMocks({
             },
         });
     },
-    storage: async (importOriginal) => {
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createPartialStorageModuleMock(importOriginal, {
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
             useSessionMessages: (...args: any[]) => useSessionMessagesSpy(...args),
         });
     },
@@ -104,7 +104,7 @@ vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
 }));
 
 vi.mock('@/sync/sync', () => ({
-  sync: { sendMessage: (...args: any[]) => sendMessageSpy(...args) },
+  sync: { submitMessage: (...args: any[]) => submitMessageSpy(...args) },
 }));
 
 vi.mock('@/hooks/server/useExecutionRunsBackendsForSession', () => ({
@@ -434,7 +434,7 @@ describe('ReviewFindingsMessageCard', () => {
   });
 
   it('publishes accepted findings via structured review_publish_request.v1 metadata', async () => {
-    sendMessageSpy.mockClear();
+    submitMessageSpy.mockClear();
     useExecutionRunsBackendsForSessionSpy.mockReturnValue(null);
     useSessionMessagesSpy.mockReturnValue({ messages: [], isLoaded: true });
 
@@ -475,8 +475,8 @@ describe('ReviewFindingsMessageCard', () => {
       await pressTestInstanceAsync(publish!);
     });
 
-    expect(sendMessageSpy).toHaveBeenCalledTimes(1);
-    const metaOverrides = sendMessageSpy.mock.calls[0]?.[3];
+    expect(submitMessageSpy).toHaveBeenCalledTimes(1);
+    const metaOverrides = submitMessageSpy.mock.calls[0]?.[3];
     expect(metaOverrides).toEqual({
       happier: {
         kind: 'review_publish_request.v1',
@@ -489,7 +489,7 @@ describe('ReviewFindingsMessageCard', () => {
   });
 
   it('publishes accepted findings using the latest follow-up snapshot for the same review run', async () => {
-    sendMessageSpy.mockClear();
+    submitMessageSpy.mockClear();
     useExecutionRunsBackendsForSessionSpy.mockReturnValue(null);
     useSessionMessagesSpy.mockReturnValue({
       isLoaded: true,
@@ -577,8 +577,8 @@ describe('ReviewFindingsMessageCard', () => {
       await pressTestInstanceAsync(publish!);
     });
 
-    expect(sendMessageSpy).toHaveBeenCalledTimes(1);
-    const [, text, , metaOverrides] = sendMessageSpy.mock.calls[0] as any[];
+    expect(submitMessageSpy).toHaveBeenCalledTimes(1);
+    const [, text, , metaOverrides] = submitMessageSpy.mock.calls[0] as any[];
     expect(String(text)).toContain('Merged finding');
     expect(metaOverrides).toEqual({
       happier: {

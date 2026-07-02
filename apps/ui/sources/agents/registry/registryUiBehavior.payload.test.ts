@@ -40,13 +40,13 @@ describe('buildSpawnSessionExtrasFromUiState', () => {
         })).not.toHaveProperty('experimentalCodexAcp');
     });
 
-    it('disables codex ACP when backend mode is mcp', () => {
+    it('maps retired codex mcp setting onto app-server', () => {
         expect(buildSpawnSessionExtrasFromUiState({
             agentId: 'codex',
             settings: makeSettings({ codexBackendMode: 'mcp' }),
             resumeSessionId: 'x1',
         })).toEqual({
-            codexBackendMode: 'mcp',
+            codexBackendMode: 'appServer',
         });
     });
 
@@ -86,7 +86,7 @@ describe('buildResumeSessionExtrasFromUiState', () => {
             agentId: 'codex',
             settings: makeSettings({ codexBackendMode: 'mcp' }),
         })).toEqual({
-            codexBackendMode: 'mcp',
+            codexBackendMode: 'appServer',
         });
 
         expect(buildResumeSessionExtrasFromUiState({
@@ -188,7 +188,7 @@ describe('buildWakeResumeExtras', () => {
             agentId: 'codex',
             resumeCapabilityOptions: { accountSettings: makeSettings({ codexBackendMode: 'mcp' }) },
             session: null,
-        })).toEqual({ codexBackendMode: 'mcp' });
+        })).toEqual({ codexBackendMode: 'appServer' });
         expect(buildWakeResumeExtras({
             agentId: 'codex',
             resumeCapabilityOptions: { accountSettings: makeSettings({ codexBackendMode: 'appServer' as any }) },
@@ -212,12 +212,12 @@ describe('buildWakeResumeExtras', () => {
             resumeCapabilityOptions: { accountSettings: makeSettings({ codexBackendMode: 'acp' }) },
             session: {
                 metadata: {
-                    agentRuntimeDescriptorV1: {
+                    runtimeDescriptorV1: {
                         v: 1,
                         providerId: 'codex',
                         provider: {
                             backendMode: 'appServer',
-                            vendorSessionId: 'x1',
+                            providerSessionId: 'x1',
                         },
                     },
                     codexBackendMode: 'acp',
@@ -241,6 +241,8 @@ describe('buildWakeResumeExtras', () => {
             session: {
                 metadata: {
                     externalSessionV1: {
+                        v: 1,
+                        providerId: 'codex',
                         codexBackendMode: 'appServer',
                     },
                 },
@@ -332,7 +334,7 @@ describe('buildWakeResumeExtras', () => {
                         providerId: 'opencode',
                         provider: {
                             backendMode: 'server',
-                            vendorSessionId: 'oc1',
+                            providerSessionId: 'oc1',
                             serverBaseUrl: 'http://127.0.0.1:4096/',
                             serverBaseUrlExplicit: true,
                         },

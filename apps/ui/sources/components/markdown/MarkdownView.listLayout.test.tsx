@@ -37,11 +37,11 @@ describe('MarkdownView (lists)', () => {
 
     it('normalizes loose ordered outline continuations before enriched rendering', async () => {
         const markdown = [
-            '1. **First idea**',
+            '1. Provider cards as operational dashboards.',
             '',
             'The first description should stay inside the first item.',
             '',
-            '2. **Second idea**',
+            '2. Explicit switch mode vs additive mode.',
             '',
             'The second description should stay inside the second item.',
             '',
@@ -52,15 +52,52 @@ describe('MarkdownView (lists)', () => {
 
         const enrichedRun = screen.findByType('EnrichedMarkdownText');
         expect(enrichedRun.props.markdown).toBe([
-            '1. **First idea**',
+            '1. Provider cards as operational dashboards.',
             '',
             '   The first description should stay inside the first item.',
             '',
-            '2. **Second idea**',
+            '2. Explicit switch mode vs additive mode.',
             '',
             '   The second description should stay inside the second item.',
             '',
             '**Next Section**',
+        ].join('\n'));
+    }, 60_000);
+
+    it('passes repaired multi-block ordered lists to the enriched renderer', async () => {
+        const markdown = [
+            '1. Add a “Provider Accounts” quick-switch screen.',
+            '',
+            'Build on existing connected services and account groups. Show:',
+            '',
+            '- Provider/agent.',
+            '- Current connected profile.',
+            '',
+            'Use existing architecture:',
+            '',
+            '- `packages/agents/src/manifest.ts`',
+            '- `apps/cli/src/backends/catalog.ts`',
+            '',
+            '2. Add compact provider/account cards.',
+        ].join('\n');
+
+        const screen = await renderScreen(<MarkdownView markdown={markdown} />);
+
+        const enrichedRun = screen.findByType('EnrichedMarkdownText');
+        expect(enrichedRun.props.markdown).toBe([
+            '1. Add a “Provider Accounts” quick-switch screen.',
+            '',
+            '   Build on existing connected services and account groups. Show:',
+            '',
+            '   - Provider/agent.',
+            '   - Current connected profile.',
+            '',
+            '   Use existing architecture:',
+            '',
+            '   - `packages/agents/src/manifest.ts`',
+            '   - `apps/cli/src/backends/catalog.ts`',
+            '',
+            '2. Add compact provider/account cards.',
         ].join('\n'));
     }, 60_000);
 

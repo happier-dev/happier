@@ -11,7 +11,7 @@ import {
     PROVIDER_SETTINGS_DESCRIPTORS,
     getProviderSettingsDescriptor,
     getProviderSettingsBehavior,
-} from '@/agents/providers/catalog/providerSettingsCatalog';
+} from '@/agents/catalog/providerSettingsCatalog';
 import type {
     ProviderSettingsBehavior,
     ProviderSettingsDescriptor,

@@ -1,4 +1,10 @@
-import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionErrorCode, type SpawnSessionResult } from '@happier-dev/protocol';
+import {
+    SPAWN_SESSION_ERROR_CODES,
+    normalizeSpawnSessionErrorDetail as normalizeProtocolSpawnSessionErrorDetail,
+    type SpawnSessionErrorCode,
+    type SpawnSessionErrorDetail,
+    type SpawnSessionResult,
+} from '@happier-dev/protocol';
 import { isSocketIoAckTimeoutError } from '@/sync/runtime/socketIoAckTimeout';
 
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -8,6 +14,28 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
 function isSpawnSessionErrorCode(value: unknown): value is SpawnSessionErrorCode {
     if (typeof value !== 'string') return false;
     return (Object.values(SPAWN_SESSION_ERROR_CODES) as string[]).includes(value);
+}
+
+/**
+ * Carry only a RECOGNIZED structured spawn-error detail through normalization. Unknown/legacy detail
+ * shapes are dropped so the UI never reacts to a detail it cannot interpret (D2: additive + safe).
+ */
+function normalizeSpawnSessionErrorDetail(value: unknown): SpawnSessionErrorDetail | undefined {
+    return normalizeProtocolSpawnSessionErrorDetail(value);
+}
+
+function buildSpawnSessionErrorResult(params: Readonly<{
+    errorCode: SpawnSessionErrorCode;
+    errorMessage: string;
+    errorDetail?: unknown;
+}>): Extract<SpawnSessionResult, { type: 'error' }> {
+    const errorDetail = normalizeSpawnSessionErrorDetail(params.errorDetail);
+    return {
+        type: 'error',
+        errorCode: params.errorCode,
+        errorMessage: params.errorMessage,
+        ...(errorDetail ? { errorDetail } : {}),
+    };
 }
 
 export function normalizeSpawnSessionResult(value: unknown): SpawnSessionResult {
@@ -42,7 +70,7 @@ export function normalizeSpawnSessionResult(value: unknown): SpawnSessionResult 
             ? value.errorCode
             : SPAWN_SESSION_ERROR_CODES.UNEXPECTED;
         const errorMessage = typeof value.errorMessage === 'string' ? value.errorMessage : 'Failed to spawn session';
-        return { type: 'error', errorCode, errorMessage };
+        return buildSpawnSessionErrorResult({ errorCode, errorMessage, errorDetail: value.errorDetail });
     }
 
     if (value.success === false || value.ok === false) {
@@ -54,7 +82,7 @@ export function normalizeSpawnSessionResult(value: unknown): SpawnSessionResult 
             : typeof value.error === 'string'
                 ? value.error
                 : 'Failed to spawn session';
-        return { type: 'error', errorCode, errorMessage };
+        return buildSpawnSessionErrorResult({ errorCode, errorMessage, errorDetail: value.errorDetail });
     }
 
     return {

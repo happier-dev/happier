@@ -12,6 +12,15 @@ import {
     updateNotificationChannelById,
 } from './notificationChannels';
 
+const enabledLegacyNotificationTopics = {
+    ready: true,
+    permissionRequest: true,
+    userActionRequest: true,
+    connectedServiceAccountSwitch: true,
+    connectedServiceQuotaBlocked: true,
+    connectedServiceQuotaRecovered: true,
+};
+
 describe('notificationChannels helpers', () => {
     it('adds a webhook channel alongside the builtin expo channel', () => {
         const next = addWebhookNotificationChannel({
@@ -27,11 +36,7 @@ describe('notificationChannels helpers', () => {
                 enabled: true,
                 url: 'https://hooks.example.test/notify',
                 signingSecret: null,
-                topics: {
-                    ready: true,
-                    permissionRequest: true,
-                    userActionRequest: true,
-                },
+                topics: enabledLegacyNotificationTopics,
                 readyIncludeMessageText: false,
             },
         ]);
@@ -45,11 +50,7 @@ describe('notificationChannels helpers', () => {
                     id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
                     kind: 'expo_push',
                     enabled: true,
-                    topics: {
-                        ready: true,
-                        permissionRequest: true,
-                        userActionRequest: true,
-                    },
+                    topics: enabledLegacyNotificationTopics,
                     readyIncludeMessageText: true,
                 },
                 {
@@ -59,11 +60,7 @@ describe('notificationChannels helpers', () => {
                     enabled: true,
                     url: 'https://hooks.example.test/notify',
                     signingSecret: null,
-                    topics: {
-                        ready: true,
-                        permissionRequest: true,
-                        userActionRequest: true,
-                    },
+                    topics: enabledLegacyNotificationTopics,
                     readyIncludeMessageText: false,
                 },
             ],
@@ -74,6 +71,9 @@ describe('notificationChannels helpers', () => {
                     ready: false,
                     permissionRequest: true,
                     userActionRequest: false,
+                    connectedServiceAccountSwitch: true,
+                    connectedServiceQuotaBlocked: true,
+                    connectedServiceQuotaRecovered: true,
                 },
             },
         });
@@ -84,11 +84,7 @@ describe('notificationChannels helpers', () => {
                 id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
                 kind: 'expo_push',
                 enabled: true,
-                topics: {
-                    ready: true,
-                    permissionRequest: true,
-                    userActionRequest: true,
-                },
+                topics: enabledLegacyNotificationTopics,
                 readyIncludeMessageText: true,
             },
             {
@@ -102,6 +98,9 @@ describe('notificationChannels helpers', () => {
                     ready: false,
                     permissionRequest: true,
                     userActionRequest: false,
+                    connectedServiceAccountSwitch: true,
+                    connectedServiceQuotaBlocked: true,
+                    connectedServiceQuotaRecovered: true,
                 },
                 readyIncludeMessageText: false,
             },
@@ -118,11 +117,7 @@ describe('notificationChannels helpers', () => {
                     enabled: true,
                     url: 'https://hooks.example.test/notify',
                     signingSecret: null,
-                    topics: {
-                        ready: true,
-                        permissionRequest: true,
-                        userActionRequest: true,
-                    },
+                    topics: enabledLegacyNotificationTopics,
                     readyIncludeMessageText: false,
                 },
             ],
@@ -154,11 +149,14 @@ describe('notificationChannels helpers', () => {
                     enabled: true,
                     url: 'https://hooks.example.test/notify',
                     signingSecret: null,
-                    topics: {
-                        ready: true,
-                        permissionRequest: false,
-                        userActionRequest: true,
-                    },
+                topics: {
+                    ready: true,
+                    permissionRequest: false,
+                    userActionRequest: true,
+                    connectedServiceAccountSwitch: true,
+                    connectedServiceQuotaBlocked: true,
+                    connectedServiceQuotaRecovered: true,
+                },
                     readyIncludeMessageText: false,
                 },
             ],
@@ -171,11 +169,7 @@ describe('notificationChannels helpers', () => {
                     id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
                     kind: 'expo_push',
                     enabled: true,
-                    topics: {
-                        ready: true,
-                        permissionRequest: true,
-                        userActionRequest: true,
-                    },
+                    topics: enabledLegacyNotificationTopics,
                     readyIncludeMessageText: false,
                 },
                 {
@@ -185,11 +179,14 @@ describe('notificationChannels helpers', () => {
                     enabled: true,
                     url: 'https://hooks.example.test/notify',
                     signingSecret: null,
-                    topics: {
-                        ready: true,
-                        permissionRequest: false,
-                        userActionRequest: true,
-                    },
+                topics: {
+                    ready: true,
+                    permissionRequest: false,
+                    userActionRequest: true,
+                    connectedServiceAccountSwitch: true,
+                    connectedServiceQuotaBlocked: true,
+                    connectedServiceQuotaRecovered: true,
+                },
                     readyIncludeMessageText: false,
                 },
             ],
@@ -247,11 +244,7 @@ describe('notificationChannels helpers', () => {
                     enabled: true,
                     url: 'https://hooks.example.test/notify',
                     signingSecret: null,
-                    topics: {
-                        ready: true,
-                        permissionRequest: true,
-                        userActionRequest: true,
-                    },
+                    topics: enabledLegacyNotificationTopics,
                     readyIncludeMessageText: false,
                 },
             ],

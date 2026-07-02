@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Platform, useWindowDimensions } from 'react-native';
+import { Platform, View, useWindowDimensions } from 'react-native';
 import { decodeSessionFilePathParam } from '@/scm/utils/filePathParam';
 import { parseSessionFileDeepLinkAnchor } from '@/utils/url/sessionFileDeepLink';
 import { SessionFileDetailsView } from '@/components/sessions/files/views/SessionFileDetailsView';
@@ -13,12 +13,21 @@ import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServe
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export default function FileScreen() {
     const router = useRouter();
     const params = useLocalSearchParams<{ id: string; serverId?: string; path: string }>();
     const routeScope = React.useMemo(() => createSessionRouteServerScope(params), [params]);
     const sessionId = normalizeSessionId(params.id);
+    const routeHydrationState = useHydrateSessionForRoute(
+        sessionId,
+        'SessionFileRoute.ensureSessionVisible',
+        routeScope.hydrationOptions,
+    );
+    const sessionHydrated = isSessionRouteHydrationAvailable(routeHydrationState);
     const decodedFilePath = decodeSessionFilePathParam(params.path as string);
     const filePath = isSafeWorkspaceRelativePath(decodedFilePath) ? decodedFilePath.trim() : '';
     const isUnsafeFilePath = Boolean(decodedFilePath) && !filePath;
@@ -33,6 +42,7 @@ export default function FileScreen() {
     const shouldRedirect =
         Boolean(sessionId)
         && Boolean(filePath)
+        && sessionHydrated
         && shouldRedirectDetailsRouteToPanes({ containerWidthPx, deviceType, multiPaneEnabled });
 
     const pane = useAppPaneScope(`session:${sessionId}`);
@@ -53,8 +63,6 @@ export default function FileScreen() {
     React.useEffect(() => {
         if (!shouldRedirect) return;
         const fileName = filePath.split('/').at(-1) ?? filePath;
-        pane.openRight({ tabId: 'files' });
-        pane.setRightTab('files');
         pane.openDetailsTab({
             key: `file:${filePath}`,
             kind: 'file',
@@ -70,11 +78,10 @@ export default function FileScreen() {
         if (isUnsafeFilePath) return;
         if (!sessionId) return;
         if (!filePath) return;
+        if (!sessionHydrated) return;
         if (shouldRedirect) return;
         hasRedirectedToDetailsRef.current = true;
         const fileName = filePath.split('/').at(-1) ?? filePath;
-        pane.openRight({ tabId: 'files' });
-        pane.setRightTab('files');
         pane.openDetailsTab(
             {
                 key: `file:${filePath}`,
@@ -91,12 +98,19 @@ export default function FileScreen() {
                 ...serializeSessionPaneUrlState({ details: { kind: 'file', path: filePath } }),
             }),
         } as any);
-    }, [deepLinkAnchor, filePath, isUnsafeFilePath, pane, routeScope, router, sessionId, shouldRedirect, shouldUseDetailsScreen]);
+    }, [deepLinkAnchor, filePath, isUnsafeFilePath, pane, routeScope, router, sessionHydrated, sessionId, shouldRedirect, shouldUseDetailsScreen]);
 
-    if (!sessionId || (!filePath && !isUnsafeFilePath)) {
+    if (!sessionId || isSessionRouteHydrationMissing(routeHydrationState) || (!filePath && !isUnsafeFilePath)) {
         return <SessionInvalidLinkFallback />;
     }
     if (isUnsafeFilePath) return null;
+    if (!sessionHydrated) {
+        return (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <ActivitySpinner size="small" />
+            </View>
+        );
+    }
     if (shouldRedirect) return null;
     if (shouldUseDetailsScreen) return null;
     return <SessionFileDetailsView sessionId={sessionId} scopeId={`session:${sessionId}`} filePath={filePath} deepLinkAnchor={deepLinkAnchor} />;

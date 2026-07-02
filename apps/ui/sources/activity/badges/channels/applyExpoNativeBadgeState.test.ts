@@ -1,16 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const setBadgeCountAsync = vi.hoisted(() => vi.fn(async () => true));
+const notificationNativeState = vi.hoisted(() => ({ unavailable: false }));
 
-vi.mock('expo-notifications', () => ({
-    setBadgeCountAsync,
-}));
+vi.mock('expo-notifications', () => {
+    if (notificationNativeState.unavailable) {
+        throw new Error('expo-notifications native module unavailable');
+    }
+    return {
+        setBadgeCountAsync,
+    };
+});
 
 describe('applyExpoNativeBadgeState', () => {
     beforeEach(() => {
         vi.resetModules();
+        notificationNativeState.unavailable = false;
         setBadgeCountAsync.mockClear();
         setBadgeCountAsync.mockResolvedValue(true);
+    });
+
+    it('does not load expo-notifications while importing the badge channel module', async () => {
+        notificationNativeState.unavailable = true;
+
+        await expect(import('./applyExpoNativeBadgeState')).resolves.toHaveProperty('applyExpoNativeBadgeState');
     });
 
     it('applies the numeric badge count', async () => {

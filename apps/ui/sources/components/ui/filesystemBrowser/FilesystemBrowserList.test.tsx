@@ -1,9 +1,13 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const platformState = vi.hoisted(() => ({
+    os: 'web',
+}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -19,8 +23,27 @@ vi.mock('react-native', async () => {
             });
             return React.createElement('FlatList', null, header, ...rows);
         },
+        Platform: {
+            get OS() {
+                return platformState.os;
+            },
+            select: (options: any) => options?.[platformState.os] ?? options?.default ?? options?.native,
+        },
     });
 });
+
+vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
+    FlashList: ({ data, renderItem, keyExtractor, ListHeaderComponent, estimatedItemSize }: any) => {
+        const header = ListHeaderComponent
+            ? (React.isValidElement(ListHeaderComponent) ? ListHeaderComponent : React.createElement(ListHeaderComponent))
+            : null;
+        const rows = (data ?? []).map((item: any, index: number) => {
+            const key = keyExtractor ? keyExtractor(item, index) : String(item?.path ?? index);
+            return React.createElement(React.Fragment, { key }, renderItem({ item, index }));
+        });
+        return React.createElement('FlashList', { estimatedItemSize }, header, ...rows);
+    },
+}));
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -53,6 +76,10 @@ describe('FilesystemBrowserList', () => {
         { path: 'src/index.ts', name: 'index.ts', type: 'file', depth: 0 },
     ] as any[];
 
+    beforeEach(() => {
+        platformState.os = 'web';
+    });
+
     it('keeps rows mounted without an inline root loading header when loading is surfaced elsewhere', async () => {
         const { FilesystemBrowserList } = await import('./FilesystemBrowserList');
 
@@ -71,5 +98,28 @@ describe('FilesystemBrowserList', () => {
 
         expect(screen.findByTestId('row-src/index.ts')).toBeTruthy();
         expect(screen.findAllByType('ActivityIndicator' as any)).toHaveLength(0);
+    });
+
+    it('uses FlashList on native file browsers', async () => {
+        platformState.os = 'ios';
+        const { FilesystemBrowserList } = await import('./FilesystemBrowserList');
+
+        const screen = await renderScreen(
+            <FilesystemBrowserList
+                nodes={nodes}
+                rootLoading={false}
+                showInlineLoadingHeader={false}
+                rootError={null}
+                loadingLabel="Loading"
+                inlineRetryLabel="Retry"
+                retryRoot={() => {}}
+                renderRow={({ node }) => React.createElement('View', { testID: `row-${node.path}` })}
+            />,
+        );
+
+        const flashLists = screen.findAllByType('FlashList' as any);
+        expect(flashLists).toHaveLength(1);
+        expect(flashLists[0]?.props?.estimatedItemSize).toBeGreaterThan(0);
+        expect(screen.findAllByType('FlatList' as any)).toHaveLength(0);
     });
 });

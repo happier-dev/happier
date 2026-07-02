@@ -23,6 +23,13 @@ const workspaceB: SessionFolderWorkspaceRefV1 = {
     machineId: 'machine-b',
     rootPath: '/repo/b',
 };
+const projectAGroupKey = 'project-a';
+const projectBGroupKey = 'project-b';
+const rootAGroupKey = 'folder:server-a:workspaceScope:server-a:machine-a:/repo/a:root';
+const folderAGroupKey = 'folder:server-a:workspaceScope:server-a:machine-a:/repo/a:folder-a';
+const childAGroupKey = 'folder:server-a:workspaceScope:server-a:machine-a:/repo/a:child-a';
+const folderBGroupKey = 'folder:server-a:workspaceScope:server-a:machine-a:/repo/a:folder-b';
+const folderCGroupKey = 'folder:server-a:workspaceScope:server-a:machine-b:/repo/b:folder-c';
 
 function bounds(y: number): WindowBounds {
     return { x: 0, y, width: 320, height: 40 };
@@ -80,14 +87,14 @@ function sessionItem(params: Readonly<{
 
 function items(): SessionListIndexItem[] {
     return [
-        projectHeader('project-a', workspaceA),
-        folderHeader({ id: 'folder-a', groupKey: 'project-a:folder:folder-a', depth: 0, workspace: workspaceA }),
-        sessionItem({ id: 'inside-a', groupKey: 'project-a:folder:folder-a', folderId: 'folder-a', depth: 1, workspace: workspaceA }),
-        folderHeader({ id: 'child-a', groupKey: 'project-a:folder:child-a', depth: 1, workspace: workspaceA }),
-        folderHeader({ id: 'folder-b', groupKey: 'project-a:folder:folder-b', depth: 0, workspace: workspaceA }),
-        sessionItem({ id: 'root-a', groupKey: 'project-a', folderId: null, depth: 0, workspace: workspaceA }),
-        projectHeader('project-b', workspaceB),
-        folderHeader({ id: 'folder-c', groupKey: 'project-b:folder:folder-c', depth: 0, workspace: workspaceB }),
+        projectHeader(projectAGroupKey, workspaceA),
+        folderHeader({ id: 'folder-a', groupKey: folderAGroupKey, depth: 0, workspace: workspaceA }),
+        sessionItem({ id: 'inside-a', groupKey: folderAGroupKey, folderId: 'folder-a', depth: 1, workspace: workspaceA }),
+        folderHeader({ id: 'child-a', groupKey: childAGroupKey, depth: 1, workspace: workspaceA }),
+        folderHeader({ id: 'folder-b', groupKey: folderBGroupKey, depth: 0, workspace: workspaceA }),
+        sessionItem({ id: 'root-a', groupKey: rootAGroupKey, folderId: null, depth: 0, workspace: workspaceA }),
+        projectHeader(projectBGroupKey, workspaceB),
+        folderHeader({ id: 'folder-c', groupKey: folderCGroupKey, depth: 0, workspace: workspaceB }),
     ];
 }
 
@@ -107,23 +114,23 @@ function buildTree() {
     return buildSessionListTreeRows({
         items: items(),
         rowBoundsById: new Map([
-            [treeRowId.workspaceRoot('project-a'), bounds(0)],
+            [treeRowId.workspaceRoot(projectAGroupKey), bounds(0)],
             [treeRowId.folder('folder-a'), bounds(40)],
             [treeRowId.session('server-a', 'inside-a'), bounds(80)],
             [treeRowId.folder('child-a'), bounds(120)],
             [treeRowId.folder('folder-b'), bounds(160)],
             [treeRowId.session('server-a', 'root-a'), bounds(200)],
-            [treeRowId.workspaceRoot('project-b'), bounds(300)],
+            [treeRowId.workspaceRoot(projectBGroupKey), bounds(300)],
             [treeRowId.folder('folder-c'), bounds(340)],
         ]),
         dropZoneBounds: [
             {
-                containerId: treeRowId.workspaceRoot('project-a'),
+                containerId: treeRowId.workspaceRoot(projectAGroupKey),
                 role: 'root-before-first',
                 bounds: { x: 0, y: 20, width: 320, height: 16 },
             },
             {
-                containerId: treeRowId.workspaceRoot('project-a'),
+                containerId: treeRowId.workspaceRoot(projectAGroupKey),
                 role: 'root-after-last',
                 bounds: { x: 0, y: 244, width: 320, height: 16 },
             },
@@ -169,20 +176,35 @@ describe('SessionsList drag result consistency', () => {
             sourceRowId: treeRowId.session('server-a', 'inside-a'),
             y: 180,
             expectedAssignment: { serverId: 'server-a', sessionId: 'inside-a', folderId: 'folder-b' },
-            expectedOrder: { 'project-a:folder:folder-b': ['server-a:inside-a'] },
+            expectedOrder: { [folderBGroupKey]: ['server-a:inside-a'] },
         },
         {
             name: 'session out to workspace root',
             sourceRowId: treeRowId.session('server-a', 'inside-a'),
             y: 250,
             expectedAssignment: { serverId: 'server-a', sessionId: 'inside-a', folderId: null },
-            expectedOrder: { 'project-a': ['server-a:inside-a', 'folder:folder-a', 'folder:folder-b', 'server-a:root-a'] },
+            expectedOrder: { [rootAGroupKey]: ['server-a:root-a', 'server-a:inside-a'] },
+        },
+        {
+            name: 'session out to exact mixed workspace root position',
+            sourceRowId: treeRowId.session('server-a', 'inside-a'),
+            y: 250,
+            sessionListFolderSortModeV1: 'mixed' as const,
+            expectedAssignment: { serverId: 'server-a', sessionId: 'inside-a', folderId: null },
+            expectedOrder: { [rootAGroupKey]: ['folder:folder-a', 'folder:folder-b', 'server-a:root-a', 'server-a:inside-a'] },
         },
         {
             name: 'folder around root sessions',
             sourceRowId: treeRowId.folder('folder-b'),
             y: 204,
-            expectedOrder: { 'project-a': ['folder:folder-a', 'folder:folder-b', 'server-a:root-a'] },
+            expectedOrder: { [rootAGroupKey]: ['folder:folder-b', 'folder:folder-a'] },
+        },
+        {
+            name: 'folder around root sessions in exact mixed position',
+            sourceRowId: treeRowId.folder('folder-b'),
+            y: 204,
+            sessionListFolderSortModeV1: 'mixed' as const,
+            expectedOrder: { [rootAGroupKey]: ['folder:folder-a', 'folder:folder-b', 'server-a:root-a'] },
         },
         {
             name: 'blocked descendant folder target',
@@ -219,6 +241,7 @@ describe('SessionsList drag result consistency', () => {
             context: {
                 sessionFoldersV1: folders(),
                 sessionListGroupOrderV1: {},
+                sessionListFolderSortModeV1: scenario.sessionListFolderSortModeV1,
                 now: () => 100,
                 setSessionFoldersV1,
                 setSessionListGroupOrderV1,

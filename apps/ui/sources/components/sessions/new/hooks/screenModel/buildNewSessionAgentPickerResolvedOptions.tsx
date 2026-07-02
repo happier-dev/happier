@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { Ionicons } from '@expo/vector-icons';
+import { useUnistyles } from 'react-native-unistyles';
 
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
@@ -10,11 +11,15 @@ import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibil
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
+import { t } from '@/text';
 
 import type { NewSessionAgentPickerSelection } from './buildNewSessionAgentPickerDetailContent';
 import { buildNewSessionAgentPickerOptionInteractions } from './buildNewSessionAgentPickerOptionInteractions';
 import type { FavoriteModelTogglePayload } from './newSessionFavoriteModelsPickerOption';
 import { resolveNewSessionAgentPickerOptionPresentation } from './resolveNewSessionAgentPickerOptionPresentation';
+
+const ENGINE_FAVORITE_RAIL_ICON_SIZE = 14;
 
 type BuildNewSessionAgentPickerResolvedOptionsParams = Readonly<{
     profileForAgentSelection: AIBackendProfile | null;
@@ -29,14 +34,31 @@ type BuildNewSessionAgentPickerResolvedOptionsParams = Readonly<{
     settings: Settings;
     refreshProbe?: OptionPickerProbeState | null;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
+    favoriteBackendTargetKeys?: ReadonlyArray<string>;
     onToggleFavoriteModel?: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
+    onToggleFavoriteBackendTarget?: (targetKey: string) => void;
+    onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
 }>;
+
+function EngineFavoritePickerIcon(props: Readonly<{ favorite: boolean }>) {
+    const { theme } = useUnistyles();
+    const selectedColor = theme.dark ? theme.colors.text.primary : theme.colors.button.primary.background;
+    return (
+        <Ionicons
+            name={props.favorite ? 'star' : 'star-outline'}
+            size={ENGINE_FAVORITE_RAIL_ICON_SIZE}
+            color={props.favorite ? selectedColor : theme.colors.text.secondary}
+        />
+    );
+}
 
 export function buildNewSessionAgentPickerResolvedOptions(
     params: BuildNewSessionAgentPickerResolvedOptionsParams,
 ): ReadonlyArray<AgentInputChipPickerOption> {
+    const favoriteBackendTargetKeySet = new Set(params.favoriteBackendTargetKeys ?? []);
     return params.resolvedBackendEntries.map((entry) => {
         const selectable = params.isBackendEntrySelectable(entry);
+        const isFavoriteBackend = favoriteBackendTargetKeySet.has(entry.backendTargetKey);
         const { subtitle, disabled, muted } = resolveNewSessionAgentPickerOptionPresentation({
             entry,
             profileForAgentSelection: params.profileForAgentSelection,
@@ -58,6 +80,15 @@ export function buildNewSessionAgentPickerResolvedOptions(
             subtitle,
             disabled,
             muted,
+            railAction: params.onToggleFavoriteBackendTarget ? {
+                testID: `new-session-engine-favorite-rail:${entry.backendTargetKey}`,
+                accessibilityLabel: isFavoriteBackend ? t('profiles.actions.removeFromFavorites') : t('profiles.actions.addToFavorites'),
+                selected: isFavoriteBackend,
+                icon: <EngineFavoritePickerIcon favorite={isFavoriteBackend} />,
+                onPress: () => {
+                    params.onToggleFavoriteBackendTarget?.(entry.backendTargetKey);
+                },
+            } : undefined,
             ...buildNewSessionAgentPickerOptionInteractions({
                 entry,
                 disabled,
@@ -68,6 +99,13 @@ export function buildNewSessionAgentPickerResolvedOptions(
                 refreshProbe: params.refreshProbe,
                 favoriteModelSelections: params.favoriteModelSelections ?? [],
                 onToggleFavoriteModel: params.onToggleFavoriteModel,
+                favoriteEngine: params.onToggleFavoriteBackendTarget ? {
+                    favorite: isFavoriteBackend,
+                    onToggle: () => {
+                        params.onToggleFavoriteBackendTarget?.(entry.backendTargetKey);
+                    },
+                } : undefined,
+                onRememberAgentPickerView: params.onRememberAgentPickerView,
                 getEngineSelectionForTargetKey: params.getEngineSelectionForTargetKey,
                 selectEngineSelection: params.selectEngineSelection,
             }),

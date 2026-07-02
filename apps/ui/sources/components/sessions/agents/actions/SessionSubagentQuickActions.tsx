@@ -67,7 +67,9 @@ export const SessionSubagentQuickActions = React.memo((props: Readonly<{
                         ...(recipient.memberLabel ? { memberLabel: recipient.memberLabel } : {}),
                     },
                 });
-                await sync.sendMessage(props.sessionId, structured.text, structured.displayText, structured.metaOverrides);
+                await sync.sendMessage(props.sessionId, structured.text, structured.displayText, structured.metaOverrides, {
+                    bypassPendingQueueReason: 'subagent_command',
+                });
             } catch (error) {
                 Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.requestFailed'));
             } finally {

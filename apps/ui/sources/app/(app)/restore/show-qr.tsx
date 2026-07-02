@@ -1,29 +1,44 @@
 import * as React from 'react';
 
 import { useRouter } from 'expo-router';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { RestoreQrView } from '@/components/account/restore/RestoreQrView';
-import { WizardModalShell } from '@/components/onboarding';
+import { UnauthenticatedSplitShell } from '@/components/onboarding/unauthShell';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
-import { t } from '@/text';
+
+const ignoreBrandHeroGetStarted = () => undefined;
 
 export default function RestoreShowQrRoute() {
     const router = useRouter();
     const handleBack = React.useCallback(() => {
         safeRouterBack({ router, fallbackHref: '/restore' });
     }, [router]);
+    const handleOpenRelayCustomFlow = React.useCallback(() => {
+        router.push('/setup');
+    }, [router]);
 
     return (
-        <WizardModalShell
-            testID="restore-show-qr-wizard"
-            stepIndex={1}
-            stepCount={3}
-            title={t('setupOnboarding.authRestoreTitle')}
-            subtitle={t('setupOnboarding.authRestoreSubtitle')}
+        <UnauthenticatedSplitShell
+            stepId="restore-show-qr"
+            isWelcomeStep={false}
+            allowMobileBrandHero={false}
+            onOpenRelayCustomFlow={handleOpenRelayCustomFlow}
+            onBrandHeroGetStarted={ignoreBrandHeroGetStarted}
             onBack={handleBack}
-            showSkip={false}
+            testID="unauth-shell-route-restore-show-qr"
         >
-            <RestoreQrView embedded onBack={handleBack} />
-        </WizardModalShell>
+            <View testID="restore-route-content" style={styles.content}>
+                <RestoreQrView embedded onBack={handleBack} />
+            </View>
+        </UnauthenticatedSplitShell>
     );
 }
+
+const styles = StyleSheet.create(() => ({
+    content: {
+        flex: 1,
+        width: '100%',
+    },
+}));

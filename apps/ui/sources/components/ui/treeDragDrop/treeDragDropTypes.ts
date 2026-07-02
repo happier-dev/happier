@@ -18,6 +18,8 @@ export type TreeContainerScope = Readonly<{
 
 export type TreeContainerDropZoneRole =
     | 'container-body'
+    | 'sibling-before'
+    | 'sibling-after'
     | 'root-before-first'
     | 'root-after-last'
     | 'root-empty';
@@ -29,6 +31,7 @@ export type TreeContainerDropZone = Readonly<{
     depth: number;
     bounds: WindowBounds;
     role: TreeContainerDropZoneRole;
+    targetId?: string;
 }>;
 
 export type TreeRowKind = 'container' | 'leaf';
@@ -72,7 +75,7 @@ export type TreeInstruction =
     | Readonly<{ kind: 'idle' }>;
 
 export type TreeInstructionVisual =
-    | Readonly<{ kind: 'line'; targetId: string; edge: 'top' | 'bottom'; depth: number }>
+    | Readonly<{ kind: 'line'; targetId: string; edge: 'top' | 'bottom'; depth: number; dropZoneRole?: TreeContainerDropZoneRole }>
     | Readonly<{ kind: 'outline'; targetId: string }>
     | Readonly<{ kind: 'none' }>;
 

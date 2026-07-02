@@ -92,6 +92,7 @@ installSessionShellCommonModuleMocks({
                 useSettingMutable: ((key: string) => {
                     if (key === 'sessionFolderViewModeV1') return [sessionFolderViewMode, setSessionFolderViewMode];
                     if (key === 'sessionListOrderingModeV1') return ['custom', vi.fn()];
+                    if (key === 'sessionListSectionModeV1') return ['activity', vi.fn()];
                     if (key === 'sessionListActiveGroupingV1') return ['project', vi.fn()];
                     if (key === 'sessionListInactiveGroupingV1') return ['date', vi.fn()];
                     if (key === 'hideInactiveSessions') return [false, vi.fn()];
@@ -221,6 +222,40 @@ describe('ProjectGroupHeader menu items', () => {
             expect.objectContaining({ id: 'rename' }),
             expect.objectContaining({ id: 'reset' }),
         ]));
+    });
+
+    it('exposes a stable project header selector keyed by group key', async () => {
+        const { ProjectGroupHeader } = await import('./sessionListChrome');
+
+        const screen = await renderScreen(
+            <ProjectGroupHeader
+                item={{
+                    type: 'header',
+                    title: '/repo',
+                    headerKind: 'project',
+                    groupKey: 'server:s1:active:project:repo',
+                    workspaceKey: 'legacy_repo',
+                    workspaceScopeHint: {
+                        serverId: 'server_a',
+                        machineId: 'machine_a',
+                        rootPath: '/repo',
+                    },
+                } as any}
+                hasMultipleMachines={false}
+                displayTitle="Important Repo"
+                hasCustomLabel={false}
+                canOpenProject={true}
+                onOpenProject={vi.fn()}
+                onCreateSession={vi.fn()}
+                onAddFolder={vi.fn()}
+                onRename={vi.fn()}
+                onReset={vi.fn()}
+                collapsed={false}
+                onToggleCollapse={vi.fn()}
+            />,
+        );
+
+        expect(screen.findByProps({ testID: 'session-list-project-header:server:s1:active:project:repo' })).toBeTruthy();
     });
 
     it('keeps the project-group menu trigger stopPropagation bound to the original event', async () => {
@@ -414,11 +449,11 @@ describe('ProjectGroupHeader menu items', () => {
         expect(onMoveToWorkspaceRoot).toHaveBeenCalledTimes(1);
     });
 
-    it('shows the folder outline only while it is the active drop target', async () => {
+    it('keeps folder drop target registration separate from row-local outline styling', async () => {
         platformOs = 'web';
         const { FolderGroupHeader } = await import('./sessionListChrome');
 
-        const renderHeader = (activeDropTargetId: string | null) => (
+        const renderHeader = () => (
             <FolderGroupHeader
                 title="Planning"
                 depth={0}
@@ -442,11 +477,10 @@ describe('ProjectGroupHeader menu items', () => {
                 onAddSubfolder={vi.fn()}
                 onRename={vi.fn()}
                 onDelete={vi.fn()}
-                activeDropTargetId={activeDropTargetId}
             />
         );
 
-        const screen = await renderScreen(renderHeader(null));
+        const screen = await renderScreen(renderHeader());
 
         const row = screen.findByTestId('session-folder-header-folder_planning');
         expect(row).not.toBeNull();
@@ -458,10 +492,6 @@ describe('ProjectGroupHeader menu items', () => {
         });
 
         expect(flattenStyle(row.props.style).borderWidth).toBeUndefined();
-
-        await screen.update(renderHeader('folder:folder_planning'));
-
-        expect(flattenStyle(row.props.style).borderWidth).toBe(1);
     });
 
     it('does not nest folder header pressable controls inside another pressable on web', async () => {
@@ -673,6 +703,7 @@ describe('ProjectGroupHeader menu items', () => {
         expect(addButton).toBeTruthy();
         expect(chevronWrapper?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ opacity: 0 })]));
         expect(screen.root.findAllByType('DropdownMenu')).toHaveLength(0);
+        expect(screen.root.findAllByProps({ testID: 'session-workspace-reorder-handle:project:repo' })).toHaveLength(0);
 
         await act(async () => {
             addButton.props.onPress();
@@ -685,8 +716,19 @@ describe('ProjectGroupHeader menu items', () => {
         });
 
         expect(screen.root.findAllByType('DropdownMenu')).toHaveLength(1);
+        const reorderHandle = screen.root.findAllByProps({ testID: 'session-workspace-reorder-handle:project:repo' })[0];
+        expect(reorderHandle).toBeTruthy();
+        expect(typeof reorderHandle.props.onHoverIn).toBe('function');
+        expect(typeof reorderHandle.props.onHoverOut).toBe('function');
         expect(rowPressable.findAllByType('Ionicons')[0]?.parent?.props?.style).toEqual(expect.arrayContaining([expect.objectContaining({ opacity: 1 })]));
         const menuTrigger = screen.findByProps({ accessibilityLabel: 'common.moreActions' });
+
+        await act(async () => {
+            reorderHandle.props.onHoverIn?.();
+            rowPressable.props.onHoverOut?.();
+        });
+
+        expect(screen.root.findAllByProps({ testID: 'session-workspace-reorder-handle:project:repo' })).toHaveLength(1);
 
         await act(async () => {
             menuTrigger.props.onHoverIn?.();

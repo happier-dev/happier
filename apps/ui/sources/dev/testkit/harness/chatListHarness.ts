@@ -8,6 +8,7 @@ import { createStorageModuleMock, createStorageStoreMock } from '../mocks/storag
 import { renderScreen, type RenderScreenResult } from '../render/renderScreen';
 import type { RenderWithAppProvidersOptions } from '../render/renderWithAppProviders';
 import { createReducer } from '@/sync/reducer/reducer';
+import { loadSyncTuning, type SyncTuning } from '@/sync/runtime/syncTuning';
 
 export type ChatListHarness = RenderScreenResult & Readonly<{
     findMessageRow: (testID: string) => ReactTestInstance | null;
@@ -26,18 +27,12 @@ type SessionPendingState = {
     isLoaded: boolean;
 };
 
-type SyncTuningState = {
-    transcriptForwardPrefetchThresholdPx: number;
-    transcriptBackwardPrefetchThresholdPx: number;
-    transcriptFlashListEstimatedItemSize: number;
-    transcriptWebHotTailItemCount: number;
-    transcriptWebInitialPinStabilizeMs: number;
-    transcriptWebInitialPinRetryIntervalMs: number;
-};
+type SyncTuningState = SyncTuning;
 
 type FlashListChatListHarnessState = {
     flashListProps: any | null;
     flashListRefHandle: unknown;
+    flashListRenderCount: number;
     platformOs: 'web' | 'ios';
     sessionMessagesState: SessionMessagesState;
     sessionPendingState: SessionPendingState;
@@ -183,20 +178,14 @@ export const flashListChatListHarnessState: FlashListChatListHarnessState = {
         scrollToOffset: () => {},
         scrollToIndex: () => {},
     },
+    flashListRenderCount: 0,
     platformOs: 'web',
     sessionMessagesState: { messages: [], isLoaded: true },
     sessionPendingState: { messages: [], discarded: [], isLoaded: true },
     sessionActionDraftsState: [],
     sessionState: null,
     settingValues: {},
-    syncTuningState: {
-        transcriptForwardPrefetchThresholdPx: 0,
-        transcriptBackwardPrefetchThresholdPx: 0,
-        transcriptFlashListEstimatedItemSize: 120,
-        transcriptWebHotTailItemCount: 2,
-        transcriptWebInitialPinStabilizeMs: 3000,
-        transcriptWebInitialPinRetryIntervalMs: 250,
-    },
+    syncTuningState: loadSyncTuning(),
 };
 
 function createFlashListChatListMessagesSnapshot() {
@@ -234,6 +223,7 @@ export function resetFlashListChatListHarness(
         scrollToOffset: () => {},
         scrollToIndex: () => {},
     };
+    flashListChatListHarnessState.flashListRenderCount = 0;
     flashListChatListHarnessState.platformOs = options.platformOs ?? 'web';
     flashListChatListHarnessState.sessionMessagesState = { messages: [], isLoaded: true };
     flashListChatListHarnessState.sessionPendingState = { messages: [], discarded: [], isLoaded: true };
@@ -247,12 +237,15 @@ export function resetFlashListChatListHarness(
         agentState: null,
     };
     flashListChatListHarnessState.syncTuningState = {
+        ...loadSyncTuning(),
         transcriptForwardPrefetchThresholdPx: 0,
         transcriptBackwardPrefetchThresholdPx: 0,
         transcriptFlashListEstimatedItemSize: 120,
         transcriptWebHotTailItemCount: 2,
         transcriptWebInitialPinStabilizeMs: 3000,
         transcriptWebInitialPinRetryIntervalMs: 250,
+        transcriptWebInitialPinRetryMilestonesMs: [16, 50, 100, 200, 400, 800],
+        transcriptOlderLoadSpinnerDelayMs: 300,
         ...(options.syncTuningState ?? {}),
     };
 
@@ -349,11 +342,31 @@ export async function createFlashListChatListModuleMock(
 
     return {
         FlashList: React.forwardRef<any, any>((props, ref) => {
+            flashListChatListHarnessState.flashListRenderCount += 1;
             const element = (flashListMock.module.FlashList as any).render?.(props, ref)
                 ?? React.createElement(flashListMock.module.FlashList as any, { ...props, ref });
             flashListChatListHarnessState.flashListProps = flashListMock.state.props;
             return element;
         }),
+        LayoutCommitObserver: ({ children, onCommitLayoutEffect }: any) => {
+            React.useLayoutEffect(() => {
+                onCommitLayoutEffect?.();
+            });
+            return React.createElement(React.Fragment, null, children);
+        },
+        useLayoutState: <T,>(initialValue: T) => React.useState<T>(initialValue),
+        useMappingHelper: () => ({
+            getMappingKey: (_key: string | number, index: number) => index,
+        }),
+        useRecyclingState: <T,>(initialValue: T, dependencies: readonly unknown[], onReset?: () => void) => {
+            const [state, setState] = React.useState<T>(initialValue);
+            React.useEffect(() => {
+                setState(initialValue);
+                onReset?.();
+            // eslint-disable-next-line react-hooks/exhaustive-deps
+            }, dependencies);
+            return [state, setState] as const;
+        },
     };
 }
 
@@ -468,6 +481,17 @@ export async function triggerFlashListChatListInitialFill(
     await flushHookEffects(options.flushOptions);
 }
 
+export async function triggerFlashListChatListLoad(
+    elapsedTimeInMs = 0,
+    flushOptions: FlushHookEffectsOptions = {},
+): Promise<void> {
+    const capturedFlashListProps = requireCapturedFlashListProps();
+    await act(async () => {
+        capturedFlashListProps.onLoad?.({ elapsedTimeInMs });
+    });
+    await flushHookEffects(flushOptions);
+}
+
 export async function triggerFlashListChatListContentSizeChange(
     contentWidth: number,
     contentHeight: number,
@@ -536,6 +560,7 @@ export async function withFlashListChatListWebScrollerDom<T>(
     };
     (globalThis as any).window = {
         getComputedStyle: () => ({ overflowY: 'auto' }),
+        location: previousWindow?.location ?? { hostname: 'localhost' },
         ...(options.window ?? {}),
     };
     if ('HTMLElement' in options) {

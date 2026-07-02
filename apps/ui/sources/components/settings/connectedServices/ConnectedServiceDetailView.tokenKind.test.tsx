@@ -1,12 +1,14 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { flushHookEffects, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import {
     connectedServicesModuleState,
     installConnectedServicesCommonModuleMocks,
 } from './connectedServicesTestHelpers';
 import type { IModal } from '@/modal/types';
+
+type StoreConnectedServiceCredentialForAccount = typeof import('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount').storeConnectedServiceCredentialForAccount;
 
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -16,7 +18,8 @@ const { openExternalUrlSpy } = vi.hoisted(() => ({
 }));
 const promptSpy = vi.fn<IModal['prompt']>(async () => null);
 const alertSpy = vi.fn(async () => {});
-const storeCredentialSpy = vi.fn(async () => {});
+const confirmSpy = vi.fn<IModal['confirm']>(async () => false);
+const storeCredentialSpy = vi.fn<StoreConnectedServiceCredentialForAccount>(async () => {});
 const applySettingsSpy = vi.fn(async () => {});
 installConnectedServicesCommonModuleMocks({
     modal: async () => {
@@ -25,7 +28,7 @@ installConnectedServicesCommonModuleMocks({
             spies: {
                 prompt: promptSpy,
                 alert: alertSpy,
-                confirm: vi.fn(async () => false),
+                confirm: confirmSpy,
             },
         }).module;
     },
@@ -127,8 +130,38 @@ describe('ConnectedServiceDetailView token kind copy', () => {
     await act(async () => {
       await pressTestInstanceAsync(tokenItem);
     });
+    await flushHookEffects({ cycles: 1, turns: 3 });
 
     expect(storeCredentialSpy).toHaveBeenCalledTimes(1);
+    expect(alertSpy).toHaveBeenCalled();
+    expect(connectedServicesModuleState.routerBackSpy).not.toHaveBeenCalled();
+  });
+
+  it('asks before replacing a connected service credential with a different provider identity', async () => {
+    promptSpy.mockReset();
+    alertSpy.mockReset();
+    confirmSpy.mockReset();
+    storeCredentialSpy.mockReset();
+    connectedServicesModuleState.routerBackSpy.mockReset();
+    promptSpy.mockResolvedValueOnce('work');
+    promptSpy.mockResolvedValueOnce('setup-token-1');
+    storeCredentialSpy
+      .mockRejectedValueOnce(new Error('connect_reconnect_provider_identity_mismatch'))
+      .mockResolvedValueOnce(undefined);
+    confirmSpy.mockResolvedValueOnce(true);
+
+    const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
+
+    const tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
+    const tokenItem = tree.find((n) => n.props?.testID === 'connected-services-action:connect-token');
+    await act(async () => {
+      await pressTestInstanceAsync(tokenItem);
+    });
+    await flushHookEffects({ cycles: 1, turns: 3 });
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(storeCredentialSpy).toHaveBeenCalledTimes(2);
+    expect(storeCredentialSpy.mock.calls[1]?.[2]).toEqual({ allowProviderIdentityChange: true });
     expect(alertSpy).toHaveBeenCalled();
     expect(connectedServicesModuleState.routerBackSpy).not.toHaveBeenCalled();
   });
@@ -179,6 +212,7 @@ describe('ConnectedServiceDetailView token kind copy', () => {
     await act(async () => {
       await pressTestInstanceAsync(tokenItem);
     });
+    await flushHookEffects({ cycles: 1, turns: 3 });
 
     expect(promptSpy).toHaveBeenCalledTimes(2);
     expect(promptSpy.mock.calls[1]?.[2]).toEqual(expect.objectContaining({
@@ -202,6 +236,7 @@ describe('ConnectedServiceDetailView token kind copy', () => {
     await act(async () => {
       await pressTestInstanceAsync(tokenItem);
     });
+    await flushHookEffects({ cycles: 1, turns: 3 });
 
     expect(promptSpy.mock.calls[1]?.[0]).toBe('Descriptor GitHub PAT title');
   });
@@ -223,6 +258,7 @@ describe('ConnectedServiceDetailView token kind copy', () => {
     await act(async () => {
       await pressTestInstanceAsync(tokenItem);
     });
+    await flushHookEffects({ cycles: 1, turns: 3 });
 
     expect(promptSpy.mock.calls[1]?.[0]).toBe('Bitbucket email title');
     expect(promptSpy.mock.calls[2]?.[0]).toBe('Bitbucket token title');

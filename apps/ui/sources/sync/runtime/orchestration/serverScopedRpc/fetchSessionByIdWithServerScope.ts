@@ -53,6 +53,7 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
     getExistingSession?: (sessionId: string) => Session | null | undefined;
     log: { log: (message: string) => void };
     timeoutMs?: number;
+    includeTurnsProjection?: boolean;
 }>): Promise<Awaited<ReturnType<typeof fetchAndApplySessionById>>> {
     const context = await resolveServerScopedSessionContext({
         serverId: params.serverId ?? null,
@@ -75,6 +76,7 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
             getExistingSession: params.getExistingSession,
             log: params.log,
             timeoutMs: params.timeoutMs,
+            includeTurnsProjection: params.includeTurnsProjection,
         });
     }
 
@@ -103,5 +105,6 @@ export async function fetchSessionByIdWithServerScope(params: Readonly<{
         getExistingSession: params.getExistingSession,
         log: params.log,
         timeoutMs: params.timeoutMs,
+        includeTurnsProjection: params.includeTurnsProjection,
     });
 }

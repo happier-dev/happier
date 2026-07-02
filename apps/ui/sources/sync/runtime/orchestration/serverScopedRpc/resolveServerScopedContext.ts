@@ -1,6 +1,10 @@
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
-import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import {
+    areServerProfileIdentifiersEquivalent,
+    getServerProfileById,
+    resolveServerProfileScopeIdForIdentifier,
+} from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 import type { ResolvedServerRpcContext, ScopedRpcEncryptionContext } from './serverScopedRpcTypes';
@@ -22,7 +26,7 @@ export async function resolveServerScopedContext(params: Readonly<{
     const activeServerId = normalizeId(activeSnapshot.serverId);
     const shouldForceScoped = params.forceScoped === true;
 
-    if (!shouldForceScoped && (!targetServerId || targetServerId === activeServerId)) {
+    if (!shouldForceScoped && (!targetServerId || areServerProfileIdentifiersEquivalent(targetServerId, activeServerId))) {
         return {
             scope: 'active',
             machineId,
@@ -30,14 +34,14 @@ export async function resolveServerScopedContext(params: Readonly<{
         };
     }
 
-    const resolvedTargetServerId = targetServerId || activeServerId;
-    const targetProfile = resolvedTargetServerId === activeServerId
+    const resolvedTargetServerId = resolveServerProfileScopeIdForIdentifier(targetServerId || activeServerId);
+    const targetProfile = areServerProfileIdentifiersEquivalent(resolvedTargetServerId, activeServerId)
         ? {
             id: activeServerId,
             serverUrl: activeSnapshot.serverUrl,
             name: activeSnapshot.serverUrl,
         }
-        : listServerProfiles().find((profile) => normalizeId(profile.id) === resolvedTargetServerId) ?? null;
+        : getServerProfileById(resolvedTargetServerId);
     if (!targetProfile) {
         throw new Error(`Target server profile not found for serverId "${resolvedTargetServerId}"`);
     }

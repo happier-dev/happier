@@ -106,8 +106,8 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', () => ({
         machineContributionRegistryProjectionDescribeMock(...args),
 }));
 
-vi.mock('@/agents/providers/catalog/providerSettingsCatalog', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/agents/providers/catalog/providerSettingsCatalog')>();
+vi.mock('@/agents/catalog/providerSettingsCatalog', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/agents/catalog/providerSettingsCatalog')>();
     return actual;
 });
 

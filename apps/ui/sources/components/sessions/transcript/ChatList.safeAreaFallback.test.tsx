@@ -101,10 +101,12 @@ vi.mock('./ChatFooter', () => ({
 
 vi.mock('./MessageView', () => ({
     MessageView: () => React.createElement('MessageView'),
+    MessageViewWithSessionCommon: () => React.createElement('MessageView'),
 }));
 
 vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
     TurnView: () => React.createElement('TurnView'),
+    TurnViewWithSessionCommon: () => React.createElement('TurnView'),
 }));
 
 vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({

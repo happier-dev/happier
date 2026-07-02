@@ -235,6 +235,7 @@ const buildThemeProfileOverridesFromVsCodeTheme = (theme: Record<string, unknown
     setOverride(overrides, 'control.input.background', inputBackground);
     setOverride(overrides, 'control.input.foreground', inputForeground);
     setOverride(overrides, 'control.input.placeholder', inputPlaceholder);
+    setOverride(overrides, 'composer.chipTint', inputPlaceholder);
     setOverride(overrides, 'control.switch.track.active', activeForeground);
     setOverride(overrides, 'control.switch.track.inactive', surfacePressed);
     setOverride(overrides, 'control.switch.thumb.active', buttonForeground);

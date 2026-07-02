@@ -74,6 +74,17 @@ function readNullableNumber(value: unknown): number | null | undefined {
     return readNumber(value);
 }
 
+function readNonNegativeNumberArray(value: unknown): number[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    const numbers: number[] = [];
+    for (const entry of value) {
+        const number = readNumber(entry);
+        if (number == null || number < 0) continue;
+        numbers.push(Math.trunc(number));
+    }
+    return numbers;
+}
+
 function readOptionalBoolean(value: unknown): boolean | undefined {
     return typeof value === 'boolean' ? value : undefined;
 }
@@ -161,6 +172,7 @@ function coerceLegacySessionRecord(raw: unknown): V2SessionRecord | null {
         seq,
         createdAt,
         updatedAt,
+        meaningfulActivityAt: readNumber(raw.meaningfulActivityAt) ?? undefined,
         active,
         activeAt,
         archivedAt: readNullableNumber(raw.archivedAt),
@@ -172,6 +184,20 @@ function coerceLegacySessionRecord(raw: unknown): V2SessionRecord | null {
         lastViewedSessionSeq: readNullableNumber(raw.lastViewedSessionSeq),
         pendingPermissionRequestCount: readNumber(raw.pendingPermissionRequestCount) ?? undefined,
         pendingUserActionRequestCount: readNumber(raw.pendingUserActionRequestCount) ?? undefined,
+        latestTurnStatus: raw.latestTurnStatus === 'in_progress'
+            || raw.latestTurnStatus === 'completed'
+            || raw.latestTurnStatus === 'cancelled'
+            || raw.latestTurnStatus === 'failed'
+                ? raw.latestTurnStatus
+                : raw.latestTurnStatus === null
+                    ? null
+                    : undefined,
+        latestTurnStatusObservedAt: readNullableNumber(raw.latestTurnStatusObservedAt),
+        rollbackEligibleTurnStarts: readNonNegativeNumberArray(raw.rollbackEligibleTurnStarts),
+        lastRuntimeIssue: raw.lastRuntimeIssue === null
+            || (raw.lastRuntimeIssue && typeof raw.lastRuntimeIssue === 'object')
+                ? raw.lastRuntimeIssue as V2SessionRecord['lastRuntimeIssue']
+                : undefined,
         pendingCount: readNumber(raw.pendingCount) ?? undefined,
         pendingVersion: readNumber(raw.pendingVersion) ?? undefined,
         dataEncryptionKey: readNullableString(raw.dataEncryptionKey) ?? null,

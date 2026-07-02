@@ -152,8 +152,10 @@ describe('PushNotificationTroubleshootingView', () => {
 
         const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
         const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
-        await flushHookEffects({ cycles: 10 });
+        await flushHookEffects({ cycles: 20 });
 
+        expect(Notifications.getPermissionsAsync).toHaveBeenCalled();
+        expect(Notifications.getExpoPushTokenAsync).toHaveBeenCalled();
         const accountSettingRow = screen.findRowByTitle('settingsNotifications.pushTroubleshooting.status.accountSettingTitle');
         expect(accountSettingRow?.props?.detail).toBe('common.disabled');
     });
@@ -178,7 +180,7 @@ describe('PushNotificationTroubleshootingView', () => {
 
         const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
         const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
-        await flushHookEffects({ cycles: 10 });
+        await flushHookEffects({ cycles: 20 });
 
         const row = screen.findRow('settings-notifications-push-troubleshooting-device-t1');
         expect(row?.props?.detail).toBe('settingsNotifications.pushTroubleshooting.devices.thisDevice');
@@ -206,7 +208,7 @@ describe('PushNotificationTroubleshootingView', () => {
 
         const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
         const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
-        await flushHookEffects({ cycles: 10 });
+        await flushHookEffects({ cycles: 20 });
 
         const staleRow = screen.findRow('settings-notifications-push-troubleshooting-device-t2');
         expect(staleRow?.props?.onPress).toBeUndefined();
@@ -237,7 +239,7 @@ describe('PushNotificationTroubleshootingView', () => {
 
         const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
         const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
-        await flushHookEffects({ cycles: 10 });
+        await flushHookEffects({ cycles: 20 });
 
         await act(async () => {
             screen.pressByTestId('settings-notifications-push-troubleshooting-request-permission');
@@ -265,7 +267,7 @@ describe('PushNotificationTroubleshootingView', () => {
 
         const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
         const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
-        await flushHookEffects({ cycles: 10 });
+        await flushHookEffects({ cycles: 20 });
 
         await act(async () => {
             screen.pressByTestId('settings-notifications-push-troubleshooting-reregister');

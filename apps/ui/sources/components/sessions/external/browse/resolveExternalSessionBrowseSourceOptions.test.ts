@@ -31,6 +31,7 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
                                 providerAccountId: null,
                                 expiresAt: null,
                                 lastUsedAt: null,
+                                health: null,
                             },
                             {
                                 profileId: 'personal',
@@ -40,8 +41,10 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
                                 providerAccountId: null,
                                 expiresAt: null,
                                 lastUsedAt: null,
+                                health: null,
                             },
                         ],
+                        groups: [],
                     },
                 ],
             },
@@ -100,7 +103,7 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
                         providerId: 'codex',
                         provider: {
                             backendMode: 'appServer',
-                            vendorSessionId: 'thread-1',
+                            providerSessionId: 'thread-1',
                         },
                     },
                     source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' },
@@ -111,10 +114,10 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
         expect(extras.source).toEqual({ kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' });
         expect(readSessionMetadataRuntimeDescriptor({
             runtimeDescriptorV1: extras.runtimeDescriptorV1,
-        }, 'codex')).toEqual({
+        }, 'codex')).toMatchObject({
             providerId: 'codex',
             backendMode: 'appServer',
-            vendorSessionId: 'thread-1',
+            providerSessionId: 'thread-1',
             home: 'user',
             connectedServiceId: null,
             connectedServiceProfileId: null,
@@ -126,6 +129,44 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
             source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096' },
             candidate: { details: { codexBackendMode: 'appServer' } },
         })).toEqual({});
+    });
+
+    it('resolves compatible link sources through registered provider behavior', async () => {
+        const { resolveExternalSessionBrowseCompatibleLinkSource } = await externalSessionBrowseModulePromise;
+
+        expect(resolveExternalSessionBrowseCompatibleLinkSource({
+            providerId: 'opencode',
+            selectedSource: {
+                kind: 'opencodeServer',
+                baseUrl: 'http://127.0.0.1:4096',
+            },
+            candidateSource: {
+                kind: 'opencodeServer',
+                baseUrl: 'http://127.0.0.1:5000',
+                directory: '/tmp/other',
+            },
+        })).toEqual({
+            kind: 'opencodeServer',
+            baseUrl: 'http://127.0.0.1:4096',
+        });
+
+        expect(resolveExternalSessionBrowseCompatibleLinkSource({
+            providerId: 'opencode',
+            selectedSource: {
+                kind: 'opencodeServer',
+                baseUrl: 4096,
+                directory: { path: '/tmp/repo' },
+            },
+            candidateSource: {
+                kind: 'opencodeServer',
+                baseUrl: 'http://127.0.0.1:4096',
+                directory: '/tmp/repo',
+            },
+        })).toEqual({
+            kind: 'opencodeServer',
+            baseUrl: 'http://127.0.0.1:4096',
+            directory: '/tmp/repo',
+        });
     });
 
 });

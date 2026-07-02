@@ -113,4 +113,34 @@ describe('SavedServersSection web actions', () => {
             ]),
         );
     });
+
+    it('marks identity-backed saved server rows active and reads auth by server identity id', async () => {
+        const { SavedServersSection } = await import('./SavedServersSection');
+
+        const screen = await renderScreen(React.createElement(SavedServersSection, {
+            servers: [
+                {
+                    id: 'server-host-derived',
+                    name: 'Identity Relay',
+                    serverUrl: 'https://identity.example',
+                    serverIdentityId: 'srv_identity_saved',
+                    source: 'manual',
+                    createdAt: 1,
+                    updatedAt: 1,
+                    lastUsedAt: 1,
+                },
+            ],
+            activeServerId: 'srv_identity_saved',
+            authStatusByServerId: {
+                srv_identity_saved: 'signedIn',
+            },
+            onSwitch: vi.fn(),
+            onRename: vi.fn(),
+            onRemove: vi.fn(),
+        }));
+
+        const row = screen.findByTestId('saved-server-row-server-host-derived');
+        expect(row?.props?.selected).toBe(true);
+        expect(row?.props?.subtitle).toContain('server.signedIn');
+    });
 });

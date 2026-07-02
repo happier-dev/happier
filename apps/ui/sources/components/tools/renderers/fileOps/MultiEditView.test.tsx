@@ -43,6 +43,16 @@ installFileOpsRendererCommonModuleMocks({
     },
 });
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+    }
+    if (style && typeof style === 'object') {
+        return style as Record<string, unknown>;
+    }
+    return {};
+}
+
 describe('MultiEditView', () => {
     function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
         return makeToolCall({
@@ -87,6 +97,15 @@ describe('MultiEditView', () => {
         const renderedText = collectHostText(tree).join('\n').replace(/\s+/g, ' ');
         expect(renderedText).toContain('+2 more');
         expect(renderedText).not.toContain('Replace all');
+    });
+
+    it('does not force flex sizing around inline edit diffs', async () => {
+        const tree = await renderView(makeTool());
+
+        const flexContainers = tree.root.findAllByType('View' as any).filter((node) => (
+            flattenStyle(node.props.style).flex === 1
+        ));
+        expect(flexContainers).toHaveLength(0);
     });
 
     it('renders all edits with headers when detailLevel=full', async () => {

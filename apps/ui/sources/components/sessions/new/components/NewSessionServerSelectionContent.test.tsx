@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 
@@ -23,6 +24,24 @@ const expoRouterMock = createExpoRouterMock({
     navigation: { dispatch: vi.fn(), getState: () => undefined },
     router: { replace: vi.fn() },
 });
+
+type StyleLikeProps = Readonly<{
+    style?: unknown;
+}>;
+
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign(
+            {} as Record<string, unknown>,
+            ...style.filter(Boolean).map((entry) => flattenStyle(entry)),
+        );
+    }
+    return (style as Record<string, unknown> | undefined) ?? {};
+}
+
+function readProps<P>(node: ReactTestInstance): P {
+    return node.props as P;
+}
 
 installNewSessionComponentsCommonModuleMocks({
     icons: () => ({
@@ -57,7 +76,7 @@ installNewSessionComponentsCommonModuleMocks({
     }),
 });
 
-vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemList']));
+vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemListStatic']));
 vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: createCapturingComponent('Item', (props) => {
@@ -150,5 +169,26 @@ describe('NewSessionServerSelectionContent', () => {
         await serverBItem.onPress();
 
         expect(getCredentialsForServerUrlMock).toHaveBeenCalledWith('http://server-b.local', { serverId: 'server-b' });
+    });
+
+    it('caps the popover content without forcing every server picker to max height', async () => {
+        const { NewSessionServerSelectionContent } = await import('./NewSessionServerSelectionContent');
+
+        const screen = await renderScreen(<NewSessionServerSelectionContent
+                    maxHeight={333}
+                    onClose={() => {}}
+                    selectedServerId="server-a"
+                />);
+
+        const cappedContainer = screen.findAllByType('View').find((node) => {
+            const style = flattenStyle(readProps<StyleLikeProps>(node).style);
+            return style.maxHeight === 333;
+        });
+
+        expect(cappedContainer).toBeDefined();
+        const style = flattenStyle(readProps<StyleLikeProps>(cappedContainer!).style);
+        expect(style.maxHeight).toBe(333);
+        expect(style.height).toBeUndefined();
+        expect(style.flex).toBeUndefined();
     });
 });

@@ -24,6 +24,7 @@ export function createServerActionChip(params: Readonly<{
             renderContent: params.popoverContent,
             maxHeightCap: params.maxHeightCap,
             maxWidthCap: params.maxWidthCap,
+            scrollEnabled: true,
         },
         render: ({ chipStyle, iconColor, showLabel, textStyle, chipAnchorRef, toggleCollapsedPopover }) => (
             <Pressable

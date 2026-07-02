@@ -21,6 +21,11 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         defaultBinding: { binding: 'Mod+Enter', allowInEditable: true, nativeConsumable: true },
     },
     {
+        id: 'composer.sendPending',
+        settingsTitleKey: 'settingsKeyboard.commands.composerSendPending',
+        defaultBinding: { binding: 'Mod+Shift+Enter', allowInEditable: true },
+    },
+    {
         id: 'commandPalette.open',
         settingsTitleKey: 'settingsKeyboard.commands.commandPaletteOpen',
         defaultBindings: [
@@ -93,6 +98,36 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
         id: 'sessions.row.moveToWorkspaceRoot',
         settingsTitleKey: 'settingsKeyboard.commands.sessionsRowMoveToWorkspaceRoot',
         defaultBinding: { binding: 'Alt+Shift+R' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'sessions.selection.toggleFocused',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionsSelectionToggleFocused',
+        defaultBinding: { binding: 'Space', platforms: ['web'], conflictScope: 'sessionListSelection' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'sessions.selection.extendUp',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionsSelectionExtendUp',
+        defaultBinding: { binding: 'Shift+ArrowUp', platforms: ['web'], conflictScope: 'sessionListSelection' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'sessions.selection.extendDown',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionsSelectionExtendDown',
+        defaultBinding: { binding: 'Shift+ArrowDown', platforms: ['web'], conflictScope: 'sessionListSelection' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'sessions.selection.selectAll',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionsSelectionSelectAll',
+        defaultBinding: { binding: 'Mod+A', platforms: ['web'], conflictScope: 'sessionListSelection' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'sessions.selection.clear',
+        settingsTitleKey: 'settingsKeyboard.commands.sessionsSelectionClear',
+        defaultBinding: { binding: 'Escape', platforms: ['web'], conflictScope: 'sessionListSelection' },
         when: (context) => !context.isEditableTarget,
     },
     {
@@ -172,6 +207,30 @@ export const defaultKeyboardCommands: readonly KeyboardCommand[] = [
     {
         id: 'transcript.message.previous',
         settingsTitleKey: 'settingsKeyboard.commands.transcriptMessagePrevious',
+    },
+    {
+        id: 'transcript.selection.cancel',
+        settingsTitleKey: 'settingsKeyboard.commands.transcriptSelectionCancel',
+        defaultBinding: { binding: 'Escape' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'transcript.selection.copy',
+        settingsTitleKey: 'settingsKeyboard.commands.transcriptSelectionCopy',
+        defaultBinding: { binding: 'Alt+Shift+C' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'transcript.selection.selectAll',
+        settingsTitleKey: 'settingsKeyboard.commands.transcriptSelectionSelectAll',
+        defaultBinding: { binding: 'Alt+Shift+A' },
+        when: (context) => !context.isEditableTarget,
+    },
+    {
+        id: 'transcript.selection.sendToSession',
+        settingsTitleKey: 'settingsKeyboard.commands.transcriptSelectionSendToSession',
+        defaultBinding: { binding: 'Alt+Shift+S' },
+        when: (context) => !context.isEditableTarget,
     },
     {
         id: 'transcript.scroll.bottom',

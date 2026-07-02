@@ -15,7 +15,9 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { useUnistyles } from 'react-native-unistyles';
 import { getLatestReleaseId, setLastViewedReleaseId } from '@/changelog';
 import { t } from '@/text';
+import { MotionPreviewDevSection } from './MotionPreviewDevSection';
 import { StoryDeckPreviewDevSection } from './StoryDeckPreviewDevSection';
+import { WebHmrDevSettingsSection } from './WebHmrDevSettingsSection';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 export default function DevScreen() {
@@ -269,6 +271,8 @@ export default function DevScreen() {
             </ItemGroup>
 
             <StoryDeckPreviewDevSection />
+            <MotionPreviewDevSection />
+            <WebHmrDevSettingsSection />
 
             {/* Test Features */}
             <ItemGroup title="Test Features" footer="These actions may affect app stability">

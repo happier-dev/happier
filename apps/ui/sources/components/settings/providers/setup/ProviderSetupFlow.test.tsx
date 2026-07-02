@@ -156,16 +156,24 @@ vi.mock('@/agents/providers/catalog/providerLocalAuthCatalog', () => ({
     getProviderLocalAuthPlugin: () => null,
 }));
 
-vi.mock('@/components/onboarding/ui/WizardTerminalHandoff', () => ({
+const onboardingComponentMocks = {
+    ProvidersLogoMultiSelect: (props: Record<string, unknown>) => React.createElement('ProvidersLogoMultiSelect', props),
     WizardTerminalHandoff: (props: Record<string, unknown>) => React.createElement('WizardTerminalHandoff', props),
+    WebDesktopDownloadCta: (props: Record<string, unknown>) => React.createElement('WebDesktopDownloadCta', props),
+};
+
+vi.mock('@/components/onboarding', () => onboardingComponentMocks);
+
+vi.mock('@/components/onboarding/ui/WizardTerminalHandoff', () => ({
+    WizardTerminalHandoff: onboardingComponentMocks.WizardTerminalHandoff,
 }));
 
 vi.mock('@/components/onboarding/steps/ProvidersLogoMultiSelect', () => ({
-    ProvidersLogoMultiSelect: (props: Record<string, unknown>) => React.createElement('ProvidersLogoMultiSelect', props),
+    ProvidersLogoMultiSelect: onboardingComponentMocks.ProvidersLogoMultiSelect,
 }));
 
 vi.mock('@/components/onboarding/steps/webDesktop/WebDesktopDownloadCta', () => ({
-    WebDesktopDownloadCta: (props: Record<string, unknown>) => React.createElement('WebDesktopDownloadCta', props),
+    WebDesktopDownloadCta: onboardingComponentMocks.WebDesktopDownloadCta,
 }));
 
 describe('ProviderSetupFlow', () => {
@@ -204,7 +212,7 @@ describe('ProviderSetupFlow', () => {
         expect(capabilitiesState.invoke).toHaveBeenCalledTimes(2);
     });
 
-    it('renders the CLI web handoff on browser web for the settings presentation', async () => {
+    it('keeps machine-backed setup controls available on browser web for the settings presentation', async () => {
         tauriDesktopState.value = false;
 
         const { ProviderSetupFlow } = await import('./ProviderSetupFlow');
@@ -214,19 +222,15 @@ describe('ProviderSetupFlow', () => {
         }));
 
         expect(screen.findByTestId('settings.providers.setup.desktopOnlyNotice')).toBeNull();
-        expect(screen.findByTestId('setupWizard.providers.webHandoff')).toBeTruthy();
-        expect(screen.findByTestId('provider-setup-start-card')).toBeNull();
-        expect(screen.findByTestId('provider-setup-queue-card')).toBeNull();
-        expect(screen.findByTestId('provider-setup-option-codex')).toBeNull();
+        expect(screen.findByTestId('setupWizard.providers.webHandoff')).toBeNull();
+        expect(screen.findByTestId('provider-setup-start-card')).toBeTruthy();
+        expect(screen.findByTestId('provider-setup-option-codex')).toBeTruthy();
 
-        const handoff = screen.findByType('WizardTerminalHandoff' as never) as unknown as {
-            props: { steps?: Array<{ code?: unknown }> };
-        };
-        const codes = (handoff.props.steps ?? [])
-            .map((step) => (typeof step.code === 'string' ? step.code : ''))
-            .join('\n');
-        expect(codes).toContain('curl -fsSL https://happier.dev/install | bash');
-        expect(codes).toContain('&& happier providers setup');
+        await screen.pressByTestIdAsync('provider-setup-start-card');
+
+        expect(screen.findByTestId('provider-setup-active-codex')).toBeTruthy();
+        expect(screen.findByType('ProviderAuthenticationCard').props.showActions).toBe(false);
+        expect(screen.findAllByType('ProviderAuthenticationTerminalPane')).toHaveLength(0);
     });
 
     it('renders a wizard-friendly CLI handoff on web when running in wizard presentation', async () => {
@@ -375,7 +379,7 @@ describe('ProviderSetupFlow', () => {
         expect(screen.findByTestId('provider-setup-option-customAcp')).toBeNull();
     });
 
-    it('uses the browser web handoff instead of desktop setup controls', async () => {
+    it('defaults to settings setup controls on browser web', async () => {
         tauriDesktopState.value = false;
 
         const { ProviderSetupFlow } = await import('./ProviderSetupFlow');
@@ -383,10 +387,9 @@ describe('ProviderSetupFlow', () => {
             providerIds: ['codex', 'claude'],
         }));
 
-        expect(screen.findByTestId('setupWizard.providers.webHandoff')).toBeTruthy();
+        expect(screen.findByTestId('setupWizard.providers.webHandoff')).toBeNull();
         expect(screen.findByTestId('settings.providers.setup.desktopOnlyNotice')).toBeNull();
-        expect(screen.findByTestId('provider-setup-start-card')).toBeNull();
-        expect(screen.findByTestId('provider-setup-queue-card')).toBeNull();
-        expect(screen.findByTestId('provider-setup-option-codex')).toBeNull();
+        expect(screen.findByTestId('provider-setup-start-card')).toBeTruthy();
+        expect(screen.findByTestId('provider-setup-option-codex')).toBeTruthy();
     });
 });

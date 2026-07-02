@@ -38,6 +38,11 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
 }));
 
+vi.mock('@/components/ui/keyboardAvoidance', () => ({
+    KeyboardAwareScrollView: ({ children, ...props }: any) =>
+        React.createElement('KeyboardAwareScrollView', props, children),
+}));
+
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children, title }: any) => React.createElement('ItemGroup', { title }, children),
 }));

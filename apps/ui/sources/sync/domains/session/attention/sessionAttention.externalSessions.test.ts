@@ -165,4 +165,53 @@ describe('sessionAttention (direct sessions)', () => {
 
         expect(flags.hasUnread).toBe(true);
     });
+
+    it('does not treat normal non-terminal raw session seq as unread activity', () => {
+        const flags = deriveSessionAttentionFlags({
+            id: 's1',
+            seq: 3,
+            createdAt: 0,
+            updatedAt: 0,
+            active: true,
+            activeAt: 0,
+            metadata: null,
+            agentState: null,
+            pendingCount: 0,
+            latestTurnStatus: 'in_progress',
+            lastViewedSessionSeq: 2,
+        } as any);
+
+        expect(flags.hasUnread).toBe(false);
+        expect(hasSessionAttention({
+            id: 's1',
+            seq: 3,
+            createdAt: 0,
+            updatedAt: 0,
+            active: true,
+            activeAt: 0,
+            metadata: null,
+            agentState: null,
+            pendingCount: 0,
+            latestTurnStatus: 'in_progress',
+            lastViewedSessionSeq: 2,
+        } as any)).toBe(false);
+    });
+
+    it('treats terminal normal session seq as readable attention', () => {
+        const flags = deriveSessionAttentionFlags({
+            id: 's1',
+            seq: 3,
+            createdAt: 0,
+            updatedAt: 0,
+            active: false,
+            activeAt: 0,
+            metadata: null,
+            agentState: null,
+            pendingCount: 0,
+            latestTurnStatus: 'completed',
+            lastViewedSessionSeq: 2,
+        } as any);
+
+        expect(flags.hasUnread).toBe(true);
+    });
 });

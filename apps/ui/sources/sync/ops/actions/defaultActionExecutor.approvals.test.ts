@@ -17,6 +17,7 @@ const sessionRename = vi.fn(async () => ({ success: true as const }));
 const sessionStopWithServerScope = vi.fn(async () => ({ success: true as const }));
 const updateArtifactWithHeader = vi.fn(async () => {});
 const sessionExecutionRunStart = vi.fn(async () => ({}));
+const reviewCommentExecute = vi.fn(async () => ({ items: [], cursor: null }));
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
     sessionExecutionRunStart,
@@ -147,6 +148,7 @@ vi.mock('@/sync/domains/sessionRollback/rollbackUiSupport', () => ({
 
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineTargetForSession: vi.fn(() => null),
+    readMachineControlTargetForSession: vi.fn(() => null),
 }));
 
 vi.mock('@/sync/domains/state/storage', async () => {
@@ -159,6 +161,14 @@ vi.mock('@/sync/domains/state/storage', async () => {
         },
 });
 });
+
+vi.mock('@/sync/domains/reviews/comments/api', () => ({
+    createReviewCommentsHttpActionExecutor: vi.fn(() => reviewCommentExecute),
+}));
+
+vi.mock('@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides', () => ({
+    BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_OVERRIDES: Object.freeze({}),
+}));
 
 describe('createDefaultActionExecutor approvals', () => {
     beforeEach(() => {
@@ -197,6 +207,24 @@ describe('createDefaultActionExecutor approvals', () => {
         sessionRename.mockClear();
         patchSessionMetadataWithRetry.mockClear();
         updateArtifactWithHeader.mockClear();
+        reviewCommentExecute.mockClear();
+    });
+
+    it('routes durable review-comment actions through the shared HTTP action executor', async () => {
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+
+        const res = await executor.execute(
+            'reviews.comments.list' as any,
+            { projectId: 'project-1', states: ['open'] },
+            { surface: 'ui' },
+        );
+
+        expect(res).toEqual({ ok: true, result: { items: [], cursor: null } });
+        expect(reviewCommentExecute).toHaveBeenCalledWith(
+            'reviews.comments.list',
+            { projectId: 'project-1', states: ['open'], includeHistory: false, limit: 50 },
+        );
     });
 
     it('executes approved session.title.set requests when the approval was created from the MCP surface', async () => {

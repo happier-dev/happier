@@ -63,6 +63,10 @@ type SelectableLikeProps = Readonly<{
     accessibilityLabel?: string;
 }>;
 type StyleLikeProps = Readonly<{ style?: unknown }>;
+type TextLikeProps = Readonly<{
+    children?: unknown;
+    ellipsizeMode?: 'head' | 'middle' | 'tail' | 'clip';
+}>;
 
 function flattenStyle(props: StyleLikeProps): Record<string, unknown> {
     const style = props.style;
@@ -88,6 +92,29 @@ function createInputNodeMock(focus: () => void) {
             removeEventListener: () => {},
         };
     };
+}
+
+function flattenTextChildren(children: unknown): string {
+    if (typeof children === 'string' || typeof children === 'number') return String(children);
+    if (React.isValidElement(children)) {
+        return flattenTextChildren((children.props as { children?: unknown }).children);
+    }
+    if (!Array.isArray(children)) return '';
+    return children.map(flattenTextChildren).join('');
+}
+
+function findTextNodeByContent(root: ReactTestInstance, text: string): ReactTestInstance | undefined {
+    return root.findAll((node) => {
+        const nodeType: unknown = node.type;
+        return nodeType === 'Text';
+    }).find((node) => {
+        return flattenTextChildren(readProps<TextLikeProps>(node).children) === text;
+    });
+}
+
+async function flushPathSelectionDynamicResolver() {
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
 }
 
 describe('PathSelectionList', () => {
@@ -116,7 +143,52 @@ describe('PathSelectionList', () => {
         act(() => screen.tree.unmount());
     });
 
-    it('uses fixed-to-maxHeight behavior when a maxHeight cap is provided', async () => {
+    it('omits recent rows that resolve to visible favorites and dedupes recent path variants', async () => {
+        const { PathSelectionList } = await import('./PathSelectionList');
+        const recentRowTestId = 'path-selection-list:path-root:option:recent:/Users/leeroy/recent';
+
+        const baselineScreen = await renderScreen(
+            <PathSelectionList
+                initialValue=""
+                favorites={[{ path: '~/proj' }]}
+                recents={[{ path: '/Users/leeroy/recent', lastUsedAt: 1 }]}
+                machineHomeDir="/Users/leeroy"
+                machineId="m-1"
+                serverId={null}
+                machinePlatform="unix"
+                onCommit={() => {}}
+                onRequestClose={() => {}}
+            />,
+        );
+        const singleRecentRenderNodeCount = baselineScreen.findAllByTestId(recentRowTestId).length;
+        expect(singleRecentRenderNodeCount).toBeGreaterThan(0);
+        act(() => baselineScreen.tree.unmount());
+
+        const screen = await renderScreen(
+            <PathSelectionList
+                initialValue=""
+                favorites={[{ path: '~/proj' }]}
+                recents={[
+                    { path: '/Users/leeroy/proj', lastUsedAt: 3 },
+                    { path: '/Users/leeroy/recent', lastUsedAt: 2 },
+                    { path: '~/recent', lastUsedAt: 1 },
+                ]}
+                machineHomeDir="/Users/leeroy"
+                machineId="m-1"
+                serverId={null}
+                machinePlatform="unix"
+                onCommit={() => {}}
+                onRequestClose={() => {}}
+            />,
+        );
+
+        expect(screen.findByTestId('path-selection-list:path-root:option:favorite:/Users/leeroy/proj')).not.toBeNull();
+        expect(screen.findByTestId('path-selection-list:path-root:option:recent:/Users/leeroy/proj')).toBeNull();
+        expect(screen.findAllByTestId(recentRowTestId)).toHaveLength(singleRecentRenderNodeCount);
+        act(() => screen.tree.unmount());
+    });
+
+    it('uses maxHeight as a cap without forcing the popover to its maximum height', async () => {
         const { PathSelectionList } = await import('./PathSelectionList');
 
         const screen = await renderScreen(
@@ -137,7 +209,7 @@ describe('PathSelectionList', () => {
         const flat = flattenStyle(root.props);
 
         expect(flat.maxHeight).toBe(300);
-        expect(flat.height).toBe(300);
+        expect(flat.height).toBeUndefined();
         act(() => screen.tree.unmount());
     });
 
@@ -179,6 +251,85 @@ describe('PathSelectionList', () => {
             />,
         );
         expect(screen.findByTestId('path-selection-list:section:in-this-folder')).toBeNull();
+        act(() => screen.tree.unmount());
+    });
+
+    it('history-first mode displays the selected path while showing favorites and recents without browsing it', async () => {
+        listMachineFileBrowserDirectoryEntriesMock.mockResolvedValueOnce({
+            ok: true,
+            entries: [
+                { type: 'directory', name: 'current-child', path: '/Users/leeroy/current/current-child' },
+            ],
+        });
+        const { PathSelectionList } = await import('./PathSelectionList');
+        const screen = await renderScreen(
+            <PathSelectionList
+                initialValue="/Users/leeroy/current"
+                initialSuggestionMode="history"
+                favorites={[{ path: '/Users/leeroy/fav-one' }]}
+                recents={[{ path: '/Users/leeroy/recent-one', lastUsedAt: 1 }]}
+                machineHomeDir="/Users/leeroy"
+                machineId="m-1"
+                serverId={null}
+                machinePlatform="unix"
+                onCommit={() => {}}
+                onRequestClose={() => {}}
+            />,
+        );
+
+        await flushPathSelectionDynamicResolver();
+
+        expect(listMachineFileBrowserDirectoryEntriesMock).not.toHaveBeenCalled();
+        expect(screen.findByTestId('path-selection-list:section:in-this-folder')).toBeNull();
+        expect(screen.findByTestId('path-selection-list:path-root:option:favorite:/Users/leeroy/fav-one')).not.toBeNull();
+        expect(screen.findByTestId('path-selection-list:path-root:option:recent:/Users/leeroy/recent-one')).not.toBeNull();
+        const input = screen.findByTestId('path-selection-list:header:input');
+        expect(input).not.toBeNull();
+        expect(readProps<ValueLikeProps>(input!).value).toBe('/Users/leeroy/current');
+        act(() => screen.tree.unmount());
+    });
+
+    it('history-first mode browses the selected folder after the user types plain child text', async () => {
+        listMachineFileBrowserDirectoryEntriesMock.mockResolvedValue({
+            ok: true,
+            entries: [
+                { type: 'directory', name: 'Documents', path: '/Users/leeroy/current/Documents' },
+                { type: 'directory', name: 'Archive', path: '/Users/leeroy/current/Archive' },
+            ],
+        });
+        const { PathSelectionList } = await import('./PathSelectionList');
+        const screen = await renderScreen(
+            <PathSelectionList
+                initialValue="/Users/leeroy/current"
+                initialSuggestionMode="history"
+                favorites={[]}
+                recents={[]}
+                machineHomeDir="/Users/leeroy"
+                machineId="m-1"
+                serverId="srv-1"
+                machinePlatform="unix"
+                onCommit={() => {}}
+                onRequestClose={() => {}}
+            />,
+        );
+
+        await act(async () => {
+            screen.changeTextByTestId('path-selection-list:header:input', 'Doc');
+        });
+        await flushPathSelectionDynamicResolver();
+
+        expect(listMachineFileBrowserDirectoryEntriesMock).toHaveBeenCalledWith(expect.objectContaining({
+            machineId: 'm-1',
+            serverId: 'srv-1',
+            directoryPath: '/Users/leeroy/current',
+            includeFiles: false,
+        }));
+        expect(screen.findByTestId(
+            'path-selection-list:path-root:option:in-folder:/Users/leeroy/current/Documents',
+        )).not.toBeNull();
+        expect(screen.findByTestId(
+            'path-selection-list:path-root:option:in-folder:/Users/leeroy/current/Archive',
+        )).toBeNull();
         act(() => screen.tree.unmount());
     });
 
@@ -387,6 +538,106 @@ describe('PathSelectionList', () => {
         // visual role and a second prefix produces a double-leading-icon.
         const prefixSlot = screen.findByTestId('path-selection-list:header:input-prefix');
         expect(prefixSlot).toBeNull();
+        act(() => screen.tree.unmount());
+    });
+
+    it('renders the header path value with start ellipsis', async () => {
+        const { PathSelectionList } = await import('./PathSelectionList');
+        const selectedPath = '/Users/leeroy/Documents/Development/happier/remote-dev';
+        const screen = await renderScreen(
+            <PathSelectionList
+                initialValue={selectedPath}
+                initialSuggestionMode="history"
+                favorites={[]}
+                recents={[]}
+                machineHomeDir="/Users/leeroy"
+                machineId="m-1"
+                serverId={null}
+                machinePlatform="unix"
+                onCommit={() => {}}
+                onRequestClose={() => {}}
+            />,
+        );
+
+        const visibleValue = screen.findByTestId('path-selection-list:header:input:start-ellipsis');
+        expect(visibleValue).not.toBeNull();
+        const visibleValueProps = readProps<TextLikeProps>(visibleValue!);
+        expect(visibleValueProps.ellipsizeMode).toBe('head');
+        expect(flattenTextChildren(visibleValueProps.children)).toBe(selectedPath);
+        act(() => screen.tree.unmount());
+    });
+
+    it('renders saved path rows with start ellipsis', async () => {
+        const { PathSelectionList } = await import('./PathSelectionList');
+        const absolutePath = '/Users/leeroy/Documents/Development/happier/remote-dev';
+        const displayPath = '~/Documents/Development/happier/remote-dev';
+        const screen = await renderScreen(
+            <PathSelectionList
+                initialValue=""
+                favorites={[{ path: absolutePath }]}
+                recents={[]}
+                machineHomeDir="/Users/leeroy"
+                machineId="m-1"
+                serverId={null}
+                machinePlatform="unix"
+                onCommit={() => {}}
+                onRequestClose={() => {}}
+            />,
+        );
+
+        const title = findTextNodeByContent(screen.tree.root, displayPath);
+        const subtitle = findTextNodeByContent(screen.tree.root, absolutePath);
+        expect(title).not.toBeUndefined();
+        expect(subtitle).not.toBeUndefined();
+        expect(readProps<TextLikeProps>(title!).ellipsizeMode).toBe('head');
+        expect(readProps<TextLikeProps>(subtitle!).ellipsizeMode).toBe('head');
+        act(() => screen.tree.unmount());
+    });
+
+    it('aligns section headers with path row text', async () => {
+        const { PathSelectionList } = await import('./PathSelectionList');
+        const screen = await renderScreen(
+            <PathSelectionList
+                initialValue=""
+                favorites={[{ path: '/Users/leeroy/fav-one' }]}
+                recents={[]}
+                machineHomeDir="/Users/leeroy"
+                machineId="m-1"
+                serverId={null}
+                machinePlatform="unix"
+                onCommit={() => {}}
+                onRequestClose={() => {}}
+            />,
+        );
+
+        const header = screen.findByTestId('path-selection-list:section:favorites:header');
+        expect(header).not.toBeNull();
+        const headerStyle = flattenStyle(readProps<StyleLikeProps>(header!));
+        expect(headerStyle.paddingHorizontal).toBe(16);
+        expect(Number(headerStyle.paddingTop)).toBeLessThanOrEqual(16);
+        act(() => screen.tree.unmount());
+    });
+
+    it('keeps the browse suffix flush with the header edge', async () => {
+        const { PathSelectionList } = await import('./PathSelectionList');
+        const screen = await renderScreen(
+            <PathSelectionList
+                initialValue=""
+                favorites={[]}
+                recents={[]}
+                machineHomeDir="/Users/leeroy"
+                machineId="m-1"
+                serverId={null}
+                machinePlatform="unix"
+                onCommit={() => {}}
+                onRequestClose={() => {}}
+            />,
+        );
+
+        const suffixSlot = screen.findByTestId('path-selection-list:header:input-suffix');
+        expect(suffixSlot).not.toBeNull();
+        const suffixStyle = flattenStyle(readProps<StyleLikeProps>(suffixSlot!));
+        expect(suffixStyle.marginRight ?? 0).toBe(0);
         act(() => screen.tree.unmount());
     });
 

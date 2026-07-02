@@ -17,6 +17,7 @@ export function stripLocalOnlyAccountSettings(settings: Partial<Settings>): Part
     const {
         lastUsedAgent: _dropped,
         lastUsedBackendTarget: _droppedBackendTarget,
+        lastNewSessionAgentPickerViewV1: _droppedAgentPickerView,
         ...rest
     } = stripped as any;
     return rest;
@@ -28,5 +29,6 @@ export function pickLocalOnlyAccountSettings(settings: Settings): Partial<Settin
         ...pickLocalOnlyTerminalConnectSettings(settings),
         lastUsedAgent: settings.lastUsedAgent,
         lastUsedBackendTarget: settings.lastUsedBackendTarget,
+        lastNewSessionAgentPickerViewV1: settings.lastNewSessionAgentPickerViewV1,
     };
 }

@@ -101,6 +101,9 @@ describe('SessionSubagentGroup', () => {
                     }),
                 },
             }),
+            expect.objectContaining({
+                bypassPendingQueueReason: 'subagent_command',
+            }),
         );
     });
 

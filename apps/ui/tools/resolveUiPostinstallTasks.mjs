@@ -10,6 +10,7 @@ export function resolveUiPostinstallTasks({ env }) {
     const tasks = [
         'patch-package',
         'verify-expo-router-web-modal-patch',
+        'install-react-native-enriched-markdown-web-wasm',
         'verify-react-native-enriched-markdown-web-streaming-patch',
     ]
 
@@ -23,6 +24,7 @@ export function resolveUiPostinstallTasks({ env }) {
             'vendor-pierre-diffs-worker',
             'vendor-codemirror-webview-bundle',
             'vendor-xterm-webview-bundle',
+            'vendor-tiptap-webview-bundle',
         )
     }
 

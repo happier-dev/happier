@@ -184,11 +184,13 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
     ), -1);
     const zIndexStep = 10;
     const zIndexBase = 100000;
+    const screenOverlayPortalZIndex = zIndexBase - 10000;
 
     return (
         <OverlayPortalProvider>
             <ModalContext.Provider value={contextValue}>
                 {children}
+                <OverlayPortalHost zIndex={screenOverlayPortalZIndex} />
                 {state.modals.map((modal, index) => {
                     const showBackdrop = index === topVisibleIndex;
                     const modalZIndexBase = zIndexBase + index * zIndexStep;
@@ -261,7 +263,6 @@ export function ModalProvider({ active = true, children }: ModalProviderProps) {
 
                     return null;
                 })}
-                <OverlayPortalHost />
             </ModalContext.Provider>
         </OverlayPortalProvider>
     );

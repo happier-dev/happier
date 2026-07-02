@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks, settingsViewScanProcessAuthUrlSpy } from './settingsViewTestHelpers';
 
 
@@ -9,6 +9,16 @@ import { installSettingsViewCommonModuleMocks, settingsViewScanProcessAuthUrlSpy
 
 const connectTerminalSpy = vi.fn();
 const promptSpy = vi.fn(async (_title?: string): Promise<string | null> => null);
+const requestReviewMockState = vi.hoisted(() => ({
+    canRequestReview: vi.fn(async () => false),
+    requestReview: vi.fn(async () => {}),
+}));
+const interactionManagerMockState = vi.hoisted(() => ({
+    runAfterInteractions: vi.fn((fn: () => void) => {
+        fn();
+        return { cancel: () => {} };
+    }),
+}));
 
 installSettingsViewCommonModuleMocks({
     reactNative: async () => {
@@ -26,6 +36,9 @@ installSettingsViewCommonModuleMocks({
             },
             Text: 'Text',
             ActivityIndicator: 'ActivityIndicator',
+            InteractionManager: {
+                runAfterInteractions: interactionManagerMockState.runAfterInteractions,
+            },
         });
     },
     router: async () => {
@@ -179,6 +192,11 @@ vi.mock('@/utils/system/bugReportActionTrail', () => ({
     recordBugReportUserAction: vi.fn(),
 }));
 
+vi.mock('@/utils/system/requestReview', () => ({
+    canRequestReview: requestReviewMockState.canRequestReview,
+    requestReview: requestReviewMockState.requestReview,
+}));
+
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
     useAutomationsSupport: () => ({ enabled: false }),
 }));
@@ -199,6 +217,28 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
         return () => {};
     },
 }));
+
+function findItemByTitle(tree: ReactTestRenderer, title: string) {
+    return tree.findAllByType('Item' as any).find((item: any) => item?.props?.title === title);
+}
+
+async function flushDeferredSettingsDelay(delayMs = 0): Promise<void> {
+    await act(async () => {
+        if (vi.isFakeTimers()) {
+            await vi.advanceTimersByTimeAsync(delayMs);
+            return;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    });
+    await flushHookEffects({ cycles: 1 });
+}
+
+async function flushAllDeferredSettingsSections(): Promise<void> {
+    await flushDeferredSettingsDelay();
+    await flushDeferredSettingsDelay(20);
+    await flushDeferredSettingsDelay(20);
+    await flushDeferredSettingsDelay(20);
+}
 
 describe('SettingsView (native connect terminal)', () => {
     it('shows terminal connect actions on native platforms', async () => {
@@ -241,5 +281,113 @@ describe('SettingsView (native connect terminal)', () => {
         });
 
         expect(settingsViewScanProcessAuthUrlSpy).toHaveBeenCalledWith('happier://terminal?key=abc123&server=https%3A%2F%2Frelay.example.test');
+    });
+
+    it('waits for native interactions before showing below-fold settings sections', async () => {
+        interactionManagerMockState.runAfterInteractions.mockClear();
+        let releaseInteractions: (() => void) | null = null;
+        interactionManagerMockState.runAfterInteractions.mockImplementationOnce((fn: () => void) => {
+            releaseInteractions = fn;
+            return { cancel: () => {} };
+        });
+
+        vi.resetModules();
+        const { SettingsView } = await import('./SettingsView');
+
+        vi.useFakeTimers();
+        try {
+            const screen = await renderScreen(<SettingsView />, { flushOptions: { cycles: 0 } });
+
+            await flushDeferredSettingsDelay(1000);
+
+            expect(interactionManagerMockState.runAfterInteractions).toHaveBeenCalledTimes(1);
+            expect(Boolean(findItemByTitle(screen.tree, 'settingsProviders.title'))).toBe(false);
+
+            await act(async () => {
+                releaseInteractions?.();
+            });
+            await flushDeferredSettingsDelay();
+
+            expect(findItemByTitle(screen.tree, 'settingsProviders.title')).toBeTruthy();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('defers below-fold settings sections until after interactions settle', async () => {
+        vi.resetModules();
+        const { SettingsView } = await import('./SettingsView');
+
+        vi.useFakeTimers();
+        try {
+            const screen = await renderScreen(<SettingsView />, { flushOptions: { cycles: 0 } });
+
+            expect(findItemByTitle(screen.tree, 'settings.account')).toBeTruthy();
+            expect(findItemByTitle(screen.tree, 'settings.appearance')).toBeTruthy();
+            expect(Boolean(findItemByTitle(screen.tree, 'settingsProviders.title'))).toBe(false);
+            expect(Boolean(findItemByTitle(screen.tree, 'settings.sessions'))).toBe(false);
+
+            await flushDeferredSettingsDelay();
+
+            expect(findItemByTitle(screen.tree, 'settingsProviders.title')).toBeTruthy();
+            expect(Boolean(findItemByTitle(screen.tree, 'settings.sessions'))).toBe(false);
+            expect(Boolean(findItemByTitle(screen.tree, 'settings.servers'))).toBe(false);
+            expect(Boolean(findItemByTitle(screen.tree, 'settings.github'))).toBe(false);
+
+            await flushDeferredSettingsDelay(20);
+
+            expect(findItemByTitle(screen.tree, 'settings.sessions')).toBeTruthy();
+            expect(Boolean(findItemByTitle(screen.tree, 'settings.servers'))).toBe(false);
+            expect(Boolean(findItemByTitle(screen.tree, 'settings.github'))).toBe(false);
+
+            await flushDeferredSettingsDelay(20);
+
+            expect(findItemByTitle(screen.tree, 'settings.servers')).toBeTruthy();
+            expect(Boolean(findItemByTitle(screen.tree, 'settings.github'))).toBe(false);
+
+            await flushDeferredSettingsDelay(20);
+
+            expect(findItemByTitle(screen.tree, 'settings.github')).toBeTruthy();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('keeps unaffected settings row props stable when rate-us availability updates', async () => {
+        const rateUsAvailability = createDeferred<boolean>();
+        requestReviewMockState.canRequestReview.mockReset();
+        requestReviewMockState.canRequestReview.mockReturnValue(rateUsAvailability.promise);
+
+        vi.resetModules();
+        const { SettingsView } = await import('./SettingsView');
+
+        const screen = await renderScreen(<SettingsView />, { flushOptions: { cycles: 0 } });
+        await flushAllDeferredSettingsSections();
+
+        const stableRowTitles = [
+            'settings.account',
+            'settings.appearance',
+            'settingsProviders.title',
+            'settings.sessions',
+            'settings.servers',
+        ];
+        const iconsBefore = new Map<string, unknown>();
+        for (const title of stableRowTitles) {
+            const item = findItemByTitle(screen.tree, title);
+            expect(item).toBeTruthy();
+            iconsBefore.set(title, item!.props.icon);
+        }
+
+        await act(async () => {
+            rateUsAvailability.resolve(true);
+        });
+        await flushHookEffects();
+
+        expect(findItemByTitle(screen.tree, 'settings.rateUs')).toBeTruthy();
+        for (const title of stableRowTitles) {
+            const item = findItemByTitle(screen.tree, title);
+            expect(item).toBeTruthy();
+            expect(item!.props.icon).toBe(iconsBefore.get(title));
+        }
     });
 });

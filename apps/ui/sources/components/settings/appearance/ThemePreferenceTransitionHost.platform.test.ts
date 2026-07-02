@@ -15,4 +15,13 @@ describe('ThemePreferenceTransitionHost platform boundaries', () => {
         expect(webHostSource).not.toContain('react-native-view-shot');
         expect(webHostSource).not.toContain('@react-native-masked-view/masked-view');
     });
+
+    it('keeps the native transition host off MaskedView first-mount native rendering', () => {
+        const nativeHostPath = join(currentDir, 'ThemePreferenceTransitionHost.tsx');
+        expect(existsSync(nativeHostPath)).toBe(true);
+
+        const nativeHostSource = readFileSync(nativeHostPath, 'utf8');
+        expect(nativeHostSource).not.toContain('@react-native-masked-view/masked-view');
+        expect(nativeHostSource).not.toContain('<MaskedView');
+    });
 });

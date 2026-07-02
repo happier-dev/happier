@@ -270,6 +270,71 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
                 />)).tree;
 
         expect(() => tree.findByType('FlatList' as any)).not.toThrow();
+
+        const flatList = tree.findByType('FlatList' as any);
+        expect(flatList.props.initialNumToRender).toBeLessThanOrEqual(12);
+        expect(flatList.props.maxToRenderPerBatch).toBeLessThanOrEqual(12);
+    });
+
+    it('renders session-scoped changed files through the bounded FlatList path', async () => {
+        const { SessionRightPanelGitCommitTab } = await import('./SessionRightPanelGitCommitTab');
+
+        const files = Array.from({ length: 200 }).map((_, idx) => ({
+            fileName: `session-file-${idx}.ts`,
+            filePath: 'src',
+            fullPath: `src/session-file-${idx}.ts`,
+            status: 'modified',
+            isIncluded: false,
+            linesAdded: 1,
+            linesRemoved: 0,
+        }));
+
+        const screen = await renderScreen(<SessionRightPanelGitCommitTab
+                    theme={makeGitTheme()}
+                    sessionId="s1"
+                    sessionPath="/workspace"
+                    backendLabel="Git"
+                    commitActionLabel="Commit"
+                    scmSnapshot={null}
+                    hasConflicts={false}
+                    scmOperationBusy={false}
+                    scmOperationStatus={null}
+                    hasGlobalOperationInFlight={false}
+                    inFlightScmOperation={null}
+                    commitAllowed={false}
+                    commitBlockedMessage={null}
+                    changedFilesViewMode="session"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={files as any}
+                    turnAttributedFiles={[] as any}
+                    sessionAttributedFiles={files.map((file) => ({ file, confidence: 'high' })) as any}
+                    repositoryOnlyFiles={[] as any}
+                    suppressedInferredCount={0}
+                    showSessionViewToggle={true}
+                    repositorySelectedCount={0}
+                    onSelectAll={() => {}}
+                    onSelectNone={() => {}}
+                    disableSelectAll={true}
+                    disableSelectNone={true}
+                    onFilePress={() => {}}
+                    onFilePressPinned={() => {}}
+                    onToggleSelectionForFile={() => {}}
+                    renderFileActions={() => null}
+                    renderFileTrailingActions={() => null}
+                    commitDraftMessage=""
+                    onCommitDraftMessageChange={() => {}}
+                    onCommitFromMessage={() => {}}
+                    commitMessageGeneratorEnabled={false}
+                    onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
+                    scmStatusFiles={null}
+                    showCommitComposer={false}
+                />);
+
+        const flatList = screen.tree.findByType('FlatList' as any);
+        expect(flatList.props.data).toHaveLength(200);
+        expect(flatList.props.initialNumToRender).toBeLessThanOrEqual(12);
+        expect(flatList.props.maxToRenderPerBatch).toBeLessThanOrEqual(12);
+        expect(screen.tree.findAllByType('ScrollView' as any)).toHaveLength(0);
     });
 
     it('uses the largest visible virtualized change stats as a shared stats column width', async () => {

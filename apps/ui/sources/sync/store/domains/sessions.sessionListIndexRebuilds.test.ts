@@ -37,6 +37,7 @@ function mockSessionPersistenceBoundaries(options?: { trackWarmCacheEntries?: bo
         loadSessionPermissionModeUpdatedAts: vi.fn(() => ({})),
         loadSessionPermissionModes: vi.fn(() => ({})),
         loadSessionActionDrafts: vi.fn(() => ({})),
+        prepareSessionLocalStateScopeForActivation: vi.fn(),
         loadSessionReviewCommentsDrafts: vi.fn(() => ({})),
         loadWorkspaceReviewCommentsDrafts: vi.fn(() => ({})),
         saveSessionDrafts: vi.fn(),
@@ -66,6 +67,10 @@ function mockSessionPersistenceBoundaries(options?: { trackWarmCacheEntries?: bo
         saveSessionListWarmCacheEntries,
     }));
     vi.doMock('@/sync/domains/models/modelOptions', () => ({
+    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
+        options?.find?.((option: any) => option.value === effectiveModelId)
+            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
+            ?? null,
         isModelSelectableForSession: vi.fn(() => true),
     }));
     vi.doMock('@/agents/catalog/catalog', () => ({
@@ -106,6 +111,14 @@ function createHarness(createSessionsDomain: any, initialState?: Record<string, 
 
     const domain = createSessionsDomain({ get, set } as any);
     return { get, domain, getSetCalls: () => setCalls };
+}
+
+function readSessionListIndexSessionIds(
+    index: ReadonlyArray<SessionListIndexItem> | null | undefined,
+): string[] {
+    return (index ?? [])
+        .filter((item): item is Extract<SessionListIndexItem, { type: 'session' }> => item.type === 'session')
+        .map((item) => item.sessionId);
 }
 
 describe('sessions domain: sessionListIndex rebuild gating', () => {
@@ -557,6 +570,85 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
     });
 
+    it('rebuilds inactive date-grouped sessionListIndex when updatedAt changes ordering', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        mockSessionPersistenceBoundaries({ trackWarmCacheEntries: true });
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain, {
+            settings: {
+                groupInactiveSessionsByProject: false,
+                sessionListInactiveGroupingV1: 'date',
+            },
+        });
+
+        domain.applySessions([
+            {
+                id: 's1',
+                serverId: 'server-active',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 100,
+                meaningfulActivityAt: 100,
+                active: false,
+                activeAt: 1,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+            {
+                id: 's2',
+                serverId: 'server-active',
+                seq: 1,
+                createdAt: 2,
+                updatedAt: 200,
+                meaningfulActivityAt: 200,
+                active: false,
+                activeAt: 2,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 2,
+            } as any,
+        ]);
+
+        const initialIndex = get().sessionListIndexByServerId['server-active'];
+        expect(readSessionListIndexSessionIds(initialIndex)).toEqual(['s2', 's1']);
+
+        domain.applySessions([
+            {
+                id: 's1',
+                serverId: 'server-active',
+                seq: 2,
+                createdAt: 1,
+                updatedAt: 300,
+                meaningfulActivityAt: 300,
+                active: false,
+                activeAt: 1,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+        ]);
+
+        const nextIndex = get().sessionListIndexByServerId['server-active'];
+        expect(nextIndex).not.toBe(initialIndex);
+        expect(readSessionListIndexSessionIds(nextIndex)).toEqual(['s1', 's2']);
+    });
+
     it('reuses the previous renderable object for semantically identical applySessions refreshes', async () => {
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions: vi.fn() },
@@ -611,6 +703,67 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
         expect(get().sessionListRenderables['s1']).toBe(initialRenderable);
         expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
+    });
+
+    it('preserves ready metadata across applySessions refresh rows that omit it', async () => {
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            projectManager: { updateSessions: vi.fn() },
+        }));
+        mockSessionPersistenceBoundaries({ trackWarmCacheEntries: true });
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        domain.applySessions([
+            {
+                id: 's1',
+                serverId: 'server-active',
+                seq: 10,
+                createdAt: 1,
+                updatedAt: 1,
+                active: true,
+                activeAt: 1,
+                lastViewedSessionSeq: 8,
+                latestTurnStatus: 'in_progress',
+                latestReadyEventSeq: 9,
+                latestReadyEventAt: 9_000,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+        ]);
+
+        domain.applySessions([
+            {
+                id: 's1',
+                serverId: 'server-active',
+                seq: 10,
+                createdAt: 1,
+                updatedAt: 2,
+                active: true,
+                activeAt: 2,
+                lastViewedSessionSeq: 8,
+                latestTurnStatus: 'in_progress',
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 2,
+            } as any,
+        ]);
+
+        expect(get().sessions.s1.latestReadyEventSeq).toBe(9);
+        expect(get().sessions.s1.latestReadyEventAt).toBe(9_000);
+        expect(get().sessionListRenderables.s1.latestReadyEventSeq).toBe(9);
+        expect(get().sessionListRenderables.s1.latestReadyEventAt).toBe(9_000);
+        expect(get().sessionListRowStateByServerId['server-active'].s1.latestReadyEventSeq).toBe(9);
+        expect(get().sessionListRowStateByServerId['server-active'].s1.latestReadyEventAt).toBe(9_000);
     });
 
     it('reuses the previous session object for semantically identical applySessions refreshes', async () => {
@@ -845,7 +998,10 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
     });
 
     it('preserves previous warm-cache metadata when applySessions receives a stale replacement row', async () => {
-        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+        vi.useFakeTimers();
+        vi.setSystemTime(1_700_000_000_000);
+        try {
+            vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -899,6 +1055,8 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
             } as any,
         ]);
 
+        await vi.advanceTimersByTimeAsync(1_000);
+
         const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
         const lastCall = saveWarmCache.mock.calls.at(-1);
         const entries = lastCall?.[2] as Record<string, any>;
@@ -915,6 +1073,10 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
             hasPendingPermissionRequests: true,
             hasPendingUserActionRequests: false,
         }));
+        } finally {
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
     });
 
     it('preserves transient renderable visibility flags across applySessions refreshes', async () => {
@@ -1223,7 +1385,7 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
     });
 
-    it('rebuilds sessionListIndex when a peer session update changes another stale session reachable target', async () => {
+    it('keeps sessionListIndex stable when peer updates only change heartbeat and progress fields', async () => {
         const updateSessions = vi.fn();
         vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions },
@@ -1311,9 +1473,10 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         domain.applySessions([
             {
                 id: 's2',
-                seq: 2,
+                seq: 4,
                 createdAt: 2,
                 updatedAt: 300,
+                meaningfulActivityAt: 300,
                 active: true,
                 activeAt: 100,
                 metadata: { machineId: 'm-a', host: 'host-a', path: '/home/u/repo', homeDir: '/home/u' },
@@ -1326,8 +1489,8 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
             } as any,
         ]);
 
-        expect(get().sessionListIndexByServerId['server-active']).not.toBe(initialIndex);
-        expect(updateSessions).toHaveBeenCalledTimes(2);
+        expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
+        expect(updateSessions).toHaveBeenCalledTimes(1);
     });
 
     it('skips reachable peer scans for row-only applySessions updates that cannot affect canonical targets', async () => {
@@ -1449,6 +1612,98 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
 
         expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
         expect(resolveSessionMachineRpcTargetSpy).toHaveBeenCalledTimes(initialResolveCallCount);
+    });
+
+    it('skips reachable peer scans for active metadata-version-only updates with explicit canonical targets', async () => {
+        const updateSessions = vi.fn();
+        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+            projectManager: { updateSessions },
+        }));
+        mockSessionPersistenceBoundaries();
+
+        const resolveSessionMachineRpcTargetSpy = vi.fn();
+        vi.doMock('../../domains/session/resolveSessionReachableMachineId', async () => {
+            const actual = await vi.importActual<typeof import('../../domains/session/resolveSessionReachableMachineId')>(
+                '../../domains/session/resolveSessionReachableMachineId',
+            );
+            return {
+                ...actual,
+                resolveSessionMachineRpcTarget: (params: Parameters<typeof actual.resolveSessionMachineRpcTarget>[0]) => {
+                    resolveSessionMachineRpcTargetSpy(params);
+                    return actual.resolveSessionMachineRpcTarget(params);
+                },
+            };
+        });
+
+        const { buildMachineDisplayRenderableFromMachine } = await import('../../domains/machines/machineDisplayRenderable');
+        const { createSessionsDomain } = await import('./sessions');
+        const { get, domain } = createHarness(createSessionsDomain);
+
+        const machine = {
+            id: 'm-a',
+            active: true,
+            activeAt: 100,
+            metadata: { host: 'host-a' },
+        } as any;
+        get().machines = { 'm-a': machine };
+        get().machineDisplayById = { 'm-a': buildMachineDisplayRenderableFromMachine(machine) };
+
+        domain.applySessions([
+            {
+                id: 's1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 100,
+                active: true,
+                activeAt: 100,
+                metadata: {
+                    machineId: 'm-a',
+                    host: 'host-a',
+                    path: '/home/u/repo',
+                    homeDir: '/home/u',
+                    name: 'Initial title',
+                },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+        ]);
+
+        const initialIndex = get().sessionListIndexByServerId['server-active'];
+        expect(Array.isArray(initialIndex)).toBe(true);
+        const initialResolveCallCount = resolveSessionMachineRpcTargetSpy.mock.calls.length;
+
+        domain.applySessions([
+            {
+                id: 's1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: 101,
+                active: true,
+                activeAt: 100,
+                metadata: {
+                    machineId: 'm-a',
+                    host: 'host-a',
+                    path: '/home/u/repo',
+                    homeDir: '/home/u',
+                    name: 'Updated title',
+                    summaryText: 'Updated non-reachability summary',
+                },
+                metadataVersion: 2,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 1,
+            } as any,
+        ]);
+
+        expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
+        expect(resolveSessionMachineRpcTargetSpy).toHaveBeenCalledTimes(initialResolveCallCount);
+        expect(updateSessions).toHaveBeenCalledTimes(1);
     });
 
     it('rebuilds sessionListIndex when a peer project lookup changes and can retarget a stale session', async () => {
@@ -1950,7 +2205,10 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
     });
 
     it('does not resurrect a cleared draft when applySessions merges a loaded session update', async () => {
-        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+        vi.useFakeTimers();
+        vi.setSystemTime(1_700_000_000_000);
+        try {
+            vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries();
@@ -2006,11 +2264,19 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         ]);
 
         expect(get().sessions.s1?.draft).toBeNull();
+        await vi.advanceTimersByTimeAsync(1_000);
         expect(saveWarmCache).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
     });
 
     it('reuses the previous warm-cache renderable map when applySessions updates only one warm-cache relevant row', async () => {
-        vi.doMock('../../runtime/orchestration/projectManager', () => ({
+        vi.useFakeTimers();
+        vi.setSystemTime(1_700_000_000_000);
+        try {
+            vi.doMock('../../runtime/orchestration/projectManager', () => ({
             projectManager: { updateSessions: vi.fn() },
         }));
         mockSessionPersistenceBoundaries({ trackWarmCacheEntries: true });
@@ -2092,8 +2358,13 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
         ]);
 
         expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
+        await vi.advanceTimersByTimeAsync(1_000);
         expect(saveWarmCache).toHaveBeenCalledTimes(2);
         expect(buildPreviousEntries.mock.calls[1]?.[1]).toBe(firstEntries);
+        } finally {
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
     });
 
     it('does not rebuild the active-server sessionListIndex when marking optimistic thinking', async () => {
@@ -2188,6 +2459,317 @@ describe('sessions domain: sessionListIndex rebuild gating', () => {
             expect(get().sessions.s1?.thinking).toBe(true);
             expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
             expect(saveWarmCache).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+
+    it('coalesces warm cache persistence for repeated applySessions cache-entry updates', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_700_000_000_000);
+        try {
+            vi.doMock('../../runtime/orchestration/projectManager', () => ({
+                projectManager: { updateSessions: vi.fn() },
+            }));
+            mockSessionPersistenceBoundaries();
+
+            const warmCache = await import('../../domains/state/warmCachePersistence');
+            const { createSessionsDomain } = await import('./sessions');
+            const { get, domain } = createHarness(createSessionsDomain);
+
+            const buildSession = (version: number, title: string) => ({
+                id: 's1',
+                serverId: 'server-active',
+                seq: version,
+                createdAt: 1,
+                updatedAt: version,
+                active: true,
+                activeAt: 1,
+                metadata: {
+                    machineId: 'm1',
+                    path: '/home/u/repo',
+                    homeDir: '/home/u',
+                    name: title,
+                },
+                metadataVersion: version,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: false,
+                thinkingAt: 0,
+                presence: 'online',
+            } as any);
+
+            domain.applySessions([buildSession(1, 'Initial title')]);
+
+            const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+            saveWarmCache.mockClear();
+
+            domain.applySessions([buildSession(2, 'Updated title')]);
+            domain.applySessions([buildSession(3, 'Final title')]);
+
+            expect(get().sessions.s1?.metadata?.name).toBe('Final title');
+            expect(saveWarmCache).not.toHaveBeenCalled();
+
+            await vi.advanceTimersByTimeAsync(1_000);
+
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+            const entries = saveWarmCache.mock.calls.at(-1)?.[2] as Record<string, any>;
+            expect(entries?.s1?.name).toBe('Final title');
+        } finally {
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+
+    it('coalesces warm cache writes for active streaming progress when list rows are stable', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_700_000_000_000);
+        try {
+            vi.doMock('../../runtime/orchestration/projectManager', () => ({
+                projectManager: { updateSessions: vi.fn() },
+            }));
+            mockSessionPersistenceBoundaries();
+
+            const warmCache = await import('../../domains/state/warmCachePersistence');
+            const { createSessionsDomain } = await import('./sessions');
+            const { get, domain } = createHarness(createSessionsDomain);
+
+            domain.applySessions([
+                {
+                    id: 'streaming',
+                    serverId: 'server-active',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: true,
+                    thinkingAt: 1,
+                    presence: 'online',
+                } as any,
+            ]);
+
+            const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+            const initialIndex = get().sessionListIndexByServerId['server-active'];
+            expect(Array.isArray(initialIndex)).toBe(true);
+
+            for (let index = 0; index < 10; index += 1) {
+                domain.applySessions([
+                    {
+                        id: 'streaming',
+                        serverId: 'server-active',
+                        seq: index + 2,
+                        createdAt: 1,
+                        updatedAt: index + 2,
+                        active: true,
+                        activeAt: index + 2,
+                        metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                        metadataVersion: 1,
+                        agentState: null,
+                        agentStateVersion: 0,
+                        thinking: true,
+                        thinkingAt: 1,
+                        presence: 'online',
+                    } as any,
+                ]);
+            }
+
+            expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+            vi.runOnlyPendingTimers();
+            expect(saveWarmCache).toHaveBeenCalledTimes(2);
+        } finally {
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+
+    it('cancels deferred warm cache writes when the session local state scope switches', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_700_000_000_000);
+        try {
+            vi.doMock('../../runtime/orchestration/projectManager', () => ({
+                projectManager: { updateSessions: vi.fn() },
+            }));
+            mockSessionPersistenceBoundaries();
+
+            const warmCache = await import('../../domains/state/warmCachePersistence');
+            const { createSessionsDomain } = await import('./sessions');
+            const { domain } = createHarness(createSessionsDomain);
+
+            domain.applySessions([
+                {
+                    id: 'streaming',
+                    serverId: 'server-active',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: true,
+                    thinkingAt: 1,
+                    presence: 'online',
+                } as any,
+            ]);
+
+            const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+
+            domain.applySessions([
+                {
+                    id: 'streaming',
+                    serverId: 'server-active',
+                    seq: 2,
+                    createdAt: 1,
+                    updatedAt: 2,
+                    active: true,
+                    activeAt: 2,
+                    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: true,
+                    thinkingAt: 1,
+                    presence: 'online',
+                } as any,
+            ]);
+
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+
+            domain.activateSessionLocalStateScope({ serverId: 'server-active', accountId: 'account-b' });
+            vi.runOnlyPendingTimers();
+
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+
+    it('cancels deferred warm cache writes when the session local state scope clears', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_700_000_000_000);
+        try {
+            vi.doMock('../../runtime/orchestration/projectManager', () => ({
+                projectManager: { updateSessions: vi.fn() },
+            }));
+            mockSessionPersistenceBoundaries();
+
+            const warmCache = await import('../../domains/state/warmCachePersistence');
+            const { createSessionsDomain } = await import('./sessions');
+            const { domain } = createHarness(createSessionsDomain);
+
+            domain.applySessions([
+                {
+                    id: 'streaming',
+                    serverId: 'server-active',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: true,
+                    thinkingAt: 1,
+                    presence: 'online',
+                } as any,
+            ]);
+
+            const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+
+            domain.applySessions([
+                {
+                    id: 'streaming',
+                    serverId: 'server-active',
+                    seq: 2,
+                    createdAt: 1,
+                    updatedAt: 2,
+                    active: true,
+                    activeAt: 2,
+                    metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                    metadataVersion: 1,
+                    agentState: null,
+                    agentStateVersion: 0,
+                    thinking: true,
+                    thinkingAt: 1,
+                    presence: 'online',
+                } as any,
+            ]);
+
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+
+            domain.clearSessionLocalStateScope();
+            vi.runOnlyPendingTimers();
+
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.clearAllTimers();
+            vi.useRealTimers();
+        }
+    });
+
+    it('coalesces warm cache writes for active streaming progress during renderable replacement', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_700_000_000_000);
+        try {
+            vi.doMock('../../runtime/orchestration/projectManager', () => ({
+                projectManager: { updateSessions: vi.fn() },
+            }));
+            mockSessionPersistenceBoundaries();
+
+            const warmCache = await import('../../domains/state/warmCachePersistence');
+            const { createSessionsDomain } = await import('./sessions');
+            const { get, domain } = createHarness(createSessionsDomain);
+
+            const buildStreamingSession = (seq: number) => ({
+                id: 'streaming',
+                serverId: 'server-active',
+                seq,
+                createdAt: 1,
+                updatedAt: seq,
+                active: true,
+                activeAt: seq,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u' },
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                thinking: true,
+                thinkingAt: 1,
+                presence: 'online',
+            } as any);
+
+            domain.applySessions([buildStreamingSession(1)]);
+
+            const saveWarmCache = warmCache.saveSessionListWarmCacheEntries as unknown as ReturnType<typeof vi.fn>;
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+            const initialIndex = get().sessionListIndexByServerId['server-active'];
+            expect(Array.isArray(initialIndex)).toBe(true);
+
+            for (let seq = 2; seq <= 11; seq += 1) {
+                domain.replaceSessionListRenderables([
+                    buildSessionListRenderableFromSession(buildStreamingSession(seq)),
+                ]);
+            }
+
+            expect(get().sessionListIndexByServerId['server-active']).toBe(initialIndex);
+            expect(saveWarmCache).toHaveBeenCalledTimes(1);
+            vi.runOnlyPendingTimers();
+            expect(saveWarmCache).toHaveBeenCalledTimes(2);
         } finally {
             vi.clearAllTimers();
             vi.useRealTimers();

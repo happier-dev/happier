@@ -37,6 +37,29 @@ describe('pendingQueueV2 optimistic thinking', () => {
         expect(storage.getState().sessionPending[sessionId]?.messages[0]?.deliveryStatus).toBe('accepted');
     });
 
+    it('marks encrypted pending enqueue payloads as user messages', async () => {
+        const sessionId = 's_test_encrypted_message_role';
+        storage.getState().applySessions([buildSession({ sessionId })]);
+        const encryption = await createPendingQueueEncryption({ sessionId, seedByte: 7 });
+
+        const bodies: unknown[] = [];
+        await enqueuePendingMessageV2({
+            sessionId,
+            text: 'hello',
+            encryption,
+            request: async (_path, init) => {
+                bodies.push(JSON.parse(String(init?.body ?? 'null')));
+                return new Response(null, { status: 200 });
+            },
+        });
+
+        expect(bodies).toHaveLength(1);
+        expect(bodies[0]).toEqual(expect.objectContaining({
+            ciphertext: expect.any(String),
+            messageRole: 'user',
+        }));
+    });
+
     it('keeps a newly enqueued pending row in queued delivery state until the server accepts it', async () => {
         const sessionId = 's_test_delivery_state';
         storage.getState().applySessions([buildSession({ sessionId })]);
@@ -246,6 +269,7 @@ describe('pendingQueueV2 optimistic thinking', () => {
             expect.objectContaining({
                 localId: expect.any(String),
                 content: expect.objectContaining({ t: 'plain', v: expect.any(Object) }),
+                messageRole: 'user',
             }),
         );
         expect(bodies[0]).not.toEqual(expect.objectContaining({ ciphertext: expect.anything() }));
@@ -274,6 +298,7 @@ describe('pendingQueueV2 optimistic thinking', () => {
             expect.objectContaining({
                 localId: expect.any(String),
                 content: expect.objectContaining({ t: 'plain', v: expect.any(Object) }),
+                messageRole: 'user',
             }),
         );
         expect(bodies[0]).not.toEqual(expect.objectContaining({ ciphertext: expect.anything() }));

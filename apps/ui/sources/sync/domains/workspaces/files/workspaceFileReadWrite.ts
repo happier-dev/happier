@@ -1,10 +1,12 @@
-import { workspaceWriteFile as writeWorkspaceFile } from '@/sync/ops/workspaceFileSystem';
+import { WORKSPACE_WRITE_FILE_TOO_LARGE_ERROR, workspaceWriteFile as writeWorkspaceFile } from '@/sync/ops/workspaceFileSystem';
 
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 export type WorkspaceWriteFileResponse =
     | Readonly<{ success: true; hash: string }>
     | Readonly<{ success: false; error: string; errorCode?: string }>;
+
+export { WORKSPACE_WRITE_FILE_TOO_LARGE_ERROR };
 
 export async function workspaceWriteFile(params: Readonly<{
     scope: WorkspaceScopeBase;

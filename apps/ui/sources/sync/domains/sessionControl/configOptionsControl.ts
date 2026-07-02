@@ -52,7 +52,52 @@ export type SessionConfigOptionControl = Readonly<{
     requestedValue?: SessionConfigOptionValueId;
     effectiveValue: SessionConfigOptionValueId;
     isPending: boolean;
+    /** Set when another effectively-on boolean option overrides this one (e.g. ultracode). */
+    disabled?: boolean;
+    disabledByOptionName?: string;
 }>;
+
+// Generic overriding-boolean rule: while the keyed boolean option is effectively ON, the
+// listed target option ids are rendered disabled ("Overridden by …"). Ultracode overrides
+// the Thinking effort level while enabled.
+const OVERRIDING_BOOLEAN_OPTION_TARGETS: Readonly<Record<string, readonly string[]>> = {
+    ultracode: ['reasoning_effort', 'effort'],
+};
+
+function applyOverridingBooleanOptionDimming(
+    controls: SessionConfigOptionControl[],
+): SessionConfigOptionControl[] {
+    const overriddenBy = new Map<string, string>();
+    for (const control of controls) {
+        const targets = OVERRIDING_BOOLEAN_OPTION_TARGETS[control.option.id];
+        if (!targets || !isBooleanConfigOptionType(control.option.type)) continue;
+        if (!resolveBooleanConfigOptionValue(control.option, control.effectiveValue)) continue;
+        for (const target of targets) {
+            overriddenBy.set(target, control.option.name);
+        }
+    }
+    if (overriddenBy.size === 0) return controls;
+    return controls.map((control) => {
+        const byName = overriddenBy.get(control.option.id);
+        return byName
+            ? { ...control, disabled: true, disabledByOptionName: byName }
+            : control;
+    });
+}
+
+function resolveRequestedValue(
+    option: SessionConfigOption,
+    rawValue: unknown,
+): SessionConfigOptionValueId | undefined {
+    const requestedValue = normalizeValueId(rawValue);
+    if (!requestedValue) return undefined;
+    if (option.options?.length) {
+        return option.options.some((entry) => entry.value === requestedValue)
+            ? requestedValue
+            : undefined;
+    }
+    return requestedValue;
+}
 
 export function normalizeAcpConfigOptionsArray(raw: unknown): SessionConfigOption[] | null {
     if (!Array.isArray(raw) || raw.length === 0) return null;
@@ -195,7 +240,7 @@ function buildSessionConfigOptionControls(params: Readonly<{
             ...(options.length > 0 ? { options } : {}),
         };
 
-        const requestedValue = normalizeValueId(params.overrides?.[id]?.value) ?? undefined;
+        const requestedValue = resolveRequestedValue(option, params.overrides?.[id]?.value);
         const effectiveValue = requestedValue ?? currentValue;
         const isPending = requestedValue !== undefined && requestedValue !== currentValue;
 
@@ -207,7 +252,7 @@ function buildSessionConfigOptionControls(params: Readonly<{
         });
     }
 
-    return controls.length > 0 ? controls : null;
+    return controls.length > 0 ? applyOverridingBooleanOptionDimming(controls) : null;
 }
 
 export function computeSessionConfigOptionControls(params: {

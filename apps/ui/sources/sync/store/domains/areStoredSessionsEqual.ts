@@ -61,6 +61,7 @@ export function areStoredSessionsEqual(
         && (previous.encryptionMode ?? null) === (next.encryptionMode ?? null)
         && previous.createdAt === next.createdAt
         && previous.updatedAt === next.updatedAt
+        && (previous.meaningfulActivityAt ?? null) === (next.meaningfulActivityAt ?? null)
         && previous.active === next.active
         && activeAtMatches
         && (previous.archivedAt ?? null) === (next.archivedAt ?? null)
@@ -70,6 +71,10 @@ export function areStoredSessionsEqual(
         && (previous.pendingPermissionRequestCount ?? null) === (next.pendingPermissionRequestCount ?? null)
         && (previous.pendingUserActionRequestCount ?? null) === (next.pendingUserActionRequestCount ?? null)
         && (previous.latestTurnStatus ?? null) === (next.latestTurnStatus ?? null)
+        && (previous.latestTurnStatusObservedAt ?? null) === (next.latestTurnStatusObservedAt ?? null)
+        && areSessionValueEqual(previous.rollbackEligibleTurnStarts ?? null, next.rollbackEligibleTurnStarts ?? null)
+        && (previous.latestReadyEventSeq ?? null) === (next.latestReadyEventSeq ?? null)
+        && (previous.latestReadyEventAt ?? null) === (next.latestReadyEventAt ?? null)
         && areSessionValueEqual(previous.lastRuntimeIssue ?? null, next.lastRuntimeIssue ?? null)
         && previous.metadataVersion === next.metadataVersion
         && previous.agentStateVersion === next.agentStateVersion

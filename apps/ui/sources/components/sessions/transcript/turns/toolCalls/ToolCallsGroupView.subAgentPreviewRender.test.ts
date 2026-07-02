@@ -49,6 +49,10 @@ vi.mock('@/components/sessions/transcript/MessageView', () => ({
         renderedMessageViews.push(props);
         return React.createElement('MessageView', props);
     },
+    MessageViewWithSessionCommon: (props: any) => {
+        renderedMessageViews.push(props);
+        return React.createElement('MessageView', props);
+    },
 }));
 
 vi.mock('@/components/tools/shell/views/ToolTimelineRow', () => ({

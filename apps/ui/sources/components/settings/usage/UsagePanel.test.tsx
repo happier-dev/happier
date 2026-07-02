@@ -98,7 +98,9 @@ describe('UsagePanel', () => {
                         providerAccountId: null,
                         expiresAt: null,
                         lastUsedAt: null,
+                        health: null,
                     }],
+                    groups: [],
                 },
             ],
         });
@@ -172,6 +174,7 @@ describe('UsagePanel', () => {
                             providerAccountId: null,
                             expiresAt: null,
                             lastUsedAt: null,
+                            health: null,
                         },
                         {
                             profileId: 'personal',
@@ -181,8 +184,10 @@ describe('UsagePanel', () => {
                             providerAccountId: null,
                             expiresAt: null,
                             lastUsedAt: null,
+                            health: null,
                         },
                     ],
+                    groups: [],
                 },
             ],
         });
@@ -274,7 +279,9 @@ describe('UsagePanel', () => {
                         providerAccountId: null,
                         expiresAt: null,
                         lastUsedAt: null,
+                        health: null,
                     }],
+                    groups: [],
                 },
             ],
         });

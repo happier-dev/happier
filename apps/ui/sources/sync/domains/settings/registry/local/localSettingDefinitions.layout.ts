@@ -91,7 +91,7 @@ export const LAYOUT_LOCAL_SETTING_DEFINITIONS = {
     sessionLastMobileSurfaceBySessionId: {
         schema: z.record(z.string(), z.enum(['chat', 'browse', 'git', 'tabs', 'terminal'])).default({}),
         default: {},
-        description: 'Last active mobile session surface by session id',
+        description: 'Last active mobile session surface by server-scoped session key, with legacy bare session ids accepted for compatibility',
         storageScope: 'local',
         analytics: {
             trackCurrentState: true,

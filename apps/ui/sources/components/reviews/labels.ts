@@ -1,0 +1,33 @@
+import type { ReviewCommentStateV1 } from '@happier-dev/protocol';
+
+export type ReviewCommentLabels = Readonly<{
+    empty: string;
+    directWriteGranted: string;
+    directWriteMissing: string;
+    engine: string;
+    stale: string;
+    outdated: string;
+    binarySnapshot: string;
+    minified: string;
+    submoduleSnapshot: string;
+    symlinkSnapshot: string;
+    textSnapshot: string;
+    tooLargeSnapshot: string;
+    encryptedSnapshot: string;
+    truncated: string;
+    bidiControls: string;
+    redacted: string;
+    contentUnavailable: string;
+    edit: string;
+    resolve: string;
+    dismiss: string;
+    reopen: string;
+    redact: string;
+    reply: string;
+    replyUnavailable: string;
+    bulkResolve: string;
+    bulkDismiss: string;
+    bulkPartialFailure: string;
+    bulkFailure: (params: Readonly<{ commentId: string; errorCode: string }>) => string;
+    states: Readonly<Record<ReviewCommentStateV1, string>>;
+}>;

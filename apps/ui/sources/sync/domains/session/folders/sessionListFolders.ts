@@ -40,7 +40,7 @@ function cloneSessionWithFolder(
     };
 }
 
-function buildFolderGroupKey(params: Readonly<{
+export function buildSessionFolderGroupKey(params: Readonly<{
     serverId: string | null | undefined;
     workspace: SessionFolderWorkspaceRefV1;
     folderId: string | null;
@@ -65,7 +65,7 @@ function pushFolderNode(params: Readonly<{
     collapsedGroupKeys: Readonly<Record<string, boolean>>;
     sessionsByFolderId: ReadonlyMap<string, ReadonlyArray<Extract<SessionListIndexItem, { type: 'session' }>>>;
 }>): void {
-    const groupKey = buildFolderGroupKey({ serverId: params.serverId, workspace: params.workspace, folderId: params.node.id });
+    const groupKey = buildSessionFolderGroupKey({ serverId: params.serverId, workspace: params.workspace, folderId: params.node.id });
     params.out.push({
         type: 'header',
         title: params.node.name,
@@ -195,7 +195,7 @@ export function applySessionFolderTreeToSessionListIndex(params: Readonly<{
                         session,
                         assignedFolderId,
                         1,
-                        buildFolderGroupKey({ serverId: group.header.serverId, workspace: group.workspace, folderId: assignedFolderId }),
+                        buildSessionFolderGroupKey({ serverId: group.header.serverId, workspace: group.workspace, folderId: assignedFolderId }),
                         group.workspace,
                     ));
                 }
@@ -203,7 +203,7 @@ export function applySessionFolderTreeToSessionListIndex(params: Readonly<{
             continue;
         }
 
-        const rootGroupKey = buildFolderGroupKey({ serverId: group.header.serverId, workspace: group.workspace, folderId: null });
+        const rootGroupKey = buildSessionFolderGroupKey({ serverId: group.header.serverId, workspace: group.workspace, folderId: null });
         for (const node of tree.rootNodes) {
             pushFolderNode({
                 out,

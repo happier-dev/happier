@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ScrollView, Pressable, Platform, KeyboardAvoidingView as RNKeyboardAvoidingView } from 'react-native';
+import { View, Pressable, Platform } from 'react-native';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useRouter, Stack } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -7,10 +7,9 @@ import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -72,7 +71,6 @@ export default function NewArtifactScreen() {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
-    const safeArea = useSafeAreaInsets();
     
     const [title, setTitle] = React.useState('');
     const [body, setBody] = React.useState('');
@@ -129,19 +127,6 @@ export default function NewArtifactScreen() {
         </Pressable>
     ), [handleSave, isSaving, styles]);
     
-    const KeyboardWrapper = Platform.select({
-        ios: KeyboardAvoidingView,
-        default: React.Fragment,
-    });
-    
-    const keyboardProps = Platform.select({
-        ios: {
-            behavior: 'padding' as const,
-            keyboardVerticalOffset: 0,
-        },
-        default: {},
-    });
-
     const headerTitle = t('artifacts.new');
     const screenOptions = React.useMemo(() => {
         return {
@@ -157,8 +142,7 @@ export default function NewArtifactScreen() {
                 options={screenOptions}
             />
             <View style={styles.container}>
-                <KeyboardWrapper {...keyboardProps}>
-                    <ScrollView 
+                    <KeyboardAwareScrollView
                         style={styles.scrollView}
                         contentContainerStyle={[
                             styles.contentContainer,
@@ -217,8 +201,7 @@ export default function NewArtifactScreen() {
                                 autoCapitalize="sentences"
                             />
                         </View>
-                    </ScrollView>
-                </KeyboardWrapper>
+                    </KeyboardAwareScrollView>
             </View>
         </>
     );

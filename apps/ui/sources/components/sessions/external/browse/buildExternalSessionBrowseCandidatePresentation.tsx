@@ -122,19 +122,6 @@ export function buildExternalSessionBrowseCandidateSubtitle(
     );
 }
 
-export function buildExternalSessionBrowseCandidateSearchValue(candidate: ExternalSessionBrowseCandidate): string {
-    const path = readExternalSessionBrowseCandidatePath(candidate.details);
-
-    return [
-        buildExternalSessionBrowseCandidateDisplayTitle(candidate),
-        typeof candidate.title === 'string' ? candidate.title : '',
-        candidate.remoteSessionId,
-        path ?? '',
-    ]
-        .join('\n')
-        .toLowerCase();
-}
-
 export function buildExternalSessionBrowseCandidateRightElement(
     candidate: ExternalSessionBrowseCandidate,
     theme: AppTheme,

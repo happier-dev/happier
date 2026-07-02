@@ -10,6 +10,7 @@ import { renderScreen } from '@/dev/testkit';
 
 const shared = vi.hoisted(() => ({
     themeOverride: {} as Record<string, unknown>,
+    platformOS: 'web' as 'web' | 'ios' | 'android',
 }));
 
 vi.mock('react-native', async () => {
@@ -17,7 +18,7 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock(
         {
                     Platform: {
-                        OS: 'web',
+                        OS: shared.platformOS,
                     },
                     ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
                         React.createElement('ScrollView', props, props.children),
@@ -96,22 +97,57 @@ function flattenStyle(style: unknown): Record<string, unknown> {
     return {};
 }
 
-function findOverlayContainerStyle(screen: Awaited<ReturnType<typeof renderOverlay>>): Record<string, unknown> {
-    const node = screen.findAllByType('AnimatedView' as never).find((candidate) => {
-        const style = flattenStyle(candidate.props.style);
-        return style.overflow === 'hidden' && style.borderRadius === 12;
-    });
-    if (!node) throw new Error('expected floating overlay container to exist');
-    return flattenStyle(node.props.style);
+type RenderedOverlayScreen = Awaited<ReturnType<typeof renderOverlay>>;
+
+function findAnimatedViewStyles(screen: RenderedOverlayScreen): ReadonlyArray<Readonly<{
+    rawStyle: unknown;
+    style: Record<string, unknown>;
+}>> {
+    return screen.findAllByType('AnimatedView' as never).map((candidate) => ({
+        rawStyle: candidate.props.style,
+        style: flattenStyle(candidate.props.style),
+    }));
 }
 
-function findOverlayContainerRawStyle(screen: Awaited<ReturnType<typeof renderOverlay>>): unknown {
-    const node = screen.findAllByType('AnimatedView' as never).find((candidate) => {
-        const style = flattenStyle(candidate.props.style);
-        return style.overflow === 'hidden' && style.borderRadius === 12;
-    });
-    if (!node) throw new Error('expected floating overlay container to exist');
-    return node.props.style;
+function findOverlayFrame(screen: RenderedOverlayScreen): Readonly<{
+    rawStyle: unknown;
+    style: Record<string, unknown>;
+}> {
+    const node = findAnimatedViewStyles(screen).find(({ style }) => (
+        style.borderRadius === 12
+        && style.overflow !== 'hidden'
+        && style.maxHeight !== undefined
+    ));
+    if (!node) throw new Error('expected floating overlay shadow frame to exist');
+    return node;
+}
+
+function findOverlayFrameStyle(screen: RenderedOverlayScreen): Record<string, unknown> {
+    return findOverlayFrame(screen).style;
+}
+
+function findOverlayFrameRawStyle(screen: RenderedOverlayScreen): unknown {
+    return findOverlayFrame(screen).rawStyle;
+}
+
+function findOverlayClipSurface(screen: RenderedOverlayScreen): Readonly<{
+    rawStyle: unknown;
+    style: Record<string, unknown>;
+}> {
+    const node = findAnimatedViewStyles(screen).find(({ style }) => (
+        style.overflow === 'hidden'
+        && style.borderRadius === 12
+    ));
+    if (!node) throw new Error('expected floating overlay clipped surface to exist');
+    return node;
+}
+
+function findOverlayClipStyle(screen: RenderedOverlayScreen): Record<string, unknown> {
+    return findOverlayClipSurface(screen).style;
+}
+
+function findOverlayClipRawStyle(screen: RenderedOverlayScreen): unknown {
+    return findOverlayClipSurface(screen).rawStyle;
 }
 
 function hasShadow(style: Record<string, unknown>): boolean {
@@ -125,6 +161,7 @@ function Child() {
 afterEach(() => {
     vi.resetModules();
     shared.themeOverride = {};
+    shared.platformOS = 'web';
 });
 
 describe('FloatingOverlay', () => {
@@ -147,7 +184,7 @@ describe('FloatingOverlay', () => {
         expect(screen.findByType('ScrollEdgeIndicators')).toBeTruthy();
     });
 
-    it('does not add themed surface border or shadow when surface chrome colors are transparent', async () => {
+    it('keeps themed overlay shadow even when optional surface border/highlight colors are transparent', async () => {
         shared.themeOverride = {
             colors: {
                 border: { surface: 'transparent' },
@@ -160,10 +197,12 @@ describe('FloatingOverlay', () => {
             surfaceChrome: 'theme',
         });
 
-        const style = findOverlayContainerStyle(screen);
-        expect(style.borderWidth).toBe(0);
-        expect(style.borderTopWidth).toBe(0);
-        expect(hasShadow(style)).toBe(false);
+        const frameStyle = findOverlayFrameStyle(screen);
+        const clipStyle = findOverlayClipStyle(screen);
+        expect(clipStyle.borderWidth).toBe(0);
+        expect(clipStyle.borderTopWidth).toBe(0);
+        expect(hasShadow(frameStyle)).toBe(true);
+        expect(hasShadow(clipStyle)).toBe(false);
     });
 
     it('adds themed surface border and shadow when surface chrome colors are visible', async () => {
@@ -179,15 +218,42 @@ describe('FloatingOverlay', () => {
             surfaceChrome: 'theme',
         });
 
-        const style = findOverlayContainerStyle(screen);
-        expect(style.borderColor).toBe('rgba(0,0,0,0.08)');
-        expect(style.borderWidth).toBeGreaterThan(0);
-        expect(style.borderTopColor).toBe('rgba(0,0,0,0.08)');
-        expect(style.borderTopWidth).toBeGreaterThan(0);
-        expect(hasShadow(style)).toBe(true);
+        const frameStyle = findOverlayFrameStyle(screen);
+        const clipStyle = findOverlayClipStyle(screen);
+        expect(clipStyle.borderColor).toBe('rgba(0,0,0,0.08)');
+        expect(clipStyle.borderWidth).toBeGreaterThan(0);
+        expect(clipStyle.borderTopColor).toBe('rgba(0,0,0,0.08)');
+        expect(clipStyle.borderTopWidth).toBeGreaterThan(0);
+        expect(hasShadow(frameStyle)).toBe(true);
+        expect(hasShadow(clipStyle)).toBe(false);
     });
 
-    it('keeps themed surface chrome in one static style entry before dynamic overrides', async () => {
+    it('keeps native popover shadows outside the clipped rounded surface', async () => {
+        shared.platformOS = 'ios';
+        shared.themeOverride = {
+            colors: {
+                border: { surface: 'rgba(0,0,0,0.08)' },
+                effect: { surfaceHighlight: 'rgba(255,255,255,0.04)' },
+            },
+        };
+
+        for (const surfaceChrome of ['modal', 'theme'] as const) {
+            vi.resetModules();
+            const screen = await renderOverlay({
+                maxHeight: 200,
+                surfaceChrome,
+            });
+
+            const frameStyle = findOverlayFrameStyle(screen);
+            const clipStyle = findOverlayClipStyle(screen);
+            expect(frameStyle.overflow).not.toBe('hidden');
+            expect(hasShadow(frameStyle)).toBe(true);
+            expect(clipStyle.overflow).toBe('hidden');
+            expect(hasShadow(clipStyle)).toBe(false);
+        }
+    });
+
+    it('keeps themed surface chrome split between a shadow frame and clipped content surface', async () => {
         shared.themeOverride = {
             colors: {
                 border: { surface: 'rgba(0,0,0,0.08)' },
@@ -200,15 +266,24 @@ describe('FloatingOverlay', () => {
             surfaceChrome: 'theme',
         });
 
-        const rawStyle = findOverlayContainerRawStyle(screen);
-        expect(Array.isArray(rawStyle)).toBe(true);
-        const styleEntries = rawStyle as readonly unknown[];
-        expect(styleEntries[0]).toMatchObject({
+        const frameRawStyle = findOverlayFrameRawStyle(screen);
+        expect(Array.isArray(frameRawStyle)).toBe(true);
+        const frameStyleEntries = frameRawStyle as readonly unknown[];
+        expect(frameStyleEntries[0]).toMatchObject({
+            borderRadius: 12,
+        });
+        expect(flattenStyle(frameStyleEntries[0]).overflow).toBeUndefined();
+        expect(frameStyleEntries[1]).toEqual({ maxHeight: 200 });
+
+        const clipRawStyle = findOverlayClipRawStyle(screen);
+        expect(Array.isArray(clipRawStyle)).toBe(true);
+        const clipStyleEntries = clipRawStyle as readonly unknown[];
+        expect(clipStyleEntries[0]).toMatchObject({
             borderRadius: 12,
             overflow: 'hidden',
             borderColor: 'rgba(0,0,0,0.08)',
             borderTopColor: 'rgba(0,0,0,0.08)',
         });
-        expect(styleEntries[1]).toEqual({ maxHeight: 200 });
+        expect(clipStyleEntries[1]).toEqual({ maxHeight: 200 });
     });
 });

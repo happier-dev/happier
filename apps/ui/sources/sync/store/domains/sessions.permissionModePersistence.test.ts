@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const persistedPermissionModes = vi.hoisted(() => new Map<string, string>());
 const persistedPermissionModeUpdatedAts = vi.hoisted(() => new Map<string, number>());
 
-vi.mock('../../domains/state/persistence', () => ({
+vi.mock('../../domains/state/sessionPersistence', () => ({
     loadSessionDrafts: () => ({}),
     loadSessionLastViewed: () => ({}),
     loadSessionModelModeUpdatedAts: () => ({}),
@@ -32,6 +32,10 @@ vi.mock('../../domains/state/persistence', () => ({
     saveSessionActionDrafts: () => {},
     saveSessionReviewCommentsDrafts: () => {},
     saveWorkspaceReviewCommentsDrafts: () => {},
+}));
+
+vi.mock('../../domains/state/persistence', () => ({
+    prepareSessionLocalStateScopeForActivation: () => {},
 }));
 
 vi.mock('../../domains/state/warmCachePersistence', () => ({
@@ -244,5 +248,35 @@ describe('sessions domain: permissionMode persistence + hydration merge', () => 
 
         expect(getB().sessions.s_persisted.permissionMode).toBe('read-only');
         expect(getB().sessions.s_persisted.permissionModeUpdatedAt).toBe(7000);
+    });
+
+    it('persists a loaded session permission mode without dropping unloaded session permission modes', () => {
+        vi.spyOn(Date, 'now').mockReturnValue(9000);
+        persistedPermissionModes.set('s_loaded', 'default');
+        persistedPermissionModes.set('s_unloaded', 'read-only');
+        persistedPermissionModeUpdatedAts.set('s_loaded', 1000);
+        persistedPermissionModeUpdatedAts.set('s_unloaded', 2000);
+        const { domain } = createHarness();
+
+        domain.applySessions([
+            {
+                id: 's_loaded',
+                createdAt: 1,
+                active: false,
+                activeAt: 1,
+                metadata: null,
+            } as any,
+        ]);
+
+        domain.updateSessionPermissionMode('s_loaded', 'yolo');
+
+        expect(Object.fromEntries(persistedPermissionModes.entries())).toEqual({
+            s_loaded: 'yolo',
+            s_unloaded: 'read-only',
+        });
+        expect(Object.fromEntries(persistedPermissionModeUpdatedAts.entries())).toEqual({
+            s_loaded: 9000,
+            s_unloaded: 2000,
+        });
     });
 });

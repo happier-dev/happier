@@ -115,7 +115,7 @@ vi.mock('@/sync/sync', () => ({
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: (sessionId: string) => {
         ensureSessionVisibleSpy(sessionId);
-        return true;
+        return { kind: 'available', sessionId };
     },
 }));
 

@@ -165,12 +165,15 @@ describe('TranscriptRollbackActionButton', () => {
             <TranscriptRollbackActionButton
                 sessionId="session-1"
                 testID="rollback-action"
+                target={{ type: 'before_user_message', userMessageSeq: 7 }}
+                restoredDraftText="do not restore"
             />,
         );
         await screen.pressByTestIdAsync('rollback-action');
 
         expect(getTranscriptModalMockRef().current).not.toBeNull();
         expect(getTranscriptModalMockRef().current.spies.alert).toHaveBeenCalledWith('common.error', 'nope');
+        expect(updateSessionDraftSpy).not.toHaveBeenCalled();
         await screen.unmount();
     });
 
@@ -201,6 +204,32 @@ describe('TranscriptRollbackActionButton', () => {
             },
         );
         expect(updateSessionDraftSpy).toHaveBeenCalledWith('session-1', 'edit this prompt');
+        await screen.unmount();
+    });
+
+    it('does not prefill the draft when rollback is only routed to an approval request', async () => {
+        executeSpy.mockResolvedValueOnce({
+            ok: true,
+            result: {
+                kind: 'approval_request_created',
+                artifactId: 'artifact-1',
+                actionId: 'session.rollback',
+            },
+        });
+
+        const { TranscriptRollbackActionButton } = await import('./TranscriptRollbackActionButton');
+        const screen = await renderScreen(
+            <TranscriptRollbackActionButton
+                sessionId="session-1"
+                testID="rollback-action"
+                target={{ type: 'before_user_message', userMessageSeq: 7 }}
+                restoredDraftText="edit this prompt"
+            />,
+        );
+        await screen.pressByTestIdAsync('rollback-action');
+
+        expect(updateSessionDraftSpy).not.toHaveBeenCalled();
+        expect(getTranscriptModalMockRef().current?.spies.alert).not.toHaveBeenCalled();
         await screen.unmount();
     });
 

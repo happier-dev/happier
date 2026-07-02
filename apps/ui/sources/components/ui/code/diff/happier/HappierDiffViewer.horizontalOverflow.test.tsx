@@ -38,7 +38,59 @@ vi.mock('@/components/ui/code/view/CodeLinesView', () => ({
         React.createElement('CodeLinesView', props),
 }));
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (Array.isArray(style)) {
+        return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
+    }
+    if (style && typeof style === 'object') {
+        return style as Record<string, unknown>;
+    }
+    return {};
+}
+
 describe('Happier diff viewers horizontal overflow', () => {
+    it('does not force flex sizing for inline non-virtualized diff bodies', async () => {
+        const { HappierTextDiffViewer } = await import('./HappierTextDiffViewer');
+        const { HappierUnifiedDiffViewer } = await import('./HappierUnifiedDiffViewer');
+
+        const textScreen = await renderScreen(
+            <HappierTextDiffViewer
+                mode="text"
+                oldText={'const value = 1;'}
+                newText={'const value = 2;'}
+                virtualized={false}
+            />,
+        );
+        const textRootView = textScreen.tree.root.findAllByType('View' as any)[0];
+        expect(flattenStyle(textRootView.props.style).flex).toBeUndefined();
+
+        const unifiedScreen = await renderScreen(
+            <HappierUnifiedDiffViewer
+                mode="unified"
+                unifiedDiff={'@@ -1 +1 @@\n-const value = 1;\n+const value = 2;\n'}
+                virtualized={false}
+            />,
+        );
+        const unifiedRootView = unifiedScreen.tree.root.findAllByType('View' as any)[0];
+        expect(flattenStyle(unifiedRootView.props.style).flex).toBeUndefined();
+    });
+
+    it('passes inactive comment affordance visibility through text diffs', async () => {
+        const { HappierTextDiffViewer } = await import('./HappierTextDiffViewer');
+
+        const screen = await renderScreen(
+            <HappierTextDiffViewer
+                mode="text"
+                oldText={'const value = 1;'}
+                newText={'const value = 2;'}
+                showInactiveCommentAffordance={false}
+            />,
+        );
+
+        const codeLinesView = screen.tree.findByType('CodeLinesView' as any);
+        expect(codeLinesView.props.showInactiveCommentAffordance).toBe(false);
+    });
+
     it('uses a gesture-handler ScrollView for no-wrap text diffs on Android', async () => {
         const { HappierTextDiffViewer } = await import('./HappierTextDiffViewer');
 

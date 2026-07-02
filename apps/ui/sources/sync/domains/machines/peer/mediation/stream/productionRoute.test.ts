@@ -39,8 +39,34 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: (...args: unknown[]) => getActiveServerSnapshotSpy(...args),
 }));
 
+function normalizeServerProfileTestId(raw: unknown): string {
+    return String(raw ?? '').trim();
+}
+
+function findServerProfileTestDouble(idRaw: unknown): { id: string; serverUrl: string; serverIdentityId?: string | null } | null {
+    const id = normalizeServerProfileTestId(idRaw);
+    const profiles = listServerProfilesSpy();
+    if (!id || !Array.isArray(profiles)) return null;
+    return (profiles as Array<{ id: string; serverUrl: string; serverIdentityId?: string | null; legacyServerIds?: readonly string[] }>).find((profile) => (
+        normalizeServerProfileTestId(profile.id) === id
+        || normalizeServerProfileTestId(profile.serverIdentityId) === id
+        || (profile.legacyServerIds ?? []).some((legacyId) => normalizeServerProfileTestId(legacyId) === id)
+    )) ?? null;
+}
+
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => {
+        const leftId = normalizeServerProfileTestId(left);
+        const rightId = normalizeServerProfileTestId(right);
+        if (!leftId || !rightId) return false;
+        if (leftId === rightId) return true;
+        const leftProfile = findServerProfileTestDouble(leftId);
+        const rightProfile = findServerProfileTestDouble(rightId);
+        return Boolean(leftProfile && rightProfile && leftProfile.id === rightProfile.id);
+    },
+    getServerProfileById: (id: unknown) => findServerProfileTestDouble(id),
     listServerProfiles: (...args: unknown[]) => listServerProfilesSpy(...args),
+    resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => profile.serverIdentityId ?? profile.id,
 }));
 
 vi.mock('@/sync/domains/state/storage', async () => {

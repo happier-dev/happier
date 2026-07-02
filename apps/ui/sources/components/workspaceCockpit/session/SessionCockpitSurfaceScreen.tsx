@@ -6,6 +6,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
+import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 import { SessionDetailsPanel } from '@/components/sessions/panes/SessionDetailsPanel';
 import {
     createSessionCommitDetailsTab,
@@ -41,6 +42,7 @@ export type SessionCockpitSurfaceScreenProps = Readonly<{
     initialAttachmentDrafts?: readonly AttachmentDraft[] | null;
     terminalTabAvailable?: boolean;
     routeServerId?: string | null;
+    routeHydrationState?: SessionRouteHydrationState | null;
 }>;
 
 export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurfaceScreenProps) => {
@@ -161,9 +163,11 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
         <SessionView
             id={props.sessionId}
             routeServerId={props.routeServerId ?? undefined}
+            routeHydrationState={props.routeHydrationState}
             jumpToSeq={props.jumpToSeq}
             paneUrlState={props.paneUrlState ?? undefined}
             initialAttachmentDrafts={props.initialAttachmentDrafts}
+            routeAnchorOverride={true}
             contentOverride={contentOverride}
             safeAreaTopMode={safeAreaTopMode}
             headerSafeAreaTopMode={headerSafeAreaTopMode}
@@ -175,6 +179,7 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
         props.jumpToSeq,
         props.paneUrlState,
         props.routeServerId,
+        props.routeHydrationState,
         props.sessionId,
         safeAreaTopMode,
     ]);

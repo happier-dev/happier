@@ -1,5 +1,5 @@
-import { normalizeServerUrl } from '../activeServerSwitch';
 import { readWebServerUrlOverrideFromLocation } from './bootstrapActiveServerFromWebLocation';
+import { shouldSwitchToServerUrl } from './serverUrlOverridePolicy';
 
 export function shouldHoldUnauthenticatedShellForWebServerOverride(
     isAuthenticated: boolean,
@@ -10,7 +10,8 @@ export function shouldHoldUnauthenticatedShellForWebServerOverride(
     const override = readWebServerUrlOverrideFromLocation();
     if (!override) return false;
 
-    const desired = normalizeServerUrl(override.serverUrl);
-    const current = normalizeServerUrl(String(currentServerUrl ?? ''));
-    return Boolean(desired) && desired !== current;
+    return shouldSwitchToServerUrl({
+        targetServerUrl: override.serverUrl,
+        activeServerUrl: currentServerUrl,
+    });
 }

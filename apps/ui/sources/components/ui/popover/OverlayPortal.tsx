@@ -57,9 +57,14 @@ function useOverlayPortalNodes() {
     return React.useContext(OverlayPortalNodesContext);
 }
 
-export function OverlayPortalHost(props: { pointerEvents?: 'box-none' | 'none' | 'auto' | 'box-only' } = {}) {
+export function OverlayPortalHost(props: {
+    pointerEvents?: 'box-none' | 'none' | 'auto' | 'box-only';
+    zIndex?: number;
+} = {}) {
     const nodes = useOverlayPortalNodes();
     if (!nodes || nodes.size === 0) return null;
+
+    const zIndex = props.zIndex ?? 999999;
 
     return (
         <View
@@ -67,7 +72,7 @@ export function OverlayPortalHost(props: { pointerEvents?: 'box-none' | 'none' |
             // Collapsable views can be optimized away, producing invalid measurements (e.g. y=0 in contained modals).
             collapsable={false}
             pointerEvents={props.pointerEvents ?? 'box-none'}
-            style={[StyleSheet.absoluteFill, { zIndex: 999999, elevation: 999999 }]}
+            style={[StyleSheet.absoluteFill, { zIndex, elevation: zIndex }]}
         >
             {Array.from(nodes.entries()).map(([id, node]) => (
                 <React.Fragment key={id}>

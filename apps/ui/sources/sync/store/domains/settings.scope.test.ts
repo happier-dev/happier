@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
+import { purchasesDefaults } from '@/sync/domains/purchases/purchases';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import {
     loadAccountSettings,
     loadPendingAccountSettings,
     saveAccountSettings,
 } from '@/sync/domains/state/accountSettingsPersistence';
+import {
+    loadAccountPurchases,
+    saveAccountPurchases,
+} from '@/sync/domains/state/accountProfilePersistence';
 import { clearPersistence } from '@/sync/domains/state/persistence';
 
 const store = vi.hoisted(() => new Map<string, string>());
@@ -46,7 +51,7 @@ import { createSettingsDomain } from './settings';
 
 type ScopedSettingsDomain = ReturnType<typeof createSettingsDomain> & Readonly<{
     settingsScope: AccountSettingsScope | null;
-    activateSettingsScope?: (scope: AccountSettingsScope) => void;
+    activateSettingsScope?: (scope: AccountSettingsScope, legacyScopes?: readonly AccountSettingsScope[]) => void;
     applySettingsForScope?: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
     replaceSettingsForScope?: (scope: AccountSettingsScope, settings: Settings, version: number) => void;
     clearSettingsScope?: () => void;
@@ -126,7 +131,7 @@ describe('createSettingsDomain scoped account settings', () => {
         expect(getState().settings.crashReportsOptOut).toBe(true);
     });
 
-    it('migrates only legacy local-only settings on first scoped activation', () => {
+    it('migrates local-only legacy cache and preserves legacy pending edits on first scoped activation', () => {
         store.set('settings', JSON.stringify({
             settings: {
                 ...settingsDefaults,
@@ -158,7 +163,49 @@ describe('createSettingsDomain scoped account settings', () => {
             }),
             version: null,
         });
-        expect(loadPendingAccountSettings(scopeA)).toEqual({});
+        expect(loadPendingAccountSettings(scopeA)).toEqual({ analyticsOptOut: true, viewInline: true });
+    });
+
+    it('forwards explicit legacy identity scopes during scoped activation', () => {
+        const legacyScope = { serverId: 'localhost-18829', accountId: 'account-a' };
+        saveAccountSettings(legacyScope, {
+            ...settingsDefaults,
+            pinnedSessionKeysV1: ['legacy-session'],
+        }, 7);
+
+        const { getState } = createTestStore();
+        requireScopedMethods(getState());
+
+        getState().activateSettingsScope(scopeA, [legacyScope]);
+
+        expect(loadPendingAccountSettings(scopeA)).toMatchObject({
+            pinnedSessionKeysV1: ['legacy-session'],
+        });
+    });
+
+    it('hydrates purchases from explicit legacy identity scopes during scoped activation', () => {
+        const legacyScope = { serverId: 'localhost-18829', accountId: 'account-a' };
+        saveAccountPurchases(legacyScope, {
+            ...purchasesDefaults,
+            activeSubscriptions: ['pro'],
+            entitlements: { pro: true },
+        });
+
+        const { getState } = createTestStore();
+        requireScopedMethods(getState());
+
+        getState().activateSettingsScope(scopeA, [legacyScope]);
+
+        expect(getState().purchases).toEqual({
+            ...purchasesDefaults,
+            activeSubscriptions: ['pro'],
+            entitlements: { pro: true },
+        });
+        expect(loadAccountPurchases(scopeA)).toEqual({
+            ...purchasesDefaults,
+            activeSubscriptions: ['pro'],
+            entitlements: { pro: true },
+        });
     });
 
     it('does not re-migrate legacy settings over an existing scoped settings cache', () => {

@@ -221,7 +221,7 @@ const styles = StyleSheet.create((theme, _runtime) => ({
     },
     statusInline: {
         fontSize: 13,
-        opacity: 0.4,
+        color: theme.colors.text.secondary,
         ...Typography.default('regular'),
         minWidth: 0,
         flexShrink: 1,

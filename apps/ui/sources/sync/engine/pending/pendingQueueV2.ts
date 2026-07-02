@@ -151,6 +151,7 @@ function buildPendingDecryptFailureMessage(params: {
     localId: string;
     createdAt: number;
     updatedAt: number;
+    source: 'server_pending';
     text: string;
     displayText: string;
     rawRecord: { pendingDecryptFailure: PendingDecryptFailure };
@@ -163,11 +164,45 @@ function buildPendingDecryptFailureMessage(params: {
         localId: params.row.localId,
         createdAt: params.row.createdAt,
         updatedAt: params.row.updatedAt,
+        source: 'server_pending',
         text: '',
         displayText: t('session.pendingMessages.decryptFailed'),
         rawRecord: { pendingDecryptFailure },
         pendingDecryptFailure,
     };
+}
+
+function mergeServerPendingMessagesWithLocalOutbound(params: Readonly<{
+    sessionId: string;
+    serverPendingMessages: PendingMessage[];
+    serverDiscardedMessages: DiscardedPendingMessage[];
+}>): PendingMessage[] {
+    const existing = storage.getState().sessionPending[params.sessionId]?.messages ?? [];
+    if (existing.length === 0) return params.serverPendingMessages;
+
+    const serverLocalIds = new Set<string>();
+    for (const message of params.serverPendingMessages) {
+        if (message.localId) serverLocalIds.add(message.localId);
+    }
+    for (const message of params.serverDiscardedMessages) {
+        if (message.localId) serverLocalIds.add(message.localId);
+    }
+
+    const preservedLocalOutbound = existing.filter((message) => {
+        if (message.localId && serverLocalIds.has(message.localId)) return false;
+        return message.source === 'local_outbound'
+            || (message.source == null && message.deliveryStatus === 'accepted');
+    });
+    if (preservedLocalOutbound.length === 0) return params.serverPendingMessages;
+
+    const merged = [...params.serverPendingMessages];
+    const mergedIds = new Set(merged.map((message) => message.id));
+    for (const message of preservedLocalOutbound) {
+        if (mergedIds.has(message.id)) continue;
+        merged.push(message);
+        mergedIds.add(message.id);
+    }
+    return merged;
 }
 
 async function readPendingRowDecryptedContent(params: {
@@ -260,6 +295,7 @@ export async function fetchAndApplyPendingMessagesV2(params: {
             localId: r.localId,
             createdAt: r.createdAt,
             updatedAt: r.updatedAt,
+            source: 'server_pending',
             deliveryStatus: 'accepted',
             text: coerced.text,
             displayText: coerced.displayText,
@@ -296,6 +332,7 @@ export async function fetchAndApplyPendingMessagesV2(params: {
             localId: r.localId,
             createdAt: r.createdAt,
             updatedAt: r.updatedAt,
+            source: 'server_pending',
             text: coerced.text,
             displayText: coerced.displayText,
             rawRecord: coerced.rawRecord,
@@ -304,7 +341,11 @@ export async function fetchAndApplyPendingMessagesV2(params: {
         });
     }
 
-    storage.getState().applyPendingMessages(sessionId, pendingMessages);
+    storage.getState().applyPendingMessages(sessionId, mergeServerPendingMessagesWithLocalOutbound({
+        sessionId,
+        serverPendingMessages: pendingMessages,
+        serverDiscardedMessages: discardedMessages,
+    }));
     storage.getState().applyDiscardedPendingMessages(sessionId, discardedMessages);
 }
 
@@ -363,6 +404,7 @@ export async function enqueuePendingMessageV2(params: {
         localId,
         createdAt,
         updatedAt,
+        source: 'local_outbound',
         deliveryStatus: 'queued',
         text,
         displayText,
@@ -373,10 +415,10 @@ export async function enqueuePendingMessageV2(params: {
         await runPendingEnqueueCommitInOrder(sessionId, async () => {
             let writeBody: Record<string, unknown>;
             if (sessionEncryptionMode === 'plain') {
-                writeBody = { localId, content: { t: 'plain', v: rawRecord } };
+                writeBody = { localId, content: { t: 'plain', v: rawRecord }, messageRole: 'user' };
             } else {
                 const ciphertext = await sessionEncryption!.encryptRawRecord(rawRecord);
-                writeBody = { localId, ciphertext };
+                writeBody = { localId, ciphertext, messageRole: 'user' };
             }
 
             const response = await request(`/v2/sessions/${sessionId}/pending`, {
@@ -393,6 +435,7 @@ export async function enqueuePendingMessageV2(params: {
             localId,
             createdAt,
             updatedAt: nowServerMs(),
+            source: 'local_outbound',
             deliveryStatus: 'accepted',
             text,
             displayText,
@@ -470,8 +513,8 @@ export async function updatePendingMessageV2(params: {
 
     const writeBody =
         sessionEncryptionMode === 'plain'
-            ? { content: { t: 'plain', v: rawRecord } }
-            : { ciphertext: await sessionEncryption!.encryptRawRecord(rawRecord) };
+            ? { content: { t: 'plain', v: rawRecord }, messageRole: 'user' }
+            : { ciphertext: await sessionEncryption!.encryptRawRecord(rawRecord), messageRole: 'user' };
     const updatedAt = nowServerMs();
 
     const response = await request(`/v2/sessions/${sessionId}/pending/${pendingId}`, {

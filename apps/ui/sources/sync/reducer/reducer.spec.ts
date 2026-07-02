@@ -250,10 +250,10 @@ describe('reducer', () => {
             ]);
         });
 
-        it('tracks TaskCreate results and TaskUpdate tool uses as session todos', () => {
+        it('does not derive session todos from Claude TaskCreate tool rows in the UI reducer', () => {
             const state = createReducer();
 
-            reducer(state, [{
+            const result = reducer(state, [{
                 id: 'msg-task-create',
                 localId: null,
                 createdAt: 1000,
@@ -261,119 +261,20 @@ describe('reducer', () => {
                 isSidechain: false,
                 content: [{
                     type: 'tool-call',
-                    id: 'toolu_task_create_1',
+                    id: 'toolu_task_create_ui_owner',
                     name: 'TaskCreate',
                     input: {
                         subject: 'Patch task projection',
-                        activeForm: 'Patching task projection',
                     },
                     description: null,
-                    uuid: 'uuid_task_create_1',
+                    uuid: 'uuid_task_create_ui_owner',
                     parentUUID: null,
                 }],
             }]);
 
-            const created = reducer(state, [{
-                id: 'msg-task-create-result',
-                localId: null,
-                createdAt: 1001,
-                role: 'agent',
-                isSidechain: false,
-                content: [{
-                    type: 'tool-result',
-                    tool_use_id: 'toolu_task_create_1',
-                    content: 'Task #1 created successfully: Patch task projection',
-                    tool_use_result: {
-                        task: {
-                            id: 'task_real_1',
-                            subject: 'Patch task projection',
-                            status: 'pending',
-                        },
-                    },
-                    is_error: false,
-                    uuid: 'uuid_task_create_result_1',
-                    parentUUID: null,
-                }],
-            }]);
-
-            expect(created.todos?.map((todo) => [todo.id, todo.content, todo.status])).toEqual([
-                ['task_real_1', 'Patch task projection', 'pending'],
-            ]);
-
-            const updated = reducer(state, [{
-                id: 'msg-task-update',
-                localId: null,
-                createdAt: 1002,
-                role: 'agent',
-                isSidechain: false,
-                content: [{
-                    type: 'tool-call',
-                    id: 'toolu_task_update_1',
-                    name: 'TaskUpdate',
-                    input: {
-                        taskId: 'task_real_1',
-                        subject: 'Run tests',
-                        status: 'in_progress',
-                    },
-                    description: null,
-                    uuid: 'uuid_task_update_1',
-                    parentUUID: null,
-                }],
-            }]);
-
-            expect(updated.todos?.map((todo) => [todo.id, todo.content, todo.status])).toEqual([
-                ['task_real_1', 'Run tests', 'in_progress'],
-            ]);
+            expect(result.todos).toBeUndefined();
         });
 
-        it('replaces session todos from TaskList tool results', () => {
-            const state = createReducer();
-
-            reducer(state, [{
-                id: 'msg-task-list',
-                localId: null,
-                createdAt: 1000,
-                role: 'agent',
-                isSidechain: false,
-                content: [{
-                    type: 'tool-call',
-                    id: 'toolu_task_list_1',
-                    name: 'TaskList',
-                    input: {},
-                    description: null,
-                    uuid: 'uuid_task_list_1',
-                    parentUUID: null,
-                }],
-            }]);
-
-            const result = reducer(state, [{
-                id: 'msg-task-list-result',
-                localId: null,
-                createdAt: 1001,
-                role: 'agent',
-                isSidechain: false,
-                content: [{
-                    type: 'tool-result',
-                    tool_use_id: 'toolu_task_list_1',
-                    content: 'Listed tasks',
-                    tool_use_result: {
-                        tasks: [
-                            { id: 'task_a', subject: 'Author tests', status: 'completed' },
-                            { id: 'task_b', subject: 'Ship parser', status: 'pending' },
-                            { id: 'task_deleted', subject: 'Old task', status: 'deleted' },
-                        ],
-                    },
-                    is_error: false,
-                    uuid: 'uuid_task_list_result_1',
-                    parentUUID: null,
-                }],
-            }]);
-
-            expect(result.todos?.map((todo) => [todo.id, todo.content, todo.status])).toEqual([
-                ['task_a', 'Author tests', 'completed'],
-                ['task_b', 'Ship parser', 'pending'],
-            ]);
-        });
     });
 
     describe('agent text message handling', () => {
@@ -477,6 +378,80 @@ describe('reducer', () => {
                 cacheRead: 2,
                 contextSize: 16,
                 timestamp: 1000,
+            });
+        });
+
+        it('projects explicit context-window usage telemetry into latestUsage', () => {
+            const state = createReducer();
+
+            const result = reducer(state, [{
+                id: 'usage-context-window',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [],
+                usage: {
+                    input_tokens: 700,
+                    output_tokens: 250,
+                    cache_read_input_tokens: 200,
+                    context_used_tokens: 1_200,
+                    context_window_tokens: 258_400,
+                },
+            }]);
+
+            expect(result.messages).toHaveLength(0);
+            expect(result.usage).toEqual({
+                inputTokens: 700,
+                outputTokens: 250,
+                cacheCreation: 0,
+                cacheRead: 200,
+                contextSize: 1_200,
+                contextWindowTokens: 258_400,
+            });
+        });
+
+        it('does not derive active context from context-window-only cumulative telemetry', () => {
+            const state = createReducer();
+
+            reducer(state, [{
+                id: 'usage-before-result-telemetry',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [],
+                usage: {
+                    input_tokens: 1,
+                    output_tokens: 4_765,
+                    cache_creation_input_tokens: 111,
+                    cache_read_input_tokens: 938_731,
+                },
+            }]);
+
+            const result = reducer(state, [{
+                id: 'legacy-result-telemetry',
+                localId: null,
+                createdAt: 2000,
+                role: 'agent',
+                isSidechain: false,
+                content: [],
+                usage: {
+                    input_tokens: 4_000_000,
+                    output_tokens: 25_000,
+                    cache_creation_input_tokens: 769_000,
+                    cache_read_input_tokens: 39_231_000,
+                    context_window_tokens: 1_000_000,
+                },
+            }]);
+
+            expect(result.usage).toEqual({
+                inputTokens: 4_000_000,
+                outputTokens: 25_000,
+                cacheCreation: 769_000,
+                cacheRead: 39_231_000,
+                contextSize: 938_843,
+                contextWindowTokens: 1_000_000,
             });
         });
 
@@ -620,7 +595,7 @@ describe('reducer', () => {
     });
 
     describe('tool lifecycle cancellation', () => {
-        it('marks running tools as canceled on turn_aborted even when they have no permission object', () => {
+        it('keeps running tools active on turn_aborted when there is no tool error proof', () => {
             const state = createReducer();
 
             reducer(state, [{
@@ -655,12 +630,12 @@ describe('reducer', () => {
 
             const toolMessageId = state.toolIdToMessageId.get('tool-1');
             const toolMessage = toolMessageId ? state.messages.get(toolMessageId) : null;
-            expect(toolMessage?.tool?.state).toBe('error');
-            expect(toolMessage?.tool?.completedAt).toBe(2000);
-            expect(toolMessage?.tool?.result).toEqual({ error: 'Request interrupted' });
+            expect(toolMessage?.tool?.state).toBe('running');
+            expect(toolMessage?.tool?.completedAt).toBeNull();
+            expect(toolMessage?.tool?.result).toBeUndefined();
         });
 
-        it('marks running tools as canceled on ready events (to avoid endless spinners)', () => {
+        it('keeps running tools active on ready events because readiness is not tool error proof', () => {
             const state = createReducer();
 
             reducer(state, [{
@@ -680,8 +655,59 @@ describe('reducer', () => {
                 }],
             }]);
 
+            const readyResult = reducer(state, [
+                {
+                    id: 'ready-1',
+                    seq: 7,
+                    localId: null,
+                    createdAt: 1500,
+                    role: 'event',
+                    isSidechain: false,
+                    content: { type: 'ready' },
+                },
+                {
+                    id: 'ready-2',
+                    seq: 11,
+                    localId: null,
+                    createdAt: 1700,
+                    role: 'event',
+                    isSidechain: false,
+                    content: { type: 'ready' },
+                },
+            ]);
+
+            const toolMessageId = state.toolIdToMessageId.get('tool-1');
+            const toolMessage = toolMessageId ? state.messages.get(toolMessageId) : null;
+            expect(readyResult.hasReadyEvent).toBe(true);
+            expect(readyResult.latestReadyEventSeq).toBe(11);
+            expect(readyResult.latestReadyEventAt).toBe(1700);
+            expect(toolMessage?.tool?.state).toBe('running');
+            expect(toolMessage?.tool?.completedAt).toBeNull();
+            expect(toolMessage?.tool?.result).toBeUndefined();
+        });
+
+        it('applies late tool results after ready events because ready is not tool error proof', () => {
+            const state = createReducer();
+
             reducer(state, [{
-                id: 'ready-1',
+                id: 'tool-call-late-1',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'tool-late-1',
+                    name: 'CodeSearch',
+                    input: { query: 'foo' },
+                    description: null,
+                    uuid: 'tool-uuid-late-1',
+                    parentUUID: null,
+                }],
+            }]);
+
+            reducer(state, [{
+                id: 'ready-late-1',
                 localId: null,
                 createdAt: 1500,
                 role: 'event',
@@ -689,11 +715,27 @@ describe('reducer', () => {
                 content: { type: 'ready' },
             }]);
 
-            const toolMessageId = state.toolIdToMessageId.get('tool-1');
+            reducer(state, [{
+                id: 'tool-result-late-1',
+                localId: null,
+                createdAt: 1800,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'tool-late-1',
+                    content: { ok: true },
+                    is_error: false,
+                    uuid: 'tool-result-uuid-late-1',
+                    parentUUID: null,
+                }],
+            }]);
+
+            const toolMessageId = state.toolIdToMessageId.get('tool-late-1');
             const toolMessage = toolMessageId ? state.messages.get(toolMessageId) : null;
-            expect(toolMessage?.tool?.state).toBe('error');
-            expect(toolMessage?.tool?.completedAt).toBe(1500);
-            expect(toolMessage?.tool?.result).toEqual({ error: 'Request interrupted' });
+            expect(toolMessage?.tool?.state).toBe('completed');
+            expect(toolMessage?.tool?.completedAt).toBe(1800);
+            expect(toolMessage?.tool?.result).toEqual({ ok: true });
         });
 
         it('does not cancel pending permission gates on ready events', () => {
@@ -1839,7 +1881,7 @@ describe('reducer', () => {
             }
         });
 
-        it('marks orphaned running approved tools as canceled when the agent emits "No response requested."', () => {
+        it('keeps orphaned running approved tools active when the agent emits "No response requested."', () => {
             const state = createReducer();
 
             const pendingState: AgentState = {
@@ -1901,13 +1943,13 @@ describe('reducer', () => {
 
             const messageId = state.toolIdToMessageId.get('tool-1');
             const toolMessage = messageId ? state.messages.get(messageId) : null;
-            expect(toolMessage?.tool?.state).toBe('error');
-            expect(toolMessage?.tool?.permission?.status).toBe('canceled');
-            expect(toolMessage?.tool?.completedAt).toBe(1700);
-            expect(toolMessage?.tool?.result).toEqual({ error: 'Request interrupted' });
+            expect(toolMessage?.tool?.state).toBe('running');
+            expect(toolMessage?.tool?.permission?.status).toBe('approved');
+            expect(toolMessage?.tool?.completedAt).toBeNull();
+            expect(toolMessage?.tool?.result).toBeUndefined();
         });
 
-        it('marks orphaned running approved tools as canceled even when partial output already streamed', () => {
+        it('keeps orphaned running approved tools active when partial output already streamed', () => {
             const state = createReducer();
 
             const pendingState: AgentState = {
@@ -1986,13 +2028,13 @@ describe('reducer', () => {
 
             const messageId = state.toolIdToMessageId.get('tool-2');
             const toolMessage = messageId ? state.messages.get(messageId) : null;
-            expect(toolMessage?.tool?.state).toBe('error');
-            expect(toolMessage?.tool?.permission?.status).toBe('canceled');
-            expect(toolMessage?.tool?.completedAt).toBe(1700);
+            expect(toolMessage?.tool?.state).toBe('running');
+            expect(toolMessage?.tool?.permission?.status).toBe('approved');
+            expect(toolMessage?.tool?.completedAt).toBeNull();
             expect(toolMessage?.tool?.result).toEqual({ stdout: 'partial\\n' });
         });
 
-        it('marks orphaned running approved tools as canceled when a task lifecycle abort event arrives', () => {
+        it('keeps orphaned running approved tools active when a task lifecycle abort event arrives', () => {
             const state = createReducer();
 
             const approvedState: AgentState = {
@@ -2040,18 +2082,17 @@ describe('reducer', () => {
             };
             const result = reducer(state, [lifecycleAbortEvent], approvedState);
 
-            expect(result.messages).toHaveLength(1);
-            expect(result.messages[0]?.kind).toBe('tool-call');
+            expect(result.messages).toHaveLength(0);
 
             const messageId = state.toolIdToMessageId.get('tool-lifecycle-1');
             const toolMessage = messageId ? state.messages.get(messageId) : null;
-            expect(toolMessage?.tool?.state).toBe('error');
-            expect(toolMessage?.tool?.permission?.status).toBe('canceled');
-            expect(toolMessage?.tool?.completedAt).toBe(1700);
-            expect(toolMessage?.tool?.result).toEqual({ error: 'Request interrupted' });
+            expect(toolMessage?.tool?.state).toBe('running');
+            expect(toolMessage?.tool?.permission?.status).toBe('approved');
+            expect(toolMessage?.tool?.completedAt).toBeNull();
+            expect(toolMessage?.tool?.result).toBeUndefined();
         });
 
-        it('marks orphaned running approved tools as canceled when a task lifecycle complete event arrives', () => {
+        it('keeps orphaned running approved tools active when a task lifecycle complete event arrives', () => {
             const state = createReducer();
 
             const approvedState: AgentState = {
@@ -2099,15 +2140,14 @@ describe('reducer', () => {
             };
             const result = reducer(state, [lifecycleCompleteEvent], approvedState);
 
-            expect(result.messages).toHaveLength(1);
-            expect(result.messages[0]?.kind).toBe('tool-call');
+            expect(result.messages).toHaveLength(0);
 
             const messageId = state.toolIdToMessageId.get('tool-lifecycle-2');
             const toolMessage = messageId ? state.messages.get(messageId) : null;
-            expect(toolMessage?.tool?.state).toBe('error');
-            expect(toolMessage?.tool?.permission?.status).toBe('canceled');
-            expect(toolMessage?.tool?.completedAt).toBe(1700);
-            expect(toolMessage?.tool?.result).toEqual({ error: 'Request interrupted' });
+            expect(toolMessage?.tool?.state).toBe('running');
+            expect(toolMessage?.tool?.permission?.status).toBe('approved');
+            expect(toolMessage?.tool?.completedAt).toBeNull();
+            expect(toolMessage?.tool?.result).toBeUndefined();
         });
 
         it('should buffer a tool result that arrives before the tool call and apply it when the tool call arrives', () => {

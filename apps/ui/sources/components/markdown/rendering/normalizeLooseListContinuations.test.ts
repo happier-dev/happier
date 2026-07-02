@@ -92,6 +92,80 @@ describe('normalizeLooseListContinuations', () => {
         ].join('\n'));
     });
 
+    it('normalizes period-ending title continuations only up to the next list boundary', () => {
+        expect(normalizeLooseListContinuations([
+            '1. Provider cards as operational dashboards.',
+            '',
+            'Cards combine provider identity, health, route status, and actions.',
+            '',
+            '2. Explicit switch mode vs additive mode.',
+            '',
+            'The model is simple and user-aligned.',
+            '',
+            '**Next Section**',
+            '',
+            'This paragraph must stay outside the list.',
+        ].join('\n'))).toBe([
+            '1. Provider cards as operational dashboards.',
+            '',
+            '   Cards combine provider identity, health, route status, and actions.',
+            '',
+            '2. Explicit switch mode vs additive mode.',
+            '',
+            '   The model is simple and user-aligned.',
+            '',
+            '**Next Section**',
+            '',
+            'This paragraph must stay outside the list.',
+        ].join('\n'));
+    });
+
+    it('normalizes multi-block continuations before the next ordered marker', () => {
+        expect(normalizeLooseListContinuations([
+            '1. Add a “Provider Accounts” quick-switch screen.',
+            '',
+            'Build on existing connected services and account groups. Show:',
+            '',
+            '- Provider/agent.',
+            '- Current connected profile.',
+            '',
+            'Use existing architecture:',
+            '',
+            '- `packages/agents/src/manifest.ts`',
+            '- `apps/cli/src/backends/catalog.ts`',
+            '',
+            '2. Add compact provider/account cards.',
+            '',
+            'Each card should show:',
+            '',
+            '- Agent icon/name.',
+            '- CLI install/resolution status.',
+            '',
+            '3. Add a read-only terminal status command.',
+        ].join('\n'))).toBe([
+            '1. Add a “Provider Accounts” quick-switch screen.',
+            '',
+            '   Build on existing connected services and account groups. Show:',
+            '',
+            '   - Provider/agent.',
+            '   - Current connected profile.',
+            '',
+            '   Use existing architecture:',
+            '',
+            '   - `packages/agents/src/manifest.ts`',
+            '   - `apps/cli/src/backends/catalog.ts`',
+            '',
+            '2. Add compact provider/account cards.',
+            '',
+            '   Each card should show:',
+            '',
+            '   - Agent icon/name.',
+            '   - CLI install/resolution status.',
+            '',
+            '3. Add a read-only terminal status command.',
+        ].join('\n'));
+    });
+
     it('normalizes heading-style ordered lists that use one-dot markers for every item', () => {
         expect(normalizeLooseListContinuations([
             '1. **First idea**',

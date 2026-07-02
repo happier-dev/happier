@@ -7,6 +7,7 @@ import { NewSessionFavoriteModelsDetail } from '@/components/sessions/new/compon
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 import {
     favoriteModelSelectionMatchesBackend,
     type FavoriteModelBackendIdentity,
@@ -53,7 +54,11 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
     selectedPath: string | null;
     settings: Settings;
     refreshProbe?: OptionPickerProbeState | null;
-    onSelectFavoriteModel: (entry: ResolvedBackendCatalogEntry, modelId: string) => void;
+    onSelectFavoriteModel: (
+        entry: ResolvedBackendCatalogEntry,
+        modelId: string,
+        configOverrides?: Readonly<Record<string, string>>,
+    ) => void;
     onSelectFavoriteModelOptionValue?: (
         entry: ResolvedBackendCatalogEntry,
         modelId: string,
@@ -62,6 +67,7 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
     ) => void;
     onToggleFavoriteModel: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
     onRemoveFavoriteModelSelection?: (favorite: FavoriteModelSelectionV1) => void;
+    onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
 }>): AgentInputChipPickerOption | null {
     if (params.favoriteModelSelections.length === 0) {
         return null;
@@ -93,7 +99,9 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
             params.selectedPath ?? '',
         ].join(':'),
         preserveFocusOnExternalSelectionChange: true,
-        onSelectImmediate: () => {},
+        onSelectImmediate: () => {
+            params.onRememberAgentPickerView?.({ kind: 'favoriteModels' });
+        },
         renderDetailContent: () => (
             <NewSessionFavoriteModelsDetail
                 favoriteModelSelections={params.favoriteModelSelections}

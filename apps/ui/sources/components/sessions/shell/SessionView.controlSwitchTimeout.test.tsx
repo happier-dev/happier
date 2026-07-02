@@ -8,15 +8,54 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+vi.mock('@/agents/registry/registryUiBehavior', () => ({
+  buildResumeCapabilityOptionsFromUiState: () => ({}),
+  buildNewSessionOptionsFromUiState: () => ({}),
+  canSelectAgentWithoutDetectedCli: () => false,
+  getNewSessionAgentInputExtraActionChips: () => [],
+  buildSpawnEnvironmentVariablesFromUiState: () => ({}),
+  buildResumeSessionExtrasFromUiState: () => null,
+  buildSpawnSessionExtrasFromUiState: () => null,
+  buildWakeResumeExtras: () => null,
+  getAgentResumeExperimentsFromSettings: () => null,
+  getNewSessionPreflightIssues: () => [],
+  getNewSessionRelevantInstallableDepKeys: () => [],
+  resolveAgentUiBehavior: () => ({}),
+  resolveAgentUiBehaviorFromFlavor: () => ({}),
+  supportsDetectedMcpConfigScan: () => false,
+  supportsEditableSessionGoals: () => false,
+}));
+vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
+  getResolvedBackendCatalogEntries: () => [],
+}));
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+  useDaemonMergedProjectionInputs: () => ({ inputs: null }),
+}));
+
 const previousDev = (globalThis as { __DEV__?: boolean }).__DEV__;
 const controlSwitchTimeoutMs = 25;
 
 const sessionSwitchSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const chatListPropsSpy = vi.hoisted(() => vi.fn());
+const agentInputPropsSpy = vi.hoisted(() => vi.fn());
+const warningActionBannerPropsSpy = vi.hoisted(() => vi.fn());
+const sessionUsageLimitWaitResumeEnableSpy = vi.hoisted(() => vi.fn());
 const cliDetectionState = vi.hoisted(() => ({
   authStatus: {} as Record<string, { state: 'logged_in' | 'logged_out' | 'unknown'; checkedAt: number } | null>,
 }));
+const featureGateState = vi.hoisted(() => {
+  const enabledFeatureIds = new Set<string>();
+  const useFeatureEnabledSpy = vi.fn((featureId: string, scope?: { serverId?: string | null }) => {
+    const scopedKey = typeof scope?.serverId === 'string' && scope.serverId.trim().length > 0
+      ? `${scope.serverId.trim()}:${featureId}`
+      : null;
+    return Boolean((scopedKey && enabledFeatureIds.has(scopedKey)) || enabledFeatureIds.has(featureId));
+  });
+  return { enabledFeatureIds, useFeatureEnabledSpy };
+});
+const enabledFeatureIds = featureGateState.enabledFeatureIds;
+const useFeatureEnabledSpy = featureGateState.useFeatureEnabledSpy;
 const sessionState = vi.hoisted(() => ({
   session: {
     id: 's1',
@@ -97,17 +136,20 @@ installSessionShellCommonModuleMocks({
     return modalMock.module;
   },
   storage: async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-	      storage: { getState: () => ({ sessions: { s1: sessionState.session }, settings: {}, concurrentSessionListCacheByServerId: {} }) },
+      storage: createStorageStoreMock({
+        sessions: { s1: sessionState.session },
+        sessionListIndexByServerId: {},
+      }),
       useSession: () => sessionState.session,
       useIsDataReady: () => true,
       useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
       useSessionMessages: () => ({ messages: [], isLoaded: true }),
+      useSessionSubagentSourceMessages: () => [],
       useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
       useSessionPendingMessages: () => ({ messages: [] }),
       useSessionReviewCommentsDrafts: () => [],
-      useWorkspaceReviewCommentsDrafts: () => [],
       useSessionUsage: () => null,
       useLocalSetting: (key: string) => {
         if (key === 'acknowledgedCliVersions') return {};
@@ -194,7 +236,7 @@ vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
   AttachmentFilePicker: () => null,
 }));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-  useFeatureEnabled: () => false,
+  useFeatureEnabled: useFeatureEnabledSpy,
 }));
 vi.mock('@/hooks/auth/useCLIDetection', () => ({
   useCLIDetection: () => ({
@@ -216,19 +258,25 @@ vi.mock('@/utils/platform/responsive', () => ({
   useIsLandscape: () => false,
   useIsTablet: () => true,
 }));
-vi.mock('@/hooks/session/useDraft', () => ({
-  useDraft: () => ({ clearDraft: vi.fn() }),
-}));
 vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
   getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true }),
 }));
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
   resolveSessionMachineReachability: () => true,
 }));
-vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-  useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
-  useSessionReachableMachineTarget: () => null,
-}));
+vi.mock(
+  '@/components/sessions/model/useSessionMachineReachability',
+  async (importOriginal) => {
+    const { createSessionMachineReachabilityModuleMock } = await import('@/dev/testkit/mocks/sessionMachineReachability');
+    return createSessionMachineReachabilityModuleMock({
+      importOriginal,
+      overrides: {
+        useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
+        useSessionReachableMachineTarget: () => ({ machineId: 'm1', basePath: '/tmp' }),
+      },
+    });
+  },
+);
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
   subscribeActiveServer: (listener: (active: any) => void) => {
@@ -258,18 +306,39 @@ vi.mock('@/sync/sync', () => ({
     onSessionViewportChange: () => {},
   },
 }));
-vi.mock('@/sync/ops', () => ({
-  continueSessionWithReplay: vi.fn(),
-  sessionAbort: vi.fn(),
-  resumeSession: vi.fn(),
-  sessionAttachmentsUploadFile: vi.fn(),
-  sessionSwitch: sessionSwitchSpy,
+vi.mock('@/sync/ops', async (importOriginal) => {
+  const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
+  return createSyncOpsModuleMock({
+    importOriginal,
+    overrides: {
+      continueSessionWithReplay: vi.fn(),
+      sessionAbort: vi.fn(),
+      resumeSession: vi.fn(),
+      sessionAttachmentsUploadFile: vi.fn(),
+      sessionSwitch: sessionSwitchSpy,
+    },
+  });
+});
+vi.mock('@/sync/ops/sessionUsageLimitRecovery', () => ({
+  sessionUsageLimitCheckNow: vi.fn(),
+  sessionUsageLimitSwitchAccountNow: vi.fn(),
+  sessionUsageLimitWaitResumeCancel: vi.fn(),
+  sessionUsageLimitWaitResumeEnable: sessionUsageLimitWaitResumeEnableSpy,
 }));
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   createDefaultActionExecutor: () => ({ execute: vi.fn() }),
 }));
 vi.mock('@/components/sessions/agentInput', () => ({
-  AgentInput: () => null,
+  AgentInput: (props: any) => {
+    agentInputPropsSpy(props);
+    return null;
+  },
+}));
+vi.mock('./view/WarningActionBanner', () => ({
+  WarningActionBanner: (props: any) => {
+    warningActionBannerPropsSpy(props);
+    return React.createElement('WarningActionBanner', props);
+  },
 }));
 
 vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOriginal) => {
@@ -295,10 +364,10 @@ describe('SessionView (control switch timeout)', () => {
     }));
   }
 
-  async function renderSessionView() {
+  async function renderSessionView(options: Readonly<{ routeServerId?: string | null }> = {}) {
     const { SessionView } = await import('./SessionView');
     return renderScreen(
-      <SessionView id="s1" />,
+      <SessionView id="s1" routeServerId={options.routeServerId} />,
       {
         wrapper: AppPaneProviderWrapper,
       },
@@ -314,19 +383,23 @@ describe('SessionView (control switch timeout)', () => {
     return chatListProps;
   }
 
-  it('hides switch-to-remote when the local CLI is logged out', async () => {
-    cliDetectionState.authStatus = {
-      agent: { state: 'logged_out', checkedAt: 1 },
-    };
-    Object.assign(sessionState.session, {
-      metadata: { machineId: 'machine-1' },
-      agentState: { controlledByUser: true },
-    });
+  function getAgentInputProps() {
+    const calls = agentInputPropsSpy.mock.calls;
+    const props = calls[calls.length - 1]?.[0];
+    if (!props) {
+      throw new Error('Expected AgentInput props to be captured');
+    }
+    return props;
+  }
 
-    await renderSessionView();
-
-    expect(getChatListProps().onRequestSwitchToRemote).toBeUndefined();
-  });
+  function getWarningActionBannerProps() {
+    const calls = warningActionBannerPropsSpy.mock.calls;
+    const props = calls[calls.length - 1]?.[0];
+    if (!props) {
+      throw new Error('Expected WarningActionBanner props to be captured');
+    }
+    return props;
+  }
 
   async function waitForControlSwitchTimeout() {
     await act(async () => {
@@ -342,6 +415,17 @@ describe('SessionView (control switch timeout)', () => {
     sessionSwitchSpy.mockResolvedValue(true);
     modalAlertSpy.mockClear();
     chatListPropsSpy.mockClear();
+    agentInputPropsSpy.mockClear();
+    warningActionBannerPropsSpy.mockClear();
+    sessionUsageLimitWaitResumeEnableSpy.mockReset();
+    useFeatureEnabledSpy.mockClear();
+    enabledFeatureIds.clear();
+    cliDetectionState.authStatus = {
+      claude: {
+        state: 'logged_in',
+        checkedAt: 1,
+      },
+    };
     process.env.EXPO_PUBLIC_HAPPIER_CONTROL_SWITCH_UI_TIMEOUT_MS = String(controlSwitchTimeoutMs);
   });
 
@@ -372,7 +456,7 @@ describe('SessionView (control switch timeout)', () => {
     expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'errors.failedToSwitchControl');
   });
 
-  it('does not surface app-side switch-to-local for attachable exclusive local-control sessions', async () => {
+  it('does not surface app-side switch-to-local for attachable exclusive local-control sessions in remote mode', async () => {
     Object.assign(sessionState.session, {
       agentState: {
         controlledByUser: false,
@@ -392,7 +476,30 @@ describe('SessionView (control switch timeout)', () => {
     // sessions back to remote, but it must not expose a transcript button/handler that
     // tries to launch local terminal control from the UI.
     expect(chatList.onRequestSwitchToLocal).toBeUndefined();
+    expect(chatList.controlSwitchTo).toBeNull();
     expect(sessionSwitchSpy).not.toHaveBeenCalledWith('s1', 'local');
+
+    await screen.unmount();
+  });
+
+  it('hides switch-to-remote when the local Claude CLI is logged out', async () => {
+    Object.assign(sessionState.session, {
+      metadata: {
+        machineId: 'machine-1',
+        host: 'mac-mini',
+      },
+    });
+    cliDetectionState.authStatus = {
+      claude: {
+        state: 'logged_out',
+        checkedAt: 1,
+      },
+    };
+
+    const screen = await renderSessionView();
+    const chatList = getChatListProps();
+
+    expect(chatList.onRequestSwitchToRemote).toBeUndefined();
 
     await screen.unmount();
   });
@@ -424,6 +531,131 @@ describe('SessionView (control switch timeout)', () => {
 
     expect(modalAlertSpy).toHaveBeenCalledTimes(1);
     expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'errors.failedToSwitchControl');
+
+    await screen.unmount();
+  });
+
+  it('clears optimistic usage-limit checking state after a recovery action fails', async () => {
+    enabledFeatureIds.add('sessions.usageLimitRecovery');
+    const futureResetAtMs = Date.now() + 60_000;
+    sessionUsageLimitWaitResumeEnableSpy.mockResolvedValueOnce({
+      ok: false,
+      error: 'temporary control failure',
+    });
+    resetSession({
+      latestTurnStatus: 'failed' as any,
+      lastRuntimeIssue: {
+        v: 1,
+        scope: 'primary_session',
+        status: 'failed',
+        code: 'usage_limit',
+        source: 'usage_limit',
+        occurredAt: 1_700_000_000_000,
+        usageLimit: {
+          v: 1,
+          resetAtMs: futureResetAtMs,
+          retryAfterMs: null,
+          quotaScope: 'account',
+          recoverability: 'wait',
+        },
+      } as any,
+    });
+
+    const screen = await renderSessionView();
+    expect(getWarningActionBannerProps().actionTestID).toBe('session-usageLimit-recovery-enable');
+    expect(getAgentInputProps().statusBadges).toContainEqual(expect.objectContaining({
+      key: 'usage-limit-recovery',
+      label: 'session.usageLimitRecovery.status.ready',
+    }));
+
+    await act(async () => {
+      await getWarningActionBannerProps().onActionPress();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(sessionUsageLimitWaitResumeEnableSpy).toHaveBeenCalledWith(
+      's1',
+      expect.objectContaining({
+        issueFingerprint: 'usage-limit:provider:1700000000000',
+      }),
+      expect.objectContaining({
+        serverId: 'server-1',
+      }),
+    );
+    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'temporary control failure');
+    expect(getWarningActionBannerProps().actionTestID).toBe('session-usageLimit-recovery-enable');
+    expect(getAgentInputProps().statusBadges).toContainEqual(expect.objectContaining({
+      key: 'usage-limit-recovery',
+      label: 'session.usageLimitRecovery.status.ready',
+    }));
+
+    await screen.unmount();
+  });
+
+  it('gates usage-limit recovery against the session route server instead of the main selected server', async () => {
+    enabledFeatureIds.add('session-server:sessions.usageLimitRecovery');
+    const futureResetAtMs = Date.now() + 60_000;
+    resetSession({
+      serverId: 'session-server',
+      latestTurnStatus: 'failed' as any,
+      lastRuntimeIssue: {
+        v: 1,
+        scope: 'primary_session',
+        status: 'failed',
+        code: 'usage_limit',
+        source: 'usage_limit',
+        occurredAt: 1_700_000_000_000,
+        usageLimit: {
+          v: 1,
+          resetAtMs: futureResetAtMs,
+          retryAfterMs: null,
+          quotaScope: 'account',
+          recoverability: 'wait',
+        },
+      } as any,
+    });
+
+    const screen = await renderSessionView({ routeServerId: 'session-server' });
+
+    expect(useFeatureEnabledSpy).toHaveBeenCalledWith(
+      'sessions.usageLimitRecovery',
+      expect.objectContaining({ scopeKind: 'spawn', serverId: 'session-server' }),
+    );
+    expect(getWarningActionBannerProps().actionTestID).toBe('session-usageLimit-recovery-enable');
+
+    await screen.unmount();
+  });
+
+  it('does not advertise resume-now for an active reset-elapsed issue when no interrupted work remains', async () => {
+    enabledFeatureIds.add('sessions.usageLimitRecovery');
+    resetSession({
+      active: true as any,
+      latestTurnStatus: 'failed' as any,
+      metadata: null,
+      lastRuntimeIssue: {
+        v: 1,
+        scope: 'primary_session',
+        status: 'failed',
+        code: 'usage_limit',
+        source: 'usage_limit',
+        occurredAt: 1_700_000_000_000,
+        usageLimit: {
+          v: 1,
+          resetAtMs: 1,
+          retryAfterMs: null,
+          quotaScope: 'account',
+          recoverability: 'wait',
+        },
+      } as any,
+    });
+
+    const screen = await renderSessionView();
+
+    expect(getWarningActionBannerProps().actionTestID).toBe('session-usageLimit-recovery-enable');
+    expect(getAgentInputProps().statusBadges).toContainEqual(expect.objectContaining({
+      key: 'usage-limit-recovery',
+      label: 'session.usageLimitRecovery.status.ready',
+    }));
 
     await screen.unmount();
   });

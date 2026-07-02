@@ -6,6 +6,7 @@ import type {
     SessionActivityAttention,
 } from '@/activity/attention/activityAttentionTypes';
 import type { SessionAttentionOptions } from '@/sync/domains/session/attention/sessionAttention';
+import { readStoredSessionMessagesFromStateLike } from '@/sync/domains/messages/readStoredSessionMessages';
 import {
     listSessionListLookupActiveSessionIds,
     listSessionListLookupServerSessions,
@@ -13,7 +14,7 @@ import {
     resolveSessionListLookupSessionServerScopeFromState,
     type SessionServerLookupStateLike,
 } from '@/sync/domains/session/listing/sessionListLookupState';
-import type { Session } from '@/sync/domains/state/storageTypes';
+import type { AgentState, Session } from '@/sync/domains/state/storageTypes';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
@@ -133,6 +134,13 @@ function buildSessionFromRenderable(
 ): Session {
     const seq = Math.max(0, Math.trunc(renderable.seq ?? 0));
     const normalizedServerId = typeof serverId === 'string' && serverId.trim() ? serverId.trim() : undefined;
+    const pendingRequestObservedAt = typeof renderable.pendingRequestObservedAt === 'number'
+        && Number.isFinite(renderable.pendingRequestObservedAt)
+        && renderable.pendingRequestObservedAt > 0
+        ? renderable.pendingRequestObservedAt
+        : null;
+    const agentState = buildRenderablePendingAgentState(renderable, pendingRequestObservedAt);
+
     return {
         id: renderable.id,
         serverId: normalizedServerId,
@@ -142,14 +150,20 @@ function buildSessionFromRenderable(
         active: renderable.active,
         activeAt: renderable.activeAt,
         archivedAt: renderable.archivedAt ?? null,
+        meaningfulActivityAt: renderable.meaningfulActivityAt ?? null,
         pendingVersion: renderable.pendingVersion,
         pendingCount: renderable.pendingCount,
         lastViewedSessionSeq: renderable.hasUnreadMessages === true ? 0 : seq,
         pendingPermissionRequestCount: renderable.hasPendingPermissionRequests === true ? 1 : 0,
         pendingUserActionRequestCount: renderable.hasPendingUserActionRequests === true ? 1 : 0,
+        latestReadyEventSeq: renderable.hasUnreadMessages === true ? Math.max(1, seq) : renderable.latestReadyEventSeq,
+        latestTurnStatus: renderable.latestTurnStatus ?? null,
+        latestTurnStatusObservedAt: renderable.latestTurnStatusObservedAt ?? null,
+        lastRuntimeIssue: renderable.lastRuntimeIssue ?? null,
+        lastTurnCompletedAt: renderable.lastTurnCompletedAt ?? null,
         metadata: renderable.metadata as Session['metadata'],
         metadataVersion: renderable.metadataVersion,
-        agentState: null,
+        agentState,
         agentStateVersion: renderable.agentStateVersion,
         thinking: renderable.thinking,
         thinkingAt: renderable.thinkingAt,
@@ -160,6 +174,35 @@ function buildSessionFromRenderable(
         accessLevel: renderable.accessLevel,
         canApprovePermissions: renderable.canApprovePermissions,
     };
+}
+
+function buildRenderablePendingAgentState(
+    renderable: SessionListRenderableSession,
+    pendingRequestObservedAt: number | null,
+): AgentState | null {
+    if (pendingRequestObservedAt === null) return null;
+
+    const requests: NonNullable<AgentState['requests']> = {};
+    if (renderable.hasPendingPermissionRequests === true) {
+        requests.permission = {
+            tool: 'PendingPermission',
+            kind: 'permission',
+            arguments: {},
+            createdAt: pendingRequestObservedAt,
+        };
+    }
+    if (renderable.hasPendingUserActionRequests === true) {
+        requests.user_action = {
+            tool: 'PendingUserAction',
+            kind: 'user_action',
+            arguments: {},
+            createdAt: pendingRequestObservedAt,
+        };
+    }
+
+    return Object.keys(requests).length > 0
+        ? { controlledByUser: null, requests }
+        : null;
 }
 
 function collectSourceSessions(
@@ -185,6 +228,13 @@ function collectSourceSessions(
     }
 
     return sessions;
+}
+
+function readSourceSessionMessages(
+    source: ActivityAttentionSource,
+    sessionId: string,
+) {
+    return readStoredSessionMessagesFromStateLike(source.sessionMessagesById?.[sessionId]);
 }
 
 function normalizeServerId(serverId: string | null | undefined): string | null {
@@ -276,6 +326,7 @@ export function buildActivityOverviewFromSource(params: Readonly<{
     const candidates = collectSourceSessions(params.source, params.includeWarmSourceWhenNotReady === true)
         .map((session) => buildSessionActivityAttention({
             session,
+            sessionMessages: readSourceSessionMessages(params.source, session.id),
             sessionOptions: params.sessionOptions,
             nowMs: params.nowMs,
         }))

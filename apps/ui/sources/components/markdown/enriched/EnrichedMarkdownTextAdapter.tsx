@@ -119,6 +119,7 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
         if (Platform.OS === 'web') {
             const webProps: Record<string, unknown> = {
                 'data-testid': props.testID,
+                renderRawFallback: 'hidden',
             };
             if (props.streamingAnimated) {
                 webProps.streamingAnimation = true;

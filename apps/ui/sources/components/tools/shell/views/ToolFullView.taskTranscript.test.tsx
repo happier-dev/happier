@@ -1,4 +1,5 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     installToolShellCommonModuleMocks,
@@ -6,6 +7,7 @@ import {
 } from './ToolView.testHelpers';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import {
+    createDeferred,
     flushHookEffects,
     renderScreen,
     standardCleanup,
@@ -162,6 +164,74 @@ describe('ToolFullView (Task transcript reuse)', () => {
         await flushHookEffects();
 
         expect(ensureSidechainMessagesLoadedMock).toHaveBeenCalledWith('s1', 'tool_task_1');
+    });
+
+    it('shows sidechain loading only while the full-view Task transcript request is in flight', async () => {
+        const request = createDeferred<'loaded' | 'not_ready' | 'in_flight'>();
+        ensureSidechainMessagesLoadedMock.mockReturnValueOnce(request.promise);
+        const tool = makeToolCall({
+            id: 'tool_task_1',
+            name: 'Task',
+            input: { operation: 'run', description: 'Explore' },
+            result: null,
+        });
+
+        const screen = await renderScreen(
+            React.createElement(ToolFullView, {
+                tool,
+                metadata: null,
+                messages: [],
+                sessionId: 's1',
+                interaction: { canSendMessages: true, canApprovePermissions: true },
+            }),
+        );
+        await flushHookEffects();
+
+        expect(screen.findByTestId('tool-sidechain-loading')).not.toBeNull();
+
+        await act(async () => {
+            request.resolve('loaded');
+            await request.promise;
+        });
+        await flushHookEffects();
+
+        expect(screen.findByTestId('tool-sidechain-loading')).toBeNull();
+    });
+
+    it('surfaces an unavailable affordance (not a perpetual spinner) when full-view sidechain hydration fails terminally', async () => {
+        const previousMaxRetries = process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_MAX_RETRIES;
+        process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_MAX_RETRIES = '0';
+        try {
+            ensureSidechainMessagesLoadedMock.mockResolvedValue('not_ready');
+            const tool = makeToolCall({
+                id: 'tool_task_1',
+                name: 'Task',
+                input: { operation: 'run', description: 'Explore' },
+                result: null,
+            });
+
+            const screen = await renderScreen(
+                React.createElement(ToolFullView, {
+                    tool,
+                    metadata: null,
+                    messages: [],
+                    sessionId: 's1',
+                    interaction: { canSendMessages: true, canApprovePermissions: true },
+                }),
+            );
+            await flushHookEffects();
+
+            const statusNode = screen.findByTestId('tool-sidechain-loading');
+            expect(statusNode).not.toBeNull();
+            expect(screen.getTextContent()).toContain('common.unavailable');
+            expect(statusNode?.findAllByProps({ accessibilityRole: 'progressbar' })).toHaveLength(0);
+        } finally {
+            if (previousMaxRetries === undefined) {
+                delete process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_MAX_RETRIES;
+            } else {
+                process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_MAX_RETRIES = previousMaxRetries;
+            }
+        }
     });
 
     it('renders Task renderer as a header when Task transcript is empty (so the user still sees context)', async () => {

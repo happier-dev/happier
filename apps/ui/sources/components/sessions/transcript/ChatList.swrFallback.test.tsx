@@ -17,6 +17,7 @@ vi.mock('@/components/sessions/chatListItems', () => ({
 
 vi.mock('@/components/markdown/enriched/preloadEnrichedMarkdownRuntime', () => ({
     preloadEnrichedMarkdownRuntime: preloadEnrichedMarkdownRuntimeSpy,
+    isEnrichedMarkdownRuntimePreloaded: () => true,
 }));
 
 vi.mock('@shopify/flash-list', () => ({

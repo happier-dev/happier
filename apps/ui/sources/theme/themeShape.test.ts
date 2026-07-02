@@ -59,6 +59,9 @@ describe('canonical theme color shape', () => {
         expect(lightTheme.colors.chrome.header.foreground).toBe('#18171C');
         expect(darkTheme.colors.chrome.header.background).toBe('#131111');
         expect(darkTheme.colors.chrome.header.foreground).toBe('#EFEFEF');
+
+        expect(lightTheme.colors.composer.chipTint).toBe('#767676');
+        expect(darkTheme.colors.composer.chipTint).toBe('#A79D97');
     });
 
     it('does not expose legacy groupped or flat surface tokens in the canonical color shape', () => {
@@ -80,6 +83,7 @@ describe('canonical theme color shape', () => {
         expect(darkTheme.colors).toHaveProperty('text.tertiary', '#6C625D');
         expect(darkTheme.colors).toHaveProperty('text.link', '#9EB9FF');
         expect(darkTheme.colors).toHaveProperty('text.destructive', '#EE6E6C');
+        expect(darkTheme.colors).toHaveProperty('composer.chipTint', '#A79D97');
 
         expect(darkTheme.colors).toHaveProperty('state.success.foreground', '#66DC7E');
         expect(darkTheme.colors).toHaveProperty('state.warning.foreground', '#E0B65A');

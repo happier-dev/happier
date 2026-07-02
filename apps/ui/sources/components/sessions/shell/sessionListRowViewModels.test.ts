@@ -1,239 +1,185 @@
 import { describe, expect, it } from 'vitest';
 
+import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { buildSessionListRowViewModels } from './sessionListRowViewModels';
 
+function createRenderableSession(id: string): SessionListRenderableSession {
+    return {
+        id,
+        seq: 1,
+        createdAt: 100,
+        updatedAt: 200,
+        active: false,
+        activeAt: 0,
+        metadataVersion: 1,
+        agentStateVersion: 1,
+        metadata: {
+            name: 'Stable session',
+            path: '/repo/stable',
+            homeDir: '/repo',
+            host: 'test.local',
+            machineId: 'machine-a',
+        },
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+    };
+}
+
 describe('buildSessionListRowViewModels', () => {
-    it('reuses a shared empty array when there are no visible list items', () => {
-        const first = buildSessionListRowViewModels({
-            listItems: [],
-            reachableSessionDisplayById: new Map(),
-            hasMultipleMachines: false,
-            pinnedSessionKeys: new Set<string>(),
-            sessionTags: {},
-            selectedSessionId: null,
-            showServerBadge: true,
-            showPinnedServerBadge: false,
-        });
-        const second = buildSessionListRowViewModels({
-            listItems: [],
-            reachableSessionDisplayById: new Map(),
-            hasMultipleMachines: true,
-            pinnedSessionKeys: new Set<string>(),
-            sessionTags: {},
-            selectedSessionId: 'sess_a',
-            showServerBadge: false,
-            showPinnedServerBadge: true,
-        });
+    it('keeps current-session selection derived only from selectedSessionId', () => {
+        const firstItem = {
+            type: 'session',
+            sessionId: 'sess_selected_current',
+            serverId: 'server_a',
+            storageKind: 'persisted',
+            groupKey: 'group-a',
+            groupKind: 'date',
+        } satisfies SessionListIndexItem;
+        const secondItem = {
+            ...firstItem,
+            sessionId: 'sess_not_current',
+        } satisfies SessionListIndexItem;
 
-        expect(first).toBe(second);
-        expect(first).toHaveLength(0);
-    });
-
-    it('reuses the same row view model array for identical non-empty inputs', () => {
-        const input = {
-            listItems: [
-                {
-                    type: 'session',
-                    sessionId: 'sess_a',
-                    groupKey: 'group:day',
-                    groupKind: 'date',
-                    serverId: 'server_a',
-                    serverName: 'Server A',
-                },
-                {
-                    type: 'session',
-                    sessionId: 'sess_b',
-                    groupKey: 'group:day',
-                    groupKind: 'date',
-                    serverId: 'server_a',
-                    serverName: 'Server A',
-                },
-            ] as any,
-            reachableSessionDisplayById: new Map([
-                ['sess_a', { machineId: 'machine_a', machineLabel: 'Machine A', workspaceSubtitle: '/repo-a', workspaceSubtitleEllipsizeMode: 'head' as const }],
-                ['sess_b', { machineId: 'machine_b', machineLabel: 'Machine B', workspaceSubtitle: '/repo-b', workspaceSubtitleEllipsizeMode: 'head' as const }],
+        const rows = buildSessionListRowViewModels({
+            listItems: [firstItem, secondItem],
+            reachableSessionDisplayById: new Map(),
+            rowRenderableByKey: new Map([
+                ['server_a:sess_selected_current', createRenderableSession('sess_selected_current')],
+                ['server_a:sess_not_current', createRenderableSession('sess_not_current')],
             ]),
-            hasMultipleMachines: true,
-            pinnedSessionKeys: new Set(['server_a:sess_a']),
-            sessionTags: {
-                'server_a:sess_a': ['important'],
-            } satisfies Record<string, string[]>,
-            selectedSessionId: 'sess_b',
-            showServerBadge: true,
+            relativeNowMs: 1000,
+            runtimeNowMs: 1000,
+            hasMultipleMachines: false,
+            pinnedSessionKeys: new Set(),
+            sessionTags: {},
+            selectedSessionId: 'sess_selected_current',
+            showServerBadge: false,
             showPinnedServerBadge: false,
-        } as const;
+        });
 
-        const first = buildSessionListRowViewModels(input);
-        const second = buildSessionListRowViewModels(input);
-
-        expect(first).toStrictEqual(second);
-        expect(first).toMatchObject([
-            {
-                groupKey: 'group:day',
-                sessionKey: 'server_a:sess_a',
-                isFirst: true,
-                isLast: false,
-                isSingle: false,
-                subtitleOverride: 'Machine A · /repo-a',
-                subtitleEllipsizeMode: 'head',
-                pinned: true,
-                showServerBadge: false,
-                selected: false,
-                tags: ['important'],
-                secondaryLineMode: 'path',
-            },
-            {
-                groupKey: 'group:day',
-                sessionKey: 'server_a:sess_b',
-                isFirst: false,
-                isLast: true,
-                isSingle: false,
-                subtitleOverride: 'Machine B · /repo-b',
-                subtitleEllipsizeMode: 'head',
-                pinned: false,
-                showServerBadge: true,
-                selected: true,
-                tags: [],
-                secondaryLineMode: 'path',
-            },
+        expect(rows.map((row) => {
+            expect(row).not.toBeNull();
+            expect(row?.session).not.toBeNull();
+            return [row?.session?.id, row?.selected];
+        })).toEqual([
+            ['sess_selected_current', true],
+            ['sess_not_current', false],
         ]);
     });
 
-    it('derives adjacency, pin, tags, and server badge state for visible rows', () => {
-        const result = buildSessionListRowViewModels({
-            listItems: [
-                {
-                    type: 'header',
-                    title: 'Today',
-                    headerKind: 'date',
-                    groupKey: 'group:day',
-                },
-                {
-                    type: 'session',
-                    sessionId: 'sess_a',
-                    groupKey: 'group:day',
-                    groupKind: 'date',
-                    serverId: 'server_a',
-                    serverName: 'Server A',
-                },
-                {
-                    type: 'session',
-                    sessionId: 'sess_b',
-                    groupKey: 'group:day',
-                    groupKind: 'date',
-                    serverId: 'server_a',
-                    serverName: 'Server A',
-                },
-            ] as any,
-            reachableSessionDisplayById: new Map([
-                ['sess_a', { machineId: 'machine_a', machineLabel: 'Machine A', workspaceSubtitle: '/repo-a', workspaceSubtitleEllipsizeMode: 'head' as const }],
-                ['sess_b', { machineId: 'machine_b', machineLabel: 'Machine B', workspaceSubtitle: '/repo-b', workspaceSubtitleEllipsizeMode: 'head' as const }],
-            ]),
-            hasMultipleMachines: true,
-            pinnedSessionKeys: new Set(['server_a:sess_a']),
-            sessionTags: {
-                'server_a:sess_a': ['important'],
-            },
-            selectedSessionId: 'sess_b',
-            showServerBadge: true,
+    it('reuses row view models when a session renderable is structurally unchanged', () => {
+        const item = {
+            type: 'session',
+            sessionId: 'sess_row_vm_stability',
+            serverId: 'server_a',
+            storageKind: 'persisted',
+            groupKey: 'group-a',
+            groupKind: 'date',
+        } satisfies SessionListIndexItem;
+        const session = createRenderableSession(item.sessionId);
+        const first = buildSessionListRowViewModels({
+            listItems: [item],
+            reachableSessionDisplayById: new Map(),
+            rowRenderableByKey: new Map([['server_a:sess_row_vm_stability', session]]),
+            relativeNowMs: 1000,
+            runtimeNowMs: 1000,
+            hasMultipleMachines: false,
+            pinnedSessionKeys: new Set(),
+            sessionTags: {},
+            selectedSessionId: null,
+            showServerBadge: false,
+            showPinnedServerBadge: false,
+        });
+        const equivalentSession = {
+            ...session,
+            metadata: session.metadata ? { ...session.metadata } : null,
+        };
+
+        const second = buildSessionListRowViewModels({
+            listItems: [{ ...item }],
+            reachableSessionDisplayById: new Map(),
+            rowRenderableByKey: new Map([['server_a:sess_row_vm_stability', equivalentSession]]),
+            relativeNowMs: 1000,
+            runtimeNowMs: 1000,
+            hasMultipleMachines: false,
+            pinnedSessionKeys: new Set(),
+            sessionTags: {},
+            selectedSessionId: null,
+            showServerBadge: false,
             showPinnedServerBadge: false,
         });
 
-        expect(result[0]).toBeNull();
-        expect(result[1]).toMatchObject({
-            groupKey: 'group:day',
-            sessionKey: 'server_a:sess_a',
-            isFirst: true,
-            isLast: false,
-            isSingle: false,
-            subtitleOverride: 'Machine A · /repo-a',
-            subtitleEllipsizeMode: 'head',
-            pinned: true,
+        expect(second[0]).toBe(first[0]);
+    });
+
+    it('derives animated working text for working rows by default', async () => {
+        const { t } = await import('@/text');
+        const item = {
+            type: 'session',
+            sessionId: 'sess_row_vm_working',
+            serverId: 'server_a',
+            storageKind: 'persisted',
+            groupKey: 'group-a',
+            groupKind: 'date',
+        } satisfies SessionListIndexItem;
+        const session = createRenderableSession(item.sessionId);
+        const rows = buildSessionListRowViewModels({
+            listItems: [item],
+            reachableSessionDisplayById: new Map(),
+            rowRenderableByKey: new Map([['server_a:sess_row_vm_working', {
+                ...session,
+                active: true,
+                thinking: true,
+                thinkingAt: 900,
+            }]]),
+            relativeNowMs: 1000,
+            runtimeNowMs: 1000,
+            hasMultipleMachines: false,
+            pinnedSessionKeys: new Set(),
+            sessionTags: {},
+            selectedSessionId: null,
             showServerBadge: false,
-            selected: false,
-            tags: ['important'],
-            secondaryLineMode: 'path',
+            showPinnedServerBadge: false,
         });
-        expect(result[2]).toMatchObject({
-            sessionKey: 'server_a:sess_b',
-            isFirst: false,
-            isLast: true,
-            isSingle: false,
-            subtitleOverride: 'Machine B · /repo-b',
-            subtitleEllipsizeMode: 'head',
-            pinned: false,
-            showServerBadge: true,
-            selected: true,
-            tags: [],
-            secondaryLineMode: 'path',
-        });
+
+        expect(rows[0]?.sessionStatus?.state).toBe('thinking');
+        expect(rows[0]?.sessionStatus?.statusText).not.toBe(t('status.working'));
     });
 
-    it('hides path subtitles for project no-path rows and keeps status mode', () => {
-        const result = buildSessionListRowViewModels({
-            listItems: [
-                {
-                    type: 'session',
-                    sessionId: 'sess_project',
-                    groupKey: 'group:project',
-                    groupKind: 'project',
-                    variant: 'no-path',
-                    serverId: 'server_a',
-                    serverName: 'Server A',
-                },
-            ] as any,
-            reachableSessionDisplayById: new Map([
-                ['sess_project', { machineId: 'machine_a', machineLabel: 'Machine A', workspaceSubtitle: '/repo-a', workspaceSubtitleEllipsizeMode: 'head' }],
-            ]),
+    it('derives static working text for working rows when requested', async () => {
+        const { t } = await import('@/text');
+        const item = {
+            type: 'session',
+            sessionId: 'sess_row_vm_static_working',
+            serverId: 'server_a',
+            storageKind: 'persisted',
+            groupKey: 'group-a',
+            groupKind: 'date',
+        } satisfies SessionListIndexItem;
+        const session = createRenderableSession(item.sessionId);
+        const rows = buildSessionListRowViewModels({
+            listItems: [item],
+            reachableSessionDisplayById: new Map(),
+            rowRenderableByKey: new Map([['server_a:sess_row_vm_static_working', {
+                ...session,
+                active: true,
+                thinking: true,
+                thinkingAt: 900,
+            }]]),
+            relativeNowMs: 1000,
+            runtimeNowMs: 1000,
+            workingTextMode: 'static',
             hasMultipleMachines: false,
-            pinnedSessionKeys: new Set<string>(),
+            pinnedSessionKeys: new Set(),
             sessionTags: {},
             selectedSessionId: null,
-            showServerBadge: true,
-            showPinnedServerBadge: true,
+            showServerBadge: false,
+            showPinnedServerBadge: false,
         });
 
-        expect(result[0]).toMatchObject({
-            isFirst: true,
-            isLast: true,
-            isSingle: true,
-            subtitleOverride: null,
-            subtitleEllipsizeMode: 'head',
-            secondaryLineMode: 'status',
-        });
-    });
-
-    it('keeps custom workspace labels as tail-truncated subtitles', () => {
-        const result = buildSessionListRowViewModels({
-            listItems: [
-                {
-                    type: 'session',
-                    sessionId: 'sess_workspace_label',
-                    groupKey: 'group:day',
-                    groupKind: 'date',
-                    serverId: 'server_a',
-                    serverName: 'Server A',
-                },
-            ] as any,
-            reachableSessionDisplayById: new Map([
-                ['sess_workspace_label', {
-                    machineId: 'machine_a',
-                    machineLabel: 'Machine A',
-                    workspaceSubtitle: 'Renamed Workspace',
-                    workspaceSubtitleEllipsizeMode: 'tail',
-                }],
-            ]),
-            hasMultipleMachines: false,
-            pinnedSessionKeys: new Set<string>(),
-            sessionTags: {},
-            selectedSessionId: null,
-            showServerBadge: true,
-            showPinnedServerBadge: true,
-        });
-
-        expect(result[0]).toMatchObject({
-            subtitleOverride: 'Renamed Workspace',
-            subtitleEllipsizeMode: 'tail',
-        });
+        expect(rows[0]?.sessionStatus?.state).toBe('thinking');
+        expect(rows[0]?.sessionStatus?.statusText).toBe(t('status.working'));
     });
 });

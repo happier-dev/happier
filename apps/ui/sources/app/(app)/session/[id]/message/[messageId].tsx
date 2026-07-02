@@ -13,7 +13,9 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { useSessionRealtimeTranscriptConsumer } from '@/hooks/session/useSessionRealtimeTranscriptConsumer';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
 import {
     createSessionMessageDetailsStyles,
     SessionMessageDetailsView,
@@ -112,24 +114,34 @@ function SessionMessageRouteLoaded(props: { sessionId: string; messageId: string
         sync.onSessionVisible(props.sessionId);
     }, [props.sessionId]);
 
+    // This detail route renders live transcript-derived content but is a separate navigation screen
+    // that does not mark the session surface visible. Register it as an explicit transcript consumer
+    // so realtime projection routing keeps materializing transcript content while it is open.
+    useSessionRealtimeTranscriptConsumer(props.sessionId);
+
     React.useEffect(() => {
         setMessageBackfillComplete(false);
     }, [props.messageId, props.sessionId]);
 
     // Best-effort hydration for deep links / hard refreshes: sessions list is paginated, and message fetch
     // is guarded when a session isn't known on the active server snapshot yet.
-    useHydrateSessionForRoute(props.sessionId, 'MessageRoute.ensureSessionVisible', props.routeScope.hydrationOptions);
+    const routeHydrationState = useHydrateSessionForRoute(
+        props.sessionId,
+        'MessageRoute.ensureSessionVisible',
+        props.routeScope.hydrationOptions,
+    );
+    const sessionMissingAfterHydration = isSessionRouteHydrationMissing(routeHydrationState) && !session;
 
     // Message deep links may target messages older than the initial `/messages` page. If we can't find
     // the message after the initial load, try paging older messages until we either find it or run out.
     React.useEffect(() => {
         let canceled = false;
-        if (!messagesLoaded || message || messageBackfillComplete) return;
+        if (sessionMissingAfterHydration || !messagesLoaded || message || messageBackfillComplete) return;
 
         fireAndForget((async () => {
             try {
                 try {
-                    await sync.ensureSessionVisibleForMessageRoute(props.sessionId);
+                    await sync.ensureSessionVisibleForMessageRoute(props.sessionId, props.routeScope.hydrationOptions);
                 } catch {
                     // best-effort only
                 }
@@ -168,7 +180,7 @@ function SessionMessageRouteLoaded(props: { sessionId: string; messageId: string
         return () => {
             canceled = true;
         };
-    }, [message, messageBackfillComplete, messagesLoaded, props.messageId, props.routeScope.hydrationOptions, props.sessionId, resolvedMessageId]);
+    }, [message, messageBackfillComplete, messagesLoaded, props.messageId, props.routeScope.hydrationOptions, props.sessionId, resolvedMessageId, sessionMissingAfterHydration]);
 
     React.useEffect(() => {
         if (messageBackfillComplete && messagesLoaded && !message) {
@@ -190,6 +202,10 @@ function SessionMessageRouteLoaded(props: { sessionId: string; messageId: string
     }, [message]);
     
     // Show loader while waiting for session and messages to load
+    if (sessionMissingAfterHydration) {
+        return <SessionInvalidLinkFallback />;
+    }
+
     if (!session || !messagesLoaded) {
         return (
             <View style={styles.loadingContainer}>

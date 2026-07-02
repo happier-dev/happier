@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
 
+vi.mock('@/agents/catalog/catalog', () => ({
+  getAgentCore: () => ({ model: { defaultMode: 'default', supportsSelection: false } }),
+  resolveAgentIdFromFlavor: () => 'codex',
+}));
+
 const state = {
   sessions: {
     s1: { id: 's1', permissionMode: 'default', metadata: { flavor: 'claude' }, modelMode: 'default' },
@@ -91,7 +96,14 @@ describe('sendSessionMessageWithServerScope', () => {
         },
       }),
     }));
-    expect(emitWithAck).toHaveBeenCalledWith('message', expect.objectContaining({ sid: 's1', message: 'encrypted_record' }));
+    expect(emitWithAck).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({
+        sid: 's1',
+        message: 'encrypted_record',
+        messageRole: 'user',
+      }),
+    );
   });
 
   it('uses message metadata for active-scope displayText and metadata forwarding too', async () => {
@@ -128,6 +140,10 @@ describe('sendSessionMessageWithServerScope', () => {
         kind: 'attachments.v1',
       },
       profileId: 'profile-work',
+    }, {
+      profileId: 'profile-work',
+      localId: null,
+      bypassPendingQueueReason: 'server_scoped_rpc',
     });
   });
 
@@ -176,7 +192,11 @@ describe('sendSessionMessageWithServerScope', () => {
     expect(getScopedSessionEncryption).not.toHaveBeenCalled();
     expect(emitWithAck).toHaveBeenCalledWith(
       'message',
-      expect.objectContaining({ sid: 's1', message: expect.objectContaining({ t: 'plain', v: expect.any(Object) }) }),
+      expect.objectContaining({
+        sid: 's1',
+        message: expect.objectContaining({ t: 'plain', v: expect.any(Object) }),
+        messageRole: 'user',
+      }),
     );
   });
 
@@ -221,9 +241,10 @@ describe('sendSessionMessageWithServerScope', () => {
 
     expect(res.ok).toBe(true);
     expect(emit).toHaveBeenCalledTimes(1);
-    const ackPayload = emitWithAck.mock.calls[0]?.[1] as { localId?: string } | undefined;
+    const ackPayload = emitWithAck.mock.calls[0]?.[1] as { localId?: string; messageRole?: string } | undefined;
     expect(emit).toHaveBeenCalledWith('message', ackPayload);
     expect(typeof ackPayload?.localId).toBe('string');
+    expect(ackPayload?.messageRole).toBe('user');
   });
 
   it('checks scoped auth before fallback and preserves terminal auth', async () => {

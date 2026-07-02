@@ -19,21 +19,20 @@ type UseDelayedStaticMarkdownRenderPlaceholderResult = Readonly<{
 export function useDelayedStaticMarkdownRenderPlaceholder(
     params: UseDelayedStaticMarkdownRenderPlaceholderParams,
 ): UseDelayedStaticMarkdownRenderPlaceholderResult {
-    const contentReadyRef = React.useRef(!params.enabled);
+    const readyContentKeyRef = React.useRef<string | null>(params.enabled ? null : params.contentKey);
     const [visible, setVisible] = React.useState(false);
 
     React.useEffect(() => {
         if (!params.enabled) {
-            contentReadyRef.current = true;
+            readyContentKeyRef.current = params.contentKey;
             setVisible(false);
             return;
         }
 
-        contentReadyRef.current = false;
         setVisible(false);
 
         const timeout = setTimeout(() => {
-            if (!contentReadyRef.current) {
+            if (readyContentKeyRef.current !== params.contentKey) {
                 setVisible(true);
             }
         }, STATIC_MARKDOWN_RENDER_PLACEHOLDER_DELAY_MS);
@@ -46,9 +45,9 @@ export function useDelayedStaticMarkdownRenderPlaceholder(
     const onContentLayout = React.useCallback((event: LayoutChangeEvent) => {
         if (!params.enabled) return;
         if (event.nativeEvent.layout.height < STATIC_MARKDOWN_RENDER_READY_MIN_HEIGHT) return;
-        contentReadyRef.current = true;
+        readyContentKeyRef.current = params.contentKey;
         setVisible(false);
-    }, [params.enabled]);
+    }, [params.contentKey, params.enabled]);
 
     return { visible, onContentLayout };
 }

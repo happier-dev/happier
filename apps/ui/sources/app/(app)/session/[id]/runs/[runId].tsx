@@ -11,7 +11,9 @@ import {
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import { createSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
+import { useSessionRealtimeTranscriptConsumer } from '@/hooks/session/useSessionRealtimeTranscriptConsumer';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -30,7 +32,13 @@ export default function SessionRunDetailsScreen() {
     const routeScope = React.useMemo(() => createSessionRouteServerScope(params as Record<string, unknown>), [params]);
     const sessionId = normalizeSessionId(params.id);
     const runId = normalizeParam(params.runId);
-    const hydrateReady = useHydrateSessionForRoute(sessionId, 'SessionRunDetailsScreen.hydrate', routeScope.hydrationOptions);
+    const routeHydrationState = useHydrateSessionForRoute(sessionId, 'SessionRunDetailsScreen.hydrate', routeScope.hydrationOptions);
+    const hydrateReady = isSessionRouteHydrationAvailable(routeHydrationState);
+    const hydrateMissing = isSessionRouteHydrationMissing(routeHydrationState);
+    // The run detail view derives a live transcript fallback from the session's messages but is a
+    // separate navigation screen that does not mark the session surface visible. Register it as an
+    // explicit transcript consumer so hidden durable messages keep materializing while it is open.
+    useSessionRealtimeTranscriptConsumer(sessionId);
     const detailsRef = React.useRef<SessionExecutionRunDetailsViewHandle | null>(null);
     const headerTint = theme.colors.chrome.header.foreground ?? theme.colors.text.primary;
     const parentSessionHref = sessionId ? routeScope.buildHref(sessionId) : '/session';
@@ -77,9 +85,9 @@ export default function SessionRunDetailsScreen() {
     return (
         <View style={{ flex: 1, backgroundColor: theme.colors.background?.canvas ?? theme.colors.surface.base }}>
             <Stack.Screen options={screenOptions} />
-            {!hydrateReady ? (
+            {!hydrateReady && !hydrateMissing ? (
                 <ActivitySpinner size="small" color={theme.colors.text.secondary} />
-            ) : !sessionId || !runId ? (
+            ) : !sessionId || !runId || hydrateMissing ? (
                 <SessionInvalidLinkFallback />
             ) : (
                 <SessionExecutionRunDetailsView

@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 
-import { useSessionMessages, useSessionSubagentSourceMessages } from '@/sync/domains/state/storage';
+import { useSessionMessages, useSessionSubagentSourceMessages, useSessionTranscriptIds, useSessionVisibleReadSeq } from '@/sync/domains/state/storage';
 import { storage } from '@/sync/domains/state/storageStore';
 
 afterEach(() => {
@@ -11,6 +11,336 @@ afterEach(() => {
 });
 
 describe('useSessionMessages', () => {
+    it('keeps visible read seq stable when message content streams without seq changes', async () => {
+        const previousState = storage.getState();
+        try {
+            const messagesById = {
+                'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, seq: 10, text: 'hi' } as any,
+                'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, seq: 11, text: 'hello', isThinking: true } as any,
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-visible': {
+                        messageIdsOldestFirst: ['m-1', 'm-2'],
+                        messagesById,
+                        messagesMap: messagesById,
+                        reducerState: {} as any,
+                        latestThinkingMessageId: 'm-2',
+                        latestThinkingMessageActivityAtMs: 2,
+                        messagesVersion: 1,
+                        isLoaded: true,
+                    },
+                },
+            }));
+
+            let renderCount = 0;
+            const hook = await renderHook(() => {
+                renderCount += 1;
+                return useSessionVisibleReadSeq('s-visible', {
+                    sessionSeq: 12,
+                    latestTurnStatus: 'in_progress',
+                });
+            }, {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const initialRenderCount = renderCount;
+
+            expect(hook.getCurrent()).toBe(11);
+
+            await act(async () => {
+                storage.setState((state) => {
+                    const session = state.sessionMessages['s-visible'];
+                    if (!session) return state;
+                    const nextMessagesById = {
+                        ...session.messagesById,
+                        'm-2': {
+                            ...session.messagesById['m-2'],
+                            text: 'hello streaming update',
+                        },
+                    };
+                    return {
+                        ...state,
+                        sessionMessages: {
+                            ...state.sessionMessages,
+                            's-visible': {
+                                ...session,
+                                messagesById: nextMessagesById,
+                                messagesMap: nextMessagesById,
+                                messagesVersion: session.messagesVersion + 1,
+                            },
+                        },
+                    };
+                });
+            });
+
+            expect(hook.getCurrent()).toBe(11);
+            expect(renderCount).toBe(initialRenderCount);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('returns null visible read seq for a loaded transcript with no readable activity', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-empty-visible': {
+                        messageIdsOldestFirst: [],
+                        messagesById: {},
+                        messagesMap: {},
+                        reducerState: {} as any,
+                        latestThinkingMessageId: null,
+                        latestThinkingMessageActivityAtMs: null,
+                        messagesVersion: 1,
+                        isLoaded: true,
+                    },
+                },
+            }));
+
+            const hook = await renderHook(() => useSessionVisibleReadSeq('s-empty-visible', {
+                sessionSeq: 12,
+                latestTurnStatus: 'in_progress',
+            }), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent()).toBeNull();
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('includes the session seq when a loaded transcript has a terminal turn status', async () => {
+        const previousState = storage.getState();
+        try {
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-terminal-visible': {
+                        messageIdsOldestFirst: [],
+                        messagesById: {},
+                        messagesMap: {},
+                        reducerState: {} as any,
+                        latestThinkingMessageId: null,
+                        latestThinkingMessageActivityAtMs: null,
+                        messagesVersion: 1,
+                        isLoaded: true,
+                    },
+                },
+            }));
+
+            const hook = await renderHook(() => useSessionVisibleReadSeq('s-terminal-visible', {
+                sessionSeq: 12,
+                latestTurnStatus: 'completed',
+            }), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent()).toBe(12);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('keeps transcript ids stable when message content changes without id changes', async () => {
+        const previousState = storage.getState();
+        try {
+            const messagesById = {
+                'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'hi' } as any,
+                'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'hello', isThinking: true } as any,
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-1': {
+                        messageIdsOldestFirst: ['m-1', 'm-2'],
+                        messagesById,
+                        messagesMap: messagesById,
+                        reducerState: {} as any,
+                        latestThinkingMessageId: 'm-2',
+                        latestThinkingMessageActivityAtMs: 2,
+                        messagesVersion: 1,
+                        isLoaded: true,
+                    },
+                },
+            }));
+
+            let renderCount = 0;
+            const hook = await renderHook(() => {
+                renderCount += 1;
+                return useSessionTranscriptIds('s-1');
+            }, {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const firstIds = hook.getCurrent().ids;
+            const initialRenderCount = renderCount;
+
+            expect(firstIds).toEqual(['m-1', 'm-2']);
+
+            await act(async () => {
+                storage.setState((state) => {
+                    const session = state.sessionMessages['s-1'];
+                    if (!session) return state;
+                    const nextMessagesById = {
+                        ...session.messagesById,
+                        'm-2': {
+                            ...session.messagesById['m-2'],
+                            text: 'hello streaming update',
+                        },
+                    };
+                    return {
+                        ...state,
+                        sessionMessages: {
+                            ...state.sessionMessages,
+                            's-1': {
+                                ...session,
+                                messagesById: nextMessagesById,
+                                messagesMap: nextMessagesById,
+                                messagesVersion: session.messagesVersion + 1,
+                            },
+                        },
+                    };
+                });
+            });
+
+            expect(hook.getCurrent().ids).toBe(firstIds);
+            expect(renderCount).toBe(initialRenderCount);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('updates transcript ids when the committed id order changes', async () => {
+        const previousState = storage.getState();
+        try {
+            const messagesById = {
+                'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'hi' } as any,
+                'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'hello', isThinking: true } as any,
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-1': {
+                        messageIdsOldestFirst: ['m-1'],
+                        messagesById,
+                        messagesMap: messagesById,
+                        reducerState: {} as any,
+                        latestThinkingMessageId: 'm-2',
+                        latestThinkingMessageActivityAtMs: 2,
+                        messagesVersion: 1,
+                        isLoaded: true,
+                    },
+                },
+            }));
+
+            const hook = await renderHook(() => useSessionTranscriptIds('s-1'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent().ids).toEqual(['m-1']);
+
+            await act(async () => {
+                storage.setState((state) => {
+                    const session = state.sessionMessages['s-1'];
+                    if (!session) return state;
+                    return {
+                        ...state,
+                        sessionMessages: {
+                            ...state.sessionMessages,
+                            's-1': {
+                                ...session,
+                                messageIdsOldestFirst: ['m-2', 'm-1'],
+                                messagesVersion: session.messagesVersion + 1,
+                            },
+                        },
+                    };
+                });
+            });
+
+            expect(hook.getCurrent().ids).toEqual(['m-2', 'm-1']);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('updates transcript ids when committed ids are removed', async () => {
+        const previousState = storage.getState();
+        try {
+            const messagesById = {
+                'm-1': { id: 'm-1', kind: 'user-text', localId: null, createdAt: 1, text: 'hi' } as any,
+                'm-2': { id: 'm-2', kind: 'agent-text', localId: null, createdAt: 2, text: 'hello', isThinking: true } as any,
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-1': {
+                        messageIdsOldestFirst: ['m-1', 'm-2'],
+                        messagesById,
+                        messagesMap: messagesById,
+                        reducerState: {} as any,
+                        latestThinkingMessageId: 'm-2',
+                        latestThinkingMessageActivityAtMs: 2,
+                        messagesVersion: 1,
+                        isLoaded: true,
+                    },
+                },
+            }));
+
+            const hook = await renderHook(() => useSessionTranscriptIds('s-1'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent().ids).toEqual(['m-1', 'm-2']);
+
+            await act(async () => {
+                storage.setState((state) => {
+                    const session = state.sessionMessages['s-1'];
+                    if (!session) return state;
+                    return {
+                        ...state,
+                        sessionMessages: {
+                            ...state.sessionMessages,
+                            's-1': {
+                                ...session,
+                                messageIdsOldestFirst: ['m-2'],
+                                messagesVersion: session.messagesVersion + 1,
+                            },
+                        },
+                    };
+                });
+            });
+
+            expect(hook.getCurrent().ids).toEqual(['m-2']);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('does not subscribe to message updates when disabled', async () => {
         const previousState = storage.getState();
         try {
@@ -349,6 +679,80 @@ describe('useSessionMessages', () => {
 });
 
 describe('useSessionSubagentSourceMessages', () => {
+    it('does not scan ordered messages when the subagent source version is unchanged', async () => {
+        const previousState = storage.getState();
+        try {
+            const messagesById = {
+                'm-1': {
+                    id: 'm-1',
+                    kind: 'agent-text',
+                    localId: null,
+                    createdAt: 1,
+                    text: 'ordinary streamed text',
+                    children: [],
+                } as any,
+            };
+
+            storage.setState((state) => ({
+                ...state,
+                sessionMessages: {
+                    ...state.sessionMessages,
+                    's-1': {
+                        messageIdsOldestFirst: ['m-1'],
+                        messagesById,
+                        messagesMap: messagesById,
+                        reducerState: {} as any,
+                        latestThinkingMessageId: null,
+                        latestThinkingMessageActivityAtMs: null,
+                        messagesVersion: 1,
+                        subagentSourceVersion: 0,
+                        isLoaded: true,
+                    },
+                },
+            }));
+
+            const hook = await renderHook(() => useSessionSubagentSourceMessages('s-1'), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            const initialMessages = hook.getCurrent();
+            expect(initialMessages).toEqual([]);
+
+            const unreadableMessagesById = {} as Record<string, any>;
+            Object.defineProperty(unreadableMessagesById, 'm-1', {
+                enumerable: true,
+                get() {
+                    throw new Error('ordinary streamed text should not be scanned');
+                },
+            });
+
+            await act(async () => {
+                storage.setState((state) => {
+                    const session = state.sessionMessages['s-1'];
+                    if (!session) return state;
+                    return {
+                        ...state,
+                        sessionMessages: {
+                            ...state.sessionMessages,
+                            's-1': {
+                                ...session,
+                                messagesById: unreadableMessagesById,
+                                messagesMap: unreadableMessagesById,
+                                messagesVersion: session.messagesVersion + 1,
+                                subagentSourceVersion: session.subagentSourceVersion,
+                            },
+                        },
+                    };
+                });
+            });
+
+            expect(hook.getCurrent()).toBe(initialMessages);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('does not re-render when ordinary agent text streams', async () => {
         const previousState = storage.getState();
         try {

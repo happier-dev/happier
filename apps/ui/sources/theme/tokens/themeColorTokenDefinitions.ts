@@ -9,6 +9,7 @@ export type ThemeColorTokenGroup =
     | 'text'
     | 'state'
     | 'control'
+    | 'composer'
     | 'message'
     | 'syntax'
     | 'versionControl'
@@ -128,6 +129,7 @@ export const EDITABLE_THEME_COLOR_TOKEN_DEFINITIONS = [
     defineEditableThemeColorToken({ id: 'control.permissionButton.selected.background', path: ['permissionButton', 'selected', 'background'], group: 'control', label: 'Selected permission background', description: 'Selected permission button background.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'control.permissionButton.selected.border', path: ['permissionButton', 'selected', 'border'], group: 'control', label: 'Selected permission border', description: 'Selected permission button border.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'control.permissionButton.selected.foreground', path: ['permissionButton', 'selected', 'text'], group: 'control', label: 'Selected permission foreground', description: 'Selected permission button text and icon color.', valueKind: 'color' }),
+    defineEditableThemeColorToken({ id: 'composer.chipTint', path: ['composer', 'chipTint'], group: 'composer', label: 'Composer chip tint', description: 'Foreground for composer chips, pills, and their low-emphasis action labels.', valueKind: 'color' }),
 
     defineEditableThemeColorToken({ id: 'message.user.background', path: ['message', 'user', 'background'], group: 'message', label: 'User message background', description: 'Background for user-authored transcript messages.', valueKind: 'color' }),
     defineEditableThemeColorToken({ id: 'message.user.foreground', path: ['message', 'user', 'foreground'], group: 'message', label: 'User message foreground', description: 'Foreground for user-authored transcript messages.', valueKind: 'color', contrastPairs: stateContrast('message.user.background') }),

@@ -1,11 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit';
-import type { TreeDropResult } from '@/components/ui/treeDragDrop';
+import {
+    TREE_DROP_OVERLAY_KIND_LINE,
+    TREE_DROP_OVERLAY_KIND_NONE,
+    type TreeDropOverlaySharedValues,
+    type TreeDropResult,
+    type TreeDropVisualGeometry,
+} from '@/components/ui/treeDragDrop';
 import type {
-    SessionInlineDragVisualKind,
-    SessionInlineDragVisualSharedValues,
     UseSessionInlineDragParams,
+    UseSessionInlineDragResolvedDrop,
 } from './useSessionInlineDrag';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -20,9 +25,14 @@ vi.mock('react-native-worklets', () => ({
 }));
 
 vi.mock('react-native-reanimated', () => ({
+    Easing: {
+        bezier: () => () => 0,
+        linear: () => 0,
+    },
     useSharedValue: (initial: any) => ({ value: initial }),
     useAnimatedStyle: (fn: any) => fn(),
     withSpring: (value: any) => value,
+    withTiming: (value: any) => value,
 }));
 
 type MockGesture = Readonly<{
@@ -121,12 +131,15 @@ vi.mock('react-native-gesture-handler', () => ({
 }));
 
 describe('useSessionInlineDrag (onLongPressActivated)', () => {
-    function sharedVisualValues(): SessionInlineDragVisualSharedValues {
+    function sharedOverlayValues(): TreeDropOverlaySharedValues {
         return {
-            visualKind: { value: 0 as SessionInlineDragVisualKind },
-            visualTargetId: { value: null as string | null },
-            visualEdge: { value: null as 'top' | 'bottom' | null },
-            visualDepth: { value: 0 },
+            overlayVisible: { value: 0 },
+            overlayKind: { value: TREE_DROP_OVERLAY_KIND_NONE },
+            overlayTop: { value: 0 },
+            overlayHeight: { value: 0 },
+            overlayLeft: { value: 0 },
+            overlayRight: { value: 0 },
+            overlayDepth: { value: 0 },
         };
     }
 
@@ -169,14 +182,46 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
         };
     }
 
+    function lineGeometry(targetId: string, depth: number): TreeDropVisualGeometry {
+        return {
+            kind: 'line',
+            targetId,
+            edge: 'top',
+            depth,
+            geometry: {
+                top: 12,
+                left: 24,
+                width: 180,
+                height: 2,
+            },
+        };
+    }
+
+    function outlineGeometry(targetId: string): TreeDropVisualGeometry {
+        return {
+            kind: 'outline',
+            targetId,
+            geometry: {
+                top: 40,
+                left: 16,
+                width: 220,
+                height: 36,
+            },
+        };
+    }
+
+    function resolvedDrop(result: TreeDropResult, geometry: TreeDropVisualGeometry): UseSessionInlineDragResolvedDrop {
+        return { result, geometry };
+    }
+
     function dragParams(overrides: Partial<UseSessionInlineDragParams> = {}): UseSessionInlineDragParams {
         const base: UseSessionInlineDragParams = {
             sessionKey: 's1',
             groupKey: 'g1',
             dataIndex: 1,
-            dropVisual: sharedVisualValues(),
+            overlayShared: sharedOverlayValues(),
             onDragStart: () => {},
-            resolveDropResult: () => idleResult,
+            resolveDropResult: () => resolvedDrop(idleResult, { kind: 'none' }),
             onDropResult: () => {},
         };
         return { ...base, ...overrides };
@@ -189,18 +234,18 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
         };
     }
 
-    it('resolves one canonical drop result on update and mirrors only visual fields', async () => {
-        const {
-            SESSION_INLINE_DRAG_VISUAL_KIND_LINE,
-            useSessionInlineDrag,
-        } = await import('./useSessionInlineDrag');
+    it('resolves one canonical drop result on update and writes numeric overlay geometry', async () => {
+        const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
 
-        const dropVisual = sharedVisualValues();
+        const overlayShared = sharedOverlayValues();
         const onDragUpdate = vi.fn();
-        const resolveDropResult = vi.fn(() => lineResult('session:server:target', 2));
+        const resolveDropResult = vi.fn(() => resolvedDrop(
+            lineResult('session:server:target', 2),
+            lineGeometry('session:server:target', 2),
+        ));
 
         const hook = await renderHook(() => useSessionInlineDrag(dragParams({
-            dropVisual,
+            overlayShared,
             onDragUpdate,
             resolveDropResult,
         })));
@@ -225,29 +270,31 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
             dataIndex: 1,
             result: lineResult('session:server:target', 2),
         });
-        expect(dropVisual.visualKind.value).toBe(SESSION_INLINE_DRAG_VISUAL_KIND_LINE);
-        expect(dropVisual.visualTargetId.value).toBe('session:server:target');
-        expect(dropVisual.visualEdge.value).toBe('top');
-        expect(dropVisual.visualDepth.value).toBe(2);
+        expect(overlayShared.overlayVisible.value).toBe(1);
+        expect(overlayShared.overlayKind.value).toBe(TREE_DROP_OVERLAY_KIND_LINE);
+        expect(overlayShared.overlayTop.value).toBe(12);
+        expect(overlayShared.overlayHeight.value).toBe(2);
+        expect(overlayShared.overlayLeft.value).toBe(24);
+        expect(overlayShared.overlayRight.value).toBe(204);
+        expect(overlayShared.overlayDepth.value).toBe(2);
 
         await hook.unmount();
     });
 
     it('re-resolves the final pointer before completing the drag', async () => {
-        const {
-            SESSION_INLINE_DRAG_VISUAL_KIND_NONE,
-            useSessionInlineDrag,
-        } = await import('./useSessionInlineDrag');
+        const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
 
-        const dropVisual = sharedVisualValues();
+        const overlayShared = sharedOverlayValues();
         const onDropResult = vi.fn();
         const resolveDropResult = vi.fn((event: { pointer: { x: number; y: number } | null }) => {
-            if (event.pointer?.y === 300) return outlineResult('folder:final');
-            return lineResult('session:server:hover', 1);
+            if (event.pointer?.y === 300) {
+                return resolvedDrop(outlineResult('folder:final'), outlineGeometry('folder:final'));
+            }
+            return resolvedDrop(lineResult('session:server:hover', 1), lineGeometry('session:server:hover', 1));
         });
 
         const hook = await renderHook(() => useSessionInlineDrag(dragParams({
-            dropVisual,
+            overlayShared,
             resolveDropResult,
             onDropResult,
         })));
@@ -277,8 +324,55 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
             dataIndex: 1,
             result: outlineResult('folder:final'),
         });
-        expect(dropVisual.visualKind.value).toBe(SESSION_INLINE_DRAG_VISUAL_KIND_NONE);
-        expect(dropVisual.visualTargetId.value).toBeNull();
+        expect(overlayShared.overlayVisible.value).toBe(0);
+        expect(overlayShared.overlayKind.value).toBe(TREE_DROP_OVERLAY_KIND_NONE);
+
+        await hook.unmount();
+    });
+
+    it('clears overlay state and notifies the owner when an active drag is cancelled by the touch system', async () => {
+        const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
+
+        const overlayShared = sharedOverlayValues();
+        const onDragCancel = vi.fn();
+        const params = {
+            ...dragParams({
+                overlayShared,
+                resolveDropResult: () => resolvedDrop(
+                    lineResult('session:server:target', 2),
+                    lineGeometry('session:server:target', 2),
+                ),
+            }),
+            onDragCancel,
+        } satisfies UseSessionInlineDragParams & {
+            onDragCancel: (event: { sessionKey: string; groupKey: string; dataIndex: number }) => void;
+        };
+        const hook = await renderHook(() => useSessionInlineDrag(params));
+
+        const gesture = hook.getCurrent().gesture as unknown as MockGesture;
+        gesture.handlers.onStart?.();
+        gesture.handlers.onUpdate?.({
+            translationY: 240,
+            absoluteX: 18,
+            absoluteY: 64,
+        });
+
+        expect(overlayShared.overlayKind.value).toBe(TREE_DROP_OVERLAY_KIND_LINE);
+
+        gesture.handlers.onTouchesCancelled?.();
+        gesture.handlers.onFinalize?.({
+            translationY: 240,
+            absoluteX: 18,
+            absoluteY: 64,
+        });
+
+        expect(overlayShared.overlayVisible.value).toBe(0);
+        expect(overlayShared.overlayKind.value).toBe(TREE_DROP_OVERLAY_KIND_NONE);
+        expect(onDragCancel).toHaveBeenCalledWith({
+            sessionKey: 's1',
+            groupKey: 'g1',
+            dataIndex: 1,
+        });
 
         await hook.unmount();
     });
@@ -300,7 +394,8 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
         const longPress = gesture.gestures?.[0];
         const pan = gesture.gestures?.[1];
         expect(longPress?.kind).toBe('longPress');
-        expect(longPress?.config.maxDistance).toBeGreaterThanOrEqual(32);
+        expect(longPress?.config.maxDistance).toBeGreaterThanOrEqual(8);
+        expect(longPress?.config.maxDistance).toBeLessThanOrEqual(12);
         expect(longPress?.config.shouldCancelWhenOutside).toBe(false);
         expect(longPress?.config.cancelsTouchesInView).toBe(false);
         expect(pan?.kind).toBe('pan');
@@ -361,7 +456,7 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
         await hook.unmount();
     });
 
-    it('fires onLongPressActivated from a touch timer when the native LongPress recognizer does not activate', async () => {
+    it('does not synthesize a context-menu long press from Pan touch-down events', async () => {
         vi.useFakeTimers();
         try {
             const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
@@ -378,15 +473,7 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
             const pan = gesture.gestures?.[1];
 
             pan?.handlers?.onTouchesDown?.(touchEvent(100, 200));
-            vi.advanceTimersByTime(349);
-            expect(onLongPressActivated).not.toHaveBeenCalled();
-
-            vi.advanceTimersByTime(1);
-            expect(onLongPressActivated).toHaveBeenCalledWith('s1');
-
-            onLongPressActivated.mockClear();
-            pan?.handlers?.onTouchesUp?.(touchEvent(100, 200));
-            gesture.gestures?.[0]?.handlers?.onEnd?.({}, true);
+            vi.advanceTimersByTime(1000);
             expect(onLongPressActivated).not.toHaveBeenCalled();
 
             await hook.unmount();
@@ -395,38 +482,45 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
         }
     });
 
-    it('keeps the touch timer pending when Pan starts before native LongPress reports activation', async () => {
-        vi.useFakeTimers();
-        try {
-            const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
+    it('does not fire onLongPressActivated when native LongPress ends after a completed drag', async () => {
+        const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
 
-            const onLongPressActivated = vi.fn();
+        const onLongPressActivated = vi.fn();
 
-            const hook = await renderHook(() => useSessionInlineDrag({
-                ...dragParams(),
-                activateAfterLongPressMs: 350,
-                onLongPressActivated,
-            }));
+        const hook = await renderHook(() => useSessionInlineDrag({
+            ...dragParams(),
+            activateAfterLongPressMs: 350,
+            onLongPressActivated,
+        }));
 
-            const gesture = hook.getCurrent().gesture as unknown as MockGesture;
-            const pan = gesture.gestures?.[1];
+        const gesture = hook.getCurrent().gesture as unknown as MockGesture;
+        const longPress = gesture.gestures?.[0];
+        const pan = gesture.gestures?.[1];
 
-            pan?.handlers?.onTouchesDown?.(touchEvent(100, 200));
-            vi.advanceTimersByTime(100);
-            pan?.handlers?.onStart?.();
-            vi.advanceTimersByTime(249);
-            expect(onLongPressActivated).not.toHaveBeenCalled();
+        longPress?.handlers?.onBegin?.();
+        pan?.handlers?.onStart?.();
+        pan?.handlers?.onUpdate?.({
+            translationY: 80,
+            absoluteX: 100,
+            absoluteY: 280,
+        });
+        pan?.handlers?.onEnd?.({
+            absoluteX: 100,
+            absoluteY: 280,
+        });
 
-            vi.advanceTimersByTime(1);
-            expect(onLongPressActivated).toHaveBeenCalledWith('s1');
+        // Some native event orderings can report the LongPress lifecycle after
+        // Pan has already cleaned up. That must still be treated as the same
+        // drag touch, not as a fresh stationary long press.
+        longPress?.handlers?.onBegin?.();
+        longPress?.handlers?.onEnd?.({}, true);
 
-            await hook.unmount();
-        } finally {
-            vi.useRealTimers();
-        }
+        expect(onLongPressActivated).not.toHaveBeenCalled();
+
+        await hook.unmount();
     });
 
-    it('cancels the touch timer when the user releases or starts scrolling before the long press threshold', async () => {
+    it('does not fire onLongPressActivated after release without native LongPress activation', async () => {
         vi.useFakeTimers();
         try {
             const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
@@ -447,8 +541,30 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
             vi.advanceTimersByTime(350);
             expect(onLongPressActivated).not.toHaveBeenCalled();
 
+            await hook.unmount();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('does not fire onLongPressActivated after scroll movement without native LongPress activation', async () => {
+        vi.useFakeTimers();
+        try {
+            const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
+
+            const onLongPressActivated = vi.fn();
+
+            const hook = await renderHook(() => useSessionInlineDrag({
+                ...dragParams(),
+                activateAfterLongPressMs: 350,
+                onLongPressActivated,
+            }));
+
+            const gesture = hook.getCurrent().gesture as unknown as MockGesture;
+            const pan = gesture.gestures?.[1];
+
             pan?.handlers?.onTouchesDown?.(touchEvent(100, 200));
-            pan?.handlers?.onTouchesMove?.(touchEvent(100, 260));
+            pan?.handlers?.onTouchesMove?.(touchEvent(100, 212));
             vi.advanceTimersByTime(350);
             expect(onLongPressActivated).not.toHaveBeenCalled();
 

@@ -8,6 +8,8 @@ import {
   resetFlashListChatListHarness,
   standardCleanup,
 } from '@/dev/testkit';
+import { triggerFlashListChatListLoad } from '@/dev/testkit/harness/chatListHarness';
+import { transcriptViewportTelemetry } from '@/components/sessions/transcript/scroll/transcriptViewportTelemetry';
 import {
   installTranscriptCommonModuleMocks,
   resetTranscriptCommonModuleMockState,
@@ -18,6 +20,9 @@ import {
 const scrollToOffsetSpy = vi.fn();
 let previousRequestAnimationFrame: typeof globalThis.requestAnimationFrame | undefined;
 let previousCancelAnimationFrame: typeof globalThis.cancelAnimationFrame | undefined;
+const keyboardAvoidanceMockState = vi.hoisted(() => ({
+  composerInsetProps: null as null | { onHeightChange?: (height: number) => void },
+}));
 
 installTranscriptCommonModuleMocks({
   reactNative: async () =>
@@ -29,6 +34,7 @@ installTranscriptCommonModuleMocks({
 });
 
 beforeEach(() => {
+  vi.useFakeTimers({ now: new Date(0) });
   resetTranscriptCommonModuleMockState();
   previousRequestAnimationFrame = globalThis.requestAnimationFrame;
   previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
@@ -38,6 +44,7 @@ beforeEach(() => {
   }) as typeof globalThis.requestAnimationFrame;
   globalThis.cancelAnimationFrame = (() => {}) as typeof globalThis.cancelAnimationFrame;
   scrollToOffsetSpy.mockClear();
+  keyboardAvoidanceMockState.composerInsetProps = null;
   resetFlashListChatListHarness({
     flashListRefHandle: { scrollToOffset: scrollToOffsetSpy, scrollToIndex: vi.fn() },
     platformOs: 'ios',
@@ -90,6 +97,7 @@ vi.mock('./ChatFooter', () => ({
 
 vi.mock('./MessageView', () => ({
   MessageView: () => React.createElement('MessageView'),
+  MessageViewWithSessionCommon: () => React.createElement('MessageView'),
 }));
 
 vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
@@ -102,6 +110,7 @@ vi.mock('@/components/sessions/actions/SessionActionDraftCard', () => ({
 
 vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
   TurnView: () => React.createElement('TurnView'),
+  TurnViewWithSessionCommon: () => React.createElement('TurnView'),
 }));
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptMotionProvider', () => ({
@@ -118,6 +127,15 @@ vi.mock('@/components/sessions/transcript/motion/TranscriptEnterWrapper', () => 
 
 vi.mock('@/components/sessions/transcript/scroll/JumpToBottomButton', () => ({
   JumpToBottomButton: () => null,
+}));
+
+vi.mock('@/components/sessions/keyboardAvoidance', () => ({
+  ComposerKeyboardScrollInset: (props: { testID?: string; onHeightChange?: (height: number) => void }) => {
+    keyboardAvoidanceMockState.composerInsetProps = props;
+    return React.createElement('ComposerKeyboardScrollInset', props);
+  },
+  ComposerKeyboardFloatingInset: ({ children }: { children: React.ReactNode }) =>
+    React.createElement('ComposerKeyboardFloatingInset', null, children),
 }));
 
 vi.mock('@/components/sessions/transcript/scroll/transcriptScrollPinController', async () => {
@@ -144,10 +162,17 @@ vi.mock('@/sync/sync', async () =>
   })
 );
 
+async function settleNativeFlashListMount(screen: Awaited<ReturnType<typeof renderFlashListChatList>>) {
+  await triggerFlashListChatListLoad(12, { turns: 1 });
+  await screen.settle({ advanceTimersMs: 160, cycles: 1, turns: 1 });
+}
+
 describe('ChatList (FlashList v2 pinned follow on content growth)', () => {
   afterEach(() => {
     globalThis.requestAnimationFrame = previousRequestAnimationFrame as typeof globalThis.requestAnimationFrame;
     globalThis.cancelAnimationFrame = previousCancelAnimationFrame as typeof globalThis.cancelAnimationFrame;
+    vi.useRealTimers();
+    transcriptViewportTelemetry.configure({ enabled: false, sink: null });
     resetTranscriptCommonModuleMockState();
     standardCleanup();
   });
@@ -170,18 +195,83 @@ describe('ChatList (FlashList v2 pinned follow on content growth)', () => {
       contentWidth: 0,
     });
 
+    expect(scrollToOffsetSpy).not.toHaveBeenCalled();
+
+    await settleNativeFlashListMount(screen);
+
     expect(scrollToOffsetSpy).toHaveBeenCalledWith({ offset: 500, animated: false });
     scrollToOffsetSpy.mockClear();
 
     screen.getCapturedFlashListProps().onContentSizeChange?.(0, 1200);
     await screen.settle({ cycles: 1, turns: 1 });
 
-    expect(scrollToOffsetSpy).toHaveBeenCalledWith({ offset: 700, animated: false });
+    expect(scrollToOffsetSpy).not.toHaveBeenCalled();
     expect(screen.getCapturedFlashListProps().maintainVisibleContentPosition).toMatchObject({
       startRenderingFromBottom: true,
       animateAutoScrollToBottom: false,
     });
-    expect(screen.getCapturedFlashListProps().maintainVisibleContentPosition?.autoscrollToBottomThreshold).toBeGreaterThan(0);
+  });
+
+  it('records telemetry for native content-growth scroll writes', async () => {
+    const telemetrySink = vi.fn();
+    vi.stubGlobal('__DEV__', true);
+    transcriptViewportTelemetry.configure({
+      enabled: true,
+      capacity: 16,
+      sink: telemetrySink,
+    });
+    resetFlashListChatListHarness({
+      flashListRefHandle: { scrollToOffset: scrollToOffsetSpy, scrollToIndex: vi.fn() },
+      platformOs: 'ios',
+      syncTuningState: {
+        transcriptViewportTelemetryEnabled: true,
+        transcriptViewportTelemetryMaxEvents: 16,
+      },
+    });
+    flashListChatListHarnessState.sessionMessagesState = {
+      messages: [{ kind: 'user-text', id: 'm1', localId: 'u1', createdAt: 1, text: 'hi' }],
+      isLoaded: true,
+    };
+    flashListChatListHarnessState.sessionState = {
+      ...flashListChatListHarnessState.sessionState,
+      id: 'session-telemetry',
+      seq: 0,
+      metadata: null,
+      accessLevel: null,
+      canApprovePermissions: true,
+    };
+
+    const { ChatList } = await import('./ChatList');
+    const screen = await renderFlashListChatList(
+      <ChatList session={flashListChatListHarnessState.sessionState} />
+    );
+
+    await screen.triggerInitialFill({
+      layoutHeight: 500,
+      contentHeight: 1000,
+      contentWidth: 0,
+    });
+    await settleNativeFlashListMount(screen);
+    telemetrySink.mockClear();
+    scrollToOffsetSpy.mockClear();
+
+    screen.getCapturedFlashListProps().onContentSizeChange?.(0, 1200);
+    await screen.settle({ cycles: 1, turns: 1 });
+
+    expect(telemetrySink).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'content-measured',
+      reason: 'content-size-change',
+      platform: 'ios',
+      listImplementation: 'flash_v2',
+      layoutHeight: 500,
+      contentHeight: 1200,
+    }));
+    expect(telemetrySink).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: 'scroll-write',
+      reason: 'content-size-change',
+    }));
+    expect(telemetrySink.mock.calls.at(-1)?.[0]?.sessionId).toMatch(/^session:/);
+    expect(telemetrySink.mock.calls.at(-1)?.[0]?.sessionId).not.toBe('session-telemetry');
   });
 
   it('keeps native FlashList pinned when the viewport height changes while following', async () => {
@@ -196,6 +286,7 @@ describe('ChatList (FlashList v2 pinned follow on content growth)', () => {
       contentHeight: 1000,
       contentWidth: 0,
     });
+    await settleNativeFlashListMount(screen);
 
     scrollToOffsetSpy.mockClear();
 
@@ -211,6 +302,71 @@ describe('ChatList (FlashList v2 pinned follow on content growth)', () => {
     });
     await screen.settle({ cycles: 1, turns: 1 });
 
-    expect(scrollToOffsetSpy).toHaveBeenCalledWith({ offset: 580, animated: false });
+    expect(scrollToOffsetSpy).not.toHaveBeenCalled();
+    expect(screen.getCapturedFlashListProps().maintainVisibleContentPosition).toMatchObject({
+      startRenderingFromBottom: true,
+      animateAutoScrollToBottom: false,
+    });
+  });
+
+  it('keeps native FlashList pinned when composer inset height changes while following', async () => {
+    const { ChatList } = await import('./ChatList');
+
+    const screen = await renderFlashListChatList(
+      <ChatList session={flashListChatListHarnessState.sessionState} />
+    );
+
+    await screen.triggerInitialFill({
+      layoutHeight: 500,
+      contentHeight: 1000,
+      contentWidth: 0,
+    });
+    await settleNativeFlashListMount(screen);
+
+    scrollToOffsetSpy.mockClear();
+
+    await act(async () => {
+      keyboardAvoidanceMockState.composerInsetProps?.onHeightChange?.(180);
+    });
+    await screen.settle({ cycles: 1, turns: 1 });
+
+    expect(scrollToOffsetSpy).not.toHaveBeenCalled();
+    expect(screen.getCapturedFlashListProps().maintainVisibleContentPosition).toMatchObject({
+      startRenderingFromBottom: true,
+      animateAutoScrollToBottom: false,
+    });
+  });
+
+  it('includes the composer inset when native FlashList measures content after the composer', async () => {
+    const { ChatList } = await import('./ChatList');
+
+    const screen = await renderFlashListChatList(
+      <ChatList session={flashListChatListHarnessState.sessionState} />
+    );
+
+    expect(screen.getCapturedFlashListProps()).toBeTruthy();
+
+    await act(async () => {
+      keyboardAvoidanceMockState.composerInsetProps?.onHeightChange?.(180);
+    });
+
+    scrollToOffsetSpy.mockClear();
+
+    await screen.triggerInitialFill({
+      layoutHeight: 500,
+      contentHeight: 1000,
+      contentWidth: 0,
+    });
+
+    expect(scrollToOffsetSpy).not.toHaveBeenCalled();
+    await settleNativeFlashListMount(screen);
+
+    expect(scrollToOffsetSpy).toHaveBeenCalledWith({ offset: 680, animated: false });
+    scrollToOffsetSpy.mockClear();
+
+    screen.getCapturedFlashListProps().onContentSizeChange?.(0, 1200);
+    await screen.settle({ cycles: 1, turns: 1 });
+
+    expect(scrollToOffsetSpy).not.toHaveBeenCalled();
   });
 });

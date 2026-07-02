@@ -268,7 +268,7 @@ const MetadataObjectSchema = z.object({
         providerHint: z.object({
             providerId: z.string().optional(),
             backendMode: z.string().optional(),
-            vendorSessionId: z.string().optional(),
+            providerSessionId: z.string().optional(),
         }).optional(),
     }).optional(),
     /**
@@ -290,6 +290,14 @@ const MetadataObjectSchema = z.object({
         sourceMessageId: z.string().optional(),
         appliedAtMs: z.number().optional(),
     }).optional(),
+    sessionInitialPromptV1: z.object({
+        v: z.literal(1),
+        text: z.string(),
+        mode: z.enum(['replace', 'append']),
+        createdAtMs: z.number(),
+        sourceMessageIds: z.array(z.string()).optional(),
+        sourceSessionId: z.string().optional(),
+    }).optional().catch(undefined),
 }).passthrough();
 
 export const MetadataSchema = z.preprocess((value) => {
@@ -382,6 +390,21 @@ const AgentStateObjectSchema = z.object({
         inFlightSteer: z.boolean().optional(),
         inFlightSteerSupported: z.boolean().optional(),
         inFlightSteerAvailable: z.boolean().optional(),
+        /**
+         * Why in-flight steering is currently unavailable (Seam A). Permissive string for
+         * forward-compat across CLI versions. Known values: 'backend_unsupported' |
+         * 'unsafe_window' | 'turn_settling' | 'user_terminal_draft' (X1: a terminal composer
+         * draft is starving steering).
+         */
+        inFlightSteerUnavailableReason: z.string().nullish(),
+        /** Timestamp (ms) of the last steerability evaluation — staleness guard. */
+        inFlightSteerStateAt: z.number().nullish(),
+        /**
+         * G4 (lane Q intent): the backend can apply a steered message's config delta (permission
+         * mode) to the RUNNING turn, so the busy-send affordance may offer
+         * "Apply setting & steer now". Readers must fail closed when absent.
+         */
+        inFlightConfigApplySupported: z.boolean().nullish(),
         localPermissionBridgeInLocalMode: z.boolean().optional(),
         permissionsInUiWhileLocal: z.boolean().optional(),
     }).nullish(),
@@ -410,6 +433,7 @@ export interface Session {
     encryptionMode?: 'e2ee' | 'plain',
     createdAt: number,
     updatedAt: number,
+    meaningfulActivityAt?: number | null,
     active: boolean,
     activeAt: number,
     /**
@@ -426,7 +450,13 @@ export interface Session {
     lastViewedSessionSeq?: number | null,
     pendingPermissionRequestCount?: number,
     pendingUserActionRequestCount?: number,
+    pendingRequestObservedAt?: number | null,
+    latestTurnId?: string | null,
     latestTurnStatus?: PrimaryTurnStatusV1 | null,
+    latestTurnStatusObservedAt?: number | null,
+    rollbackEligibleTurnStarts?: readonly number[] | null,
+    latestReadyEventSeq?: number | null,
+    latestReadyEventAt?: number | null,
     lastRuntimeIssue?: SessionRuntimeIssueV1 | null,
     metadata: Metadata | null,
     metadataVersion: number,
@@ -478,6 +508,7 @@ export interface PendingMessage {
     localId: string | null;
     createdAt: number;
     updatedAt: number;
+    source?: 'local_outbound' | 'server_pending';
     deliveryStatus?: 'queued' | 'accepted';
     text: string;
     displayText?: string;

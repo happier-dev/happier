@@ -93,7 +93,7 @@ export function createJsThreadLagTelemetry(options: JsThreadLagTelemetryOptions)
         timer = setTimeout(() => {
             const sampledAtMs = now();
             recordSample(sampledAtMs - expectedAtMs, sampledAtMs);
-            expectedAtMs += sampleIntervalMs;
+            expectedAtMs = sampledAtMs + sampleIntervalMs;
             scheduleNext();
         }, sampleIntervalMs);
     }
@@ -148,6 +148,9 @@ export function createJsThreadLagTelemetry(options: JsThreadLagTelemetryOptions)
             samples.length = 0;
             thresholdExceededCount = 0;
             lastSampleAtMs = 0;
+            if (timer) {
+                expectedAtMs = now() + sampleIntervalMs;
+            }
         },
         isRunning(): boolean {
             return timer !== null;

@@ -125,10 +125,8 @@ import { runSidechainsPhase } from "./phases/sidechains";
 import { runModeSwitchEventsPhase } from "./phases/modeSwitchEvents";
 import { equalOptionalStringArrays } from "./helpers/arrays";
 import { coerceStreamingToolResultChunk, mergeExistingStdStreamsIntoFinalResultIfMissing, mergeStreamingChunkIntoResult } from "./helpers/streamingToolResult";
-import { cancelRunningTools } from "./helpers/cancelRunningApprovedTools";
 import type { OrphanToolResultBucket } from "./helpers/orphanToolResults";
 import { isDebugFlagEnabled } from "./helpers/debugFlags";
-import type { ClaudeTaskListTodo } from "./helpers/claudeTaskListTodos";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -228,9 +226,6 @@ export type ReducerState = {
      * even when providers emit interleaved keepalive chunks or the reducer processes messages in separate invocations.
      */
     sidechainThinkingMergeCursors: Map<string, string>;
-    claudeTaskToolTodos: Map<string, ClaudeTaskListTodo>;
-    claudeTaskCreateToolUseIdToTodoId: Map<string, string>;
-    claudeTaskListToolUseIds: Set<string>;
     latestTodos?: {
         todos: Array<{
             content: string;
@@ -246,6 +241,7 @@ export type ReducerState = {
         cacheCreation: number;
         cacheRead: number;
         contextSize: number;
+        contextWindowTokens?: number;
         timestamp: number;
     };
 };
@@ -265,9 +261,6 @@ export function createReducer(): ReducerState {
         thinkingMergeCursor: null,
         thinkingSegmentKeyToMessageId: new Map(),
         sidechainThinkingMergeCursors: new Map(),
-        claudeTaskToolTodos: new Map(),
-        claudeTaskCreateToolUseIdToTodoId: new Map(),
-        claudeTaskListToolUseIds: new Set(),
     };
 }
 
@@ -289,6 +282,8 @@ export type ReducerResult = {
         contextSize: number;
     };
     hasReadyEvent?: boolean;
+    latestReadyEventSeq?: number;
+    latestReadyEventAt?: number;
     reducerStateChanged?: boolean;
 };
 
@@ -318,6 +313,8 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
     let newMessages: Message[] = [];
     let changed: Set<string> = new Set();
     let hasReadyEvent = false;
+    let latestReadyEventSeq: number | null = null;
+    let latestReadyEventAt: number | null = null;
 
     const sidechainMessageIds = new Set<string>();
     for (const chain of state.sidechains.values()) {
@@ -486,6 +483,16 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
 	    const incomingToolIds = conversion.incomingToolIds;
 	    hasReadyEvent = hasReadyEvent || conversion.hasReadyEvent;
 	    const readyAt = conversion.readyAt;
+        if (conversion.latestReadyEventSeq !== null) {
+            latestReadyEventSeq = latestReadyEventSeq === null
+                ? conversion.latestReadyEventSeq
+                : Math.max(latestReadyEventSeq, conversion.latestReadyEventSeq);
+        }
+        if (conversion.latestReadyEventAt !== null) {
+            latestReadyEventAt = latestReadyEventAt === null
+                ? conversion.latestReadyEventAt
+                : Math.max(latestReadyEventAt, conversion.latestReadyEventAt);
+        }
 
 	    runAgentStatePermissionsPhase({
 	        state,
@@ -543,19 +550,6 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
         allocateId,
     });
 
-    // Ready events are filtered out of the transcript, but they are a strong signal that
-    // the current turn is done. If any tools are still marked running (often due to
-    // dropped tool-result events during reconnects/aborts), cancel them to avoid
-    // endless spinners and incorrect elapsed timers.
-    if (typeof readyAt === 'number' && Number.isFinite(readyAt)) {
-        cancelRunningTools({
-            state,
-            changed,
-            completedAt: readyAt,
-            reason: 'Request interrupted',
-        });
-    }
-
     //
     // Collect changed messages (only root-level messages)
     //
@@ -607,9 +601,14 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
             outputTokens: state.latestUsage.outputTokens,
             cacheCreation: state.latestUsage.cacheCreation,
             cacheRead: state.latestUsage.cacheRead,
-            contextSize: state.latestUsage.contextSize
+            contextSize: state.latestUsage.contextSize,
+            ...(typeof state.latestUsage.contextWindowTokens === 'number'
+                ? { contextWindowTokens: state.latestUsage.contextWindowTokens }
+                : {})
         } : undefined,
         hasReadyEvent: hasReadyEvent || undefined,
+        latestReadyEventSeq: latestReadyEventSeq ?? undefined,
+        latestReadyEventAt: latestReadyEventAt ?? undefined,
         reducerStateChanged: sidechainStateChanged || undefined,
     };
 }
@@ -622,15 +621,36 @@ function allocateId() {
     return Math.random().toString(36).substring(2, 15);
 }
 
+function readContextUsageTelemetryNumber(usage: UsageData, key: string): number | null {
+    const record = asRecord(usage);
+    const value = record?.[key];
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
+}
+
+function readContextWindowTokensFromUsage(usage: UsageData): number | null {
+    return readContextUsageTelemetryNumber(usage, 'context_window_tokens');
+}
+
+function readContextUsedTokensFromUsage(usage: UsageData): number | null {
+    return readContextUsageTelemetryNumber(usage, 'context_used_tokens');
+}
+
 function processUsageData(state: ReducerState, usage: UsageData, timestamp: number) {
     // Only update if this is newer than the current latest usage
     if (!state.latestUsage || timestamp > state.latestUsage.timestamp) {
+        const reportedContextWindowTokens = readContextWindowTokensFromUsage(usage);
+        const contextWindowTokens = reportedContextWindowTokens ?? state.latestUsage?.contextWindowTokens ?? null;
+        const derivedContextSize = (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0) + usage.input_tokens;
+        const contextSize =
+            readContextUsedTokensFromUsage(usage) ??
+            (reportedContextWindowTokens !== null ? state.latestUsage?.contextSize ?? 0 : derivedContextSize);
         state.latestUsage = {
             inputTokens: usage.input_tokens,
             outputTokens: usage.output_tokens,
             cacheCreation: usage.cache_creation_input_tokens || 0,
             cacheRead: usage.cache_read_input_tokens || 0,
-            contextSize: (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0) + usage.input_tokens,
+            contextSize,
+            ...(contextWindowTokens !== null ? { contextWindowTokens } : {}),
             timestamp: timestamp
         };
     }

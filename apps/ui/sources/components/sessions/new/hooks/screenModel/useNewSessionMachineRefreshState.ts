@@ -15,6 +15,33 @@ type RecentMachinePath = Readonly<{
     path: string;
 }>;
 
+function buildMachineRefreshItemSignature(machine: Machine): string {
+    const metadata = machine.metadata;
+    return [
+        machine.id,
+        String(machine.active === true),
+        String(machine.revokedAt ?? ''),
+        String(machine.replacedByMachineId ?? ''),
+        String(machine.daemonStateVersion ?? ''),
+        String(metadata?.displayName ?? ''),
+        String(metadata?.host ?? ''),
+        String(metadata?.homeDir ?? ''),
+        String(metadata?.platform ?? ''),
+    ].join('|');
+}
+
+function buildMachineRefreshListSignature(machines: ReadonlyArray<Machine>): string {
+    return machines.map(buildMachineRefreshItemSignature).join('\n');
+}
+
+function useStableValueBySignature<Value>(value: Value, signature: string): Value {
+    const stableRef = React.useRef<Readonly<{ signature: string; value: Value }> | null>(null);
+    if (!stableRef.current || stableRef.current.signature !== signature) {
+        stableRef.current = { signature, value };
+    }
+    return stableRef.current.value;
+}
+
 export function useNewSessionMachineRefreshState(params: Readonly<{
     capabilityServerId: string;
     selectedMachineId: string | null;
@@ -45,7 +72,7 @@ export function useNewSessionMachineRefreshState(params: Readonly<{
         }
     }, [params.capabilityServerId, params.machines, params.refreshMachineEnvPresence, params.selectedMachineId]);
 
-    const recentMachines = React.useMemo(() => {
+    const rawRecentMachines = React.useMemo(() => {
         if (params.machines.length === 0) return [];
         if (params.recentMachinePaths.length === 0) return [];
 
@@ -61,10 +88,20 @@ export function useNewSessionMachineRefreshState(params: Readonly<{
         }
         return result;
     }, [params.machines, params.recentMachinePaths]);
+    const recentMachinesSignature = React.useMemo(
+        () => buildMachineRefreshListSignature(rawRecentMachines),
+        [rawRecentMachines],
+    );
+    const recentMachines = useStableValueBySignature(rawRecentMachines, recentMachinesSignature);
 
-    const favoriteMachineItems = React.useMemo(() => {
+    const rawFavoriteMachineItems = React.useMemo(() => {
         return params.machines.filter((machine) => params.favoriteMachines.includes(machine.id));
     }, [params.favoriteMachines, params.machines]);
+    const favoriteMachineItemsSignature = React.useMemo(
+        () => buildMachineRefreshListSignature(rawFavoriteMachineItems),
+        [rawFavoriteMachineItems],
+    );
+    const favoriteMachineItems = useStableValueBySignature(rawFavoriteMachineItems, favoriteMachineItemsSignature);
 
     useNewSessionCapabilitiesPrefetch({
         enabled: params.useEnhancedSessionWizard,

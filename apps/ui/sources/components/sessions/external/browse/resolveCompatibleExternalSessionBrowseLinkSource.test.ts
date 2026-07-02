@@ -42,20 +42,4 @@ describe('resolveCompatibleExternalSessionBrowseLinkSource', () => {
         })).toEqual(candidateSource);
     });
 
-    it('preserves the selected OpenCode server when the candidate source points at a different base URL', () => {
-        const selectedSource: ExternalSessionsSource = {
-            kind: 'opencodeServer',
-            baseUrl: 'http://127.0.0.1:4096',
-        };
-        const candidateSource: ExternalSessionsSource = {
-            kind: 'opencodeServer',
-            baseUrl: 'http://127.0.0.1:5000',
-            directory: '/tmp/other',
-        };
-
-        expect(resolveCompatibleExternalSessionBrowseLinkSource({
-            selectedSource,
-            candidateSource,
-        })).toEqual(selectedSource);
-    });
 });

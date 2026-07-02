@@ -3,6 +3,7 @@ import { Platform, ScrollView, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useAuth } from '@/auth/context/AuthContext';
@@ -48,16 +49,18 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 0,
     },
     title: {
-        fontSize: 18,
+        fontSize: 28,
+        lineHeight: 34,
+        letterSpacing: -0.56,
         color: theme.colors.text.primary,
-        marginBottom: 6,
+        marginBottom: 8,
         textAlign: 'center',
         ...Typography.default('semiBold'),
     },
     subtitle: {
-        fontSize: 14,
+        fontSize: 16,
         color: theme.colors.text.secondary,
-        lineHeight: 20,
+        lineHeight: 24,
         textAlign: 'center',
         ...Typography.default(),
     },
@@ -75,7 +78,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     codeLabel: {
         marginTop: 12,
-        fontSize: 12,
+        fontSize: 13,
+        lineHeight: 18,
         color: theme.colors.text.secondary,
         ...Typography.default(),
     },
@@ -121,6 +125,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const router = useRouter();
+    const isFocused = useIsFocused();
     const auth = useAuth();
     const embedded = props.embedded === true;
     const pairingDecision = useFeatureDecision('auth.pairing.desktopQrMobileScan');
@@ -275,7 +280,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         const frame = (
             <View style={containerStyle}>
                 <View style={contentWrapperStyle}>
-                    <Text style={styles.title}>{t('connect.restoreAccount')}</Text>
+                    {embedded ? null : <Text style={styles.title}>{t('connect.restoreAccount')}</Text>}
                     <Text style={styles.subtitle}>{t('common.loading')}</Text>
 
                     <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>
@@ -330,7 +335,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         const frame = (
             <View style={containerStyle}>
                 <View style={contentWrapperStyle}>
-                    <Text style={styles.title}>{t('connect.restoreAccount')}</Text>
+                    {embedded ? null : <Text style={styles.title}>{t('connect.restoreAccount')}</Text>}
                     <Text style={styles.subtitle}>{t('connect.scanComputerQrUnavailableBody')}</Text>
 
                     <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>
@@ -384,6 +389,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     if (phase === 'idle') {
         return (
             <QrCodeScannerView
+                active={isFocused}
                 testIDPrefix="restore-scan"
                 title={t('connect.restoreAccount')}
                 subtitle={t('connect.scanComputerQrInstructions')}
@@ -453,7 +459,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     const frame = (
         <View style={containerStyle}>
             <View style={contentWrapperStyle}>
-                <Text style={styles.title}>{t('connect.restoreAccount')}</Text>
+                {embedded ? null : <Text style={styles.title}>{t('connect.restoreAccount')}</Text>}
                 <Text style={styles.subtitle}>{statusText}</Text>
 
                 <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>

@@ -6,6 +6,13 @@ import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import type { Router } from 'expo-router';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
+vi.mock('react-native-reanimated', () => ({ __esModule: true, default: {} }));
+vi.mock('react-native-reanimated/lib/module', () => ({ __esModule: true, default: {} }));
+vi.mock('react-native-reanimated/lib/module/index.js', () => ({ __esModule: true, default: {} }));
+vi.mock('react-native-reanimated/lib/module/index', () => ({ __esModule: true, default: {} }));
+vi.mock('react-native-reanimated/lib/module/publicGlobals', () => ({ __esModule: true }));
+vi.mock('react-native-reanimated/lib/module/publicGlobals.js', () => ({ __esModule: true }));
+
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock();
@@ -155,6 +162,110 @@ describe('useNewSessionAgentInputPresentation', () => {
             dotColor: 'success',
             isPulsing: true,
         });
+    });
+
+    it('keeps connection status stable when only machine heartbeat timestamps change', async () => {
+        const { useNewSessionAgentInputPresentation } = await import('./useNewSessionAgentInputPresentation');
+        const router = createRouter();
+        let activeAt = Date.now();
+        const renderPresentation = () => useNewSessionAgentInputPresentation({
+            theme: {
+                colors: {
+                    state: {
+                        success: { foreground: 'success' },
+                        danger: { foreground: 'danger' },
+                    },
+                },
+            },
+            selectedMachine: {
+                id: 'm1',
+                seq: 1,
+                createdAt: 1,
+                updatedAt: activeAt,
+                active: true,
+                activeAt,
+                revokedAt: null,
+                metadata: {
+                    host: 'host-1',
+                    homeDir: '/home/me',
+                    platform: 'darwin',
+                    happyHomeDir: '/home/me/.happier',
+                    happyCliVersion: '0.0.0-test',
+                },
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 0,
+            },
+            selectedMachineSpawnReadiness: { status: 'unknown', machineId: 'm1' },
+            automationFeatureEnabled: false,
+            automationDraft: {
+                enabled: false,
+                name: '',
+                description: '',
+                scheduleKind: 'interval',
+                everyMinutes: 30,
+                cronExpr: '0 * * * *',
+                timezone: 'UTC',
+            },
+            effectiveAutomationDraft: {
+                enabled: false,
+                name: '',
+                description: '',
+                scheduleKind: 'interval',
+                everyMinutes: 30,
+                cronExpr: '0 * * * *',
+                timezone: 'UTC',
+            },
+            setAutomationDraft: vi.fn(),
+            repoScmSnapshot: null,
+            checkoutChipModel: {
+                selectedOptionId: 'current_path',
+                options: [{ id: 'current_path', kind: 'current_path', path: '/repo' }],
+            },
+            checkoutPickerOpen: false,
+            setCheckoutPickerOpen: vi.fn(),
+            checkoutCreationDraft: null,
+            selectedMachineId: 'm1',
+            selectedPath: '/repo',
+            setSelectedPath: vi.fn(),
+            setCheckoutCreationDraft: vi.fn(),
+            pendingGitWorktreeBaseRefRef: { current: null },
+            pendingGitWorktreeSourceKindRef: { current: 'current' },
+            shouldReconcileInitialHydratedCheckoutCreationDraftRef: { current: false },
+            router,
+            sessionPrompt: '',
+            setSessionPrompt: vi.fn(),
+            handleCreateSession: vi.fn(),
+            backendTarget: { kind: 'backend', backendId: 'claude' },
+            agentType: 'claude',
+            agentOptionState: null,
+            setAgentOptionStateForCurrentAgent: vi.fn(),
+            connectedServicesAuthChip: null,
+            showAutomationActionChips: false,
+            showServerPickerChip: false,
+            targetServerId: 'srv',
+            targetServerName: 'Server A',
+            mcpChip: null,
+            externalSessionsFeatureEnabled: false,
+            supportsDirectTranscriptStorage: false,
+            transcriptStorage: 'persisted',
+            hasUserSelectedTranscriptStorageRef: { current: false },
+            setTranscriptStorage: vi.fn(),
+            selectedMachineIsWindows: false,
+            effectiveWindowsRemoteSessionLaunchMode: null,
+            windowsTerminalAvailable: false,
+            setWindowsRemoteSessionLaunchModeOverride: vi.fn(),
+        });
+
+        const hook = await renderHook(renderPresentation, {
+            flushOptions: { cycles: 1, turns: 4 },
+        });
+        const firstConnectionStatus = hook.getCurrent().connectionStatus;
+
+        activeAt += 1000;
+        await hook.rerender();
+
+        expect(hook.getCurrent().connectionStatus).toBe(firstConnectionStatus);
     });
 
     it('exposes automation controls via an action chip (no inline automation section)', async () => {

@@ -58,7 +58,7 @@ describe('emitSessionMetadataUpdateWithServerScope', () => {
             sid: 'session-1',
             expectedVersion: 3,
             metadata: 'ciphertext',
-        });
+        }, { timeoutMs: 4000 });
         expect(createSocketSpy).not.toHaveBeenCalled();
     });
 

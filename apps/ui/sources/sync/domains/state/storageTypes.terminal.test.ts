@@ -12,7 +12,7 @@ describe('MetadataSchema', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'thread-1',
+                    providerSessionId: 'thread-1',
                 },
             },
         } as any);
@@ -22,7 +22,7 @@ describe('MetadataSchema', () => {
             providerId: 'codex',
             provider: {
                 backendMode: 'appServer',
-                vendorSessionId: 'thread-1',
+                providerSessionId: 'thread-1',
             },
         });
         expect(parsed).not.toHaveProperty('agentRuntimeDescriptorV1');
@@ -52,7 +52,7 @@ describe('MetadataSchema', () => {
                 providerId: 'codex',
                 provider: {
                     backendMode: 'appServer',
-                    vendorSessionId: 'thread-legacy',
+                    providerSessionId: 'thread-legacy',
                 },
             },
         } as any);
@@ -62,7 +62,7 @@ describe('MetadataSchema', () => {
             providerId: 'codex',
             provider: {
                 backendMode: 'appServer',
-                vendorSessionId: 'thread-legacy',
+                providerSessionId: 'thread-legacy',
             },
         });
         expect(parsed).not.toHaveProperty('agentRuntimeDescriptorV1');

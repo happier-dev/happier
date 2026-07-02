@@ -1,6 +1,8 @@
 import { vi } from 'vitest';
 
 import {
+    DEFAULT_BROWSER_CAPABILITIES,
+    DEFAULT_LOCAL_SERVICE_CAPABILITIES,
     DEFAULT_MACHINE_LIVE_STREAM_CAPABILITIES,
     DEFAULT_MACHINE_TUNNEL_CAPABILITIES,
     DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS,
@@ -82,6 +84,12 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             },
             connectedServices: {
                 enabled: overrides.connectedServicesEnabled ?? true,
+                accountGroups: {
+                    enabled: false,
+                },
+                accountFallback: {
+                    enabled: false,
+                },
                 quotas: {
                     enabled: overrides.connectedServicesQuotasEnabled ?? false,
                 },
@@ -105,7 +113,13 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
             },
             sessions: {
                 enabled: false,
+                folders: {
+                    enabled: false,
+                },
                 handoff: {
+                    enabled: false,
+                },
+                usageLimitRecovery: {
                     enabled: false,
                 },
             },
@@ -134,6 +148,23 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                     enabled: false,
                     directPeer: { enabled: false },
                 },
+            },
+            localServices: {
+                enabled: false,
+                inventory: { enabled: false },
+                managed: { enabled: false },
+                preview: { enabled: false },
+                publicPreview: { enabled: false },
+            },
+            browser: {
+                enabled: false,
+                viewTargets: { enabled: false },
+                internal: { enabled: false },
+                sidecar: { enabled: false },
+            },
+            devices: {
+                enabled: false,
+                simulatorPreview: { enabled: false },
             },
             setup: {
                 relay: {
@@ -218,7 +249,10 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                     grantSigningKeys: [],
                 },
             },
+            localServices: DEFAULT_LOCAL_SERVICE_CAPABILITIES,
+            browser: DEFAULT_BROWSER_CAPABILITIES,
             server: {},
+            serverIdentity: { serverIdentityId: null },
             social: {
                 friends: {
                     allowUsername: overrides.friendsAllowUsername ?? false,
@@ -252,6 +286,9 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 misconfig: [],
             },
             session: {
+                messages: {
+                    role: false,
+                },
                 state: {},
             },
             liveActivities: {

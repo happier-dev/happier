@@ -219,12 +219,14 @@ export class Encryption {
     static async markNativeCryptoWorkerQueueActive(options: Readonly<{
         telemetryEnabled: boolean;
         capabilityStalenessMs: number;
+        revalidationTimeoutMs?: number;
         revalidateCapabilities?: () => Promise<void>;
     }>): Promise<void> {
         await markNativeCryptoWorkerQueueActive({
             telemetry: syncPerformanceTelemetry,
             telemetryEnabled: options.telemetryEnabled,
             capabilityStalenessMs: options.capabilityStalenessMs,
+            revalidationTimeoutMs: options.revalidationTimeoutMs,
             revalidateCapabilities: options.revalidateCapabilities,
         });
     }

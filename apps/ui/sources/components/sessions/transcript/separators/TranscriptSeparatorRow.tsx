@@ -16,10 +16,12 @@ export function TranscriptSeparatorRow(props: Readonly<{
   chipTestID?: string;
   accessibilityLabel?: string;
   padding?: 'default' | 'none';
+  chipChrome?: 'default' | 'minimal';
   containerStyle?: ViewStyle | null;
 }>): React.ReactElement {
   const { theme } = useUnistyles();
   const padding = props.padding === 'none' ? 'none' : 'default';
+  const chipChrome = props.chipChrome === 'minimal' ? 'minimal' : 'default';
   const chipContent = (
     <>
       <Ionicons name={props.iconName} size={14} color={theme.colors.text.secondary} />
@@ -54,8 +56,10 @@ export function TranscriptSeparatorRow(props: Readonly<{
             onPress={props.onPress}
             accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel ?? props.title}
+            hitSlop={chipChrome === 'minimal' ? 10 : undefined}
             style={({ pressed }) => [
               styles.chip,
+              chipChrome === 'minimal' ? styles.chipMinimal : null,
               { backgroundColor: theme.colors.surface.base, borderColor: theme.colors.border.default, opacity: pressed ? 0.82 : 1 },
             ]}
           >
@@ -64,7 +68,11 @@ export function TranscriptSeparatorRow(props: Readonly<{
         ) : (
           <View
             testID={props.chipTestID}
-            style={[styles.chip, { backgroundColor: theme.colors.surface.base, borderColor: theme.colors.border.default }]}
+            style={[
+              styles.chip,
+              chipChrome === 'minimal' ? styles.chipMinimal : null,
+              { backgroundColor: theme.colors.surface.base, borderColor: theme.colors.border.default },
+            ]}
           >
             {chipContent}
           </View>
@@ -107,6 +115,11 @@ const styles = StyleSheet.create((_theme) => ({
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
+  },
+  chipMinimal: {
+    borderWidth: 0,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
   },
   textStack: {
     flex: 1,

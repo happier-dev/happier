@@ -6,7 +6,10 @@ import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const hydrateSessionSpy = vi.hoisted(() => vi.fn<(sessionId: string, reason: string) => boolean>(() => true));
+const hydrateSessionSpy = vi.hoisted(() => vi.fn((sessionId: string, reason: string) => ({
+    kind: 'available' as const,
+    sessionId,
+})));
 const detailsViewSpy = vi.hoisted(() => vi.fn<(props: any, ref?: any) => React.ReactElement>((props) => React.createElement('SessionExecutionRunDetailsView', props)));
 
 const routerMock = createExpoRouterMock({

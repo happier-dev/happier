@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { installServerSettingsHooksCommonModuleMocks } from './serverSettingsHooksTestHelpers';
 
 
@@ -13,7 +14,7 @@ vi.mock('@/sync/domains/server/serverConfig', () => ({
     validateServerUrl: () => ({ valid: true, error: null }),
 }));
 
-const upsertServerProfileMock = vi.fn((..._args: unknown[]) => ({
+const upsertServerProfileMock = vi.fn((..._args: unknown[]): ServerProfile => ({
     id: 'p0',
     serverUrl: 'http://example.test',
     name: 'Example',
@@ -21,18 +22,30 @@ const upsertServerProfileMock = vi.fn((..._args: unknown[]) => ({
     updatedAt: 0,
     lastUsedAt: 0,
 }));
+const getServerProfileByIdMock = vi.fn((id: string) => {
+    const profile = upsertServerProfileMock.mock.results
+        .map((result) => result.value)
+        .reverse()
+        .find((value) => value?.id === id);
+    return profile ?? null;
+});
 const removeServerProfileMock = vi.fn((..._args: unknown[]) => undefined);
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-a', serverUrl: 'https://a.example.test', generation: 1 }),
+    getServerProfileById: (...args: [string]) => getServerProfileByIdMock(...args),
     upsertServerProfile: (...args: unknown[]) => upsertServerProfileMock(...args),
     removeServerProfile: (...args: unknown[]) => removeServerProfileMock(...args),
+    resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => profile.serverIdentityId ?? profile.id,
 }));
 
 const getServerFeaturesSnapshotMock = vi.fn(async (..._args: unknown[]) => ({
     status: 'ready',
     features: {
         features: {},
-        capabilities: { server: { canonicalServerUrl: 'https://canonical.example.test' } },
+        capabilities: {
+            server: { canonicalServerUrl: 'https://canonical.example.test' },
+            serverIdentity: { serverIdentityId: null as string | null },
+        },
     },
 }));
 vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
@@ -42,8 +55,19 @@ vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
 describe('useServerAutoAddFromRoute (canonical URL adoption)', () => {
     beforeEach(() => {
         upsertServerProfileMock.mockReset();
+        getServerProfileByIdMock.mockReset();
         removeServerProfileMock.mockReset();
         getServerFeaturesSnapshotMock.mockReset();
+        getServerFeaturesSnapshotMock.mockResolvedValue({
+            status: 'ready',
+            features: {
+                features: {},
+                capabilities: {
+                    server: { canonicalServerUrl: 'https://canonical.example.test' },
+                    serverIdentity: { serverIdentityId: null as string | null },
+                },
+            },
+        });
     });
 
     it('adopts canonicalServerUrl from /v1/features without prompting', async () => {
@@ -84,7 +108,10 @@ describe('useServerAutoAddFromRoute (canonical URL adoption)', () => {
             status: 'ready',
             features: {
                 features: {},
-                capabilities: { server: { canonicalServerUrl: 'https://canonical.example.test' } },
+                capabilities: {
+                    server: { canonicalServerUrl: 'https://canonical.example.test' },
+                    serverIdentity: { serverIdentityId: null as string | null },
+                },
             },
         });
 
@@ -110,6 +137,60 @@ describe('useServerAutoAddFromRoute (canonical URL adoption)', () => {
 
         expect(removeServerProfileMock).not.toHaveBeenCalled();
         expect(onSwitchServerById).toHaveBeenCalledWith('p1', expect.anything());
+        expect(onAfterSuccess).toHaveBeenCalled();
+    });
+
+    it('switches by server identity id when the features probe learns a stable identity', async () => {
+        upsertServerProfileMock.mockReturnValueOnce({
+            id: 'p1',
+            serverUrl: 'http://127.0.0.1:3005',
+            name: 'Local',
+            serverIdentityId: 'srv_identity_route',
+            createdAt: 0,
+            updatedAt: 0,
+            lastUsedAt: 0,
+        });
+        getServerProfileByIdMock.mockReturnValueOnce({
+            id: 'p1',
+            serverUrl: 'http://127.0.0.1:3005',
+            name: 'Local',
+            serverIdentityId: 'srv_identity_route',
+            createdAt: 0,
+            updatedAt: 0,
+            lastUsedAt: 0,
+        });
+        getServerFeaturesSnapshotMock.mockResolvedValueOnce({
+            status: 'ready',
+            features: {
+                features: {},
+                capabilities: {
+                    server: { canonicalServerUrl: 'http://127.0.0.1:3005' },
+                    serverIdentity: { serverIdentityId: 'srv_identity_route' },
+                },
+            },
+        });
+
+        const onSwitchServerById = vi.fn(async () => {});
+        const onAfterSuccess = vi.fn();
+
+        const { useServerAutoAddFromRoute } = await import('./useServerAutoAddFromRoute');
+
+        function Probe() {
+            useServerAutoAddFromRoute({
+                enabled: true,
+                url: 'http://127.0.0.1:3005',
+                validateServerReachable: async () => true,
+                setError: vi.fn(),
+                onSwitchServerById,
+                onAfterSuccess,
+                source: 'url',
+            });
+            return null;
+        }
+
+        await renderScreen(React.createElement(Probe));
+
+        expect(onSwitchServerById).toHaveBeenCalledWith('srv_identity_route', expect.anything());
         expect(onAfterSuccess).toHaveBeenCalled();
     });
 });

@@ -9,6 +9,8 @@ import { installSessionRouteCommonModuleMocks } from './[id]/sessionRouteTestHel
 const navigateToSessionSpy = vi.fn();
 const flatListMock = createCapturingFlatListMock({ renderItems: true });
 const fetchArchivedSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
+const fetchMoreArchivedSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
+const fetchMoreSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
 const sessionUnarchiveWithServerScopeSpy = vi.hoisted(() => vi.fn(async () => ({ success: true, archivedAt: null })));
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 let capturedSectionListProps: any | null = null;
@@ -85,6 +87,8 @@ vi.mock('@/hooks/session/useNavigateToSession', () => ({
 vi.mock('@/sync/sync', () => ({
     sync: {
         fetchArchivedSessions: fetchArchivedSessionsSpy,
+        fetchMoreArchivedSessions: fetchMoreArchivedSessionsSpy,
+        fetchMoreSessions: fetchMoreSessionsSpy,
     },
 }));
 
@@ -96,6 +100,8 @@ describe('session history navigation', () => {
     beforeEach(() => {
         navigateToSessionSpy.mockReset();
         fetchArchivedSessionsSpy.mockReset();
+        fetchMoreArchivedSessionsSpy.mockReset();
+        fetchMoreSessionsSpy.mockReset();
         sessionUnarchiveWithServerScopeSpy.mockReset();
         sessionUnarchiveWithServerScopeSpy.mockResolvedValue({ success: true, archivedAt: null });
         modalAlertSpy.mockReset();
@@ -136,6 +142,19 @@ describe('session history navigation', () => {
         expect(fetchArchivedSessionsSpy).toHaveBeenCalledTimes(1);
     });
 
+    it('loads more archived and hidden inactive pages when the archived route reaches the end', async () => {
+        hideInactiveSessions = true;
+
+        const ArchivedSessionsScreen = (await import('@/app/(app)/session/archived')).default;
+        await renderScreen(React.createElement(ArchivedSessionsScreen));
+
+        expect(typeof capturedSectionListProps?.onEndReached).toBe('function');
+        capturedSectionListProps?.onEndReached?.();
+
+        expect(fetchMoreSessionsSpy).toHaveBeenCalledTimes(1);
+        expect(fetchMoreArchivedSessionsSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('passes the row server id when unarchiving an archived session', async () => {
         const ArchivedSessionsScreen = (await import('@/app/(app)/session/archived')).default;
         const screen = await renderScreen(React.createElement(ArchivedSessionsScreen));
@@ -174,6 +193,46 @@ describe('session history navigation', () => {
         const screen = await renderScreen(React.createElement(ArchivedSessionsScreen));
 
         expect(screen.getTextContent()).toContain('Cached archived session');
+    });
+
+    it('keeps archived rows distinct when server scopes reuse a session id', async () => {
+        sessionListRowStateByServerId = {
+            'server-a': {
+                shared: {
+                    id: 'shared-archived-session',
+                    active: false,
+                    archivedAt: 180,
+                    updatedAt: 180,
+                    metadata: { name: 'Server A archived session' },
+                    accessLevel: 'admin',
+                },
+            },
+            'server-b': {
+                shared: {
+                    id: 'shared-archived-session',
+                    active: false,
+                    archivedAt: 190,
+                    updatedAt: 190,
+                    metadata: { name: 'Server B archived session' },
+                    accessLevel: 'admin',
+                },
+            },
+        };
+
+        const ArchivedSessionsScreen = (await import('@/app/(app)/session/archived')).default;
+        const screen = await renderScreen(React.createElement(ArchivedSessionsScreen));
+
+        expect(screen.getTextContent()).toContain('Server A archived session');
+        expect(screen.getTextContent()).toContain('Server B archived session');
+        const archivedSection = capturedSectionListProps?.sections.find((section: any) => section.kind === 'archived');
+        const rowKeys = archivedSection?.data.map((item: any, index: number) =>
+            capturedSectionListProps?.keyExtractor(item, index),
+        );
+        expect(new Set(rowKeys)).toEqual(new Set([
+            'server-archived:session-archived-1',
+            'server-a:shared-archived-session',
+            'server-b:shared-archived-session',
+        ]));
     });
 
     it('shows inactive sessions before archived sessions on the archived screen when hide inactive sessions is enabled', async () => {

@@ -11,9 +11,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { useAuth } from '@/auth/context/AuthContext';
-import { sync } from '@/sync/sync';
 import { exchangeConnectedServiceOauthViaProxy } from '@/sync/api/account/apiConnectedServicesV2';
-import { storeConnectedServiceCredentialForAccount } from '@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount';
 import { generateOauthState, generatePkceCodes, parseOauthCallbackUrl } from '@/utils/auth/oauthCore';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
@@ -29,6 +27,8 @@ import { getConnectedServiceOauthAdapter } from '@/sync/domains/connectedService
 import { buildOauthRecordFromProxyPayload, parseConnectedServiceOauthProxyBundle } from '@/sync/domains/connectedServices/oauth/connectedServiceOauthProxyBundle';
 import { resolveConnectedServiceOauthPasteCopy } from './oauth/resolveConnectedServiceOauthPasteCopy';
 import { resolveConnectedServiceOauthErrorMessage } from './oauth/resolveConnectedServiceOauthErrorMessage';
+import { storeConnectedServiceCredentialWithIdentityConfirmation } from './storeConnectedServiceCredentialWithIdentityConfirmation';
+import { runConnectedServiceCredentialStoredEffects } from './runConnectedServiceCredentialStoredEffects';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
@@ -130,9 +130,13 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
         payload,
       });
 
-      await storeConnectedServiceCredentialForAccount(credentials, { serviceId, profileId, record });
+      const stored = await storeConnectedServiceCredentialWithIdentityConfirmation(
+        credentials,
+        { serviceId, profileId, record },
+        { onStored: runConnectedServiceCredentialStoredEffects },
+      );
+      if (!stored) return;
 
-      await sync.refreshProfile();
       await Modal.alert(
         t('connectedServices.oauthPaste.alerts.connectedTitle'),
         t('connectedServices.oauthPaste.alerts.connectedBody', { serviceId, profileId })

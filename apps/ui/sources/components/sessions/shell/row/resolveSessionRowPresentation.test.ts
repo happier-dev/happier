@@ -6,6 +6,37 @@ import {
     shouldShowMinimalSessionStatusLine,
 } from './resolveSessionRowPresentation';
 
+type SessionRowAttentionState =
+    | 'quiet'
+    | 'unread'
+    | 'pending'
+    | 'working'
+    | 'ready'
+    | 'failed'
+    | 'permission_required'
+    | 'action_required';
+
+type ResolveSessionRowPresentation = (input: Readonly<{
+    attentionState: SessionRowAttentionState;
+    density: 'default' | 'compact' | 'minimal';
+    requestedSecondaryLineMode: 'status' | 'path';
+    hasPathSubtitle: boolean;
+}>) => Readonly<{
+    attentionIndicator: 'none' | 'working' | 'ready' | 'failed' | 'unread' | 'pending' | 'permission' | 'action';
+    titleTone: 'quiet' | 'normal' | 'emphasized';
+    secondaryLine: 'none' | 'path' | 'status';
+    statusTextKey?: 'status.readyForReview' | 'status.error';
+}>;
+
+async function loadRowPresentationResolver(): Promise<ResolveSessionRowPresentation> {
+    const module = await import('./resolveSessionRowPresentation');
+    const resolver = (module as Partial<{
+        resolveSessionRowPresentation: ResolveSessionRowPresentation;
+    }>).resolveSessionRowPresentation;
+    expect(resolver).toBeTypeOf('function');
+    return resolver as ResolveSessionRowPresentation;
+}
+
 function createSessionStatus(overrides: Partial<SessionStatus> = {}): SessionStatus {
     return {
         state: 'waiting',
@@ -48,17 +79,79 @@ describe('resolveSessionRowPresentation', () => {
         })).toBe(true);
     });
 
-    it('shows a minimal-row status line only for meaningful active states', () => {
+    it('hides minimal-row status text for working states because the indicator owns attention', () => {
         expect(shouldShowMinimalSessionStatusLine(
             createSessionStatus({
                 state: 'thinking',
                 shouldShowStatus: true,
                 statusText: 'Working on it',
             }),
-        )).toBe(true);
+        )).toBe(false);
     });
 
     it('hides a minimal-row status line for quiet online sessions', () => {
         expect(shouldShowMinimalSessionStatusLine(createSessionStatus())).toBe(false);
+    });
+
+    it('keeps minimal working rows to an indicator without a secondary line', async () => {
+        const resolveSessionRowPresentation = await loadRowPresentationResolver();
+
+        expect(resolveSessionRowPresentation({
+            attentionState: 'working',
+            density: 'minimal',
+            requestedSecondaryLineMode: 'status',
+            hasPathSubtitle: true,
+        })).toEqual({
+            attentionIndicator: 'working',
+            titleTone: 'emphasized',
+            secondaryLine: 'none',
+        });
+    });
+
+    it('uses a ready-for-review status subtitle for non-minimal ready rows', async () => {
+        const resolveSessionRowPresentation = await loadRowPresentationResolver();
+
+        expect(resolveSessionRowPresentation({
+            attentionState: 'ready',
+            density: 'default',
+            requestedSecondaryLineMode: 'path',
+            hasPathSubtitle: true,
+        })).toEqual({
+            attentionIndicator: 'ready',
+            titleTone: 'emphasized',
+            secondaryLine: 'status',
+            statusTextKey: 'status.readyForReview',
+        });
+    });
+
+    it('uses an error status subtitle for non-minimal failed rows', async () => {
+        const resolveSessionRowPresentation = await loadRowPresentationResolver();
+
+        expect(resolveSessionRowPresentation({
+            attentionState: 'failed',
+            density: 'default',
+            requestedSecondaryLineMode: 'path',
+            hasPathSubtitle: true,
+        })).toEqual({
+            attentionIndicator: 'failed',
+            titleTone: 'emphasized',
+            secondaryLine: 'status',
+            statusTextKey: 'status.error',
+        });
+    });
+
+    it('does not show online status text for quiet rows', async () => {
+        const resolveSessionRowPresentation = await loadRowPresentationResolver();
+
+        expect(resolveSessionRowPresentation({
+            attentionState: 'quiet',
+            density: 'default',
+            requestedSecondaryLineMode: 'status',
+            hasPathSubtitle: true,
+        })).toEqual({
+            attentionIndicator: 'none',
+            titleTone: 'quiet',
+            secondaryLine: 'none',
+        });
     });
 });

@@ -2,6 +2,8 @@ import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { QRAuthKeyPair } from './qrStart';
 import { decryptBox } from '@/encryption/libsodium';
 import { serverFetch } from '@/sync/http/client';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 import { delay } from '@/utils/timing/time';
 
@@ -14,8 +16,8 @@ export async function authQRWait(keypair: QRAuthKeyPair, onProgress?: (dots: num
     let dots = 0;
 
     type Requested = { state: 'requested' };
-    type AuthorizedV1 = { state: 'authorized'; token: string; response: string };
-    type AuthorizedV2 = { state: 'authorized'; tokenEncrypted: string; response: string };
+    type AuthorizedV1 = { state: 'authorized'; token: string; response: string; serverIdentityId?: string | null };
+    type AuthorizedV2 = { state: 'authorized'; tokenEncrypted: string; response: string; serverIdentityId?: string | null };
     type AuthPollResponse = Requested | AuthorizedV1 | AuthorizedV2;
 
     while (true) {
@@ -68,6 +70,10 @@ export async function authQRWait(keypair: QRAuthKeyPair, onProgress?: (dots: num
                         : data.token;
                 if (!token) {
                     return null;
+                }
+
+                if (data.serverIdentityId) {
+                    setServerProfileIdentityForUrl(getActiveServerSnapshot().serverUrl, data.serverIdentityId);
                 }
 
                 const encryptedResponse = decodeBase64(data.response);

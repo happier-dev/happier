@@ -10,7 +10,7 @@ export type ItemAction = {
      * or a fully-rendered icon node for custom surfaces (e.g. header icons with badges).
      */
     icon: React.ComponentProps<typeof Ionicons>['name'] | React.ReactElement;
-    onPress: () => void;
+    onPress?: () => void;
     /** Optional testID for the inline icon pressable. */
     inlineTestID?: string;
     disabled?: boolean;

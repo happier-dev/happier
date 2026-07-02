@@ -292,6 +292,98 @@ describe('FileContentPanel', () => {
         expect(markdownViewPropsState.current?.renderAfterSourceRange).toEqual(expect.any(Function));
     });
 
+    it('lets saved markdown review comments be edited from the markdown source range', async () => {
+        const { FileContentPanel } = await import('./FileContentPanel');
+
+        markdownViewPropsState.current = null;
+
+        const panel = await renderScreen(<FileContentPanel
+            theme={theme as any}
+            displayMode={'markdown' as any}
+            sessionId="s1"
+            filePath="README.md"
+            diffContent={null}
+            fileContent={'# Title\n\nBody'}
+            language="markdown"
+            selectedLineKeys={new Set()}
+            lineSelectionEnabled={false}
+            onToggleLine={vi.fn()}
+            reviewCommentsEnabled
+            reviewCommentModeActive
+            reviewCommentDrafts={[{
+                id: 'markdown-draft-1',
+                filePath: 'README.md',
+                source: 'file',
+                anchor: {
+                    kind: 'range',
+                    filePath: 'README.md',
+                    startLine: 3,
+                    endLine: 3,
+                },
+                snapshot: {
+                    selectedLines: ['Body'],
+                    beforeContext: ['# Title'],
+                    afterContext: [],
+                },
+                body: 'Clarify this paragraph.',
+                createdAt: 1,
+            }]}
+        />);
+
+        const action = {
+            sourceRange: { startLine: 3, endLine: 3 },
+            markdown: '# Title\n\nBody',
+        };
+        const savedComment = await renderScreen(<>{markdownViewPropsState.current?.renderAfterSourceRange(action)}</>);
+
+        expect(savedComment.findByTestId('review-comment-draft-edit:markdown-draft-1')).toBeTruthy();
+
+        await act(async () => {
+            await savedComment.pressByTestIdAsync('review-comment-draft-edit:markdown-draft-1');
+        });
+
+        await act(async () => {
+            panel.tree.update(<FileContentPanel
+                theme={theme as any}
+                displayMode={'markdown' as any}
+                sessionId="s1"
+                filePath="README.md"
+                diffContent={null}
+                fileContent={'# Title\n\nBody'}
+                language="markdown"
+                selectedLineKeys={new Set()}
+                lineSelectionEnabled={false}
+                onToggleLine={vi.fn()}
+                reviewCommentsEnabled
+                reviewCommentModeActive
+                reviewCommentDrafts={[{
+                    id: 'markdown-draft-1',
+                    filePath: 'README.md',
+                    source: 'file',
+                    anchor: {
+                        kind: 'range',
+                        filePath: 'README.md',
+                        startLine: 3,
+                        endLine: 3,
+                    },
+                    snapshot: {
+                        selectedLines: ['Body'],
+                        beforeContext: ['# Title'],
+                        afterContext: [],
+                    },
+                    body: 'Clarify this paragraph.',
+                    createdAt: 1,
+                }]}
+            />);
+        });
+
+        const editor = await renderScreen(<>{markdownViewPropsState.current?.renderAfterSourceRange(action)}</>);
+        const inputs = editor.findAllByType('TextInput' as any);
+
+        expect(inputs).toHaveLength(1);
+        expect(inputs[0]!.props.value).toBe('Clarify this paragraph.');
+    });
+
     it('uses a gesture-handler ScrollView for no-wrap file content on Android', async () => {
         const { FileContentPanel } = await import('./FileContentPanel');
 
@@ -315,7 +407,7 @@ describe('FileContentPanel', () => {
         expect(scrollView.props.disallowInterruption).toBe(true);
     });
 
-    it('disables virtualization when review comments are enabled', async () => {
+    it('disables virtualization when review comment mode is active', async () => {
         const { FileContentPanel } = await import('./FileContentPanel');
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -332,10 +424,34 @@ describe('FileContentPanel', () => {
                     lineSelectionEnabled={false}
                     onToggleLine={vi.fn()}
                     reviewCommentsEnabled
+                    reviewCommentModeActive
                     reviewCommentDrafts={[]}
                 />)).tree;
 
         expect(codeLinesViewPropsState.current?.virtualized).toBe(false);
+    });
+
+    it('keeps file virtualization available when review comments are inactive and there are no drafts', async () => {
+        thresholds = { lineThreshold: 50_000, byteThreshold: 100 };
+        const { FileContentPanel } = await import('./FileContentPanel');
+        codeLinesViewPropsState.current = null;
+
+        await renderScreen(<FileContentPanel
+                    theme={theme as any}
+                    displayMode="file"
+                    sessionId="s1"
+                    filePath="src/minified.js"
+                    diffContent={null}
+                    fileContent={'a'.repeat(2_000)}
+                    language="javascript"
+                    selectedLineKeys={new Set()}
+                    lineSelectionEnabled={false}
+                    onToggleLine={vi.fn()}
+                    reviewCommentsEnabled
+                    reviewCommentDrafts={[]}
+                />);
+
+        expect(codeLinesViewPropsState.current?.virtualized).toBe(true);
     });
 
     it('enables virtualization for large file content when review comments are enabled', async () => {
@@ -384,6 +500,57 @@ describe('FileContentPanel', () => {
                 />)).tree;
 
         expect(diffViewerPropsState.current?.virtualized).toBe(true);
+    });
+
+    it('does not wrap virtualized diffs in an outer vertical ScrollView', async () => {
+        thresholds = { lineThreshold: 50_000, byteThreshold: 100 };
+        const { FileContentPanel } = await import('./FileContentPanel');
+        diffViewerPropsState.current = null;
+
+        const screen = await renderScreen(<FileContentPanel
+                    theme={theme as any}
+                    displayMode="diff"
+                    sessionId="s1"
+                    filePath="src/a.ts"
+                    diffContent={'a'.repeat(2_000)}
+                    fileContent={null}
+                    language="typescript"
+                    selectedLineKeys={new Set()}
+                    lineSelectionEnabled={false}
+                    onToggleLine={vi.fn()}
+                    reviewCommentsEnabled
+                    reviewCommentDrafts={[]}
+                    scrollTestID="diff-scroll-host"
+                />);
+
+        expect(diffViewerPropsState.current?.virtualized).toBe(true);
+        expect(diffViewerPropsState.current?.testID).toBe('diff-scroll-host');
+        expect(screen.tree.root.findAllByType('ScrollView' as any)).toHaveLength(0);
+    });
+
+    it('ignores empty review comment draft array churn when comments do not affect rendered output', async () => {
+        const { areFileContentPanelPropsEqual } = await import('./FileContentPanel');
+        const baseProps = {
+            theme,
+            displayMode: 'file' as const,
+            sessionId: 's1',
+            filePath: 'src/a.ts',
+            diffContent: null,
+            fileContent: 'const a = 1;',
+            language: 'typescript',
+            selectedLineKeys: new Set<string>(),
+            lineSelectionEnabled: false,
+            onToggleLine: vi.fn(),
+            reviewCommentsEnabled: true,
+            reviewCommentDrafts: [],
+            onUpsertReviewCommentDraft: vi.fn(),
+        };
+
+        expect(areFileContentPanelPropsEqual(baseProps as any, {
+            ...baseProps,
+            reviewCommentDrafts: [],
+            onUpsertReviewCommentDraft: vi.fn(),
+        } as any)).toBe(true);
     });
 
     it('passes scroll/highlight target for fileLine anchors', async () => {

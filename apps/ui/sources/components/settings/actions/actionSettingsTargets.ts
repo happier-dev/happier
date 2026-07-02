@@ -16,6 +16,12 @@ export {
     setActionTargetSelected,
 } from './actionSettingsTargetSelection';
 export {
+    resolveActionSettingsToolExposureState,
+    setActionSettingsToolExposureMode,
+    type ActionSettingsToolExposureControlValue,
+    type ActionSettingsToolExposureState,
+} from './actionSettingsToolExposure';
+export {
     getActionTargetApprovalRequired,
     isActionSettingsApprovalAction,
     resolveActionSettingsApprovalSurface,

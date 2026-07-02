@@ -2,9 +2,12 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { findTestInstanceByTypeContainingText, pressTestInstance, renderScreen } from '@/dev/testkit';
+import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import { installSourceControlCommitSelectionCommonModuleMocks } from './sourceControlCommitSelectionTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const selectionHeaderTheme = createThemeFixture();
 
 installSourceControlCommitSelectionCommonModuleMocks({
     text: async () => {
@@ -29,7 +32,7 @@ describe('ScmChangesSelectionHeaderRow', () => {
 
         const screen = await renderScreen(
             <ScmChangesSelectionHeaderRow
-                theme={{ colors: { divider: '#000', textSecondary: '#aaa', textLink: '#09f', surfaceHigh: '#222' } }}
+                theme={selectionHeaderTheme}
                 selectedCount={2}
                 totalCount={5}
                 onSelectAll={onSelectAll}
@@ -58,7 +61,7 @@ describe('ScmChangesSelectionHeaderRow', () => {
 
         const screen = await renderScreen(
             <ScmChangesSelectionHeaderRow
-                theme={{ colors: { divider: '#000', textSecondary: '#aaa', textLink: '#09f', surfaceHigh: '#222' } }}
+                theme={selectionHeaderTheme}
                 selectedCount={0}
                 totalCount={5}
             />,

@@ -9,12 +9,11 @@ import { Typography } from "@/constants/Typography";
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { DependabotIcon } from '@/components/ui/icons/DependabotIcon';
 import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useEntitlement, useLocalSettingMutable, useSetting, useProfile } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
-import { trackPaywallButtonClicked, trackWhatsNewClicked } from '@/track';
+import { trackPaywallButtonClicked } from '@/track';
 import { Modal } from '@/modal';
 import { useMultiClick } from '@/hooks/ui/useMultiClick';
 import { useUnistyles } from 'react-native-unistyles';
@@ -24,7 +23,7 @@ import { disconnectVendorToken } from '@/sync/api/account/apiVendorTokens';
 import { getDisplayName, getAvatarUrl, getBio } from '@/sync/domains/profiles/profile';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { t } from '@/text';
-import { canRequestReview, requestReview } from '@/utils/system/requestReview';
+import { canRequestReview } from '@/utils/system/requestReview';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromConnectedServiceId } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior';
@@ -41,12 +40,16 @@ import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristi
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { isTauriDesktop } from '@/utils/platform/tauri';
-import { DesktopSettingsEntry } from '@/components/settings/desktop/DesktopSettingsEntry';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
+import { SettingsBelowFoldSections } from '@/components/settings/SettingsBelowFoldSections';
+import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { useScannedAuthUrlProcessor } from '@/hooks/auth/useScannedAuthUrlProcessor';
 import { resolveConnectedServiceDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
 
 const Ionicons = SafeIonicons;
+
+const DEFER_BELOW_FOLD_SETTINGS_SECTIONS_DELAY_MS = 0;
+const DEFER_BELOW_FOLD_SETTINGS_STAGE_DELAY_MS = 16;
 
 export const SettingsView = React.memo(function SettingsView() {
     const { theme } = useUnistyles();
@@ -103,6 +106,7 @@ export const SettingsView = React.memo(function SettingsView() {
 
     const showHiddenSettingsButtons = devModeEnabled;
     const showDesktopSettings = isTauriDesktop();
+    const [belowFoldSettingsStage, setBelowFoldSettingsStage] = React.useState(0);
 
     const { connectTerminal, isLoading } = useConnectTerminal();
     const { processAuthUrl } = useScannedAuthUrlProcessor();
@@ -112,6 +116,36 @@ export const SettingsView = React.memo(function SettingsView() {
             fireAndForget(sync.refreshMachinesThrottled({ staleMs: 30_000 }), { tag: 'SettingsView.refreshMachinesThrottled' });
         }, [])
     );
+
+    React.useEffect(() => {
+        if (belowFoldSettingsStage >= 4) return undefined;
+
+        const nextStage = belowFoldSettingsStage + 1;
+        const delayMs = belowFoldSettingsStage === 0
+            ? DEFER_BELOW_FOLD_SETTINGS_SECTIONS_DELAY_MS
+            : DEFER_BELOW_FOLD_SETTINGS_STAGE_DELAY_MS;
+        let cancelStageTimer: (() => void) | undefined;
+
+        const scheduleNextStage = () => {
+            const timer = setTimeout(() => {
+                setBelowFoldSettingsStage((currentStage) => Math.max(currentStage, nextStage));
+            }, delayMs);
+            cancelStageTimer = () => clearTimeout(timer);
+        };
+
+        if (belowFoldSettingsStage === 0) {
+            const cancelInteractions = runAfterInteractionsWithFallback(scheduleNextStage);
+            return () => {
+                cancelStageTimer?.();
+                cancelInteractions();
+            };
+        }
+
+        scheduleNextStage();
+        return () => {
+            cancelStageTimer?.();
+        };
+    }, [belowFoldSettingsStage]);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -215,6 +249,87 @@ export const SettingsView = React.memo(function SettingsView() {
               await sync.refreshProfile();
           }
       });
+
+    const profileAndAccountSection = React.useMemo(() => (
+        <ItemGroup title={t('settings.profileAndAccount')}>
+            <Item
+                title={t('settings.account')}
+                subtitle={t('settings.accountSubtitle')}
+                icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.accent.blue} />}
+                onPress={() => router.push('/(app)/settings/account')}
+            />
+            {useProfiles ? (
+                <Item
+                    title={t('settings.secrets')}
+                    subtitle={t('settings.secretsSubtitle')}
+                    icon={<Ionicons name="key-outline" size={29} color={theme.colors.accent.purple} />}
+                    onPress={() => router.push('/(app)/settings/secrets')}
+                />
+            ) : null}
+            {usageReportingEnabled ? (
+                <Item
+                    title={t('settings.usage')}
+                    subtitle={t('settings.usageSubtitle')}
+                    icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.accent.blue} />}
+                    onPress={() => router.push('/(app)/settings/usage')}
+                />
+            ) : null}
+            <Item
+                title={t('settings.machines')}
+                icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.accent.orange} />}
+                onPress={() => pushRoute('/(app)/settings/machines')}
+            />
+            {showDesktopSettings && remoteHostsManagementEnabled ? (
+                <Item
+                    title={t('settings.remoteHostsTitle')}
+                    icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.orange} />}
+                    onPress={() => pushRoute('/(app)/settings/remote-hosts')}
+                />
+            ) : null}
+        </ItemGroup>
+    ), [
+        pushRoute,
+        remoteHostsManagementEnabled,
+        router,
+        showDesktopSettings,
+        theme.colors.accent.blue,
+        theme.colors.accent.orange,
+        theme.colors.accent.purple,
+        usageReportingEnabled,
+        useProfiles,
+    ]);
+
+    const generalSection = React.useMemo(() => (
+        <ItemGroup title={t('settings.general')}>
+            <Item
+                title={t('settings.appearance')}
+                subtitle={t('settings.appearanceSubtitle')}
+                icon={<Ionicons name="color-palette-outline" size={29} color={theme.colors.accent.indigo} />}
+                onPress={() => pushRoute('/(app)/settings/appearance')}
+            />
+            {petsCompanionEnabled ? (
+                <Item
+                    testID="settings-pets-row"
+                    title={t('settings.pets')}
+                    subtitle={t('settings.petsSubtitle')}
+                    icon={<Ionicons name="paw-outline" size={29} color={theme.colors.accent.green} />}
+                    onPress={() => pushRoute('/(app)/settings/pets')}
+                />
+            ) : null}
+            <Item
+                title={t('settings.featuresTitle')}
+                subtitle={t('settings.featuresSubtitle')}
+                icon={<Ionicons name="flask-outline" size={29} color={theme.colors.accent.orange} />}
+                onPress={() => pushRoute('/(app)/settings/features')}
+            />
+        </ItemGroup>
+    ), [
+        petsCompanionEnabled,
+        pushRoute,
+        theme.colors.accent.green,
+        theme.colors.accent.indigo,
+        theme.colors.accent.orange,
+    ]);
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
@@ -353,325 +468,38 @@ export const SettingsView = React.memo(function SettingsView() {
             </ItemGroup> */}
 
             {/* Profile & Account */}
-            <ItemGroup title={t('settings.profileAndAccount')}>
-                <Item
-                    title={t('settings.account')}
-                    subtitle={t('settings.accountSubtitle')}
-                    icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={() => router.push('/(app)/settings/account')}
-                />
-                {useProfiles && (
-                    <Item
-                        title={t('settings.secrets')}
-                        subtitle={t('settings.secretsSubtitle')}
-                        icon={<Ionicons name="key-outline" size={29} color={theme.colors.accent.purple} />}
-                        onPress={() => router.push('/(app)/settings/secrets')}
-                    />
-                )}
-                {usageReportingEnabled && (
-                    <Item
-                        title={t('settings.usage')}
-                        subtitle={t('settings.usageSubtitle')}
-                        icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.accent.blue} />}
-                        onPress={() => router.push('/(app)/settings/usage')}
-                    />
-                )}
-                <Item
-                    title={t('settings.machines')}
-                    icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => pushRoute('/(app)/settings/machines')}
-                />
-                {showDesktopSettings && remoteHostsManagementEnabled ? (
-                    <Item
-                        title={t('settings.remoteHostsTitle')}
-                        icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.orange} />}
-                        onPress={() => pushRoute('/(app)/settings/remote-hosts')}
-                    />
-                ) : null}
-            </ItemGroup>
+            {profileAndAccountSection}
 
             {/* General */}
-            <ItemGroup title={t('settings.general')}>
-                <Item
-                    title={t('settings.appearance')}
-                    subtitle={t('settings.appearanceSubtitle')}
-                    icon={<Ionicons name="color-palette-outline" size={29} color={theme.colors.accent.indigo} />}
-                    onPress={() => pushRoute('/(app)/settings/appearance')}
-                />
-                {petsCompanionEnabled ? (
-                    <Item
-                        testID="settings-pets-row"
-                        title={t('settings.pets')}
-                        subtitle={t('settings.petsSubtitle')}
-                        icon={<Ionicons name="paw-outline" size={29} color={theme.colors.accent.green} />}
-                        onPress={() => pushRoute('/(app)/settings/pets')}
-                    />
-                ) : null}
-                <Item
-                    title={t('settings.featuresTitle')}
-                    subtitle={t('settings.featuresSubtitle')}
-                    icon={<Ionicons name="flask-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => pushRoute('/(app)/settings/features')}
-                />
-            </ItemGroup>
+            {generalSection}
 
-            {/* AI & Agents */}
-            <ItemGroup title={t('settings.aiAndAgents')}>
-                <Item
-                    title={t('settingsProviders.title')}
-                    subtitle={t('settingsProviders.entrySubtitle')}
-                    icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => router.push('/(app)/settings/providers')}
+            {belowFoldSettingsStage > 0 ? (
+                <SettingsBelowFoldSections
+                    appVersion={appVersion}
+                    attachmentsUploadsEnabled={attachmentsUploadsEnabled}
+                    automationsNeedLocalEnablement={automationsNeedLocalEnablement}
+                    connectedServicesEnabled={connectedServicesEnabled}
+                    devModeEnabled={devModeEnabled}
+                    executionRunsEnabled={executionRunsEnabled}
+                    handleGitHub={handleGitHub}
+                    handleReportIssue={handleReportIssue}
+                    handleVersionClick={handleVersionClick}
+                    mcpServersEnabled={mcpServersEnabled}
+                    memorySearchEnabled={memorySearchEnabled}
+                    promptsLibraryEnabled={promptsLibraryEnabled}
+                    router={router}
+                    showAutomations={showAutomations}
+                    showChangelog={showChangelog}
+                    showFilesAndSourceControlGroup={showFilesAndSourceControlGroup}
+                    showRateUs={showRateUs}
+                    sourceControlEnabled={sourceControlEnabled}
+                    stage={belowFoldSettingsStage}
+                    terminalUseTmux={terminalUseTmux}
+                    theme={theme}
+                    useProfiles={useProfiles}
+                    voiceEnabled={voiceEnabled}
                 />
-                <Item
-                    title={t('subAgentGuidance.settings.groupTitle')}
-                    subtitle={t('settingsSession.subAgentGuidanceEntry.openSubtitle')}
-                    icon={(
-                        <View style={{ width: 29, height: 29, alignItems: 'center', justifyContent: 'center' }}>
-                            <DependabotIcon size={22} color={theme.colors.accent.orange} />
-                        </View>
-                    )}
-                    onPress={() => router.push('/(app)/settings/sub-agent')}
-                />
-                {useProfiles && (
-                    <Item
-                        title={t('settings.profiles')}
-                        subtitle={t('settings.profilesSubtitle')}
-                        icon={<Ionicons name="person-outline" size={29} color={theme.colors.accent.purple} />}
-                        onPress={() => router.push('/(app)/settings/profiles')}
-                    />
-                )}
-                {connectedServicesEnabled ? (
-                    <Item
-                        title={t('settings.connectedServices')}
-                        subtitle={t('settings.connectedServicesSubtitle')}
-                        icon={<Ionicons name="key-outline" size={29} color={theme.colors.accent.blue} />}
-                        onPress={() => router.push('/(app)/settings/connected-services')}
-                    />
-                ) : null}
-                {mcpServersEnabled && (
-                    <Item
-                        testID="settings-mcp-servers-item"
-                        title={t('settings.mcpServers')}
-                        subtitle={t('settings.mcpServersSubtitle')}
-                        icon={<Ionicons name="extension-puzzle-outline" size={29} color={theme.colors.accent.purple} />}
-                        // `router.push` expects the public route (group segments like `/(app)` are not valid here on web).
-                        onPress={() => router.push('/settings/mcp')}
-                    />
-                )}
-                <Item
-                    testID="settings-plugin-marketplace-item"
-                    title={t('settingsPlugins.title')}
-                    subtitle={t('settingsPlugins.subtitle')}
-                    icon={<Ionicons name="grid-outline" size={29} color={theme.colors.accent.purple} />}
-                    onPress={() => router.push('/(app)/settings/plugins')}
-                />
-                {promptsLibraryEnabled ? (
-                    <Item
-                        title={t('settings.prompts')}
-                        subtitle={t('settings.promptsSubtitle')}
-                        icon={<Ionicons name="library-outline" size={29} color={theme.colors.accent.blue} />}
-                        onPress={() => router.push('/(app)/settings/prompts')}
-                    />
-                ) : null}
-                {voiceEnabled ? (
-                    <Item
-                        title={t('settings.voiceAssistant')}
-                        subtitle={t('settings.voiceAssistantSubtitle')}
-                        icon={<Ionicons name="mic-outline" size={29} color={theme.colors.state.success.foreground} />}
-                        onPress={() => router.push('/(app)/settings/voice')}
-                    />
-                ) : null}
-                {memorySearchEnabled ? (
-                    <Item
-                        title={t('settings.memorySearch')}
-                        subtitle={t('settings.memorySearchSubtitle')}
-                        icon={<Ionicons name="search-outline" size={29} color={theme.colors.state.success.foreground} />}
-                        onPress={() => router.push('/(app)/settings/memory')}
-                    />
-                ) : null}
-            </ItemGroup>
-
-            {/* Sessions & Behavior */}
-            <ItemGroup title={t('settings.sessionsBehavior')}>
-                <Item
-                    title={t('settings.sessions')}
-                    subtitle={terminalUseTmux ? t('settings.sessionSubtitleTmuxEnabled') : t('settings.sessionSubtitleMessageSendingAndTmux')}
-                    icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.accent.indigo} />}
-                    onPress={() => router.push('/(app)/settings/session')}
-                />
-                <Item
-                    title={t('common.actions')}
-                    subtitle={t('settings.actionsSubtitle')}
-                    icon={<Ionicons name="flash-outline" size={29} color={theme.colors.accent.orange} />}
-                    onPress={() => router.push('/(app)/settings/actions')}
-                />
-                <Item
-                    title={t('settings.transcript')}
-                    subtitle={t('settings.transcriptSubtitle')}
-                    icon={<Ionicons name="chatbubbles-outline" size={29} color={theme.colors.accent.indigo} />}
-                    onPress={() => router.push('/(app)/settings/session/transcript')}
-                />
-                <Item
-                    title={t('settings.permissions')}
-                    subtitle={t('settings.permissionsSubtitle')}
-                    icon={<Ionicons name="shield-outline" size={29} color={theme.colors.accent.indigo} />}
-                    onPress={() => router.push('/(app)/settings/session/permissions')}
-                />
-                {showAutomations ? (
-                    <Item
-                        title={t('settings.automations')}
-                        subtitle={automationsNeedLocalEnablement
-                            ? t('settingsFeatures.expAutomationsSubtitle')
-                            : t('settings.automationsSubtitle')}
-                        icon={<Ionicons name="timer-outline" size={29} color={theme.colors.accent.blue} />}
-                        onPress={() => router.push(automationsNeedLocalEnablement ? '/(app)/settings/features' : '/automations')}
-                    />
-                ) : null}
-                {executionRunsEnabled ? (
-                    <Item
-                        title={t('runs.title')}
-                        subtitle={t('settings.executionRunsSubtitle')}
-                        icon={<Ionicons name="play-outline" size={29} color={theme.colors.state.success.foreground} />}
-                        onPress={() => router.push('/runs')}
-                    />
-                ) : null}
-            </ItemGroup>
-
-            {/* Files & Source Control */}
-            {showFilesAndSourceControlGroup ? (
-                <ItemGroup title={t('settings.filesAndSourceControl')}>
-                    {sourceControlEnabled ? (
-                        <Item
-                            title={t('settings.filesSourceControl')}
-                            subtitle={t('settings.filesSourceControlSubtitle')}
-                            icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.state.success.foreground} />}
-                            onPress={() => router.push('/(app)/settings/source-control')}
-                        />
-                    ) : null}
-                    {attachmentsUploadsEnabled ? (
-                        <Item
-                            title={t('settings.attachments')}
-                            subtitle={t('settings.attachmentsSubtitle')}
-                            icon={<Ionicons name="attach-outline" size={29} color={theme.colors.accent.blue} />}
-                            onPress={() => router.push('/(app)/settings/attachments')}
-                        />
-                    ) : null}
-                </ItemGroup>
             ) : null}
-
-            {/* System */}
-            <ItemGroup title={t('settings.system')}>
-                <Item
-                    title={t('settings.servers')}
-                    subtitle={t('settings.serversSubtitle')}
-                    icon={<Ionicons name="server-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={() => router.push('/server')}
-                />
-                <Item
-                    testID="settings-system-status-item"
-                    title={t('settings.systemStatus')}
-                    subtitle={t('settings.systemStatusSubtitle')}
-                    icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.accent.indigo} />}
-                    onPress={() => router.push('/(app)/settings/system-status')}
-                />
-                <DesktopSettingsEntry />
-                <Item
-                    title={t('settings.notifications')}
-                    subtitle={t('settings.notificationsSubtitle')}
-                    icon={<Ionicons name="notifications-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={() => router.push('/(app)/settings/notifications')}
-                />
-            </ItemGroup>
-
-            {/* Developer */}
-            {(__DEV__ || devModeEnabled) && (
-                <ItemGroup title={t('settings.developer')}>
-                    <Item
-                        title={t('settings.developerTools')}
-                        icon={<Ionicons name="construct-outline" size={29} color={theme.colors.accent.indigo} />}
-                        onPress={() => router.push('/(app)/dev')}
-                    />
-                </ItemGroup>
-            )}
-
-            {/* About */}
-            <ItemGroup title={t('settings.about')} footer={t('settings.aboutFooter')}>
-                {showChangelog ? (
-                    <Item
-                        title={t('settings.whatsNew')}
-                        subtitle={t('settings.whatsNewSubtitle')}
-                        icon={<Ionicons name="sparkles-outline" size={29} color={theme.colors.accent.orange} />}
-                        onPress={() => {
-                            trackWhatsNewClicked();
-                            router.push('/(app)/changelog');
-                        }}
-                    />
-                ) : null}
-                {showRateUs ? (
-                    <Item
-                        title={t('settings.rateUs')}
-                        subtitle={t('settings.rateUsSubtitle')}
-                        icon={<Ionicons name="star-outline" size={29} color={theme.colors.accent.orange} />}
-                        onPress={() => {
-                            void requestReview();
-                        }}
-                    />
-                ) : null}
-                <Item
-                    title={t('settings.github')}
-                    icon={<Ionicons name="logo-github" size={29} color={theme.colors.text.primary} />}
-                    subtitle="happier-dev/happier"
-                    onPress={handleGitHub}
-                />
-                <Item
-                    title={t('settings.reportIssue')}
-                    icon={<Ionicons name="bug-outline" size={29} color={theme.colors.state.danger.foreground} />}
-                    onPress={handleReportIssue}
-                />
-                <Item
-                    title={t('settings.privacyPolicy')}
-                    icon={<Ionicons name="shield-checkmark-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={async () => {
-                        const url = 'https://docs.happier.dev/legal/privacy';
-                        const supported = await Linking.canOpenURL(url);
-                        if (supported) {
-                            await Linking.openURL(url);
-                        }
-                    }}
-                />
-                <Item
-                    title={t('settings.termsOfService')}
-                    icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.accent.blue} />}
-                    onPress={async () => {
-                        const url = 'https://docs.happier.dev/legal/terms';
-                        const supported = await Linking.canOpenURL(url);
-                        if (supported) {
-                            await Linking.openURL(url);
-                        }
-                    }}
-                />
-                {Platform.OS === 'ios' && (
-                    <Item
-                        title={t('settings.eula')}
-                        icon={<Ionicons name="document-text-outline" size={29} color={theme.colors.accent.blue} />}
-                        onPress={async () => {
-                            const url = 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/';
-                            const supported = await Linking.canOpenURL(url);
-                            if (supported) {
-                                await Linking.openURL(url);
-                            }
-                        }}
-                    />
-                )}
-                <Item
-                    title={t('common.version')}
-                    detail={appVersion}
-                    icon={<Ionicons name="information-circle-outline" size={29} color={theme.colors.text.secondary} />}
-                    onPress={handleVersionClick}
-                    showChevron={false}
-                />
-            </ItemGroup>
 
         </ItemList>
     );

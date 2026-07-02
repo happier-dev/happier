@@ -54,6 +54,11 @@ vi.mock('@/components/friends/RequireFriendsIdentityForFriends', () => ({
     RequireFriendsIdentityForFriends: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+vi.mock('@/components/ui/keyboardAvoidance', () => ({
+    KeyboardAwareScrollView: ({ children, ...props }: any) =>
+        React.createElement('KeyboardAwareScrollView', props, children),
+}));
+
 const hoisted = vi.hoisted(() => {
     const user = {
         id: 'u1',
@@ -91,6 +96,8 @@ describe('SearchFriendsScreen', () => {
         const { default: SearchFriendsScreen } = await import('@/app/(app)/friends/search');
         const screen = await renderScreen(<SearchFriendsScreen />);
 
+        expect(screen.findAllByType('KeyboardAwareScrollView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('KeyboardAvoidingView' as any)).toHaveLength(0);
         const addFriendButton = screen.tree.findAllByType('TouchableOpacity')[0];
         expect(addFriendButton).toBeTruthy();
         await pressTestInstanceAsync(addFriendButton, 'friends.addFriend');

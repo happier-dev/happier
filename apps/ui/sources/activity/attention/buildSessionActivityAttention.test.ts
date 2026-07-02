@@ -23,6 +23,17 @@ describe('buildSessionActivityAttention', () => {
                 active: true,
                 presence: 'online',
                 pendingPermissionRequestCount: 1,
+                agentState: {
+                    controlledByUser: null,
+                    requests: {
+                        permission_1: {
+                            tool: 'Bash',
+                            kind: 'permission',
+                            arguments: { command: 'deploy' },
+                            createdAt: Date.now(),
+                        },
+                    },
+                },
                 seq: 3,
                 lastViewedSessionSeq: 3,
                 metadata: createMetadata({

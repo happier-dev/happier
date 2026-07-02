@@ -27,17 +27,17 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import {
     SelectionList,
+    type SelectionListHeightBehavior,
     type SelectionListOption,
     type SelectionListSectionDescriptor,
     type SelectionListStep,
 } from '@/components/ui/selectionList';
-import { makePathBrowseInputBehavior } from '@/utils/path/browseInputBehavior';
 import {
     appendSegment,
-    isBrowsePathLikeInput,
     type PathTargetPlatform,
 } from '@/utils/path/browseSegments';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
+import { resolveDirectoryFavoriteComparisonKey } from '@/utils/sessions/favoriteDirectoriesToggle';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
 import { InputBrowseButton } from '@/components/ui/buttons/InputBrowseButton';
@@ -46,6 +46,13 @@ import { listMachineFileBrowserDirectoryEntries } from '@/sync/domains/input/mac
 import { t } from '@/text';
 
 import { PathFavoriteToggleButton } from './PathFavoriteToggleButton';
+import {
+    createPathSelectionInputBehavior,
+    resolvePathSelectionEmptyInputPath,
+    resolvePathSelectionInitialInputValue,
+    shouldShowPathSelectionBrowseSuggestions,
+    type PathSelectionInitialSuggestionMode,
+} from './createPathSelectionInputBehavior';
 
 
 export type PathSelectionListFavorite = Readonly<{ path: string; label?: string }>;
@@ -71,6 +78,13 @@ export function isPathNotFoundErrorMessage(message: string): boolean {
 
 export type PathSelectionListProps = Readonly<{
     initialValue: string;
+    /**
+     * Default `browse` preserves the original direct picker behavior: a
+     * path-shaped initial value immediately drives IN THIS FOLDER. Popover
+     * callers use `history` so opening the picker shows favorites/recents first
+     * and only starts folder suggestions after explicit user input.
+     */
+    initialSuggestionMode?: PathSelectionInitialSuggestionMode;
     favorites: ReadonlyArray<PathSelectionListFavorite>;
     recents: ReadonlyArray<PathSelectionListRecent>;
     machineHomeDir: string;
@@ -118,6 +132,7 @@ export type PathSelectionListProps = Readonly<{
      * list is unconstrained (back-compat / full-screen embedding).
      */
     maxHeight?: number;
+    heightBehavior?: SelectionListHeightBehavior;
 }>;
 
 type FavoriteAccessoryFactory = (absolutePath: string, optionTestIdPrefix: string) => React.ReactNode | undefined;
@@ -171,6 +186,8 @@ function buildFavoriteOptions(
                 id: optionId,
                 label: entry.label ?? formatPathRelativeToHome(absolutePath, machineHomeDir),
                 subtitle: absolutePath,
+                labelEllipsizeMode: 'head',
+                subtitleEllipsizeMode: 'head',
                 onSelect: () => onCommit(absolutePath),
                 autocompleteValue: absolutePath,
                 rightAccessory: favoriteAccessory(absolutePath, accessoryTestIdPrefix),
@@ -195,6 +212,8 @@ function buildRecentOptions(
                 id: optionId,
                 label: formatPathRelativeToHome(absolutePath, machineHomeDir),
                 subtitle: absolutePath,
+                labelEllipsizeMode: 'head',
+                subtitleEllipsizeMode: 'head',
                 onSelect: () => onCommit(absolutePath),
                 autocompleteValue: absolutePath,
                 rightAccessory: favoriteAccessory(absolutePath, accessoryTestIdPrefix),
@@ -207,6 +226,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
     // re-run effects on every parent render).
     const {
         initialValue,
+        initialSuggestionMode = 'browse',
         favorites,
         recents,
         machineHomeDir,
@@ -224,8 +244,13 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
     const ROOT_TEST_ID = 'path-selection-list';
     const modalPortalTarget = useModalPortalTarget();
 
-    const [inputValue, setInputValue] = React.useState(initialValue);
+    const [inputValue, setInputValue] = React.useState(() => resolvePathSelectionInitialInputValue({
+        initialValue,
+        initialSuggestionMode,
+    }));
+    const [hasUserEditedInput, setHasUserEditedInput] = React.useState(false);
     const handleChangeInputValue = React.useCallback((nextValue: string) => {
+        setHasUserEditedInput(true);
         setInputValue(nextValue);
         onChangeDraftPath?.(nextValue);
     }, [onChangeDraftPath]);
@@ -235,12 +260,22 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
     // new starting value), reset the local input to mirror the new prop.
     // Comparing the previous prop identity avoids clobbering user edits
     // on every re-render — only an actual prop swap triggers the reset.
-    const lastInitialValueRef = React.useRef(initialValue);
+    const lastInitialInputRef = React.useRef({ initialSuggestionMode, initialValue });
     React.useEffect(() => {
-        if (lastInitialValueRef.current === initialValue) return;
-        lastInitialValueRef.current = initialValue;
-        setInputValue(initialValue);
-    }, [initialValue]);
+        const lastInitialInput = lastInitialInputRef.current;
+        if (
+            lastInitialInput.initialValue === initialValue
+            && lastInitialInput.initialSuggestionMode === initialSuggestionMode
+        ) {
+            return;
+        }
+        lastInitialInputRef.current = { initialSuggestionMode, initialValue };
+        setHasUserEditedInput(false);
+        setInputValue(resolvePathSelectionInitialInputValue({
+            initialValue,
+            initialSuggestionMode,
+        }));
+    }, [initialSuggestionMode, initialValue]);
 
     // R16a: stabilize values captured by the dynamic-section's `resolve`
     // closure via refs so the resolver doesn't need to be re-created when the
@@ -296,13 +331,46 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         [favoriteAddLabel, favoriteRemoveLabel, isFavorite, onToggleFavorite],
     );
 
+    const visibleFavorites = React.useMemo(() => {
+        const seenFavoriteKeys = new Set<string>();
+        return favorites.filter((entry) => {
+            if (!entry || typeof entry.path !== 'string' || entry.path.trim().length === 0) return false;
+            const comparisonKey = resolveDirectoryFavoriteComparisonKey(entry.path, machineHomeDir);
+            if (seenFavoriteKeys.has(comparisonKey)) return false;
+            seenFavoriteKeys.add(comparisonKey);
+            return true;
+        });
+    }, [favorites, machineHomeDir]);
+
+    const visibleFavoriteKeys = React.useMemo(() => new Set(
+        visibleFavorites.map((entry) => resolveDirectoryFavoriteComparisonKey(entry.path, machineHomeDir)),
+    ), [machineHomeDir, visibleFavorites]);
+
+    const visibleRecents = React.useMemo(() => {
+        const seenRecentKeys = new Set<string>();
+        return recents.filter((entry) => {
+            if (!entry || typeof entry.path !== 'string' || entry.path.trim().length === 0) return false;
+            const comparisonKey = resolveDirectoryFavoriteComparisonKey(entry.path, machineHomeDir);
+            if (visibleFavoriteKeys.has(comparisonKey)) return false;
+            if (seenRecentKeys.has(comparisonKey)) return false;
+            seenRecentKeys.add(comparisonKey);
+            return true;
+        });
+    }, [machineHomeDir, recents, visibleFavoriteKeys]);
+
     // Path-domain input behavior bound to the machine's platform (NEVER the
     // local browser's platform). When `machinePlatform === 'auto'`, the
     // adapter falls back to shape-based inference, which is correct for
     // local-machine browsing only.
     const inputBehavior = React.useMemo(
-        () => makePathBrowseInputBehavior({ targetPlatform: machinePlatform }),
-        [machinePlatform],
+        () => createPathSelectionInputBehavior({
+            targetPlatform: machinePlatform,
+            initialSuggestionMode,
+            inputActivated: hasUserEditedInput,
+            initialValue,
+            machineHomeDir,
+        }),
+        [hasUserEditedInput, initialSuggestionMode, initialValue, machineHomeDir, machinePlatform],
     );
 
     const canBrowseMachine = machineId !== null;
@@ -312,7 +380,13 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         if (onBeforeBrowseMachinePath) {
             await onBeforeBrowseMachinePath();
         }
-        const browseStart = inputValue.trim().length > 0 ? inputValue : machineHomeDir;
+        const browseStart = inputValue.trim().length > 0
+            ? inputValue
+            : resolvePathSelectionEmptyInputPath({
+                initialValue,
+                initialSuggestionMode,
+                machineHomeDir,
+            });
         const initialPath = resolveAbsolutePath(browseStart, machineHomeDir);
         const selectedPath = await openMachinePathBrowserModal({
             machineId,
@@ -325,6 +399,8 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         }
     }, [
         inputValue,
+        initialSuggestionMode,
+        initialValue,
         machineHomeDir,
         machineId,
         modalPortalTarget,
@@ -400,6 +476,8 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
                         id: `in-folder:${entry.path}`,
                         label: entry.name,
                         subtitle: formatPathRelativeToHome(entry.path, currentMachineHomeDir),
+                        labelEllipsizeMode: 'head',
+                        subtitleEllipsizeMode: 'head',
                         autocompleteValue: drillValue,
                         // Bug 4c fix: row press commits the absolute
                         // path; the chevron in `rightAccessory` drills
@@ -432,6 +510,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
                                         // tree-browser label remains on the input-suffix button.
                                         accessibilityLabel={t('newSession.pathPicker.openFolderLabel')}
                                         onPress={() => {
+                                            setHasUserEditedInput(true);
                                             setInputValue(drillValue);
                                             onChangeDraftPathRef.current?.(drillValue);
                                         }}
@@ -474,7 +553,13 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
                 // Only show when the input shape suggests a path AND a machine
                 // is bound. NEVER infer the target platform from the local
                 // browser — always thread the machine's platform.
-                visibleWhen: (input) => isBrowsePathLikeInput(input, machinePlatform) && canBrowseMachine,
+                visibleWhen: (input) => canBrowseMachine
+                    && shouldShowPathSelectionBrowseSuggestions({
+                        inputValue: input,
+                        targetPlatform: machinePlatform,
+                        initialSuggestionMode,
+                        inputActivated: hasUserEditedInput,
+                    }),
                 // Auto-virtualize when the directory has many children.
                 virtualization: 'auto',
                 resolve: inThisFolderResolver,
@@ -488,7 +573,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
                 kind: 'static',
                 id: 'favorites',
                 title: t('newSession.pathPicker.favoritesTitle'),
-                options: buildFavoriteOptions(favorites, machineHomeDir, onCommit, renderFavoriteAccessoryStatic, ROOT_TEST_ID),
+                options: buildFavoriteOptions(visibleFavorites, machineHomeDir, onCommit, renderFavoriteAccessoryStatic, ROOT_TEST_ID),
                 // RUX-9.2: favorites carry path subtitles too — disable
                 // subtitle-tier ranking for the same reason.
                 disableSubtitleRanking: true,
@@ -497,7 +582,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
                 kind: 'static',
                 id: 'recent',
                 title: t('newSession.pathPicker.recentTitle'),
-                options: buildRecentOptions(recents, machineHomeDir, onCommit, renderFavoriteAccessoryStatic, ROOT_TEST_ID),
+                options: buildRecentOptions(visibleRecents, machineHomeDir, onCommit, renderFavoriteAccessoryStatic, ROOT_TEST_ID),
                 // RUX-9.2: same — recent rows have path subtitles.
                 disableSubtitleRanking: true,
             },
@@ -515,13 +600,15 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         };
     }, [
         canBrowseMachine,
-        favorites,
+        hasUserEditedInput,
         inThisFolderResolver,
+        initialSuggestionMode,
         machineHomeDir,
         machineId,
         machinePlatform,
         onCommit,
-        recents,
+        visibleFavorites,
+        visibleRecents,
         renderFavoriteAccessoryStatic,
         // FR4-9: the dynamic section's resolverKey reads `serverId` from the
         // current render, so make memoization depend on it too.
@@ -549,9 +636,12 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
             inputMode="value"
             inputBehavior={inputBehavior}
             inputSuffix={inputSuffix}
+            inputValueEllipsizeMode="head"
             autoFocusInputOnWeb
             maxHeight={maxHeight}
-            heightBehavior={maxHeight !== undefined ? 'fixedToMaxHeight' : undefined}
+            heightBehavior={props.heightBehavior ?? (
+                maxHeight !== undefined ? 'stabilizedContentHeight' : undefined
+            )}
             inputValue={inputValue}
             onChangeInputValue={handleChangeInputValue}
             // Bug 4a fix: SelectionList's row already invokes
@@ -563,7 +653,16 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
             // Enter on the input (no row focused): commit the resolved
             // absolute path. The display value is preserved in shorthand
             // until this commit; the committed value is always absolute.
-            onCommitInputValue={(value) => onCommit(resolveAbsolutePath(value, machineHomeDir))}
+            onCommitInputValue={(value) => {
+                const commitValue = value.trim().length > 0
+                    ? value
+                    : resolvePathSelectionEmptyInputPath({
+                        initialValue,
+                        initialSuggestionMode,
+                        machineHomeDir,
+                    });
+                onCommit(resolveAbsolutePath(commitValue, machineHomeDir));
+            }}
             onRequestClose={onRequestClose}
             testID="path-selection-list"
         />

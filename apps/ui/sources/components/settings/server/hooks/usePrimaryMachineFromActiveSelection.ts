@@ -4,6 +4,10 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { filterVisibleMachines, resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { getEffectiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
+import {
+    listServerProfileScopeIds,
+    normalizeServerSelectionSettingsForProfileScopeIds,
+} from '@/sync/domains/server/selection/serverSelectionProfileScopeIds';
 import { useAllMachines, useMachineListByServerId, useSetting } from '@/sync/domains/state/storage';
 
 /**
@@ -37,12 +41,12 @@ export function usePrimaryMachineFromActiveSelection(): string | null {
         // Determine which servers are visible based on active selection
         const selection = getEffectiveServerSelectionFromRawSettings({
             activeServerId: activeServerSnapshot.serverId,
-            availableServerIds: serverProfiles.map((server) => server.id),
-            settings: {
+            availableServerIds: listServerProfileScopeIds(serverProfiles),
+            settings: normalizeServerSelectionSettingsForProfileScopeIds({
                 serverSelectionGroups: settingsServerSelectionGroups,
                 serverSelectionActiveTargetKind: settingsServerSelectionActiveTargetKind,
                 serverSelectionActiveTargetId: settingsServerSelectionActiveTargetId,
-            },
+            }, serverProfiles),
         });
 
         const visibleServerIds = selection.serverIds.length > 0

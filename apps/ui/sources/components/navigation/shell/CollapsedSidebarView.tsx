@@ -12,11 +12,11 @@ import {
     DESKTOP_SIDEBAR_CHROME_COLLAPSED_HORIZONTAL_PADDING_PX,
     DESKTOP_SIDEBAR_CHROME_COLLAPSED_VERTICAL_GAP_PX,
 } from './desktopChrome/desktopChromeMetrics';
-import { DesktopShellUpdateIndicatorHost } from './desktopChrome/DesktopShellUpdateIndicatorHost';
 import { DesktopShellWindowControlsHost } from './desktopChrome/DesktopShellWindowControlsHost';
 import { useResolvedDesktopWindowControls } from './desktopChrome/useResolvedDesktopWindowControls';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import type { AppUpdateStatusTagProps } from '@/components/ui/feedback/AppUpdateStatusTag';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -61,6 +61,24 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
+function renderUpdateIndicatorWithFallback(
+    indicator: React.ReactNode,
+    fallback: React.ReactNode,
+): React.ReactNode {
+    if (!indicator) {
+        return fallback;
+    }
+
+    if (!React.isValidElement<AppUpdateStatusTagProps>(indicator)) {
+        return indicator;
+    }
+
+    return React.cloneElement(indicator, {
+        fallback,
+        labelVariant: 'short',
+    });
+}
+
 export type CollapsedSidebarViewProps = Readonly<{
     desktopWindowControls?: React.ReactNode;
     desktopUpdateIndicator?: React.ReactNode;
@@ -100,6 +118,14 @@ export const CollapsedSidebarView = React.memo((props: CollapsedSidebarViewProps
         }
     }, [focusModeActive, onExitFocusMode, router]);
 
+    const logoButton = (
+        <SidebarLogoButton
+            testID="collapsed-sidebar-home-button"
+            onPress={handleHome}
+            style={styles.logoButton}
+        />
+    );
+
     return (
         <View style={[styles.container, { paddingTop: safeArea.top }]}>
             <View testID="desktop-collapsed-shell-chrome" style={[styles.chrome, { minHeight: headerHeight }]}>
@@ -110,14 +136,7 @@ export const CollapsedSidebarView = React.memo((props: CollapsedSidebarViewProps
                 >
                     {resolvedDesktopWindowControls}
                 </DesktopShellWindowControlsHost>
-                <DesktopShellUpdateIndicatorHost style={styles.updateIndicatorHost}>
-                    {props.desktopUpdateIndicator}
-                </DesktopShellUpdateIndicatorHost>
-                <SidebarLogoButton
-                    testID="collapsed-sidebar-home-button"
-                    onPress={handleHome}
-                    style={styles.logoButton}
-                />
+                {renderUpdateIndicatorWithFallback(props.desktopUpdateIndicator, logoButton)}
                 {Platform.OS === 'web' ? (
                     <Pressable
                         testID="sidebar-expand-button"

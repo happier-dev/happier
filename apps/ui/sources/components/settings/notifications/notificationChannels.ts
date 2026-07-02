@@ -44,6 +44,12 @@ function buildLegacyNotificationsMirrorFromPolicy(policy: AttentionDeliveryPolic
         readyIncludeMessageText: readyPreviewBehavior === 'include_preview',
         permissionRequest: isLegacyNotificationEventEnabled(policy, 'permission_request'),
         userActionRequest: isLegacyNotificationEventEnabled(policy, 'user_action_request'),
+        connectedServiceAccountSwitch: policy.events.connected_service_account_switch?.enabled !== false
+            && policy.channels.expo_push.events.connected_service_account_switch?.enabled !== false,
+        connectedServiceQuotaBlocked: policy.events.connected_service_quota_blocked?.enabled !== false
+            && policy.channels.expo_push.events.connected_service_quota_blocked?.enabled !== false,
+        connectedServiceQuotaRecovered: policy.events.connected_service_quota_recovered?.enabled !== false
+            && policy.channels.expo_push.events.connected_service_quota_recovered?.enabled !== false,
         foregroundBehavior: policy.foregroundBehavior,
     };
 }

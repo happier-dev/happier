@@ -228,16 +228,9 @@ export AZURE_OPENAI_API_VERSION="2024-02-15-preview"
                         description: 'Your Gemini API key',
                         isSecret: true,
                     },
-                    {
-                        name: 'GEMINI_MODEL',
-                        expectedValue: 'gemini-2.5-pro',
-                        description: 'Default model (optional)',
-                        isSecret: false,
-                    },
                 ],
                 shellConfigExample: `# Add to ~/.zshrc or ~/.bashrc:
-export GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
-export GEMINI_MODEL="gemini-2.5-pro"`,
+	export GEMINI_API_KEY="YOUR_GEMINI_API_KEY"`,
             };
         case 'gemini-vertex':
             return {

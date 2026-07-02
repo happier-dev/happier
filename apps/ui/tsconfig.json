@@ -7,6 +7,18 @@
       "@/*": [
         "./sources/*"
       ],
+      "react": [
+        "./node_modules/@types/react"
+      ],
+      "react/jsx-runtime": [
+        "./node_modules/@types/react/jsx-runtime"
+      ],
+      "react/jsx-dev-runtime": [
+        "./node_modules/@types/react/jsx-dev-runtime"
+      ],
+      "react-native-unistyles": [
+        "./node_modules/react-native-unistyles/lib/typescript/src/index.d.ts"
+      ],
       "hello-world": [
         "../hello-world"
       ]

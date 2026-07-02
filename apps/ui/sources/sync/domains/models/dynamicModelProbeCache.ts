@@ -5,7 +5,13 @@ import type { ProbedResourceSnapshot } from '@happier-dev/protocol';
 import { createPersistentProbedResourceCache } from '@/sync/runtime/probedResources/createPersistentProbedResourceCache';
 
 export type DynamicModelProbeCacheEntry =
-    | Readonly<{ kind: 'success'; updatedAt: number; expiresAt: number; value: PreflightModelList }>
+    | Readonly<{
+        kind: 'success';
+        updatedAt: number;
+        expiresAt: number;
+        value: PreflightModelList;
+        cacheable?: boolean;
+    }>
     | Readonly<{ kind: 'error'; updatedAt: number; expiresAt: number }>;
 
 export const DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS = 24 * 60 * 60_000;
@@ -13,6 +19,7 @@ export const DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS = 60_000;
 // When dynamic model probing temporarily falls back to a static list (no per-model options),
 // retry quickly so users don't have to manually hit refresh to see things like Thinking/Speed.
 export const DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS = 2_000;
+export const DYNAMIC_MODEL_PROBE_TRANSIENT_SUCCESS_MAX_AGE_MS = 10 * 60_000;
 
 const PERSIST_KEY = 'dynamic-model-probe-cache-v1';
 const PERSIST_VERSION = 6;
@@ -21,8 +28,9 @@ const PERSIST_MAX_AGE_MS = 30 * 24 * 60 * 60_000;
 
 function normalizePersistedModelList(input: unknown): PreflightModelList | null {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
-    const modelsRaw = (input as any).availableModels;
-    const supportsFreeformRaw = (input as any).supportsFreeform;
+    const inputRecord = input as Record<string, unknown>;
+    const modelsRaw = inputRecord.availableModels;
+    const supportsFreeformRaw = inputRecord.supportsFreeform;
     if (!Array.isArray(modelsRaw)) return null;
 
     const normalizeModelOptions = (value: unknown): readonly AcpConfigOption[] | undefined => {
@@ -30,21 +38,29 @@ function normalizePersistedModelList(input: unknown): PreflightModelList | null 
         return normalized && normalized.length > 0 ? normalized : undefined;
     };
 
-    const models = modelsRaw
-        .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
-        .map((m: any) => {
-            const modelOptions = normalizeModelOptions(m.modelOptions);
-            return {
-                id: String(m.id),
-                name: String(m.name),
-                ...(typeof m.description === 'string' ? { description: m.description } : {}),
-                ...(modelOptions ? { modelOptions } : {}),
-            };
-        });
+    const models = modelsRaw.flatMap((rawModel) => {
+        if (!rawModel || typeof rawModel !== 'object' || Array.isArray(rawModel)) return [];
+        const modelRecord = rawModel as Record<string, unknown>;
+        if (typeof modelRecord.id !== 'string' || typeof modelRecord.name !== 'string') return [];
+        const modelOptions = normalizeModelOptions(modelRecord.modelOptions);
+        return [{
+            id: modelRecord.id,
+            name: modelRecord.name,
+            ...(typeof modelRecord.description === 'string' ? { description: modelRecord.description } : {}),
+            ...(modelOptions ? { modelOptions } : {}),
+        }];
+    });
     const supportsFreeform = Boolean(supportsFreeformRaw);
     if (models.length === 0 && supportsFreeform !== true) return null;
     return { availableModels: models, supportsFreeform };
 }
+
+const transientSuccessByKey = new Map<string, Readonly<{
+    updatedAt: number;
+    expiresAt: number;
+    retainUntil: number;
+    value: PreflightModelList;
+}>>();
 
 const persistedCache = createPersistentProbedResourceCache<PreflightModelList>({
     cacheId: 'dynamic-model-probe-cache',
@@ -59,7 +75,24 @@ const persistedCache = createPersistentProbedResourceCache<PreflightModelList>({
 });
 
 export function resetDynamicModelProbeCacheForTests(): void {
+    transientSuccessByKey.clear();
     persistedCache.resetForTests();
+}
+
+function readTransientSuccess(key: string, nowMs = Date.now()): DynamicModelProbeCacheEntry | null {
+    const entry = transientSuccessByKey.get(key) ?? null;
+    if (!entry) return null;
+    if (nowMs >= 0 && nowMs > entry.retainUntil) {
+        transientSuccessByKey.delete(key);
+        return null;
+    }
+    return {
+        kind: 'success',
+        updatedAt: entry.updatedAt,
+        expiresAt: entry.expiresAt,
+        value: entry.value,
+        cacheable: false,
+    };
 }
 
 export function readDynamicModelProbeCache(key: string): DynamicModelProbeCacheEntry | null {
@@ -70,8 +103,11 @@ export function readDynamicModelProbeCache(key: string): DynamicModelProbeCacheE
             updatedAt: snap.dataUpdatedAt,
             expiresAt: snap.dataUpdatedAt + DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS,
             value: snap.data,
+            cacheable: true,
         };
     }
+    const transient = readTransientSuccess(key);
+    if (transient) return transient;
     if (snap.errorUpdatedAt !== null) {
         return {
             kind: 'error',
@@ -83,7 +119,21 @@ export function readDynamicModelProbeCache(key: string): DynamicModelProbeCacheE
 }
 
 export function writeDynamicModelProbeCacheSuccess(key: string, value: PreflightModelList, nowMs = Date.now()): void {
+    transientSuccessByKey.delete(key);
     persistedCache.writeSuccess(key, value, nowMs);
+}
+
+export function writeDynamicModelProbeCacheTransientSuccess(
+    key: string,
+    value: PreflightModelList,
+    nowMs = Date.now(),
+): void {
+    transientSuccessByKey.set(key, {
+        updatedAt: nowMs,
+        expiresAt: nowMs + DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS,
+        retainUntil: nowMs + DYNAMIC_MODEL_PROBE_TRANSIENT_SUCCESS_MAX_AGE_MS,
+        value,
+    });
 }
 
 export function writeDynamicModelProbeCacheError(key: string, nowMs = Date.now()): void {

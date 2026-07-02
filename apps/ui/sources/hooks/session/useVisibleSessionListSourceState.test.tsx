@@ -4,6 +4,7 @@ import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 const sourceState = vi.hoisted(() => ({
+    selectedIndexRequests: [] as Array<ReadonlyArray<string> | undefined>,
     selection: {
         enabled: true,
         presentation: 'grouped',
@@ -45,7 +46,10 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     return createStorageModuleMock({
         importOriginal,
         overrides: {
-            useSessionListIndexByServerId: () => sourceState.byServerId,
+            useSessionListIndexByServerId: (serverIds?: ReadonlyArray<string>) => {
+                sourceState.selectedIndexRequests.push(serverIds);
+                return sourceState.byServerId;
+            },
         },
     });
 });
@@ -91,6 +95,7 @@ describe('useVisibleSessionListSourceState', () => {
                 },
             ] as SessionListIndexItem[],
         } as Record<string, SessionListIndexItem[]>;
+        sourceState.selectedIndexRequests = [];
     });
 
     it('returns the canonical selection together with the resolved visible source', async () => {
@@ -106,5 +111,25 @@ describe('useVisibleSessionListSourceState', () => {
             ]),
         }));
         expect(hook.getCurrent()?.source?.map((item) => item.type === 'session' ? item.sessionId : item.type)).toEqual(['active-1', 'cached-1']);
+        expect(sourceState.selectedIndexRequests).toEqual([['srv-a', 'srv-b']]);
+    });
+
+    it('keeps the active server index subscribed when selection presentation is disabled', async () => {
+        sourceState.selection = {
+            enabled: false,
+            presentation: 'single',
+            activeServerId: 'srv-a',
+            allowedServerIds: ['srv-a'],
+            explicit: false,
+            activeTarget: { kind: 'server', id: 'srv-a', serverId: 'srv-a' },
+        };
+
+        const { useVisibleSessionListSourceState } = await import('./useVisibleSessionListSourceState');
+        const hook = await renderHook(() => useVisibleSessionListSourceState());
+        await flushHookEffects();
+
+        expect(hook.getCurrent().activeIndex?.map((item) => item.type === 'session' ? item.sessionId : item.type)).toEqual(['active-1']);
+        expect(hook.getCurrent().source?.map((item) => item.type === 'session' ? item.sessionId : item.type)).toEqual(['active-1']);
+        expect(sourceState.selectedIndexRequests).toEqual([['srv-a']]);
     });
 });

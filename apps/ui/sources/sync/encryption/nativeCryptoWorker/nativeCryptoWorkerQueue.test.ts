@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createDeferred } from '@/dev/testkit';
 import { createSyncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
@@ -15,6 +15,7 @@ type NativeCryptoWorkerQueueLifecycleExports = Readonly<{
     markNativeCryptoWorkerQueueActive: (options?: Readonly<{
         now?: () => number;
         capabilityStalenessMs?: number;
+        revalidationTimeoutMs?: number;
         revalidateCapabilities?: () => Promise<void>;
     }>) => Promise<void>;
     resetNativeCryptoWorkerQueueLifecycleForTests: () => void;
@@ -155,6 +156,52 @@ describe('createNativeCryptoWorkerBatchQueue', () => {
         expect(dispatches).toEqual([[1]]);
 
         lifecycle.resetNativeCryptoWorkerQueueLifecycleForTests();
+    });
+
+    it('wakes queued regular dispatch after the stale resume capability revalidation timeout', async () => {
+        vi.useFakeTimers();
+        const lifecycle = getQueueLifecycleExports();
+        lifecycle.resetNativeCryptoWorkerQueueLifecycleForTests();
+        let now = 0;
+        const revalidation = createDeferred<void>();
+        try {
+            lifecycle.markNativeCryptoWorkerQueueQuiescent({ now: () => now });
+
+            const dispatches: number[][] = [];
+            const queue = createNativeCryptoWorkerBatchQueue<number, string>({
+                maxBatchSize: 2,
+                dispatch: async (items) => {
+                    dispatches.push([...items]);
+                    return items.map((item) => `r${item}`);
+                },
+            });
+            const result = queue.enqueue(1);
+            await Promise.resolve();
+
+            now = 2_000;
+            const active = lifecycle.markNativeCryptoWorkerQueueActive({
+                now: () => now,
+                capabilityStalenessMs: 1_000,
+                revalidationTimeoutMs: 25,
+                revalidateCapabilities: () => revalidation.promise,
+            });
+            await Promise.resolve();
+            expect(dispatches).toEqual([]);
+
+            await vi.advanceTimersByTimeAsync(25);
+            expect(await getPromiseSettlement(active)).toEqual({
+                status: 'fulfilled',
+                value: undefined,
+            });
+            await expect(result).resolves.toBe('r1');
+            expect(dispatches).toEqual([[1]]);
+
+            revalidation.resolve();
+            await Promise.resolve();
+        } finally {
+            lifecycle.resetNativeCryptoWorkerQueueLifecycleForTests();
+            vi.useRealTimers();
+        }
     });
 
     it('dispatches one in-flight batch and preserves result order across pending batches', async () => {

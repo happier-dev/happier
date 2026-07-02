@@ -111,6 +111,36 @@ export function canResumeSessionWithOptions(metadata: SessionMetadata | null | u
     );
 }
 
+/**
+ * A session whose provider never started (the agent persists a vendor resume id
+ * at provider session start, and none exists in metadata) has no provider
+ * context to restore: it is continuable by a fresh spawn against the same
+ * Happier session. Without this gate, pre-start deaths show a misleading
+ * "doesn't support restoring context" dead-end (QA A-F5).
+ */
+export function canContinueSessionWithFreshSpawn(
+    metadata: SessionMetadata | null | undefined,
+    options?: ResumeCapabilityOptions,
+): boolean {
+    void options;
+    if (!metadata) return false;
+    const flavor = metadata.flavor;
+
+    // Configured ACP backends are governed by the normal resume gate.
+    if (isAcpFlavorPrefix(flavor)) return false;
+
+    const agentId = resolveAgentIdFromSessionMetadata(metadata) ?? resolveAgentIdFromFlavor(flavor);
+    if (!agentId) return false;
+    if (!isAgentId(agentId)) return false;
+
+    const resume = getAgentResumeConfig(agentId);
+    const field = resume && 'vendorResumeIdField' in resume ? resume.vendorResumeIdField : null;
+    if (!field) return false;
+
+    const vendorResumeId = metadata[field];
+    return !(typeof vendorResumeId === 'string' && vendorResumeId.trim().length > 0);
+}
+
 export function getAgentSessionId(metadata: SessionMetadata | null | undefined): string | null {
     if (!metadata) return null;
     return getAgentVendorResumeId(metadata, metadata.flavor, undefined);

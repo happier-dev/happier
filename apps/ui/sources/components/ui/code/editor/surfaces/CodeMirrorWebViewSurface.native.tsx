@@ -43,7 +43,6 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
     const pendingInitRef = React.useRef<null | { doc: string }>(null);
     const lastDocRef = React.useRef(props.value);
     const pendingDocRequestRef = React.useRef(new Map<string, { resolve: () => void; timeoutId: any }>());
-    const latestValueRef = React.useRef(props.value);
     const latestLanguageRef = React.useRef(props.language);
     const latestReadOnlyRef = React.useRef(false);
 
@@ -53,7 +52,6 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
     const changeDebounceMs = typeof props.changeDebounceMs === 'number' ? props.changeDebounceMs : 250;
     const maxChunkBytes = typeof props.bridgeMaxChunkBytes === 'number' ? props.bridgeMaxChunkBytes : 64_000;
 
-    latestValueRef.current = props.value;
     latestLanguageRef.current = props.language;
     latestReadOnlyRef.current = readOnly;
 
@@ -116,7 +114,7 @@ export const CodeMirrorWebViewSurface = React.forwardRef<CodeEditorHandle, CodeE
 
     const sendInit = React.useCallback(() => {
         if (!readyRef.current) return;
-        const doc = pendingInitRef.current?.doc ?? latestValueRef.current;
+        const doc = pendingInitRef.current?.doc ?? lastDocRef.current;
         pendingInitRef.current = null;
         lastDocRef.current = doc;
         postEnvelope({

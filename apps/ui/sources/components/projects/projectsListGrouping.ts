@@ -1,3 +1,4 @@
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 
 type MachineGroup = Readonly<{
@@ -25,7 +26,7 @@ export function buildProjectsListGroups(input: Readonly<{
     pinnedWorkspaceRefIds: readonly string[];
 }>): ProjectsListGroups {
     const activeServerId = String(input.activeServerId ?? '').trim();
-    const refs = (input.workspaceRefs ?? []).filter((ref) => String(ref.serverId ?? '').trim() === activeServerId);
+    const refs = (input.workspaceRefs ?? []).filter((ref) => areServerProfileIdentifiersEquivalent(String(ref.serverId ?? '').trim(), activeServerId));
 
     const byId = new Map<string, WorkspaceRefV1>();
     for (const ref of refs) {

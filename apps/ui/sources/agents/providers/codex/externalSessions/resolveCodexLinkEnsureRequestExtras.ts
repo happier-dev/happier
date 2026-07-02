@@ -1,5 +1,5 @@
 import { buildCodexAgentRuntimeDescriptor, readSessionMetadataRuntimeDescriptor } from '@happier-dev/agents';
-import { normalizeCodexBackendMode } from '@happier-dev/protocol';
+import { normalizeCodexBackendMode, type CodexBackendMode } from '@happier-dev/protocol';
 
 import type { ExternalSessionBrowseLinkEnsureRequestExtras } from '@/agents/registry/registryUiBehavior';
 
@@ -17,7 +17,7 @@ function readCandidateCodexRuntimeDescriptor(details: Record<string, unknown> | 
     return readSessionMetadataRuntimeDescriptor(normalizeCandidateRuntimeDescriptorMetadata(details) ?? null, 'codex');
 }
 
-function readCodexBackendMode(details: Record<string, unknown> | undefined): 'mcp' | 'acp' | 'appServer' | null {
+function readCodexBackendMode(details: Record<string, unknown> | undefined): CodexBackendMode | null {
     const runtimeDescriptor = readSessionMetadataRuntimeDescriptor(normalizeCandidateRuntimeDescriptorMetadata(details) ?? null, 'codex');
     const runtimeMode = normalizeCodexBackendMode(runtimeDescriptor?.backendMode);
     if (runtimeMode) return runtimeMode;
@@ -41,7 +41,7 @@ function buildCanonicalRuntimeDescriptor(params: Readonly<{
 
     return buildCodexAgentRuntimeDescriptor({
         backendMode: normalizeCodexBackendMode(runtimeDescriptor.backendMode) ?? 'appServer',
-        vendorSessionId: typeof runtimeDescriptor.vendorSessionId === 'string' ? runtimeDescriptor.vendorSessionId : null,
+        providerSessionId: typeof runtimeDescriptor.providerSessionId === 'string' ? runtimeDescriptor.providerSessionId : null,
         homePath: params.source.homePath ?? null,
         home: params.source.home,
         connectedServiceId: params.source.home === 'connectedService' ? params.source.connectedServiceId ?? null : null,

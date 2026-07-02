@@ -215,4 +215,38 @@ describe('AuthContext.login', () => {
             await screen.unmount();
         }
     });
+
+    it('keeps the mobile brand hero dismissed after logout', async () => {
+        const seenAt = 1_789_222_000_000;
+        const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
+        const { clearPersistence, loadLocalSettings, saveLocalSettings } = await import('@/sync/domains/state/persistence');
+        clearPersistence();
+        saveLocalSettings({
+            ...localSettingsDefaults,
+            brandHeroSeenAt: seenAt,
+        });
+
+        const { AuthProvider, getCurrentAuth } = await import('./AuthContext');
+
+        const screen = await renderScreen(
+            React.createElement(AuthProvider, {
+                initialCredentials: { token: buildTokenWithSub('server-test'), secret: 'secret-test' },
+                children: React.createElement(React.Fragment, null),
+            }),
+        );
+
+        try {
+            const auth = getCurrentAuth();
+            if (!auth) throw new Error('Expected current auth to be set');
+
+            await act(async () => {
+                await auth.logout();
+            });
+
+            expect(loadLocalSettings().brandHeroSeenAt).toBe(seenAt);
+        } finally {
+            await screen.unmount();
+            clearPersistence();
+        }
+    });
 });

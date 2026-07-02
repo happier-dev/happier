@@ -10,6 +10,7 @@ import type { AgentInputChipPickerOption } from './AgentInputChipPickerPanel';
 export type AgentInputChipPickerPopoverProps = Readonly<{
     open: boolean;
     anchorRef: React.RefObject<any>;
+    boundaryRef?: React.RefObject<any> | null;
     title: string;
     showCloseButton?: boolean;
     options: ReadonlyArray<AgentInputChipPickerOption>;
@@ -35,6 +36,7 @@ export function AgentInputChipPickerPopover(props: AgentInputChipPickerPopoverPr
         <AgentInputSelectionPopover
             open={props.open}
             anchorRef={props.anchorRef}
+            boundaryRef={props.boundaryRef}
             maxHeightCap={props.maxHeightCap ?? 420}
             maxWidthCap={props.maxWidthCap ?? 720}
             portalTopBottomLayout={portalTopBottomLayout}

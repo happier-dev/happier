@@ -30,10 +30,17 @@ describe('SourceControlOperationsHistorySection', () => {
 
     const theme = {
         colors: {
-            text: '#fff',
-            textSecondary: '#aaa',
-            textLink: '#09f',
+            text: {
+                primary: '#fff',
+                secondary: '#aaa',
+                link: '#09f',
+            },
             divider: '#333',
+            border: { default: '#333' },
+            surface: {
+                base: '#222',
+                inset: '#111',
+            },
             surfaceHigh: '#222',
             input: { background: '#111' },
         },

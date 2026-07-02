@@ -1,7 +1,5 @@
 import * as React from 'react';
 
-import { resolveIndexWindow } from '@/components/ui/scroll/resolveIndexWindow';
-
 function areStringSetsEqual(left: ReadonlySet<string>, right: ReadonlySet<string>) {
     if (left === right) return true;
     if (left.size !== right.size) return false;
@@ -26,6 +24,7 @@ export function useScmDiffExpandedKeys(input: Readonly<{
     resetKey: string;
     initialCollapsedKeys?: readonly string[] | null;
     onCollapsedKeysChange?: (keys: string[]) => void;
+    viewableExpansionEnabled?: boolean;
 }>): ScmDiffExpandedKeysState {
     const initialCollapsedKeysSignature = React.useMemo(() => {
         const raw = Array.isArray(input.initialCollapsedKeys)
@@ -47,14 +46,33 @@ export function useScmDiffExpandedKeys(input: Readonly<{
     }, [input.allKeys, initialCollapsedKeysSignature]);
 
     const [collapsedKeys, setCollapsedKeys] = React.useState<Set<string>>(() => new Set(initialCollapsedKeySet));
+    const [manualExpandedKeys, setManualExpandedKeys] = React.useState<Set<string>>(() => new Set());
+    const expandedKeysRef = React.useRef<ReadonlySet<string>>(new Set());
     const toggleCollapsed = React.useCallback((key: string) => {
+        if (!input.tooLarge) {
+            setCollapsedKeys((prev) => {
+                const next = new Set(prev);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
+                return next;
+            });
+            return;
+        }
+
+        const isExpanded = expandedKeysRef.current.has(key);
         setCollapsedKeys((prev) => {
             const next = new Set(prev);
-            if (next.has(key)) next.delete(key);
-            else next.add(key);
-            return next;
+            if (isExpanded) next.add(key);
+            else next.delete(key);
+            return areStringSetsEqual(prev, next) ? prev : next;
         });
-    }, []);
+        setManualExpandedKeys((prev) => {
+            const next = new Set(prev);
+            if (isExpanded) next.delete(key);
+            else next.add(key);
+            return areStringSetsEqual(prev, next) ? prev : next;
+        });
+    }, [input.tooLarge]);
 
     const onCollapsedKeysChangeRef = React.useRef(input.onCollapsedKeysChange);
     React.useEffect(() => {
@@ -62,9 +80,8 @@ export function useScmDiffExpandedKeys(input: Readonly<{
     }, [input.onCollapsedKeysChange]);
 
     const initialAutoExpandedKeySet = React.useMemo(() => {
-        const initialCount = Math.max(1, input.aheadCount + input.behindCount + 1);
-        return new Set(input.allKeys.slice(0, initialCount));
-    }, [input.aheadCount, input.allKeys, input.behindCount]);
+        return new Set(input.allKeys.slice(0, 1));
+    }, [input.allKeys]);
     const initialAutoExpandedKeysSignature = React.useMemo(() => {
         return Array.from(initialAutoExpandedKeySet).sort().join('\n');
     }, [initialAutoExpandedKeySet]);
@@ -77,6 +94,7 @@ export function useScmDiffExpandedKeys(input: Readonly<{
     React.useEffect(() => {
         if (!input.tooLarge) {
             setAutoExpandedKeys((prev) => (prev.size === 0 ? prev : new Set()));
+            setManualExpandedKeys((prev) => (prev.size === 0 ? prev : new Set()));
             setCollapsedKeys((prev) => (
                 areStringSetsEqual(prev, initialCollapsedKeySet) ? prev : new Set(initialCollapsedKeySet)
             ));
@@ -85,6 +103,7 @@ export function useScmDiffExpandedKeys(input: Readonly<{
         setAutoExpandedKeys((prev) => (
             areStringSetsEqual(prev, initialAutoExpandedKeySet) ? prev : new Set(initialAutoExpandedKeySet)
         ));
+        setManualExpandedKeys((prev) => (prev.size === 0 ? prev : new Set()));
         setCollapsedKeys((prev) => (
             areStringSetsEqual(prev, initialCollapsedKeySet) ? prev : new Set(initialCollapsedKeySet)
         ));
@@ -92,28 +111,21 @@ export function useScmDiffExpandedKeys(input: Readonly<{
 
     React.useEffect(() => {
         if (!input.tooLarge) return;
-        const window = resolveIndexWindow({
-            viewableIndices: input.viewableIndices,
-            aheadCount: input.aheadCount,
-            // Never auto-expand diffs *above* the first visible row: expanding above the viewport
-            // changes height "behind" the user's scroll position and makes scrolling feel like it
-            // snaps back up on web. Prefetch can be bidirectional, but auto-expansion must not be.
-            behindCount: 0,
-            maxIndex: Math.max(0, input.allKeys.length - 1),
-        });
-        if (!window) return;
-        const windowKeys = input.allKeys.slice(window.startIndex, window.endIndex + 1);
+        if (input.viewableExpansionEnabled === false) return;
+        const firstVisibleIndex = input.viewableIndices.find((index) => (
+            typeof index === 'number'
+            && Number.isFinite(index)
+            && index >= 0
+            && index < input.allKeys.length
+        ));
+        if (typeof firstVisibleIndex !== 'number') return;
+        const key = input.allKeys[firstVisibleIndex];
+        if (!key) return;
+        const nextKeys = new Set([key]);
         setAutoExpandedKeys((prev) => {
-            let changed = false;
-            const next = new Set(prev);
-            for (const key of windowKeys) {
-                if (next.has(key)) continue;
-                next.add(key);
-                changed = true;
-            }
-            return changed ? next : prev;
+            return areStringSetsEqual(prev, nextKeys) ? prev : nextKeys;
         });
-    }, [input.aheadCount, input.allKeys, input.tooLarge, input.viewableIndices]);
+    }, [input.allKeys, input.tooLarge, input.viewableExpansionEnabled, input.viewableIndices]);
 
     const expandedKeys = React.useMemo(() => {
         if (!input.tooLarge) {
@@ -126,13 +138,20 @@ export function useScmDiffExpandedKeys(input: Readonly<{
         }
 
         const autoKeys = autoExpandedKeys.size > 0 ? autoExpandedKeys : initialAutoExpandedKeySet;
+        const allowedKeys = new Set(input.allKeys);
         const out = new Set<string>();
         for (const key of autoKeys) {
             if (collapsedKeys.has(key)) continue;
             out.add(key);
         }
+        for (const key of manualExpandedKeys) {
+            if (!allowedKeys.has(key) || collapsedKeys.has(key)) continue;
+            out.add(key);
+        }
         return out;
-    }, [autoExpandedKeys, collapsedKeys, initialAutoExpandedKeySet, input.allKeys, input.tooLarge]);
+    }, [autoExpandedKeys, collapsedKeys, initialAutoExpandedKeySet, input.allKeys, input.tooLarge, manualExpandedKeys]);
+
+    expandedKeysRef.current = expandedKeys;
 
     React.useEffect(() => {
         const cb = onCollapsedKeysChangeRef.current;

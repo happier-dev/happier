@@ -2,6 +2,7 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import { installReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 
 import { installSessionFileViewCommonModuleMocks } from './sessionFileViewTestHelpers';
@@ -37,14 +38,7 @@ describe('FileBinaryState (svg previews)', () => {
         const base64 = Buffer.from(svg, 'utf-8').toString('base64');
         const uri = `data:image/svg+xml;base64,${base64}`;
 
-        const theme = {
-            colors: {
-                surface: '#000',
-                surfaceHigh: '#111',
-                divider: '#222',
-                textSecondary: '#bbb',
-            },
-        } as any;
+        const theme = createThemeFixture();
 
         let tree!: renderer.ReactTestRenderer;
         tree = (await renderScreen(<FileBinaryState theme={theme} filePath="icon.svg" imagePreviewUri={uri} />)).tree;

@@ -4,7 +4,15 @@ import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEnc
 import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
 import { fetchAndApplySessions } from '@/sync/engine/sessions/sessionSnapshot';
 import { getEffectiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
-import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import {
+    areServerProfileIdentifiersEquivalent,
+    listServerProfiles,
+    resolveServerProfileScopeId,
+} from '@/sync/domains/server/serverProfiles';
+import {
+    listServerProfileScopeIds,
+    normalizeServerSelectionSettingsForProfileScopeIds,
+} from '@/sync/domains/server/selection/serverSelectionProfileScopeIds';
 import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
@@ -130,13 +138,19 @@ function createServerRequest(serverUrl: string, token: string): (path: string, i
 
 export function resolveConcurrentTargets(params: Readonly<{
     activeServerId: string;
-    profiles: ReadonlyArray<Readonly<{ id: string; serverUrl: string; name: string }>>;
+    profiles: ReadonlyArray<Readonly<{
+        id: string;
+        serverUrl: string;
+        name: string;
+        serverIdentityId?: string | null;
+        legacyServerIds?: readonly string[];
+    }>>;
     settings: ConcurrentSelectionSettings;
 }>): ConcurrentTarget[] {
     const selection = getEffectiveServerSelectionFromRawSettings({
         activeServerId: params.activeServerId,
-        availableServerIds: params.profiles.map((profile) => profile.id),
-        settings: params.settings,
+        availableServerIds: listServerProfileScopeIds(params.profiles),
+        settings: normalizeServerSelectionSettingsForProfileScopeIds(params.settings, params.profiles),
     });
     if (!selection.enabled) {
         return [];
@@ -148,13 +162,14 @@ export function resolveConcurrentTargets(params: Readonly<{
     }
     const targets: ConcurrentTarget[] = [];
     for (const profile of params.profiles) {
-        if (!selected.has(profile.id)) continue;
+        const scopeId = resolveServerProfileScopeId(profile);
+        if (!selected.has(scopeId)) continue;
         const serverUrl = normalizeServerUrl(profile.serverUrl);
         if (!serverUrl) continue;
         targets.push({
-            id: profile.id,
+            id: scopeId,
             serverUrl,
-            serverName: String(profile.name ?? profile.id).trim() || profile.id,
+            serverName: String(profile.name ?? scopeId).trim() || scopeId,
         });
     }
     return targets;
@@ -266,7 +281,12 @@ function updateConcurrentSessionListCache(params: Readonly<{
             const shouldRebuildIndex =
                 previousIndexByServerId[serverId] == null
                 || previousName !== nextName
-                || shouldRebuildSessionListIndexForRowStateChange(previousRows, nextRows);
+                || shouldRebuildSessionListIndexForRowStateChange(previousRows, nextRows, {
+                    groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
+                    activeGroupingV1: state.settings.sessionListActiveGroupingV1,
+                    inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                    sectionModeV1: state.settings.sessionListSectionModeV1,
+                });
 
             if (!shouldRebuildIndex) {
                 return previousIndexByServerId;
@@ -278,6 +298,7 @@ function updateConcurrentSessionListCache(params: Readonly<{
                 groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
                 activeGroupingV1: state.settings.sessionListActiveGroupingV1,
                 inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                sectionModeV1: state.settings.sessionListSectionModeV1,
                 serverScope: {
                     serverId,
                     serverName: nextName ?? undefined,
@@ -413,6 +434,7 @@ function updateConcurrentMachineListCache(input: {
                 groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
                 activeGroupingV1: state.settings.sessionListActiveGroupingV1,
                 inactiveGroupingV1: state.settings.sessionListInactiveGroupingV1,
+                sectionModeV1: state.settings.sessionListSectionModeV1,
                 serverScope: {
                     serverId,
                     serverName,
@@ -458,7 +480,7 @@ function clearConcurrentSessionListCache(serverIdRaw: string): void {
         delete next[serverId];
 
         const activeServerId = normalizeServerId(getActiveServerSnapshot().serverId);
-        const shouldPruneCanonicalState = serverId !== activeServerId;
+        const shouldPruneCanonicalState = !areServerProfileIdentifiersEquivalent(serverId, activeServerId);
 
         const nextRowStateByServerId = shouldPruneCanonicalState && state.sessionListRowStateByServerId && (serverId in state.sessionListRowStateByServerId)
             ? (() => {
@@ -727,6 +749,8 @@ async function reconcileConcurrentServers(): Promise<void> {
             id: profile.id,
             serverUrl: profile.serverUrl,
             name: profile.name,
+            serverIdentityId: profile.serverIdentityId,
+            legacyServerIds: profile.legacyServerIds,
         })),
         settings: {
             serverSelectionGroups: Array.isArray(settings.serverSelectionGroups)

@@ -1,5 +1,6 @@
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { installAutomationScreensCommonModuleMocks } from './automationScreensTestHelpers';
+import type { StorageState } from '@/sync/store/types';
 import React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,7 +22,9 @@ const syncSpies = vi.hoisted(() => ({
 const sessionState = vi.hoisted(() => ({
     session: null as any,
 }));
-const getStateSpy = vi.hoisted(() => vi.fn());
+const storageState = vi.hoisted(() => ({
+    value: {} as Record<string, unknown>,
+}));
 const hydrateReadyState = vi.hoisted(() => ({
     ready: true,
 }));
@@ -72,29 +75,7 @@ vi.mock('@/components/automations/shared/ExistingSessionAutomationUnavailableNot
 installAutomationScreensCommonModuleMocks({
     unistyles: async () => {
         const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: {
-                dark: false,
-                colors: {
-                    groupped: { background: '#fff', chevron: '#777', sectionTitle: '#666' },
-                    surface: '#fff',
-                    surfaceHigh: '#f7f7f7',
-                    surfaceHighest: '#eee',
-                    surfacePressed: '#f0f0f0',
-                    surfacePressedOverlay: '#ececec',
-                    surfaceSelected: '#e6f0ff',
-                    surfaceRipple: '#ddd',
-                    text: '#111',
-                    textSecondary: '#777',
-                    textDestructive: '#c00',
-                    input: { background: '#eee', placeholder: '#999' },
-                    divider: '#ddd',
-                    accent: { blue: '#0a84ff' },
-                    modal: { border: '#ddd' },
-                    shadow: { color: '#000', opacity: 0.2 },
-                },
-            },
-        });
+        return createUnistylesMock();
     },
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -117,9 +98,20 @@ installAutomationScreensCommonModuleMocks({
         return createStorageModuleStub({
             useSession: () => sessionState.session,
             useSettings: () => ({}),
-            storage: {
-                getState: () => getStateSpy(),
-            },
+            storage: Object.assign(
+                ((selector?: (value: StorageState) => unknown) => (
+                    typeof selector === 'function'
+                        ? selector(storageState.value as unknown as StorageState)
+                        : (storageState.value as unknown as StorageState)
+                )),
+                {
+                    getState: () => storageState.value as unknown as StorageState,
+                    getInitialState: () => storageState.value as unknown as StorageState,
+                    setState: () => undefined,
+                    subscribe: () => () => undefined,
+                    destroy: () => undefined,
+                },
+            ),
         });
     },
     text: async () => {
@@ -143,7 +135,9 @@ installAutomationScreensCommonModuleMocks({
 });
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
-    useHydrateSessionForRoute: () => hydrateReadyState.ready,
+    useHydrateSessionForRoute: (sessionId: string) => hydrateReadyState.ready
+        ? { kind: 'available', sessionId }
+        : { kind: 'loading', sessionId, reason: 'store-miss' },
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -163,6 +157,87 @@ async function flushRender(): Promise<void> {
     await act(async () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
     });
+}
+
+function setStorageForSession(input: {
+    session: any;
+    projectMachineId?: string | null;
+    includeProject?: boolean;
+}) {
+    const sessionId = String(input.session?.id ?? '');
+    const sessionMachineId = typeof input.session?.metadata?.machineId === 'string'
+        ? input.session.metadata.machineId
+        : null;
+    const projectMachineId = input.projectMachineId ?? sessionMachineId;
+    const sessionPath = typeof input.session?.metadata?.path === 'string'
+        ? input.session.metadata.path
+        : null;
+
+    storageState.value = {
+        sessions: sessionId ? { [sessionId]: input.session } : {},
+        machines: projectMachineId
+            ? {
+                [projectMachineId]: {
+                    id: projectMachineId,
+                    active: true,
+                    activeAt: 1,
+                    metadata: { host: 'mbp-host' },
+                },
+            }
+            : {},
+        getProjectForSession: (candidateSessionId: string) => {
+            if (!input.includeProject || candidateSessionId !== sessionId || !projectMachineId || !sessionPath) {
+                return null;
+            }
+            return {
+                key: {
+                    machineId: projectMachineId,
+                    path: sessionPath,
+                },
+            };
+        },
+    };
+}
+
+function setStorageForSessionWithMachineReplacement(input: {
+    session: any;
+    staleMachineId: string;
+    replacementMachineId: string;
+}) {
+    const sessionId = String(input.session?.id ?? '');
+    const sessionPath = typeof input.session?.metadata?.path === 'string'
+        ? input.session.metadata.path
+        : null;
+
+    storageState.value = {
+        sessions: sessionId ? { [sessionId]: input.session } : {},
+        machines: {
+            [input.staleMachineId]: {
+                id: input.staleMachineId,
+                active: false,
+                replacedByMachineId: input.replacementMachineId,
+                activeAt: 1,
+                metadata: { host: 'mbp-host' },
+            },
+            [input.replacementMachineId]: {
+                id: input.replacementMachineId,
+                active: true,
+                activeAt: 2,
+                metadata: { host: 'mbp-host' },
+            },
+        },
+        getProjectForSession: (candidateSessionId: string) => {
+            if (!sessionPath || candidateSessionId !== sessionId) {
+                return null;
+            }
+            return {
+                key: {
+                    machineId: input.replacementMachineId,
+                    path: sessionPath,
+                },
+            };
+        },
+    };
 }
 
 function getComposerProps() {
@@ -200,10 +275,11 @@ describe('SessionAutomationCreateScreen', () => {
                 claudeSessionId: 'claude-session-1',
             },
         };
-        getStateSpy.mockImplementation(() => ({
-            sessions: sessionState.session ? { s1: sessionState.session } : {},
-            getProjectForSession: () => null,
-        }));
+        setStorageForSession({
+            session: sessionState.session,
+            projectMachineId: 'm1',
+            includeProject: true,
+        });
         syncSpies.createAutomation.mockClear();
         syncSpies.refreshAutomations.mockClear();
         syncSpies.getSessionEncryptionKeyBase64ForResume.mockClear();
@@ -244,27 +320,11 @@ describe('SessionAutomationCreateScreen', () => {
                 claudeSessionId: 'claude-session-1',
             },
         };
-        getStateSpy.mockImplementation(() => ({
-            sessions: {
-                s1: sessionState.session,
-            },
-            machines: {
-                'm-target': {
-                    id: 'm-target',
-                    active: true,
-                    activeAt: 10,
-                    metadata: { host: 'mbp-host' },
-                },
-            },
-            getProjectForSession: (sessionId: string) => sessionId === 's1'
-                ? {
-                    key: {
-                        machineId: 'm-target',
-                        path: '/tmp/project',
-                    },
-                }
-                : null,
-        }));
+        setStorageForSessionWithMachineReplacement({
+            session: sessionState.session,
+            staleMachineId: 'm-stale',
+            replacementMachineId: 'm-target',
+        });
 
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
@@ -346,27 +406,11 @@ describe('SessionAutomationCreateScreen', () => {
                 claudeSessionId: 'claude-session-1',
             },
         };
-        getStateSpy.mockImplementation(() => ({
-            sessions: {
-                s1: sessionState.session,
-            },
-            machines: {
-                'm-target': {
-                    id: 'm-target',
-                    active: true,
-                    activeAt: 10,
-                    metadata: { host: 'mbp-host' },
-                },
-            },
-            getProjectForSession: (sessionId: string) => sessionId === 's1'
-                ? {
-                    key: {
-                        machineId: 'm-target',
-                        path: '/tmp/project',
-                    },
-                }
-                : null,
-        }));
+        setStorageForSessionWithMachineReplacement({
+            session: sessionState.session,
+            staleMachineId: 'm-stale',
+            replacementMachineId: 'm-target',
+        });
 
         const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
 
@@ -395,12 +439,45 @@ describe('SessionAutomationCreateScreen', () => {
         expect(envelope.existingSessionId).toBe('s1');
     });
 
+    it('creates an existing-session automation from persisted session metadata when machine inventory has not hydrated yet', async () => {
+        sessionState.session = {
+            id: 's1',
+            active: false,
+            encryptionMode: 'e2ee',
+            metadata: {
+                machineId: 'm-persisted',
+                path: '/tmp/project',
+                homeDir: '/tmp',
+                flavor: 'claude',
+                claudeSessionId: 'claude-session-1',
+            },
+        };
+        setStorageForSession({
+            session: sessionState.session,
+            projectMachineId: null,
+            includeProject: false,
+        });
+
+        const { SessionAutomationCreateScreen } = await import('./SessionAutomationCreateScreen');
+
+        await renderScreen(<SessionAutomationCreateScreen sessionId="s1" />);
+        await flushRender();
+
+        await setComposerText('Do the thing');
+        await submitComposer();
+
+        expect(syncSpies.createAutomation).toHaveBeenCalledTimes(1);
+        expect(syncSpies.createAutomation.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+            assignments: [{ machineId: 'm-persisted', enabled: true, priority: 100 }],
+        }));
+    });
+
     it('inherits the session runtime fields into the existing-session automation template', async () => {
         sessionState.session = {
             id: 's1',
             active: true,
             encryptionMode: 'e2ee',
-            permissionMode: 'acceptEdits',
+            permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
             modelMode: 'gpt-5',
             modelModeUpdatedAt: 456,
@@ -441,7 +518,11 @@ describe('SessionAutomationCreateScreen', () => {
             directory: '/tmp/project',
             prompt: 'Send the latest automation QA summary into this session.',
             displayText: 'Send the latest automation QA summary into this session.',
-            backendTarget: expect.objectContaining({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' }),
+            backendTarget: expect.objectContaining({
+                kind: 'backend',
+                backendId: 'review-bot',
+                configuredBackendId: 'review-bot',
+            }),
             profileId: 'profile-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
@@ -484,6 +565,11 @@ describe('SessionAutomationCreateScreen', () => {
                 claudeSessionId: 'claude-session-plain-1',
             },
         };
+        setStorageForSession({
+            session: sessionState.session,
+            projectMachineId: 'm1',
+            includeProject: true,
+        });
         syncSpies.getSessionEncryptionKeyBase64ForResume.mockImplementationOnce(() => null as any);
         serverFetchSpy.mockImplementationOnce(async () => ({
             ok: true,
@@ -518,10 +604,14 @@ describe('SessionAutomationCreateScreen', () => {
                 machineId: 'm1',
                 path: '/tmp/project',
                 homeDir: '/tmp',
-                flavor: 'pi',
-                piSessionId: 'pi-session-1',
+                flavor: 'claude',
             },
         };
+        setStorageForSession({
+            session: sessionState.session,
+            projectMachineId: 'm1',
+            includeProject: true,
+        });
         syncSpies.getSessionEncryptionKeyBase64ForResume.mockImplementationOnce(() => null as any);
         serverFetchSpy.mockImplementationOnce(async () => ({
             ok: true,
@@ -558,6 +648,11 @@ describe('SessionAutomationCreateScreen', () => {
                 claudeSessionId: 'claude-session-1',
             },
         };
+        setStorageForSession({
+            session: sessionState.session,
+            projectMachineId: 'm1',
+            includeProject: true,
+        });
         syncSpies.getSessionEncryptionKeyBase64ForResume.mockImplementationOnce(() => null as any);
         serverFetchSpy.mockImplementationOnce(async () => ({
             ok: true,

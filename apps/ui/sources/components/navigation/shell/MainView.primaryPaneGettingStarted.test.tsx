@@ -16,12 +16,6 @@ const buildPolicyState = vi.hoisted(() => ({
 }));
 
 const setSessionsListStorageTabSpy = vi.hoisted(() => vi.fn());
-const localSettingsState = vi.hoisted(() => ({
-    sessionsListStorageTab: 'persisted' as 'persisted' | 'direct',
-}));
-const externalSessionsFeatureState = vi.hoisted(() => ({
-    enabled: false,
-}));
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -56,7 +50,7 @@ installNavigationShellCommonModuleMocks({
             useRealtimeStatus: () => ({ status: 'idle' }),
             useLocalSettingMutable: (name: string) => {
                 if (name === 'sessionsListStorageTab') {
-                    return [localSettingsState.sessionsListStorageTab, setSessionsListStorageTabSpy] as const;
+                    return ['persisted', setSessionsListStorageTabSpy] as const;
                 }
                 throw new Error(`Unexpected local setting: ${name}`);
             },
@@ -70,6 +64,14 @@ installNavigationShellCommonModuleMocks({
         });
     },
 });
+
+vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
+    useVisibleSessionListViewData: () => sessionListState.data,
+    useHasHiddenInactiveSessions: () => false,
+    countVisibleSessionListSessions: (data: Array<{ type?: string }> | null) => (
+        data?.reduce((count, item) => count + (item.type === 'session' ? 1 : 0), 0) ?? 0
+    ),
+}));
 
 vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => true,
@@ -93,9 +95,9 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
     useFeatureDecision: () => ({
-        state: externalSessionsFeatureState.enabled ? 'enabled' : 'disabled',
-        blockerCode: externalSessionsFeatureState.enabled ? 'none' : 'feature_disabled',
-        blockedBy: externalSessionsFeatureState.enabled ? null : 'local_policy',
+        state: 'disabled',
+        blockerCode: 'feature_disabled',
+        blockedBy: 'local_policy',
         diagnostics: [],
         evaluatedAt: 0,
         featureId: 'sessions.direct',
@@ -103,13 +105,18 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
     }),
 }));
 
-vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', () => ({
-    useMainAppTabState: () => ({
+vi.mock('@/hooks/ui/useTabState', () => ({
+    useTabState: () => ({
         activeTab: 'sessions',
         setActiveTab: async () => {},
         isLoading: false,
     }),
 }));
+
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock();
+});
 
 vi.mock('@/sync/domains/features/featureBuildPolicy', () => ({
     getFeatureBuildPolicyDecision: () => buildPolicyState.decision,
@@ -117,9 +124,6 @@ vi.mock('@/sync/domains/features/featureBuildPolicy', () => ({
 
 vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
     SessionGettingStartedGuidance: 'SessionGettingStartedGuidance',
-}));
-vi.mock('@/components/sessions/shell/ExternalSessionsEmptyState', () => ({
-    ExternalSessionsEmptyState: 'ExternalSessionsEmptyState',
 }));
 
 vi.mock('@/components/sessions/shell/SessionsList', () => ({
@@ -130,16 +134,12 @@ vi.mock('@/components/ui/buttons/FABWide', () => ({
     FABWide: 'FABWide',
 }));
 
-vi.mock('@/components/navigation/mobile/chrome/bars/MainAppTabBar', () => ({
-    MainAppTabBar: 'MainAppTabBar',
+vi.mock('@/components/ui/navigation/TabBar', () => ({
+    TabBar: 'TabBar',
 }));
 
 vi.mock('@/components/navigation/shell/InboxView', () => ({
     InboxView: 'InboxView',
-}));
-
-vi.mock('@/components/settings/shell/SettingsViewWrapper', () => ({
-    SettingsViewWrapper: 'SettingsViewWrapper',
 }));
 
 vi.mock('@/components/sessions/shell/SessionsListWrapper', () => ({
@@ -174,13 +174,17 @@ vi.mock('@/components/navigation/ConnectionStatusControl', () => ({
     ConnectionStatusControl: 'ConnectionStatusControl',
 }));
 
+vi.mock('@/components/navigation/mobile/chrome/MainAppTabStateProvider', () => ({
+    useMainAppTabState: () => ({
+        activeTab: 'sessions',
+    }),
+}));
+
 describe('MainView (tablet primary pane)', () => {
     beforeEach(() => {
         sessionListState.data = [];
         buildPolicyState.decision = 'neutral';
         setSessionsListStorageTabSpy.mockReset();
-        localSettingsState.sessionsListStorageTab = 'persisted';
-        externalSessionsFeatureState.enabled = false;
     });
 
     it('shows getting started guidance instead of a blank view', async () => {
@@ -190,18 +194,6 @@ describe('MainView (tablet primary pane)', () => {
         tree = (await renderScreen(<MainView variant="phone" />)).tree;
 
         expect(() => tree!.findByType('SessionGettingStartedGuidance')).not.toThrow();
-    });
-
-    it('shows the direct sessions empty state in the primary pane when the direct tab is active', async () => {
-        const { MainView } = await import('./MainView');
-        externalSessionsFeatureState.enabled = true;
-        localSettingsState.sessionsListStorageTab = 'direct';
-
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<MainView variant="phone" />)).tree;
-
-        expect(() => tree!.findByType('ExternalSessionsEmptyState')).not.toThrow();
-        expect(() => tree!.findByType('SessionGettingStartedGuidance')).toThrow();
     });
 
     it('shows a fallback view when getting started guidance is denied by build policy', async () => {

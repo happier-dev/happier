@@ -51,26 +51,34 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
             storageListeners.delete(listener);
         };
     };
+    const buildState = () => ({
+        sessions: storageState.sessions,
+        machines: Object.fromEntries(storageState.machines.map((machine) => [machine.id, machine])),
+        getProjectForSession: (sessionId: string) => storageState.projects[sessionId as keyof typeof storageState.projects] ?? null,
+    });
     return createStorageModuleStub({
-        getStorage: () => ((selector?: (state: unknown) => unknown) => {
-            const state = {
-                sessions: storageState.sessions,
-                machines: Object.fromEntries(storageState.machines.map((machine) => [machine.id, machine])),
-                getProjectForSession: (sessionId: string) => storageState.projects[sessionId as keyof typeof storageState.projects] ?? null,
-            };
-            return typeof selector === 'function' ? selector(state) : state;
-        }) as ReturnType<StorageModule['getStorage']>,
+        getStorage: () => ((selector?: (state: unknown) => unknown) => React.useSyncExternalStore(
+            subscribe,
+            () => {
+                const state = buildState();
+                return typeof selector === 'function' ? selector(state) : state;
+            },
+            () => {
+                const state = buildState();
+                return typeof selector === 'function' ? selector(state) : state;
+            },
+        )) as ReturnType<StorageModule['getStorage']>,
         storage: {
-            getState: () => ({
-                sessions: storageState.sessions,
-                machines: Object.fromEntries(storageState.machines.map((machine) => [machine.id, machine])),
-                getProjectForSession: (sessionId: string) => storageState.projects[sessionId as keyof typeof storageState.projects] ?? null,
-            }),
+            getState: buildState,
         },
         useSession: (sessionId: string) => storageState.sessions[sessionId as keyof typeof storageState.sessions] ?? null,
         useProjectForSession: (sessionId: string) => storageState.projects[sessionId as keyof typeof storageState.projects] ?? null,
         useAllMachines: () => storageState.machines,
-        useMachine: (machineId: string) => storageState.machines.find((machine) => machine.id === machineId) ?? null,
+        useMachine: (machineId: string) => React.useSyncExternalStore(
+            subscribe,
+            () => storageState.machines.find((machine) => machine.id === machineId) ?? null,
+            () => storageState.machines.find((machine) => machine.id === machineId) ?? null,
+        ),
         useAllSessions: () => React.useSyncExternalStore(
             subscribe,
             () => allSessionsSnapshot,
@@ -126,6 +134,34 @@ describe('useSessionMachineReachability', () => {
                     path: '/other-repo',
                     homeDir: '/repo',
                 },
+            };
+            emitStorageChange();
+        });
+        await flushHookEffects();
+
+        expect(seen).toHaveLength(1);
+
+        await hook.unmount();
+    });
+
+    it('does not update visible reachability when only the machine heartbeat changes', async () => {
+        const { useSessionMachineReachability } = await import('./useSessionMachineReachability');
+        const seen: Array<ReturnType<typeof useSessionMachineReachability>> = [];
+        const hook = await renderHook(() => {
+            const value = useSessionMachineReachability('s1');
+            React.useEffect(() => {
+                seen.push(value);
+            }, [value]);
+            return value;
+        });
+
+        expect(seen).toHaveLength(1);
+
+        await act(async () => {
+            (storageState.machines as any[])[0] = {
+                ...storageState.machines[0],
+                activeAt: nowMs + 1,
+                lastSeenMs: nowMs + 1,
             };
             emitStorageChange();
         });

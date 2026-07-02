@@ -21,6 +21,7 @@ const scrollToIndexMock = vi.fn();
 const loadOlderMessagesMock = vi.fn();
 
 let flatListRefImpl: any = null;
+let sessionViewportByIdState = new Map<string, { isPinned: boolean; offsetY: number; lastUpdatedAt: number; source: 'default' | 'observed' }>();
 
 const buildChatListItemsMock = vi.fn((..._args: any[]) => ([] as any[]));
 
@@ -36,6 +37,7 @@ vi.mock('./ChatFooter', () => ({
 
 vi.mock('./MessageView', () => ({
   MessageView: () => React.createElement('MessageView'),
+  MessageViewWithSessionCommon: () => React.createElement('MessageView'),
 }));
 
 vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
@@ -43,6 +45,15 @@ vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
     capturedTurnViewProps = props;
     return React.createElement('TurnView');
   },
+  TurnViewWithSessionCommon: (props: any) => {
+    capturedTurnViewProps = props;
+    return React.createElement('TurnView');
+  },
+}));
+
+vi.mock('@/components/sessions/transcript/toolCalls/ToolCallsGroupRow', () => ({
+  ToolCallsGroupRow: () => React.createElement('ToolCallsGroupRow'),
+  ToolCallsGroupRowWithSessionCommon: () => React.createElement('ToolCallsGroupRow'),
 }));
 
 vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
@@ -66,12 +77,16 @@ vi.mock('@/sync/sync', () => ({
     loadOlderMessages: loadOlderMessagesMock,
     loadNewerMessages: vi.fn(),
     hasDeferredNewerMessages: () => false,
+    getSessionViewport: (sessionId: string) => sessionViewportByIdState.get(sessionId) ?? null,
     getSyncTuning: () => ({
       transcriptForwardPrefetchThresholdPx: 0,
       transcriptBackwardPrefetchThresholdPx: 0,
       transcriptFlashListEstimatedItemSize: 120,
       transcriptWebInitialPinStabilizeMs: 3000,
       transcriptWebInitialPinRetryIntervalMs: 250,
+      transcriptWebInitialPinRetryMilestonesMs: [16, 50, 100, 200, 400, 800],
+      transcriptOlderLoadSpinnerDelayMs: 300,
+      transcriptMaxTurnEntriesPerListItem: 8,
     }),
   },
 }));
@@ -87,6 +102,7 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
     scrollToIndexMock.mockClear();
     loadOlderMessagesMock.mockReset();
     buildChatListItemsMock.mockClear();
+    sessionViewportByIdState = new Map();
 
     flatListRefImpl = {
       scrollToOffset: scrollToOffsetMock,
@@ -239,6 +255,7 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
         getElementById: () => rootEl,
       };
       (globalThis as any).window = {
+        location: prevWindow?.location ?? { hostname: 'localhost' },
         getComputedStyle: () => ({ overflowY: 'auto' }),
       };
 
@@ -273,6 +290,7 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
         getElementById: () => rootEl,
       };
       (globalThis as any).window = {
+        location: prevWindow?.location ?? { hostname: 'localhost' },
         getComputedStyle: () => ({ overflowY: 'auto' }),
       };
 
@@ -334,6 +352,124 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
     await screen.unmount();
   });
 
+  it('does not auto-expand a huge tool calls group into one giant rendered row when the transcript cannot scroll', async () => {
+    legacyChatListHarnessState.sessionState = { ...legacyChatListHarnessState.sessionState, seq: 25 };
+    legacyChatListHarnessState.sessionMessagesState = {
+      isLoaded: true,
+      messages: [{ id: 'm1', seq: 100 }],
+    };
+
+    buildChatListItemsMock.mockReturnValue([
+      {
+        id: 'turn-1',
+        kind: 'turn',
+        createdAt: 123,
+        turn: {
+          userMessageId: null,
+          content: [
+            {
+              kind: 'tool_calls',
+              id: 'tool-group-1',
+              toolMessageIds: Array.from({ length: 200 }, (_, i) => `tool-${i}`),
+            },
+          ],
+        },
+      },
+    ]);
+
+    loadOlderMessagesMock.mockResolvedValue({ loaded: 0, hasMore: false, status: 'no_more' });
+
+    const screen = await renderLegacyChatList({ flushOptions: { cycles: 0 } });
+
+    requireCapturedFlatListProps();
+    await triggerLegacyChatListInitialFill({
+      flushOptions: { cycles: 4 },
+    });
+
+    expect(loadOlderMessagesMock).toHaveBeenCalledTimes(1);
+    expect(capturedTurnViewProps).toBeTruthy();
+    expect(capturedTurnViewProps.expandedToolCallsAnchorMessageIds?.size ?? 0).toBe(0);
+
+    await screen.unmount();
+  });
+
+  it('auto-expands a tool calls group without pinning an observed unpinned entry', async () => {
+    legacyChatListHarnessState.sessionState = { ...legacyChatListHarnessState.sessionState, seq: 25 };
+    legacyChatListHarnessState.sessionMessagesState = {
+      isLoaded: true,
+      messages: [{ id: 'm1', seq: 100 }],
+    };
+    sessionViewportByIdState.set('session-1', {
+      isPinned: false,
+      offsetY: 42,
+      lastUpdatedAt: 1,
+      source: 'observed',
+    });
+
+    buildChatListItemsMock.mockReturnValue([
+      {
+        id: 'turn-1',
+        kind: 'turn',
+        createdAt: 123,
+        turn: {
+          userMessageId: null,
+          content: [
+            {
+              kind: 'tool_calls',
+              id: 'tool-group-1',
+              toolMessageIds: Array.from({ length: 10 }, (_, i) => `tool-${i}`),
+            },
+          ],
+        },
+      },
+    ]);
+
+    loadOlderMessagesMock.mockResolvedValue({ loaded: 0, hasMore: false, status: 'no_more' });
+
+    const scrollEl = {
+      clientHeight: 100,
+      contains: () => true,
+      isConnected: true,
+      parentElement: null,
+      querySelectorAll: () => [],
+      scrollHeight: 100,
+      scrollTop: 42,
+    };
+    const previousDocument = (globalThis as any).document;
+    const previousWindow = (globalThis as any).window;
+    try {
+      (globalThis as any).document = {
+        getElementById: () => scrollEl,
+      };
+      (globalThis as any).window = {
+        location: previousWindow?.location ?? { hostname: 'localhost' },
+        getComputedStyle: () => ({ overflowY: 'auto' }),
+      };
+
+      const screen = await renderLegacyChatList({ flushOptions: { cycles: 0 } });
+
+      requireCapturedFlatListProps();
+      await triggerLegacyChatListInitialFill({
+        contentHeight: 100,
+        flushOptions: { cycles: 4 },
+        layoutHeight: 100,
+      });
+      await flushLegacyChatListEffects({ cycles: 4 });
+
+      expect(capturedTurnViewProps).toBeTruthy();
+      expect(capturedTurnViewProps.expandedToolCallsAnchorMessageIds?.has('tool-9')).toBe(true);
+      // The transcript is not scrollable (scrollHeight === clientHeight, maxScrollTop === 0), so the
+      // forced observed-unpinned restore normalizes to the only valid position (top), matching the
+      // remote-dev distance-fallback guard. It still must not auto-pin to the bottom.
+      expect(scrollEl.scrollTop).toBe(0);
+
+      await screen.unmount();
+    } finally {
+      (globalThis as any).document = previousDocument;
+      (globalThis as any).window = previousWindow;
+    }
+  });
+
   it('auto-expands a tool calls group even if the group only appears after the initial fill completes', async () => {
     legacyChatListHarnessState.sessionState = { ...legacyChatListHarnessState.sessionState, seq: 25 };
     legacyChatListHarnessState.sessionMessagesState = {
@@ -378,7 +514,7 @@ describe('ChatList (initial scroll/pagination behavior)', () => {
       messages: [...legacyChatListHarnessState.sessionMessagesState.messages, { id: 'm2', seq: 101 }],
     };
     buildChatListItemsMock.mockReturnValue([toolGroupTurnItem] as any);
-    await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} />);
+    await screen.update(<ChatList session={{ ...legacyChatListHarnessState.sessionState }} followBottomIntentKey="tool-group-visible" />);
     await flushLegacyChatListEffects({ cycles: 4 });
 
     expect(capturedTurnViewProps).toBeTruthy();

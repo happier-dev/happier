@@ -106,6 +106,48 @@ describe('CodeLinesView', () => {
         expect(list.props.extraData).toBeTruthy();
     });
 
+    it('keeps virtualized FlatList structural props stable across equivalent rerenders', async () => {
+        const { CodeLinesView } = await import('./CodeLinesView');
+
+        const lines = [
+            {
+                id: '1',
+                sourceIndex: 0,
+                kind: 'context',
+                oldLine: 1,
+                newLine: 1,
+                renderPrefixText: '',
+                renderCodeText: 'const x = 1;',
+                renderIsHeaderLine: false,
+                selectable: false,
+            },
+        ] as const;
+
+        const rendered = await renderScreen(<CodeLinesView lines={lines} />);
+        const before = findFirstByType(rendered.tree, 'FlatList');
+        if (!before) {
+            throw new Error('expected FlatList');
+        }
+        const beforeRenderItem = before.props.renderItem;
+        const beforeStyle = before.props.style;
+        const beforeContentContainerStyle = before.props.contentContainerStyle;
+        const beforeListFooterComponent = before.props.ListFooterComponent;
+
+        await renderer.act(async () => {
+            rendered.tree.update(<CodeLinesView lines={lines} />);
+        });
+
+        const after = findFirstByType(rendered.tree, 'FlatList');
+        if (!after) {
+            throw new Error('expected FlatList');
+        }
+
+        expect(after.props.renderItem).toBe(beforeRenderItem);
+        expect(after.props.style).toBe(beforeStyle);
+        expect(after.props.contentContainerStyle).toBe(beforeContentContainerStyle);
+        expect(after.props.ListFooterComponent).toBe(beforeListFooterComponent);
+    });
+
     it('passes commentActive to CodeLineRow when isCommentActive reports true', async () => {
         const { CodeLinesView } = await import('./CodeLinesView');
 

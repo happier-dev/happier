@@ -13,6 +13,7 @@ import { sanitizeNewSessionAutomationDraft } from '@/sync/domains/automations/au
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import type { HandleCreateSessionOptions } from '@/components/sessions/new/hooks/useCreateNewSession';
 import type { ScmWorkingSnapshot, Machine } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import type { NewSessionCheckoutChipModel } from '@/components/sessions/new/modules/newSessionCheckoutChipModel';
@@ -36,11 +37,13 @@ function buildExtraActionChipsSignature(params: Readonly<{
     chips: ReadonlyArray<AgentInputExtraActionChip>;
     agentType: string;
     backendTarget: unknown;
+    checkoutPickerOpen: boolean;
 }>): string {
     try {
         return JSON.stringify({
             agentType: params.agentType,
             backendTarget: params.backendTarget,
+            checkoutPickerOpen: params.checkoutPickerOpen,
             chips: params.chips.map((chip) => ({
                 key: chip.key,
                 controlId: chip.controlId ?? null,
@@ -92,7 +95,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     router: Router;
     sessionPrompt: string;
     setSessionPrompt: React.Dispatch<React.SetStateAction<string>>;
-    handleCreateSession: (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (context: Readonly<{ sessionId: string }>) => void | Promise<void> }>) => void;
+    handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     backendTarget: BackendTargetRefV2;
     agentType: AgentId;
     agentOptionState?: Record<string, unknown> | null;
@@ -125,12 +128,27 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     const selectedMachineActiveAt = params.selectedMachine?.activeAt;
     const selectedMachineRevokedAt = params.selectedMachine?.revokedAt;
     const selectedMachineReplacedByMachineId = params.selectedMachine?.replacedByMachineId;
+    const selectedMachineOnline = React.useMemo(() => (
+        params.selectedMachine ? isMachineOnline(params.selectedMachine) : false
+    ), [
+        params.selectedMachine?.id,
+        selectedMachineActive,
+        selectedMachineActiveAt,
+        selectedMachineReplacedByMachineId,
+        selectedMachineRevokedAt,
+    ]);
+    const selectedMachineReadinessStatus = params.selectedMachineSpawnReadiness?.status;
     const connectionStatus = React.useMemo(() => {
         if (!params.selectedMachine) return undefined;
-        const readinessStatus = params.selectedMachineSpawnReadiness?.status;
-        const broadOnline = isMachineOnline(params.selectedMachine);
-        const online = readinessStatus === 'ready'
-            || ((readinessStatus === undefined || readinessStatus === 'unknown' || readinessStatus === 'probing') && broadOnline);
+        const online = selectedMachineReadinessStatus === 'ready'
+            || (
+                (
+                    selectedMachineReadinessStatus === undefined
+                    || selectedMachineReadinessStatus === 'unknown'
+                    || selectedMachineReadinessStatus === 'probing'
+                )
+                && selectedMachineOnline
+            );
 
         return {
             text: online ? t('status.online') : t('newSession.machineOfflineCannotStartStatus'),
@@ -140,11 +158,8 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         };
     }, [
         params.selectedMachine?.id,
-        selectedMachineActive,
-        selectedMachineActiveAt,
-        selectedMachineReplacedByMachineId,
-        selectedMachineRevokedAt,
-        params.selectedMachineSpawnReadiness?.status,
+        selectedMachineOnline,
+        selectedMachineReadinessStatus,
         params.theme.colors.state.success.foreground,
         params.theme.colors.state.danger.foreground,
     ]);
@@ -245,7 +260,8 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         chips: combinedExtraActionChips,
         agentType: params.agentType,
         backendTarget: params.backendTarget,
-    }), [combinedExtraActionChips, params.agentType, params.backendTarget]);
+        checkoutPickerOpen: params.checkoutPickerOpen,
+    }), [combinedExtraActionChips, params.agentType, params.backendTarget, params.checkoutPickerOpen]);
     const stableExtraActionChips = useStableExtraActionChips(
         combinedExtraActionChips,
         combinedExtraActionChipsSignature,

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const deleteAsync = vi.fn(() => new Promise<void>(() => {}));
+const fileDelete = vi.fn(() => new Promise<void>(() => {}));
 const playbackState: {
   playbackStatusListener: ((status: any) => void) | null;
 } = {
@@ -13,9 +13,9 @@ async function waitForPlaybackStatusListener() {
   });
 }
 
-async function waitForDeleteAsyncCall() {
+async function waitForFileDeleteCall() {
   await vi.waitFor(() => {
-    expect(deleteAsync).toHaveBeenCalled();
+    expect(fileDelete).toHaveBeenCalled();
   });
 }
 
@@ -38,8 +38,11 @@ vi.mock('expo-file-system', () => ({
       this.uri = `${base}${name}`;
     }
     async write(_content: Uint8Array) {}
+    delete = fileDelete;
   },
-  deleteAsync,
+  deleteAsync: () => {
+    throw new Error('deprecated_deleteAsync_called');
+  },
 }));
 
 vi.mock('expo-audio', () => ({
@@ -58,7 +61,7 @@ import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStop
 describe('playAudioBytesWithStopper (native)', () => {
   it('resolves promptly when playback finishes even if temp-file cleanup stalls', async () => {
     playbackState.playbackStatusListener = null;
-    deleteAsync.mockClear();
+    fileDelete.mockClear();
 
     const promise = playAudioBytesWithStopper({
       bytes: new Uint8Array([1, 2, 3]).buffer,
@@ -82,7 +85,7 @@ describe('playAudioBytesWithStopper (native)', () => {
     });
     await observedResolution;
 
-    await waitForDeleteAsyncCall();
-    expect(deleteAsync).toHaveBeenCalledTimes(1);
+    await waitForFileDeleteCall();
+    expect(fileDelete).toHaveBeenCalledTimes(1);
   });
 });

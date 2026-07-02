@@ -64,6 +64,24 @@ describe('account settings daemon spawn preparation registry', () => {
         unregister();
     });
 
+    it('propagates pending account settings flush failures instead of silently spawning stale settings', async () => {
+        const pendingFlushError = Object.assign(
+            new Error('Account settings changes could not be synced before spawning'),
+            { code: 'ACCOUNT_SETTINGS_PENDING_FLUSH_FAILED_BEFORE_SPAWN' },
+        );
+        const prepare = vi.fn(async () => {
+            throw pendingFlushError;
+        });
+        const unregister = registerAccountSettingsDaemonSpawnPreparation(prepare);
+
+        await expect(prepareAccountSettingsForDaemonSpawnIfNeeded(undefined)).rejects.toMatchObject({
+            code: 'ACCOUNT_SETTINGS_PENDING_FLUSH_FAILED_BEFORE_SPAWN',
+        });
+        expect(prepare).toHaveBeenCalledTimes(1);
+
+        unregister();
+    });
+
     it('does not override an explicit valid version hint', async () => {
         const prepare = vi.fn(async () => ({ accountSettingsVersionHint: 7 }));
         const unregister = registerAccountSettingsDaemonSpawnPreparation(prepare);

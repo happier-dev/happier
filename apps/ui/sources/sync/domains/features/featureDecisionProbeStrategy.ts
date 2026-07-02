@@ -1,11 +1,9 @@
 import type { FeatureId } from '@happier-dev/protocol';
 
-import type { Settings } from '@/sync/domains/settings/settings';
-
 import { featureRequiresServerSnapshot } from '@happier-dev/protocol';
 
 import { getFeatureBuildPolicyDecision } from './featureBuildPolicy';
-import { resolveLocalFeaturePolicyEnabled } from './featureLocalPolicy';
+import { resolveLocalFeaturePolicyEnabled, type FeatureLocalPolicySettings } from './featureLocalPolicy';
 
 export type FeatureDecisionSnapshotScopeKind = 'runtime' | 'spawn' | 'main_selection';
 
@@ -16,7 +14,7 @@ export type FeatureDecisionSnapshotStrategy = Readonly<{
     mainSelectionEnabled: boolean;
 }>;
 
-export function resolveFeatureDecisionProbesEnabled(featureId: FeatureId, settings: Settings): boolean {
+export function resolveFeatureDecisionProbesEnabled(featureId: FeatureId, settings: FeatureLocalPolicySettings): boolean {
     const buildPolicy = getFeatureBuildPolicyDecision(featureId);
     const localPolicyEnabled = resolveLocalFeaturePolicyEnabled(featureId, settings);
     return featureRequiresServerSnapshot(featureId) && buildPolicy !== 'deny' && localPolicyEnabled;
@@ -24,7 +22,7 @@ export function resolveFeatureDecisionProbesEnabled(featureId: FeatureId, settin
 
 export function resolveFeatureDecisionSnapshotStrategy(params: Readonly<{
     featureId: FeatureId;
-    settings: Settings;
+    settings: FeatureLocalPolicySettings;
     scopeKind: FeatureDecisionSnapshotScopeKind;
     hasMainSelectionServerIds: boolean;
 }>): FeatureDecisionSnapshotStrategy {

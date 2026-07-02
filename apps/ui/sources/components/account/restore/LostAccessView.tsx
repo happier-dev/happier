@@ -58,9 +58,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.base,
     },
     noticeBody: {
-        fontSize: 15,
+        fontSize: 16,
         color: theme.colors.text.primary,
-        lineHeight: 21,
+        lineHeight: 24,
         ...Typography.default(),
     },
     actions: {

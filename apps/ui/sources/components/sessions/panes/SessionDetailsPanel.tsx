@@ -9,6 +9,7 @@ import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAre
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { DetailsSplitWorkspace } from '@/components/appShell/panes/details/workspace/DetailsSplitWorkspace';
 import type { DetailsTabState } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import {
     renderProviderSessionDetailsTab,
     resolveProviderSessionDetailsTabIconName,
@@ -30,6 +31,11 @@ import {
     SessionScmStashDetailsViewForPanel,
     SessionSubagentDetailsViewForPanel,
 } from './SessionDetailsPanelDetailViews';
+import {
+    renderPluginSessionSurfaceTab,
+    resolvePluginSessionSurfaceTabIconName,
+} from './registry/sessionSurfaces';
+import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 
 export type SessionDetailsPanelProps = Readonly<{
     sessionId: string;
@@ -45,6 +51,8 @@ export type SessionDetailsPanelProps = Readonly<{
      * controls would duplicate route-level navigation controls.
      */
     showHeaderActions?: boolean;
+    pluginUiProjection?: PluginUiProjectionModel | null;
+    localServicePreviewState?: LocalServicePreviewState | null;
 }>;
 
 function asResource(value: unknown): { kind: string } | null {
@@ -106,6 +114,8 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
     const showHeaderActions = props.showHeaderActions !== false;
     const closeButtonAtStart = showHeaderActions && props.presentation === 'screen' && Platform.OS !== 'web';
     const panelPaddingTop = closeButtonAtStart ? 0 : insets.top;
+    const rightPaneOpen = pane.scopeState?.right?.isOpen === true;
+    const showRightPaneToggle = showHeaderActions && props.presentation !== 'screen';
 
     const openFileTab = React.useCallback((path: string, intent: 'default' | 'pinned' = 'default') => {
         deferOnWeb(() => {
@@ -133,6 +143,15 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
     }, []);
 
     const renderTabContent = React.useCallback((tab: any) => {
+        const pluginSurfaceTab = renderPluginSessionSurfaceTab({
+            tab,
+            pluginUiProjection: props.pluginUiProjection,
+            localServicePreviewState: props.localServicePreviewState,
+        });
+        if (pluginSurfaceTab) {
+            return pluginSurfaceTab;
+        }
+
         const resource = asResource(tab.resource);
         if (resource?.kind === 'file') {
             if (isFileResource(tab.resource)) {
@@ -241,7 +260,7 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
                 </Text>
             </View>
         );
-    }, [getStartEditingFileHandler, openFileTab, pane, props.scopeId, props.sessionId, requestClose, sessionScreenTestIdsEnabled, theme.colors.text.secondary]);
+    }, [getStartEditingFileHandler, openFileTab, pane, props.localServicePreviewState, props.pluginUiProjection, props.scopeId, props.sessionId, requestClose, sessionScreenTestIdsEnabled, theme.colors.text.secondary]);
 
     const iconButtonStyle = {
         width: 34,
@@ -283,6 +302,14 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         </Pressable>
     );
 
+    const toggleRightPane = React.useCallback(() => {
+        if (rightPaneOpen) {
+            pane.closeRight();
+            return;
+        }
+        pane.openRight();
+    }, [pane, rightPaneOpen]);
+
     const renderHeaderLeadingActions = React.useCallback(() => (
         showHeaderActions && closeButtonAtStart ? closeButton : null
     ), [closeButton, closeButtonAtStart, showHeaderActions]);
@@ -314,6 +341,25 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
                         />
                     </Pressable>
                 ) : null}
+                {showRightPaneToggle ? (
+                    <Pressable
+                        onPress={toggleRightPane}
+                        testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-details-right-pane-toggle')}
+                        style={iconButtonStyle}
+                        accessibilityRole="button"
+                        accessibilityLabel={
+                            rightPaneOpen
+                                ? t('session.detailsPanel.closeRightSidebarA11y')
+                                : t('session.detailsPanel.openRightSidebarA11y')
+                        }
+                    >
+                        <Octicons
+                            name={rightPaneOpen ? 'sidebar-collapse' : 'sidebar-expand'}
+                            size={18}
+                            color={theme.colors.text.secondary}
+                        />
+                    </Pressable>
+                ) : null}
                 {closeButtonAtStart ? null : closeButton}
             </>
         );
@@ -324,9 +370,12 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
         paneFocusMode.active,
         paneFocusMode.canEnter,
         paneFocusMode.toggle,
+        rightPaneOpen,
         sessionScreenTestIdsEnabled,
         showHeaderActions,
+        showRightPaneToggle,
         theme.colors.text.secondary,
+        toggleRightPane,
     ]);
 
     return (
@@ -335,7 +384,12 @@ export const SessionDetailsPanel = React.memo((props: SessionDetailsPanelProps) 
             paddingTop={panelPaddingTop}
             headerPaddingTop={10}
             testIds={testIds}
-            resolveTabIconName={(tab) => resolveProviderSessionDetailsTabIconName(tab)}
+            resolveTabIconName={(tab) =>
+                resolvePluginSessionSurfaceTabIconName({
+                    tab,
+                    pluginUiProjection: props.pluginUiProjection,
+                }) ?? resolveProviderSessionDetailsTabIconName(tab)
+            }
             renderTabContent={renderTabContent}
             renderHeaderLeadingActions={renderHeaderLeadingActions}
             renderHeaderActions={renderHeaderActions}

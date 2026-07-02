@@ -15,28 +15,55 @@ import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { useScrollEdgeFades, type ScrollEdgeVisibility } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { shadowLevelStyle } from '@/shadowElevation';
-import { resolveThemeSurfaceChromeStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import {
+    resolveThemeSurfaceChromeStyle,
+    type ThemeSurfaceChromeStyle,
+} from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 
-const stylesheet = StyleSheet.create((theme, runtime) => ({
-    modalContainer: {
-        borderRadius: 12,
-        overflow: 'hidden',
-        backgroundColor: theme.colors.surface.base,
-        borderWidth: Platform.OS === 'web' ? 0 : 0.5,
-        borderColor: theme.colors.border.modal,
-        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
-    },
-    themedSurfaceContainer: {
-        borderRadius: 12,
-        overflow: 'hidden',
-        backgroundColor: theme.colors.surface.base,
-        ...resolveThemeSurfaceChromeStyle({
-            borderColor: theme.colors.border.surface,
-            highlightColor: theme.colors.effect.surfaceHighlight,
-            shadowStyle: shadowLevelStyle(theme.colors.shadowLevels[4]),
-        }),
-    },
-}));
+const OVERLAY_BORDER_RADIUS = 12;
+
+function extractSurfaceStyle(chromeStyle: ThemeSurfaceChromeStyle) {
+    return {
+        borderColor: chromeStyle.borderColor,
+        borderWidth: chromeStyle.borderWidth,
+        borderTopColor: chromeStyle.borderTopColor,
+        borderTopWidth: chromeStyle.borderTopWidth,
+    };
+}
+
+const stylesheet = StyleSheet.create((theme) => {
+    const themedSurfaceChromeStyle = resolveThemeSurfaceChromeStyle({
+        borderColor: theme.colors.border.surface,
+        highlightColor: theme.colors.effect.surfaceHighlight,
+        shadowStyle: shadowLevelStyle(theme.colors.shadowLevels[4]),
+    });
+
+    return {
+        modalShadowFrame: {
+            borderRadius: OVERLAY_BORDER_RADIUS,
+            backgroundColor: theme.colors.surface.base,
+            ...shadowLevelStyle(theme.colors.shadowLevels[4]),
+        },
+        modalClipSurface: {
+            borderRadius: OVERLAY_BORDER_RADIUS,
+            overflow: 'hidden',
+            backgroundColor: theme.colors.surface.base,
+            borderWidth: Platform.OS === 'web' ? 0 : 0.5,
+            borderColor: theme.colors.border.modal,
+        },
+        themedSurfaceShadowFrame: {
+            borderRadius: OVERLAY_BORDER_RADIUS,
+            backgroundColor: theme.colors.surface.base,
+            ...shadowLevelStyle(theme.colors.shadowLevels[2]),
+        },
+        themedSurfaceClip: {
+            borderRadius: OVERLAY_BORDER_RADIUS,
+            overflow: 'hidden',
+            backgroundColor: theme.colors.surface.base,
+            ...extractSurfaceStyle(themedSurfaceChromeStyle),
+        },
+    };
+});
 
 export type FloatingOverlayEdgeFades =
     | boolean
@@ -203,27 +230,32 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
 
     const overlay = (
         <Animated.View style={[
-            surfaceChrome === 'theme' ? styles.themedSurfaceContainer : styles.modalContainer,
+            surfaceChrome === 'theme' ? styles.themedSurfaceShadowFrame : styles.modalShadowFrame,
             { maxHeight },
             containerStyle,
         ]}>
-            {content}
-            {scrollEnabled && fadeCfg ? (
-                <ScrollEdgeFades
-                    color={theme.colors.surface.base}
-                    size={fadeCfg.size}
-                    edges={fades.visibility}
-                />
-            ) : null}
+            <Animated.View style={[
+                surfaceChrome === 'theme' ? styles.themedSurfaceClip : styles.modalClipSurface,
+                { maxHeight },
+            ]}>
+                {content}
+                {scrollEnabled && fadeCfg ? (
+                    <ScrollEdgeFades
+                        color={theme.colors.surface.base}
+                        size={fadeCfg.size}
+                        edges={fades.visibility}
+                    />
+                ) : null}
 
-            {scrollEnabled && indicatorCfg ? (
-                <ScrollEdgeIndicators
-                    edges={fades.visibility}
-                    color={theme.colors.text.secondary}
-                    size={indicatorCfg.size}
-                    opacity={indicatorCfg.opacity}
-                />
-            ) : null}
+                {scrollEnabled && indicatorCfg ? (
+                    <ScrollEdgeIndicators
+                        edges={fades.visibility}
+                        color={theme.colors.text.secondary}
+                        size={indicatorCfg.size}
+                        opacity={indicatorCfg.opacity}
+                    />
+                ) : null}
+            </Animated.View>
         </Animated.View>
     );
 

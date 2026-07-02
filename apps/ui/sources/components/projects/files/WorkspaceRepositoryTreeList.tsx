@@ -5,6 +5,7 @@ import type { useUnistyles } from 'react-native-unistyles';
 
 import { FilesystemBrowser } from '@/components/ui/filesystemBrowser/FilesystemBrowser';
 import { FilesystemBrowserRow } from '@/components/ui/filesystemBrowser/FilesystemBrowserRow';
+import type { FilesystemBrowserRowRenderInput } from '@/components/ui/filesystemBrowser/filesystemBrowserTypes';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -13,6 +14,7 @@ import { SourceControlUnavailableState } from '@/components/workspaces/scm/state
 import { t } from '@/text';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { useScmTreeBadgeIndex } from '@/components/workspaces/files/repositoryTree/useScmTreeBadgeIndex';
+import { buildScmTreeBadgeSignature } from '@/components/workspaces/files/repositoryTree/scmTreeBadges';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
 import { isWebFileDragEvent } from '@/utils/files/isWebFileDragEvent';
@@ -114,6 +116,235 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
     }, [props.onRootLoadingChange, rootLoading]);
 
     const badgeIndex = useScmTreeBadgeIndex(props.scmSnapshot ?? null);
+    const badgeSignature = buildScmTreeBadgeSignature(props.scmSnapshot ?? null);
+    const rowRenderState = React.useMemo(() => ({
+        badgeIndex,
+        detailsMode,
+        onOpenFile,
+        onOpenFilePinned: props.onOpenFilePinned,
+        onWebDropTargetChange: props.onWebDropTargetChange,
+        renderRowActions: props.renderRowActions,
+        retryDirectory,
+        scmSnapshot: props.scmSnapshot,
+        theme,
+        toggleDirectory,
+        webDropHoverPath: props.webDropHoverPath,
+    }), [
+        badgeIndex,
+        detailsMode,
+        onOpenFile,
+        props.onOpenFilePinned,
+        props.onWebDropTargetChange,
+        props.renderRowActions,
+        retryDirectory,
+        props.scmSnapshot,
+        theme,
+        toggleDirectory,
+        props.webDropHoverPath,
+    ]);
+    const rowRenderStateRef = React.useRef(rowRenderState);
+    rowRenderStateRef.current = rowRenderState;
+    const rowVisualExtraData = React.useMemo(() => [
+        badgeSignature,
+        detailsMode ? 'details' : 'compact',
+        props.renderRowActions ? 'actions' : 'no-actions',
+        props.onWebDropTargetChange ? 'drop' : 'no-drop',
+        props.webDropHoverPath ?? '',
+        theme.colors.text?.secondary,
+        theme.colors.text?.link,
+        theme.colors.surface?.pressed,
+        theme.colors.state?.neutral?.foreground,
+        theme.colors.state?.success?.foreground,
+        theme.colors.state?.danger?.foreground,
+    ].join('|'), [
+        badgeSignature,
+        detailsMode,
+        props.onWebDropTargetChange,
+        props.renderRowActions,
+        props.webDropHoverPath,
+        theme.colors.state?.danger?.foreground,
+        theme.colors.state?.neutral?.foreground,
+        theme.colors.state?.success?.foreground,
+        theme.colors.surface?.pressed,
+        theme.colors.text?.link,
+        theme.colors.text?.secondary,
+    ]);
+
+    const renderRow = React.useCallback(({ node, showDivider }: FilesystemBrowserRowRenderInput) => {
+        const rowState = rowRenderStateRef.current;
+        const rowTestId = `repository-tree-row-${toTestIdSafeValue(node.path)}`;
+        const badge = rowState.badgeIndex
+            ? (
+                node.type === 'file'
+                    ? rowState.badgeIndex.getFileBadge(node.path)
+                    : node.type === 'directory'
+                        ? rowState.badgeIndex.getDirectoryBadge(node.path)
+                        : null
+            )
+            : null;
+
+        const menu = rowState.renderRowActions ? rowState.renderRowActions(node) : null;
+
+        const showDetailsInline = node.type !== 'error' && rowState.detailsMode && Platform.OS === 'web';
+        const detailsSize =
+            node.type === 'file' && typeof node.sizeBytes === 'number'
+                ? formatByteSize(node.sizeBytes)
+                : '';
+        const detailsModified =
+            typeof node.modifiedMs === 'number'
+                ? new Date(node.modifiedMs).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                : '';
+
+        const shouldShowRight = showDetailsInline || Boolean(badge) || (isDirectoryNode(node) && node.isLoadingChildren) || Boolean(menu);
+        const right = shouldShowRight ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                {showDetailsInline ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                        <Text
+                            style={{
+                                width: 74,
+                                textAlign: 'right',
+                                fontSize: 12,
+                                color: rowState.theme.colors.text.secondary,
+                                ...Typography.mono(),
+                            }}
+                            numberOfLines={1}
+                        >
+                            {detailsSize}
+                        </Text>
+                        <Text
+                            style={{
+                                width: 132,
+                                textAlign: 'right',
+                                fontSize: 12,
+                                color: rowState.theme.colors.text.secondary,
+                                ...Typography.mono(),
+                            }}
+                            numberOfLines={1}
+                        >
+                            {detailsModified}
+                        </Text>
+                    </View>
+                ) : null}
+                {badge ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
+                        <Text style={{ fontSize: 12, color: rowState.theme.colors.state.neutral.foreground, ...Typography.mono('semiBold') }}>
+                            {node.type === 'directory' ? `${badge.kindLetter}${badge.changedCount}` : badge.kindLetter}
+                        </Text>
+                        {badge.added > 0 ? (
+                            <Text style={{ fontSize: 12, color: rowState.theme.colors.state.success.foreground, ...Typography.mono('semiBold') }}>
+                                {`+${badge.added}`}
+                            </Text>
+                        ) : null}
+                        {badge.removed > 0 ? (
+                            <Text
+                                style={{
+                                    fontSize: 12,
+                                    color: rowState.theme.colors.state.danger.foreground ?? rowState.theme.colors.state.neutral.foreground,
+                                    ...Typography.mono('semiBold'),
+                                }}
+                            >
+                                {`-${badge.removed}`}
+                            </Text>
+                        ) : null}
+                    </View>
+                ) : null}
+                {isDirectoryNode(node) && node.isLoadingChildren ? (
+                    <ActivitySpinner size="small" color={rowState.theme.colors.text.secondary} />
+                ) : null}
+                {menu}
+            </View>
+        ) : undefined;
+
+        const subtitle = (() => {
+            if (node.type === 'error') return t('errors.tryAgain');
+            if (node.type === 'info') return undefined;
+            if (!rowState.detailsMode || Platform.OS === 'web') return undefined;
+            const parts: string[] = [];
+            if (node.type === 'file' && typeof node.sizeBytes === 'number') {
+                parts.push(formatByteSize(node.sizeBytes));
+            }
+            if (typeof node.modifiedMs === 'number') {
+                parts.push(new Date(node.modifiedMs).toLocaleString());
+            }
+            return parts.length > 0 ? parts.join(' · ') : undefined;
+        })();
+
+        return (
+            <FilesystemBrowserRow
+                testID={rowTestId}
+                node={node}
+                title={node.type === 'directory' ? `${node.name}/` : node.name}
+                subtitle={subtitle}
+                icon={renderEntryIcon(node, rowState.theme)}
+                density="tight"
+                showDivider={showDivider}
+                rightElement={right}
+                errorTitle={t('files.repositoryFolderLoadFailed')}
+                errorSubtitle={t('errors.tryAgain')}
+                onRetryError={(errorNode: WorkspaceRepositoryTreeNode) => {
+                    const parentDirectoryPath =
+                        typeof errorNode.parentDirectoryPath === 'string' && errorNode.parentDirectoryPath.trim()
+                            ? errorNode.parentDirectoryPath
+                            : null;
+                    if (parentDirectoryPath) {
+                        void rowState.retryDirectory(parentDirectoryPath);
+                    }
+                }}
+                onPress={
+                    node.type === 'error'
+                        ? undefined
+                        : node.type === 'file'
+                            ? () => rowState.onOpenFile(node.path)
+                            : () => {
+                                void rowState.toggleDirectory(node.path);
+                            }
+                }
+                onDoublePress={
+                    node.type === 'file'
+                        ? () => (rowState.onOpenFilePinned ?? rowState.onOpenFile)(node.path)
+                        : undefined
+                }
+                paddingRight={8}
+                style={{
+                    backgroundColor: rowState.webDropHoverPath === node.path ? rowState.theme.colors.surface.pressed : undefined,
+                    borderRadius: 10,
+                }}
+                wrapContent={
+                    Platform.OS === 'web'
+                        ? ({ content }) => {
+                            const shouldWrapDropTarget =
+                                (node.type === 'directory' || node.type === 'file')
+                                && Boolean(rowState.onWebDropTargetChange);
+                            const wrappedContent = shouldWrapDropTarget
+                                ? (
+                                    <WebDropTargetView
+                                        onDragEnter={(event) => {
+                                            if (!isWebFileDragEvent(event)) return;
+                                            rowState.onWebDropTargetChange?.(buildWebDropTarget(node));
+                                        }}
+                                        onDragOver={(event) => {
+                                            if (!isWebFileDragEvent(event)) return;
+                                            event.preventDefault?.();
+                                            rowState.onWebDropTargetChange?.(buildWebDropTarget(node));
+                                        }}
+                                    >
+                                        {content}
+                                    </WebDropTargetView>
+                                )
+                                : content;
+
+                            return (
+                                <View testID={`${rowTestId}-drop-target`}>
+                                    {wrappedContent}
+                                </View>
+                            );
+                        }
+                        : null
+                }
+            />
+        );
+    }, []);
 
     if (rootError && nodes.length === 0) {
         return (
@@ -139,180 +370,8 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
             emptyIconName="folder-outline"
             loadingLabel={t('common.loading')}
             inlineRetryLabel={t('errors.tryAgain')}
-            renderRow={({ node, showDivider }) => {
-                const rowTestId = `repository-tree-row-${toTestIdSafeValue(node.path)}`;
-                const badge = badgeIndex
-                    ? (
-                        node.type === 'file'
-                            ? badgeIndex.getFileBadge(node.path)
-                            : node.type === 'directory'
-                                ? badgeIndex.getDirectoryBadge(node.path)
-                                : null
-                    )
-                    : null;
-
-                const menu = props.renderRowActions ? props.renderRowActions(node) : null;
-
-                const showDetailsInline = node.type !== 'error' && detailsMode && Platform.OS === 'web';
-                const detailsSize =
-                    node.type === 'file' && typeof node.sizeBytes === 'number'
-                        ? formatByteSize(node.sizeBytes)
-                        : '';
-                const detailsModified =
-                    typeof node.modifiedMs === 'number'
-                        ? new Date(node.modifiedMs).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-                        : '';
-
-                const shouldShowRight = showDetailsInline || Boolean(badge) || (isDirectoryNode(node) && node.isLoadingChildren) || Boolean(menu);
-                const right = shouldShowRight ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                        {showDetailsInline ? (
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                                <Text
-                                    style={{
-                                        width: 74,
-                                        textAlign: 'right',
-                                        fontSize: 12,
-                                        color: theme.colors.text.secondary,
-                                        ...Typography.mono(),
-                                    }}
-                                    numberOfLines={1}
-                                >
-                                    {detailsSize}
-                                </Text>
-                                <Text
-                                    style={{
-                                        width: 132,
-                                        textAlign: 'right',
-                                        fontSize: 12,
-                                        color: theme.colors.text.secondary,
-                                        ...Typography.mono(),
-                                    }}
-                                    numberOfLines={1}
-                                >
-                                    {detailsModified}
-                                </Text>
-                            </View>
-                        ) : null}
-                        {badge ? (
-                            <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 6 }}>
-                                <Text style={{ fontSize: 12, color: theme.colors.state.neutral.foreground, ...Typography.mono('semiBold') }}>
-                                    {node.type === 'directory' ? `${badge.kindLetter}${badge.changedCount}` : badge.kindLetter}
-                                </Text>
-                                {badge.added > 0 ? (
-                                    <Text style={{ fontSize: 12, color: theme.colors.state.success.foreground, ...Typography.mono('semiBold') }}>
-                                        {`+${badge.added}`}
-                                    </Text>
-                                ) : null}
-                                {badge.removed > 0 ? (
-                                    <Text
-                                        style={{
-                                            fontSize: 12,
-                                            color: theme.colors.state.danger.foreground ?? theme.colors.state.neutral.foreground,
-                                            ...Typography.mono('semiBold'),
-                                        }}
-                                    >
-                                        {`-${badge.removed}`}
-                                    </Text>
-                                ) : null}
-                            </View>
-                        ) : null}
-                        {isDirectoryNode(node) && node.isLoadingChildren ? (
-                            <ActivitySpinner size="small" color={theme.colors.text.secondary} />
-                        ) : null}
-                        {menu}
-                    </View>
-                ) : undefined;
-
-                const subtitle = (() => {
-                    if (node.type === 'error') return t('errors.tryAgain');
-                    if (node.type === 'info') return undefined;
-                    if (!detailsMode || Platform.OS === 'web') return undefined;
-                    const parts: string[] = [];
-                    if (node.type === 'file' && typeof node.sizeBytes === 'number') {
-                        parts.push(formatByteSize(node.sizeBytes));
-                    }
-                    if (typeof node.modifiedMs === 'number') {
-                        parts.push(new Date(node.modifiedMs).toLocaleString());
-                    }
-                    return parts.length > 0 ? parts.join(' · ') : undefined;
-                })();
-
-                return (
-                    <FilesystemBrowserRow
-                        testID={rowTestId}
-                        node={node}
-                        title={node.type === 'directory' ? `${node.name}/` : node.name}
-                        subtitle={subtitle}
-                        icon={renderEntryIcon(node, theme)}
-                        density="tight"
-                        showDivider={showDivider}
-                        rightElement={right}
-                        errorTitle={t('files.repositoryFolderLoadFailed')}
-                        errorSubtitle={t('errors.tryAgain')}
-                        onRetryError={(errorNode: WorkspaceRepositoryTreeNode) => {
-                            const parentDirectoryPath =
-                                typeof errorNode.parentDirectoryPath === 'string' && errorNode.parentDirectoryPath.trim()
-                                    ? errorNode.parentDirectoryPath
-                                    : null;
-                            if (parentDirectoryPath) {
-                                void retryDirectory(parentDirectoryPath);
-                            }
-                        }}
-                        onPress={
-                            node.type === 'error'
-                                ? undefined
-                                : node.type === 'file'
-                                    ? () => onOpenFile(node.path)
-                                    : () => {
-                                        void toggleDirectory(node.path);
-                                    }
-                        }
-                        onDoublePress={
-                            node.type === 'file'
-                                ? () => (props.onOpenFilePinned ?? onOpenFile)(node.path)
-                                : undefined
-                        }
-                        paddingRight={8}
-                        style={{
-                            backgroundColor: props.webDropHoverPath === node.path ? theme.colors.surface.pressed : undefined,
-                            borderRadius: 10,
-                        }}
-                        wrapContent={
-                            Platform.OS === 'web'
-                                ? ({ content }) => {
-                                    const shouldWrapDropTarget =
-                                        (node.type === 'directory' || node.type === 'file')
-                                        && Boolean(props.onWebDropTargetChange);
-                                    const wrappedContent = shouldWrapDropTarget
-                                        ? (
-                                            <WebDropTargetView
-                                                onDragEnter={(event) => {
-                                                    if (!isWebFileDragEvent(event)) return;
-                                                    props.onWebDropTargetChange?.(buildWebDropTarget(node));
-                                                }}
-                                                onDragOver={(event) => {
-                                                    if (!isWebFileDragEvent(event)) return;
-                                                    event.preventDefault?.();
-                                                    props.onWebDropTargetChange?.(buildWebDropTarget(node));
-                                                }}
-                                            >
-                                                {content}
-                                            </WebDropTargetView>
-                                        )
-                                        : content;
-
-                                    return (
-                                        <View testID={`${rowTestId}-drop-target`}>
-                                            {wrappedContent}
-                                        </View>
-                                    );
-                                }
-                                : null
-                        }
-                    />
-                );
-            }}
+            renderRow={renderRow}
+            extraData={rowVisualExtraData}
             initialNumToRender={Math.min(32, nodes.length)}
             maxToRenderPerBatch={32}
             windowSize={7}

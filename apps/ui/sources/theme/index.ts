@@ -201,6 +201,9 @@ export const lightTheme = {
             text: '#000000',
             placeholder: '#999999',
         },
+        composer: {
+            chipTint: '#767676',
+        },
         //
         // App components
         //
@@ -493,6 +496,9 @@ export const darkTheme = {
             background: '#171515',
             text: '#EFEFEF',
             placeholder: '#766C67',
+        },
+        composer: {
+            chipTint: '#A79D97',
         },
         feed: {
             card: {

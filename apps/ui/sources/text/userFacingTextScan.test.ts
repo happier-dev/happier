@@ -104,4 +104,30 @@ describe('tools/i18n/userFacingTextScan', () => {
             await fs.rm(dir, { recursive: true, force: true });
         }
     });
+
+    it('excludes dev-only components under sources/components/dev', async () => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'happier-ui-i18n-scan-'));
+        try {
+            const devComponentsDir = path.join(dir, 'sources', 'components', 'dev');
+            await fs.mkdir(devComponentsDir, { recursive: true });
+
+            await fs.writeFile(
+                path.join(devComponentsDir, 'ExampleDevSection.tsx'),
+                [
+                    `import { Text } from '@/components/ui/text/Text';`,
+                    '',
+                    'export function ExampleDevSection() {',
+                    '  return <Text>Hardcoded dev-only copy</Text>;',
+                    '}',
+                    '',
+                ].join('\n'),
+                'utf8'
+            );
+
+            const hits = scanUserFacingStrings({ sourcesRootDir: path.join(dir, 'sources') });
+            expect(hits).toEqual([]);
+        } finally {
+            await fs.rm(dir, { recursive: true, force: true });
+        }
+    });
 });

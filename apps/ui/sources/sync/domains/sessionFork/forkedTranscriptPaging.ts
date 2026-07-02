@@ -9,6 +9,21 @@ function normalizeSeq(seq: unknown): number | null {
   return Math.max(0, Math.trunc(seq));
 }
 
+function deriveBeforeSeqFromLoadedSegmentMessages(
+  fork: ForkedTranscriptSnapshot,
+  messageIdsOldestFirst: readonly string[],
+): number | null {
+  let oldestSeq: number | null = null;
+  for (const messageId of messageIdsOldestFirst) {
+    const message = fork.combinedMessagesById[messageId];
+    const seq = normalizeSeq(message?.seq);
+    if (seq == null || seq <= 0) continue;
+    oldestSeq = oldestSeq == null ? seq : Math.min(oldestSeq, seq);
+  }
+
+  return oldestSeq == null || oldestSeq <= 1 ? null : oldestSeq - 1;
+}
+
 export function resolveNextForkedTranscriptLoadOlderRequest(params: Readonly<{
   fork: ForkedTranscriptSnapshot;
   getHasMoreOlder: (sessionId: string) => boolean | undefined;
@@ -21,14 +36,19 @@ export function resolveNextForkedTranscriptLoadOlderRequest(params: Readonly<{
   for (let i = segments.length - 1; i >= 0; i -= 1) {
     const seg = segments[i]!;
     const hasMoreOlder = params.getHasMoreOlder(seg.sessionId);
-    if (hasMoreOlder === false) continue;
 
     if (seg.isReadOnlyContext !== true) {
+      if (hasMoreOlder === false) continue;
+
       const cursor = normalizeSeq(params.getBeforeSeqCursor(seg.sessionId));
-      // If the child segment hasn't initialized its pagination cursor yet (common for brand new fork
-      // sessions with 0 committed messages), `loadOlderMessages(child)` will return `not_ready` and
-      // paging can get stuck on the child segment forever. Skip upward so ancestor paging can proceed.
       if (cursor === null || cursor <= 0) {
+        const derivedBeforeSeq = deriveBeforeSeqFromLoadedSegmentMessages(params.fork, seg.messageIdsOldestFirst);
+        if (derivedBeforeSeq !== null) {
+          return { kind: 'loadOlderFromCursor', sessionId: seg.sessionId, beforeSeq: derivedBeforeSeq };
+        }
+        // If the child segment hasn't initialized its pagination cursor yet (common for brand new fork
+        // sessions with 0 committed messages), `loadOlderMessages(child)` will return `not_ready` and
+        // paging can get stuck on the child segment forever. Skip upward so ancestor paging can proceed.
         continue;
       }
       return { kind: 'loadOlder', sessionId: seg.sessionId };
@@ -36,8 +56,25 @@ export function resolveNextForkedTranscriptLoadOlderRequest(params: Readonly<{
 
     const cutoff = normalizeSeq(seg.cutoffSeqInclusive) ?? 0;
     const desiredStartBeforeSeq = cutoff + 1;
-    const cursor = params.getBeforeSeqCursor(seg.sessionId);
-    if (typeof cursor !== 'number' || !Number.isFinite(cursor) || cursor <= 0 || cursor > desiredStartBeforeSeq) {
+    const cursor = normalizeSeq(params.getBeforeSeqCursor(seg.sessionId));
+    const hasInitializedAncestorPage = cursor !== null && cursor > 0;
+    const hasLoadedAncestorMessages = seg.messageIdsOldestFirst.length > 0;
+    const olderSegmentHasMore = segments
+      .slice(0, i)
+      .some((olderSegment) => params.getHasMoreOlder(olderSegment.sessionId) === true);
+    if (
+      hasMoreOlder === false
+      && (
+        cutoff <= 0
+        || hasInitializedAncestorPage
+        || hasLoadedAncestorMessages
+        || olderSegmentHasMore
+      )
+    ) {
+      continue;
+    }
+
+    if (cursor === null || cursor <= 0 || cursor > desiredStartBeforeSeq) {
       return { kind: 'loadOlderFromCursor', sessionId: seg.sessionId, beforeSeq: desiredStartBeforeSeq };
     }
     return { kind: 'loadOlder', sessionId: seg.sessionId };

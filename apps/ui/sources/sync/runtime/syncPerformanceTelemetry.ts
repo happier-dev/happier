@@ -36,6 +36,23 @@ type SyncPerformanceTelemetryOptions = Readonly<{
     emitSummary?: (summary: SyncPerformanceTelemetrySummary) => void;
 }>;
 
+type SyncPerformanceTelemetryGlobalLifecycleHooks = Readonly<{
+    telemetry?: SyncPerformanceTelemetry;
+    beforeCollect?: () => void;
+    reset?: () => void;
+}>;
+
+type SyncPerformanceTelemetryGlobalConfigureOptions = Readonly<{
+    enabled?: boolean;
+    flushIntervalMs?: number;
+    slowThresholdMs?: number;
+}>;
+
+type RegisteredSyncPerformanceTelemetryLifecycleHook = Readonly<{
+    telemetry: SyncPerformanceTelemetry;
+    hook: () => void;
+}>;
+
 type MutableTelemetryEvent = {
     name: string;
     count: number;
@@ -52,6 +69,9 @@ const DEFAULT_SLOW_THRESHOLD_MS = 50;
 const DEFAULT_FLUSH_INTERVAL_MS = 30_000;
 const DURATION_BUCKETS_MS = [1, 4, 16, 64, 256, 1024, 4096, 16384] as const;
 const DURATION_BUCKET_OVERFLOW = 'inf';
+const globalBeforeCollectHooks = new Set<RegisteredSyncPerformanceTelemetryLifecycleHook>();
+const globalResetHooks = new Set<RegisteredSyncPerformanceTelemetryLifecycleHook>();
+const telemetryInstancesCollectingHooks = new Set<SyncPerformanceTelemetry>();
 
 function defaultNow(): number {
     const perf = (globalThis as unknown as { performance?: { now?: () => number } }).performance;
@@ -59,6 +79,10 @@ function defaultNow(): number {
         return perf.now();
     }
     return Date.now();
+}
+
+function readDevFlag(): boolean {
+    return typeof __DEV__ !== 'undefined' && __DEV__ === true;
 }
 
 function normalizePositiveNumber(value: unknown, fallback: number): number {
@@ -92,6 +116,17 @@ function readDurationBucketValue(bucketKey: string, fallbackMaxMs: number): numb
     }
     const value = Number(bucketKey);
     return Number.isFinite(value) ? value : fallbackMaxMs;
+}
+
+function sanitizeScenarioName(name: string): string {
+    const sanitized = name
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 80)
+        .replace(/-+$/g, '');
+    return sanitized.length > 0 ? sanitized : 'unnamed';
 }
 
 function sortedDurationBucketKeys(durationBuckets: SyncPerformanceTelemetryDurationBuckets): string[] {
@@ -231,11 +266,18 @@ export class SyncPerformanceTelemetry {
         if (!existing) {
             this.events.set(trimmedName, event);
         }
-        this.flushIfDue();
-        this.scheduleFlushIfNeeded();
+        if (!telemetryInstancesCollectingHooks.has(this)) {
+            this.flushIfDue();
+            this.scheduleFlushIfNeeded();
+        }
     }
 
     snapshot(): SyncPerformanceTelemetrySummary {
+        runGlobalBeforeCollectHooks(this);
+        return this.createSnapshot();
+    }
+
+    private createSnapshot(): SyncPerformanceTelemetrySummary {
         return {
             events: Array.from(this.events.values()).map((event) => ({
                 name: event.name,
@@ -258,8 +300,9 @@ export class SyncPerformanceTelemetry {
 
     flushSummary(): SyncPerformanceTelemetrySummary | null {
         this.clearFlushTimer();
+        runGlobalBeforeCollectHooks(this);
         if (this.events.size === 0) return null;
-        const summary = this.snapshot();
+        const summary = this.createSnapshot();
         this.reset();
         this.lastFlushAtMs = this.now();
         return summary;
@@ -268,6 +311,7 @@ export class SyncPerformanceTelemetry {
     reset(): void {
         this.clearFlushTimer();
         this.events.clear();
+        runGlobalResetHooks(this);
     }
 
     private clearFlushTimer(): void {
@@ -305,21 +349,85 @@ export function createSyncPerformanceTelemetry(options?: SyncPerformanceTelemetr
 
 export const syncPerformanceTelemetry = createSyncPerformanceTelemetry();
 
+function runGlobalBeforeCollectHooks(telemetry: SyncPerformanceTelemetry): void {
+    if (telemetryInstancesCollectingHooks.has(telemetry)) return;
+    telemetryInstancesCollectingHooks.add(telemetry);
+    try {
+        for (const entry of Array.from(globalBeforeCollectHooks)) {
+            if (entry.telemetry === telemetry) {
+                entry.hook();
+            }
+        }
+    } finally {
+        telemetryInstancesCollectingHooks.delete(telemetry);
+    }
+}
+
+function runGlobalResetHooks(telemetry: SyncPerformanceTelemetry): void {
+    for (const entry of Array.from(globalResetHooks)) {
+        if (entry.telemetry === telemetry) {
+            entry.hook();
+        }
+    }
+}
+
+export function registerSyncPerformanceTelemetryGlobalLifecycleHooks(
+    hooks: SyncPerformanceTelemetryGlobalLifecycleHooks,
+): () => void {
+    const telemetry = hooks.telemetry ?? syncPerformanceTelemetry;
+    const beforeCollectEntry = hooks.beforeCollect
+        ? { telemetry, hook: hooks.beforeCollect }
+        : null;
+    const resetEntry = hooks.reset
+        ? { telemetry, hook: hooks.reset }
+        : null;
+    if (beforeCollectEntry) {
+        globalBeforeCollectHooks.add(beforeCollectEntry);
+    }
+    if (resetEntry) {
+        globalResetHooks.add(resetEntry);
+    }
+    return () => {
+        if (beforeCollectEntry) {
+            globalBeforeCollectHooks.delete(beforeCollectEntry);
+        }
+        if (resetEntry) {
+            globalResetHooks.delete(resetEntry);
+        }
+    };
+}
+
 export function installSyncPerformanceTelemetryGlobal(
     telemetry: SyncPerformanceTelemetry = syncPerformanceTelemetry,
 ): void {
     const target = globalThis as unknown as {
         __HAPPIER_SYNC_PERFORMANCE__?: {
+            configure?: (options: SyncPerformanceTelemetryGlobalConfigureOptions) => void;
             snapshot: () => SyncPerformanceTelemetrySummary;
             flush: () => SyncPerformanceTelemetrySummary | null;
             reset: () => void;
+            markScenario: (name: string, fields?: SyncPerformanceTelemetryFields) => void;
         };
     };
     target.__HAPPIER_SYNC_PERFORMANCE__ = {
-        snapshot: () => telemetry.snapshot(),
-        flush: () => telemetry.flushSummary(),
-        reset: () => telemetry.reset(),
+        snapshot: () => {
+            return telemetry.snapshot();
+        },
+        flush: () => {
+            return telemetry.flushSummary();
+        },
+        reset: () => {
+            telemetry.reset();
+        },
+        markScenario: (name, fields) => {
+            telemetry.count(`sync.performance.scenario.${sanitizeScenarioName(name)}`, fields);
+        },
     };
+    if (readDevFlag()) {
+        target.__HAPPIER_SYNC_PERFORMANCE__.configure = (options) => {
+            telemetry.configure(options);
+        };
+    }
 }
 
 export function emitSyncPerformanceSummaryToConsole(summary: SyncPerformanceTelemetrySummary): void {

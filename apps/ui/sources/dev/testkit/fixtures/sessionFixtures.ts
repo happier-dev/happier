@@ -60,6 +60,7 @@ export function createSessionListRenderableSessionFixture(
         thinkingGraceUntil: null,
         hasPendingPermissionRequests: false,
         hasPendingUserActionRequests: false,
+        pendingRequestObservedAt: null,
         hasUnreadMessages: false,
         keepVisibleWhenInactive: false,
         ...overrides,

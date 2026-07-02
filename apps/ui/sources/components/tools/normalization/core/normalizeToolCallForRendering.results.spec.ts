@@ -118,4 +118,24 @@ describe('normalizeToolCallForRendering (results)', () => {
         );
         expect(reasoning.result).toMatchObject({ content: 'Hello from reasoning' });
     });
+
+    it("preserves Cursor's cancelled todo status instead of coercing it to pending", () => {
+        const todo = normalizeToolCallForRendering(
+            makeTool({
+                name: 'TodoWrite',
+                result: {
+                    newTodos: [
+                        { content: 'Done', status: 'completed' },
+                        { content: 'Abandoned', status: 'cancelled' },
+                    ],
+                },
+            }),
+        );
+        expect(todo.result).toMatchObject({
+            todos: [
+                { content: 'Done', status: 'completed' },
+                { content: 'Abandoned', status: 'cancelled' },
+            ],
+        });
+    });
 });

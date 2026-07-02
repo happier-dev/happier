@@ -11,12 +11,10 @@ vi.mock('react-native-gesture-handler', async () => {
     return createGestureHandlerMock();
 });
 
-vi.mock('react-native-reanimated', () => ({
-    default: { View: (props: any) => React.createElement('Animated.View', props) },
-    useSharedValue: (init: any) => ({ value: init }),
-    useAnimatedStyle: (fn: () => any) => fn(),
-    withSpring: (value: any) => value,
-}));
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
 
 vi.mock('react-native-worklets', () => ({
     scheduleOnRN: (fn: (...args: any[]) => void, ...args: any[]) => fn(...args),
@@ -34,6 +32,8 @@ const routerPushSpy = vi.fn();
 const setPinnedSessionKeysV1 = vi.fn();
 const setSessionListGroupOrderV1 = vi.fn();
 const setSessionListOrderingModeV1 = vi.fn();
+const setSessionListFolderSortModeV1 = vi.fn();
+const setSessionListSectionModeV1 = vi.fn();
 const setSessionListActiveGroupingV1 = vi.fn();
 const setSessionListInactiveGroupingV1 = vi.fn();
 const setHideInactiveSessions = vi.fn();
@@ -47,6 +47,8 @@ const setSessionFolderAssignmentSpy = vi.hoisted(() => vi.fn(async () => {}));
 let pinnedSessionKeysV1: string[] = [];
 let sessionListGroupOrderV1: Record<string, string[]> = {};
 let sessionListOrderingModeV1 = 'custom';
+let sessionListFolderSortModeV1 = 'foldersFirst';
+let sessionListSectionModeV1: 'activity' | 'single' = 'activity';
 let sessionListActiveGroupingV1: 'project' | 'date' = 'project';
 let sessionListInactiveGroupingV1: 'project' | 'date' = 'date';
 let hideInactiveSessions = false;
@@ -77,7 +79,7 @@ type DropdownMenuTriggerParams = {
 };
 
 type DropdownMenuCapture = {
-    items?: Array<{ id?: string; category?: string; subtitle?: string; rightElement?: unknown }>;
+    items?: Array<{ id?: string; category?: string; subtitle?: string; rightElement?: unknown; disabled?: boolean }>;
     selectedId?: string;
     showCategoryTitles?: boolean;
     onSelect?: (id: string) => void;
@@ -136,6 +138,8 @@ installSessionShellCommonModuleMocks({
             if (key === 'compactSessionViewMinimal') return false;
             if (key === 'sessionTagsEnabled') return true;
             if (key === 'sessionListOrderingModeV1') return sessionListOrderingModeV1;
+            if (key === 'sessionListFolderSortModeV1') return sessionListFolderSortModeV1;
+            if (key === 'sessionListSectionModeV1') return sessionListSectionModeV1;
             if (key === 'sessionListActiveGroupingV1') return sessionListActiveGroupingV1;
             if (key === 'sessionListInactiveGroupingV1') return sessionListInactiveGroupingV1;
             if (key === 'hideInactiveSessions') return hideInactiveSessions;
@@ -146,6 +150,8 @@ installSessionShellCommonModuleMocks({
             if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
             if (key === 'sessionListGroupOrderV1') return [sessionListGroupOrderV1, setSessionListGroupOrderV1];
             if (key === 'sessionListOrderingModeV1') return [sessionListOrderingModeV1, setSessionListOrderingModeV1];
+            if (key === 'sessionListFolderSortModeV1') return [sessionListFolderSortModeV1, setSessionListFolderSortModeV1];
+            if (key === 'sessionListSectionModeV1') return [sessionListSectionModeV1, setSessionListSectionModeV1];
             if (key === 'sessionListActiveGroupingV1') return [sessionListActiveGroupingV1, setSessionListActiveGroupingV1];
             if (key === 'sessionListInactiveGroupingV1') return [sessionListInactiveGroupingV1, setSessionListInactiveGroupingV1];
             if (key === 'hideInactiveSessions') return [hideInactiveSessions, setHideInactiveSessions];
@@ -275,6 +281,8 @@ vi.mock('./SessionItem', () => ({
 describe('SessionsList (inline reorder)', () => {
     beforeEach(() => {
         sessionListOrderingModeV1 = 'custom';
+        sessionListFolderSortModeV1 = 'foldersFirst';
+        sessionListSectionModeV1 = 'activity';
         pinnedSessionKeysV1 = [];
         sessionListGroupOrderV1 = {};
         sessionTagsV1 = {};
@@ -287,6 +295,8 @@ describe('SessionsList (inline reorder)', () => {
         setPinnedSessionKeysV1.mockClear();
         setSessionListGroupOrderV1.mockClear();
         setSessionListOrderingModeV1.mockClear();
+        setSessionListFolderSortModeV1.mockClear();
+        setSessionListSectionModeV1.mockClear();
         setSessionTagsV1.mockClear();
         setSessionFoldersV1.mockClear();
         getCredentialsForServerUrlSpy.mockClear();
@@ -383,31 +393,46 @@ describe('SessionsList (inline reorder)', () => {
             'custom',
             'created',
             'updated',
+            'sectionModeActivity',
+            'sectionModeSingle',
             'activeGroupingProject',
             'activeGroupingDate',
             'inactiveGroupingProject',
             'inactiveGroupingDate',
             'sessionFolderViewModeTree',
+            'sessionListFolderSortModeFoldersFirst',
+            'sessionListFolderSortModeMixed',
             'hideInactiveSessions',
         ]));
         expect(menuProps?.items?.map((item: any) => item?.category)).toEqual([
             'settingsSession.sessionList.menuSections.sortBy',
             'settingsSession.sessionList.menuSections.sortBy',
             'settingsSession.sessionList.menuSections.sortBy',
+            'settingsSession.sessionList.sectionModeTitle',
+            'settingsSession.sessionList.sectionModeTitle',
             'settingsFeatures.sessionListActiveGrouping',
             'settingsFeatures.sessionListActiveGrouping',
             'settingsFeatures.sessionListInactiveGrouping',
             'settingsFeatures.sessionListInactiveGrouping',
             'settingsSession.sessionList.menuSections.show',
+            'settingsSession.sessionList.menuSections.folderSortMode',
+            'settingsSession.sessionList.menuSections.folderSortMode',
             'settingsSession.sessionList.menuSections.show',
         ]);
         const activeGroupingProjectItem = menuProps?.items?.find((item: any) => item?.id === 'activeGroupingProject');
+        const sectionModeActivityItem = menuProps?.items?.find((item: any) => item?.id === 'sectionModeActivity');
         const inactiveGroupingDateItem = menuProps?.items?.find((item: any) => item?.id === 'inactiveGroupingDate');
         const hideInactiveSessionsItem = menuProps?.items?.find((item: any) => item?.id === 'hideInactiveSessions');
+        const foldersFirstItem = menuProps?.items?.find((item: any) => item?.id === 'sessionListFolderSortModeFoldersFirst');
+        const mixedFolderSortItem = menuProps?.items?.find((item: any) => item?.id === 'sessionListFolderSortModeMixed');
         expect(activeGroupingProjectItem?.subtitle).toBeUndefined();
+        expect(sectionModeActivityItem?.subtitle).toBe('settingsSession.sessionList.sectionModeActivitySubtitle');
         expect(inactiveGroupingDateItem?.subtitle).toBeUndefined();
         expect(hideInactiveSessionsItem?.subtitle).toBeUndefined();
+        expect(foldersFirstItem?.subtitle).toBe('settingsSession.sessionList.folderSortModeFoldersFirstSubtitle');
+        expect(mixedFolderSortItem?.subtitle).toBe('settingsSession.sessionList.folderSortModeMixedSubtitle');
         expect((activeGroupingProjectItem as { rightElement?: unknown } | undefined)?.rightElement).toBeTruthy();
+        expect((sectionModeActivityItem as { rightElement?: unknown } | undefined)?.rightElement).toBeTruthy();
         expect((inactiveGroupingDateItem as { rightElement?: unknown } | undefined)?.rightElement).toBeTruthy();
 
         const firstMenuItems = menuProps?.items;
@@ -419,12 +444,40 @@ describe('SessionsList (inline reorder)', () => {
 
         rerenderedMenuProps?.onSelect?.('created');
         expect(setSessionListOrderingModeV1).toHaveBeenCalledWith('created');
+        rerenderedMenuProps?.onSelect?.('sessionListFolderSortModeMixed');
+        expect(setSessionListFolderSortModeV1).toHaveBeenCalledWith('mixed');
         rerenderedMenuProps?.onSelect?.('activeGroupingDate');
         expect(setSessionListActiveGroupingV1).toHaveBeenCalledWith('date');
+        rerenderedMenuProps?.onSelect?.('sectionModeSingle');
+        expect(setSessionListSectionModeV1).toHaveBeenCalledWith('single');
         rerenderedMenuProps?.onSelect?.('inactiveGroupingProject');
         expect(setSessionListInactiveGroupingV1).toHaveBeenCalledWith('project');
         rerenderedMenuProps?.onSelect?.('hideInactiveSessions');
         expect(setHideInactiveSessions).toHaveBeenCalledWith(true);
+    });
+
+    it('uses folders-first as the effective folder sort mode while preserving mixed as a dormant date-mode preference', async () => {
+        sessionListOrderingModeV1 = 'updated';
+        sessionListFolderSortModeV1 = 'mixed';
+
+        const { SessionsList } = await import('./SessionsList');
+        await renderScreen(<SessionsList />);
+
+        const menuProps = dropdownMenuCaptures.find((captured) => {
+            const items = captured.items ?? [];
+            return items.some((item) => item?.id === 'sessionListFolderSortModeFoldersFirst')
+                && items.some((item) => item?.id === 'sessionListFolderSortModeMixed');
+        });
+        const foldersFirstItem = menuProps?.items?.find((item) => item?.id === 'sessionListFolderSortModeFoldersFirst');
+        const mixedFolderSortItem = menuProps?.items?.find((item) => item?.id === 'sessionListFolderSortModeMixed');
+
+        expect((foldersFirstItem as { rightElement?: unknown } | undefined)?.rightElement).toBeTruthy();
+        expect((mixedFolderSortItem as { rightElement?: unknown } | undefined)?.rightElement).toBeFalsy();
+        expect(mixedFolderSortItem?.disabled).toBe(true);
+        expect(mixedFolderSortItem?.subtitle).toBe('settingsSession.sessionList.folderSortModeMixedDisabledInDateModeSubtitle');
+
+        menuProps?.onSelect?.('sessionListFolderSortModeMixed');
+        expect(setSessionListFolderSortModeV1).not.toHaveBeenCalled();
     });
 
     it('moves a session to a folder through the row menu with server-scoped credentials', async () => {

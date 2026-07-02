@@ -1,8 +1,19 @@
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeWithProps, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
-import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import {
+    installSessionShellCommonModuleMocks,
+    readSessionShellDraftTextForTest,
+    resetSessionShellDraftStateForTest,
+} from './sessionShellTestHelpers';
+import { clearSessionAttachmentDrafts } from '@/components/sessions/attachments/sessionAttachmentDraftStore';
+import {
+    clearSessionDraftValuesForSession,
+    readSessionDraftValue,
+    writeSessionDraftValue,
+} from '@/sync/domains/input/draftValues/sessionDraftValueStore';
+import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -29,17 +40,22 @@ const sessionState = vi.hoisted(() => ({
 const featureEnabledState = vi.hoisted(() => ({
     reviewComments: false,
 }));
+const chooseSubmitModeState = vi.hoisted(() => ({
+    mode: 'agent_queue',
+}));
 const reviewCommentDraftsState = vi.hoisted(() => ({
     current: [] as any[],
 }));
+const sessionPendingMessagesState = vi.hoisted(() => ({
+    current: [] as any[],
+}));
 const deleteWorkspaceReviewCommentDraftSpy = vi.hoisted(() => vi.fn());
-const resolveReviewCommentDraftAnchorsForPromptSpy = vi.hoisted(() => vi.fn(async (input: {
-    drafts: readonly any[];
-}) => [...input.drafts]));
 
 const pendingFireAndForget: Promise<unknown>[] = [];
+const TEST_SERVER_ACCOUNT_SCOPE = null;
 
 const resolveSessionComposerSendMock = vi.fn((..._args: any[]) => ({ kind: 'send', text: 'hello' }));
+const chatListPropsSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
@@ -68,10 +84,6 @@ const reactNativeRuntime = vi.hoisted(() => {
 
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-    initialWindowMetrics: {
-        insets: { top: 0, bottom: 0, left: 0, right: 0 },
-        frame: { x: 0, y: 0, width: 390, height: 844 },
-    },
 }));
 
 vi.mock('@react-navigation/native', () => ({
@@ -84,13 +96,16 @@ vi.mock('@/auth/context/AuthContext', () => ({
 }));
 
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
-    AgentContentView: (props: any) => React.createElement('AgentContentView', props, props.input ?? null),
+    AgentContentView: (props: any) => React.createElement('AgentContentView', props, props.content ?? null, props.input ?? null),
 }));
 vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
     ChatHeaderView: () => null,
 }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
-    ChatList: () => null,
+    ChatList: (props: any) => {
+        chatListPropsSpy(props);
+        return React.createElement('ChatList', props);
+    },
 }));
 vi.mock('@/components/ui/empty/EmptyMessages', () => ({
     EmptyMessages: () => null,
@@ -106,9 +121,6 @@ vi.mock('@/components/voice/surface/VoiceSurface', () => ({
 }));
 vi.mock('@/components/sessions/attachments/AttachmentFilePicker', () => ({
     AttachmentFilePicker: () => null,
-}));
-vi.mock('@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt', () => ({
-    resolveReviewCommentDraftAnchorsForPrompt: resolveReviewCommentDraftAnchorsForPromptSpy,
 }));
 
 vi.mock('@/components/sessions/files/useSessionFileUploadAvailability', () => ({
@@ -128,19 +140,25 @@ vi.mock('@/utils/platform/responsive', () => ({
     useIsLandscape: () => false,
     useIsTablet: () => false,
 }));
-vi.mock('@/hooks/session/useDraft', () => ({
-    useDraft: () => ({ clearDraft: vi.fn() }),
-}));
 vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
     getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true }),
 }));
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
     resolveSessionMachineReachability: () => true,
 }));
-vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-    useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
-    useSessionReachableMachineTarget: () => null,
-}));
+vi.mock(
+    '@/components/sessions/model/useSessionMachineReachability',
+    async (importOriginal) => {
+        const { createSessionMachineReachabilityModuleMock } = await import('@/dev/testkit/mocks/sessionMachineReachability');
+        return createSessionMachineReachabilityModuleMock({
+            importOriginal,
+            overrides: {
+                useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
+                useSessionReachableMachineTarget: () => ({ machineId: 'm1', basePath: '/tmp' }),
+            },
+        });
+    },
+);
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
@@ -152,10 +170,14 @@ vi.mock('@/voice/session/voiceSession', () => ({
 }));
 
 const sendMessageSpy = vi.fn(async (..._args: any[]) => {});
+const enqueuePendingMessageSpy = vi.fn(async (..._args: any[]) => ({ localId: 'pending-local-id' }));
+const updatePendingMessageSpy = vi.fn(async (..._args: any[]) => {});
+const patchSessionMetadataWithRetrySpy = vi.fn(async (..._args: any[]) => {});
 
 vi.mock('@/sync/sync', () => ({
     sync: {
         markSessionViewed: async () => {},
+        markSessionLiveTailIntent: () => {},
         fetchPendingMessages: async () => {},
         publishSessionPermissionModeToMetadata: async () => {},
         publishSessionAcpSessionModeOverrideToMetadata: async () => {},
@@ -164,7 +186,9 @@ vi.mock('@/sync/sync', () => ({
         refreshSessions: async () => {},
         onSessionVisible: () => {},
         sendMessage: (...args: any[]) => sendMessageSpy(...args),
-        enqueuePendingMessage: async () => {},
+        enqueuePendingMessage: (...args: any[]) => enqueuePendingMessageSpy(...args),
+        updatePendingMessage: (...args: any[]) => updatePendingMessageSpy(...args),
+        patchSessionMetadataWithRetry: (...args: any[]) => patchSessionMetadataWithRetrySpy(...args),
         submitMessage: async () => {},
         encryption: {
             getMachineEncryption: () => null,
@@ -175,13 +199,17 @@ vi.mock('@/sync/sync', () => ({
 const resumeSessionSpy = vi.fn(async (..._args: any[]) => ({ type: 'success' }));
 const uploadSpy = vi.fn(async (..._args: any[]) => ({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' }));
 
-vi.mock('@/sync/ops', () => ({
-    continueSessionWithReplay: vi.fn(),
-    sessionAbort: vi.fn(),
-    resumeSession: (...args: any[]) => resumeSessionSpy(...args),
-    sessionAttachmentsUploadFile: (...args: any[]) => uploadSpy(...args),
-    machineCapabilitiesInvoke: vi.fn(async () => ({ type: 'success' })),
-}));
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const actual = await importOriginal<any>();
+    return {
+        ...actual,
+        continueSessionWithReplay: vi.fn(),
+        sessionAbort: vi.fn(),
+        resumeSession: (...args: any[]) => resumeSessionSpy(...args),
+        sessionAttachmentsUploadFile: (...args: any[]) => uploadSpy(...args),
+        machineCapabilitiesInvoke: vi.fn(async () => ({ type: 'success' })),
+    };
+});
 
 vi.mock('@/sync/domains/transfers/ops/uploadSessionAttachment', () => ({
     sessionAttachmentsUploadFile: (...args: any[]) => uploadSpy(...args),
@@ -193,6 +221,9 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
 
 vi.mock('@/components/sessions/agentInput', () => ({
     AgentInput: (props: any) => React.createElement('AgentInput', props),
+}));
+vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
+    AppPaneScopeHost: (props: any) => React.createElement('AppPaneScopeHost', props, props.main ?? null),
 }));
 
 const modalAlertSpy = vi.fn();
@@ -284,23 +315,41 @@ installSessionShellCommonModuleMocks({
         }).module;
     },
     storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
         return createStorageModuleStub({
-            storage: {
-                getState: () => ({
+            storage: createStorageStoreMock({
                     sessions: { s1: sessionState.session },
-                    machines: { m1: { id: 'm1', active: true, metadata: { host: 'happy-host' } } },
-                    settings: {},
-                    concurrentSessionListCacheByServerId: {},
+                    machines: {
+                        m1: {
+                            id: 'm1',
+                            seq: 0,
+                            createdAt: 0,
+                            updatedAt: 0,
+                            active: true,
+                            activeAt: 0,
+                            metadata: {
+                                host: 'happy-host',
+                                platform: 'darwin',
+                                happyCliVersion: '0.0.0',
+                                happyHomeDir: '/tmp',
+                                homeDir: '/tmp',
+                            },
+                            metadataVersion: 0,
+                            daemonState: null,
+                            daemonStateVersion: 0,
+                        },
+                    },
+                    sessionListIndexByServerId: {},
+                    settings: settingsDefaults,
                     deleteWorkspaceReviewCommentDraft: deleteWorkspaceReviewCommentDraftSpy,
-                }),
-            },
+            }),
             useSession: () => sessionState.session,
             useIsDataReady: () => true,
             useRealtimeStatus: () => ({ status: 'connected' }),
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
             useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionPendingMessages: () => ({ messages: [] }),
+            useSessionPendingMessages: () => ({ messages: sessionPendingMessagesState.current, discarded: [] }),
             useSessionSubagentSourceMessages: () => [],
             useSessionReviewCommentsDrafts: () => [],
             useWorkspaceReviewCommentsDrafts: () => reviewCommentDraftsState.current,
@@ -334,25 +383,26 @@ vi.mock('@/utils/system/versionUtils', () => ({
     MINIMUM_CLI_VERSION: '0.0.0',
 }));
 
-vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        getAgentCore: () => ({
-            model: { defaultMode: 'default' },
-            cli: { spawnAgent: 'codex' },
-            localControl: { supported: true },
-            resume: {
-                vendorResumeIdField: 'codexSessionId',
-                supportsVendorResume: true,
-                experimental: true,
-            },
-            uiConnectedService: { serviceId: null, label: 'Provider', connectRoute: null },
-        }),
-        resolveAgentIdFromFlavor: () => 'codex',
-        DEFAULT_AGENT_ID: 'codex',
-    };
-});
+vi.mock('@/agents/catalog/catalog', () => ({
+    AGENT_IDS: ['codex'],
+    DEFAULT_AGENT_ID: 'codex',
+    buildResumeSessionExtrasFromUiState: () => null,
+    getAgentCore: () => ({
+        model: { defaultMode: 'default' },
+        cli: { spawnAgent: 'codex' },
+        localControl: { supported: true },
+        resume: {
+            vendorResumeIdField: 'codexSessionId',
+            supportsVendorResume: true,
+            experimental: true,
+        },
+        uiConnectedService: { serviceId: null, label: 'Provider', connectRoute: null },
+    }),
+    getAgentResumeExperimentsFromSettings: () => null,
+    getNewSessionRelevantInstallableDepKeys: () => [],
+    isAgentId: (value: unknown) => value === 'codex',
+    resolveAgentIdFromFlavor: () => 'codex',
+}));
 
 vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
     useResumeCapabilityOptions: () => ({ resumeCapabilityOptions: { accountSettings: { codexBackendMode: 'acp' } } }),
@@ -391,7 +441,7 @@ vi.mock('@/utils/system/fireAndForget', () => ({
         const tag = typeof opts?.tag === 'string' ? opts.tag : '';
         // This test is validating the resumable attachment send flow; ignore unrelated
         // fire-and-forget work (analytics, mount-time prefetch, etc).
-        if (tag.startsWith('SessionView.sendMessage')) {
+        if (tag.startsWith('SessionView.sendMessage') || tag === 'SessionView.pendingMessageEdit.save') {
             pendingFireAndForget.push(p);
         }
         return p;
@@ -404,17 +454,31 @@ vi.mock('@/sync/domains/input/slashCommands/executeSessionComposerResolution', (
     executeSessionComposerResolution: vi.fn(),
 }));
 vi.mock('@/sync/domains/session/control/submitMode', () => ({
-    chooseSubmitMode: () => 'server_pending',
+    decideSessionMessageDelivery: () => ({
+        mode: chooseSubmitModeState.mode,
+        intent: 'default',
+        reason: 'test_decision',
+        pendingSupportState: 'supported',
+        ...(chooseSubmitModeState.mode === 'agent_queue'
+            ? { directBypassReason: 'selected_direct' }
+            : chooseSubmitModeState.mode === 'interrupt'
+                ? { directBypassReason: 'interrupt' }
+                : {}),
+    }),
+    chooseSubmitMode: () => chooseSubmitModeState.mode,
+    chooseForceImmediateSubmitMode: () => chooseSubmitModeState.mode,
+    canDirectSubmitUserMessageNow: () => true,
+    getPendingQueueSubmitSupportState: () => 'supported',
+    isPendingQueueSubmitKnownUnsupported: () => false,
 }));
-vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        shouldRenderChatTimelineForSession: () => true,
-        shouldRequestRemoteControl: () => false,
-        shouldRequestRemoteControlAfterPendingEnqueue: () => false,
-    };
-});
+vi.mock('@/sync/domains/session/control/localControlSwitch', () => ({
+    shouldRenderChatTimelineForSession: () => true,
+    shouldRequestRemoteControl: () => false,
+    shouldRequestRemoteControlAfterPendingEnqueue: () => false,
+}));
+vi.mock('@/sync/acp/sessionModeControl', () => ({
+    supportsSessionModeOverrides: () => false,
+}));
 vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
     supportsSessionModeOverrides: () => false,
 }));
@@ -430,6 +494,86 @@ const { getInactiveSessionUiState } = await import('@/components/sessions/model/
 const { SessionView } = await import('./SessionView');
 
 describe('SessionView (attachments.uploads resumable send)', () => {
+    beforeEach(() => {
+        chooseSubmitModeState.mode = 'agent_queue';
+        clearSessionAttachmentDrafts('s1');
+        sendMessageSpy.mockClear();
+        enqueuePendingMessageSpy.mockClear();
+        updatePendingMessageSpy.mockClear();
+        patchSessionMetadataWithRetrySpy.mockClear();
+        resumeSessionSpy.mockClear();
+        uploadSpy.mockClear();
+        modalAlertSpy.mockClear();
+        resolveSessionComposerSendMock.mockClear();
+        chatListPropsSpy.mockClear();
+        deleteWorkspaceReviewCommentDraftSpy.mockClear();
+        reviewCommentDraftsState.current = [];
+        sessionPendingMessagesState.current = [];
+        sessionState.session.seq = 0;
+        resetSessionShellDraftStateForTest();
+        clearSessionDraftValuesForSession(TEST_SERVER_ACCOUNT_SCOPE, 's1', { reason: 'composerClear' });
+        pendingFireAndForget.length = 0;
+    });
+
+    it('restores unsent attachment drafts when the session input remounts', async () => {
+        featureEnabledState.reviewComments = false;
+        sendMessageSpy.mockClear();
+        resumeSessionSpy.mockClear();
+        uploadSpy.mockClear();
+        modalAlertSpy.mockClear();
+        resolveSessionComposerSendMock.mockClear();
+        reviewCommentDraftsState.current = [];
+        deleteWorkspaceReviewCommentDraftSpy.mockClear();
+        pendingFireAndForget.length = 0;
+
+        let firstTree: renderer.ReactTestRenderer | undefined;
+        let secondTree: renderer.ReactTestRenderer | undefined;
+        try {
+            firstTree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+
+            const renderedFirstTree = firstTree;
+            expect(renderedFirstTree).toBeDefined();
+            if (!renderedFirstTree) throw new Error('SessionView test renderer did not mount');
+
+            let agentInput = findTestInstanceByTypeWithProps(renderedFirstTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
+                    { name: 'draft-note.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([97])]) } as any,
+                ], 'AgentInput');
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedFirstTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.attachments).toEqual([
+                expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
+            ]);
+
+            act(() => {
+                firstTree?.unmount();
+            });
+            firstTree = undefined;
+
+            secondTree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+            const renderedSecondTree = secondTree;
+            expect(renderedSecondTree).toBeDefined();
+            if (!renderedSecondTree) throw new Error('SessionView test renderer did not remount');
+
+            agentInput = findTestInstanceByTypeWithProps(renderedSecondTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.attachments).toEqual([
+                expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
+            ]);
+        } finally {
+            act(() => {
+                firstTree?.unmount();
+                secondTree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
     it('hydrates recoverable attachment drafts so retry can reuse uploaded files', async () => {
         sendMessageSpy.mockClear();
         resumeSessionSpy.mockClear();
@@ -517,32 +661,19 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         }
     });
 
-    it('resumes and sends attachments even when chooseSubmitMode selects server_pending', async () => {
+    it('resumes and queues attachments when chooseSubmitMode selects server_pending', async () => {
         expect(getInactiveSessionUiState({ isSessionActive: true, isResumable: true, isMachineOnline: true })).toMatchObject({ shouldShowInput: true });
 
+        chooseSubmitModeState.mode = 'server_pending';
         featureEnabledState.reviewComments = false;
         sendMessageSpy.mockClear();
+        enqueuePendingMessageSpy.mockClear();
         resumeSessionSpy.mockClear();
         uploadSpy.mockClear();
         modalAlertSpy.mockClear();
         resolveSessionComposerSendMock.mockClear();
         reviewCommentDraftsState.current = [];
         deleteWorkspaceReviewCommentDraftSpy.mockClear();
-        resolveReviewCommentDraftAnchorsForPromptSpy.mockReset();
-        resolveReviewCommentDraftAnchorsForPromptSpy.mockImplementation(async (input: {
-            drafts: readonly any[];
-        }) => input.drafts.map((draft) => ({
-            ...draft,
-            anchorResolution: {
-                id: draft.id,
-                filePath: draft.filePath,
-                originalAnchor: draft.anchor,
-                resolvedAnchor: { kind: 'line', filePath: draft.filePath, line: 1 },
-                status: 'exact',
-                confidence: 1,
-                preview: draft.snapshot,
-            },
-        })));
         pendingFireAndForget.length = 0;
 
         let tree: renderer.ReactTestRenderer | undefined;
@@ -576,9 +707,10 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             expect(modalAlertSpy.mock.calls.some((c) => String(c?.[1] ?? '').includes('Attachments require direct sending'))).toBe(false);
             expect(resumeSessionSpy).toHaveBeenCalled();
             expect(uploadSpy).toHaveBeenCalled();
-            expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+            expect(sendMessageSpy).not.toHaveBeenCalled();
+            expect(enqueuePendingMessageSpy).toHaveBeenCalledTimes(1);
 
-            const [sentSessionId, sentText, sentDisplayText, sentMetaOverrides] = sendMessageSpy.mock.calls[0] ?? [];
+            const [sentSessionId, sentText, sentDisplayText, sentMetaOverrides] = enqueuePendingMessageSpy.mock.calls[0] ?? [];
             expect(sentSessionId).toBe('s1');
             expect(String(sentText)).toContain('[attachments]');
             expect(String(sentText)).toContain('- p1');
@@ -608,7 +740,409 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         }
     });
 
-    it('keeps composer text visible while attachment upload is pending and clears after send', async () => {
+    it('restores the previous draft when a pending edit is abandoned by unmounting the session view', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit',
+            localId: 'p-edit',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Existing draft', 'AgentInput');
+            });
+
+            expect(chatListPropsSpy).toHaveBeenCalled();
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            expect(chatListProps?.onEditPendingMessage).toEqual(expect.any(Function));
+
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: 'p-edit',
+                    text: 'Queued edit text',
+                    displayText: 'Queued edit text',
+                    message: queuedMessage,
+                });
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Queued edit text');
+            expect(readSessionShellDraftTextForTest('s1')).toBe('Queued edit text');
+
+            act(() => {
+                tree?.unmount();
+            });
+            tree = undefined;
+
+            expect(readSessionShellDraftTextForTest('s1')).toBe('Existing draft');
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('restores non-text composer drafts when a modified pending edit row disappears', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit',
+            localId: 'p-edit',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+        writeSessionDraftValue(
+            TEST_SERVER_ACCOUNT_SCOPE,
+            's1',
+            'routing.executionRunDelivery',
+            'interrupt',
+        );
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            const element = <AppPaneProvider>
+                <SessionView
+                    id="s1"
+                    initialAttachmentDrafts={[{
+                        id: 'draft-note',
+                        source: {
+                            kind: 'native',
+                            uri: 'file:///tmp/draft-note.txt',
+                            name: 'draft-note.txt',
+                            sizeBytes: 1,
+                            mimeType: 'text/plain',
+                        },
+                        status: 'pending',
+                    }]}
+                />
+            </AppPaneProvider>;
+            tree = (await renderScreen(element)).tree;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.attachments).toEqual([
+                expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
+            ]);
+
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            expect(chatListProps?.onEditPendingMessage).toEqual(expect.any(Function));
+
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: 'p-edit',
+                    text: 'Queued edit text',
+                    displayText: 'Queued edit text',
+                    message: queuedMessage,
+                });
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Queued edit text');
+            expect(agentInput.props.attachments).toEqual([]);
+            expect(readSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'routing.executionRunDelivery',
+            )).toBeUndefined();
+
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited queued text', 'AgentInput');
+            });
+
+            sessionPendingMessagesState.current = [];
+            await act(async () => {
+                renderedTree.update(<AppPaneProvider>
+                    <SessionView id="s1" />
+                </AppPaneProvider>);
+                await Promise.resolve();
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Edited queued text');
+            expect(agentInput.props.attachments).toEqual([
+                expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
+            ]);
+            expect(readSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'routing.executionRunDelivery',
+            )).toBe('interrupt');
+            expect(agentInput.props.statusBadges?.some((badge: any) => badge.key === 'pending-message-edit')).toBe(false);
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('restores non-text composer drafts when a modified pending edit is abandoned by unmounting', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit',
+            localId: 'p-edit',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+        writeSessionDraftValue(
+            TEST_SERVER_ACCOUNT_SCOPE,
+            's1',
+            'routing.executionRunDelivery',
+            'interrupt',
+        );
+
+        let firstTree: renderer.ReactTestRenderer | undefined;
+        let secondTree: renderer.ReactTestRenderer | undefined;
+        try {
+            firstTree = (await renderScreen(<AppPaneProvider>
+                        <SessionView
+                            id="s1"
+                            initialAttachmentDrafts={[{
+                                id: 'draft-note',
+                                source: {
+                                    kind: 'native',
+                                    uri: 'file:///tmp/draft-note.txt',
+                                    name: 'draft-note.txt',
+                                    sizeBytes: 1,
+                                    mimeType: 'text/plain',
+                                },
+                                status: 'pending',
+                            }]}
+                        />
+                    </AppPaneProvider>)).tree;
+
+            const renderedFirstTree = firstTree;
+            expect(renderedFirstTree).toBeDefined();
+            if (!renderedFirstTree) throw new Error('SessionView test renderer did not mount');
+
+            let agentInput = findTestInstanceByTypeWithProps(renderedFirstTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.attachments).toEqual([
+                expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
+            ]);
+
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            expect(chatListProps?.onEditPendingMessage).toEqual(expect.any(Function));
+
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: 'p-edit',
+                    text: 'Queued edit text',
+                    displayText: 'Queued edit text',
+                    message: queuedMessage,
+                });
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedFirstTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited queued text', 'AgentInput');
+            });
+
+            act(() => {
+                firstTree?.unmount();
+            });
+            firstTree = undefined;
+
+            expect(readSessionShellDraftTextForTest('s1')).toBe('Edited queued text');
+            expect(readSessionDraftValue(
+                TEST_SERVER_ACCOUNT_SCOPE,
+                's1',
+                'routing.executionRunDelivery',
+            )).toBe('interrupt');
+
+            secondTree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+            const renderedSecondTree = secondTree;
+            expect(renderedSecondTree).toBeDefined();
+            if (!renderedSecondTree) throw new Error('SessionView test renderer did not remount');
+
+            agentInput = findTestInstanceByTypeWithProps(renderedSecondTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.attachments).toEqual([
+                expect.objectContaining({ label: 'draft-note.txt', status: 'pending' }),
+            ]);
+        } finally {
+            act(() => {
+                firstTree?.unmount();
+                secondTree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('saves a pending edit through updatePendingMessage and restores the previous draft', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit',
+            localId: 'p-edit',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Existing draft', 'AgentInput');
+            });
+
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            expect(chatListProps?.onEditPendingMessage).toEqual(expect.any(Function));
+
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: 'p-edit',
+                    text: 'Queued edit text',
+                    displayText: 'Queued edit text',
+                    message: queuedMessage,
+                });
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited queued text', 'AgentInput');
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+
+            expect(pendingFireAndForget.length).toBe(1);
+            await act(async () => {
+                await pendingFireAndForget[0];
+            });
+
+            expect(updatePendingMessageSpy).toHaveBeenCalledTimes(1);
+            expect(updatePendingMessageSpy).toHaveBeenCalledWith('s1', 'p-edit', 'Edited queued text');
+            expect(sendMessageSpy).not.toHaveBeenCalled();
+            expect(enqueuePendingMessageSpy).not.toHaveBeenCalled();
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Existing draft');
+            expect(readSessionShellDraftTextForTest('s1')).toBe('Existing draft');
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('publishes and clears a pending queue drain hold while editing a queued message', async () => {
+        const queuedMessage: PendingMessage = {
+            id: 'p-edit',
+            localId: 'p-edit',
+            text: 'Queued edit text',
+            displayText: 'Queued edit text',
+            createdAt: 0,
+            updatedAt: 0,
+            deliveryStatus: 'accepted',
+            rawRecord: {},
+        };
+        sessionPendingMessagesState.current = [queuedMessage];
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+            expect(chatListProps?.onEditPendingMessage).toEqual(expect.any(Function));
+
+            await act(async () => {
+                await chatListProps.onEditPendingMessage({
+                    id: 'p-edit',
+                    text: 'Queued edit text',
+                    displayText: 'Queued edit text',
+                    message: queuedMessage,
+                });
+            });
+
+            expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledTimes(1);
+            expect(patchSessionMetadataWithRetrySpy.mock.calls[0]?.[0]).toBe('s1');
+            const writeUpdater = patchSessionMetadataWithRetrySpy.mock.calls[0]?.[1] as (metadata: Record<string, unknown>) => Record<string, unknown>;
+            const metadataWithHold = writeUpdater({});
+            const holdsById = (metadataWithHold.sessionPendingQueueHoldV1 as any)?.holdsById;
+            const holdId = Object.keys(holdsById ?? {})[0];
+            expect(holdId).toBeTruthy();
+            expect(holdsById[holdId]).toMatchObject({
+                kind: 'pending_message_edit',
+                localId: 'p-edit',
+            });
+
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Edited queued text', 'AgentInput');
+            });
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+            expect(pendingFireAndForget.length).toBe(1);
+            await act(async () => {
+                await pendingFireAndForget[0];
+            });
+
+            expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledTimes(2);
+            const clearUpdater = patchSessionMetadataWithRetrySpy.mock.calls[1]?.[1] as (metadata: Record<string, unknown>) => Record<string, unknown>;
+            expect(clearUpdater(metadataWithHold)).not.toHaveProperty('sessionPendingQueueHoldV1');
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('keeps composer text visible until attachment send creates a local pending projection', async () => {
         featureEnabledState.reviewComments = false;
         sendMessageSpy.mockClear();
         resumeSessionSpy.mockClear();
@@ -625,6 +1159,20 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 resolveStarted();
                 return await new Promise((resolve) => {
                     resolveUpload = () => resolve({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' });
+                });
+            });
+        });
+        let resolveSend: (() => void) | null = null;
+        let localPendingProjectionCreated: (() => void) | null = null;
+        const sendStarted = new Promise<void>((resolveStarted) => {
+            sendMessageSpy.mockImplementationOnce(async (...args: any[]) => {
+                const options = args[4] as
+                    | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
+                    | undefined;
+                localPendingProjectionCreated = () => options?.onLocalPendingProjectionCreated?.({ localId: 'attachment-local-id' });
+                resolveStarted();
+                return await new Promise<void>((resolve) => {
+                    resolveSend = resolve;
                 });
             });
         });
@@ -672,12 +1220,473 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             await act(async () => {
                 if (!resolveUpload) throw new Error('upload did not start');
                 resolveUpload();
-                await pendingFireAndForget[0];
+                await sendStarted;
             });
 
             agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+            expect(agentInput.props.value).toBe('Describe this image');
+
+            await act(async () => {
+                if (!localPendingProjectionCreated) throw new Error('local pending projection callback was not registered');
+                localPendingProjectionCreated();
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
             expect(agentInput.props.value).toBe('');
+
+            await act(async () => {
+                if (!resolveSend) throw new Error('send did not start');
+                resolveSend();
+                await pendingFireAndForget[0];
+            });
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('preserves newer attachment drafts when a no-callback attachment send resolves after the draft changes', async () => {
+        featureEnabledState.reviewComments = false;
+        sendMessageSpy.mockClear();
+        resumeSessionSpy.mockClear();
+        uploadSpy.mockClear();
+        modalAlertSpy.mockClear();
+        resolveSessionComposerSendMock.mockClear();
+        reviewCommentDraftsState.current = [];
+        deleteWorkspaceReviewCommentDraftSpy.mockClear();
+        pendingFireAndForget.length = 0;
+
+        uploadSpy.mockResolvedValueOnce({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' });
+
+        let resolveSend: (() => void) | null = null;
+        const sendStarted = new Promise<void>((resolveStarted) => {
+            sendMessageSpy.mockImplementationOnce(async () => {
+                resolveStarted();
+                return await new Promise<void>((resolve) => {
+                    resolveSend = resolve;
+                });
+            });
+        });
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Describe this image', 'AgentInput');
+            });
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
+                    { name: 'a.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([97])]) } as any,
+                ], 'AgentInput');
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+
+            await act(async () => {
+                await sendStarted;
+            });
+
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Next draft', 'AgentInput');
+            });
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
+                    { name: 'next.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([98])]) } as any,
+                ], 'AgentInput');
+            });
+
+            await act(async () => {
+                if (!resolveSend) throw new Error('send did not start');
+                resolveSend();
+                await pendingFireAndForget[0];
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Next draft');
+            expect(agentInput.props.attachments).toEqual([
+                expect.objectContaining({ label: 'next.txt' }),
+            ]);
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('preserves attachment drafts added while the submitted attachments are uploading', async () => {
+        featureEnabledState.reviewComments = false;
+        sendMessageSpy.mockClear();
+        resumeSessionSpy.mockClear();
+        uploadSpy.mockClear();
+        modalAlertSpy.mockClear();
+        resolveSessionComposerSendMock.mockClear();
+        reviewCommentDraftsState.current = [];
+        deleteWorkspaceReviewCommentDraftSpy.mockClear();
+        pendingFireAndForget.length = 0;
+
+        let resolveUpload: (() => void) | null = null;
+        const uploadStarted = new Promise<void>((resolveStarted) => {
+            uploadSpy.mockImplementationOnce(async () => {
+                resolveStarted();
+                return await new Promise((resolve) => {
+                    resolveUpload = () => resolve({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' });
+                });
+            });
+        });
+
+        let resolveSend: (() => void) | null = null;
+        const sendStarted = new Promise<void>((resolveStarted) => {
+            sendMessageSpy.mockImplementationOnce(async () => {
+                resolveStarted();
+                return await new Promise<void>((resolve) => {
+                    resolveSend = resolve;
+                });
+            });
+        });
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Describe this image', 'AgentInput');
+            });
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
+                    { name: 'a.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([97])]) } as any,
+                ], 'AgentInput');
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+
+            expect(pendingFireAndForget.length).toBe(1);
+            await act(async () => {
+                await uploadStarted;
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Next draft', 'AgentInput');
+            });
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
+                    { name: 'next.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([98])]) } as any,
+                ], 'AgentInput');
+            });
+
+            await act(async () => {
+                if (!resolveUpload) throw new Error('upload did not start');
+                resolveUpload();
+                await sendStarted;
+            });
+
+            await act(async () => {
+                if (!resolveSend) throw new Error('send did not start');
+                resolveSend();
+                await pendingFireAndForget[0];
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Next draft');
+            expect(agentInput.props.attachments).toEqual([
+                expect.objectContaining({ label: 'next.txt' }),
+            ]);
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('clears submitted text while preserving an attachment draft added during upload', async () => {
+        featureEnabledState.reviewComments = false;
+        sendMessageSpy.mockClear();
+        resumeSessionSpy.mockClear();
+        uploadSpy.mockClear();
+        modalAlertSpy.mockClear();
+        resolveSessionComposerSendMock.mockClear();
+        reviewCommentDraftsState.current = [];
+        deleteWorkspaceReviewCommentDraftSpy.mockClear();
+        pendingFireAndForget.length = 0;
+
+        let resolveUpload: (() => void) | null = null;
+        const uploadStarted = new Promise<void>((resolveStarted) => {
+            uploadSpy.mockImplementationOnce(async () => {
+                resolveStarted();
+                return await new Promise((resolve) => {
+                    resolveUpload = () => resolve({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' });
+                });
+            });
+        });
+
+        let localPendingProjectionCreated: (() => void) | null = null;
+        const sendStarted = new Promise<void>((resolveStarted) => {
+            sendMessageSpy.mockImplementationOnce(async (...args: any[]) => {
+                const options = args[4] as
+                    | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
+                    | undefined;
+                localPendingProjectionCreated = () => options?.onLocalPendingProjectionCreated?.({ localId: 'attachment-local-id' });
+                resolveStarted();
+            });
+        });
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Describe this image', 'AgentInput');
+            });
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
+                    { name: 'a.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([97])]) } as any,
+                ], 'AgentInput');
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+
+            expect(pendingFireAndForget.length).toBe(1);
+            await act(async () => {
+                await uploadStarted;
+            });
+
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
+                    { name: 'next.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([98])]) } as any,
+                ], 'AgentInput');
+            });
+
+            await act(async () => {
+                if (!resolveUpload) throw new Error('upload did not start');
+                resolveUpload();
+                await sendStarted;
+            });
+
+            await act(async () => {
+                if (!localPendingProjectionCreated) throw new Error('local pending projection callback was not registered');
+                localPendingProjectionCreated();
+                await pendingFireAndForget[0];
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('');
+            expect(agentInput.props.attachments).toEqual([
+                expect.objectContaining({ label: 'next.txt' }),
+            ]);
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('restores text and attachment drafts when outbound handoff after upload fails', async () => {
+        featureEnabledState.reviewComments = false;
+        sendMessageSpy.mockClear();
+        resumeSessionSpy.mockClear();
+        uploadSpy.mockClear();
+        modalAlertSpy.mockClear();
+        resolveSessionComposerSendMock.mockClear();
+        reviewCommentDraftsState.current = [];
+        deleteWorkspaceReviewCommentDraftSpy.mockClear();
+        pendingFireAndForget.length = 0;
+
+        uploadSpy.mockResolvedValueOnce({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' });
+
+        let rejectSend: (() => void) | null = null;
+        const sendStarted = new Promise<void>((resolveStarted) => {
+            sendMessageSpy.mockImplementationOnce(async (...args: any[]) => {
+                const options = args[4] as
+                    | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
+                    | undefined;
+                options?.onLocalPendingProjectionCreated?.({ localId: 'attachment-local-id' });
+                resolveStarted();
+                return await new Promise<void>((_resolve, reject) => {
+                    rejectSend = () => reject(new Error('attachment handoff rejected'));
+                });
+            });
+        });
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Describe this image', 'AgentInput');
+            });
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
+                    { name: 'a.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([97])]) } as any,
+                ], 'AgentInput');
+            });
+
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+
+            expect(pendingFireAndForget.length).toBe(1);
+            await act(async () => {
+                await sendStarted;
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('');
+            expect(agentInput.props.attachments).toEqual([]);
+
+            await act(async () => {
+                if (!rejectSend) throw new Error('send did not start');
+                rejectSend();
+                await pendingFireAndForget[0];
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('Describe this image');
+            expect(agentInput.props.attachments).toEqual([
+                expect.objectContaining({ label: 'a.txt', status: 'uploaded' }),
+            ]);
+            expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'attachment handoff rejected');
+        } finally {
+            act(() => {
+                tree?.unmount();
+            });
+            pendingFireAndForget.length = 0;
+        }
+    });
+
+    it('does not restore a failed attachment send over a newer attachment-only draft', async () => {
+        featureEnabledState.reviewComments = false;
+        sendMessageSpy.mockClear();
+        resumeSessionSpy.mockClear();
+        uploadSpy.mockClear();
+        modalAlertSpy.mockClear();
+        resolveSessionComposerSendMock.mockClear();
+        reviewCommentDraftsState.current = [];
+        deleteWorkspaceReviewCommentDraftSpy.mockClear();
+        pendingFireAndForget.length = 0;
+
+        uploadSpy.mockResolvedValueOnce({ success: true, path: 'p1', sizeBytes: 1, sha256: 'h1' });
+
+        let rejectSend: (() => void) | null = null;
+        const sendStarted = new Promise<void>((resolveStarted) => {
+            sendMessageSpy.mockImplementationOnce(async (...args: any[]) => {
+                const options = args[4] as
+                    | { onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void }
+                    | undefined;
+                options?.onLocalPendingProjectionCreated?.({ localId: 'attachment-local-id' });
+                resolveStarted();
+                return await new Promise<void>((_resolve, reject) => {
+                    rejectSend = () => reject(new Error('attachment handoff rejected'));
+                });
+            });
+        });
+
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            tree = (await renderScreen(<AppPaneProvider>
+                        <SessionView id="s1" />
+                    </AppPaneProvider>)).tree;
+
+            pendingFireAndForget.length = 0;
+
+            const renderedTree = tree;
+            expect(renderedTree).toBeDefined();
+            if (!renderedTree) throw new Error('SessionView test renderer did not mount');
+
+            let agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onChangeText', 'Describe this image', 'AgentInput');
+            });
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
+                    { name: 'a.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([97])]) } as any,
+                ], 'AgentInput');
+            });
+
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+            });
+
+            expect(pendingFireAndForget.length).toBe(1);
+            await act(async () => {
+                await sendStarted;
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('');
+            expect(agentInput.props.attachments).toEqual([]);
+
+            await act(async () => {
+                invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
+                    { name: 'next.txt', size: 1, type: 'text/plain', slice: () => new Blob([new Uint8Array([98])]) } as any,
+                ], 'AgentInput');
+            });
+
+            await act(async () => {
+                if (!rejectSend) throw new Error('send did not start');
+                rejectSend();
+                await pendingFireAndForget[0];
+            });
+
+            agentInput = findTestInstanceByTypeWithProps(renderedTree, 'AgentInput' as any, {}) as any;
+            expect(agentInput.props.value).toBe('');
+            expect(agentInput.props.attachments).toEqual([
+                expect.objectContaining({ label: 'next.txt' }),
+            ]);
+            expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'attachment handoff rejected');
         } finally {
             act(() => {
                 tree?.unmount();
@@ -742,9 +1751,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             await pendingFireAndForget[0];
 
             expect(sendMessageSpy).toHaveBeenCalledTimes(1);
-            expect(resolveReviewCommentDraftAnchorsForPromptSpy).toHaveBeenCalledWith(expect.objectContaining({
-                reviewScope: expect.objectContaining({ serverId: 'server-1', machineId: 'm1', rootPath: '/tmp' }),
-            }));
             const [sentSessionId, sentText, sentDisplayText, sentMetaOverrides] = sendMessageSpy.mock.calls[0] ?? [];
             expect(sentSessionId).toBe('s1');
             expect(String(sentText)).toContain('Review comments:');

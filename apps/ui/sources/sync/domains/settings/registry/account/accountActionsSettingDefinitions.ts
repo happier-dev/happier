@@ -1,8 +1,12 @@
 import {
+    ACTION_TOOL_EXPOSURE_SURFACES,
+    ActionToolExposureModeSchema,
     ActionsSettingsV1Schema,
     DEFAULT_ACTIONS_SETTINGS_V1,
     buildSettingArtifacts,
     defineSettingDefinitions,
+    type ActionToolExposureMode,
+    type ActionToolExposureSurface,
 } from '@happier-dev/protocol';
 
 type ActionSettingsOverrideLike = Readonly<{
@@ -11,6 +15,7 @@ type ActionSettingsOverrideLike = Readonly<{
     disabledSurfaces?: ReadonlyArray<unknown>;
     disabledPlacements?: ReadonlyArray<unknown>;
     approvalRequiredSurfaces?: ReadonlyArray<unknown>;
+    toolExposureModes?: unknown;
 }>;
 
 type NormalizedActionSettingsOverride = Readonly<{
@@ -19,7 +24,10 @@ type NormalizedActionSettingsOverride = Readonly<{
     disabledSurfaces: ReadonlyArray<string>;
     disabledPlacements: ReadonlyArray<string>;
     approvalRequiredSurfaces: ReadonlyArray<string>;
+    toolExposureModes: Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>>;
 }>;
+
+const ACTION_TOOL_EXPOSURE_SURFACE_SET = new Set<ActionToolExposureSurface>(ACTION_TOOL_EXPOSURE_SURFACES);
 
 function normalizeStringSet(raw: ReadonlyArray<unknown> | undefined): ReadonlyArray<string> {
     if (!Array.isArray(raw) || raw.length === 0) return [];
@@ -33,6 +41,21 @@ function normalizeStringSet(raw: ReadonlyArray<unknown> | undefined): ReadonlyAr
     return Array.from(out).sort();
 }
 
+function normalizeToolExposureModes(raw: unknown): Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>> {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        return {};
+    }
+
+    const next: Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>> = {};
+    for (const [surface, mode] of Object.entries(raw as Record<string, unknown>)) {
+        if (!ACTION_TOOL_EXPOSURE_SURFACE_SET.has(surface as ActionToolExposureSurface)) continue;
+        const parsed = ActionToolExposureModeSchema.safeParse(mode);
+        if (!parsed.success) continue;
+        next[surface as ActionToolExposureSurface] = parsed.data;
+    }
+    return next;
+}
+
 function normalizeOverride(raw: unknown): NormalizedActionSettingsOverride {
     const value = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as ActionSettingsOverrideLike) : null;
     const enabled = typeof value?.enabled === 'boolean' ? value.enabled : null;
@@ -42,6 +65,7 @@ function normalizeOverride(raw: unknown): NormalizedActionSettingsOverride {
         disabledSurfaces: normalizeStringSet(value?.disabledSurfaces),
         disabledPlacements: normalizeStringSet(value?.disabledPlacements),
         approvalRequiredSurfaces: normalizeStringSet(value?.approvalRequiredSurfaces),
+        toolExposureModes: normalizeToolExposureModes(value?.toolExposureModes),
     };
 }
 
@@ -63,6 +87,9 @@ function areOverridesEqual(a: NormalizedActionSettingsOverride, b: NormalizedAct
     for (let i = 0; i < a.approvalRequiredSurfaces.length; i += 1) {
         if (a.approvalRequiredSurfaces[i] !== b.approvalRequiredSurfaces[i]) return false;
     }
+    for (const surface of ACTION_TOOL_EXPOSURE_SURFACES) {
+        if (a.toolExposureModes[surface] !== b.toolExposureModes[surface]) return false;
+    }
     return true;
 }
 
@@ -77,6 +104,19 @@ function countAddedStrings(current: ReadonlyArray<string>, base: ReadonlyArray<s
     return count;
 }
 
+function countToolExposureOverrides(
+    current: Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>>,
+    base: Partial<Record<ActionToolExposureSurface, ActionToolExposureMode>>,
+): number {
+    let count = 0;
+    for (const surface of ACTION_TOOL_EXPOSURE_SURFACES) {
+        const mode = current[surface];
+        if (mode === base[surface]) continue;
+        count += 1;
+    }
+    return count;
+}
+
 function buildActionsSettingsSummaryProperties(value: unknown): Record<string, number> {
     const actions =
         value && typeof value === 'object' && !Array.isArray(value) && 'actions' in (value as Record<string, unknown>)
@@ -86,6 +126,7 @@ function buildActionsSettingsSummaryProperties(value: unknown): Record<string, n
                 disabledSurfaces?: ReadonlyArray<unknown>;
                 disabledPlacements?: ReadonlyArray<unknown>;
                 approvalRequiredSurfaces?: ReadonlyArray<unknown>;
+                toolExposureModes?: unknown;
             }> }).actions ?? {}
             : {};
 
@@ -96,6 +137,7 @@ function buildActionsSettingsSummaryProperties(value: unknown): Record<string, n
     let disabledSurfaceCount = 0;
     let disabledPlacementCount = 0;
     let approvalRequiredSurfaceCount = 0;
+    let toolExposureOverrideCount = 0;
     let overrideCount = 0;
 
     for (const [actionId, rawOverride] of Object.entries(actions)) {
@@ -113,6 +155,7 @@ function buildActionsSettingsSummaryProperties(value: unknown): Record<string, n
         disabledSurfaceCount += countAddedStrings(normalized.disabledSurfaces, normalizedDefault.disabledSurfaces);
         disabledPlacementCount += countAddedStrings(normalized.disabledPlacements, normalizedDefault.disabledPlacements);
         approvalRequiredSurfaceCount += countAddedStrings(normalized.approvalRequiredSurfaces, normalizedDefault.approvalRequiredSurfaces);
+        toolExposureOverrideCount += countToolExposureOverrides(normalized.toolExposureModes, normalizedDefault.toolExposureModes);
     }
 
     return {
@@ -122,6 +165,7 @@ function buildActionsSettingsSummaryProperties(value: unknown): Record<string, n
         disabledSurfaceCount,
         disabledPlacementCount,
         approvalRequiredSurfaceCount,
+        toolExposureOverrideCount,
     };
 }
 

@@ -30,6 +30,10 @@ import { deriveToolTimelineDensity } from '@/components/tools/normalization/poli
 import { resolvePermissionPromptSurface, shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
 import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
 import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
+import {
+    SidechainHydrationInlineStatus,
+    shouldShowSidechainHydrationInlineStatus,
+} from './SidechainHydrationInlineStatus';
 import { buildToolCallMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 import { Typography } from '@/constants/Typography';
 import { isGenericSubAgentToolName, isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
@@ -177,14 +181,27 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     const transcriptSidechainId = React.useMemo(() => {
         return resolveToolTranscriptSidechainId({ tool: toolForRendering, normalizedToolName });
     }, [normalizedToolName, toolForRendering]);
+    const isSubAgentTranscriptTool = isSubAgentTranscriptToolName(normalizedToolName);
 
-    useEnsureSidechainsLoaded({
+    const sidechainHydration = useEnsureSidechainsLoaded({
         enabled:
             isExpanded &&
-            isSubAgentTranscriptToolName(normalizedToolName),
+            isSubAgentTranscriptTool,
         sessionId,
         sidechainIds: [transcriptSidechainId],
     });
+    const toolMessages = props.messages ?? [];
+    const sidechainHydrationStatus = transcriptSidechainId
+        ? sidechainHydration.bySidechainId[transcriptSidechainId]?.status ?? sidechainHydration.status
+        : sidechainHydration.status;
+    const showSidechainHydrationStatus =
+        isExpanded &&
+        isSubAgentTranscriptTool &&
+        shouldShowSidechainHydrationInlineStatus({
+            messageCount: toolMessages.length,
+            sidechainId: transcriptSidechainId,
+            status: sidechainHydrationStatus,
+        });
 
     const inlineDetailLevel =
         isGenericSubAgentToolName(normalizedToolName) && effectiveDetailLevel === 'full'
@@ -409,12 +426,18 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
             {/* Content area - either custom children or tool-specific view */}
             <TranscriptCollapsible id={collapsibleId} createdAt={toolForRendering.createdAt} expanded={isBodyVisible}>
                 <View style={styles.content}>
+                    {showSidechainHydrationStatus ? (
+                        <SidechainHydrationInlineStatus
+                            testID="tool-sidechain-loading"
+                            status={sidechainHydrationStatus}
+                        />
+                    ) : null}
                     <ToolInlineBody
                         mode="card"
                         tool={toolForRendering}
                         normalizedToolName={normalizedToolName}
                         metadata={props.metadata}
-                        messages={props.messages ?? []}
+                        messages={toolMessages}
                         sessionId={sessionId}
                         messageId={messageId}
                         interaction={props.interaction}
@@ -527,8 +550,8 @@ const styles = StyleSheet.create((theme) => ({
     },
     status: {
         fontWeight: '400',
-        opacity: 0.3,
         fontSize: 13,
+        color: theme.colors.text.secondary,
     },
     toolDescription: {
         fontSize: 13,

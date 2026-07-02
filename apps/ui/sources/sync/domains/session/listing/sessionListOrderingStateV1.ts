@@ -4,6 +4,14 @@ import { normalizeTrimmedString } from './normalizeTrimmedString';
 import { normalizeSessionListKeyParts } from './sessionListKeyNormalization';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { buildSessionFolderWorkspaceRefKey } from '@/sync/domains/session/folders/workspaceRefs';
+import {
+    compareSessionListSessionOrderingKeys,
+    readSessionListUpdatedOrderingKey,
+    type SessionListOrderingModeV1,
+    type SessionListSessionOrderingKey,
+} from './sessionListOrderingRules';
+
+export type { SessionListOrderingModeV1 } from './sessionListOrderingRules';
 
 export const PINNED_GROUP_KEY_V1 = 'pinned-v1';
 
@@ -29,8 +37,6 @@ const SESSION_LIST_GROUP_ORDER_V1_INDEX_CACHE = new WeakMap<
     >
 >();
 
-export type SessionListOrderingModeV1 = 'custom' | 'created' | 'updated';
-
 function hasAnyOwnEntries(
     record: Readonly<Record<string, ReadonlyArray<string> | undefined>> | null | undefined,
 ): boolean {
@@ -47,28 +53,27 @@ function compareSessionItemsByOrderingMode(
     a: Extract<SessionListViewItem, { type: 'session' }>,
     b: Extract<SessionListViewItem, { type: 'session' }>,
     orderingMode: SessionListOrderingModeV1,
+    keyCache: ReadonlyMap<Extract<SessionListViewItem, { type: 'session' }>, SessionListSessionOrderingKey>,
 ): number {
-    if (orderingMode === 'updated') {
-        if (b.session.updatedAt !== a.session.updatedAt) {
-            return b.session.updatedAt - a.session.updatedAt;
-        }
-    } else if (orderingMode === 'created') {
-        if (b.session.createdAt !== a.session.createdAt) {
-            return b.session.createdAt - a.session.createdAt;
-        }
-    } else {
-        if (b.session.createdAt !== a.session.createdAt) {
-            return b.session.createdAt - a.session.createdAt;
-        }
-    }
+    const keyA = keyCache.get(a);
+    const keyB = keyCache.get(b);
+    if (!keyA || !keyB) return 0;
+    return compareSessionListSessionOrderingKeys(keyA, keyB, orderingMode);
+}
 
-    if (orderingMode === 'updated' && b.session.createdAt !== a.session.createdAt) {
-        return b.session.createdAt - a.session.createdAt;
-    }
-
-    const aId = normalizeTrimmedString(a.session?.id);
-    const bId = normalizeTrimmedString(b.session?.id);
-    return aId.localeCompare(bId);
+function buildSessionListViewItemOrderingKey(
+    item: Extract<SessionListViewItem, { type: 'session' }>,
+): SessionListSessionOrderingKey {
+    const createdAt = typeof item.session.createdAt === 'number' ? item.session.createdAt : 0;
+    return {
+        updated: readSessionListUpdatedOrderingKey({
+            createdAt,
+            meaningfulActivityAt: item.session.meaningfulActivityAt,
+        }),
+        createdAt,
+        stableId: normalizeSessionListKeyParts(item.serverId, item.session?.id).sessionKey
+            || normalizeTrimmedString(item.session?.id),
+    };
 }
 
 function isSessionListViewItemsAlreadyOrderedByOrderingMode(
@@ -76,15 +81,17 @@ function isSessionListViewItemsAlreadyOrderedByOrderingMode(
     orderingMode: SessionListOrderingModeV1,
 ): boolean {
     const lastSessionByGroupKey = new Map<string, Extract<SessionListViewItem, { type: 'session' }>>();
+    const keyCache = new Map<Extract<SessionListViewItem, { type: 'session' }>, SessionListSessionOrderingKey>();
 
     for (const item of source) {
         if (item.type !== 'session') continue;
 
         const groupKey = normalizeTrimmedString(item.groupKey);
         if (!groupKey) continue;
+        keyCache.set(item, buildSessionListViewItemOrderingKey(item));
 
         const previous = lastSessionByGroupKey.get(groupKey);
-        if (previous && compareSessionItemsByOrderingMode(previous, item, orderingMode) > 0) {
+        if (previous && compareSessionItemsByOrderingMode(previous, item, orderingMode, keyCache) > 0) {
             return false;
         }
 
@@ -126,7 +133,11 @@ export function sortSessionListViewItemsByOrderingMode(
     const sortedByGroupKey = new Map<string, Array<Extract<SessionListViewItem, { type: 'session' }>>>();
     for (const [groupKey, sessions] of sessionsByGroupKey.entries()) {
         if (sessions.length < 2) continue;
-        const next = [...sessions].sort((a, b) => compareSessionItemsByOrderingMode(a, b, orderingMode));
+        const keyCache = new Map<Extract<SessionListViewItem, { type: 'session' }>, SessionListSessionOrderingKey>();
+        for (const item of sessions) {
+            keyCache.set(item, buildSessionListViewItemOrderingKey(item));
+        }
+        const next = [...sessions].sort((a, b) => compareSessionItemsByOrderingMode(a, b, orderingMode, keyCache));
         sortedByGroupKey.set(groupKey, next);
     }
 

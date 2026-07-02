@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
+import { ReviewCommentsSessionSurface } from '@/components/reviews/ReviewCommentsSessionSurface';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { buildWorkspaceChangedFilesData } from '@/hooks/workspaces/scm/buildWorkspaceChangedFilesData';
@@ -17,6 +18,18 @@ import type { ScmReviewUnifiedDiffFetcher } from '@/components/workspaces/scm/re
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { createReviewCommentsHttpActionExecutor } from '@/sync/domains/reviews/comments/api';
+import { createPluginPermissionGrantActions } from '@/sync/domains/plugins/permissions/actions';
+import { createPluginPermissionGrantHttpActionExecutor } from '@/sync/domains/plugins/permissions/api';
+import { usePluginPermissionGrants } from '@/sync/domains/plugins/permissions/usePluginPermissionGrants';
+import {
+    selectPluginPermissionPendingRequests,
+} from '@/sync/domains/plugins/permissions/store';
+import {
+    REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
+    type PluginPermissionGrantListInput,
+    type PluginPermissionGrantTargetScope,
+} from '@/sync/domains/plugins/permissions/types';
 
 export type WorkspaceScmReviewDetailsViewProps = Readonly<{
     scopeId: string;
@@ -41,7 +54,34 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments') === true;
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(scope);
     const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(scope);
+    const reviewCommentsExecutor = React.useMemo(() => createReviewCommentsHttpActionExecutor(), []);
+    const pluginPermissionGrantExecutor = React.useMemo(() => createPluginPermissionGrantHttpActionExecutor(), []);
+    const pluginPermissionGrantActions = React.useMemo(
+        () => createPluginPermissionGrantActions({ execute: pluginPermissionGrantExecutor }),
+        [pluginPermissionGrantExecutor],
+    );
     const { snapshot, loading, error, refresh } = useWorkspaceScmSnapshotController(scope);
+    const directWriteGrantScope = React.useMemo<PluginPermissionGrantTargetScope>(() => ({
+        kind: 'project',
+        projectId: props.workspaceRefId,
+    }), [props.workspaceRefId]);
+    const pluginPermissionGrantListInput = React.useMemo<PluginPermissionGrantListInput>(() => ({
+        capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
+        targetScope: directWriteGrantScope,
+    }), [directWriteGrantScope]);
+    const pluginPermissionGrants = usePluginPermissionGrants({
+        actions: pluginPermissionGrantActions,
+        enabled: reviewCommentsEnabled,
+        listInput: pluginPermissionGrantListInput,
+    });
+    const directWriteGranted = pluginPermissionGrants.hasGrant({
+        capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
+        targetScope: directWriteGrantScope,
+    });
+    const pendingDirectWriteGrantRequest = selectPluginPermissionPendingRequests(pluginPermissionGrants.state, {
+        capability: REVIEW_COMMENTS_DIRECT_WRITE_PERMISSION_CAPABILITY,
+        targetScope: directWriteGrantScope,
+    })[0] ?? null;
 
     const maxFiles = React.useMemo(() => {
         const raw = typeof scmReviewMaxFilesSetting === 'number' && Number.isFinite(scmReviewMaxFilesSetting)
@@ -92,6 +132,18 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
 
     return (
         <View style={{ flex: 1, minHeight: 0, minWidth: 0, backgroundColor: theme.colors.surface.base }}>
+            {reviewCommentsEnabled ? (
+                <ReviewCommentsSessionSurface
+                    workspaceId={props.workspaceRefId}
+                    execute={reviewCommentsExecutor}
+                    directWriteGranted={directWriteGranted}
+                    pendingDirectWriteGrantRequest={pendingDirectWriteGrantRequest}
+                    onGrantDirectWrite={pluginPermissionGrants.grant}
+                    onCancelDirectWriteGrant={pluginPermissionGrants.dismissRequest}
+                    defaultPanelOpen={false}
+                    testID="workspace-review-comments"
+                />
+            ) : null}
             <ChangedFilesReview
                 theme={theme}
                 sessionId={props.scopeId}

@@ -12,6 +12,7 @@ import { t } from '@/text';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { Text } from '@/components/ui/text/Text';
 import { useConnectionHealth } from '@/components/navigation/connectionStatus/useConnectionHealth';
+import { AppUpdateStatusTag } from '@/components/ui/feedback/AppUpdateStatusTag';
 
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
@@ -140,15 +141,22 @@ function HeaderLeft(props: { showAutomations: boolean }) {
     const router = useRouter();
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const logo = (
+        <View style={styles.logoContainer}>
+            <Image
+                source={theme.dark ? require('@/assets/images/logo-white.png') : require('@/assets/images/logo-black.png')}
+                contentFit="contain"
+                style={[{ width: 24, height: 24 }]}
+            />
+        </View>
+    );
     return (
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <View style={styles.logoContainer}>
-                <Image
-                    source={theme.dark ? require('@/assets/images/logo-white.png') : require('@/assets/images/logo-black.png')}
-                    contentFit="contain"
-                    style={[{ width: 24, height: 24 }]}
-                />
-            </View>
+            <AppUpdateStatusTag
+                testID="home-header-app-update-status-tag"
+                labelVariant="short"
+                fallback={logo}
+            />
             {props.showAutomations ? (
                 <Pressable
                     onPress={() => router.push('/automations')}

@@ -12,6 +12,7 @@ function makeSession(partial: Partial<Session> & Pick<Session, 'id'>): Session {
         seq: partial.seq ?? 0,
         createdAt,
         updatedAt,
+        meaningfulActivityAt: (partial as Partial<Session> & { meaningfulActivityAt?: number | null }).meaningfulActivityAt ?? null,
         active,
         activeAt,
         metadata: partial.metadata ?? null,
@@ -145,6 +146,57 @@ describe('buildSessionListViewData', () => {
         }
     });
 
+    it('groups inactive date rows by meaningful activity instead of technical updates', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(2026, 4, 17, 18, 0));
+        const technicalUpdateToday = new Date(2026, 4, 17, 14, 0).getTime();
+        const meaningfulYesterday = new Date(2026, 4, 16, 9, 0).getTime();
+        const olderMeaningfulToday = new Date(2026, 4, 17, 8, 0).getTime();
+        try {
+            const data = buildSessionListViewData({
+                staleMetadataRefresh: makeSession({
+                    id: 'staleMetadataRefresh',
+                    active: false,
+                    createdAt: meaningfulYesterday,
+                    updatedAt: technicalUpdateToday,
+                    meaningfulActivityAt: meaningfulYesterday,
+                    metadata: { machineId: 'm1', path: '/home/u/repoA', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+                } as Partial<Session> & Pick<Session, 'id'> & { meaningfulActivityAt: number }),
+                actualToday: makeSession({
+                    id: 'actualToday',
+                    active: false,
+                    createdAt: olderMeaningfulToday,
+                    updatedAt: olderMeaningfulToday,
+                    meaningfulActivityAt: olderMeaningfulToday,
+                    metadata: { machineId: 'm1', path: '/home/u/repoB', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+                } as Partial<Session> & Pick<Session, 'id'> & { meaningfulActivityAt: number }),
+            }, {
+                m1: makeMachine({
+                    id: 'm1',
+                    metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
+                }),
+            }, {
+                groupInactiveSessionsByProject: false,
+                inactiveGroupingV1: 'date',
+            });
+
+            const summary = data.map((item) => {
+                if (item.type === 'header') return `header:${item.title}`;
+                return `session:${item.session.id}`;
+            });
+
+            expect(summary).toEqual([
+                'header:Inactive',
+                'header:Today',
+                'session:actualToday',
+                'header:Yesterday',
+                'session:staleMetadataRefresh',
+            ]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('excludes hidden system sessions from the list view data', () => {
         const machine = makeMachine({
             id: 'm1',
@@ -177,6 +229,59 @@ describe('buildSessionListViewData', () => {
         const data = buildSessionListViewData(sessions, { [machine.id]: machine }, { groupInactiveSessionsByProject: false });
         const sessionIds = data.filter((i) => i.type === 'session').map((i: any) => i.session.id);
         expect(sessionIds).toEqual(['user']);
+    });
+
+    it('can render active and inactive sessions in one workspace-grouped section', () => {
+        const machine = makeMachine({ id: 'm1', metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' } });
+
+        const sessions: Record<string, Session> = {
+            active: makeSession({
+                id: 'active',
+                active: true,
+                createdAt: 3,
+                updatedAt: 300,
+                metadata: { machineId: 'm1', path: '/home/u/repoA', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+            }),
+            inactive: makeSession({
+                id: 'inactive',
+                active: false,
+                createdAt: 2,
+                updatedAt: 200,
+                metadata: { machineId: 'm1', path: '/home/u/repoA', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+            }),
+            other: makeSession({
+                id: 'other',
+                active: false,
+                createdAt: 1,
+                updatedAt: 100,
+                metadata: { machineId: 'm1', path: '/home/u/repoB', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+            }),
+        };
+
+        const data = buildSessionListViewData(sessions, { [machine.id]: machine }, {
+            groupInactiveSessionsByProject: false,
+            activeGroupingV1: 'project',
+            inactiveGroupingV1: 'date',
+            sectionModeV1: 'single',
+        });
+
+        const summary = data.map((item) => {
+            switch (item.type) {
+                case 'header':
+                    return `header:${item.headerKind ?? 'unknown'}:${item.title}`;
+                case 'session':
+                    return `session:${item.session.id}:${item.section ?? 'unknown'}:${item.groupKind ?? 'unknown'}:${item.variant ?? 'default'}`;
+            }
+        });
+
+        expect(summary).toEqual([
+            'header:sessions:Sessions',
+            'header:project:~/repoA',
+            'session:active:active:project:no-path',
+            'session:inactive:inactive:project:no-path',
+            'header:project:~/repoB',
+            'session:other:inactive:project:no-path',
+        ]);
     });
 
     it('reuses the shared empty array when every session is hidden system data', () => {
@@ -515,7 +620,7 @@ describe('buildSessionListViewData', () => {
         }
     });
 
-    it('groups inactive sessions by updated date while grouping active sessions by project', () => {
+    it('groups inactive sessions by meaningful activity date while grouping active sessions by project', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date(2026, 1, 17, 12, 0, 0));
 
@@ -570,12 +675,45 @@ describe('buildSessionListViewData', () => {
                 'header:project:~/repoA',
                 'session:act1:active:no-path',
                 'header:inactive:Inactive',
-                'header:date:Today',
+                'header:date:Yesterday',
                 'session:in1:inactive:default',
             ]);
         } finally {
             vi.useRealTimers();
         }
+    });
+
+    it('uses the same project group key across active and inactive sections for the same workspace', () => {
+        const machine = makeMachine({
+            id: 'm1',
+            metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
+        });
+        const data = buildSessionListViewData({
+            active: makeSession({
+                id: 'active',
+                active: true,
+                createdAt: 2,
+                updatedAt: 2,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+            }),
+            inactive: makeSession({
+                id: 'inactive',
+                active: false,
+                createdAt: 1,
+                updatedAt: 1,
+                metadata: { machineId: 'm1', path: '/home/u/repo', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+            }),
+        }, { [machine.id]: machine }, { groupInactiveSessionsByProject: true });
+
+        const projectGroupKeys = data.flatMap((item) => (
+            item.type === 'header' && item.headerKind === 'project' && item.groupKey
+                ? [item.groupKey]
+                : []
+        ));
+
+        expect(projectGroupKeys).toHaveLength(2);
+        expect(new Set(projectGroupKeys).size).toBe(1);
+        expect(projectGroupKeys[0]).toMatch(/^server:[^:]+:project:/);
     });
 
     it('places shared sessions into a dedicated subgroup inside active and inactive sections', () => {

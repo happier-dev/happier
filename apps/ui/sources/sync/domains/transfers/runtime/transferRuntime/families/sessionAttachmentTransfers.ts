@@ -3,7 +3,7 @@ import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { resolveSessionListPreferredServerIdFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 
 import { uploadSessionAttachmentFromReaderViaDirectImport } from './uploadSessionAttachmentFromReaderViaDirectImport';
 
@@ -37,7 +37,7 @@ export async function uploadDaemonSessionAttachmentFromReader(params: Readonly<{
     signal?: AbortSignal | null;
     onProgress?: ((progress: Readonly<{ uploadedBytes: number; totalBytes: number }>) => void) | null;
 }>): Promise<SessionAttachmentsUploadFinalizeResponse | TransferFailureResponse> {
-    const machineTarget = readMachineTargetForSession(params.sessionId);
+    const machineTarget = readMachineControlTargetForSession(params.sessionId);
     const preferredServerId = resolveSessionListPreferredServerIdFromState(
         storage.getState(),
         params.sessionId,

@@ -14,12 +14,14 @@ import {
 } from '@/dev/testkit';
 
 const {
+    sessionScmRemoteFetch,
     sessionScmRemotePush,
     sessionScmRepositoryRemoveIndexLock,
     invalidateFromMutationAndAwait,
     loadCommitHistory,
     refreshScmData,
 } = vi.hoisted(() => ({
+    sessionScmRemoteFetch: vi.fn(async (): Promise<ScmRemoteResponse> => ({ success: true, stdout: 'fetched' })),
     sessionScmRemotePush: vi.fn(async (): Promise<ScmRemoteResponse> => ({ success: true, stdout: 'pushed' })),
     sessionScmRepositoryRemoveIndexLock: vi.fn(async () => ({ success: true, removed: true, lockPath: '/repo/.git/index.lock' })),
     invalidateFromMutationAndAwait: vi.fn(async () => {}),
@@ -31,7 +33,7 @@ const storageMock = createStorageModuleStub({});
 const modalMock = createModalModuleMock({ confirmResult: true });
 
 vi.mock('@/sync/ops', () => ({
-    sessionScmRemoteFetch: vi.fn(async () => ({ success: true, stdout: 'fetched' })),
+    sessionScmRemoteFetch,
     sessionScmRemotePull: vi.fn(async () => ({ success: true, stdout: 'pulled' })),
     sessionScmRemotePush,
     sessionScmRepositoryRemoveIndexLock,
@@ -79,6 +81,8 @@ vi.mock('@/scm/operations/scmDaemonUnavailableAlert', () => ({
 describe('useScmRemoteOperations', () => {
     beforeEach(() => {
         modalMock.spies.confirm.mockClear();
+        sessionScmRemoteFetch.mockReset();
+        sessionScmRemoteFetch.mockResolvedValue({ success: true, stdout: 'fetched' });
         sessionScmRemotePush.mockReset();
         sessionScmRemotePush.mockResolvedValue({ success: true, stdout: 'pushed' });
         sessionScmRepositoryRemoveIndexLock.mockClear();
@@ -88,6 +92,7 @@ describe('useScmRemoteOperations', () => {
     });
 
     afterEach(() => {
+        vi.useRealTimers();
         standardCleanup();
     });
 
@@ -152,5 +157,42 @@ describe('useScmRemoteOperations', () => {
         });
         expect(sessionScmRemotePush).toHaveBeenCalledTimes(2);
         expect(invalidateFromMutationAndAwait).toHaveBeenCalledWith('session-1');
+    });
+
+    it('releases the remote operation lifecycle when the post-fetch refresh stalls', async () => {
+        refreshScmData.mockImplementationOnce(() => new Promise<void>(() => {}));
+        vi.useFakeTimers();
+
+        const { useScmRemoteOperations } = await import('./useScmRemoteOperations');
+        const hook = await renderHook(() => useScmRemoteOperations({
+            sessionId: 'session-1',
+            sessionPath: '/repo',
+            scmSnapshot: null,
+            scmWriteEnabled: true,
+            scmCommitStrategy: 'atomic',
+            scmRemoteConfirmPolicy: 'never',
+            scmPushRejectPolicy: 'prompt_fetch',
+            refreshScmData,
+            loadCommitHistory,
+        }));
+
+        let settled = false;
+        await act(async () => {
+            void hook.getCurrent().runRemoteOperation('fetch').finally(() => {
+                settled = true;
+            });
+            await Promise.resolve();
+        });
+
+        expect(hook.getCurrent().scmRemoteOperationBusy).toBe(true);
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(10_000);
+            await Promise.resolve();
+        });
+
+        expect(settled).toBe(true);
+        expect(hook.getCurrent().scmRemoteOperationBusy).toBe(false);
+        expect(refreshScmData).toHaveBeenCalledTimes(1);
     });
 });

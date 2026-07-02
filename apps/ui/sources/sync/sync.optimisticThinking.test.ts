@@ -39,7 +39,23 @@ vi.mock('react-native', async () => {
 
 const resumeSessionMock = vi.hoisted(() => vi.fn(async () => ({ type: 'success' as const })));
 vi.mock('@/sync/ops', () => ({
-    resumeSession: (...args: unknown[]) => resumeSessionMock(...args),
+    resumeSession: (...args: Parameters<typeof resumeSessionMock>) => resumeSessionMock(...args),
+}));
+
+vi.mock('@/agents/catalog/catalog', () => ({
+    buildWakeResumeExtras: () => ({}),
+    getAgentCore: (agentId: string) => ({
+        cli: {
+            spawnAgent: agentId,
+        },
+        model: {
+            defaultMode: 'default',
+            supportsSelection: false,
+        },
+    }),
+    isAgentId: (value: unknown) => typeof value === 'string' && ['claude', 'codex'].includes(value),
+    resolveAgentIdFromFlavor: (value: string | null | undefined) =>
+        typeof value === 'string' && ['claude', 'codex'].includes(value) ? value : null,
 }));
 
 vi.mock('@/log', () => ({
@@ -255,6 +271,45 @@ describe('sync.sendMessage optimistic thinking', () => {
         expect(storage.getState().sessions[sessionId].lastTurnCompletedAt ?? null).toBe(12_345);
     });
 
+    it('notifies local pending projection after the pending row exists', async () => {
+        const sessionId = 's_local_pending_projection_callback';
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
+        sync.setMessageTransport({
+            emitWithAck: vi.fn(async () => ({
+                ok: true,
+                id: 'm1',
+                seq: 1,
+                localId: 'local-visible-id',
+                didWrite: true,
+            })) as any,
+            send: vi.fn(),
+        });
+
+        const projectionEvents: Array<Readonly<{ localId: string; pendingIds: readonly string[] }>> = [];
+
+        await sync.sendMessage(sessionId, 'hello', undefined, undefined, {
+            localId: 'local-visible-id',
+            onLocalPendingProjectionCreated: ({ localId }) => {
+                projectionEvents.push({
+                    localId,
+                    pendingIds: (storage.getState().sessionPending[sessionId]?.messages ?? []).map((message) => message.id),
+                });
+            },
+        });
+
+        expect(projectionEvents).toEqual([{
+            localId: 'local-visible-id',
+            pendingIds: ['local-visible-id'],
+        }]);
+    });
+
     it('hydrates a missing active session before sending the user message', async () => {
         const sessionId = 's_missing_then_hydrated';
 
@@ -345,6 +400,58 @@ describe('sync.sendMessage optimistic thinking', () => {
         sessionRpcSpy.mockRestore();
     });
 
+    it('keeps a runtime-accepted local pending message when server pending refresh is empty', async () => {
+        const sessionId = 's_active_runtime_rpc_pending_refresh';
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        const encryption = await Encryption.create(new Uint8Array(32).fill(9));
+        await encryption.initializeSessions(new Map([[sessionId, null]]));
+
+        const sessionRpcSpy = vi.spyOn(apiSocket, 'sessionRPC').mockResolvedValue({ ok: true } as any);
+        const requestSpy = vi.spyOn(apiSocket, 'request').mockResolvedValue(
+            new Response(JSON.stringify({ pending: [] }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+            }),
+        );
+
+        const { sync } = await import('./sync');
+        sync.encryption = encryption;
+        sync.setMessageTransport({
+            emitWithAck: vi.fn(),
+            send: vi.fn(),
+        });
+
+        await sync.sendMessage(
+            sessionId,
+            'first prompt remains visible',
+            undefined,
+            undefined,
+            { localId: 'first-turn-local' },
+        );
+        expect(storage.getState().sessionPending[sessionId]?.messages.map((message) => message.id)).toEqual([
+            'first-turn-local',
+        ]);
+
+        await sync.fetchPendingMessages(sessionId);
+
+        expect(requestSpy).toHaveBeenCalledWith(
+            `/v2/sessions/${sessionId}/pending?includeDiscarded=1`,
+            { method: 'GET' },
+        );
+        expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
+            expect.objectContaining({
+                id: 'first-turn-local',
+                localId: 'first-turn-local',
+                deliveryStatus: 'accepted',
+                text: 'first prompt remains visible',
+            }),
+        ]);
+
+        sessionRpcSpy.mockRestore();
+        requestSpy.mockRestore();
+    });
+
     it('records auth syncError when active-session runtime RPC rejects with terminal auth', async () => {
         const sessionId = 's_active_runtime_rpc_auth';
         storage.getState().applySessions([createSession({ sessionId })]);
@@ -426,6 +533,7 @@ describe('sync.sendMessage optimistic thinking', () => {
                 expect.objectContaining({
                     sid: sessionId,
                     localId: expect.any(String),
+                    messageRole: 'user',
                 }),
                 expect.anything(),
             );
@@ -908,6 +1016,7 @@ describe('sync.sendMessage optimistic thinking', () => {
             expect.objectContaining({
                 sid: sessionId,
                 localId: 'p1',
+                messageRole: 'user',
             }),
             expect.anything(),
         );
@@ -1095,6 +1204,10 @@ describe('sync.sendMessage optimistic thinking', () => {
             await Promise.resolve();
 
             expect(emitWithAck).toHaveBeenCalledTimes(2);
+            expect(emitWithAck.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
+                localId: 'p-retry-auth',
+                messageRole: 'user',
+            }));
             expect((sync as any).pendingMessageCommitRetryTimers.has(`${sessionId}:p-retry-auth`)).toBe(false);
             expect(storage.getState().sessionPending[sessionId]?.messages.map((message) => message.id)).toEqual(['p-persisted']);
             expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
@@ -1346,6 +1459,7 @@ describe('sync.sendMessage optimistic thinking', () => {
                 message: expect.objectContaining({ t: 'plain', v: expect.any(Object) }),
                 localId: 'p-retry',
                 sentFrom: 'retry',
+                messageRole: 'user',
             }),
             expect.anything(),
         );
@@ -1388,6 +1502,7 @@ describe('sync.sendMessage optimistic thinking', () => {
             expect.objectContaining({
                 sid: sessionId,
                 message: expect.objectContaining({ t: 'plain', v: expect.any(Object) }),
+                messageRole: 'user',
             }),
             expect.anything(),
         );
@@ -1482,7 +1597,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
     });
 
-    it('marks running approved tools as canceled when a turn is aborted', async () => {
+    it('keeps running approved tools active when a turn is aborted without tool error proof', async () => {
         const sessionId = 's_turn_aborted_tools';
         const now = Date.now();
 
@@ -1546,15 +1661,20 @@ describe('sync.sendMessage optimistic thinking', () => {
         if (!afterAbort || afterAbort.kind !== 'tool-call') {
             throw new Error('Expected tool-call message after abort');
         }
-        expect(afterAbort.tool.state).toBe('error');
-        expect(afterAbort.tool.permission?.status).toBe('canceled');
-        expect(afterAbort.tool.result).toEqual({ error: 'Request interrupted' });
-        expect(afterAbort.tool.completedAt).not.toBeNull();
+        expect(afterAbort.tool.state).toBe('running');
+        expect(afterAbort.tool.permission?.status).toBe('approved');
+        expect(afterAbort.tool.result).toBeUndefined();
+        expect(afterAbort.tool.completedAt).toBeNull();
     });
 
-    it('does not force thinking=true from fetched task_started lifecycle events', async () => {
+    it('does not force running state from fetched task_started lifecycle events', async () => {
         const sessionId = 's_task_started_fetch';
-        storage.getState().applySessions([createSession({ sessionId })]);
+        storage.getState().applySessions([
+            {
+                ...createSession({ sessionId }),
+                latestTurnStatus: 'completed',
+            },
+        ]);
 
         const { sync } = await import('./sync');
         await (sync as any).applySessionThinkingFromTaskLifecycle(sessionId, {
@@ -1564,6 +1684,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         });
 
         expect(storage.getState().sessions[sessionId].thinking).toBe(false);
+        expect(storage.getState().sessions[sessionId].latestTurnStatus).toBe('completed');
     });
 
     it('publishes session metadata after send when apply timing is next_prompt and local permission selection is newer', async () => {

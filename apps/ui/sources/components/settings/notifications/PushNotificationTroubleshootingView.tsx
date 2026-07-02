@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Linking, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import * as Notifications from 'expo-notifications';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -15,7 +14,6 @@ import { useSettings } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { deletePushToken, fetchPushTokens, type PushToken } from '@/sync/api/session/apiPush';
-import { registerPushTokenIfAvailable } from '@/sync/engine/account/syncAccount';
 import {
     formatPushTimestamp,
     formatPushTokenFingerprint,
@@ -25,6 +23,7 @@ import {
     resolvePermissionSubtitle,
     type PushPermissionInfo,
 } from './pushNotificationTroubleshootingRuntime';
+import { loadExpoNotifications } from '@/utils/platform/loadExpoNotifications';
 
 export const PushNotificationTroubleshootingView = React.memo(function PushNotificationTroubleshootingView() {
     const { theme } = useUnistyles();
@@ -59,10 +58,8 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
             setLoading(true);
         }
         try {
-            const [nextPermission, nextToken] = await Promise.all([
-                getPushPermissionInfo(),
-                getCurrentExpoPushToken(),
-            ]);
+            const nextPermission = await getPushPermissionInfo();
+            const nextToken = await getCurrentExpoPushToken();
             if (!isMountedRef.current) return;
             setPermission(nextPermission);
             setCurrentToken(nextToken);
@@ -100,6 +97,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
         }
         if (nextPermission.canAskAgain) {
             try {
+                const Notifications = await loadExpoNotifications();
                 await Notifications.requestPermissionsAsync();
             } catch {
                 // ignore
@@ -120,6 +118,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
             return;
         }
         try {
+            const { registerPushTokenIfAvailable } = await import('@/sync/engine/account/syncAccount');
             await registerPushTokenIfAvailable({
                 credentials: auth.credentials,
                 log: { log: () => {} },

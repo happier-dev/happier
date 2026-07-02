@@ -11,7 +11,7 @@ import type { FavoriteModelTogglePayload } from './newSessionFavoriteModelsPicke
 
 export type NewSessionAgentPickerSelection = Readonly<{
     modelId: string;
-    sessionModeId: string;
+    sessionModeId: string | null;
     configOverrides: Readonly<Record<string, string>>;
 }>;
 
@@ -25,6 +25,10 @@ export function buildNewSessionAgentPickerDetailContent(params: Readonly<{
     selection: NewSessionAgentPickerSelection;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
     onToggleFavoriteModel?: (model: FavoriteModelTogglePayload) => void;
+    favoriteEngine?: Readonly<{
+        favorite: boolean;
+        onToggle: () => void;
+    }>;
     onSelectionChange: (selection: NewSessionAgentPickerSelection) => void;
 }>): React.ReactElement {
     const capabilityProbeContext = resolveNewSessionCapabilityProbeContext({
@@ -45,6 +49,7 @@ export function buildNewSessionAgentPickerDetailContent(params: Readonly<{
             selectedConfigOverrides={params.selection.configOverrides}
             favoriteModelSelections={params.favoriteModelSelections ?? []}
             onToggleFavoriteModel={params.onToggleFavoriteModel}
+            favoriteEngine={params.favoriteEngine}
             onSelectionChange={params.onSelectionChange}
         />
     );

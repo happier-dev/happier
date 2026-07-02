@@ -1,34 +1,28 @@
 import * as React from 'react';
 
 import { Platform } from 'react-native';
+import { useShallow } from 'zustand/react/shallow';
 
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useChangelog } from '@/hooks/inbox/useChangelog';
 import { useUpdates } from '@/hooks/inbox/useUpdates';
-import { resolveActivityAttentionDeliveryPlan } from '@/activity/delivery/resolveActivityAttentionDeliveryPlan';
-import { buildActivityOverviewFromSource } from '@/activity/source/buildActivityOverviewFromSource';
-import { useActivityAttentionSource } from '@/activity/source/useActivityAttentionSource';
-import { AttentionDeviceOverridesV1Schema } from '@/sync/domains/settings/attentionDeviceOverridesV1';
-import { localSettingsParse } from '@/sync/domains/settings/localSettings';
-import { useFriendRequests, useLocalSettings, useSettings } from '@/sync/domains/state/storage';
+import { storage, useFriendRequests, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { serverFetch } from '@/sync/http/client';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-import { buildActivityBadgeStateFromOverview } from './buildActivityBadgeState';
 import { applyExpoNativeBadgeState } from './channels/applyExpoNativeBadgeState';
 import { applyTauriBadgeState } from './channels/applyTauriBadgeState';
+import {
+    createLocalActivityBadgeSnapshotSelector,
+    type LocalActivityBadgeSnapshot,
+    type LocalActivityBadgeSnapshotSelectorParams,
+} from './createLocalActivityBadgeSnapshotSelector';
 
 type ServerBadgeSnapshot = Readonly<{
     count: number;
     serverGeneration: number;
     serverId: string;
-}>;
-
-type ActivityBadgeSessionOptions = Readonly<{
-    showUnread: boolean;
-    showPendingPermissionRequests: boolean;
-    showPendingUserActionRequests: boolean;
 }>;
 
 async function fetchServerBadgeCount(): Promise<number | null> {
@@ -45,109 +39,86 @@ async function fetchServerBadgeCount(): Promise<number | null> {
     }
 }
 
-function canUseServerBadgeSnapshot(options: ActivityBadgeSessionOptions): boolean {
+function canUseServerBadgeSnapshot(options: LocalActivityBadgeSnapshot['sessionOptions']): boolean {
     return options.showUnread
         && options.showPendingPermissionRequests
         && options.showPendingUserActionRequests;
 }
 
+function useActivityBadgeLocalSettingsInput(): LocalActivityBadgeSnapshotSelectorParams['localSettings'] {
+    const attentionDeviceOverridesV1 = useLocalSetting('attentionDeviceOverridesV1');
+    const activityBadgesEnabled = useLocalSetting('activityBadgesEnabled');
+    const activityBadgeShowUnread = useLocalSetting('activityBadgeShowUnread');
+    const activityBadgeShowPendingPermissionRequests = useLocalSetting('activityBadgeShowPendingPermissionRequests');
+    const activityBadgeShowPendingUserActionRequests = useLocalSetting('activityBadgeShowPendingUserActionRequests');
+    const activityBadgeShowQueuedUserInput = useLocalSetting('activityBadgeShowQueuedUserInput');
+    const activityBadgeShowFriendRequestsInboxCount = useLocalSetting('activityBadgeShowFriendRequestsInboxCount');
+    const activityBadgeShowDesktopNonNumericDot = useLocalSetting('activityBadgeShowDesktopNonNumericDot');
+
+    return React.useMemo(() => ({
+        attentionDeviceOverridesV1,
+        activityBadgesEnabled,
+        activityBadgeShowUnread,
+        activityBadgeShowPendingPermissionRequests,
+        activityBadgeShowPendingUserActionRequests,
+        activityBadgeShowQueuedUserInput,
+        activityBadgeShowFriendRequestsInboxCount,
+        activityBadgeShowDesktopNonNumericDot,
+    }), [
+        activityBadgeShowDesktopNonNumericDot,
+        activityBadgeShowFriendRequestsInboxCount,
+        activityBadgeShowPendingPermissionRequests,
+        activityBadgeShowPendingUserActionRequests,
+        activityBadgeShowQueuedUserInput,
+        activityBadgeShowUnread,
+        activityBadgesEnabled,
+        attentionDeviceOverridesV1,
+    ]);
+}
+
+function useActivityBadgeAccountSettingsInput(): LocalActivityBadgeSnapshotSelectorParams['accountSettings'] {
+    const attentionDeliveryPolicyV1 = useSetting('attentionDeliveryPolicyV1');
+    return React.useMemo(() => ({
+        attentionDeliveryPolicyV1,
+    }), [attentionDeliveryPolicyV1]);
+}
+
+function useLocalActivityBadgeSnapshot(
+    params: LocalActivityBadgeSnapshotSelectorParams,
+): LocalActivityBadgeSnapshot {
+    const selector = React.useMemo(
+        () => createLocalActivityBadgeSnapshotSelector(params),
+        [params],
+    );
+    return storage(useShallow(selector));
+}
+
 export function ActivityBadgeRuntime(): React.ReactElement | null {
-    const activitySource = useActivityAttentionSource();
     const friendRequests = useFriendRequests();
-    const localSettings = useLocalSettings();
-    const accountSettings = useSettings();
+    const localSettings = useActivityBadgeLocalSettingsInput();
+    const accountSettings = useActivityBadgeAccountSettingsInput();
     const activeServer = useActiveServerSnapshot();
     const { updateAvailable } = useUpdates();
     const { hasUnread: changelogHasUnread } = useChangelog();
-    const parsedLocalSettings = React.useMemo(() => localSettingsParse(localSettings), [localSettings]);
     const isTauriDesktopHost = isTauriDesktop();
     const shouldApplyBadgeRuntime = isTauriDesktopHost || Platform.OS !== 'web';
     const [serverBadgeSnapshot, setServerBadgeSnapshot] = React.useState<ServerBadgeSnapshot | null>(null);
-
-    const badgeModel = React.useMemo(() => {
-        const now = new Date();
-        const readyPlan = resolveActivityAttentionDeliveryPlan({
-            accountSettings,
-            localSettings: parsedLocalSettings,
-            event: 'ready',
-            channel: 'badge',
-            now,
-        });
-        const permissionPlan = resolveActivityAttentionDeliveryPlan({
-            accountSettings,
-            localSettings: parsedLocalSettings,
-            event: 'permission_request',
-            channel: 'badge',
-            now,
-        });
-        const userActionPlan = resolveActivityAttentionDeliveryPlan({
-            accountSettings,
-            localSettings: parsedLocalSettings,
-            event: 'user_action_request',
-            channel: 'badge',
-            now,
-        });
-        const channelDisabled =
-            readyPlan.reason === 'channel_disabled'
-            && permissionPlan.reason === 'channel_disabled'
-            && userActionPlan.reason === 'channel_disabled';
-        if (channelDisabled) {
-            return {
-                channelDisabled,
-                sessionOptions: {
-                    showUnread: false,
-                    showPendingPermissionRequests: false,
-                    showPendingUserActionRequests: false,
-                },
-                localBadgeState: { count: 0, showNonNumericDot: false },
-            };
-        }
-        const deviceOverrides = AttentionDeviceOverridesV1Schema.parse(parsedLocalSettings.attentionDeviceOverridesV1);
-
-        const sessionOptions = {
-            showUnread: readyPlan.badgeBehavior.include,
-            showPendingPermissionRequests: permissionPlan.badgeBehavior.include,
-            showPendingUserActionRequests: userActionPlan.badgeBehavior.include,
-        };
-        const overview = buildActivityOverviewFromSource({
-            source: activitySource,
-            nowMs: now.getTime(),
-            sessionOptions,
-            includeWarmSourceWhenNotReady: true,
-        });
-
-        return {
-            channelDisabled,
-            sessionOptions,
-            localBadgeState: buildActivityBadgeStateFromOverview({
-                overview,
-                numericInboxCount:
-                    !deviceOverrides.badge.includeFriendRequestsInboxCount
-                        ? 0
-                        : friendRequests.length,
-                hasNonNumericInboxAttention:
-                    deviceOverrides.badge.includeDesktopNonNumericDot &&
-                    (updateAvailable || changelogHasUnread),
-                sessionOptions,
-            }),
-        };
-    }, [
+    const hasNonNumericInboxAttention = updateAvailable || changelogHasUnread;
+    const badgeSnapshotParams = React.useMemo<LocalActivityBadgeSnapshotSelectorParams>(() => ({
         accountSettings,
-        activitySource,
-        changelogHasUnread,
+        friendRequestCount: friendRequests.length,
+        hasNonNumericInboxAttention,
+        localSettings,
+    }), [
+        accountSettings,
         friendRequests.length,
-        parsedLocalSettings,
-        updateAvailable,
+        hasNonNumericInboxAttention,
+        localSettings,
     ]);
+    const localBadgeSnapshot = useLocalActivityBadgeSnapshot(badgeSnapshotParams);
 
-    const serverSnapshotAllowed = !badgeModel.channelDisabled && canUseServerBadgeSnapshot(badgeModel.sessionOptions);
-    const hasLocalActivitySource =
-        Object.keys(activitySource.sessionsById).length > 0
-        || Object.keys(activitySource.sessionListRenderablesById).length > 0
-        || Object.values(activitySource.sessionListIndexByServerId).some((items) => Array.isArray(items) && items.length > 0)
-        || Object.values(activitySource.concurrentSessionListCacheByServerId).some((entry) => {
-            return entry && typeof entry === 'object' && Object.keys(entry.sessions ?? {}).length > 0;
-        });
+    const serverSnapshotAllowed = !localBadgeSnapshot.channelDisabled
+        && canUseServerBadgeSnapshot(localBadgeSnapshot.sessionOptions);
 
     React.useEffect(() => {
         if (!shouldApplyBadgeRuntime || !serverSnapshotAllowed || !activeServer.serverId || !activeServer.serverUrl) {
@@ -178,8 +149,10 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
     ]);
 
     const badgeState = React.useMemo(() => {
-        if (badgeModel.channelDisabled) return badgeModel.localBadgeState;
-        if (activitySource.isDataReady || hasLocalActivitySource) return badgeModel.localBadgeState;
+        if (localBadgeSnapshot.channelDisabled) return localBadgeSnapshot.localBadgeState;
+        if (localBadgeSnapshot.isDataReady || localBadgeSnapshot.hasLocalActivitySource) {
+            return localBadgeSnapshot.localBadgeState;
+        }
         if (
             serverSnapshotAllowed
             && serverBadgeSnapshot
@@ -192,9 +165,7 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
     }, [
         activeServer.generation,
         activeServer.serverId,
-        activitySource.isDataReady,
-        badgeModel,
-        hasLocalActivitySource,
+        localBadgeSnapshot,
         serverBadgeSnapshot,
         serverSnapshotAllowed,
     ]);

@@ -118,4 +118,32 @@ describe('SelectionList virtualized row ARIA parity (R9 blocker 4)', () => {
         const probeWrapper = screen.findByTestId('sl:root:option-wrapper:opt-0');
         expect(probeWrapper).not.toBeNull();
     });
+
+    it('applies option accessibility labels to virtualized option wrappers', async () => {
+        flashListState.props = null;
+        const optionWithA11yName = {
+            id: 'native',
+            label: 'Backend native auth',
+            accessibilityLabel: 'Anthropic · Backend native auth',
+        } as unknown as SelectionListOption;
+        const root: SelectionListStep = {
+            id: 'root',
+            inputPlaceholder: 'Search',
+            sections: [
+                {
+                    kind: 'static',
+                    id: 'forced',
+                    options: [optionWithA11yName],
+                    virtualization: 'force',
+                },
+            ],
+        };
+        const { SelectionList } = await import('../SelectionList');
+        const screen = await renderScreen(<SelectionList {...defaultProps(root)} />);
+
+        const wrapper = screen.findByTestId('sl:root:option-wrapper:native');
+
+        expect(wrapper?.props.accessibilityLabel).toBe('Anthropic · Backend native auth');
+        expect(wrapper?.props['aria-label']).toBe('Anthropic · Backend native auth');
+    });
 });

@@ -68,10 +68,15 @@ installAgentInputCommonModuleMocks({
         return createModalModuleMock().module;
     },
     storage: async (importOriginal) => {
-        const { createStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+        const { createStorageModuleMock, createStorageStoreMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
+        const storage = createStorageStoreMock({
+            settings: storageSettings,
+            sessionMessages: {},
+        });
         return createStorageModuleMock({
             importOriginal,
             overrides: {
+                storage,
                 useSetting: createUseSettingMock({ values: storageSettings }),
                 useSettings: () => storageSettings,
                 useSessionMessages: () => ({ messages: [], isLoaded: true }),
@@ -100,6 +105,10 @@ vi.mock('@/agents/catalog/catalog', () => ({
 }));
 
 vi.mock('@/sync/domains/models/modelOptions', () => ({
+    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
+        options?.find?.((option: any) => option.value === effectiveModelId)
+            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
+            ?? null,
     getModelOptionsForSession: () => [{ value: 'default', label: 'Default' }],
     supportsFreeformModelSelectionForSession: () => false,
 }));
@@ -203,7 +212,17 @@ function getCapturedActionMenuActions(): Array<{ id?: string; onPress?: () => vo
         ? current.actionMenuActions
         : [];
 }
+
+function getCapturedPopoverProps(): CapturedPopoverProps | null {
+    return captured.last;
+}
 vi.mock('@/components/ui/popover', () => ({
+    MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS: {
+        web: true,
+        native: true,
+        matchAnchorWidth: false,
+        anchorAlign: 'start',
+    },
     Popover: (props: CapturedPopoverProps) => {
         captured.last = props;
         return React.createElement('Popover', props, props.open ? renderPopoverChildren(props) : null);
@@ -287,6 +306,40 @@ vi.mock('./components/AgentInputSelectionListPopover', () => ({
 }));
 
 describe('AgentInput (action menu popover props)', () => {
+    it('anchors autocomplete suggestions to the composer input container', async () => {
+        vi.resetModules();
+        captured.last = null;
+        vi.doMock('@/components/autocomplete/useActiveSuggestions', () => ({
+            useActiveSuggestions: () => [[{
+                key: 'slash-command',
+                text: '/mcp',
+                label: '/mcp',
+                description: 'MCP',
+            }], 0, () => {}, () => {}],
+        }));
+
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+                    value="/m"
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompletePrefixes={['/']}
+                    autocompleteSuggestions={async () => []}
+                />);
+
+        const autocompletePopoverProps = getCapturedPopoverProps();
+        expect(autocompletePopoverProps?.open).toBe(true);
+
+        const composerInput = screen.findByType('MultiTextInput');
+        let composerInputContainer = composerInput?.parent ?? null;
+        while (composerInputContainer && String(composerInputContainer.type) !== 'View') {
+            composerInputContainer = composerInputContainer.parent;
+        }
+        expect(composerInputContainer?.props.ref).toBe(autocompletePopoverProps?.anchorRef);
+    });
+
     it('ignores autocomplete suggestions whose component is missing instead of crashing', async () => {
         vi.resetModules();
         vi.doMock('@/components/autocomplete/useActiveSuggestions', () => ({

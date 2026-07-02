@@ -27,6 +27,9 @@ describe('executeSessionComposerResolution', () => {
     const executeSessionComposerResolution = await loadSubject();
     const actionExecutor = { execute: vi.fn(async () => ({ ok: true as const, result: { ok: true } })) };
     const setMessage = vi.fn();
+    const clearDraft = vi.fn();
+    const clearTransientInputState = vi.fn();
+    const clearSemanticDraftValues = vi.fn();
 
     const handled = await executeSessionComposerResolution({
       resolved: { kind: 'action', actionId: 'ui.voice_global.reset', rest: '' },
@@ -36,7 +39,9 @@ describe('executeSessionComposerResolution', () => {
       permissionMode: 'default',
       actionExecutor,
       setMessage,
-      clearDraft: vi.fn(),
+      clearDraft,
+      clearTransientInputState,
+      clearSemanticDraftValues,
       trackMessageSent: vi.fn(),
       navigateToRuns: vi.fn(),
       modalAlert: vi.fn(),
@@ -49,6 +54,73 @@ describe('executeSessionComposerResolution', () => {
       placement: 'slash_command',
     });
     expect(setMessage).toHaveBeenCalledWith('');
+    expect(clearDraft).toHaveBeenCalledTimes(1);
+    expect(clearSemanticDraftValues).toHaveBeenCalledTimes(1);
+    expect(clearTransientInputState).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves semantic draft values when ui.voice_global.reset fails', async () => {
+    const executeSessionComposerResolution = await loadSubject();
+    const actionExecutor = {
+      execute: vi.fn(async () => ({ ok: false as const, error: 'reset failed', errorCode: 'reset_failed' })),
+    };
+    const setMessage = vi.fn();
+    const restoreComposerSnapshot = vi.fn();
+    const clearSemanticDraftValues = vi.fn();
+    const clearTransientInputState = vi.fn();
+
+    const handled = await executeSessionComposerResolution({
+      resolved: { kind: 'action', actionId: 'ui.voice_global.reset', rest: '' },
+      sessionId: 's1',
+      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'default',
+      actionExecutor,
+      previousMessage: '/voice reset',
+      setMessage,
+      clearDraft: vi.fn(),
+      clearTransientInputState,
+      clearSemanticDraftValues,
+      restoreComposerSnapshot,
+      trackMessageSent: vi.fn(),
+      navigateToRuns: vi.fn(),
+      modalAlert: vi.fn(),
+    });
+
+    expect(handled).toBe(true);
+    expect(restoreComposerSnapshot).toHaveBeenCalledWith({
+      sessionId: 's1',
+      text: '/voice reset',
+    });
+    expect(clearSemanticDraftValues).not.toHaveBeenCalled();
+    expect(clearTransientInputState).not.toHaveBeenCalled();
+  });
+
+  it('marks the current goal complete from a client-side goal slash command', async () => {
+    const executeSessionComposerResolution = await loadSubject();
+    const setSessionGoal = vi.fn(async () => ({ ok: true as const }));
+    const setMessage = vi.fn();
+    const clearDraft = vi.fn();
+
+    const handled = await executeSessionComposerResolution({
+      resolved: { kind: 'goal', command: 'complete' },
+      sessionId: 's1',
+      agentId: 'claude',
+      backendTarget: { kind: 'backend', backendId: 'claude' },
+      permissionMode: 'default',
+      actionExecutor: { execute: vi.fn(async () => ({ ok: true as const, result: { ok: true } })) },
+      setMessage,
+      clearDraft,
+      trackMessageSent: vi.fn(),
+      navigateToRuns: vi.fn(),
+      modalAlert: vi.fn(),
+      setSessionGoal,
+    });
+
+    expect(handled).toBe(true);
+    expect(setMessage).toHaveBeenCalledWith('');
+    expect(clearDraft).toHaveBeenCalled();
+    expect(setSessionGoal).toHaveBeenCalledWith('s1', { status: 'complete' });
   });
 
   it('handles ui.pet.choose locally by clearing the composer and opening pet settings', async () => {
@@ -57,6 +129,7 @@ describe('executeSessionComposerResolution', () => {
     const setMessage = vi.fn();
     const clearDraft = vi.fn();
     const navigateToPetSettings = vi.fn();
+    const clearSemanticDraftValues = vi.fn();
 
     const handled = await executeSessionComposerResolution({
       resolved: { kind: 'action', actionId: 'ui.pet.choose', rest: '' },
@@ -67,6 +140,7 @@ describe('executeSessionComposerResolution', () => {
       actionExecutor,
       setMessage,
       clearDraft,
+      clearSemanticDraftValues,
       trackMessageSent: vi.fn(),
       navigateToRuns: vi.fn(),
       navigateToPetSettings,
@@ -77,6 +151,7 @@ describe('executeSessionComposerResolution', () => {
     expect(actionExecutor.execute).not.toHaveBeenCalled();
     expect(setMessage).toHaveBeenCalledWith('');
     expect(clearDraft).toHaveBeenCalled();
+    expect(clearSemanticDraftValues).toHaveBeenCalledTimes(1);
     expect(navigateToPetSettings).toHaveBeenCalledTimes(1);
   });
 
@@ -86,6 +161,7 @@ describe('executeSessionComposerResolution', () => {
     const modalAlert = vi.fn();
     const setMessage = vi.fn();
     const clearDraft = vi.fn();
+    const clearTransientInputState = vi.fn();
 
     const handled = await executeSessionComposerResolution({
       resolved: { kind: 'action', actionId: 'review.start', rest: '   ' },
@@ -96,6 +172,7 @@ describe('executeSessionComposerResolution', () => {
       actionExecutor,
       setMessage,
       clearDraft,
+      clearTransientInputState,
       trackMessageSent: vi.fn(),
       navigateToRuns: vi.fn(),
       modalAlert,
@@ -106,6 +183,7 @@ describe('executeSessionComposerResolution', () => {
     expect(modalAlert).not.toHaveBeenCalled();
     expect(setMessage).toHaveBeenCalledWith('');
     expect(clearDraft).toHaveBeenCalled();
+    expect(clearTransientInputState).toHaveBeenCalledTimes(1);
     const draftArgs = createSessionActionDraft.mock.calls[0]?.[1] as any;
     expect(draftArgs?.input?.permissionMode).toBe('read-only');
   });
@@ -189,6 +267,8 @@ describe('executeSessionComposerResolution', () => {
     const executeSessionComposerResolution = await loadSubject();
     const actionExecutor = { execute: vi.fn(async () => ({ ok: false as const, errorCode: 'boom', error: 'boom' })) };
     const setMessage = vi.fn();
+    const restoreComposerSnapshot = vi.fn();
+    const clearTransientInputState = vi.fn();
 
     const handled = await executeSessionComposerResolution({
       resolved: { kind: 'action', actionId: 'review.start', rest: 'Review this.' },
@@ -199,6 +279,8 @@ describe('executeSessionComposerResolution', () => {
       actionExecutor,
       setMessage,
       clearDraft: vi.fn(),
+      clearTransientInputState,
+      restoreComposerSnapshot,
       trackMessageSent: vi.fn(),
       navigateToRuns: vi.fn(),
       modalAlert: vi.fn(),
@@ -207,7 +289,45 @@ describe('executeSessionComposerResolution', () => {
 
     expect(handled).toBe(true);
     expect(setMessage).toHaveBeenCalledWith('');
-    expect(setMessage).toHaveBeenCalledWith('/h.review Review this.');
+    expect(restoreComposerSnapshot).toHaveBeenCalledWith({
+      sessionId: 's1',
+      text: '/h.review Review this.',
+    });
+    expect(clearTransientInputState).not.toHaveBeenCalled();
+  });
+
+  it('restores a failed review.start only when the cleared composer is still empty', async () => {
+    const executeSessionComposerResolution = await loadSubject();
+    const actionExecutor = { execute: vi.fn(async () => ({ ok: false as const, errorCode: 'boom', error: 'boom' })) };
+    const setMessage = vi.fn();
+    const restoreComposerSnapshot = vi.fn();
+    const restoreComposerSnapshotIfCurrentValueMatches = vi.fn(() => false);
+
+    const handled = await executeSessionComposerResolution({
+      resolved: { kind: 'action', actionId: 'review.start', rest: 'Review this.' },
+      sessionId: 's1',
+      agentId: 'claude',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'default',
+      actionExecutor,
+      setMessage,
+      clearDraft: vi.fn(),
+      restoreComposerSnapshot,
+      restoreComposerSnapshotIfCurrentValueMatches,
+      trackMessageSent: vi.fn(),
+      navigateToRuns: vi.fn(),
+      modalAlert: vi.fn(),
+      previousMessage: '/h.review Review this.',
+    });
+
+    expect(handled).toBe(true);
+    expect(setMessage).toHaveBeenCalledWith('');
+    expect(restoreComposerSnapshotIfCurrentValueMatches).toHaveBeenCalledWith({
+      sessionId: 's1',
+      text: '/h.review Review this.',
+    }, '');
+    expect(restoreComposerSnapshot).not.toHaveBeenCalled();
+    expect(setMessage).not.toHaveBeenCalledWith('/h.review Review this.');
   });
 
   it('restores the previous composer text and shows an error when review.start fanout returns a failed result item', async () => {

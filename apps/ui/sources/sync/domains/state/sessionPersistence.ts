@@ -3,13 +3,9 @@ import { z } from 'zod';
 import { isModelMode, isPermissionMode, type ModelMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { ReviewCommentDraftSchema } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import { SessionActionDraftSchema } from '@/sync/domains/sessionActions/sessionActionDraftMeta';
-import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { scopedSessionLocalStateKey } from './sessionLocalStateKeys';
 import { getPersistenceStorage } from './persistenceStorage';
-
-function scopedSessionLocalStateKey(baseKey: string, scope?: ServerAccountScope | null): string {
-    if (!scope) return baseKey;
-    return `${baseKey}:scope:v2:${serverAccountScopeKeySuffix(scope)}`;
-}
 
 function sessionDraftsKey(scope?: ServerAccountScope | null): string {
     return scopedSessionLocalStateKey('session-drafts', scope);

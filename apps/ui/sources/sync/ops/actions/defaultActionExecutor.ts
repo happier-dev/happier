@@ -47,6 +47,7 @@ import { listMachinesForVoiceTool } from '@/voice/tools/actionImpl/machinesList'
 import { listServersForVoiceTool } from '@/voice/tools/actionImpl/serversList';
 import { listReviewEnginesForVoiceTool } from '@/voice/tools/actionImpl/reviewEnginesList';
 import { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } from '@/voice/tools/actionImpl/agentCatalogList';
+import { createReviewCommentsHttpActionExecutor } from '@/sync/domains/reviews/comments/api';
 import { sync } from '@/sync/sync';
 import { publishAcpSessionModeOverrideToMetadata } from '@/sync/state/acpSessionModeOverridePublish';
 import { updatePromptDoc } from '@/sync/ops/promptLibrary/promptDocs';
@@ -54,7 +55,7 @@ import { updateSkillPromptBundle } from '@/sync/ops/promptLibrary/promptBundles'
 import { writePromptLibraryArtifactToExternalAsset } from '@/sync/ops/promptLibrary/exportPromptLibraryArtifact';
 import { installPromptRegistryItem } from '@/sync/ops/promptLibrary/installPromptRegistryItem';
 import { canRollbackConversation } from '@/sync/domains/sessionRollback/rollbackUiSupport';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import {
   isRequestedSessionModeSupported,
   isSessionModeActionAvailable,
@@ -72,9 +73,9 @@ import {
     type AgentsModelsListArgs = Readonly<{ agentId?: string; machineId?: string; limit?: number; backendTargetKey?: string }>;
 
   const resolveSessionMachineId = (sessionId: string, metadata: { machineId?: unknown } | null | undefined): string => {
-    const reachableMachineId = readMachineTargetForSession(sessionId)?.machineId ?? '';
-    if (reachableMachineId) {
-      return reachableMachineId;
+    const controlMachineId = readMachineControlTargetForSession(sessionId)?.machineId ?? '';
+    if (controlMachineId) {
+      return controlMachineId;
     }
     return typeof metadata?.machineId === 'string' ? String(metadata.machineId).trim() : '';
   };
@@ -85,6 +86,7 @@ import {
     const parsed = ActionsSettingsV1Schema.safeParse(raw);
     return parsed.success ? parsed.data : { v: 1 as const, actions: {} as Record<ActionId, any> };
   };
+  const executeReviewCommentAction = createReviewCommentsHttpActionExecutor();
 
   const deps: ActionExecutorDeps = {
     isActionEnabled: (actionId: ActionId, ctx) =>
@@ -232,6 +234,7 @@ import {
     machinesList: async ({ limit }) => await listMachinesForVoiceTool({ limit }),
     serversList: async ({ limit }) => await listServersForVoiceTool({ limit }),
     reviewEnginesList: async ({ sessionId, includeDisabled }) => await listReviewEnginesForVoiceTool({ sessionId, includeDisabled }),
+    reviewCommentAction: async ({ actionId, input }) => await executeReviewCommentAction(actionId, input),
     agentsBackendsList: async (args) => {
       const { includeDisabled, limit, machineId } = args as AgentsBackendsListArgs;
       return await listAgentBackendsForVoiceTool({ includeDisabled, limit, machineId });

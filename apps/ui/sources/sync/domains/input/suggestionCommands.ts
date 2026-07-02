@@ -61,7 +61,8 @@ export const IGNORED_COMMANDS = [
 // Default commands always available
 const DEFAULT_COMMANDS: CommandItem[] = [
     { command: 'compact', description: 'Compact the conversation history' },
-    { command: 'clear', description: 'Clear the conversation' }
+    { command: 'clear', description: 'Clear the conversation' },
+    { command: 'goal', description: t('session.workState.commandDescription') },
 ];
 
 function describeActionSlashToken(token: string, fallbackTitle: string): string {

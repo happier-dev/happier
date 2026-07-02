@@ -5,6 +5,12 @@ import { renderScreen } from '@/dev/testkit';
 
 const isTauriDesktopState = vi.hoisted(() => ({ value: true }));
 const syncDesktopPetOverlayState = vi.hoisted(() => vi.fn(async () => {}));
+const idleActivity = {
+    state: 'idle',
+    reason: 'idle',
+    sessionId: null,
+    trayItems: [],
+} as const;
 
 vi.mock('@/utils/platform/tauri', async () => {
     const actual = await vi.importActual<typeof import('@/utils/platform/tauri')>('@/utils/platform/tauri');
@@ -32,6 +38,8 @@ describe('DesktopPetOverlayRuntime', () => {
                 visible={true}
                 expanded={false}
                 window={{ width: 192, height: 208 }}
+                nativeMouseTrackingEnabled={false}
+                activity={idleActivity}
                 policy={{
                     enabled: false,
                     visibilityMode: 'alwaysWhenEnabled',
@@ -46,6 +54,8 @@ describe('DesktopPetOverlayRuntime', () => {
             visible: false,
             expanded: false,
             window: { width: 192, height: 208 },
+            nativeMouseTrackingEnabled: false,
+            activity: idleActivity,
             policy: {
                 enabled: false,
                 alwaysOnTop: true,
@@ -64,6 +74,8 @@ describe('DesktopPetOverlayRuntime', () => {
                 visible={true}
                 expanded={false}
                 window={{ width: 192, height: 208 }}
+                nativeMouseTrackingEnabled={false}
+                activity={idleActivity}
                 policy={{
                     enabled: true,
                     visibilityMode: 'alwaysWhenEnabled',

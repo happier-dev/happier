@@ -66,10 +66,6 @@ vi.mock('./AgentInputChipPickerLayout', () => ({
     shouldShowAgentInputChipPickerRail: () => true,
 }));
 
-vi.mock('./AgentInputAutocomplete', () => ({
-    AgentInputAutocomplete: () => null,
-}));
-
 vi.mock('./AgentInputContentPopover', () => ({
     AgentInputContentPopover: () => null,
 }));

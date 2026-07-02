@@ -1,13 +1,24 @@
 import * as React from 'react';
 
-import { listServerProfiles, type ActiveServerSnapshot, type ServerProfile } from '@/sync/domains/server/serverProfiles';
+import {
+    listServerProfiles,
+    resolveServerProfileScopeId,
+    type ActiveServerSnapshot,
+    type ServerProfile,
+} from '@/sync/domains/server/serverProfiles';
 import { listServerSelectionTargets, resolveNewSessionServerTarget } from '@/sync/domains/server/selection/serverSelectionResolver';
 import { resolveActiveServerSelectionFromRawSettings } from '@/sync/domains/server/selection/serverSelectionResolution';
+import { toServerSelectionSettings } from '@/sync/domains/server/selection/serverSelectionSettingsAdapter';
+import {
+    listServerProfileScopeIds,
+    normalizeServerSelectionSettingsForProfileScopeIds,
+} from '@/sync/domains/server/selection/serverSelectionProfileScopeIds';
 import type { ResolvedActiveServerSelection, ServerSelectionTarget } from '@/sync/domains/server/selection/serverSelectionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 
 type RequestedTargetParams = Readonly<{
     spawnServerIdParam?: string | null;
+    persistedTargetServerId?: string | null;
 }>;
 
 export type NewSessionServerTargetState = Readonly<{
@@ -22,22 +33,33 @@ export type NewSessionServerTargetState = Readonly<{
     showServerPickerChip: boolean;
 }>;
 
+export type NewSessionServerTargetSettings = Pick<
+    Settings,
+    'serverSelectionGroups' | 'serverSelectionActiveTargetKind' | 'serverSelectionActiveTargetId'
+>;
+
 export function useNewSessionServerTargetState(params: Readonly<{
-    settings: Settings;
-    activeServerSnapshot: ActiveServerSnapshot;
+    settings: NewSessionServerTargetSettings;
+    activeServerId?: string;
+    activeServerSnapshot?: ActiveServerSnapshot;
+    serverProfiles?: ReadonlyArray<ServerProfile>;
     request: RequestedTargetParams;
 }>): NewSessionServerTargetState {
     const serverProfiles = React.useMemo(() => {
+        if (params.serverProfiles) {
+            return params.serverProfiles.slice();
+        }
         try {
             return listServerProfiles()
                 .slice();
         } catch {
             return [];
         }
-    }, [params.activeServerSnapshot.generation]);
+    }, [params.serverProfiles]);
+    const activeServerId = params.activeServerId ?? params.activeServerSnapshot?.serverId ?? '';
 
     const availableServerIds = React.useMemo(() => {
-        return serverProfiles.map((profile) => profile.id);
+        return listServerProfileScopeIds(serverProfiles);
     }, [serverProfiles]);
 
     const serverSelectionGroups = React.useMemo(() => {
@@ -47,39 +69,55 @@ export function useNewSessionServerTargetState(params: Readonly<{
     }, [params.settings.serverSelectionGroups]);
 
     const serverTargets = React.useMemo(() => {
+        const scopedSettings = normalizeServerSelectionSettingsForProfileScopeIds({
+            serverSelectionGroups,
+            serverSelectionActiveTargetKind: params.settings.serverSelectionActiveTargetKind,
+            serverSelectionActiveTargetId: params.settings.serverSelectionActiveTargetId,
+        }, serverProfiles);
         return listServerSelectionTargets({
-            serverProfiles,
-            groupProfiles: serverSelectionGroups as any,
+            serverProfiles: serverProfiles.map((profile) => ({
+                ...profile,
+                id: resolveServerProfileScopeId(profile),
+            })),
+            groupProfiles: toServerSelectionSettings(scopedSettings).serverSelectionGroups ?? [],
         });
-    }, [serverProfiles, serverSelectionGroups]);
+    }, [params.settings.serverSelectionActiveTargetId, params.settings.serverSelectionActiveTargetKind, serverProfiles, serverSelectionGroups]);
 
     const resolvedSettingsTarget = React.useMemo(() => {
+        const settings = normalizeServerSelectionSettingsForProfileScopeIds({
+            serverSelectionGroups,
+            serverSelectionActiveTargetKind: params.settings.serverSelectionActiveTargetKind,
+            serverSelectionActiveTargetId: params.settings.serverSelectionActiveTargetId,
+        }, serverProfiles);
         return resolveActiveServerSelectionFromRawSettings({
-            activeServerId: params.activeServerSnapshot.serverId,
+            activeServerId,
             availableServerIds,
-            settings: {
-                serverSelectionGroups: params.settings.serverSelectionGroups,
-                serverSelectionActiveTargetKind: params.settings.serverSelectionActiveTargetKind,
-                serverSelectionActiveTargetId: params.settings.serverSelectionActiveTargetId,
-            },
+            settings,
         });
     }, [
+        activeServerId,
         availableServerIds,
-        params.activeServerSnapshot.serverId,
         params.settings.serverSelectionActiveTargetId,
         params.settings.serverSelectionActiveTargetKind,
         params.settings.serverSelectionGroups,
+        serverProfiles,
     ]);
 
     const explicitServerTargetId = React.useMemo(() => {
         if (params.settings.serverSelectionActiveTargetKind !== 'server') return null;
         const id = String(params.settings.serverSelectionActiveTargetId ?? '').trim();
-        if (!id || !availableServerIds.includes(id)) return null;
-        return id;
+        if (!id) return null;
+        const mappedId = normalizeServerSelectionSettingsForProfileScopeIds({
+            serverSelectionGroups: [],
+            serverSelectionActiveTargetKind: 'server',
+            serverSelectionActiveTargetId: id,
+        }, serverProfiles).serverSelectionActiveTargetId;
+        return typeof mappedId === 'string' && availableServerIds.includes(mappedId) ? mappedId : null;
     }, [
         availableServerIds,
         params.settings.serverSelectionActiveTargetId,
         params.settings.serverSelectionActiveTargetKind,
+        serverProfiles,
     ]);
 
     const selectedServerTarget = React.useMemo(() => {
@@ -108,27 +146,31 @@ export function useNewSessionServerTargetState(params: Readonly<{
         return [selectedServerTarget.serverId];
     }, [resolvedSettingsTarget.allowedServerIds, selectedServerTarget]);
 
-    const requestedServerId = typeof params.request.spawnServerIdParam === 'string'
-        ? params.request.spawnServerIdParam
+    const routeRequestedServerId = typeof params.request.spawnServerIdParam === 'string'
+        ? params.request.spawnServerIdParam.trim() || null
         : null;
+    const persistedRequestedServerId = typeof params.request.persistedTargetServerId === 'string'
+        ? params.request.persistedTargetServerId.trim() || null
+        : null;
+    const requestedServerId = routeRequestedServerId ?? persistedRequestedServerId;
     const newSessionServerTarget = React.useMemo(() => {
         return resolveNewSessionServerTarget({
             requestedServerId,
-            activeServerId: params.activeServerSnapshot.serverId,
+            activeServerId,
             allowedServerIds: allowedTargetServerIds.length > 0 ? allowedTargetServerIds : resolvedSettingsTarget.allowedServerIds,
         });
     }, [
+        activeServerId,
         allowedTargetServerIds,
-        params.activeServerSnapshot.serverId,
         requestedServerId,
         resolvedSettingsTarget.allowedServerIds,
     ]);
 
     const targetServerId = newSessionServerTarget.targetServerId
         ?? resolvedSettingsTarget.activeServerId
-        ?? params.activeServerSnapshot.serverId;
+        ?? activeServerId;
     const targetServerProfile = React.useMemo(() => {
-        return serverProfiles.find((profile) => profile.id === targetServerId) ?? null;
+        return serverProfiles.find((profile) => resolveServerProfileScopeId(profile) === targetServerId || profile.id === targetServerId) ?? null;
     }, [serverProfiles, targetServerId]);
 
     return {

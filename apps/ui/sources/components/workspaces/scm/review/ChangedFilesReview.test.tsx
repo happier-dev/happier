@@ -591,17 +591,38 @@ vi.mock('@/components/workspaces/scm/review/useScmDiffExpandedKeys', () => ({
         }, [allKeys, initialCollapsedKeysSignature]);
 
         const [collapsedKeys, setCollapsedKeys] = React.useState<Set<string>>(() => new Set(initialCollapsedKeySet));
+        const [manualExpandedKeys, setManualExpandedKeys] = React.useState<Set<string>>(() => new Set());
+        const expandedKeysRef = React.useRef<ReadonlySet<string>>(new Set());
         const toggleCollapsed = React.useCallback((key: string) => {
+            if (input.tooLarge) {
+                const isExpanded = expandedKeysRef.current.has(key);
+                setCollapsedKeys((prev) => {
+                    const next = new Set(prev);
+                    if (isExpanded) next.add(key);
+                    else next.delete(key);
+                    return areStringSetsEqual(prev, next) ? prev : next;
+                });
+                setManualExpandedKeys((prev) => {
+                    const next = new Set(prev);
+                    if (isExpanded) next.delete(key);
+                    else next.add(key);
+                    return areStringSetsEqual(prev, next) ? prev : next;
+                });
+                return;
+            }
             setCollapsedKeys((prev) => {
                 const next = new Set(prev);
                 if (next.has(key)) next.delete(key);
                 else next.add(key);
                 return next;
             });
-        }, []);
+        }, [input.tooLarge]);
 
         const initialAutoExpandedKeySet = React.useMemo(() => {
-            const initialCount = Math.max(1, Number(input.aheadCount ?? 0) + Number(input.behindCount ?? 0) + 1);
+            const initialCount = Math.max(
+                1,
+                Math.floor(Number(input.aheadCount ?? 0)) + Math.floor(Number(input.behindCount ?? 0)) + 1,
+            );
             return new Set<string>(allKeys.slice(0, initialCount));
         }, [allKeys, input.aheadCount, input.behindCount]);
         const initialAutoExpandedKeysSignature = React.useMemo(() => {
@@ -615,6 +636,7 @@ vi.mock('@/components/workspaces/scm/review/useScmDiffExpandedKeys', () => ({
         React.useEffect(() => {
             if (!input.tooLarge) {
                 setAutoExpandedKeys((prev) => (prev.size === 0 ? prev : new Set<string>()));
+                setManualExpandedKeys((prev) => (prev.size === 0 ? prev : new Set<string>()));
                 setCollapsedKeys((prev) => (
                     areStringSetsEqual(prev, initialCollapsedKeySet) ? prev : new Set<string>(initialCollapsedKeySet)
                 ));
@@ -626,26 +648,29 @@ vi.mock('@/components/workspaces/scm/review/useScmDiffExpandedKeys', () => ({
             setCollapsedKeys((prev) => (
                 areStringSetsEqual(prev, initialCollapsedKeySet) ? prev : new Set<string>(initialCollapsedKeySet)
             ));
+            setManualExpandedKeys((prev) => (prev.size === 0 ? prev : new Set<string>()));
         }, [initialAutoExpandedKeysSignature, initialCollapsedKeysStateSignature, input.resetKey, input.tooLarge]);
 
         React.useEffect(() => {
             if (!input.tooLarge) return;
+            if (input.viewableExpansionEnabled === false) return;
             const viewable = Array.isArray(input.viewableIndices) ? input.viewableIndices : [];
-            if (viewable.length === 0) return;
-            const min = Math.max(0, Math.min(...viewable));
-            const max = Math.min(Math.max(0, allKeys.length - 1), Math.max(...viewable) + Number(input.aheadCount ?? 0));
-            const windowKeys = allKeys.slice(min, max + 1);
-            setAutoExpandedKeys((prev) => {
-                let changed = false;
-                const next = new Set<string>(prev);
-                for (const key of windowKeys) {
-                    if (next.has(key)) continue;
-                    next.add(key);
-                    changed = true;
-                }
-                return changed ? next : prev;
-            });
-        }, [allKeys, input.aheadCount, input.tooLarge, input.viewableIndices]);
+            const visibleIndices = viewable.filter((index: unknown): index is number => (
+                typeof index === 'number'
+                && Number.isFinite(index)
+                && index >= 0
+                && index < allKeys.length
+            ));
+            if (visibleIndices.length === 0) return;
+            const aheadCount = Math.max(0, Math.floor(Number(input.aheadCount ?? 0)));
+            const behindCount = Math.max(0, Math.floor(Number(input.behindCount ?? 0)));
+            const start = Math.max(0, Math.min(...visibleIndices) - behindCount);
+            const end = Math.min(allKeys.length - 1, Math.max(...visibleIndices) + aheadCount);
+            const nextKeys = new Set<string>(allKeys.slice(start, end + 1));
+            setAutoExpandedKeys((prev) => (
+                areStringSetsEqual(prev, nextKeys) ? prev : nextKeys
+            ));
+        }, [allKeys, input.aheadCount, input.behindCount, input.tooLarge, input.viewableExpansionEnabled, input.viewableIndices]);
 
         const expandedKeys = React.useMemo(() => {
             if (!input.tooLarge) {
@@ -657,13 +682,19 @@ vi.mock('@/components/workspaces/scm/review/useScmDiffExpandedKeys', () => ({
                 return out;
             }
             const autoKeys = autoExpandedKeys.size > 0 ? autoExpandedKeys : initialAutoExpandedKeySet;
+            const allowedKeys = new Set(allKeys);
             const out = new Set<string>();
             for (const key of autoKeys) {
                 if (collapsedKeys.has(key)) continue;
                 out.add(key);
             }
+            for (const key of manualExpandedKeys) {
+                if (!allowedKeys.has(key) || collapsedKeys.has(key)) continue;
+                out.add(key);
+            }
             return out;
-        }, [allKeys, autoExpandedKeys, collapsedKeys, initialAutoExpandedKeySet, input.tooLarge]);
+        }, [allKeys, autoExpandedKeys, collapsedKeys, initialAutoExpandedKeySet, input.tooLarge, manualExpandedKeys]);
+        expandedKeysRef.current = expandedKeys;
 
         React.useEffect(() => {
             const cb = input.onCollapsedKeysChange;
@@ -1119,7 +1150,7 @@ describe('ChangedFilesReview', () => {
         await flushHookEffects({ cycles });
     }
 
-    it('limits auto-expanded diffs when large and viewability config is enabled', async () => {
+    it('keeps a bounded auto-expanded window when large and viewability config is enabled', async () => {
         // Enable viewability windowing.
         scmReviewPrefetchAheadCountWebSetting = 3;
         scmReviewPrefetchBehindCountWebSetting = 2;
@@ -1148,9 +1179,14 @@ describe('ChangedFilesReview', () => {
         const lastProps = diffFilesListViewSpy.mock.calls.at(-1)?.[0];
         expect(lastProps).toBeTruthy();
 
-        // Initial window expands `ahead+behind+1` files only.
+        // Before native/web list viewability settles, large reviews still show the configured initial
+        // prefetch window rather than collapsing to a single anchor.
         expect(lastProps.expandedKeys.size).toBe(6);
         expect(lastProps.expandedKeys.has('src/file-0.ts')).toBe(true);
+        expect(lastProps.expandedKeys.has('src/file-1.ts')).toBe(true);
+        expect(lastProps.expandedKeys.has('src/file-2.ts')).toBe(true);
+        expect(lastProps.expandedKeys.has('src/file-3.ts')).toBe(true);
+        expect(lastProps.expandedKeys.has('src/file-4.ts')).toBe(true);
         expect(lastProps.expandedKeys.has('src/file-5.ts')).toBe(true);
         expect(lastProps.expandedKeys.has('src/file-6.ts')).toBe(false);
         expect(lastProps.expandedKeys.has('src/file-9.ts')).toBe(false);
@@ -1168,6 +1204,51 @@ describe('ChangedFilesReview', () => {
         await renderChangedFilesReview();
 
         expect(diffFilesListViewSpy).toHaveBeenCalled();
+    });
+
+    it('uses a tighter virtualized draw window for review rows', async () => {
+        diffFilesListViewSpy.mockClear();
+        await renderChangedFilesReview();
+
+        const lastProps = diffFilesListViewSpy.mock.calls.at(-1)?.[0];
+        expect(lastProps.drawDistanceMultiplier).toBeLessThan(2);
+        expect(lastProps.drawDistanceMultiplier).toBeGreaterThan(0);
+    });
+
+    it('keeps the review list header stable across large-review viewability updates', async () => {
+        scmReviewPrefetchAheadCountWebSetting = 1;
+        scmReviewPrefetchBehindCountWebSetting = 0;
+        scmReviewPrefetchDebounceMsSetting = 0;
+
+        const files = Array.from({ length: 4 }, (_unused, index) => ({
+            fileName: `file-${index}.ts`,
+            filePath: 'src',
+            fullPath: `src/file-${index}.ts`,
+            status: 'modified',
+            isIncluded: false,
+            linesAdded: 1,
+            linesRemoved: 0,
+        })) as any[];
+
+        diffFilesListViewSpy.mockClear();
+        await renderChangedFilesReview({
+            allRepositoryChangedFiles: files,
+            maxFiles: 1,
+        });
+        await flushReviewEffects(3);
+
+        const beforeProps = diffFilesListViewSpy.mock.calls.at(-1)?.[0];
+        expect(beforeProps).toBeTruthy();
+        const listHeaderBefore = beforeProps.ListHeaderComponent;
+
+        await act(async () => {
+            beforeProps.onViewableItemsChanged?.({ viewableItems: [{ index: 2 }] });
+        });
+        await flushReviewEffects(3);
+
+        const afterProps = diffFilesListViewSpy.mock.calls.at(-1)?.[0];
+        expect(afterProps).toBeTruthy();
+        expect(afterProps.ListHeaderComponent).toBe(listHeaderBefore);
     });
 
     it('passes the diff wrap setting through to the review list', async () => {
@@ -1383,6 +1464,85 @@ describe('ChangedFilesReview', () => {
         expect(sessionScmDiffFileSpy.mock.calls.length).toBe(2);
         const calledPaths = sessionScmDiffFileSpy.mock.calls.map((call: any) => call[1]?.path);
         expect(calledPaths).toEqual(['src/a.ts', 'src/b.ts']);
+    });
+
+    it('loads the initial large-review prefetch window before viewability settles', async () => {
+        scmReviewPrefetchAheadCountWebSetting = 2;
+        scmReviewPrefetchBehindCountWebSetting = 1;
+        scmReviewPrefetchDebounceMsSetting = 0;
+        flashListViewableIndicesOverride = [];
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: buildUnifiedDiff(req.path),
+            error: null,
+        }));
+
+        const files = Array.from({ length: 5 }, (_unused, index) => ({
+            fileName: `file-${index}.ts`,
+            filePath: 'src',
+            fullPath: `src/file-${index}.ts`,
+            status: 'modified',
+            isIncluded: false,
+            linesAdded: 1,
+            linesRemoved: 0,
+        })) as any[];
+
+        await renderChangedFilesReview({
+            allRepositoryChangedFiles: files,
+            maxFiles: 1,
+        });
+
+        for (let i = 0; i < 20; i++) {
+            await flushReviewEffects();
+            if (sessionScmDiffFileSpy.mock.calls.length >= 4) break;
+        }
+
+        const calledPaths = sessionScmDiffFileSpy.mock.calls.map((call: any) => call[1]?.path);
+        expect(calledPaths).toEqual(['src/file-0.ts', 'src/file-1.ts', 'src/file-2.ts', 'src/file-3.ts']);
+
+        scmReviewPrefetchAheadCountWebSetting = undefined;
+        scmReviewPrefetchBehindCountWebSetting = undefined;
+        scmReviewPrefetchDebounceMsSetting = undefined;
+        flashListViewableIndicesOverride = null;
+    });
+
+    it('loads visible large-review diffs when several rows are viewable', async () => {
+        scmReviewPrefetchAheadCountWebSetting = 3;
+        scmReviewPrefetchBehindCountWebSetting = 0;
+        scmReviewPrefetchDebounceMsSetting = 0;
+        flashListViewableIndicesOverride = [0, 1, 2, 3];
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: buildUnifiedDiff(req.path),
+            error: null,
+        }));
+
+        const files = Array.from({ length: 5 }, (_unused, index) => ({
+            fileName: `file-${index}.ts`,
+            filePath: 'src',
+            fullPath: `src/file-${index}.ts`,
+            status: 'modified',
+            isIncluded: false,
+            linesAdded: 1,
+            linesRemoved: 0,
+        })) as any[];
+
+        await renderChangedFilesReview({
+            allRepositoryChangedFiles: files,
+            maxFiles: 1,
+        });
+
+        for (let i = 0; i < 20; i++) {
+            await flushReviewEffects();
+            if (sessionScmDiffFileSpy.mock.calls.length > 0) break;
+        }
+
+        const calledPaths = sessionScmDiffFileSpy.mock.calls.map((call: any) => call[1]?.path);
+        expect(calledPaths).toEqual(['src/file-0.ts', 'src/file-1.ts', 'src/file-2.ts', 'src/file-3.ts']);
+
+        flashListViewableIndicesOverride = null;
     });
 
     it('keeps FlashList renderItem stable while diffs load', async () => {

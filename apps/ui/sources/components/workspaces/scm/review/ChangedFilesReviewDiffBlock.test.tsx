@@ -1,6 +1,6 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ChangedFilesReviewDiffBlock } from './ChangedFilesReviewDiffBlock';
 import { renderScreen } from '@/dev/testkit';
@@ -8,6 +8,10 @@ import { installFilesContentCommonModuleMocks } from './filesContentTestHelpers'
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const diffReviewCommentsViewerMock = vi.hoisted(() => ({
+    renderCount: 0,
+}));
 
 installFilesContentCommonModuleMocks({
     reactNative: async () => {
@@ -62,10 +66,17 @@ vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
 }));
 
 vi.mock('@/components/ui/code/diff/reviewComments/DiffReviewCommentsViewer', () => ({
-    DiffReviewCommentsViewer: (props: any) => React.createElement('DiffReviewCommentsViewer', props),
+    DiffReviewCommentsViewer: (props: any) => {
+        diffReviewCommentsViewerMock.renderCount += 1;
+        return React.createElement('DiffReviewCommentsViewer', props);
+    },
 }));
 
 describe('ChangedFilesReviewDiffBlock', () => {
+    beforeEach(() => {
+        diffReviewCommentsViewerMock.renderCount = 0;
+    });
+
     it('reserves a fixed height while loading for large diffs (prevents scroll jumps)', async () => {
         const loadingState = { status: 'loading', diff: '', error: null } as const;
         const diffStateSource = {
@@ -77,7 +88,13 @@ describe('ChangedFilesReviewDiffBlock', () => {
             updateDiffState: () => {},
         } as any;
 
-        const theme = { colors: { textSecondary: '#999', divider: '#333', surfaceHigh: '#111', surface: '#000' } } as any;
+        const theme = {
+            colors: {
+                border: { default: '#333' },
+                surface: { base: '#000', inset: '#111' },
+                text: { secondary: '#999' },
+            },
+        } as any;
 
         let tree: renderer.ReactTestRenderer;
         tree = (await renderScreen(<ChangedFilesReviewDiffBlock
@@ -102,6 +119,48 @@ describe('ChangedFilesReviewDiffBlock', () => {
         expect(hasHeightReservation).toBe(true);
     });
 
+    it('bounds loaded virtualized diffs with explicit height so native lists do not collapse', async () => {
+        const loadedState = { status: 'loaded', diff: '@@ -1 +1 @@\n-old\n+new', error: null } as const;
+        const diffStateSource = {
+            getDiffState: () => loadedState,
+            subscribe: () => () => {},
+            reset: () => {},
+            prune: () => {},
+            setDiffState: () => {},
+            updateDiffState: () => {},
+        } as any;
+
+        const theme = {
+            colors: {
+                border: { default: '#333' },
+                surface: { base: '#000', inset: '#111' },
+                text: { secondary: '#999' },
+            },
+        } as any;
+
+        const screen = await renderScreen(<ChangedFilesReviewDiffBlock
+                    theme={theme}
+                    sessionId="s1"
+                    snapshotSignature="sig"
+                    filePath="src/a.ts"
+                    diffStateSource={diffStateSource}
+                    reviewCommentsEnabled={false}
+                    reviewCommentDrafts={[]}
+                />);
+
+        const boundedContainers = screen.findAll((node) => {
+            const styles = Array.isArray(node.props?.style) ? node.props.style : [node.props?.style];
+            return String(node.type) === 'View'
+                && styles.some((entry) => entry && typeof entry === 'object' && typeof (entry as any).maxHeight === 'number');
+        });
+        expect(boundedContainers).toHaveLength(1);
+        const styles = Array.isArray(boundedContainers[0].props.style)
+            ? boundedContainers[0].props.style
+            : [boundedContainers[0].props.style];
+        const boundedStyle = styles.find((entry) => entry && typeof entry === 'object' && typeof (entry as any).maxHeight === 'number') as any;
+        expect(boundedStyle.height).toBe(boundedStyle.maxHeight);
+    });
+
     it('does not reserve the max diff height while loading for small diffs (avoids blank whitespace gaps)', async () => {
         const loadingState = { status: 'loading', diff: '', error: null } as const;
         const diffStateSource = {
@@ -113,7 +172,13 @@ describe('ChangedFilesReviewDiffBlock', () => {
             updateDiffState: () => {},
         } as any;
 
-        const theme = { colors: { textSecondary: '#999', divider: '#333', surfaceHigh: '#111', surface: '#000' } } as any;
+        const theme = {
+            colors: {
+                border: { default: '#333' },
+                surface: { base: '#000', inset: '#111' },
+                text: { secondary: '#999' },
+            },
+        } as any;
 
         let tree: renderer.ReactTestRenderer;
         tree = (await renderScreen(<ChangedFilesReviewDiffBlock
@@ -138,5 +203,75 @@ describe('ChangedFilesReviewDiffBlock', () => {
 
         // The max virtualized height for this test window is ~440px; assert we don't reserve that.
         expect(reservedHeights.some((height) => height >= 400)).toBe(false);
+    });
+
+    it('does not rerender the diff viewer when only unrelated review drafts change', async () => {
+        const loadedState = { status: 'loaded', diff: '@@ -1 +1 @@\n-old\n+new', error: null } as const;
+        const diffStateSource = {
+            getDiffState: () => loadedState,
+            subscribe: () => () => {},
+            reset: () => {},
+            prune: () => {},
+            setDiffState: () => {},
+            updateDiffState: () => {},
+        } as any;
+
+        const theme = {
+            colors: {
+                border: { default: '#333' },
+                surface: { base: '#000', inset: '#111' },
+                text: { secondary: '#999' },
+            },
+        } as any;
+
+        const unrelatedDraft = {
+            id: 'draft-1',
+            filePath: 'src/b.ts',
+            source: 'diff',
+            anchor: { kind: 'diffLine', startLine: 1, side: 'after', oldLine: null, newLine: 1 },
+            snapshot: { selectedLines: [], beforeContext: [], afterContext: [] },
+            body: 'first',
+            createdAt: 1,
+        } as const;
+
+        const screen = await renderScreen(<ChangedFilesReviewDiffBlock
+                    theme={theme}
+                    sessionId="s1"
+                    snapshotSignature="sig"
+                    filePath="src/a.ts"
+                    diffStateSource={diffStateSource}
+                    reviewCommentsEnabled={true}
+                    reviewCommentDrafts={[unrelatedDraft]}
+                />);
+
+        expect(diffReviewCommentsViewerMock.renderCount).toBe(1);
+
+        await renderer.act(async () => {
+            screen.tree.update(<ChangedFilesReviewDiffBlock
+                        theme={theme}
+                        sessionId="s1"
+                        snapshotSignature="sig"
+                        filePath="src/a.ts"
+                        diffStateSource={diffStateSource}
+                        reviewCommentsEnabled={true}
+                        reviewCommentDrafts={[{ ...unrelatedDraft, body: 'changed elsewhere' }]}
+                    />);
+        });
+
+        expect(diffReviewCommentsViewerMock.renderCount).toBe(1);
+
+        await renderer.act(async () => {
+            screen.tree.update(<ChangedFilesReviewDiffBlock
+                        theme={theme}
+                        sessionId="s1"
+                        snapshotSignature="sig"
+                        filePath="src/a.ts"
+                        diffStateSource={diffStateSource}
+                        reviewCommentsEnabled={true}
+                        reviewCommentDrafts={[{ ...unrelatedDraft, filePath: 'src/a.ts' }]}
+                    />);
+        });
+
+        expect(diffReviewCommentsViewerMock.renderCount).toBe(2);
     });
 });

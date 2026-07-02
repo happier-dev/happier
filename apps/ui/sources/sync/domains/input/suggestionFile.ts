@@ -1,6 +1,7 @@
 import type { FileSearchItem } from '@/sync/domains/fileSystem/fileSearchItem';
 import { searchWorkspaceFiles, workspaceFileSearchCache } from '@/sync/domains/workspaces/files/workspaceFileSearch';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
+import { registerSuggestionFileSearchCacheClearer } from '@/sync/domains/input/suggestionFileCacheInvalidation';
 
 export type FileItem = FileSearchItem;
 
@@ -20,6 +21,7 @@ export const fileSearchCache = {
         workspaceFileSearchCache.clearCache();
     },
 };
+registerSuggestionFileSearchCacheClearer((sessionId) => fileSearchCache.clearCache(sessionId));
 
 export async function searchFiles(
     sessionId: string,

@@ -30,6 +30,18 @@ vi.mock('./MessageView', () => ({
     capturedMessageViewProps.push(props);
     return React.createElement('MessageView');
   },
+  MessageViewWithSessionCommon: (props: any) => {
+    capturedMessageViewProps.push(props);
+    return React.createElement('MessageView');
+  },
+}));
+
+vi.mock('@/components/tools/shell/views/ToolView', () => ({
+  ToolView: (props: any) => React.createElement('ToolView', props),
+}));
+
+vi.mock('@/components/tools/shell/views/ToolTimelineRow', () => ({
+  ToolTimelineRow: (props: any) => React.createElement('ToolTimelineRow', props),
 }));
 
 vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
@@ -59,6 +71,7 @@ vi.mock('@/sync/sync', () => ({
       transcriptForwardPrefetchThresholdPx: 800,
       transcriptBackwardPrefetchThresholdPx: 0,
       transcriptFlashListEstimatedItemSize: 48,
+      transcriptMaxTurnEntriesPerListItem: 3,
     }),
   },
 }));
@@ -99,6 +112,42 @@ describe('ChatList (turn grouping mode)', () => {
     expect(Array.isArray(capturedFlatListProps.data)).toBe(true);
     expect(capturedFlatListProps.data[0]?.kind).toBe('turn');
     expect(Array.from(new Set(capturedMessageViewProps.map((props) => props?.message?.id)))).toEqual(['u1', 'a1']);
+
+    await screen.unmount();
+  });
+
+  it('keeps oversized turns grouped as one transcript row', async () => {
+    legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+    legacyChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
+    legacyChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    legacyChatListHarnessState.settingValues.transcriptListImplementation = 'flatlist_legacy';
+
+    const messages = [
+      { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, seq: 1, text: 'u1' },
+      { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, seq: 2, text: 'a1' },
+      { kind: 'agent-text', id: 'a2', localId: null, createdAt: 3, seq: 3, text: 'a2' },
+      { kind: 'agent-text', id: 'a3', localId: null, createdAt: 4, seq: 4, text: 'a3' },
+      { kind: 'agent-text', id: 'a4', localId: null, createdAt: 5, seq: 5, text: 'a4' },
+    ];
+    legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
+    buildChatListItemsMock.mockImplementation((opts: any) => {
+      if (opts?.includeCommittedMessages === false) return [];
+      return messages.map((message) => ({
+        kind: 'message',
+        id: `msg:${message.id}`,
+        messageId: message.id,
+        createdAt: message.createdAt,
+        seq: message.seq,
+      }));
+    });
+
+    const screen = await renderLegacyChatList();
+
+    const capturedFlatListProps = getCapturedFlatListProps();
+    expect(capturedFlatListProps).toBeTruthy();
+    expect(capturedFlatListProps.data).toHaveLength(1);
+    expect(capturedFlatListProps.data[0]?.kind).toBe('turn');
+    expect(Array.from(new Set(capturedMessageViewProps.map((props) => props?.message?.id)))).toEqual(['u1', 'a1', 'a2', 'a3', 'a4']);
 
     await screen.unmount();
   });

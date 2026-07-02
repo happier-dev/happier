@@ -45,7 +45,9 @@ describe('createAttachmentActionChip', () => {
                 presentation: 'list',
                 title: '',
             });
-            const section = chip.collapsedOptionsPopover?.rootStep.sections[0];
+            const rootStep = chip.collapsedOptionsPopover?.rootStep;
+            if (!rootStep) throw new Error('expected attachment options root step');
+            const section = rootStep.sections[0];
             expect(section?.kind).toBe('static');
             if (section?.kind !== 'static') throw new Error('expected static attachment section');
             expect(section.options.map((option) => ({ id: option.id, label: option.label }))).toEqual([

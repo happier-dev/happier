@@ -119,6 +119,7 @@ describe('SessionRightPanel (core tabs)', () => {
         expect(screen.findByTestId('session-rightpanel-tab:git')).toBeTruthy();
         expect(screen.findByTestId('session-rightpanel-tab:files')).toBeTruthy();
         expect(screen.findByTestId('session-rightpanel-tab:agents')).toBeTruthy();
+        expect(screen.findByTestId('session-rightpanel-tab:reviews')).toBeTruthy();
         expect(screen.findByTestId('session-rightpanel-tab:terminal')).toBeNull();
 
         const gitSurface = findHostByTestId(screen, 'session-rightpanel-surface-git');
@@ -126,6 +127,7 @@ describe('SessionRightPanel (core tabs)', () => {
         expect(gitSurface?.props.pointerEvents).toBe('auto');
         expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-agents')).toBeNull();
+        expect(findHostByTestId(screen, 'session-rightpanel-surface-reviews')).toBeNull();
     });
 
     it('keeps a single agents surface test id when the agents tab is active', async () => {
@@ -139,5 +141,19 @@ describe('SessionRightPanel (core tabs)', () => {
         expect(agentsSurface?.props.pointerEvents).toBe('auto');
         expect(findHostByTestId(screen, 'session-rightpanel-surface-git')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
+    });
+
+    it('shows the review comments surface when the reviews tab is active', async () => {
+        scopeState = { right: { isOpen: true, activeTabId: 'reviews', tabState: {} } };
+        const { SessionRightPanel } = await import('./SessionRightPanel');
+
+        const screen = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
+
+        const reviewsSurface = findHostByTestId(screen, 'session-rightpanel-surface-reviews');
+        expect(reviewsSurface).not.toBeNull();
+        expect(reviewsSurface?.props.pointerEvents).toBe('auto');
+        expect(findHostByTestId(screen, 'session-rightpanel-surface-git')).toBeNull();
+        expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
+        expect(findHostByTestId(screen, 'session-rightpanel-surface-agents')).toBeNull();
     });
 });

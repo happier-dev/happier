@@ -5,19 +5,20 @@ import { createReviewCommentsActionChip } from '@/components/sessions/agentInput
 import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt';
 import { createAttachmentActionChip } from '@/components/sessions/agentInput/sessionActions/createAttachmentActionChip';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import type { AgentInputSendOptions } from '@/components/sessions/agentInput/agentInputSendOptions';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
 import { attachRecoverableAttachmentDrafts } from '@/components/sessions/attachments/recoverableAttachmentDrafts';
 import { useWorkspaceReviewCommentDraftHandlers } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceReviewCommentDraftHandlers';
 import { useAttachmentDraftManager } from '@/components/sessions/attachments/useAttachmentDraftManager';
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
-import { formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
+import { buildAttachmentMessageMeta, formatAttachmentsBlock, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
 import { blurActiveElementOnWeb, deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { nativeReadClipboardImageAttachment } from '@/utils/files/nativeClipboardImageAttachment';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { followUpSpawnedSessionWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
-import type { CreatedSessionFollowUpContext } from '@/components/sessions/new/hooks/useCreateNewSession';
+import type { HandleCreateSessionOptions } from '@/components/sessions/new/hooks/useCreateNewSession';
 import { buildReviewCommentsOutboundMessage } from '@/sync/domains/input/reviewComments/buildReviewCommentsOutboundMessage';
 import {
     filterReviewCommentDraftsIncludedInPrompt,
@@ -33,12 +34,9 @@ import {
 } from './newSessionAttachmentDraftStore';
 import { resolveNewSessionReviewCommentsScope } from './resolveNewSessionReviewCommentsScope';
 
-type HandleCreateSession = (
-    opts?: Readonly<{
-        initialMessage?: 'send' | 'skip';
-        afterCreated?: (context: CreatedSessionFollowUpContext) => void | Promise<void>;
-    }>,
-) => void;
+type NewSessionAgentInputSendOptions = AgentInputSendOptions;
+
+type HandleCreateSession = (opts?: HandleCreateSessionOptions) => void;
 
 export function useNewSessionAttachmentsController(params: Readonly<{
     flowId?: string | null;
@@ -60,7 +58,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
     addWebFiles: ReturnType<typeof useAttachmentDraftManager>['addWebFiles'];
     addPickedAttachments: ReturnType<typeof useAttachmentDraftManager>['addPickedAttachments'];
     extraActionChips: readonly AgentInputExtraActionChip[];
-    handleSend: () => void;
+    handleSend: (options?: NewSessionAgentInputSendOptions) => void;
 }> {
     const attachmentsUploadsEnabled = useFeatureEnabled('attachments.uploads');
     const reviewCommentsFeatureEnabled = useFeatureEnabled('files.reviewComments');
@@ -107,11 +105,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
     const hasReviewCommentDrafts = hasDiscoverableReviewCommentDrafts && includedReviewCommentDrafts.length > 0;
 
     React.useEffect(() => {
-        if (!normalizedFlowId) return;
-        if (!attachmentsUploadsEnabled) {
-            clearNewSessionAttachmentDrafts(normalizedFlowId);
-            return;
-        }
+        if (!normalizedFlowId || !attachmentsUploadsEnabled) return;
         writeNewSessionAttachmentDrafts(normalizedFlowId, drafts);
     }, [attachmentsUploadsEnabled, drafts, normalizedFlowId]);
 
@@ -205,24 +199,27 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         discardReviewCommentDrafts,
     ]);
 
-    const handleSend = React.useCallback(() => {
-        const submit = (opts?: Readonly<{ initialMessage?: 'send' | 'skip'; afterCreated?: (context: CreatedSessionFollowUpContext) => void | Promise<void> }>) => {
+    const handleSend = React.useCallback((options?: NewSessionAgentInputSendOptions) => {
+        const promptText = options?.inputTextOverride ?? String(params.sessionPrompt ?? '');
+        const submit = (opts?: HandleCreateSessionOptions) => {
             blurActiveElementOnWeb();
             deferOnWeb(() => {
                 params.handleCreateSession(opts);
             });
         };
 
-        const hasAttachments = attachmentsUploadsEnabled && drafts.length > 0;
+        const draftSnapshot = getDraftsSnapshot();
+        const hasAttachments = attachmentsUploadsEnabled && draftSnapshot.length > 0;
         if (!hasAttachments && !hasReviewCommentDrafts) {
-            submit();
+            submit(options?.inputTextOverride ? { inputTextOverride: options.inputTextOverride } : undefined);
             return;
         }
 
-        const initialPrompt = String(params.sessionPrompt ?? '');
+        const initialPrompt = promptText;
         submit({
             initialMessage: 'skip',
-            afterCreated: async ({ sessionId, effectiveSpawnServerId }) => {
+            afterCreated: async ({ sessionId, effectiveSpawnServerId, launchAttempt }) => {
+                const attachmentMessageLocalId = launchAttempt.attachmentMessageLocalId;
                 const trimmed = initialPrompt.trim();
                 let attachmentsBlock = '';
                 let attachmentsMetaOverrides: Record<string, unknown> | undefined;
@@ -230,25 +227,13 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                 if (hasAttachments) {
                     const { uploaded } = await uploadAttachmentDraftsToSession({
                         sessionId,
-                        drafts,
+                        drafts: draftSnapshot,
                         config: attachmentsUploadConfig,
                         applyDraftPatch,
+                        messageLocalId: attachmentMessageLocalId,
                     });
                     attachmentsBlock = formatAttachmentsBlock(uploaded);
-                    attachmentsMetaOverrides = {
-                        happier: {
-                            kind: 'attachments.v1',
-                            payload: {
-                                attachments: uploaded.map((attachment) => ({
-                                    name: attachment.name,
-                                    path: attachment.path,
-                                    mimeType: attachment.mimeType,
-                                    sizeBytes: attachment.sizeBytes,
-                                    sha256: attachment.sha256,
-                                })),
-                            },
-                        },
-                    };
+                    attachmentsMetaOverrides = buildAttachmentMessageMeta(uploaded);
                 }
 
                 const resolvedReviewCommentDrafts = hasReviewCommentDrafts
@@ -282,6 +267,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                         displayText: outbound.displayText,
                         profileId: params.selectedProfileId,
                         metaOverrides: outbound.metaOverrides,
+                        messageLocalId: attachmentMessageLocalId,
                     });
                     if (hasAttachments) {
                         clearDraftsForFlow();
@@ -298,7 +284,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                         displayText: outbound.displayText,
                         profileId: params.selectedProfileId,
                         metaOverrides: outbound.metaOverrides,
-                        attachmentDrafts: getDraftsSnapshot(),
+                        attachmentDrafts: draftSnapshot,
                     });
                 }
             },
@@ -310,7 +296,6 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         clearReviewCommentsForFlow,
         clearDraftsForFlow,
         discoverableReviewCommentsScope,
-        drafts,
         getDraftsSnapshot,
         hasReviewCommentDrafts,
         includedReviewCommentDrafts,

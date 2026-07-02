@@ -49,6 +49,7 @@ const groupTitleKeys = {
     text: 'settingsAppearance.themeProfiles.groups.text',
     state: 'settingsAppearance.themeProfiles.groups.state',
     control: 'settingsAppearance.themeProfiles.groups.control',
+    composer: 'settingsAppearance.themeProfiles.groups.composer',
     message: 'settingsAppearance.themeProfiles.groups.message',
     syntax: 'settingsAppearance.themeProfiles.groups.syntax',
     versionControl: 'settingsAppearance.themeProfiles.groups.versionControl',

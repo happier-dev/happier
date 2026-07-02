@@ -62,6 +62,21 @@ export type ScmTreeBadgeIndex = Readonly<{
     getDirectoryBadge: (directoryPath: string) => ScmTreeBadge | null;
 }>;
 
+export function buildScmTreeBadgeSignature(snapshot: ScmWorkingSnapshot | null | undefined): string {
+    if (!snapshot?.entries?.length) return '';
+    return snapshot.entries
+        .map((entry) => [
+            entry.path,
+            entry.kind,
+            entry.stats.includedAdded,
+            entry.stats.includedRemoved,
+            entry.stats.pendingAdded,
+            entry.stats.pendingRemoved,
+        ].join(':'))
+        .sort()
+        .join('|');
+}
+
 const badgeIndexCache = new WeakMap<ScmWorkingSnapshot, ScmTreeBadgeIndex>();
 
 export function createScmTreeBadgeIndex(snapshot: ScmWorkingSnapshot | null | undefined): ScmTreeBadgeIndex {

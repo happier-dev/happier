@@ -4,6 +4,21 @@ import { fetchAndApplySessionById } from '@/sync/engine/sessions/sessionById';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
 
+const syncMock = vi.hoisted(() => ({
+    applySessions: vi.fn(),
+    refreshSessions: vi.fn(async () => {}),
+    sendMessage: vi.fn(async () => {}),
+}));
+
+vi.mock('@/sync/sync', () => ({
+    sync: syncMock,
+}));
+
+vi.mock('@/agents/catalog/catalog', () => ({
+    getAgentCore: () => ({ model: { defaultMode: 'default', supportsSelection: false } }),
+    resolveAgentIdFromFlavor: () => 'codex',
+}));
+
 describe('followUpSpawnedSessionWithServerScope', () => {
     it('attaches a recoverable follow-up payload when active-scope sendMessage fails before the first message send', async () => {
         const ensureSessionVisibleForMessageRoute = vi.fn(async () => {});
@@ -330,7 +345,11 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             'hello from active server',
             undefined,
             undefined,
-            undefined,
+            {
+                profileId: undefined,
+                localId: undefined,
+                bypassPendingQueueReason: 'server_scoped_rpc',
+            },
         );
         expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith(
             'sess_target',
@@ -368,7 +387,11 @@ describe('followUpSpawnedSessionWithServerScope', () => {
             'hello from active server',
             undefined,
             undefined,
-            undefined,
+            {
+                profileId: undefined,
+                localId: undefined,
+                bypassPendingQueueReason: 'server_scoped_rpc',
+            },
         );
         expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('sess_target', { forceRefresh: true });
     });
@@ -492,7 +515,11 @@ describe('followUpSpawnedSessionWithServerScope', () => {
                     kind: 'attachments.v1',
                 },
             },
-            { profileId: 'profile-work' },
+            {
+                profileId: 'profile-work',
+                localId: undefined,
+                bypassPendingQueueReason: 'server_scoped_rpc',
+            },
         );
     });
 });

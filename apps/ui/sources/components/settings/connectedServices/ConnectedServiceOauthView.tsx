@@ -6,8 +6,6 @@ import { OAuthView, OAuthViewUnsupported, type OAuthViewConfig } from '@/compone
 import { Modal } from '@/modal';
 import { useAuth } from '@/auth/context/AuthContext';
 import { t } from '@/text';
-import { sync } from '@/sync/sync';
-import { storeConnectedServiceCredentialForAccount } from '@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount';
 import { getConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { ConnectedServiceCredentialRecordV1Schema, ConnectedServiceIdSchema, type ConnectedServiceCredentialRecordV1, type ConnectedServiceId } from '@happier-dev/protocol';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -20,6 +18,8 @@ import { ConnectedServiceOauthEmbeddedView } from './oauth/ConnectedServiceOauth
 import { resolveConnectedServiceOauthMode } from './oauth/resolveConnectedServiceOauthMode';
 import { resolveConnectedServiceOauthErrorMessage } from './oauth/resolveConnectedServiceOauthErrorMessage';
 import { resolveConnectedServiceDisplayName } from './model/resolveConnectedServiceDisplayName';
+import { storeConnectedServiceCredentialWithIdentityConfirmation } from './storeConnectedServiceCredentialWithIdentityConfirmation';
+import { runConnectedServiceCredentialStoredEffects } from './runConnectedServiceCredentialStoredEffects';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
@@ -137,14 +137,17 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
 
   const registerRecord = async (record: ConnectedServiceCredentialRecordV1) => {
     const credentials = ensureCredentials();
-    await storeConnectedServiceCredentialForAccount(credentials, { serviceId, profileId, record });
-    await sync.refreshProfile();
+    return await storeConnectedServiceCredentialWithIdentityConfirmation(
+      credentials,
+      { serviceId, profileId, record },
+      { onStored: runConnectedServiceCredentialStoredEffects },
+    );
   };
 
   const registerMaybeRecord = async (record: unknown) => {
     const parsed = ConnectedServiceCredentialRecordV1Schema.safeParse(record);
     if (!parsed.success) throw new Error('OAuth flow returned an invalid credential record');
-    await registerRecord(parsed.data);
+    return await registerRecord(parsed.data);
   };
 
   if (!adapter) {
@@ -172,7 +175,8 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
     onSuccess: (record: unknown) => {
       fireAndForget((async () => {
         try {
-          await registerMaybeRecord(record);
+          const stored = await registerMaybeRecord(record);
+          if (!stored) return;
           await Modal.alert(
             t('connectedServices.oauthPaste.alerts.connectedTitle'),
             t('connectedServices.oauthPaste.alerts.connectedBody', { serviceId: serviceLabel, profileId }),

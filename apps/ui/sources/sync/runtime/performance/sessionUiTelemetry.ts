@@ -9,9 +9,20 @@ type StreamingMessageMark = Readonly<{
     startedAtMs: number;
 }>;
 
+type SessionOpenTelemetrySource = 'navigate-hook' | 'route-entry' | 'unknown';
+
+type SessionOpenTelemetryMark = {
+    firstPaintRecorded: boolean;
+    source: SessionOpenTelemetrySource;
+    stablePaintRecorded: boolean;
+    startedAtMs: number;
+};
+
 const MAX_PENDING_STREAMING_MARKS_PER_SESSION = 200;
+const MAX_PENDING_SESSION_OPEN_MARKS = 100;
 
 const streamingMarksBySessionId = new Map<string, Map<string, StreamingMessageMark[]>>();
+const sessionOpenMarksBySessionId = new Map<string, SessionOpenTelemetryMark>();
 
 export function readSessionUiTelemetryNowMs(): number {
     const perf = (globalThis as unknown as { performance?: { now?: () => number } }).performance;
@@ -55,9 +66,116 @@ function trimOldestSessionMarks(sessionMarks: Map<string, StreamingMessageMark[]
 export function clearSessionUiTelemetryMarks(sessionId?: string): void {
     if (typeof sessionId === 'string' && sessionId.length > 0) {
         streamingMarksBySessionId.delete(sessionId);
+        sessionOpenMarksBySessionId.delete(sessionId);
         return;
     }
     streamingMarksBySessionId.clear();
+    sessionOpenMarksBySessionId.clear();
+}
+
+export function clearStreamingSessionUiTelemetryMarks(sessionId?: string): void {
+    if (typeof sessionId === 'string' && sessionId.length > 0) {
+        streamingMarksBySessionId.delete(sessionId);
+        return;
+    }
+    streamingMarksBySessionId.clear();
+}
+
+function trimOldestSessionOpenMarks(): void {
+    while (sessionOpenMarksBySessionId.size > MAX_PENDING_SESSION_OPEN_MARKS) {
+        const firstKey = sessionOpenMarksBySessionId.keys().next().value as string | undefined;
+        if (!firstKey) return;
+        sessionOpenMarksBySessionId.delete(firstKey);
+    }
+}
+
+function normalizeSessionOpenTelemetrySource(value: SessionOpenTelemetrySource): SessionOpenTelemetrySource {
+    if (value === 'navigate-hook' || value === 'route-entry') return value;
+    return 'unknown';
+}
+
+export function markSessionOpenRequestedForSessionUiTelemetry(params: Readonly<{
+    sessionId: string;
+    source: SessionOpenTelemetrySource;
+}>): void {
+    if (!syncPerformanceTelemetry.isEnabled()) return;
+    const sessionId = params.sessionId.trim();
+    if (!sessionId) return;
+    sessionOpenMarksBySessionId.set(sessionId, {
+        firstPaintRecorded: false,
+        source: normalizeSessionOpenTelemetrySource(params.source),
+        stablePaintRecorded: false,
+        startedAtMs: readSessionUiTelemetryNowMs(),
+    });
+    trimOldestSessionOpenMarks();
+}
+
+export function markSessionRouteEnteredForSessionUiTelemetry(params: Readonly<{
+    sessionId: string;
+}>): void {
+    if (!syncPerformanceTelemetry.isEnabled()) return;
+    const sessionId = params.sessionId.trim();
+    if (!sessionId) return;
+    if (sessionOpenMarksBySessionId.has(sessionId)) return;
+    sessionOpenMarksBySessionId.set(sessionId, {
+        firstPaintRecorded: false,
+        source: 'route-entry',
+        stablePaintRecorded: false,
+        startedAtMs: readSessionUiTelemetryNowMs(),
+    });
+    trimOldestSessionOpenMarks();
+}
+
+export function recordSessionOpenPaintForSessionUiTelemetry(params: Readonly<{
+    committedMessages: number;
+    distanceFromBottom?: number;
+    items: number;
+    native: number;
+    phase: 'firstPaint' | 'stablePaint';
+    routeHydrationPending: number;
+    sessionId: string;
+    web: number;
+}>): void {
+    if (!syncPerformanceTelemetry.isEnabled()) return;
+    const sessionId = params.sessionId.trim();
+    if (!sessionId) return;
+    const mark = sessionOpenMarksBySessionId.get(sessionId);
+    if (!mark) return;
+
+    if (params.phase === 'firstPaint') {
+        if (mark.firstPaintRecorded) return;
+        mark.firstPaintRecorded = true;
+    } else {
+        if (mark.stablePaintRecorded) return;
+        mark.stablePaintRecorded = true;
+    }
+
+    const source = normalizeSessionOpenTelemetrySource(mark.source);
+    const fields: Record<string, number> = {
+        committedMessages: Math.max(0, Math.trunc(params.committedMessages)),
+        items: Math.max(0, Math.trunc(params.items)),
+        native: params.native === 1 ? 1 : 0,
+        routeHydrationPending: params.routeHydrationPending === 1 ? 1 : 0,
+        sourceNavigateHook: source === 'navigate-hook' ? 1 : 0,
+        sourceRouteEntry: source === 'route-entry' ? 1 : 0,
+        sourceUnknown: source === 'unknown' ? 1 : 0,
+        web: params.web === 1 ? 1 : 0,
+    };
+    if (typeof params.distanceFromBottom === 'number' && Number.isFinite(params.distanceFromBottom)) {
+        fields.distanceFromBottom = Math.max(0, Math.trunc(params.distanceFromBottom));
+    }
+
+    syncPerformanceTelemetry.recordDuration(
+        params.phase === 'firstPaint'
+            ? 'ui.sessions.transcript.openToFirstPaint'
+            : 'ui.sessions.transcript.openToStablePaint',
+        readSessionUiTelemetryNowMs() - mark.startedAtMs,
+        fields,
+    );
+
+    if (mark.firstPaintRecorded && mark.stablePaintRecorded) {
+        sessionOpenMarksBySessionId.delete(sessionId);
+    }
 }
 
 export function markStreamingMessagesAppliedForSessionUiTelemetry(params: Readonly<{

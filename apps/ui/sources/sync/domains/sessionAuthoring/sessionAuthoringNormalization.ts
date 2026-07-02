@@ -24,7 +24,7 @@ export function normalizeOptionalString(value: string | null | undefined): strin
     return trimmed.length > 0 ? trimmed : null;
 }
 
-export function normalizeOptionalNumber(value: number | null | undefined): number | null {
+export function normalizeOptionalNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 

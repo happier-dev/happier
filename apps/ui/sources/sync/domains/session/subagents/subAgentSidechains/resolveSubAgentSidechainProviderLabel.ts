@@ -1,4 +1,4 @@
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import { t } from '@/text';
 
 export function resolveSubAgentSidechainProviderLabel(flavor: string | null | undefined): string | null {

@@ -54,6 +54,52 @@ function formatFileTimestamp(date: Date): string {
     return date.toISOString().replace(/[:.]/g, '-');
 }
 
+type ExpoFileSystemDirectory = Readonly<{
+    uri: string;
+}>;
+
+type ExpoFileSystemFile = Readonly<{
+    uri: string;
+    write: (content: string) => void;
+    delete: () => void;
+}>;
+
+type ExpoFileSystemModule = Readonly<{
+    File: new (parent: ExpoFileSystemDirectory | string, name: string) => ExpoFileSystemFile;
+    Paths?: Readonly<{
+        cache?: ExpoFileSystemDirectory | string | null;
+        document?: ExpoFileSystemDirectory | string | null;
+    }>;
+}>;
+
+type ExpoSharingModule = Readonly<{
+    isAvailableAsync?: () => Promise<boolean>;
+    shareAsync?: (uri: string) => Promise<void>;
+}>;
+
+async function writeNativeCacheTextFile(input: Readonly<{
+    content: string;
+    fileName: string;
+}>): Promise<ExpoFileSystemFile | null> {
+    const FileSystem = await import('expo-file-system') as ExpoFileSystemModule;
+    const baseDirectory = FileSystem.Paths?.cache ?? FileSystem.Paths?.document ?? null;
+    if (!baseDirectory) {
+        return null;
+    }
+
+    const file = new FileSystem.File(baseDirectory, input.fileName);
+    file.write(input.content);
+    return file;
+}
+
+function deleteNativeFileBestEffort(file: ExpoFileSystemFile): void {
+    try {
+        file.delete();
+    } catch {
+        // best effort
+    }
+}
+
 export function buildUsageAnalyticsExportPayload(input: UsageAnalyticsExportInput): UsageAnalyticsExportPayload {
     const recapCards = buildUsageRecapCardModels({
         viewModel: input.viewModel,
@@ -144,29 +190,25 @@ async function shareTextOnWeb(text: string): Promise<boolean> {
 
 async function shareTextOnNative(text: string): Promise<boolean> {
     try {
-        const FileSystem: any = await import('expo-file-system');
-        const Sharing: any = await import('expo-sharing');
-        const baseDirectory: string | null = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? null;
-        if (!baseDirectory) {
+        const Sharing = await import('expo-sharing') as ExpoSharingModule;
+        const file = await writeNativeCacheTextFile({
+            content: text,
+            fileName: `usage-summary-${formatFileTimestamp(new Date())}.txt`,
+        });
+        if (!file) {
             return setClipboardStringSafe(text);
         }
 
-        const fileUri = `${baseDirectory.replace(/\/+$/, '')}/usage-summary-${formatFileTimestamp(new Date())}.txt`;
-        await FileSystem.writeAsStringAsync(fileUri, text, { encoding: FileSystem.EncodingType.UTF8 });
         try {
-            if (Sharing && typeof Sharing.isAvailableAsync === 'function' && typeof Sharing.shareAsync === 'function') {
+            if (typeof Sharing.isAvailableAsync === 'function' && typeof Sharing.shareAsync === 'function') {
                 const available = await Sharing.isAvailableAsync();
                 if (available) {
-                    await Sharing.shareAsync(fileUri);
+                    await Sharing.shareAsync(file.uri);
                     return true;
                 }
             }
         } finally {
-            try {
-                await FileSystem.deleteAsync(fileUri, { idempotent: true });
-            } catch {
-                // best effort
-            }
+            deleteNativeFileBestEffort(file);
         }
 
         return setClipboardStringSafe(text);
@@ -231,29 +273,25 @@ async function downloadJsonOnWeb(payload: UsageAnalyticsExportPayload): Promise<
 
 async function downloadJsonOnNative(payload: UsageAnalyticsExportPayload): Promise<boolean> {
     try {
-        const FileSystem: any = await import('expo-file-system');
-        const Sharing: any = await import('expo-sharing');
-        const baseDirectory: string | null = FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? null;
-        if (!baseDirectory) {
+        const Sharing = await import('expo-sharing') as ExpoSharingModule;
+        const file = await writeNativeCacheTextFile({
+            content: `${JSON.stringify(payload, null, 2)}\n`,
+            fileName: `usage-${formatFileTimestamp(new Date())}.json`,
+        });
+        if (!file) {
             return false;
         }
 
-        const fileUri = `${baseDirectory.replace(/\/+$/, '')}/usage-${formatFileTimestamp(new Date())}.json`;
-        await FileSystem.writeAsStringAsync(fileUri, `${JSON.stringify(payload, null, 2)}\n`, { encoding: FileSystem.EncodingType.UTF8 });
         try {
-            if (Sharing && typeof Sharing.isAvailableAsync === 'function' && typeof Sharing.shareAsync === 'function') {
+            if (typeof Sharing.isAvailableAsync === 'function' && typeof Sharing.shareAsync === 'function') {
                 const available = await Sharing.isAvailableAsync();
                 if (available) {
-                    await Sharing.shareAsync(fileUri);
+                    await Sharing.shareAsync(file.uri);
                     return true;
                 }
             }
         } finally {
-            try {
-                await FileSystem.deleteAsync(fileUri, { idempotent: true });
-            } catch {
-                // best effort
-            }
+            deleteNativeFileBestEffort(file);
         }
 
         return false;

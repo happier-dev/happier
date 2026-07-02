@@ -39,7 +39,7 @@ export const MultiEditView = React.memo<ToolViewProps>(({ tool, detailLevel, ses
     if (detailLevel === 'title') {
         return (
             <ToolSectionView>
-                <Text>{t('tools.multiEdit.summaryEdits', { count: edits.length })}</Text>
+                <Text style={styles.summaryText}>{t('tools.multiEdit.summaryEdits', { count: edits.length })}</Text>
             </ToolSectionView>
         );
     }
@@ -52,7 +52,7 @@ export const MultiEditView = React.memo<ToolViewProps>(({ tool, detailLevel, ses
 
     return (
         <ToolSectionView fullWidth>
-            <View style={{ flex: 1 }}>
+            <View>
                 {visibleEdits.map((edit, index) => {
                     const oldString = trimIdent(edit.old_string || '');
                     const newString = trimIdent(edit.new_string || '');
@@ -120,5 +120,9 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 12,
         color: theme.colors.text.secondary,
         fontFamily: 'Menlo',
+    },
+    summaryText: {
+        fontSize: 13,
+        color: theme.colors.text.secondary,
     },
 }));

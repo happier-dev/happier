@@ -7,7 +7,10 @@ import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const hydrateSessionSpy = vi.hoisted(() => vi.fn<(sessionId: string, reason: string) => boolean>(() => true));
+const hydrateSessionSpy = vi.hoisted(() => vi.fn((sessionId: string, reason: string) => ({
+    kind: 'available' as const,
+    sessionId,
+})));
 const onSessionVisibleSpy = vi.hoisted(() => vi.fn<(sessionId: string) => void>());
 const detailsViewSpy = vi.hoisted(() => vi.fn<(props: any, ref?: any) => React.ReactElement>((props) => React.createElement('SessionMessageDetailsView', props)));
 const useMessageSpy = vi.hoisted(() => vi.fn<(sessionId: string, messageId: string) => unknown>());
@@ -58,7 +61,10 @@ vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
 vi.mock('@/sync/sync', () => ({
     sync: {
         onSessionVisible: (sessionId: string) => onSessionVisibleSpy(sessionId),
-        ensureSessionVisibleForMessageRoute: vi.fn(async () => true),
+        ensureSessionVisibleForMessageRoute: vi.fn(async (sessionId: string) => ({
+            kind: 'available' as const,
+            sessionId,
+        })),
         loadOlderMessages: vi.fn(async () => ({ status: 'no_more' as const, hasMore: false, loaded: 0 })),
     },
 }));

@@ -89,6 +89,18 @@ function useAppShellPetDrag(): {
 
 export function PetAppShellCompanionMount(): React.ReactElement | null {
     const selectedPetPackage = useSelectedPetPackage();
+    if (Platform.OS !== 'web' || isTauriDesktop() || !selectedPetPackage.enabled || !selectedPetPackage.source) {
+        return null;
+    }
+
+    return <PetAppShellCompanionRuntime selectedPetPackage={selectedPetPackage} />;
+}
+
+function PetAppShellCompanionRuntime({
+    selectedPetPackage,
+}: Readonly<{
+    selectedPetPackage: ReturnType<typeof useSelectedPetPackage>;
+}>): React.ReactElement {
     const { dismissedTrayItemKeys, dismissTrayItem } = usePetCompanionTrayDismissals();
     const activity = usePetCompanionActivityModel({ dismissedTrayItemKeys });
     const spritesheetSource = usePetSpritesheetSource(selectedPetPackage.source, DEFAULT_BUILT_IN_PET_ID);
@@ -113,10 +125,6 @@ export function PetAppShellCompanionMount(): React.ReactElement | null {
             { defaultSessionId: item.sessionId },
         );
     }, [actionExecutor]);
-    if (Platform.OS !== 'web' || isTauriDesktop() || !selectedPetPackage.enabled || !selectedPetPackage.source) {
-        return null;
-    }
-
     return (
         <View
             pointerEvents="box-none"

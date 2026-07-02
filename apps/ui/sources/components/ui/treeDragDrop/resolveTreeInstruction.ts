@@ -1,6 +1,6 @@
 import { classifyVerticalThird } from './geometry/classifyVerticalThird';
 import { computeNestInstructionDepth, computeReorderInstructionDepth } from './geometry/computeInstructionDepth';
-import { containsWindowPointer, hitTestRowAtPointer } from './geometry/hitTestRowAtPointer';
+import { containsPointer, hitTestRowAtPointer } from './geometry/hitTestRowAtPointer';
 import { canTreeRowHaveChildren } from './rules/leafContainer';
 import type {
     ResolveTreeInstructionParams,
@@ -11,6 +11,15 @@ import type {
     TreeRow,
     BlockedReason,
 } from './treeDragDropTypes';
+
+/**
+ * Container rows get a wider, more forgiving middle "nest" band so dropping
+ * *into* a folder is easy even on short folder headers — the top/bottom quarters
+ * stay reorder edges. Leaf rows keep strict thirds (the default): their middle
+ * band is a no-op (leaves can't be parents), so widening it would only grow a
+ * "blocked" dead zone.
+ */
+const CONTAINER_NEST_BAND_RATIO = 0.5;
 
 const idleResult: TreeDropResult = Object.freeze({
     instruction: Object.freeze({ kind: 'idle' as const }),
@@ -32,8 +41,11 @@ function hitTestDropZoneAtPointer(
     dropZones: ReadonlyArray<TreeContainerDropZone>,
     pointer: NonNullable<ResolveTreeInstructionParams['pointer']>,
 ): TreeContainerDropZone | null {
-    const matches = dropZones.filter((zone) => containsWindowPointer(zone.bounds, pointer));
+    const matches = dropZones.filter((zone) => containsPointer(zone.bounds, pointer));
     matches.sort((left, right) => {
+        const rightPriority = right.role === 'sibling-before' || right.role === 'sibling-after' ? 1 : 0;
+        const leftPriority = left.role === 'sibling-before' || left.role === 'sibling-after' ? 1 : 0;
+        if (rightPriority !== leftPriority) return rightPriority - leftPriority;
         if (right.depth !== left.depth) return right.depth - left.depth;
         const leftArea = left.bounds.width * left.bounds.height;
         const rightArea = right.bounds.width * right.bounds.height;
@@ -46,7 +58,12 @@ function resolveRowInstruction(params: ResolveTreeInstructionParams, target: Tre
     if (target.id === params.source.id) return blocked('same-position', target.id);
     if (params.source.excludedDescendantIds.has(target.id)) return blocked('descendant-cycle', target.id);
 
-    const verticalThird = classifyVerticalThird(target.bounds, params.pointer!);
+    const canHaveChildren = canTreeRowHaveChildren(target);
+    const verticalThird = classifyVerticalThird(
+        target.bounds,
+        params.pointer!,
+        canHaveChildren ? CONTAINER_NEST_BAND_RATIO : undefined,
+    );
     if (verticalThird === 'top' || verticalThird === 'bottom') {
         const depth = computeReorderInstructionDepth(target);
         if (typeof params.rules.maxDepth === 'number' && depth > params.rules.maxDepth) {
@@ -71,7 +88,7 @@ function resolveRowInstruction(params: ResolveTreeInstructionParams, target: Tre
         });
     }
 
-    if (!canTreeRowHaveChildren(target)) return blocked('leaf-cannot-be-parent', target.id);
+    if (!canHaveChildren) return blocked('leaf-cannot-be-parent', target.id);
     const depth = computeNestInstructionDepth({ ...target, depth: target.depth + 1 });
     if (typeof params.rules.maxDepth === 'number' && depth > params.rules.maxDepth) {
         return blocked('max-depth-exceeded', target.id);
@@ -94,6 +111,34 @@ function resolveRowInstruction(params: ResolveTreeInstructionParams, target: Tre
 function resolveDropZoneInstruction(params: ResolveTreeInstructionParams, zone: TreeContainerDropZone): TreeDropResult {
     if (params.source.excludedDescendantIds.has(zone.containerId)) {
         return blocked('descendant-cycle', zone.containerId);
+    }
+
+    if ((zone.role === 'sibling-before' || zone.role === 'sibling-after') && zone.targetId) {
+        const target = params.rows.find((row) => row.id === zone.targetId);
+        if (!target) return blocked('no-target');
+        if (params.source.excludedDescendantIds.has(target.id)) {
+            return blocked('descendant-cycle', target.id);
+        }
+        if (typeof params.rules.maxDepth === 'number' && zone.depth > params.rules.maxDepth) {
+            return blocked('max-depth-exceeded', target.id);
+        }
+        if (!params.rules.canReorderAround(params.source, target, zone.parentId)) {
+            return blocked('workspace-scope-mismatch', target.id);
+        }
+        const kind = zone.role === 'sibling-before' ? 'reorder-before' : 'reorder-after';
+        const edge = zone.role === 'sibling-before' ? 'top' : 'bottom';
+        return result({
+            kind,
+            targetId: target.id,
+            containerId: zone.containerId,
+            parentId: zone.parentId,
+            depth: zone.depth,
+        }, {
+            kind: 'line',
+            targetId: target.id,
+            edge,
+            depth: zone.depth,
+        });
     }
 
     if (zone.role === 'container-body') {
@@ -137,6 +182,7 @@ function resolveDropZoneInstruction(params: ResolveTreeInstructionParams, zone: 
         targetId: zone.containerId,
         edge,
         depth: zone.depth,
+        dropZoneRole: zone.role,
     });
 }
 

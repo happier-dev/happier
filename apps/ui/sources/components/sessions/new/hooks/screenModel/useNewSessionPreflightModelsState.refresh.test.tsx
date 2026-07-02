@@ -6,10 +6,22 @@ import {
     resetDynamicModelProbeCacheForTests,
     DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS,
     DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS,
+    DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS,
 } from '@/sync/domains/models/dynamicModelProbeCache';
 import { installCapabilitiesOpsModuleMock } from '@/dev/testkit/mocks/capabilities';
 
 const machineCapabilitiesInvokeMock = vi.fn();
+
+vi.mock('@/agents/catalog/catalog', () => ({
+    getAgentCore: (agentId: string | null) => ({
+        model: {
+            supportsSelection: true,
+            dynamicProbe: agentId === 'claude' ? 'static-only' : 'dynamic',
+        },
+    }),
+    isAgentId: (value: unknown): value is string => typeof value === 'string' && ['claude', 'codex', 'customAcp'].includes(value),
+}));
+
 type DeferredModelProbeResult = {
     supported: true;
     response: {
@@ -155,6 +167,79 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         await hook.unmount();
     });
 
+    it('uses an expired cached model list as refreshing state while the background probe is pending', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(5_000_000);
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicModelProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+
+        let resolveProbe: ((value: DeferredModelProbeResult) => void) | null = null;
+        machineCapabilitiesInvokeMock.mockImplementationOnce(() => new Promise<DeferredModelProbeResult>((resolve) => {
+            resolveProbe = resolve;
+        }));
+
+        const {
+            writeDynamicModelProbeCacheSuccess,
+        } = await import('@/sync/domains/models/dynamicModelProbeCache');
+        const { buildDynamicModelProbeCacheKey } = await import('@/sync/domains/models/dynamicModelProbeCacheKey');
+        const cacheKey = buildDynamicModelProbeCacheKey({
+            machineId: 'machine-1',
+            targetKey: 'backend:codex',
+            serverId: 'server-1',
+            cwd: '/repo',
+        });
+        if (!cacheKey) {
+            throw new Error('expected dynamic model cache key');
+        }
+        writeDynamicModelProbeCacheSuccess(
+            cacheKey,
+            {
+                availableModels: [{ id: 'cached-model', name: 'Cached Model' }],
+                supportsFreeform: false,
+            },
+            Date.now() - DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS - 1,
+        );
+
+        const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+        const hook = await renderHook(
+            () => useNewSessionPreflightModelsState({
+                backendTarget: { kind: 'backend', backendId: 'codex' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: '/repo',
+            }),
+        );
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().modelOptions.some((option) => option.value === 'cached-model')).toBe(true);
+        expect(hook.getCurrent().probe.phase).toBe('refreshing');
+
+        if (!resolveProbe) {
+            throw new Error('expected deferred probe resolver');
+        }
+        const resolveDeferredProbe = resolveProbe as unknown as (value: DeferredModelProbeResult) => void;
+        resolveDeferredProbe({
+            supported: true,
+            response: {
+                ok: true,
+                result: {
+                    availableModels: [{ id: 'fresh-model', name: 'Fresh Model' }],
+                    supportsFreeform: false,
+                },
+            },
+        });
+
+        await flushHookEffects();
+        expect(hook.getCurrent().modelOptions.some((option) => option.value === 'fresh-model')).toBe(true);
+
+        await hook.unmount();
+        vi.useRealTimers();
+    });
+
     it('does not expose a previous backend model list after the backend target changes', async () => {
         vi.resetModules();
         machineCapabilitiesInvokeMock.mockReset();
@@ -242,6 +327,124 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm1')).toBe(true);
 
         await hook.unmount();
+        vi.useRealTimers();
+    });
+
+    it('keeps a static fallback model list available across detail remounts in the same runtime', async () => {
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicModelProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+
+        machineCapabilitiesInvokeMock.mockImplementationOnce(async () => ({
+            supported: true as const,
+            response: {
+                ok: true as const,
+                result: {
+                    provider: 'codex',
+                    source: 'static',
+                    availableModels: [{ id: 'runtime-only-model', name: 'Runtime Only' }],
+                    supportsFreeform: false,
+                },
+            },
+        }));
+
+        const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+        const hook = await renderHook(
+            () => useNewSessionPreflightModelsState({
+                backendTarget: { kind: 'backend', backendId: 'codex' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: '/repo',
+            }),
+        );
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().modelOptions.some((option) => option.value === 'runtime-only-model')).toBe(true);
+        await hook.unmount();
+
+        const remounted = await renderHook(
+            () => useNewSessionPreflightModelsState({
+                backendTarget: { kind: 'backend', backendId: 'codex' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: '/repo',
+            }),
+        );
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+        expect(remounted.getCurrent().modelOptions.some((option) => option.value === 'runtime-only-model')).toBe(true);
+        await remounted.unmount();
+    });
+
+    it('keeps a transient fallback list when a retry returns a less complete static fallback', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(3_000_000);
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicModelProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+
+        machineCapabilitiesInvokeMock
+            .mockImplementationOnce(async () => ({
+                supported: true as const,
+                response: {
+                    ok: true as const,
+                    result: {
+                        provider: 'codex',
+                        source: 'static',
+                        availableModels: [{ id: 'runtime-only-model', name: 'Runtime Only' }],
+                        supportsFreeform: false,
+                    },
+                },
+            }))
+            .mockImplementationOnce(async () => ({
+                supported: true as const,
+                response: {
+                    ok: true as const,
+                    result: {
+                        provider: 'codex',
+                        source: 'static',
+                        availableModels: [{ id: 'fallback-model', name: 'Fallback Model' }],
+                        supportsFreeform: false,
+                    },
+                },
+            }));
+
+        const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+        const hook = await renderHook(
+            () => useNewSessionPreflightModelsState({
+                backendTarget: { kind: 'backend', backendId: 'codex' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: '/repo',
+            }),
+        );
+
+        expect(hook.getCurrent().modelOptions.some((option) => option.value === 'runtime-only-model')).toBe(true);
+        await hook.unmount();
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS + 1);
+        });
+
+        const remounted = await renderHook(
+            () => useNewSessionPreflightModelsState({
+                backendTarget: { kind: 'backend', backendId: 'codex' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: '/repo',
+            }),
+        );
+        await flushHookEffects();
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
+        expect(remounted.getCurrent().modelOptions.some((option) => option.value === 'runtime-only-model')).toBe(true);
+        await remounted.unmount();
         vi.useRealTimers();
     });
 
@@ -358,7 +561,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
 
         const hook = await renderHook(() => useNewSessionPreflightModelsState({
-                backendTarget: { kind: 'backend', backendId: 'codex' },
+            backendTarget: { kind: 'backend', backendId: 'codex' },
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             cwd: '/repo',
@@ -366,7 +569,7 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
                 cacheKeySuffixParts: ['appServer'],
                 capabilityParams: { runtimeKindOverride: 'appServer' },
             },
-        } as any));
+        }));
 
         expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm1')).toBe(true);
         expect(readCall).toBe(1);

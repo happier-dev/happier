@@ -144,8 +144,11 @@ const NativePetCompanionSprite = React.memo(function NativePetCompanionSprite(pr
     );
 });
 
-function NativePetCompanionLayer(): React.ReactElement | null {
-    const selectedPetPackage = useSelectedPetPackage();
+function NativePetCompanionLayer({
+    selectedPetPackage,
+}: Readonly<{
+    selectedPetPackage: ReturnType<typeof useSelectedPetPackage>;
+}>): React.ReactElement {
     const { dismissedTrayItemKeys, dismissTrayItem } = usePetCompanionTrayDismissals();
     const activity = usePetCompanionActivityModel({ dismissedTrayItemKeys });
     const petsCompanionPosition = useLocalSetting('petsCompanionPosition');
@@ -221,10 +224,6 @@ function NativePetCompanionLayer(): React.ReactElement | null {
             { defaultSessionId: item.sessionId },
         );
     }, [actionExecutor]);
-    if (!selectedPetPackage.enabled || !selectedPetPackage.source) {
-        return null;
-    }
-
     return (
         <GestureDetector gesture={pan.gesture}>
             <PetNativeAnimatedView
@@ -291,11 +290,16 @@ function NativePetCompanionLayer(): React.ReactElement | null {
     );
 }
 
-export function PetAppShellCompanionMount(): React.ReactElement {
+export function PetAppShellCompanionMount(): React.ReactElement | null {
+    const selectedPetPackage = useSelectedPetPackage();
+    if (!selectedPetPackage.enabled || !selectedPetPackage.source) {
+        return null;
+    }
+
     return (
         <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
             <PetNoDragRegionProvider>
-                <NativePetCompanionLayer />
+                <NativePetCompanionLayer selectedPetPackage={selectedPetPackage} />
             </PetNoDragRegionProvider>
         </View>
     );

@@ -29,10 +29,12 @@ import {
   runDynamicModelProbeDedupe,
   writeDynamicModelProbeCacheError,
   writeDynamicModelProbeCacheSuccess,
+  writeDynamicModelProbeCacheTransientSuccess,
 } from '@/sync/domains/models/dynamicModelProbeCache';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import { parsePreflightModelListFromProbeModelsResult } from '@/sync/domains/models/parsePreflightModelListFromProbeModelsResult';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
+import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -92,9 +94,9 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
     discoveredBackendIds: readonly string[];
   }>;
 }>): VoiceToolBackendCatalogItem[] {
-  const stateAny: any = storage.getState();
-  const backendEnabledByTargetKey: Record<string, boolean> | null | undefined = stateAny?.settings?.backendEnabledByTargetKey ?? null;
-  const acpCatalogSettingsV1 = stateAny?.settings?.acpCatalogSettingsV1 ?? { v: 2, backends: [] };
+  const state = storage.getState();
+  const backendEnabledByTargetKey = state.settings?.backendEnabledByTargetKey ?? null;
+  const acpCatalogSettingsV1 = state.settings?.acpCatalogSettingsV1 ?? { v: 2, backends: [] };
   const enabledBuiltInAgentIds = params.includeDisabled
     ? Array.from(AGENT_IDS)
     : Array.from(AGENT_IDS).filter((id) => backendEnabledByTargetKey?.[resolveBackendTargetKeyV2({ kind: 'backend', backendId: id })] !== false);
@@ -280,6 +282,7 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
     const nowMs = Date.now();
     const cacheEntry = cacheKey ? readDynamicModelProbeCache(cacheKey) : null;
     const cached = cacheEntry?.kind === 'success' ? cacheEntry.value : null;
+    const cachedCanPersist = cacheEntry?.kind === 'success' && cacheEntry.cacheable !== false;
     if (cached && nowMs >= 0 && nowMs < cacheEntry!.expiresAt) {
       const dynamic = cached.availableModels.map((m) => ({
         modelId: String(m.id),
@@ -311,14 +314,15 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
         list: PreflightModelList;
         cacheable: boolean;
       }> | null>(cacheKey, async () => {
-        const capabilityId =
+        const capabilityIdSuffix =
           backendTarget?.kind === 'configuredAcpBackend'
             ? CONFIGURED_ACP_CLI_CAPABILITY_ID
             : agentId;
+        const capabilityId: CapabilityId = `cli.${capabilityIdSuffix}`;
         const res = await machineCapabilitiesInvoke(
           machineId,
           {
-            id: `cli.${capabilityId}` as any,
+            id: capabilityId,
             method: 'probeModels',
             params: {
               timeoutMs: 15_000,
@@ -371,6 +375,7 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
       }
 
       if (list && attempt?.cacheable === false && !cached) {
+        writeDynamicModelProbeCacheTransientSuccess(cacheKey, list, commitNowMs);
         writeDynamicModelProbeCacheError(cacheKey, commitNowMs);
         const dynamic = list.availableModels.map((m) => ({
           modelId: String(m.id),
@@ -397,7 +402,9 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
       }
 
       if (cached) {
-        writeDynamicModelProbeCacheSuccess(cacheKey, cached, commitNowMs);
+        if (cachedCanPersist) {
+          writeDynamicModelProbeCacheSuccess(cacheKey, cached, commitNowMs);
+        }
         const dynamic = cached.availableModels.map((m) => ({
           modelId: String(m.id),
           label: String(m.name),

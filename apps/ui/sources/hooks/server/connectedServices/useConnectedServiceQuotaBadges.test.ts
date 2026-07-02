@@ -13,6 +13,7 @@ import { renderHookAndCollectValues } from '../serverFeatureHookHarness.testHelp
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const stableCredentials = { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } as const;
+let currentCredentials: Readonly<{ token: string; secret: string }> = stableCredentials;
 
 const useSettingsSpy = vi.fn(() => ({
   connectedServicesQuotaPinnedMeterIdsByKey: {},
@@ -36,7 +37,7 @@ const { fetchAccountEncryptionModeSpy, getConnectedServiceQuotaSnapshotPlainSpy,
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
-  useAuth: () => ({ credentials: stableCredentials }),
+  useAuth: () => ({ credentials: currentCredentials }),
 }));
 
 vi.mock('@/sync/store/hooks', () => ({
@@ -60,8 +61,53 @@ vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
   getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
 }));
 
+beforeEach(() => {
+  currentCredentials = stableCredentials;
+});
+
+function buildWeeklyQuotaSnapshot(params: Readonly<{
+  profileId?: string;
+  meterId?: string;
+  label?: string;
+  used?: number;
+}> = {}) {
+  return ConnectedServiceQuotaSnapshotV1Schema.parse({
+    v: 1,
+    serviceId: 'anthropic',
+    profileId: params.profileId ?? 'work',
+    fetchedAt: 1,
+    staleAfterMs: 60_000,
+    planLabel: 'Pro',
+    accountLabel: null,
+    meters: [
+      {
+        meterId: params.meterId ?? 'weekly',
+        label: params.label ?? 'Weekly',
+        used: params.used ?? 82,
+        limit: 100,
+        unit: 'count',
+        utilizationPct: null,
+        resetsAt: null,
+        status: 'ok',
+        details: {},
+      },
+    ],
+  });
+}
+
+function sealQuotaSnapshot(snapshot: ReturnType<typeof buildWeeklyQuotaSnapshot>): string {
+  const secretBytes = new Uint8Array(32).fill(3);
+  return sealAccountScopedBlobCiphertext({
+    kind: 'connected_service_quota_snapshot',
+    material: { type: 'legacy', secret: secretBytes },
+    payload: snapshot,
+    randomBytes: (length) => new Uint8Array(length).fill(7),
+  });
+}
+
 describe('useConnectedServiceQuotaBadges', () => {
   beforeEach(() => {
+    vi.resetModules();
     vi.clearAllMocks();
   });
 
@@ -247,6 +293,90 @@ describe('useConnectedServiceQuotaBadges', () => {
     } finally {
       setIntervalSpy.mockRestore();
       vi.useRealTimers();
+    }
+  });
+
+  it('does not fetch quota snapshots in cache-only mode', async () => {
+    useFeatureEnabledSpy.mockReturnValue(true);
+    useSettingsSpy.mockReturnValue({
+      connectedServicesQuotaPinnedMeterIdsByKey: { 'anthropic/work': ['weekly'] },
+      connectedServicesQuotaSummaryStrategyByKey: {},
+      connectedServicesProfileLabelByKey: {},
+      connectedServicesDefaultProfileByServiceId: {},
+    });
+    const { useConnectedServiceQuotaBadges } = await import('./useConnectedServiceQuotaBadges');
+    const useBadgesWithOptions = useConnectedServiceQuotaBadges as (
+      profiles: ReadonlyArray<{ serviceId: string; profileId: string }>,
+      options: Readonly<{ fetchPolicy: 'cache_only' }>,
+    ) => ReturnType<typeof useConnectedServiceQuotaBadges>;
+
+    const hook = await renderHook(() => useBadgesWithOptions([
+      { serviceId: 'anthropic', profileId: 'work' },
+    ], { fetchPolicy: 'cache_only' }));
+    await flushHookEffects({ cycles: 5, turns: 5 });
+
+    expect(fetchAccountEncryptionModeSpy).not.toHaveBeenCalled();
+    expect(getConnectedServiceQuotaSnapshotPlainSpy).not.toHaveBeenCalled();
+    expect(getConnectedServiceQuotaSnapshotSealedSpy).not.toHaveBeenCalled();
+    expect(hook.getCurrent()).toEqual({ 'anthropic/work': [] });
+  });
+
+  it('uses cached quota snapshots for default cache-only badges without pinned meters or polling', async () => {
+    useFeatureEnabledSpy.mockReturnValue(true);
+    fetchAccountEncryptionModeSpy.mockResolvedValue({ mode: 'e2ee', updatedAt: 0 });
+    useSettingsSpy.mockReturnValue({
+      connectedServicesQuotaPinnedMeterIdsByKey: {},
+      connectedServicesQuotaSummaryStrategyByKey: {},
+      connectedServicesProfileLabelByKey: {},
+      connectedServicesDefaultProfileByServiceId: {},
+    });
+
+    const snapshotsByProfileId = {
+      work: buildWeeklyQuotaSnapshot({ profileId: 'work', meterId: 'weekly', label: 'Weekly', used: 82 }),
+      backup: buildWeeklyQuotaSnapshot({ profileId: 'backup', meterId: 'daily', label: 'Daily', used: 40 }),
+    } as const;
+    getConnectedServiceQuotaSnapshotSealedSpy.mockImplementation(async (_credentials, request) => {
+      const snapshot = snapshotsByProfileId[request.profileId as keyof typeof snapshotsByProfileId] ?? null;
+      if (!snapshot) return null;
+      return {
+        sealed: { format: 'account_scoped_v1', ciphertext: sealQuotaSnapshot(snapshot) },
+        metadata: { fetchedAt: snapshot.fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok' },
+      };
+    });
+
+    const profiles = [
+      { serviceId: 'anthropic', profileId: 'work' },
+      { serviceId: 'anthropic', profileId: 'backup' },
+    ] as const;
+    const { useConnectedServiceQuotaSnapshots } = await import('./useConnectedServiceQuotaSnapshots');
+    const { useConnectedServiceQuotaBadges } = await import('./useConnectedServiceQuotaBadges');
+    const fetchedValues = await renderHookAndCollectValues(() => useConnectedServiceQuotaSnapshots(profiles));
+    expect(fetchedValues.at(-1)?.snapshotsByKey['anthropic/work']?.meters[0]?.meterId).toBe('weekly');
+    expect(fetchedValues.at(-1)?.snapshotsByKey['anthropic/backup']?.meters[0]?.meterId).toBe('daily');
+
+    fetchAccountEncryptionModeSpy.mockClear();
+    getConnectedServiceQuotaSnapshotPlainSpy.mockClear();
+    getConnectedServiceQuotaSnapshotSealedSpy.mockClear();
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    try {
+      const cacheOnlyHook = await renderHook(() => useConnectedServiceQuotaBadges(profiles, { fetchPolicy: 'cache_only' }));
+      await flushHookEffects({ cycles: 5, turns: 5 });
+
+      expect(fetchAccountEncryptionModeSpy).not.toHaveBeenCalled();
+      expect(getConnectedServiceQuotaSnapshotPlainSpy).not.toHaveBeenCalled();
+      expect(getConnectedServiceQuotaSnapshotSealedSpy).not.toHaveBeenCalled();
+      expect(setTimeoutSpy).not.toHaveBeenCalled();
+      expect(cacheOnlyHook.getCurrent()['anthropic/work']?.map((badge) => badge.meterId)).toEqual(['weekly']);
+      expect(cacheOnlyHook.getCurrent()['anthropic/work']?.map((badge) => badge.text)).toEqual(
+        expect.arrayContaining([expect.stringContaining('18%')]),
+      );
+      expect(cacheOnlyHook.getCurrent()['anthropic/backup']?.map((badge) => badge.meterId)).toEqual(['daily']);
+      expect(cacheOnlyHook.getCurrent()['anthropic/backup']?.map((badge) => badge.text)).toEqual(
+        expect.arrayContaining([expect.stringContaining('60%')]),
+      );
+      await cacheOnlyHook.unmount();
+    } finally {
+      setTimeoutSpy.mockRestore();
     }
   });
 });

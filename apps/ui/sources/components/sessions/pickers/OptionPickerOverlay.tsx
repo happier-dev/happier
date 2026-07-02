@@ -91,6 +91,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
     }, [props.options]);
 
     const probe = props.probe;
+    const shouldRenderProbeControl = probe ? typeof probe.onRefresh === 'function' || probe.phase !== 'idle' : false;
     const showSearch = props.options.length >= 10;
     const normalizedQuery = query.trim().toLowerCase();
     const notes = props.notes ?? [];
@@ -103,6 +104,9 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
         : '';
     const [customValue, setCustomValue] = React.useState(selectedCustomValue);
     const [customEditorVisible, setCustomEditorVisible] = React.useState(selectedCustomValue.length > 0);
+    const customEditorOpenReasonRef = React.useRef<'selected-custom' | 'manual' | null>(
+        selectedCustomValue.length > 0 ? 'selected-custom' : null,
+    );
     const lastCommittedCustomValueRef = React.useRef<string>(selectedCustomValue.trim());
     const previousSelectedValueRef = React.useRef(selectedValue);
     const probeHintText = React.useMemo(() => {
@@ -124,13 +128,20 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
         if (selectedCustomValue.length > 0) {
             setCustomValue(selectedCustomValue);
             setCustomEditorVisible(true);
+            customEditorOpenReasonRef.current = 'selected-custom';
             lastCommittedCustomValueRef.current = selectedCustomValue.trim();
             return;
         }
-        if (customEditorVisible && previousSelectedValue === selectedValue) {
-            return;
-        }
         if (optionValues.has(selectedValue)) {
+            if (customEditorOpenReasonRef.current === 'selected-custom') {
+                customEditorOpenReasonRef.current = null;
+                setCustomEditorVisible(false);
+                return;
+            }
+            if (customEditorVisible && previousSelectedValue === selectedValue) {
+                return;
+            }
+            customEditorOpenReasonRef.current = null;
             setCustomEditorVisible(false);
         }
     }, [customEditorVisible, optionValues, selectedCustomValue, selectedValue]);
@@ -222,6 +233,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
     ]);
 
     const handleSelectOption = React.useCallback((nextValue: string) => {
+        customEditorOpenReasonRef.current = null;
         setCustomEditorVisible(false);
         props.onSelect(nextValue);
     }, [props]);
@@ -246,7 +258,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
     const selectedTileValue = customEditorVisible ? null : props.selectedValue;
     return (
         <View testID="model-picker-overlay" style={styles.section}>
-            <View style={[styles.row, styles.titleRowContainer ]}>
+            <View style={[styles.row, styles.titleRowContainer]}>
                 <View style={styles.titleRow}>
                     <Text style={styles.title}>{props.title}</Text>
                     {props.summary ? (
@@ -272,48 +284,52 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                         </View>
                     ) : null}
                 </View>
-                {props.headerAccessory ? (
-                    <View style={styles.headerAccessory}>
-                        {props.headerAccessory}
+                {props.headerAccessory || shouldRenderProbeControl ? (
+                    <View style={styles.titleRowActions}>
+                        {props.headerAccessory ? (
+                            <View style={styles.headerAccessory}>
+                                {props.headerAccessory}
+                            </View>
+                        ) : null}
+                        {shouldRenderProbeControl && probe ? (
+                            typeof probe.onRefresh === 'function' ? (
+                                <Pressable
+                                    testID={refreshTestID}
+                                    onPress={probe.phase === 'idle' ? probe.onRefresh : undefined}
+                                    style={({ pressed }) => [
+                                        styles.refreshIconButton,
+                                        pressed && probe.phase === 'idle' ? transientStyles.refreshIconButtonPressed : null,
+                                        probe.phase !== 'idle' ? transientStyles.refreshIconButtonDisabled : null,
+                                    ]}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={probe.refreshAccessibilityLabel ?? t('modelPickerOverlay.refreshModelsA11y')}
+                                    hitSlop={6}
+                                >
+                                    {probe.phase === 'idle' ? (
+                                        <Ionicons name="refresh-outline" size={18} color={theme.colors.text.secondary} />
+                                    ) : (
+                                        <ActivitySpinner
+                                            size="small"
+                                            color={theme.colors.text.secondary}
+                                            accessibilityLabel={probe.phase === 'loading'
+                                                ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
+                                                : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
+                                        />
+                                    )}
+                                </Pressable>
+                            ) : probe.phase !== 'idle' ? (
+                                <View style={styles.refreshIconButton}>
+                                    <ActivitySpinner
+                                        size="small"
+                                        color={theme.colors.text.secondary}
+                                        accessibilityLabel={probe.phase === 'loading'
+                                            ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
+                                            : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
+                                    />
+                                </View>
+                            ) : null
+                        ) : null}
                     </View>
-                ) : null}
-                {probe ? (
-                    typeof probe.onRefresh === 'function' ? (
-                        <Pressable
-                            testID={refreshTestID}
-                            onPress={probe.phase === 'idle' ? probe.onRefresh : undefined}
-                            style={({ pressed }) => [
-                                styles.refreshIconButton,
-                                pressed && probe.phase === 'idle' ? transientStyles.refreshIconButtonPressed : null,
-                                probe.phase !== 'idle' ? transientStyles.refreshIconButtonDisabled : null,
-                            ]}
-                            accessibilityRole="button"
-                            accessibilityLabel={probe.refreshAccessibilityLabel ?? t('modelPickerOverlay.refreshModelsA11y')}
-                            hitSlop={6}
-                        >
-                            {probe.phase === 'idle' ? (
-                                <Ionicons name="refresh-outline" size={18} color={theme.colors.text.secondary} />
-                            ) : (
-                                <ActivitySpinner
-                                    size="small"
-                                    color={theme.colors.text.secondary}
-                                    accessibilityLabel={probe.phase === 'loading'
-                                        ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
-                                        : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
-                                />
-                            )}
-                        </Pressable>
-                    ) : probe.phase !== 'idle' ? (
-                        <View style={styles.refreshIconButton}>
-                            <ActivitySpinner
-                                size="small"
-                                color={theme.colors.text.secondary}
-                                accessibilityLabel={probe.phase === 'loading'
-                                    ? (probe.loadingAccessibilityLabel ?? t('modelPickerOverlay.loadingModelsA11y'))
-                                    : (probe.refreshingAccessibilityLabel ?? t('modelPickerOverlay.refreshingModelsA11y'))}
-                            />
-                        </View>
-                    ) : null
                 ) : null}
             </View>
             {(filteredOptions.length > 0 || props.canEnterCustomValue) ? (
@@ -427,6 +443,7 @@ export function OptionPickerOverlay(props: OptionPickerOverlayProps) {
                             testID="model-picker-overlay-custom"
                             onPress={() => {
                                 if (customEditorVisible) return;
+                                customEditorOpenReasonRef.current = selectedCustomValue.length > 0 ? 'selected-custom' : 'manual';
                                 setCustomEditorVisible(true);
                                 if (selectedCustomValue.length > 0) {
                                     setCustomValue(selectedCustomValue);
@@ -503,16 +520,23 @@ const stylesheet = StyleSheet.create((theme) => ({
     titleRowContainer: {
         flexDirection: 'row',
         alignItems: 'flex-start',
-        justifyContent: 'space-between',
     },
     titleRow: {
+        flex: 1,
+        minWidth: 0,
         paddingHorizontal: 0,
         paddingBottom: 0,
     },
+    titleRowActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        flexShrink: 0,
+        gap: 4,
+        marginLeft: 8,
+    },
     headerAccessory: {
         flexShrink: 0,
-        marginLeft: 8,
-        marginRight: 32,
     },
     title: {
         flex: 1,

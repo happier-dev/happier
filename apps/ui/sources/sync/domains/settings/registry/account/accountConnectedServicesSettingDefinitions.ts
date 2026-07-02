@@ -1,4 +1,11 @@
-import { buildSettingArtifacts, defineSettingDefinitions } from '@happier-dev/protocol';
+import {
+    ConnectedServicesDefaultAuthByAgentIdV1Schema,
+    ConnectedServicesProviderStateSharingSettingsV1Schema,
+    DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1,
+    DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1,
+    buildSettingArtifacts,
+    defineSettingDefinitions,
+} from '@happier-dev/protocol';
 import { z } from 'zod';
 
 function objectKeyCount(value: unknown): number {
@@ -99,6 +106,47 @@ export const ACCOUNT_CONNECTED_SERVICES_SETTING_DEFINITIONS = defineSettingDefin
             privacy: 'count_only',
             identityScope: 'person',
             serializeCurrentProperties: buildQuotaSummaryStrategyProperties,
+        },
+    },
+    connectedServicesDefaultAuthByAgentIdV1: {
+        schema: ConnectedServicesDefaultAuthByAgentIdV1Schema,
+        default: DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1,
+        description: 'Default connected-service auth bindings per agent',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'count_only',
+            identityScope: 'person',
+            serializeCurrent: (value: unknown) => {
+                const parsed = ConnectedServicesDefaultAuthByAgentIdV1Schema.parse(value);
+                return objectKeyCount(parsed.bindingsByAgentId);
+            },
+        },
+    },
+    connectedServicesProviderStateSharingSettingsV1: {
+        schema: ConnectedServicesProviderStateSharingSettingsV1Schema,
+        default: DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1,
+        description: 'Connected-service provider configuration and state sharing policy',
+        storageScope: 'account',
+        analytics: {
+            trackCurrentState: true,
+            trackChanges: true,
+            valueKind: 'count',
+            privacy: 'safe',
+            identityScope: 'person',
+            serializeCurrentProperties: (value: unknown) => {
+                const parsed = ConnectedServicesProviderStateSharingSettingsV1Schema.parse(value);
+                return {
+                    overrideCount: objectKeyCount(parsed.byAgentId),
+                    acknowledgedRiskCount: objectKeyCount(parsed.acknowledgedRisksByAgentId),
+                    defaultsConfigLinked: parsed.defaults.configMode === 'linked' ? 1 : 0,
+                    defaultsConfigCopied: parsed.defaults.configMode === 'copied' ? 1 : 0,
+                    defaultsConfigIsolated: parsed.defaults.configMode === 'isolated' ? 1 : 0,
+                    defaultsStateShared: parsed.defaults.stateMode === 'shared' ? 1 : 0,
+                };
+            },
         },
     },
 });

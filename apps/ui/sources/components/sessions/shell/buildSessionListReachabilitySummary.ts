@@ -1,5 +1,5 @@
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
-import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import type { SessionListReachabilityRenderable } from '@/sync/domains/state/storage';
 import { resolveSessionWorkspaceDisplayPresentation } from '@/sync/domains/session/listing/sessionWorkspaceDisplayPresentation';
 import type { WorkspaceDisplayEllipsizeMode } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
 import type { WorkspacePathDisplayModeV1 } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
@@ -19,11 +19,13 @@ type ReachableSessionDisplay = Readonly<{
 
 export type SessionListReachabilitySummary = Readonly<{
     displayById: Map<string, ReachableSessionDisplay>;
+    displayByKey: Map<string, ReachableSessionDisplay>;
     hasMultipleMachines: boolean;
 }>;
 
 const EMPTY_SESSION_LIST_REACHABILITY_SUMMARY: SessionListReachabilitySummary = {
     displayById: new Map<string, ReachableSessionDisplay>(),
+    displayByKey: new Map<string, ReachableSessionDisplay>(),
     hasMultipleMachines: false,
 };
 const SESSION_LIST_REACHABILITY_SUMMARY_CACHE = new LruMap<string, SessionListReachabilitySummary>({
@@ -35,10 +37,11 @@ export function buildSessionListReachabilitySummary(input: Readonly<{
     machinesById: ReadonlyMap<string, unknown>;
     workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
     workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
-    resolveSessionRenderable: (item: Extract<SessionListIndexItem, { type: 'session' }>) => SessionListRenderableSession | null;
+    resolveSessionRenderable: (item: Extract<SessionListIndexItem, { type: 'session' }>) => SessionListReachabilityRenderable | null;
 }>): SessionListReachabilitySummary {
     const sessionDisplayRows: Array<Readonly<{
         sessionId: string;
+        sessionKey: string | null;
         machineId: string | null;
         machineLabel: string;
         workspaceSubtitle: string;
@@ -75,6 +78,7 @@ export function buildSessionListReachabilitySummary(input: Readonly<{
 
         sessionDisplayRows.push({
             sessionId,
+            sessionKey: item.serverId ? `${item.serverId}:${sessionId}` : null,
             machineId,
             machineLabel,
             workspaceSubtitle: workspaceDisplay.displayTitle,
@@ -104,14 +108,19 @@ export function buildSessionListReachabilitySummary(input: Readonly<{
     }
 
     const displayById = new Map<string, ReachableSessionDisplay>();
+    const displayByKey = new Map<string, ReachableSessionDisplay>();
     const machineKeys = new Set<string>();
     for (const row of sessionDisplayRows) {
-        displayById.set(row.sessionId, {
+        const display = {
             machineId: row.machineId,
             machineLabel: row.machineLabel,
             workspaceSubtitle: row.workspaceSubtitle,
             workspaceSubtitleEllipsizeMode: row.workspaceSubtitleEllipsizeMode,
-        });
+        };
+        displayById.set(row.sessionId, display);
+        if (row.sessionKey) {
+            displayByKey.set(row.sessionKey, display);
+        }
 
         const machineKey = row.machineId ?? row.machineLabel ?? '';
         if (machineKey) {
@@ -121,6 +130,7 @@ export function buildSessionListReachabilitySummary(input: Readonly<{
 
     const next = {
         displayById,
+        displayByKey,
         hasMultipleMachines: machineKeys.size > 1,
     };
 

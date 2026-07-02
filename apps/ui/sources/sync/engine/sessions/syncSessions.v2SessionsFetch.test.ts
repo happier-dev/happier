@@ -263,6 +263,113 @@ afterEach(() => {
 });
 
 describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
+    it('fetches one bounded v2 session page by default and returns the next cursor for loading more', async () => {
+        const firstPage = Array.from({ length: 50 }, (_, index) => buildSessionRow({
+            id: `session_${String(index + 1).padStart(3, '0')}`,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: `/page-1/${index}`, host: 'host' }),
+            agentState: JSON.stringify({}),
+        }));
+        const secondPage = Array.from({ length: 50 }, (_, index) => buildSessionRow({
+            id: `session_${String(index + 51).padStart(3, '0')}`,
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: `/page-2/${index}`, host: 'host' }),
+            agentState: JSON.stringify({}),
+        }));
+        const thirdPage = [buildSessionRow({
+            id: 'session_101',
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/page-3/0', host: 'host' }),
+            agentState: JSON.stringify({}),
+        })];
+        const requestSpy = vi.fn(async (path: string) => {
+            if (path === '/v2/sessions?limit=50') {
+                return jsonResponse({ sessions: firstPage, nextCursor: 'cursor_1', hasNext: true });
+            }
+            if (path === '/v2/sessions?limit=50&cursor=cursor_1') {
+                return jsonResponse({ sessions: secondPage, nextCursor: 'cursor_2', hasNext: true });
+            }
+            if (path === '/v2/sessions?limit=50&cursor=cursor_2') {
+                return jsonResponse({ sessions: thirdPage, nextCursor: null, hasNext: false });
+            }
+            throw new Error(`Unexpected path ${path}`);
+        });
+
+        const { encryption } = createEncryptionHarness();
+        const applySessions = vi.fn();
+
+        const result = await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(requestSpy.mock.calls.map((call) => call[0])).toEqual([
+            '/v2/sessions?limit=50',
+        ]);
+        expect(applySessions).toHaveBeenCalledWith(expect.arrayContaining([
+            expect.objectContaining({ id: 'session_001' }),
+        ]));
+        expect(applySessions.mock.calls[0]?.[0]).toHaveLength(50);
+        expect(result).toEqual(expect.objectContaining({
+            hasNext: true,
+            nextCursor: 'cursor_1',
+        }));
+    });
+
+    it('requests initial pinned and attention rows through the bounded page and de-duplicates rows', async () => {
+        const priorityRow = buildSessionRow({
+            id: 's_pinned_outside_first_page',
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/priority', host: 'host' }),
+            agentState: JSON.stringify({}),
+        });
+        const pageRow = buildSessionRow({
+            id: 's_regular_first_page',
+            encryptionMode: 'plain',
+            metadata: JSON.stringify({ path: '/regular', host: 'host' }),
+            agentState: JSON.stringify({}),
+        });
+        const requestSpy = vi.fn(async (path: string) => {
+            if (path === '/v2/sessions?pinnedSessionIds=s_pinned_outside_first_page&includeAttention=true&limit=50') {
+                return jsonResponse({ sessions: [priorityRow, pageRow, priorityRow], nextCursor: null, hasNext: false });
+            }
+            throw new Error(`Unexpected path ${path}`);
+        });
+
+        const { encryption } = createEncryptionHarness();
+        const applySessions = vi.fn();
+        const params = {
+            credentials: { token: 't', secret: 's' } as AuthCredentials,
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            sessionListPinnedSessionIds: ['s_pinned_outside_first_page'],
+            includeSessionListAttentionRows: true,
+            applySessions,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        } satisfies FetchAndApplySessionsParams & { sessionListPinnedSessionIds: readonly string[] };
+
+        const result = await fetchAndApplySessions(params);
+
+        expect(requestSpy.mock.calls.map((call) => call[0])).toEqual([
+            '/v2/sessions?pinnedSessionIds=s_pinned_outside_first_page&includeAttention=true&limit=50',
+        ]);
+        expect(applySessions.mock.calls[0]?.[0].map((session: { id: string }) => session.id)).toEqual([
+            's_pinned_outside_first_page',
+            's_regular_first_page',
+        ]);
+        expect(result.sessionIds).toEqual([
+            's_pinned_outside_first_page',
+            's_regular_first_page',
+        ]);
+    });
+
     it('starts encrypted metadata and agent-state row decrypts before awaiting either result', async () => {
         const requestSpy = vi.fn(async () =>
             jsonResponse({
@@ -364,13 +471,13 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         const fetchPageRequestEvent = events.find((event) => event.name === 'sync.sessions.snapshot.fetchPage.request');
         expect(fetchPageRequestEvent?.fields).toEqual(expect.objectContaining({
             loadedSessions: 0,
-            limit: 150,
+            limit: 50,
             cursorPresent: 0,
         }));
         const responseBodyEvent = events.find((event) => event.name === 'sync.sessions.snapshot.fetchPage.responseBody');
         expect(responseBodyEvent?.fields).toEqual(expect.objectContaining({
             loadedSessions: 0,
-            limit: 150,
+            limit: 50,
             responseChars: expect.any(Number),
             serverTimingCursorMs: 1.5,
             serverTimingQueryMs: 2.25,
@@ -380,7 +487,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         const responseJsonEvent = events.find((event) => event.name === 'sync.sessions.snapshot.fetchPage.responseJson');
         expect(responseJsonEvent?.fields).toEqual(expect.objectContaining({
             loadedSessions: 0,
-            limit: 150,
+            limit: 50,
             responseChars: expect.any(Number),
             serverTimingCursorMs: 1.5,
             serverTimingQueryMs: 2.25,
@@ -390,7 +497,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         const responseSchemaEvent = events.find((event) => event.name === 'sync.sessions.snapshot.fetchPage.responseSchema');
         expect(responseSchemaEvent?.fields).toEqual(expect.objectContaining({
             loadedSessions: 0,
-            limit: 150,
+            limit: 50,
             responseChars: expect.any(Number),
             serverTimingCursorMs: 1.5,
             serverTimingQueryMs: 2.25,
@@ -438,7 +545,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             log: { log: () => {} },
         });
 
-        expect(requestSpy.mock.calls[0]?.[0]).toBe('/v2/sessions/archived?limit=150');
+        expect(requestSpy.mock.calls[0]?.[0]).toBe('/v2/sessions/archived?limit=50');
     });
 
     it('accepts legacy-compatible session rows when /v2 payloads omit newer fields', async () => {
@@ -528,7 +635,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         });
 
         expect(requestSpy.mock.calls.map((call) => call[0])).toEqual([
-            '/v2/sessions?limit=150',
+            '/v2/sessions?limit=50',
             '/v1/sessions',
         ]);
         expect(appliedSessions).toEqual([
@@ -898,6 +1005,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                         id: 's_unread',
                         seq: 5,
                         lastViewedSessionSeq: 4,
+                        latestTurnStatus: 'completed',
                         encryptionMode: 'plain',
                         metadata: JSON.stringify({ path: '/repo/unread', host: 'dev' }),
                         agentState: JSON.stringify({}),
@@ -934,6 +1042,247 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 hasUnreadMessages: true,
             }),
         ], { replace: true });
+    });
+
+    it('does not mark first-usable non-terminal rows unread from raw seq alone', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_non_displayable_tail',
+                        seq: 946,
+                        lastViewedSessionSeq: 945,
+                        latestTurnStatus: 'in_progress',
+                        encryptionMode: 'plain',
+                        metadata: JSON.stringify({ path: '/repo/tail', host: 'dev' }),
+                        agentState: JSON.stringify({}),
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption } = createEncryptionHarness();
+        const applySessionListRenderables = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions: () => {},
+            applySessionListRenderables,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(applySessionListRenderables).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's_non_displayable_tail',
+                lastViewedSessionSeq: 945,
+                hasUnreadMessages: false,
+            }),
+        ], { replace: true });
+    });
+
+    it('preserves cached unread for first-usable non-terminal rows when readable transcript activity is unavailable', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_cached_unread_tail',
+                        seq: 946,
+                        lastViewedSessionSeq: 945,
+                        latestTurnStatus: 'in_progress',
+                        encryptionMode: 'plain',
+                        metadataVersion: 2,
+                        agentStateVersion: 0,
+                        metadata: JSON.stringify({ path: '/repo/tail', host: 'dev' }),
+                        agentState: JSON.stringify({}),
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption } = createEncryptionHarness();
+        const applySessionListRenderables = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions: () => {},
+            applySessionListRenderables,
+            cachedSessionListEntries: {
+                s_cached_unread_tail: {
+                    sessionId: 's_cached_unread_tail',
+                    seq: 946,
+                    metadataVersion: 2,
+                    agentStateVersion: 0,
+                    updatedAt: 2,
+                    createdAt: 1,
+                    active: true,
+                    activeAt: 2,
+                    archivedAt: null,
+                    lastViewedSessionSeq: 945,
+                    path: '/repo/tail',
+                    host: 'dev',
+                    hasUnreadMessages: true,
+                },
+            },
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(applySessionListRenderables).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's_cached_unread_tail',
+                lastViewedSessionSeq: 945,
+                hasUnreadMessages: true,
+            }),
+        ], { replace: true });
+    });
+
+    it('preserves current ready metadata for first-usable non-terminal rows when v2 refetch omits it', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_ready_refetch',
+                        seq: 10,
+                        lastViewedSessionSeq: 8,
+                        latestTurnStatus: 'in_progress',
+                        encryptionMode: 'plain',
+                        metadata: JSON.stringify({ path: '/repo/ready', host: 'dev' }),
+                        agentState: JSON.stringify({}),
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption } = createEncryptionHarness();
+        const applySessionListRenderables = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions: () => {},
+            applySessionListRenderables,
+            getCurrentSessionListRenderable: (sessionId) => sessionId === 's_ready_refetch'
+                ? {
+                    id: 's_ready_refetch',
+                    seq: 10,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    archivedAt: null,
+                    lastViewedSessionSeq: 8,
+                    latestTurnStatus: 'in_progress',
+                    latestReadyEventSeq: 9,
+                    latestReadyEventAt: 9_000,
+                    metadataVersion: 1,
+                    agentStateVersion: 1,
+                    metadata: { path: '/repo/ready' },
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                    hasUnreadMessages: true,
+                } as any
+                : null,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(applySessionListRenderables).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's_ready_refetch',
+                latestReadyEventSeq: 9,
+                latestReadyEventAt: 9_000,
+                hasUnreadMessages: true,
+            }),
+        ], { replace: true });
+    });
+
+    it('uses server row attention projection fields when building first-usable renderables and hydrated sessions', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_row_projection',
+                        seq: 10,
+                        lastViewedSessionSeq: 8,
+                        active: true,
+                        activeAt: 1_000,
+                        thinking: true,
+                        thinkingAt: 2_000,
+                        pendingPermissionRequestCount: 1,
+                        pendingUserActionRequestCount: 0,
+                        pendingRequestObservedAt: 2_100,
+                        latestReadyEventSeq: 9,
+                        latestReadyEventAt: 2_200,
+                        latestTurnStatus: 'in_progress',
+                        latestTurnStatusObservedAt: 1_900,
+                        rollbackEligibleTurnStarts: [1, 3],
+                        encryptionMode: 'plain',
+                        metadata: JSON.stringify({ path: '/repo/projected', host: 'dev' }),
+                        agentState: JSON.stringify({}),
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption } = createEncryptionHarness();
+        const applySessions = vi.fn();
+        const applySessionListRenderables = vi.fn();
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            applySessionListRenderables,
+            requiredHydrationSessionIds: ['s_row_projection'],
+            awaitSessionListHydration: true,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(applySessionListRenderables).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's_row_projection',
+                thinking: true,
+                thinkingAt: 2_000,
+                pendingRequestObservedAt: 2_100,
+                latestReadyEventSeq: 9,
+                latestReadyEventAt: 2_200,
+                rollbackEligibleTurnStarts: [1, 3],
+                hasPendingPermissionRequests: true,
+                hasUnreadMessages: true,
+            }),
+        ], { replace: true });
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's_row_projection',
+                thinking: true,
+                thinkingAt: 2_000,
+                pendingRequestObservedAt: 2_100,
+                latestReadyEventSeq: 9,
+                latestReadyEventAt: 2_200,
+                rollbackEligibleTurnStarts: [1, 3],
+            }),
+        ]);
     });
 
     it('reuses warm cache list data when metadata and agentState versions match and the canonical session already exists', async () => {
@@ -1121,6 +1470,75 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 agentStateVersion: 9,
             }),
         ]);
+    });
+
+    it('skips non-required background hydration when the current row renderable is already complete and current', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({
+                        id: 's_current_renderable',
+                        seq: 11,
+                        updatedAt: 30,
+                        metadata: 'encrypted-meta-current',
+                        metadataVersion: 7,
+                        agentState: 'encrypted-agent-current',
+                        agentStateVersion: 9,
+                    }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption, decryptMetadata, decryptAgentState } = createEncryptionHarness();
+        const applySessions = vi.fn();
+        const currentRenderable = buildSessionListRenderableFromSession(buildExistingSession({
+            id: 's_current_renderable',
+            seq: 11,
+            createdAt: 1,
+            updatedAt: 30,
+            active: true,
+            activeAt: 1,
+            archivedAt: null,
+            metadata: { name: 'Current renderable title', path: '/home/u/current', host: 'localhost' },
+            metadataVersion: 7,
+            agentState: {
+                kind: 'agent_state',
+                hasPendingPermissionRequests: false,
+                hasPendingUserActionRequests: true,
+            },
+            agentStateVersion: 9,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        }));
+        const sessionListBackgroundHydrationYield = vi.fn(async () => {});
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            applySessionListRenderables: vi.fn(),
+            getExistingSession: () => null,
+            getCurrentSessionListRenderable: (sessionId) => (
+                sessionId === 's_current_renderable' ? currentRenderable : null
+            ),
+            cachedSessionListEntries: {},
+            sessionListBackgroundHydrationYield,
+            awaitSessionListHydration: true,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(sessionListBackgroundHydrationYield).not.toHaveBeenCalled();
+        expect(decryptMetadata).not.toHaveBeenCalled();
+        expect(decryptAgentState).not.toHaveBeenCalled();
+        expect(applySessions).not.toHaveBeenCalled();
     });
 
     it('uses stale warm cache metadata for the first render while hydrating the newer row', async () => {
@@ -1698,6 +2116,92 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         ]);
     });
 
+    it('waits for the background hydration gate before eager rows while allowing required route active and priority rows', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({ id: 's_eager', active: false, activeAt: 5, dataEncryptionKey: 'k-eager', metadata: 'meta-eager', metadataVersion: 2 }),
+                    buildSessionRow({ id: 's_priority', active: false, activeAt: 4, dataEncryptionKey: 'k-priority', metadata: 'meta-priority', metadataVersion: 2, pendingUserActionRequestCount: 1 }),
+                    buildSessionRow({ id: 's_background', active: false, activeAt: 3, dataEncryptionKey: 'k-background', metadata: 'meta-background', metadataVersion: 2 }),
+                    buildSessionRow({ id: 's_required', active: false, activeAt: 2, dataEncryptionKey: 'k-required', metadata: 'meta-required', metadataVersion: 2 }),
+                    buildSessionRow({ id: 's_route', active: false, activeAt: 1, dataEncryptionKey: 'k-route', metadata: 'meta-route', metadataVersion: 2 }),
+                    buildSessionRow({ id: 's_active_surface', active: false, activeAt: 6, dataEncryptionKey: 'k-active-surface', metadata: 'meta-active-surface', metadataVersion: 2 }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+        const staleCacheEntry = (sessionId: string, path: string) => ({
+            sessionId,
+            metadataVersion: 1,
+            agentStateVersion: 0,
+            updatedAt: 1,
+            createdAt: 1,
+            active: false,
+            activeAt: 1,
+            archivedAt: null,
+            path,
+        });
+
+        const { encryption, decryptMetadata } = createEncryptionHarness();
+        const applySessions = vi.fn();
+        const gate = createDeferred<void>();
+        let gateOpen = false;
+        const sessionListBackgroundHydrationGate = vi.fn(() => (gateOpen ? Promise.resolve() : gate.promise));
+        const params: FetchAndApplySessionsParams = {
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+            prioritizeSessionIds: ['s_route'],
+            activeSessionIds: ['s_active_surface'],
+            requiredHydrationSessionIds: ['s_required'],
+            sessionListEagerHydrationCount: 1,
+            sessionListBackgroundHydrationConcurrencyLimit: 1,
+            sessionListBackgroundHydrationYield: async () => {},
+            sessionListBackgroundHydrationGate,
+            cachedSessionListEntries: {
+                s_eager: staleCacheEntry('s_eager', '/eager'),
+                s_priority: staleCacheEntry('s_priority', '/priority'),
+                s_background: staleCacheEntry('s_background', '/background'),
+                s_required: staleCacheEntry('s_required', '/required'),
+                s_route: staleCacheEntry('s_route', '/route'),
+                s_active_surface: staleCacheEntry('s_active_surface', '/active-surface'),
+            } satisfies NonNullable<FetchAndApplySessionsParams['cachedSessionListEntries']>,
+            applySessionListRenderables: vi.fn(),
+        };
+
+        await fetchAndApplySessions(params);
+
+        await expect.poll(() => decryptMetadata.mock.calls.map((call) => call[1])).toEqual([
+            'meta-required',
+            'meta-route',
+            'meta-active-surface',
+            'meta-priority',
+        ]);
+        expect(sessionListBackgroundHydrationGate).toHaveBeenCalledTimes(1);
+        expect(applySessions.mock.calls.flatMap((call) => call[0].map((session: { id: string }) => session.id))).toEqual([
+            's_required',
+            's_route',
+            's_active_surface',
+            's_priority',
+        ]);
+
+        gateOpen = true;
+        gate.resolve();
+        await expect.poll(() => decryptMetadata.mock.calls.map((call) => call[1])).toEqual([
+            'meta-required',
+            'meta-route',
+            'meta-active-surface',
+            'meta-priority',
+            'meta-eager',
+            'meta-background',
+        ]);
+    });
+
     it('renders placeholder rows immediately on empty cache and hydrates in the background', async () => {
         const requestSpy = vi.fn(async () =>
             jsonResponse({
@@ -1931,6 +2435,85 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             failedRows: 0,
             staleSkippedRows: 0,
         }));
+    });
+
+    it('amortizes background hydration yields over configured row intervals', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({ id: 's_yield_1', active: false, dataEncryptionKey: 'k-yield-1', metadata: 'meta-yield-1' }),
+                    buildSessionRow({ id: 's_yield_2', active: false, dataEncryptionKey: 'k-yield-2', metadata: 'meta-yield-2' }),
+                    buildSessionRow({ id: 's_yield_3', active: false, dataEncryptionKey: 'k-yield-3', metadata: 'meta-yield-3' }),
+                    buildSessionRow({ id: 's_yield_4', active: false, dataEncryptionKey: 'k-yield-4', metadata: 'meta-yield-4' }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption, decryptMetadata } = createEncryptionHarness();
+        const applySessions = vi.fn();
+        const applySessionListRenderables = vi.fn();
+        const sessionListBackgroundHydrationYield = vi.fn(async () => {});
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 60_000,
+        });
+        syncPerformanceTelemetry.reset();
+
+        const params = {
+            serverId: 'server-a',
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            applySessionListRenderables,
+            cachedSessionListEntries: {},
+            sessionListBackgroundHydrationConcurrencyLimit: 1,
+            sessionListBackgroundHydrationApplyBatchSize: 4,
+            sessionListBackgroundHydrationApplyFlushDelayMs: 1_000,
+            sessionListBackgroundHydrationYieldEveryRows: 2,
+            sessionListBackgroundHydrationYield,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        } satisfies FetchAndApplySessionsParams & { sessionListBackgroundHydrationYieldEveryRows: number };
+
+        await fetchAndApplySessions(params);
+
+        await expect.poll(() => decryptMetadata.mock.calls.map((call) => call[1])).toEqual([
+            'meta-yield-1',
+            'meta-yield-2',
+            'meta-yield-3',
+            'meta-yield-4',
+        ]);
+        await expect.poll(() => applySessions.mock.calls.length).toBe(1);
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({ id: 's_yield_1' }),
+            expect.objectContaining({ id: 's_yield_2' }),
+            expect.objectContaining({ id: 's_yield_3' }),
+            expect.objectContaining({ id: 's_yield_4' }),
+        ]);
+        expect(sessionListBackgroundHydrationYield).toHaveBeenCalledTimes(2);
+
+        const telemetryEvents = syncPerformanceTelemetry.snapshot().events;
+        const backgroundHydrationEvent = telemetryEvents.find((event) => event.name === 'sync.sessions.snapshot.backgroundHydration');
+        expect(backgroundHydrationEvent?.fields).toEqual(expect.objectContaining({
+            sessions: 4,
+            backgroundRows: 4,
+            yieldEveryRows: 2,
+        }));
+        const backgroundAttributionEvent = telemetryEvents.find((event) => event.name === 'sync.sessions.snapshot.backgroundHydration.attribution');
+        expect(backgroundAttributionEvent?.fields).toEqual(expect.objectContaining({
+            sessions: 4,
+            backgroundRows: 4,
+            yieldEveryRows: 2,
+        }));
+        const yieldEvent = telemetryEvents.find((event) => event.name === 'sync.sessions.snapshot.hydrationYield');
+        expect(yieldEvent?.count).toBe(2);
+        expect(yieldEvent?.fields.rows).toBe(2);
+        expect(yieldEvent?.fields.backgroundRows).toBe(2);
     });
 
     it('skips queued background hydration for a session deleted before apply flush', async () => {
@@ -2399,7 +2982,9 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         });
 
         firstMetadataDecrypt.resolve({ decrypted: 'meta-superseded-required' });
-        await expect(firstFetch).resolves.toBeUndefined();
+        await expect(firstFetch).resolves.toEqual(expect.objectContaining({
+            sessionIds: ['s_superseded_required'],
+        }));
 
         expect(applySessions.mock.calls.flatMap((call) => call[0].map((session: { id: string }) => session.id)))
             .not.toContain('s_superseded_required');
@@ -2712,6 +3297,56 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 }),
             }),
         ]);
+    });
+
+    it('does not spend background hydration yield or decrypt work after the caller scope becomes inactive', async () => {
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [
+                    buildSessionRow({ id: 's_stale_first', metadata: 'meta-stale-first' }),
+                    buildSessionRow({ id: 's_stale_second', metadata: 'meta-stale-second' }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+
+        const { encryption, decryptMetadata } = createEncryptionHarness();
+        const applySessions = vi.fn();
+        const applySessionListRenderables = vi.fn();
+        const yieldResolvers: Array<() => void> = [];
+        const sessionListBackgroundHydrationYield = vi.fn(
+            () => new Promise<void>((resolve) => {
+                yieldResolvers.push(resolve);
+            }),
+        );
+        let active = true;
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            request: requestSpy,
+            applySessions,
+            applySessionListRenderables,
+            cachedSessionListEntries: {},
+            shouldContinue: () => active,
+            sessionListBackgroundHydrationConcurrencyLimit: 1,
+            sessionListBackgroundHydrationYield,
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        await expect.poll(() => sessionListBackgroundHydrationYield.mock.calls.length).toBe(1);
+        active = false;
+        yieldResolvers.shift()?.();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(sessionListBackgroundHydrationYield).toHaveBeenCalledTimes(1);
+        expect(decryptMetadata).not.toHaveBeenCalled();
+        expect(applySessions).not.toHaveBeenCalled();
+        for (const resolve of yieldResolvers) resolve();
     });
 
     it('skips background hydration when the caller scope is no longer active', async () => {
@@ -3567,6 +4202,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             encryption,
             sessionDataKeys,
             request: requestSpy,
+            sessionListMaxPages: 2,
             applySessions: (sessions) => {
                 appliedSessions.push(...(sessions as unknown as Array<Record<string, unknown>>));
             },

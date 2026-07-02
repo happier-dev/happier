@@ -4,10 +4,10 @@ import Animated from 'react-native-reanimated';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { t } from '@/text';
-import type { TreeDropResult, TreeInstructionVisual } from '@/components/ui/treeDragDrop';
+import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 
 import type { SessionListProjectHeaderViewModel } from './sessionListProjectHeaderViewModels';
-import { CollapsibleSectionHeader, FolderGroupHeader, ProjectGroupHeader } from './sessionListChrome';
+import { CollapsibleSectionHeader, FolderGroupHeader, ProjectGroupHeader, SessionListHeaderControls } from './sessionListChrome';
 import type { RegisterSessionFolderDropTarget } from './useSessionListViewState';
 import {
     SessionListHeaderFrame,
@@ -15,17 +15,19 @@ import {
     type UnregisterSessionListTreeRowBounds,
 } from './SessionListHeaderFrame';
 import { resolveSessionListHeaderViewState } from './resolveSessionListHeaderViewState';
+import { isSessionListPrimaryHeaderKind } from './sessionListPrimaryHeader';
 import {
     resolveSessionListHeaderActionHandlers,
     type CreateSessionFromWorkspaceScopeHandler,
 } from './resolveSessionListHeaderActionHandlers';
 import {
     useSessionInlineDrag,
-    type SessionInlineDragVisualSharedValues,
+    type UseSessionInlineDragCancelEvent,
     type UseSessionInlineDragDropResultEvent,
+    type UseSessionInlineDragResolvedDrop,
     type UseSessionInlineDragResolveDropResultEvent,
 } from './useSessionInlineDrag';
-import { treeRowId } from './drop-resolution/treeRowId';
+import { resolveWorkspaceRootTreeRowId, treeRowId } from './drop-resolution/treeRowId';
 
 type SessionListHeaderItemProps = Readonly<{
     item: Extract<SessionListIndexItem, { type: 'header' }>;
@@ -58,15 +60,15 @@ type SessionListHeaderItemProps = Readonly<{
     workspaceFaviconsEnabled?: boolean;
     workspaceMachineSubtitlesEnabled?: boolean;
     dataIndex?: number;
-    dropVisual?: SessionInlineDragVisualSharedValues;
-    activeDropVisual?: TreeInstructionVisual;
+    overlayShared?: TreeDropOverlaySharedValues;
     onRegisterTreeRowBounds?: RegisterSessionListTreeRowBounds;
     onUnregisterTreeRowBounds?: UnregisterSessionListTreeRowBounds;
     onFolderDragStart?: (sessionKey: string) => void;
-    resolveDropResult?: (event: UseSessionInlineDragResolveDropResultEvent) => TreeDropResult;
+    resolveDropResult?: (event: UseSessionInlineDragResolveDropResultEvent) => UseSessionInlineDragResolvedDrop;
     onFolderDragUpdate?: (event: UseSessionInlineDragDropResultEvent) => void;
+    onFolderDragCancel?: (event: UseSessionInlineDragCancelEvent) => void;
     onFolderDropResult?: (event: UseSessionInlineDragDropResultEvent) => void;
-    activeFolderDropTargetId?: string | null;
+    headerControls?: Omit<React.ComponentProps<typeof SessionListHeaderControls>, 'onMenuOpenChange'>;
 }>;
 
 export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemProps) => {
@@ -90,20 +92,18 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
                 onMoveDown={() => props.onMoveFolderDown?.(props.item)}
                 item={props.item}
                 onRegisterDropTarget={props.onRegisterSessionFolderDropTarget}
-                activeDropTargetId={props.activeFolderDropTargetId}
             />
         );
-        const framedFolderHeader = rowId && props.activeDropVisual && props.onRegisterTreeRowBounds && props.onUnregisterTreeRowBounds ? (
+        const framedFolderHeader = rowId && props.onRegisterTreeRowBounds && props.onUnregisterTreeRowBounds ? (
             <SessionListHeaderFrame
                 treeRowId={rowId}
-                activeDropVisual={props.activeDropVisual}
                 onRegisterTreeRowBounds={props.onRegisterTreeRowBounds}
                 onUnregisterTreeRowBounds={props.onUnregisterTreeRowBounds}
             >
                 {folderHeader}
             </SessionListHeaderFrame>
         ) : folderHeader;
-        if (!props.item.folderId || !props.dropVisual || !props.resolveDropResult || !props.onFolderDropResult) {
+        if (!props.item.folderId || !props.overlayShared || !props.resolveDropResult || !props.onFolderDropResult) {
             return framedFolderHeader;
         }
         return (
@@ -111,9 +111,10 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
                 sessionKey={`folder:${props.item.folderId}`}
                 groupKey={props.item.groupKey ?? `folder:${props.item.folderId}`}
                 dataIndex={props.dataIndex ?? 0}
-                dropVisual={props.dropVisual}
+                overlayShared={props.overlayShared}
                 onDragStart={props.onFolderDragStart}
                 onDragUpdate={props.onFolderDragUpdate}
+                onDragCancel={props.onFolderDragCancel}
                 resolveDropResult={props.resolveDropResult}
                 onDropResult={props.onFolderDropResult}
             >
@@ -142,7 +143,7 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
     }
 
     if (headerViewState.kind === 'project') {
-        const rowId = treeRowId.workspaceRoot(props.item.groupKey ?? props.item.workspaceKey ?? headerViewState.displayTitle);
+        const rowId = resolveWorkspaceRootTreeRowId(props.item, headerViewState.displayTitle);
         const projectHeader = (
             <ProjectGroupHeader
                 item={props.item}
@@ -160,21 +161,34 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
                 collapsed={headerViewState.collapsed}
                 onToggleCollapse={headerActionHandlers.onToggleCollapse}
                 onRegisterDropTarget={props.onRegisterSessionFolderDropTarget}
-                activeDropTargetId={props.activeFolderDropTargetId}
             />
         );
-        if (!props.activeDropVisual || !props.onRegisterTreeRowBounds || !props.onUnregisterTreeRowBounds) {
-            return projectHeader;
-        }
-        return (
+        const framedProjectHeader = props.onRegisterTreeRowBounds && props.onUnregisterTreeRowBounds ? (
             <SessionListHeaderFrame
                 treeRowId={rowId}
-                activeDropVisual={props.activeDropVisual}
                 onRegisterTreeRowBounds={props.onRegisterTreeRowBounds}
                 onUnregisterTreeRowBounds={props.onUnregisterTreeRowBounds}
             >
                 {projectHeader}
             </SessionListHeaderFrame>
+        ) : projectHeader;
+        if (!props.item.workspaceScopeHint || !props.overlayShared || !props.resolveDropResult || !props.onFolderDropResult) {
+            return framedProjectHeader;
+        }
+        return (
+            <DraggableFolderHeaderFrame
+                sessionKey={rowId}
+                groupKey={props.item.groupKey ?? props.item.workspaceKey ?? headerViewState.displayTitle}
+                dataIndex={props.dataIndex ?? 0}
+                overlayShared={props.overlayShared}
+                onDragStart={props.onFolderDragStart}
+                onDragUpdate={props.onFolderDragUpdate}
+                onDragCancel={props.onFolderDragCancel}
+                resolveDropResult={props.resolveDropResult}
+                onDropResult={props.onFolderDropResult}
+            >
+                {framedProjectHeader}
+            </DraggableFolderHeaderFrame>
         );
     }
 
@@ -183,7 +197,8 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
             title={headerViewState.title}
             collapsed={headerViewState.collapsed}
             onPress={headerActionHandlers.onToggleCollapse}
-            showOrderingMenu={props.item.headerKind === 'active' || props.item.headerKind === 'inactive'}
+            showOrderingMenu={isSessionListPrimaryHeaderKind(props.item.headerKind)}
+            headerControls={props.headerControls}
         />
     );
 });
@@ -192,10 +207,11 @@ const DraggableFolderHeaderFrame = React.memo(function DraggableFolderHeaderFram
     sessionKey: string;
     groupKey: string;
     dataIndex: number;
-    dropVisual: SessionInlineDragVisualSharedValues;
+    overlayShared: TreeDropOverlaySharedValues;
     onDragStart?: (sessionKey: string) => void;
     onDragUpdate?: (event: UseSessionInlineDragDropResultEvent) => void;
-    resolveDropResult: (event: UseSessionInlineDragResolveDropResultEvent) => TreeDropResult;
+    onDragCancel?: (event: UseSessionInlineDragCancelEvent) => void;
+    resolveDropResult: (event: UseSessionInlineDragResolveDropResultEvent) => UseSessionInlineDragResolvedDrop;
     onDropResult: (event: UseSessionInlineDragDropResultEvent) => void;
     children: React.ReactNode;
 }>) {
@@ -205,9 +221,10 @@ const DraggableFolderHeaderFrame = React.memo(function DraggableFolderHeaderFram
         sessionKey: props.sessionKey,
         groupKey: props.groupKey,
         dataIndex: props.dataIndex,
-        dropVisual: props.dropVisual,
+        overlayShared: props.overlayShared,
         onDragStart: props.onDragStart ?? (() => {}),
         onDragUpdate: props.onDragUpdate,
+        onDragCancel: props.onDragCancel,
         resolveDropResult: props.resolveDropResult,
         onDropResult: props.onDropResult,
     });

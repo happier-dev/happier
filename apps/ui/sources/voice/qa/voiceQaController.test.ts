@@ -920,7 +920,9 @@ describe('voiceQaController', () => {
   });
 
   it('surfaces failed local voice tool results in the QA transcript', async () => {
-    const ensureSessionVisibleForMessageRoute = vi.spyOn(sync, 'ensureSessionVisibleForMessageRoute').mockResolvedValue(true);
+    const ensureSessionVisibleForMessageRoute = vi
+      .spyOn(sync, 'ensureSessionVisibleForMessageRoute')
+      .mockResolvedValue({ kind: 'available', sessionId: 's1' });
     const refreshSessionMessages = vi.spyOn(sync, 'refreshSessionMessages').mockResolvedValue();
     const sendLocalTurn = vi.fn(async (_sessionId: string, prompt: string) => {
       if (prompt.startsWith('VOICE_TOOL_RESULTS_JSON:')) {

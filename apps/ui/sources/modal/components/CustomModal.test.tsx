@@ -73,6 +73,20 @@ function CallbackChromeModal(
     return React.createElement('CallbackChromeModal', props);
 }
 
+function ViewportMarginChromeModal(
+    props: CustomModalInjectedProps & Readonly<{ label: string; verticalMargin: number }>,
+) {
+    useModalCardChrome(props.setChrome, React.useMemo(() => ({
+        kind: 'card' as const,
+        title: 'Viewport margin chrome',
+        dimensions: {
+            size: 'md' as const,
+            viewportMargin: { horizontal: 12, vertical: props.verticalMargin },
+        },
+    }), [props.verticalMargin]));
+    return React.createElement('ViewportMarginChromeModal', props);
+}
+
 function LegacyOnRequestCloseModal(
     props: CustomModalInjectedProps & Readonly<{ label: string; onRequestClose: () => void }>,
 ) {
@@ -119,7 +133,7 @@ describe('CustomModal', () => {
                 actions: chromeActions,
                 footer: chromeFooter,
                 closeButtonTestID: 'chrome-close',
-                layout: 'fill',
+                scrollHost: 'body',
                 bodyScroll: 'auto',
                 dimensions: {
                     size: 'lg',
@@ -135,7 +149,7 @@ describe('CustomModal', () => {
         expect(modalCardFrame.props.actions).toBe(chromeActions);
         expect(modalCardFrame.props.footer).toBe(chromeFooter);
         expect(modalCardFrame.props.closeButtonTestID).toBe('chrome-close');
-        expect(modalCardFrame.props.layout).toBe('fill');
+        expect(modalCardFrame.props.scrollHost).toBe('body');
         expect(modalCardFrame.props.bodyScroll).toBe('auto');
         expect(screen.findByType(ChromeModal).props.label).toBe('browse');
 
@@ -156,7 +170,7 @@ describe('CustomModal', () => {
 
         const modalCardFrame = screen.findByType(ModalCardFrame);
         expect(modalCardFrame.props.title).toBe('Self chrome');
-        expect(modalCardFrame.props.layout).toBe('fit');
+        expect(modalCardFrame.props.scrollHost).toBeUndefined();
         expect(screen.findByType(SelfChromeModal).props.label).toBe('self');
     });
 
@@ -171,7 +185,7 @@ describe('CustomModal', () => {
                 subtitle: 'Base subtitle',
                 actions: React.createElement('BaseActions'),
                 testID: 'base-test',
-                layout: 'fill',
+                scrollHost: 'body',
                 dimensions: { size: 'lg' },
             },
         });
@@ -180,7 +194,7 @@ describe('CustomModal', () => {
         expect(modalCardFrame.props.title).toBe('Base title');
         expect(modalCardFrame.props.subtitle).toBe('Base subtitle');
         expect(modalCardFrame.props.actions?.type).toBe('BaseActions');
-        expect(modalCardFrame.props.layout).toBe('fill');
+        expect(modalCardFrame.props.scrollHost).toBe('body');
         expect(modalCardFrame.props.footer?.type).toBe('PatchedFooter');
     });
 
@@ -219,6 +233,44 @@ describe('CustomModal', () => {
 
         const modalCardFrame = screen.findByType(ModalCardFrame);
         expect(modalCardFrame.props.footer?.props.onPress).toBe(secondAction);
+    });
+
+    it('republishes chrome when only viewport margin dimensions change', async () => {
+        const { CustomModal } = await import('./CustomModal');
+        const onClose = vi.fn();
+
+        const screen = await renderScreen(React.createElement(CustomModal, {
+            config: {
+                id: 'test-modal',
+                type: 'custom',
+                component: ViewportMarginChromeModal,
+                props: {
+                    label: 'viewport',
+                    verticalMargin: 12,
+                },
+            },
+            onClose,
+            visible: true,
+        }));
+
+        await screen.update(React.createElement(CustomModal, {
+            config: {
+                id: 'test-modal',
+                type: 'custom',
+                component: ViewportMarginChromeModal,
+                props: {
+                    label: 'viewport',
+                    verticalMargin: 80,
+                },
+            },
+            onClose,
+            visible: true,
+        }));
+
+        const modalCardFrame = screen.findByType(ModalCardFrame);
+        expect(modalCardFrame.props.dimensions).toEqual(expect.objectContaining({
+            viewportMargin: { horizontal: 12, vertical: 80 },
+        }));
     });
 
     it('does not invoke legacy `props.onRequestClose` when dismissing', async () => {

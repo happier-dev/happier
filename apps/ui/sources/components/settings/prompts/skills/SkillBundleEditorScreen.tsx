@@ -8,7 +8,8 @@ import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
 import { sync } from '@/sync/sync';
 import { storage, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
-import { CodeEditor } from '@/components/ui/code/editor/CodeEditor';
+import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
+import { MarkdownCodeEditorField } from '@/components/ui/markdown/editor/MarkdownCodeEditorField';
 import { SETTINGS_TEXT_INPUT_METRICS } from '@/components/ui/forms/settingsTextInputMetrics';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -82,6 +83,9 @@ export const SkillBundleEditorScreen = React.memo((props: Readonly<{ artifactId:
   const [tagsText, setTagsText] = React.useState('');
   const [saving, setSaving] = React.useState(false);
   const [supportingFiles, setSupportingFiles] = React.useState<Array<{ path: string; contentKind: 'utf8' | 'binary' }>>([]);
+  // Flushed before reading `skillMarkdown` on save so the latest rich/raw edit
+  // (which may still be debounced inside the active editor surface) is captured.
+  const editorRef = React.useRef<CodeEditorHandle | null>(null);
   const isTitleDirtyRef = React.useRef(false);
   const isSkillMarkdownDirtyRef = React.useRef(false);
   const isFolderDirtyRef = React.useRef(false);
@@ -190,15 +194,19 @@ export const SkillBundleEditorScreen = React.memo((props: Readonly<{ artifactId:
 
     try {
       setSaving(true);
+      // Flush any debounced edit out of the active editor surface, then read the
+      // freshest skill markdown from its handle (state may not have caught up yet).
+      await editorRef.current?.flushPendingChange();
+      const latestSkillMarkdown = editorRef.current?.getValue() ?? skillMarkdown;
       const ensuredFolder = ensurePromptFolderByName(promptFoldersV1, folderName);
       if (ensuredFolder.promptFoldersV1 !== promptFoldersV1) {
         setPromptFoldersV1(ensuredFolder.promptFoldersV1);
       }
       const tags = normalizePromptTags(tagsText);
       if (!props.artifactId) {
-        await createSkillPromptBundle({ title: title.trim(), skillMarkdown, folderId: ensuredFolder.folderId, tags });
+        await createSkillPromptBundle({ title: title.trim(), skillMarkdown: latestSkillMarkdown, folderId: ensuredFolder.folderId, tags });
       } else {
-        await updateSkillPromptBundle({ artifactId: props.artifactId, title: title.trim(), skillMarkdown, folderId: ensuredFolder.folderId, tags });
+        await updateSkillPromptBundle({ artifactId: props.artifactId, title: title.trim(), skillMarkdown: latestSkillMarkdown, folderId: ensuredFolder.folderId, tags });
       }
       safeRouterBack({ router, navigation, fallbackHref: '/settings/prompts/skills' });
     } catch (err) {
@@ -276,18 +284,18 @@ export const SkillBundleEditorScreen = React.memo((props: Readonly<{ artifactId:
         <ItemGroup title={t('promptLibrary.skillContent')}>
           <View style={{ padding: 12 }}>
             <View style={styles.editorContainer}>
-              <CodeEditor
+              <MarkdownCodeEditorField
                 resetKey={props.artifactId ?? 'new'}
                 testID="skillBundle.editor"
                 value={skillMarkdown}
-                language="markdown"
+                filePath="SKILL.md"
                 onChange={(nextValue) => {
                   setSkillMarkdown(nextValue);
                   isSkillMarkdownDirtyRef.current = true;
                 }}
                 readOnly={isLoading}
+                editorRef={editorRef}
                 wrapLines={wrapLinesInDiffs !== false}
-                showLineNumbers={false}
               />
             </View>
           </View>

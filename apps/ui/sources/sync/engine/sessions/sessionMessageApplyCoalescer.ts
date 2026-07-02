@@ -1,5 +1,6 @@
 import type { NormalizedMessage } from '@/sync/typesRaw';
 import { markStreamingMessagesAppliedForSessionUiTelemetry } from '@/sync/runtime/performance/sessionUiTelemetry';
+import { recordRealtimeFanoutCoalescerActivity } from '@/sync/runtime/performance/realtimeFanoutTelemetry';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
 export type SessionMessageApplyCoalescerConfig = Readonly<{
@@ -25,6 +26,23 @@ type SessionQueueState = {
     queued: QueuedMessage[];
     timer: TimerHandle | null;
 };
+
+type RealtimeFanoutCoalescerActivityKind = 'enqueue' | 'immediate' | 'flush' | 'drop';
+
+function recordCoalescerFanoutActivity(
+    kind: RealtimeFanoutCoalescerActivityKind,
+    sessionId: string,
+    messages: number,
+    queued: number,
+): void {
+    if (!syncPerformanceTelemetry.isEnabled()) return;
+    recordRealtimeFanoutCoalescerActivity({
+        kind,
+        sessionId,
+        messages,
+        queued,
+    });
+}
 
 export function createSessionMessageApplyCoalescer(params: Readonly<{
     getConfig: () => SessionMessageApplyCoalescerConfig;
@@ -80,6 +98,7 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
         if (messages.length === 0) return;
         if (options?.shouldContinue && !options.shouldContinue()) return;
         if (maxBatchSize <= 0) {
+            recordCoalescerFanoutActivity('immediate', sessionId, messages.length, 0);
             syncPerformanceTelemetry.measure(
                 'sync.socket.messages.coalesce.immediate',
                 { messages: messages.length },
@@ -98,6 +117,7 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
 
         for (let i = 0; i < messages.length; i += maxBatchSize) {
             const batch = messages.slice(i, i + maxBatchSize);
+            recordCoalescerFanoutActivity('immediate', sessionId, batch.length, 0);
             syncPerformanceTelemetry.measure(
                 'sync.socket.messages.coalesce.immediate',
                 { messages: batch.length },
@@ -151,11 +171,12 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
 
         const maxBatchSize = Math.max(1, Math.trunc(config.maxBatchSize));
         const batch = state.queued.splice(0, maxBatchSize);
+        const currentMessages = takeCurrentMessages(batch);
+        recordCoalescerFanoutActivity('flush', sessionId, currentMessages.length, state.queued.length);
         syncPerformanceTelemetry.measure(
             'sync.socket.messages.coalesce.flush',
             { messages: batch.length, remaining: state.queued.length },
             () => {
-                const currentMessages = takeCurrentMessages(batch);
                 if (currentMessages.length === 0) return;
                 params.applyBatch(sessionId, currentMessages);
                 params.onBatchApplied?.(sessionId, currentMessages);
@@ -210,6 +231,7 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
         if (state.timer === null && state.queued.length === 0) {
             if (options?.deferLeadingBatch === true) {
                 state.queued.push(...createQueuedMessages(messages, options));
+                recordCoalescerFanoutActivity('enqueue', sessionId, messages.length, state.queued.length);
                 syncPerformanceTelemetry.count('sync.socket.messages.coalesce.queued', {
                     messages: messages.length,
                     queued: state.queued.length,
@@ -229,11 +251,15 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
             const trailingMessages = messages.slice(maxBatchSize);
             applyImmediate(sessionId, leadingBatch, maxBatchSize, options);
             state.queued.push(...createQueuedMessages(trailingMessages, options));
+            if (trailingMessages.length > 0) {
+                recordCoalescerFanoutActivity('enqueue', sessionId, trailingMessages.length, state.queued.length);
+            }
             scheduleFlush(sessionId, state, windowMs);
             return;
         }
 
         state.queued.push(...createQueuedMessages(messages, options));
+        recordCoalescerFanoutActivity('enqueue', sessionId, messages.length, state.queued.length);
         syncPerformanceTelemetry.count('sync.socket.messages.coalesce.queued', {
             messages: messages.length,
             queued: state.queued.length,
@@ -261,6 +287,7 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
 
         state.queued = state.queued.filter((entry) => !messageIdSet.has(entry.message.id));
         if (state.queued.length === queuedCountBefore) return;
+        recordCoalescerFanoutActivity('drop', sessionId, queuedCountBefore - state.queued.length, state.queued.length);
         syncPerformanceTelemetry.count('sync.socket.messages.coalesce.dropped', {
             messages: queuedCountBefore - state.queued.length,
             queued: state.queued.length,
@@ -279,7 +306,11 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
         for (const sessionId of sessionIds) {
             const state = queues.get(sessionId);
             if (!state) continue;
-            dropped += state.queued.length;
+            const sessionDropped = state.queued.length;
+            dropped += sessionDropped;
+            if (sessionDropped > 0) {
+                recordCoalescerFanoutActivity('drop', sessionId, sessionDropped, 0);
+            }
             clearFlushTimer(state);
             queues.delete(sessionId);
         }

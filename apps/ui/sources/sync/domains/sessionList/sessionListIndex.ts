@@ -8,7 +8,7 @@ export type SessionListIndexItem =
     | Readonly<{
         type: 'header';
         title: string;
-        headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'project' | 'pinned' | 'shared' | 'folder' | 'attention';
+        headerKind?: 'date' | 'server' | 'active' | 'inactive' | 'sessions' | 'project' | 'pinned' | 'shared' | 'folder' | 'attention' | 'working';
         groupKey?: string;
         workspaceKey?: string;
         seedSessionId?: string | null;
@@ -27,12 +27,13 @@ export type SessionListIndexItem =
         storageKind?: SessionStorageKind;
         section?: 'active' | 'inactive';
         groupKey?: string;
-        groupKind?: 'active' | 'date' | 'project' | 'pinned' | 'shared' | 'folder' | 'attention';
+        groupKind?: 'active' | 'date' | 'project' | 'pinned' | 'shared' | 'folder' | 'attention' | 'working';
         pinned?: boolean;
         variant?: 'default' | 'no-path';
         archivedAt?: number | null;
         keepVisibleWhenInactive?: boolean;
         attentionPlacementReason?: SessionListAttentionPlacementReason;
+        workingPlacementReason?: 'working';
         serverId?: string;
         serverName?: string;
         folderId?: string | null;
@@ -91,7 +92,7 @@ function areWorkspaceRefsEqual(
         && previous.rootPath === next.rootPath;
 }
 
-function areSessionListIndexItemsEqual(
+export function areSessionListIndexItemsEqual(
     previous: SessionListIndexItem | null | undefined,
     next: SessionListIndexItem | null | undefined,
 ): boolean {
@@ -111,6 +112,7 @@ function areSessionListIndexItemsEqual(
             && (previous.archivedAt ?? null) === (next.archivedAt ?? null)
             && (previous.keepVisibleWhenInactive === true) === (next.keepVisibleWhenInactive === true)
             && (previous.attentionPlacementReason ?? null) === (next.attentionPlacementReason ?? null)
+            && (previous.workingPlacementReason ?? null) === (next.workingPlacementReason ?? null)
             && previous.serverId === next.serverId
             && previous.serverName === next.serverName
             && (previous.folderId ?? null) === (next.folderId ?? null)

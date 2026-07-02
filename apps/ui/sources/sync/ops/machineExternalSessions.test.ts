@@ -64,7 +64,7 @@ describe('machine direct sessions ops server-scoped routing', () => {
             providerId: 'codex' as const,
             provider: {
                 backendMode: 'appServer' as const,
-                vendorSessionId: 'vendor-session-1',
+                providerSessionId: 'vendor-session-1',
                 home: 'user' as const,
             },
         };

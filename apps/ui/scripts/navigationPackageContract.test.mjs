@@ -149,6 +149,19 @@ test('apps/ui postinstall verifies the current expo-router web modal patch targe
   );
 });
 
+test('apps/ui postinstall verifies enriched-markdown web WASM streaming patch targets', async () => {
+  const packageRoot = dirname(fileURLToPath(import.meta.url));
+  const postinstallPath = join(packageRoot, '..', 'tools', 'postinstall.mjs');
+  const postinstallContents = await readFile(postinstallPath, 'utf-8');
+
+  assert.match(postinstallContents, /install-react-native-enriched-markdown-web-wasm/);
+  assert.match(postinstallContents, /md4c\.esm\.single-file\.js/);
+  assert.match(postinstallContents, /src['"], ['"]web['"], ['"]parseMarkdown\.ts/);
+  assert.match(postinstallContents, /lengthBytesUTF8\(markdown\)/);
+  assert.match(postinstallContents, /SINGLE_FILE_BINARY_ENCODE=0/);
+  assert.match(postinstallContents, /export default createMd4cModule/);
+});
+
 test('apps/ui patched expo-router native stack treats unavailable liquid glass as disabled', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir);

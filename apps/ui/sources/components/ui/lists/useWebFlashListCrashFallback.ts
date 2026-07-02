@@ -40,10 +40,17 @@ const defaultShouldFallback = (signature: FlashListCrashSignature): boolean => {
 export function useWebFlashListCrashFallback(input: Readonly<{
     enabled: boolean;
     shouldFallback?: (signature: FlashListCrashSignature) => boolean;
+    /**
+     * Invoked synchronously inside the error handler BEFORE the fallback flip renders, so the
+     * caller can capture the current viewport from the still-mounted crashed list (plan E1).
+     */
+    onBeforeFallback?: () => void;
 }>): boolean {
     const [crashed, setCrashed] = React.useState(false);
     const shouldFallbackRef = React.useRef(input.shouldFallback ?? defaultShouldFallback);
     shouldFallbackRef.current = input.shouldFallback ?? defaultShouldFallback;
+    const onBeforeFallbackRef = React.useRef(input.onBeforeFallback);
+    onBeforeFallbackRef.current = input.onBeforeFallback;
 
     React.useEffect(() => {
         if (Platform.OS !== 'web') return;
@@ -70,6 +77,11 @@ export function useWebFlashListCrashFallback(input: Readonly<{
                 event?.stopImmediatePropagation?.();
             } catch {
                 // ignore
+            }
+            try {
+                onBeforeFallbackRef.current?.();
+            } catch {
+                // A capture failure must never block the crash fallback itself.
             }
             setCrashed(true);
         };

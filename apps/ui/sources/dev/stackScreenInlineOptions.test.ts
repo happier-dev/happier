@@ -52,51 +52,57 @@ function isStackScreenJsx(tagName: ts.JsxTagNameExpression): boolean {
 }
 
 describe('Stack.Screen options invariants', () => {
-    it('does not pass an inline object literal to <Stack.Screen options={...}> in app/(app) screens', () => {
+    it('does not pass an inline object literal to <Stack.Screen options={...}> in app routes or route components', () => {
         const testDir = fileURLToPath(new URL('.', import.meta.url));
-        const appDir = join(testDir, '..', 'app', '(app)');
+        const sourcesDir = join(testDir, '..');
+        const scannedDirs = [
+            join(sourcesDir, 'app', '(app)'),
+            join(sourcesDir, 'components'),
+        ];
 
         const offenders: Array<{ file: string; line: number }> = [];
 
-        for (const file of walkTypeScriptFiles(appDir)) {
-            const relativePath = relative(appDir, file);
-            if (EXCLUDED_RELATIVE_APP_FILES.has(relativePath)) {
-                continue;
-            }
-            const content = readFileSync(file, 'utf8');
-            if (!content.includes('Stack.Screen') || !content.includes('options')) continue;
+        for (const scannedDir of scannedDirs) {
+            for (const file of walkTypeScriptFiles(scannedDir)) {
+                const relativePath = relative(scannedDir, file);
+                if (EXCLUDED_RELATIVE_APP_FILES.has(relativePath)) {
+                    continue;
+                }
+                const content = readFileSync(file, 'utf8');
+                if (!content.includes('Stack.Screen') || !content.includes('options')) continue;
 
-            const sourceFile = ts.createSourceFile(
-                file,
-                content,
-                ts.ScriptTarget.Latest,
-                true,
-                file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-            );
+                const sourceFile = ts.createSourceFile(
+                    file,
+                    content,
+                    ts.ScriptTarget.Latest,
+                    true,
+                    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+                );
 
-            const visit = (node: ts.Node) => {
-                if (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) {
-                    if (isStackScreenJsx(node.tagName)) {
-                        for (const prop of node.attributes.properties) {
-                            if (!ts.isJsxAttribute(prop)) continue;
-                            if (prop.name.getText(sourceFile) !== 'options') continue;
+                const visit = (node: ts.Node) => {
+                    if (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) {
+                        if (isStackScreenJsx(node.tagName)) {
+                            for (const prop of node.attributes.properties) {
+                                if (!ts.isJsxAttribute(prop)) continue;
+                                if (prop.name.getText(sourceFile) !== 'options') continue;
 
-                            const init = prop.initializer;
-                            if (!init || !ts.isJsxExpression(init) || !init.expression) continue;
-                            if (ts.isObjectLiteralExpression(init.expression)) {
-                                const { line } = ts.getLineAndCharacterOfPosition(sourceFile, prop.getStart(sourceFile));
-                                offenders.push({ file, line: line + 1 });
+                                const init = prop.initializer;
+                                if (!init || !ts.isJsxExpression(init) || !init.expression) continue;
+                                if (ts.isObjectLiteralExpression(init.expression)) {
+                                    const { line } = ts.getLineAndCharacterOfPosition(sourceFile, prop.getStart(sourceFile));
+                                    offenders.push({ file, line: line + 1 });
+                                }
                             }
                         }
                     }
-                }
 
-                ts.forEachChild(node, visit);
-            };
+                    ts.forEachChild(node, visit);
+                };
 
-            visit(sourceFile);
+                visit(sourceFile);
+            }
         }
 
-        expect(offenders.map(({ file, line }) => `${relative(appDir, file)}:${line}`)).toEqual([]);
+        expect(offenders.map(({ file, line }) => `${relative(sourcesDir, file)}:${line}`)).toEqual([]);
     });
 });

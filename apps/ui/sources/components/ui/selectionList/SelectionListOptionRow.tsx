@@ -20,28 +20,12 @@ import { Item } from '@/components/ui/lists/Item';
 import { SlideTransitionSwitch } from '@/components/ui/motion/SlideTransitionSwitch';
 
 import { activateSelectionListRow } from './SelectionListRowActivation';
+import { buildSelectionListOptionA11yProps } from './buildSelectionListOptionA11yProps';
 import { renderSelectionListAccessory } from './renderSelectionListAccessory';
 import { SelectionListScrollIntoViewContext } from './SelectionListScrollIntoViewContext';
 import { selectionListTestId } from './_shared';
 import type { SectionRenderPlan } from './SelectionListRenderPlan';
 import type { SelectionListOption, SelectionListStep } from './_types';
-
-type OptionAriaProps = Readonly<{
-    id: string;
-    role: 'option';
-    'aria-selected': boolean;
-}>;
-
-function buildOptionAria(
-    optionTestId: string,
-    isSelected: boolean,
-): OptionAriaProps {
-    return {
-        id: optionTestId,
-        role: 'option',
-        'aria-selected': isSelected,
-    };
-}
 
 export type RenderPlanRowsProps = Readonly<{
     plan: SectionRenderPlan;
@@ -92,7 +76,11 @@ export function PlanOptionRow(props: Readonly<{
             onPushStep: props.onPushStep,
         });
     }, [props.option, props.onSelect, props.onPushStep]);
-    const optionAria = buildOptionAria(optionTestId, props.isSelected);
+    const optionAria = buildSelectionListOptionA11yProps({
+        optionTestId,
+        isSelected: props.isSelected,
+        accessibilityLabel: props.option.accessibilityLabel,
+    });
     if (props.measureMode === true) {
         // Identity-free mirror. Skip the role="option" ARIA spread and option
         // testID / wrapper testID. The Item still renders so the layout matches
@@ -102,6 +90,8 @@ export function PlanOptionRow(props: Readonly<{
                 <Item
                     title={props.option.label}
                     subtitle={props.option.subtitle}
+                    titleEllipsizeMode={props.option.labelEllipsizeMode}
+                    subtitleEllipsizeMode={props.option.subtitleEllipsizeMode}
                     icon={props.option.icon}
                     rightElement={renderSelectionListAccessory(props.option.rightAccessory)}
                     selected={props.isSelected || props.isFocused}
@@ -134,6 +124,8 @@ export function PlanOptionRow(props: Readonly<{
             testID={optionTestId}
             title={props.option.label}
             subtitle={props.option.subtitle}
+            titleEllipsizeMode={props.option.labelEllipsizeMode}
+            subtitleEllipsizeMode={props.option.subtitleEllipsizeMode}
             icon={props.option.icon}
             rightElement={renderSelectionListAccessory(props.option.rightAccessory)}
             onPress={handlePress}

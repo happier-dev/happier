@@ -95,12 +95,28 @@ describe('MarkdownView (static render placeholder)', () => {
         vi.useRealTimers();
     });
 
-    it('shows a delayed placeholder for native static markdown until content layout is reported', async () => {
+    it('does not show a delayed placeholder for native static markdown by default', async () => {
         animatedCapture.platformOS = 'android';
         const { MarkdownView } = await import('./MarkdownView');
 
         const screen = await renderScreen(
             <MarkdownView markdown="Hello **world**" profile="transcript" />,
+        );
+
+        await act(async () => {
+            vi.advanceTimersByTime(1_000);
+        });
+
+        expect(screen.findByTestId('markdown-static-render-placeholder')).toBe(null);
+        expect(animatedCapture.loopStartCount).toBe(0);
+    });
+
+    it('shows a delayed placeholder for native static markdown when explicitly enabled until content layout is reported', async () => {
+        animatedCapture.platformOS = 'android';
+        const { MarkdownView } = await import('./MarkdownView');
+
+        const screen = await renderScreen(
+            <MarkdownView markdown="Hello **world**" profile="transcript" staticRenderPlaceholderEnabled={true} />,
         );
 
         expect(screen.findByTestId('markdown-static-render-placeholder')).toBe(null);

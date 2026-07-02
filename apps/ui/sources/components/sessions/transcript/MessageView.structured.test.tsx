@@ -1,6 +1,7 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createPartialStorageModuleMock, renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createReducer } from '@/sync/reducer/reducer';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import type { UserTextMessage } from '@/sync/domains/messages/messageTypes';
@@ -80,8 +81,9 @@ installMessageViewCommonModuleMocks({
         });
         return routerMock.module;
     },
-    storage: async (importOriginal) =>
-        createPartialStorageModuleMock(importOriginal, {
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
             useSession: () => null,
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
             useSetting: (key: string) => {
@@ -91,9 +93,11 @@ installMessageViewCommonModuleMocks({
                 if (key === 'toolViewTimelineChromeMode') return toolViewTimelineChromeMode;
                 return null;
             },
+            useLocalSetting: () => null,
             useSessionMessagesById: () => ({}),
             useSessionMessagesReducerState: () => createReducer(),
-        }),
+        });
+    },
 });
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
@@ -112,9 +116,32 @@ vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
     shouldShowMessageCopyButton: () => false,
 }));
 
+vi.mock('@/agents/catalog/catalog', () => ({
+    DEFAULT_AGENT_ID: 'codex',
+    getAgentBehavior: () => ({ permissions: { footer: {} } }),
+    getAgentCore: () => ({
+        permissions: { promptProtocol: 'codexDecision' },
+        toolRendering: { hideUnknownToolsByDefault: false },
+    }),
+    resolveAgentIdFromFlavor: () => 'codex',
+}));
+
+vi.mock('@/agents/catalog/resolve', () => ({
+    resolveAgentIdForPermissionUi: () => 'codex',
+}));
+
+vi.mock('@/agents/catalog/permissionUiCopy', () => ({
+    getPermissionFooterCopy: () => ({
+        protocol: 'codexDecision',
+        yesAlwaysAllowCommandKey: 'codex.permissions.yesAlwaysAllowCommand',
+        yesForSessionKey: 'codex.permissions.yesForSession',
+        stopKey: 'codex.permissions.stop',
+    }),
+}));
+
 const modalShowSpy = vi.fn();
 
-const sendMessageSpy = vi.fn<
+const submitMessageSpy = vi.fn<
     (
         sessionId: string,
         text: string,
@@ -124,13 +151,13 @@ const sendMessageSpy = vi.fn<
 >(async () => undefined);
 vi.mock('@/sync/sync', () => ({
     sync: {
-        sendMessage: (
+        submitMessage: (
             sessionId: string,
             text: string,
             displayText?: string,
             metaOverrides?: Record<string, unknown>,
-        ) => sendMessageSpy(sessionId, text, displayText, metaOverrides),
-        submitMessage: vi.fn(),
+        ) => submitMessageSpy(sessionId, text, displayText, metaOverrides),
+        sendMessage: vi.fn(),
     },
 }));
 
@@ -289,6 +316,54 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         // This should fail until MessageView wires StructuredMessageBlock into its rendering.
         expect(screen.findAllByType(ReviewCommentsMessageCard as any)).toHaveLength(1);
+    });
+
+    it('keeps structured review jump handlers stable across equivalent parent renders', async () => {
+        const { MessageView } = await import('./MessageView');
+        const { ReviewCommentsMessageCard } = await import('../reviews/messages/ReviewCommentsMessageCard');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: 'review prompt',
+            displayText: 'Review comments (1)',
+            meta: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: {
+                        sessionId: 's1',
+                        comments: [
+                            {
+                                id: 'c1',
+                                filePath: 'src/foo.ts',
+                                source: 'file',
+                                body: 'Please refactor',
+                                createdAt: 1,
+                                anchor: { kind: 'fileLine', startLine: 12 },
+                                snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+                            },
+                        ],
+                    },
+                },
+            },
+        };
+
+        const renderMessage = () => (
+            <MessageView
+                message={message}
+                metadata={null}
+                sessionId="s1"
+            />
+        );
+        const screen = await renderScreen(renderMessage());
+        const firstJumpHandler = screen.tree.root.findByType(ReviewCommentsMessageCard as any).props.onJumpToAnchor;
+
+        await act(async () => {
+            screen.tree.update(renderMessage());
+        });
+
+        const secondJumpHandler = screen.tree.root.findByType(ReviewCommentsMessageCard as any).props.onJumpToAnchor;
+        expect(secondJumpHandler).toBe(firstJumpHandler);
     });
 
     it('does not render the MarkdownView for structured user messages', async () => {
@@ -898,7 +973,7 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
     });
 
     it('can adopt a plan by sending a structured user message to the parent session', async () => {
-        sendMessageSpy.mockClear();
+        submitMessageSpy.mockClear();
         const { MessageView } = await import('./MessageView');
 
         const message: any = {
@@ -938,13 +1013,13 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         expect(screen.findByTestId('adopt-plan-button')).not.toBeNull();
         await screen.pressByTestIdAsync('adopt-plan-button');
 
-        expect(sendMessageSpy).toHaveBeenCalledTimes(1);
-        expect(sendMessageSpy.mock.calls[0]?.[0]).toBe('s1');
-        expect(String(sendMessageSpy.mock.calls[0]?.[1] ?? '')).toContain('@happier/plan.adopt');
+        expect(submitMessageSpy).toHaveBeenCalledTimes(1);
+        expect(submitMessageSpy.mock.calls[0]?.[0]).toBe('s1');
+        expect(String(submitMessageSpy.mock.calls[0]?.[1] ?? '')).toContain('@happier/plan.adopt');
     });
 
     it('can apply accepted findings by sending a structured user message to the parent session', async () => {
-        sendMessageSpy.mockClear();
+        submitMessageSpy.mockClear();
         const { MessageView } = await import('./MessageView');
 
         const message: any = {
@@ -998,8 +1073,8 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
         expect(screen.findByTestId('review-findings-publish-accepted')).not.toBeNull();
         await screen.pressByTestIdAsync('review-findings-publish-accepted');
 
-        expect(sendMessageSpy).toHaveBeenCalledTimes(1);
-        const [sessionId, text, _displayText, metaOverrides] = sendMessageSpy.mock.calls[0] as any[];
+        expect(submitMessageSpy).toHaveBeenCalledTimes(1);
+        const [sessionId, text, _displayText, metaOverrides] = submitMessageSpy.mock.calls[0] as any[];
         expect(sessionId).toBe('s1');
         expect(String(text)).toContain('Please implement the accepted review findings below.');
         expect(metaOverrides).toEqual({

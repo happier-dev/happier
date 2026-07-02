@@ -54,7 +54,7 @@ export const AgentInputSourceControlStatusButton = React.memo(function AgentInpu
                     <Octicons
                         name="git-branch"
                         size={16}
-                        color={theme.colors.button.secondary.tint}
+                        color={theme.colors.composer.chipTint}
                     />,
                 )
             )}

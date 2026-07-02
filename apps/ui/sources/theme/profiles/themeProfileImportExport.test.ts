@@ -136,6 +136,7 @@ describe('theme profile import/export', () => {
             expect(result.profile.assetAppearance).toBe('dark');
             expect(result.profile.overrides.dark['background.canvas']).toBe('#191724');
             expect(result.profile.overrides.dark['surface.base']).toBe('#1F1D2E');
+            expect(result.profile.overrides.dark['composer.chipTint']).toBe('#6E6A86');
             expect(result.profile.overrides.dark['control.input.background']).toBe('#393552');
             expect(result.profile.overrides.dark['effect.surfaceHighlight']).toBe('transparent');
             expect(result.profile.overrides.dark['syntax.keyword']).toBe('#C4A7E7');

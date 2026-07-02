@@ -8,14 +8,18 @@ import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/ap
 import { useMessagesByIds } from '@/sync/domains/state/storage';
 
 import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
-import { ToolCallsGroupView } from '@/components/sessions/transcript/turns/toolCalls/ToolCallsGroupView';
+import { ToolCallsGroupViewWithSessionCommon } from '@/components/sessions/transcript/turns/toolCalls/ToolCallsGroupView';
 import { TRANSCRIPT_WEB_TOOL_GROUP_PREPEND_ANCHOR_TEST_ID_PREFIX } from '@/components/sessions/transcript/webTranscriptPrependAnchor';
 import { layout } from '@/components/ui/layout/layout';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
 import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
+import {
+    type TranscriptSessionCommonProps,
+    useTranscriptSessionCommon,
+} from '@/components/sessions/transcript/transcriptSessionCommon';
 
-export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
+type ToolCallsGroupRowProps = Readonly<{
     sessionId: string;
     toolCallsGroupId: string;
     toolMessageIds: readonly string[];
@@ -26,7 +30,25 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
     expanded: boolean;
     onSetExpanded: (params: { toolCallsGroupId: string; toolMessageIds: readonly string[]; expanded: boolean }) => void;
     interaction: TranscriptInteraction;
-}) {
+}>;
+
+export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: ToolCallsGroupRowProps) {
+    const transcriptSessionCommon = useTranscriptSessionCommon(props.sessionId);
+
+    return (
+        <ToolCallsGroupRowWithSessionCommon
+            {...props}
+            forkCommon={transcriptSessionCommon.fork}
+            messageDisplayCommon={transcriptSessionCommon.messageDisplay}
+            toolChromeCommon={transcriptSessionCommon.toolChrome}
+            toolRouteCommon={transcriptSessionCommon.toolRoute}
+        />
+    );
+});
+
+export const ToolCallsGroupRowWithSessionCommon = React.memo(function ToolCallsGroupRowWithSessionCommon(
+    props: ToolCallsGroupRowProps & TranscriptSessionCommonProps,
+) {
     const toolMessagesRaw = useMessagesByIds(props.sessionId, props.toolMessageIds);
     const toolMessages = React.useMemo(() => {
         const byId = new Map<string, ToolCallMessage>();
@@ -87,7 +109,7 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
             <TranscriptEnterWrapper id={props.toolCallsGroupId} createdAt={createdAt}>
                 <View style={styles.centered}>
                     <View style={styles.centeredContent}>
-                        <ToolCallsGroupView
+                        <ToolCallsGroupViewWithSessionCommon
                             id={props.toolCallsGroupId}
                             status={status}
                             toolMessages={toolMessagesForSession}
@@ -98,6 +120,10 @@ export const ToolCallsGroupRow = React.memo(function ToolCallsGroupRow(props: {
                             expanded={props.expanded}
                             setExpanded={setExpanded}
                             interaction={props.interaction}
+                            forkCommon={props.forkCommon}
+                            messageDisplayCommon={props.messageDisplayCommon}
+                            toolChromeCommon={props.toolChromeCommon}
+                            toolRouteCommon={props.toolRouteCommon}
                         />
                     </View>
                 </View>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PROVIDER_SETTINGS_DESCRIPTORS } from '@/agents/providers/catalog/providerSettingsCatalog';
+import { PROVIDER_SETTINGS_DESCRIPTORS } from '@/agents/catalog/providerSettingsCatalog';
 import { getProviderCliInstallGuideUrl } from '@happier-dev/agents';
 
 import { getProviderLocalAuthPlugin } from '@/agents/providers/catalog/providerLocalAuthCatalog';

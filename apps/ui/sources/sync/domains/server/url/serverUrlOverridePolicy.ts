@@ -34,3 +34,22 @@ export function resolveEffectiveServerUrlOverride(params: Readonly<{
     }
     return requested;
 }
+
+export function shouldSwitchToServerUrl(params: Readonly<{
+    targetServerUrl: string | null | undefined;
+    activeServerUrl: string | null | undefined;
+}>): boolean {
+    const target = canonicalizeServerUrl(String(params.targetServerUrl ?? ''));
+    if (!target) return false;
+
+    const targetKey = createServerUrlComparableKey(target);
+    if (!targetKey) return false;
+
+    const active = canonicalizeServerUrl(String(params.activeServerUrl ?? ''));
+    if (!active) return true;
+
+    const activeKey = createServerUrlComparableKey(active);
+    if (!activeKey) return true;
+
+    return targetKey !== activeKey;
+}

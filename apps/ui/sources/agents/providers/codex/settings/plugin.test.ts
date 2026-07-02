@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { CODEX_PROVIDER_SETTINGS_PLUGIN } from './plugin';
 
 describe('CODEX_PROVIDER_SETTINGS_PLUGIN', () => {
-    it('surfaces appServer as the default Codex backend option', () => {
+    it('surfaces only final Codex backend options', () => {
         const backendField = CODEX_PROVIDER_SETTINGS_PLUGIN.uiSections
             .flatMap((section) => section.fields)
             .find((field) => field.key === 'codexBackendMode');
@@ -12,7 +12,6 @@ describe('CODEX_PROVIDER_SETTINGS_PLUGIN', () => {
         expect(backendField?.enumOptions?.map((option) => option.id)).toEqual([
             'appServer',
             'acp',
-            'mcp',
         ]);
     });
 });

@@ -7,6 +7,7 @@ import { renderScreen } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { buildRememberedEngineSelectionScopeKey } from '@/sync/domains/session/authoring/rememberedEngineSelections';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
 import {
     findCheckoutChip as findSelectionListCheckoutChip,
@@ -148,6 +149,11 @@ const persistedDraft = vi.hoisted(() => ({
     updatedAt: number;
     backendTarget?: { kind: 'builtInAgent'; agentId: string };
     resumeSessionId?: string | null;
+    targetServerId?: string | null;
+    windowsRemoteSessionLaunchModeOverride?: {
+        machineId: string;
+        mode: 'hidden' | 'windows_terminal' | 'console';
+    } | null;
 });
 const saveNewSessionDraftMock = vi.hoisted(() => vi.fn());
 const clearNewSessionDraftMock = vi.hoisted(() => vi.fn());
@@ -328,6 +334,9 @@ const targetServerState = vi.hoisted(() => ({
     targetServerId: null as string | null,
     targetServerName: null as string | null,
 }));
+const targetServerRequestState = vi.hoisted(() => ({
+    requests: [] as unknown[],
+}));
 const activeMachinesState = vi.hoisted(() => ({
     value: [
         { id: 'machine-1', metadata: { displayName: 'Machine One', host: 'one', homeDir: '/home/one' } },
@@ -371,6 +380,14 @@ function notifyMockStorageSubscribers() {
     for (const listener of Array.from(storageSubscriptionState.listeners)) {
         listener();
     }
+}
+
+function setMockSettingValue(key: string, valueOrUpdater: unknown): void {
+    const previous = (settingsState as Record<string, unknown>)[key];
+    (settingsState as Record<string, unknown>)[key] = typeof valueOrUpdater === 'function'
+        ? (valueOrUpdater as (value: unknown) => unknown)(previous)
+        : valueOrUpdater;
+    notifyMockStorageSubscribers();
 }
 
 function materializeStorageMachine(input: { id: string; metadata: Record<string, unknown> }) {
@@ -521,6 +538,7 @@ function installNewSessionScreenModelStorageMock() {
         const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createPartialStorageModuleMock(importOriginal, {
             useAllMachines: () => activeMachinesState.value.map(materializeStorageMachine),
+            useLaunchSelectionMachines: () => activeMachinesState.value.map(materializeStorageMachine),
             useMachineListByServerId: () => Object.fromEntries(
                 Object.entries(machineListByServerIdState.value).map(([serverId, machines]) => [
                     serverId,
@@ -541,7 +559,10 @@ function installNewSessionScreenModelStorageMock() {
                 getState: () => getMockStorageState(),
             }) as unknown as typeof import('@/sync/domains/state/storage').storage,
             useSetting: (key: string) => ({ ...settingsDefaults, ...settingsState } as any)[key],
-            useSettingMutable: (key: string) => [(settingsState as any)[key], vi.fn()],
+            useSettingMutable: (key: string) => [
+                ({ ...settingsDefaults, ...settingsState } as any)[key],
+                (next: unknown) => setMockSettingValue(key, next),
+            ],
             useSettings: () => ({ ...settingsDefaults, ...settingsState }) as unknown as import('@/sync/domains/settings/settings').Settings,
         });
     });
@@ -746,7 +767,9 @@ vi.mock('@/components/sessions/new/modules/resolveNewSessionCapabilityServerId',
 }));
 
 vi.mock('@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState', () => ({
-    useNewSessionServerTargetState: () => ({
+    useNewSessionServerTargetState: (args: { request?: unknown }) => {
+        targetServerRequestState.requests.push(args.request);
+        return {
         serverProfiles: [],
         serverTargets: [],
         resolvedSettingsTarget: { allowedServerIds: [] },
@@ -755,7 +778,8 @@ vi.mock('@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetS
         targetServerProfile: null,
         targetServerName: targetServerState.targetServerName,
         showServerPickerChip: targetServerState.allowedTargetServerIds.length > 1 && !!targetServerState.targetServerName,
-    }),
+        };
+    },
 }));
 
 vi.mock('@/hooks/server/useAutomationsSupport', () => ({
@@ -828,6 +852,11 @@ vi.mock('@/sync/domains/profiles/profileUtils', () => ({
     getBuiltInProfile: () => null,
     DEFAULT_PROFILES: [],
     getProfilePrimaryCli: () => null,
+    isProfileEnabled: (profile: { id: string; defaultEnabled?: boolean }, profileEnabledById?: Record<string, boolean> | null) => {
+        const override = profileEnabledById?.[profile.id];
+        if (typeof override === 'boolean') return override;
+        return profile.defaultEnabled !== false;
+    },
     getProfileSupportedAgentIds: () => [],
     isProfileCompatibleWithAnyAgent: () => true,
 }));
@@ -936,12 +965,15 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         targetServerState.allowedTargetServerIds = [];
         targetServerState.targetServerId = null;
         targetServerState.targetServerName = null;
+        targetServerRequestState.requests = [];
         activeMachinesState.value = [
             { id: 'machine-1', metadata: { displayName: 'Machine One', host: 'one', homeDir: '/home/one' } },
             { id: 'machine-2', metadata: { displayName: 'Machine Two', host: 'two', homeDir: '/home/two' } },
         ];
         machineListByServerIdState.value = {};
         delete (persistedDraft as any).backendTarget;
+        delete persistedDraft.targetServerId;
+        delete persistedDraft.windowsRemoteSessionLaunchModeOverride;
         delete (persistedDraft as any).codexBackendMode;
         persistedDraft.agentType = 'claude';
         persistedDraft.input = 'hello';
@@ -964,13 +996,25 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             displayName: 'feature/auth',
             baseRef: 'main',
         };
+        persistedDraft.modelMode = 'default';
+        persistedDraft.acpSessionModeId = 'plan';
+        persistedDraft.sessionConfigOptionOverrides = {
+            v: 1,
+            updatedAt: 123,
+            overrides: {
+                speed: { updatedAt: 123, value: 'fast' },
+            },
+        };
         settingsState.acpCatalogSettingsV1 = {
             v: 2,
             backends: [],
         };
         settingsState.useEnhancedSessionWizard = false;
         settingsState.useProfiles = false;
+        (settingsState as any).rememberLastEngineSelectionsV1 = settingsDefaults.rememberLastEngineSelectionsV1;
+        (settingsState as any).lastEngineSelectionsByScopeV1 = settingsDefaults.lastEngineSelectionsByScopeV1;
         settingsState.lastUsedProfile = null;
+        settingsState.profileEnabledById = {};
         settingsState.profiles = [];
         workspaceGraphState.workspacesByServerId = {
             'server-a': [
@@ -1345,6 +1389,45 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect((model?.simpleProps?.agentPickerOptions ?? []).map((o: any) => o?.label)).not.toContain('Codex (Projected)');
     });
 
+    it('clears remembered Claude plan mode when the user switches the new-session mode back to build', async () => {
+        const backendTarget = { kind: 'backend' as const, backendId: 'claude' as const };
+        const scopeKey = buildRememberedEngineSelectionScopeKey({
+            serverId: null,
+            backendTarget,
+        });
+        (settingsState as any).rememberLastEngineSelectionsV1 = true;
+        (settingsState as any).lastEngineSelectionsByScopeV1 = {
+            [scopeKey]: {
+                v: 1,
+                modelId: 'default',
+                acpSessionModeId: 'plan',
+                sessionConfigOptionOverrides: null,
+                updatedAt: 1,
+            },
+        };
+        persistedDraft.backendTarget = backendTarget as any;
+        persistedDraft.acpSessionModeId = 'plan';
+
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+
+        expect(model?.simpleProps?.agentType).toBe('claude');
+        expect(model?.simpleProps?.acpSessionModeId).toBe('plan');
+
+        await act(async () => {
+            model?.simpleProps?.setAcpSessionModeId?.(null);
+        });
+        await settleNewSessionScreenModel({ cycles: 2, turns: 2 });
+
+        expect(model?.simpleProps?.acpSessionModeId).toBeNull();
+
+        standardCleanup();
+
+        expect((settingsState as any).lastEngineSelectionsByScopeV1?.[scopeKey]?.acpSessionModeId).toBeNull();
+    });
+
     it('hydrates permission, agent, and path from the persisted draft', async () => {
         let model: any = null;
         await renderNewSessionScreenModel((nextModel) => {
@@ -1386,6 +1469,110 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
                 },
             },
         }));
+    });
+
+    it('passes the persisted target server to the server target resolver when the route has no override', async () => {
+        persistedDraft.targetServerId = 'server-b' as any;
+
+        await renderNewSessionScreenModel(() => {});
+
+        expect(targetServerRequestState.requests.at(-1)).toEqual(expect.objectContaining({
+            persistedTargetServerId: 'server-b',
+        }));
+    });
+
+    it('passes both route and persisted target servers so the resolver can prefer the route override', async () => {
+        persistedDraft.targetServerId = 'server-b' as any;
+        searchParamsState.value = {
+            spawnServerId: 'server-c',
+        };
+
+        await renderNewSessionScreenModel(() => {});
+
+        expect(targetServerRequestState.requests.at(-1)).toEqual(expect.objectContaining({
+            spawnServerIdParam: 'server-c',
+            persistedTargetServerId: 'server-b',
+        }));
+    });
+
+    it('persists the selected target server and matching Windows launch override with the new-session draft', async () => {
+        targetServerState.allowedTargetServerIds = ['server-a', 'server-b'];
+        targetServerState.targetServerId = 'server-b';
+        targetServerState.targetServerName = 'Server B';
+        persistedDraft.windowsRemoteSessionLaunchModeOverride = {
+            machineId: 'machine-2',
+            mode: 'console',
+        } as any;
+
+        await renderNewSessionScreenModel(() => {});
+
+        await act(async () => {
+            persistDraftNowRef.current?.();
+        });
+
+        expect(saveNewSessionDraftMock.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({
+            targetServerId: 'server-b',
+            windowsRemoteSessionLaunchModeOverride: {
+                machineId: 'machine-2',
+                mode: 'console',
+            },
+        }));
+    });
+
+    it('does not persist a Windows launch override from a different machine', async () => {
+        persistedDraft.windowsRemoteSessionLaunchModeOverride = {
+            machineId: 'machine-1',
+            mode: 'console',
+        } as any;
+
+        await renderNewSessionScreenModel(() => {});
+
+        await act(async () => {
+            persistDraftNowRef.current?.();
+        });
+
+        expect(saveNewSessionDraftMock.mock.calls.at(-1)?.[0]).not.toEqual(expect.objectContaining({
+            windowsRemoteSessionLaunchModeOverride: expect.anything(),
+        }));
+    });
+
+    it('keeps the default attachment flow id stable across new-session route remounts', async () => {
+        let firstModel: any = null;
+        const firstHook = await renderNewSessionScreenModel((nextModel) => {
+            firstModel = nextModel;
+        });
+        const firstAttachmentFlowId = firstModel?.simpleProps?.attachmentFlowId;
+        expect(typeof firstAttachmentFlowId).toBe('string');
+        expect(firstAttachmentFlowId.length).toBeGreaterThan(0);
+
+        await firstHook.unmount();
+
+        let secondModel: any = null;
+        const secondHook = await renderNewSessionScreenModel((nextModel) => {
+            secondModel = nextModel;
+        });
+
+        expect(secondModel?.simpleProps?.attachmentFlowId).toBe(firstAttachmentFlowId);
+
+        await secondHook.unmount();
+    });
+
+    it('does not invalidate the screen model when focus reloads an equivalent draft', async () => {
+        let renderCount = 0;
+
+        await renderNewSessionScreenModel(() => {
+            renderCount += 1;
+        });
+
+        const renderedCount = renderCount;
+
+        const cleanups = await runFocusEffectsAndSettle();
+        for (const cleanup of cleanups) {
+            if (typeof cleanup === 'function') cleanup();
+        }
+
+        expect(loadNewSessionDraftMock).toHaveBeenCalled();
+        expect(renderCount).toBeLessThanOrEqual(renderedCount + 1);
     });
 
     it('keeps the typed path draft available to session creation before the path is committed', async () => {
@@ -2150,6 +2337,38 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect(pushPayload?.params?.backendTargetKey).toBe('backend:codex');
     });
 
+    it('clears backend route seed params after an explicit agent picker selection', async () => {
+        searchParamsState.value = {
+            agentType: 'codex',
+        };
+        persistedDraft.agentType = 'claude';
+        persistedDraft.backendTarget = { kind: 'backend', backendId: 'claude' } as any;
+
+        let model: any = null;
+        const hook = await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+
+        expect(model?.simpleProps?.agentType).toBe('codex');
+
+        const claudeOption = model?.simpleProps?.agentPickerOptions?.find?.((option: { id: string }) => option.id === 'backend:claude');
+        expect(claudeOption).toBeTruthy();
+
+        await act(async () => {
+            claudeOption?.onSelectImmediate?.();
+            await settleNewSessionScreenModel({ cycles: 1, turns: 2 });
+        });
+
+        expect(model?.simpleProps?.agentType).toBe('claude');
+        expect(routerSetParamsMock).toHaveBeenCalledWith({
+            agentType: undefined,
+            backendTarget: undefined,
+            backendTargetKey: undefined,
+        });
+
+        await hook.unmount();
+    });
+
     it('keeps the current route stable and exposes a shared path popover when the new-session route starts without a dataId', async () => {
         const { useNewSessionScreenModel } = await useNewSessionScreenModelModulePromise;
 
@@ -2252,12 +2471,13 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
 
         expect(requestClose).toHaveBeenCalledTimes(1);
         expect(openExternalSessionsResumeIdPickerModalMock).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'externalSessions.browseTitle',
             webPortalTarget: portalTarget,
             lockScope: expect.objectContaining({
                 machineId: 'machine-2',
                 providerId: 'claude',
-                source: expect.anything(),
+                source: expect.objectContaining({
+                    kind: 'claudeConfig',
+                }),
             }),
         }));
         expect(routerPushMock).not.toHaveBeenCalled();
@@ -2363,6 +2583,37 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         });
 
         expect(saveNewSessionDraftMock).toHaveBeenCalledTimes(0);
+    });
+
+    it('does not seed new-session profile selection from a disabled last-used profile', async () => {
+        settingsState.useProfiles = true;
+        settingsState.useEnhancedSessionWizard = true;
+        settingsState.lastUsedProfile = 'profile_disabled';
+        settingsState.profileEnabledById = { profile_disabled: false };
+        settingsState.profiles = [{
+            id: 'profile_disabled',
+            name: 'Disabled profile',
+            environmentVariables: [],
+            defaultPermissionModeByAgent: {},
+            defaultPermissionModeByTargetKey: {},
+            defaultPersistenceModeByAgent: {},
+            defaultPersistenceModeByTargetKey: {},
+            isBuiltIn: false,
+            compatibility: { claude: true },
+            compatibilityByTargetKey: {},
+            envVarRequirements: [],
+            createdAt: 0,
+            updatedAt: 0,
+            version: '1.0.0',
+        }];
+
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+
+        expect(model?.variant).toBe('wizard');
+        expect(model?.wizardProps?.profiles?.selectedProfileId).toBeNull();
     });
 
     it('keeps the default environment selected even when a workspace graph still carries a legacy default profile', async () => {
@@ -2747,6 +2998,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         }
 
         await renderScreen(React.createElement(Probe));
+        await flushHookEffects({ cycles: 3, turns: 4 });
 
         try {
         await act(async () => {
@@ -2845,6 +3097,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         }
 
         await renderScreen(React.createElement(Probe));
+        await flushHookEffects({ cycles: 3, turns: 4 });
 
         try {
             const checkoutChip = model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-checkout');
@@ -3375,11 +3628,15 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         await renderScreen(React.createElement(Probe));
 
         const getCheckoutChip = () => findSelectionListCheckoutChip(model);
-        expect(getCheckoutChip()).toBeTruthy();
-        expect(getCheckoutChip()?.controlId).toBe('checkout');
-        expect(getCheckoutChip()?.collapsedOptionsPopover?.title).toBe('newSession.checkout.selectTitle');
+        const checkoutChip = getCheckoutChip();
+        expect(checkoutChip).toBeTruthy();
+        if (!checkoutChip) {
+            throw new Error('Expected checkout chip to render');
+        }
+        expect(checkoutChip.controlId).toBe('checkout');
+        expect(checkoutChip.collapsedOptionsPopover?.title).toBe('newSession.checkout.selectTitle');
 
-        const renderChip = () => getCheckoutChip().render({
+        const renderChip = () => checkoutChip.render({
             chipStyle: () => null,
             showLabel: true,
             iconColor: '#000',
@@ -3434,6 +3691,9 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
 
         const checkoutChip = findSelectionListCheckoutChip(model);
         expect(checkoutChip).toBeTruthy();
+        if (!checkoutChip) {
+            throw new Error('Expected checkout chip to render');
+        }
 
         const renderChip = () => checkoutChip.render({
             chipStyle: () => null,

@@ -1,6 +1,8 @@
 import { MMKV } from 'react-native-mmkv';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { serverAccountScopedStorageKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
-import { getActivePendingServerUrl, isPendingServerUrlActive, normalizePendingServerUrl, pendingServerScopedKey } from './pendingServerScopedKeys';
+import { isPendingServerUrlActive, normalizePendingServerUrl } from './pendingServerScopedKeys';
 
 export type PendingNotificationNav = Readonly<{
     serverUrl: string;
@@ -31,34 +33,39 @@ function clearLegacyPendingNotificationNav(): void {
     storage.delete(KEY_ROUTE);
 }
 
+function readScopedPendingNotificationNav(key: string): PendingNotificationNav | null {
+    const raw = storage.getString(key);
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw) as Partial<PendingNotificationNav>;
+        const serverUrl = normalizeUrl(parsed.serverUrl ?? '');
+        const route = String(parsed.route ?? '').trim();
+        if (serverUrl && route) {
+            return { serverUrl, route };
+        }
+    } catch {
+        // ignore corrupt scoped payload
+    }
+    storage.delete(key);
+    return null;
+}
+
 export function setPendingNotificationNav(value: PendingNotificationNav): void {
     const serverUrl = normalizeUrl(value?.serverUrl ?? '');
     const route = String(value?.route ?? '').trim();
-    if (!serverUrl || !route) return;
+    const activeScope = getActiveServerAccountScope();
+    if (!serverUrl || !route || !activeScope || !isPendingServerUrlActive(serverUrl)) return;
     storage.set(
-        pendingServerScopedKey(KEY_RECORD_PREFIX, serverUrl),
+        serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope),
         JSON.stringify({ serverUrl, route } satisfies PendingNotificationNav),
     );
 }
 
 export function getPendingNotificationNav(): PendingNotificationNav | null {
-    const activeServerUrl = getActivePendingServerUrl();
-    if (!activeServerUrl) return null;
-    const key = pendingServerScopedKey(KEY_RECORD_PREFIX, activeServerUrl);
-    const raw = storage.getString(key);
-    if (raw) {
-        try {
-            const parsed = JSON.parse(raw) as Partial<PendingNotificationNav>;
-            const serverUrl = normalizeUrl(parsed.serverUrl ?? '');
-            const route = String(parsed.route ?? '').trim();
-            if (serverUrl && route) {
-                return { serverUrl, route };
-            }
-        } catch {
-            // ignore corrupt scoped payload
-        }
-        storage.delete(key);
-    }
+    const activeScope = getActiveServerAccountScope();
+    if (!activeScope) return null;
+    const scoped = readScopedPendingNotificationNav(serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope));
+    if (scoped) return scoped;
 
     const legacy = readLegacyPendingNotificationNav();
     if (!legacy) return null;
@@ -69,12 +76,30 @@ export function getPendingNotificationNav(): PendingNotificationNav | null {
 }
 
 export function clearPendingNotificationNav(): void {
-    const activeServerUrl = getActivePendingServerUrl();
-    if (activeServerUrl) {
-        storage.delete(pendingServerScopedKey(KEY_RECORD_PREFIX, activeServerUrl));
+    const activeScope = getActiveServerAccountScope();
+    if (activeScope) {
+        storage.delete(serverAccountScopedStorageKey(KEY_RECORD_PREFIX, activeScope));
     }
     const legacy = readLegacyPendingNotificationNav();
     if (!legacy || isPendingServerUrlActive(legacy.serverUrl)) {
         clearLegacyPendingNotificationNav();
+    }
+}
+
+export function migratePendingNotificationNavScopes(
+    scope: ServerAccountScope,
+    legacyScopes: readonly ServerAccountScope[],
+): void {
+    const canonicalKey = serverAccountScopedStorageKey(KEY_RECORD_PREFIX, scope);
+    let hasCanonicalRecord = readScopedPendingNotificationNav(canonicalKey) !== null;
+    for (const legacyScope of legacyScopes) {
+        if (legacyScope.serverId === scope.serverId && legacyScope.accountId === scope.accountId) continue;
+        const legacyKey = serverAccountScopedStorageKey(KEY_RECORD_PREFIX, legacyScope);
+        const legacyRecord = readScopedPendingNotificationNav(legacyKey);
+        if (!hasCanonicalRecord && legacyRecord) {
+            storage.set(canonicalKey, JSON.stringify(legacyRecord));
+            hasCanonicalRecord = true;
+        }
+        storage.delete(legacyKey);
     }
 }

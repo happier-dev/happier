@@ -10,12 +10,15 @@ describe('buildPetCompanionActivityState', () => {
             id: 'waiting-session',
             active: true,
             thinking: true,
+            thinkingAt: 5_000,
+            presence: 'online',
             pendingUserActionRequestCount: 1,
         });
 
         expect(buildPetCompanionActivityState({
             sessions: [session],
             selectedSessionId: session.id,
+            nowMs: 5_001,
             signalsBySessionId: {
                 [session.id]: {
                     hasFailure: true,
@@ -29,6 +32,35 @@ describe('buildPetCompanionActivityState', () => {
         })).toMatchObject({
             state: 'waiting',
             reason: 'waiting',
+            sessionId: session.id,
+        });
+    });
+
+    it('maps projected failed turn status to failed activity without failure signals', () => {
+        const session = createSessionFixture({
+            id: 'projected-failed-session',
+            active: true,
+            presence: 'online',
+            latestTurnStatus: 'failed',
+            latestTurnStatusObservedAt: 9_000,
+        });
+
+        expect(buildPetCompanionActivityState({
+            sessions: [session],
+            selectedSessionId: session.id,
+            nowMs: 9_001,
+            signalsBySessionId: {
+                [session.id]: {
+                    hasFailure: false,
+                    hasUnreadMessages: false,
+                    latestThinkingActivityAtMs: null,
+                    latestMeaningfulActivityAtMs: null,
+                    pendingMessageCount: 0,
+                },
+            },
+        })).toMatchObject({
+            state: 'failed',
+            reason: 'failed',
             sessionId: session.id,
         });
     });
@@ -94,7 +126,7 @@ describe('buildPetCompanionActivityState', () => {
         });
     });
 
-    it('maps optimistic thinking and active thinking grace to running activity', () => {
+    it('does not map optimistic thinking or thinking grace to running activity', () => {
         const optimisticSession = createSessionFixture({
             id: 'optimistic-thinking-session',
             active: true,
@@ -134,11 +166,11 @@ describe('buildPetCompanionActivityState', () => {
             },
         });
 
-        expect(model.trayItems.map((item) => item.sessionId).sort()).toEqual([
-            graceSession.id,
-            optimisticSession.id,
-        ].sort());
-        expect(model.trayItems.every((item) => item.status === 'running')).toBe(true);
+        expect(model).toMatchObject({
+            state: 'idle',
+            reason: 'idle',
+            trayItems: [],
+        });
     });
 
     it('prioritizes failed session state over review and running activity', () => {
@@ -146,14 +178,17 @@ describe('buildPetCompanionActivityState', () => {
             id: 'failed-session',
             active: true,
             thinking: true,
+            latestTurnStatus: 'failed',
+            latestTurnStatusObservedAt: 9_000,
         });
 
         expect(buildPetCompanionActivityState({
             sessions: [session],
             selectedSessionId: session.id,
+            nowMs: 9_001,
             signalsBySessionId: {
                 [session.id]: {
-                    hasFailure: true,
+                    hasFailure: false,
                     hasUnreadMessages: true,
                     latestThinkingActivityAtMs: 9_000,
                     latestMeaningfulActivityAtMs: 9_000,
@@ -171,12 +206,16 @@ describe('buildPetCompanionActivityState', () => {
         const session = createSessionFixture({
             id: 'permission-session',
             active: true,
+            presence: 'online',
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 1_000,
             pendingPermissionRequestCount: 1,
         });
 
         expect(buildPetCompanionActivityState({
             sessions: [session],
             selectedSessionId: session.id,
+            nowMs: 1_001,
             signalsBySessionId: {
                 [session.id]: {
                     hasFailure: false,
@@ -223,6 +262,7 @@ describe('buildPetCompanionActivityState', () => {
         const session = createSessionFixture({
             id: 'running-session',
             active: true,
+            presence: 'online',
             thinking: true,
             thinkingAt: 3_000,
         });
@@ -230,6 +270,7 @@ describe('buildPetCompanionActivityState', () => {
         expect(buildPetCompanionActivityState({
             sessions: [session],
             selectedSessionId: session.id,
+            nowMs: 3_001,
             signalsBySessionId: {
                 [session.id]: {
                     hasFailure: false,

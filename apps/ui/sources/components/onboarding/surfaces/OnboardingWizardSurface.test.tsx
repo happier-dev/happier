@@ -2,7 +2,7 @@ import React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import type { PendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent.shared';
@@ -365,9 +365,6 @@ vi.mock('@/components/onboarding/restore/SecretKeyLoginEmbedded', () => ({
 vi.mock('@/components/onboarding/restore/LostAccessEmbedded', () => ({
     LostAccessEmbedded: () => null,
 }));
-vi.mock('@/components/onboarding/preAuth/WelcomeProvidersShowcase', () => ({
-    WelcomeProvidersShowcase: () => null,
-}));
 vi.mock('@/components/onboarding/steps/webDesktop/WebDesktopRelayHostHandoffContent', () => ({
     WebDesktopRelayHostHandoffContent: (props: Record<string, unknown>) => React.createElement('WebDesktopRelayHostHandoffContent', props),
 }));
@@ -509,6 +506,51 @@ describe('OnboardingWizardSurface', () => {
         relayAccessWizardMockState.effectSelectionNotificationCount = 0;
     });
 
+    it('exposes wizard state and navigation through the controller hook', async () => {
+        const { useOnboardingWizardController } = await import('./useOnboardingWizardController');
+        const hook = await renderHook(() => useOnboardingWizardController({
+            layout: 'portrait',
+            isDesktopShell: true,
+            authEntryOptions: baseAuthOptions,
+            onCreateAccount: vi.fn(),
+            onCreateAccountViaProvider: vi.fn(),
+            onLoginWithKeylessProvider: vi.fn(),
+            onLoginWithMtls: vi.fn(),
+            onChangeRelayViaServerConfig: vi.fn(),
+        }));
+
+        let controller = hook.getCurrent();
+        expect(controller.stepId).toBe('welcome');
+        expect(controller.currentStepIndex).toBe(0);
+        expect(controller.stepCount).toBeGreaterThan(1);
+        expect(controller.title).toBe('setupOnboarding.welcomeTitle');
+        expect(controller.showBack).toBe(false);
+        expect(controller.onBack).toBeNull();
+        expect(controller.skipLabel).toBe('common.start');
+        expect(controller.body).toBeTruthy();
+
+        await act(async () => {
+            controller.goToStep('relay_select');
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        controller = hook.getCurrent();
+        expect(controller.stepId).toBe('relay_select');
+        expect(controller.contentTransitionDirection).toBe('forward');
+        expect(controller.showBack).toBe(true);
+        expect(controller.onBack).toEqual(expect.any(Function));
+        expect(controller.skipLabel).toBe('common.next');
+
+        await act(async () => {
+            controller.onBack?.();
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+
+        controller = hook.getCurrent();
+        expect(controller.stepId).toBe('welcome');
+        expect(controller.contentTransitionDirection).toBe('backward');
+    });
+
     it('labels the welcome action as start and the relay selection action as next', async () => {
         const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
         const screen = await renderScreen(
@@ -586,6 +628,49 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findAllByType('ShellChrome' as never)).toHaveLength(1);
     });
 
+    it('renders the current body without WizardModalShell in bare chrome mode', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                wizardChromeMode: 'bare',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        expect(screen.findAllByType(WizardModalShell as never)).toHaveLength(0);
+        expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
+    });
+
+    it('keeps non-welcome bare steps inside the workflow pane with heading plus primary action', async () => {
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                wizardChromeMode: 'bare',
+                initialStepId: 'relay_select',
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        expect(screen.findAllByType(WizardModalShell as never)).toHaveLength(0);
+        expect(screen.findByTestId('onboarding-wizard-bare-title')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('setupOnboarding.preAuthTitle');
+        expect(screen.findByTestId('onboarding-wizard-primary')).toBeTruthy();
+    });
+
     it('uses the physical screen size (not the window size) for web QR-scanner heuristics on desktop shells', async () => {
         const originalScreen = (globalThis as unknown as { screen?: unknown }).screen;
         Object.defineProperty(globalThis, 'screen', {
@@ -600,6 +685,7 @@ describe('OnboardingWizardSurface', () => {
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
+                initialStepId: 'auth',
                 authEntryOptions: baseAuthOptions,
                 onCreateAccount: vi.fn(),
                 onCreateAccountViaProvider: vi.fn(),
@@ -1118,11 +1204,10 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(screen.findByTestId('onboarding-wizard-welcome-auth')).toBeTruthy();
+        expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
 
         await act(async () => {
-            const authEntry = screen.findByType('AuthEntryView' as never) as unknown as ReactTestInstance;
-            await (authEntry.props as any).onCreateAccount?.();
+            await screen.findByTestId('welcome-primary-start')?.props.onPress?.();
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
@@ -1161,8 +1246,7 @@ describe('OnboardingWizardSurface', () => {
         expect(String(relayLine.props.children)).not.toContain('127.0.0.1:3009');
 
         await act(async () => {
-            const authEntry = screen.findByType('AuthEntryView' as never) as unknown as ReactTestInstance;
-            await (authEntry.props as any).onCreateAccount?.();
+            await screen.findByTestId('welcome-primary-start')?.props.onPress?.();
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
@@ -1172,7 +1256,7 @@ describe('OnboardingWizardSurface', () => {
         expect(onCreateAccount).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps the welcome relay footer visible even when the wizard relay selection has no URL (falls back to active relay)', async () => {
+    it('keeps the welcome relay hint visible when the active relay supplies the URL', async () => {
         activeServerSnapshotMock.serverUrl = 'https://relay.example.test';
 
         const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
@@ -1188,26 +1272,6 @@ describe('OnboardingWizardSurface', () => {
                 onChangeRelayViaServerConfig: vi.fn(),
             }),
         );
-
-        expect(screen.findAllByTestId('onboarding-wizard-relay-hint')).toHaveLength(1);
-
-        const changeRelayButton = screen.findByTestId('onboarding-wizard-change-relay')!;
-        await act(async () => {
-            await changeRelayButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const remoteChoice = screen.findByTestId('onboarding-wizard-relay:remoteComputer')!;
-        await act(async () => {
-            await remoteChoice.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const backButton = screen.findByTestId('onboarding-wizard-back')!;
-        await act(async () => {
-            await backButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(screen.findAllByTestId('onboarding-wizard-relay-hint')).toHaveLength(1);
     });
@@ -1244,7 +1308,7 @@ describe('OnboardingWizardSurface', () => {
         expect(String(updatedRelayLine.props.children)).toContain('relay-other.example.test');
     });
 
-    it('resets relay selection to the active relay when opening relay selection from welcome', async () => {
+    it('does not render a duplicate relay selection action inside the welcome body', async () => {
         activeServerSnapshotMock.serverUrl = 'https://relay.example.test';
 
         const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
@@ -1261,36 +1325,8 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const changeRelayButton = screen.findByTestId('onboarding-wizard-change-relay')!;
-        await act(async () => {
-            await changeRelayButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const thisComputerChoice = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
-        await act(async () => {
-            await thisComputerChoice.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const backButton = screen.findByTestId('onboarding-wizard-back')!;
-        await act(async () => {
-            await backButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        activeServerSnapshotMock.serverUrl = 'https://relay-other.example.test';
-
-        const changeRelayButton2 = screen.findByTestId('onboarding-wizard-change-relay')!;
-        await act(async () => {
-            await changeRelayButton2.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const activeRelayRow = screen.findByTestId('onboarding-wizard-relay:profile:active')!;
-        const thisComputerRow = screen.findByTestId('onboarding-wizard-relay:thisComputer')!;
-        expect(activeRelayRow.props.selected).toBe(true);
-        expect(thisComputerRow.props.selected).toBe(false);
+        expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
+        expect(screen.findAllByTestId('onboarding-wizard-change-relay')).toHaveLength(0);
     });
 
     afterEach(() => {
@@ -1446,7 +1482,7 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(screen.findAllByType('RestoreIndexEmbedded' as never)).toHaveLength(0);
-        expect(screen.findByTestId('onboarding-wizard-welcome-auth')).toBeTruthy();
+        expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-relay-hint')).toBeTruthy();
     });
 
@@ -1473,7 +1509,7 @@ describe('OnboardingWizardSurface', () => {
 
         expect(screen.findAllByTestId('onboarding-wizard-primary')).toHaveLength(0);
         expect(screen.findAllByTestId('onboarding-wizard-change-relay')).toHaveLength(0);
-        expect(screen.findByType('AuthEntryView' as never)).toBeTruthy();
+        expect(screen.findByTestId('welcome-auth-blocked')).toBeTruthy();
     });
 
     it('renders the welcome body block and selected server hint with clear back navigation', async () => {
@@ -1493,10 +1529,9 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        expect(screen.findByTestId('welcome-hero')).toBeTruthy();
+        expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-logotype')).toBeTruthy();
-        expect(screen.findByTestId('onboarding-wizard-welcome-auth')).toBeTruthy();
-        expect(screen.findByTestId('onboarding-wizard-welcome-showcase')).toBeTruthy();
+        expect(screen.findAllByTestId('onboarding-wizard-welcome-showcase')).toHaveLength(0);
 
         const startButton = screen.findByTestId('onboarding-wizard-primary')!;
         await act(async () => {
@@ -1521,7 +1556,127 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-back')).toBeTruthy();
     });
 
-    it('shows auth actions on welcome when the relay is already known and keeps change relay available', async () => {
+    it('runs anonymous account creation from the welcome decision primary action', async () => {
+        activeServerSnapshotMock.serverUrl = 'https://relay.example.test';
+        const onCreateAccount = vi.fn();
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: baseAuthOptions,
+                onCreateAccount,
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        await act(async () => {
+            await screen.findByTestId('welcome-primary-start')?.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(onCreateAccount).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses a provider-specific primary action when anonymous signup is unavailable', async () => {
+        activeServerSnapshotMock.serverUrl = 'https://relay.example.test';
+        const onCreateAccountViaProvider = vi.fn();
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: {
+                    ...baseAuthOptions,
+                    showAnonymousSignup: false,
+                    showProviderSignup: true,
+                    providerId: 'github',
+                    providerSignupTitle: 'Continue with GitHub',
+                    primarySignupTitle: 'Continue with GitHub',
+                },
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider,
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
+        await act(async () => {
+            await screen.findByTestId('welcome-provider-primary')?.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(onCreateAccountViaProvider).toHaveBeenCalledWith('github');
+    });
+
+    it('uses the mTLS primary action for managed certificate login states', async () => {
+        activeServerSnapshotMock.serverUrl = 'https://relay.example.test';
+        const onLoginWithMtls = vi.fn();
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: {
+                    ...baseAuthOptions,
+                    showAnonymousSignup: false,
+                    showMtlsLogin: true,
+                    mtlsPrimary: true,
+                    primarySignupTitle: 'Sign in with certificate',
+                },
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls,
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
+        await act(async () => {
+            await screen.findByTestId('welcome-mtls-primary')?.props.onPress?.();
+        });
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(onLoginWithMtls).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not render welcome decision actions while auth capability loading is unresolved', async () => {
+        activeServerSnapshotMock.serverUrl = 'https://relay.example.test';
+
+        const { OnboardingWizardSurface } = await import('./OnboardingWizardSurface');
+        const screen = await renderScreen(
+            React.createElement(OnboardingWizardSurface, {
+                layout: 'portrait',
+                isDesktopShell: true,
+                authEntryOptions: {
+                    ...baseAuthOptions,
+                    serverAvailability: 'loading',
+                    showAuthActions: false,
+                    showAnonymousSignup: false,
+                },
+                onCreateAccount: vi.fn(),
+                onCreateAccountViaProvider: vi.fn(),
+                onLoginWithKeylessProvider: vi.fn(),
+                onLoginWithMtls: vi.fn(),
+                onChangeRelayViaServerConfig: vi.fn(),
+            }),
+        );
+
+        expect(screen.findByTestId('welcome-auth-loading')).toBeTruthy();
+        expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
+        expect(screen.findAllByTestId('welcome-secondary-login')).toHaveLength(0);
+    });
+
+    it('shows welcome decision actions when the relay is already known', async () => {
         activeServerSnapshotMock.serverUrl = 'https://relay.example.test';
         listServerProfilesMock.mockReturnValue([
             {
@@ -1549,14 +1704,14 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        expect(screen.findByType('AuthEntryView' as never)).toBeTruthy();
+        expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
         expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.login');
         expect(screen.findAllByTestId('onboarding-wizard-primary')).toHaveLength(0);
         expect(screen.findByTestId('onboarding-wizard-relay-hint')).toBeTruthy();
-        expect(screen.findByTestId('onboarding-wizard-change-relay')).toBeTruthy();
+        expect(screen.findAllByTestId('onboarding-wizard-change-relay')).toHaveLength(0);
     });
 
-    it('opens relay selection from the welcome change-relay button without mutating the URL', async () => {
+    it('leaves relay selection on the shell footer instead of rendering a duplicate welcome body action', async () => {
         activeServerSnapshotMock.serverUrl = 'https://relay.example.test';
         listServerProfilesMock.mockReturnValue([
             {
@@ -1585,14 +1740,9 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const changeRelayButton = screen.findByTestId('onboarding-wizard-change-relay')!;
-        await act(async () => {
-            await changeRelayButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
         expect(onChangeRelayViaServerConfig).toHaveBeenCalledTimes(0);
-        expect(screen.findByTestId('onboarding-wizard-relay-diagram')).toBeTruthy();
+        expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
+        expect(screen.findAllByTestId('onboarding-wizard-change-relay')).toHaveLength(0);
     });
 
     it('shows auth actions on welcome after the user picks a saved relay and returns back to the intro', async () => {
@@ -1642,7 +1792,7 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(screen.findByTestId('onboarding-wizard-welcome-auth')).toBeTruthy();
+        expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-relay-hint')).toBeTruthy();
         expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.login');
     });
@@ -1694,13 +1844,10 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(screen.findByTestId('onboarding-wizard-welcome-auth')).toBeTruthy();
+        expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
 
-        const authEntry = screen.findByType('AuthEntryView' as never) as unknown as {
-            props: { onRestore?: () => void };
-        };
         await act(async () => {
-            await authEntry.props.onRestore?.();
+            await screen.findByTestId('welcome-secondary-login')?.props.onPress?.();
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
@@ -1728,7 +1875,7 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(screen.findAllByType('RestoreIndexEmbedded' as never)).toHaveLength(0);
-        expect(screen.findByTestId('onboarding-wizard-welcome-auth')).toBeTruthy();
+        expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
     });
 
     it('only advances to relay URL entry after pressing Continue when selecting the custom relay option', async () => {
@@ -1811,6 +1958,7 @@ describe('OnboardingWizardSurface', () => {
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
+                initialStepId: 'auth',
                 authEntryOptions: baseAuthOptions,
                 onCreateAccount: vi.fn(),
                 onCreateAccountViaProvider: vi.fn(),
@@ -3882,10 +4030,9 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const scanButton = screen.findByTestId('onboarding-wizard-scan')!;
-
+        const loginButton = screen.findByTestId('welcome-secondary-login')!;
         await act(async () => {
-            await scanButton.props.onPress?.();
+            await loginButton.props.onPress?.();
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
@@ -3917,10 +4064,9 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        const scanButton = screen.findByTestId('onboarding-wizard-scan')!;
-
+        const loginButton = screen.findByTestId('welcome-secondary-login')!;
         await act(async () => {
-            await scanButton.props.onPress?.();
+            await loginButton.props.onPress?.();
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 

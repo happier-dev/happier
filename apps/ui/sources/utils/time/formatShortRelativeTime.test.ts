@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatShortRelativeTime } from './formatShortRelativeTime';
+import { formatShortRelativeTime, formatShortRelativeTimeAt } from './formatShortRelativeTime';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -19,6 +19,13 @@ describe('formatShortRelativeTime', () => {
         vi.useFakeTimers();
         vi.setSystemTime(time);
     }
+
+    describe('explicit now input', () => {
+        it('formats relative time from the supplied now timestamp without reading Date.now()', () => {
+            setNow(NOW);
+            expect(formatShortRelativeTimeAt(NOW - 6 * MINUTE, NOW + 4 * MINUTE)).toBe('10m');
+        });
+    });
 
     describe('invalid / edge-case inputs', () => {
         it('returns empty string for future timestamps (negative diff)', () => {

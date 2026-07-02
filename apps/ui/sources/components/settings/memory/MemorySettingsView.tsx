@@ -29,7 +29,10 @@ import {
     type MemoryStatusV1,
 } from '@happier-dev/protocol';
 import { MemorySettingsBudgetsSection } from './MemorySettingsBudgetsSection';
+import { MemorySettingsContentPolicySection } from './MemorySettingsContentPolicySection';
+import { MemorySettingsCoverageSection } from './MemorySettingsCoverageSection';
 import { MemorySettingsEmbeddingsSection } from './MemorySettingsEmbeddingsSection';
+import { MemorySettingsIndexTelemetrySection } from './MemorySettingsIndexTelemetrySection';
 import { MemorySettingsPrivacySection } from './MemorySettingsPrivacySection';
 
 type IndexMode = MemorySettingsV1['indexMode'];
@@ -152,9 +155,9 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
     }, [embeddingsStatusPresentation, loading]);
     const diskUsageSubtitle = React.useMemo(() => {
         if (!statusPresentation) return t('memorySearchSettings.status.diskUsageUnavailable');
-        return t('memorySearchSettings.status.diskUsage', {
-            lightMb: statusPresentation.lightMb ?? 0,
-            deepMb: statusPresentation.deepMb ?? 0,
+        return t('memorySearchSettings.status.diskUsageFormatted', {
+            light: statusPresentation.lightSize ?? t('common.unavailable'),
+            deep: statusPresentation.deepSize ?? t('common.unavailable'),
         });
     }, [statusPresentation]);
     const showEmbeddingsStatus = (memoryStatus?.indexMode ?? settings.indexMode) === 'deep';
@@ -271,6 +274,8 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                 ) : null}
             </ItemGroup>
 
+            <MemorySettingsIndexTelemetrySection memoryStatus={memoryStatus} />
+
             {showReadOnlySettings ? null : (
                 <>
             <ItemGroup
@@ -320,7 +325,11 @@ export const MemorySettingsView = React.memo(function MemorySettingsView() {
                 />
             </ItemGroup>
 
+            <MemorySettingsCoverageSection settings={settings} writeSettings={writeSettings} />
+
             <MemorySettingsBudgetsSection settings={settings} writeSettings={writeSettings} />
+
+            <MemorySettingsContentPolicySection settings={settings} writeSettings={writeSettings} />
 
             <ItemGroup
                 title={t('memorySearchSettings.hints.title')}

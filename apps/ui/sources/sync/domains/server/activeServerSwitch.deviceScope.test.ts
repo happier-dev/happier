@@ -103,4 +103,26 @@ describe('activeServerSwitch device scope', () => {
         expect(profiles.getDeviceDefaultServerId()).toBe(tabProfile.id);
         expect(profiles.getActiveServerUrl()).toBe('https://tab.example.test');
     });
+
+    it('does not switch when the target id aliases the active server identity', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        stubWebRuntime('https://origin.example.test');
+
+        const { profiles, switches } = await importFreshServerModules();
+        const profile = profiles.upsertServerProfile({
+            serverUrl: 'https://relay.example.test',
+            name: 'Relay',
+        });
+        profiles.setActiveServerId(profile.id, { scope: 'device' });
+        profiles.setServerProfileIdentityForUrl(profile.serverUrl, 'srv_identity_123');
+
+        const switched = await switches.setActiveServerAndSwitch({
+            serverId: profile.id,
+            scope: 'device',
+        });
+
+        expect(switched).toBe(false);
+        expect(profiles.getActiveServerId()).toBe('srv_identity_123');
+        expect(profiles.getDeviceDefaultServerId()).toBe(profile.id);
+    });
 });

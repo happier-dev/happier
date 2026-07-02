@@ -39,6 +39,7 @@ function createIosSecureStoreEntitlementError(): Error {
 
 function installServerProfilesMock(): void {
     vi.doMock('@/sync/domains/server/serverProfiles', () => ({
+        areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
         getActiveServerId: () => serverProfilesState.activeServerId,
         getActiveServerUrl: () => serverProfilesState.activeServerUrl,
         listServerProfiles: () => serverProfilesState.profiles,

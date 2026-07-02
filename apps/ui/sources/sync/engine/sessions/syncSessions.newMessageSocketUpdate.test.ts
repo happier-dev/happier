@@ -4,6 +4,7 @@ import { handleNewMessageSocketUpdate } from './sessionSocketUpdate';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 import { createSessionMessageApplyCoalescer } from './sessionMessageApplyCoalescer';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { flushRealtimeFanoutTelemetry, resetRealtimeFanoutTelemetry } from '@/sync/runtime/performance/realtimeFanoutTelemetry';
 
 function buildUpdate(params: {
     sid?: string;
@@ -109,6 +110,7 @@ describe('handleNewMessageSocketUpdate', () => {
 
     afterEach(() => {
         vi.useRealTimers();
+        resetRealtimeFanoutTelemetry();
         syncPerformanceTelemetry.configure({ enabled: false });
         syncPerformanceTelemetry.reset();
     });
@@ -116,6 +118,8 @@ describe('handleNewMessageSocketUpdate', () => {
     it('preserves update message seq on normalized messages', async () => {
         const { params, applyMessages } = buildHarness({
             updateData: buildUpdate({ sid: 's1', messageId: 'm2', messageSeq: 2 }),
+            isSessionActivelyViewed: () => false,
+            isSessionMessagesLoaded: () => true,
         });
 
         await handleNewMessageSocketUpdate(params);
@@ -161,6 +165,209 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(applyMessages).not.toHaveBeenCalled();
         expect(markSessionMaterializedMaxSeq).not.toHaveBeenCalled();
         expect(onMessageGapDetected).not.toHaveBeenCalled();
+    });
+
+    it('applies only an advancing projection for replayed hidden new-message updates', async () => {
+        const decryptMessage = vi.fn(async () => ({
+            id: 'm2',
+            localId: null,
+            createdAt: 1_000,
+            content: { role: 'user', content: { type: 'text', text: 'hidden' } },
+        }));
+        const markSessionKnownRemoteSeq = vi.fn();
+        const markSessionTranscriptDeferred = vi.fn();
+        const { params, applyMessages, applySessions, markSessionMaterializedMaxSeq } = buildHarness({
+            updateData: buildUpdate({ sid: 's1', messageId: 'm2', messageSeq: 2 }),
+            getSession: () => ({
+                ...buildSession('s1'),
+                latestTurnStatus: 'in_progress',
+                latestTurnStatusObservedAt: 900,
+            } as Session),
+            getSessionEncryption: () => ({ decryptMessage }),
+            getSessionMaterializedMaxSeq: () => 2,
+            isSessionActivelyViewed: () => false,
+            isSessionFullContentConsumerActive: () => false,
+            realtimeProjectionMode: 'enabled',
+            markSessionKnownRemoteSeq,
+            markSessionTranscriptDeferred,
+        } as Partial<Parameters<typeof handleNewMessageSocketUpdate>[0]>);
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(decryptMessage).not.toHaveBeenCalled();
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(markSessionMaterializedMaxSeq).not.toHaveBeenCalled();
+        expect(markSessionKnownRemoteSeq).not.toHaveBeenCalled();
+        expect(markSessionTranscriptDeferred).not.toHaveBeenCalled();
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's1',
+                seq: 2,
+                updatedAt: 1_000,
+                meaningfulActivityAt: 1_000,
+            }),
+        ]);
+    });
+
+    it('routes hidden complete-projection new-message updates without decrypting transcript content', async () => {
+        const decryptMessage = vi.fn(async () => ({
+            id: 'm2',
+            localId: null,
+            createdAt: 1_000,
+            content: { role: 'user', content: { type: 'text', text: 'hi' } },
+        }));
+        const markSessionKnownRemoteSeq = vi.fn();
+        const markSessionTranscriptDeferred = vi.fn();
+        const { params, applySessions, applyMessages, markSessionMaterializedMaxSeq } = buildHarness({
+            getSessionEncryption: () => ({ decryptMessage }),
+            getSession: () => ({
+                ...buildSession('s1'),
+                latestTurnStatus: 'in_progress',
+                latestTurnStatusObservedAt: 900,
+            } as Session),
+            isSessionActivelyViewed: () => false,
+            isSessionFullContentConsumerActive: () => false,
+            realtimeProjectionMode: 'enabled',
+            markSessionKnownRemoteSeq,
+            markSessionTranscriptDeferred,
+        } as Partial<Parameters<typeof handleNewMessageSocketUpdate>[0]>);
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(decryptMessage).not.toHaveBeenCalled();
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(markSessionMaterializedMaxSeq).not.toHaveBeenCalled();
+        expect(applySessions).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 's1',
+                seq: 2,
+                updatedAt: 1_000,
+                meaningfulActivityAt: 1_000,
+            }),
+        ]);
+        expect(markSessionKnownRemoteSeq).toHaveBeenCalledWith('s1', 2);
+        expect(markSessionTranscriptDeferred).toHaveBeenCalledWith('s1', {
+            updateType: 'new-message',
+            seq: 2,
+            messageId: 'm2',
+        });
+    });
+
+    it('routes hidden partial-projection sessions without decrypting or materializing transcript content', async () => {
+        const decryptMessage = vi.fn(async () => ({
+            id: 'm2',
+            localId: null,
+            createdAt: 1_000,
+            content: { role: 'user', content: { type: 'text', text: 'legacy' } },
+        }));
+        const markSessionKnownRemoteSeq = vi.fn();
+        const markSessionTranscriptDeferred = vi.fn();
+        const { params, applyMessages, applySessions, markSessionMaterializedMaxSeq } = buildHarness({
+            getSession: () => buildSession('s1'),
+            getSessionEncryption: () => ({ decryptMessage }),
+            isSessionActivelyViewed: () => false,
+            isSessionFullContentConsumerActive: () => false,
+            realtimeProjectionMode: 'enabled',
+            markSessionKnownRemoteSeq,
+            markSessionTranscriptDeferred,
+        });
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(decryptMessage).not.toHaveBeenCalled();
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(markSessionMaterializedMaxSeq).not.toHaveBeenCalled();
+        expect(applySessions.mock.calls[0]?.[0]?.[0]).toEqual(expect.objectContaining({
+            id: 's1',
+            seq: 2,
+            updatedAt: 1_000,
+            meaningfulActivityAt: 1_000,
+        }));
+        expect(markSessionKnownRemoteSeq).toHaveBeenCalledWith('s1', 2);
+        expect(markSessionTranscriptDeferred).toHaveBeenCalledWith('s1', expect.objectContaining({
+            updateType: 'new-message',
+            seq: 2,
+        }));
+    });
+
+    it('routes hidden cache-only complete-projection new messages without forcing a sessions refresh', async () => {
+        const decryptMessage = vi.fn(async () => ({
+            id: 'm2',
+            localId: null,
+            createdAt: 1_000,
+            content: { role: 'user', content: { type: 'text', text: 'hi' } },
+        }));
+        const applyCacheOnlySessionProjectionPatch = vi.fn(() => true);
+        const markSessionKnownRemoteSeq = vi.fn();
+        const markSessionTranscriptDeferred = vi.fn();
+        const { params, applyMessages, fetchSessions, markSessionMaterializedMaxSeq } = buildHarness({
+            getSessionEncryption: () => ({ decryptMessage }),
+            getSession: () => undefined,
+            getSessionProjection: () => ({
+                latestTurnStatus: 'in_progress',
+                latestTurnStatusObservedAt: 900,
+            }),
+            isSessionActivelyViewed: () => false,
+            isSessionFullContentConsumerActive: () => false,
+            realtimeProjectionMode: 'enabled',
+            applyCacheOnlySessionProjectionPatch,
+            markSessionKnownRemoteSeq,
+            markSessionTranscriptDeferred,
+        } as unknown as Partial<Parameters<typeof handleNewMessageSocketUpdate>[0]>);
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(decryptMessage).not.toHaveBeenCalled();
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(markSessionMaterializedMaxSeq).not.toHaveBeenCalled();
+        expect(fetchSessions).not.toHaveBeenCalled();
+        expect(applyCacheOnlySessionProjectionPatch).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 's1',
+            messageSeq: 2,
+            updateType: 'new-message',
+        }));
+        expect(markSessionKnownRemoteSeq).toHaveBeenCalledWith('s1', 2);
+        expect(markSessionTranscriptDeferred).toHaveBeenCalledWith('s1', {
+            updateType: 'new-message',
+            seq: 2,
+            messageId: 'm2',
+        });
+    });
+
+    it('records shadow routing but still applies the current full transcript path', async () => {
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 60_000,
+        });
+        syncPerformanceTelemetry.reset();
+        const decryptMessage = vi.fn(async () => ({
+            id: 'm2',
+            localId: null,
+            createdAt: 1_000,
+            content: { role: 'user', content: { type: 'text', text: 'hi' } },
+        }));
+        const { params, applyMessages } = buildHarness({
+            getSessionEncryption: () => ({ decryptMessage }),
+            getSession: () => ({
+                ...buildSession('s1'),
+                latestTurnStatus: 'in_progress',
+                latestTurnStatusObservedAt: 900,
+            } as Session),
+            isSessionActivelyViewed: () => false,
+            isSessionFullContentConsumerActive: () => false,
+            realtimeProjectionMode: 'shadow',
+        } as Partial<Parameters<typeof handleNewMessageSocketUpdate>[0]>);
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(decryptMessage).toHaveBeenCalledTimes(1);
+        expect(applyMessages).toHaveBeenCalledTimes(1);
+        const routeEvent = syncPerformanceTelemetry.snapshot().events.find((event) =>
+            event.name === 'sync.sessions.socket.message.routeDecision',
+        );
+        expect(routeEvent?.fields.projectionOnly).toBe(1);
+        expect(routeEvent?.fields.shadowMode).toBe(1);
     });
 
     it('applies plaintext realtime messages when the session is plain and session encryption is unavailable', async () => {
@@ -211,6 +418,7 @@ describe('handleNewMessageSocketUpdate', () => {
                         role: 'agent',
                         content: {
                             type: 'acp',
+                            provider: 'test-provider',
                             data: { type: 'task_started', id: 'turn-1' },
                         },
                     },
@@ -242,6 +450,42 @@ describe('handleNewMessageSocketUpdate', () => {
         });
     });
 
+    it('keeps a terminal latest turn projection when a stale task_started message replays', async () => {
+        const { params, applySessions } = buildHarness({
+            updateData: buildUpdate({
+                sid: 's1',
+                messageId: 'm2',
+                messageSeq: 2,
+                content: {
+                    t: 'plain',
+                    v: {
+                        role: 'agent',
+                        content: {
+                            type: 'acp',
+                            provider: 'test-provider',
+                            data: { type: 'task_started', id: 'turn-1' },
+                        },
+                    },
+                },
+            }),
+            getSession: () => ({
+                ...buildSession('s1'),
+                encryptionMode: 'plain',
+                updatedAt: 2_000,
+                thinking: false,
+                latestTurnStatus: 'completed',
+            } as Session),
+        });
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(applySessions.mock.calls[0]?.[0]?.[0]).toMatchObject({
+            id: 's1',
+            latestTurnStatus: 'completed',
+            thinking: false,
+        });
+    });
+
     it.each([
         ['turn_failed', 'failed'],
         ['turn_cancelled', 'cancelled'],
@@ -257,6 +501,7 @@ describe('handleNewMessageSocketUpdate', () => {
                         role: 'agent',
                         content: {
                             type: 'acp',
+                            provider: 'test-provider',
                             data: { type, id: 'turn-1' },
                         },
                     },
@@ -341,7 +586,7 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(onMessageGapDetected).not.toHaveBeenCalled();
     });
 
-    it('applies decrypted messages even when the session is not yet hydrated, while still refreshing sessions', async () => {
+    it('applies decrypted messages when projection routing is disabled and the session is not yet hydrated', async () => {
         const { params, applyMessages, fetchSessions, markSessionMaterializedMaxSeq, applySessions } = buildHarness({
             getSession: () => undefined,
         });
@@ -353,6 +598,40 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(applyMessages.mock.calls[0]?.[0]).toBe('s1');
         expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
         expect(applySessions).not.toHaveBeenCalled();
+    });
+
+    it('routes hidden unhydrated sessions without decrypting when projection routing is enabled', async () => {
+        const decryptMessage = vi.fn(async () => ({
+            id: 'm2',
+            localId: null,
+            createdAt: 1_000,
+            content: { role: 'user', content: { type: 'text', text: 'hidden unknown' } },
+        }));
+        const markSessionKnownRemoteSeq = vi.fn();
+        const markSessionTranscriptDeferred = vi.fn();
+        const { params, applyMessages, fetchSessions, markSessionMaterializedMaxSeq, applySessions } = buildHarness({
+            getSession: () => undefined,
+            getSessionProjection: () => undefined,
+            getSessionEncryption: () => ({ decryptMessage }),
+            isSessionActivelyViewed: () => false,
+            isSessionFullContentConsumerActive: () => false,
+            realtimeProjectionMode: 'enabled',
+            markSessionKnownRemoteSeq,
+            markSessionTranscriptDeferred,
+        });
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(decryptMessage).not.toHaveBeenCalled();
+        expect(fetchSessions).toHaveBeenCalledTimes(1);
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(applySessions).not.toHaveBeenCalled();
+        expect(markSessionMaterializedMaxSeq).not.toHaveBeenCalled();
+        expect(markSessionKnownRemoteSeq).toHaveBeenCalledWith('s1', 2);
+        expect(markSessionTranscriptDeferred).toHaveBeenCalledWith('s1', expect.objectContaining({
+            updateType: 'new-message',
+            seq: 2,
+        }));
     });
 
     it('drops in-flight message work when a known session is deleted before decrypt resolves', async () => {
@@ -497,8 +776,11 @@ describe('handleNewMessageSocketUpdate', () => {
         const readEvent = events.find((event) => event.name === 'sync.sessions.socket.message.readMessage');
         expect(readEvent?.fields.encrypted).toBe(1);
         expect(readEvent?.fields.plain).toBe(0);
+        expect(readEvent?.fields.activeViewingSession).toBe(0);
+        expect(readEvent?.fields.messagesLoaded).toBe(1);
         const normalizeEvent = events.find((event) => event.name === 'sync.sessions.socket.message.normalize');
         expect(normalizeEvent?.fields.encrypted).toBe(1);
+        expect(normalizeEvent?.fields.activeViewingSession).toBe(0);
         const applyEvent = events.find((event) => event.name === 'sync.sessions.socket.message.apply');
         expect(applyEvent?.fields.normalized).toBe(1);
         expect(applyEvent?.fields.queued).toBe(0);
@@ -517,6 +799,71 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(enqueueMessages).toHaveBeenCalledTimes(1);
         expect(applyMessages).not.toHaveBeenCalled();
         expect(onNormalizedMessagesApplied).not.toHaveBeenCalled();
+    });
+
+    it('summarizes distinct realtime sessions and routing outcomes for concurrent stream profiling', async () => {
+        syncPerformanceTelemetry.configure({
+            enabled: true,
+            slowThresholdMs: 1_000_000,
+            flushIntervalMs: 60_000,
+        });
+        syncPerformanceTelemetry.reset();
+        resetRealtimeFanoutTelemetry();
+
+        const sessions = new Map<string, Session>([
+            ['s1', {
+                ...buildSession('s1'),
+                latestTurnStatus: 'in_progress',
+                latestTurnStatusObservedAt: 900,
+            }],
+            ['s2', {
+                ...buildSession('s2'),
+                latestTurnStatus: 'in_progress',
+                latestTurnStatusObservedAt: 900,
+            }],
+        ]);
+        const decryptMessage = vi.fn(async (encrypted: { id?: unknown }) => {
+            const id = typeof encrypted.id === 'string' ? encrypted.id : 'message';
+            return {
+                id,
+                localId: null,
+                createdAt: 1_000,
+                content: { role: 'user', content: { type: 'text', text: id } },
+            };
+        });
+        const markSessionTranscriptDeferred = vi.fn();
+        const { params } = buildHarness({
+            getSession: (sessionId: string) => sessions.get(sessionId),
+            getSessionEncryption: () => ({ decryptMessage }),
+            realtimeProjectionMode: 'enabled',
+            isSessionActivelyViewed: (sessionId: string) => sessionId === 's2',
+            isSessionFullContentConsumerActive: () => false,
+            markSessionTranscriptDeferred,
+        });
+
+        await handleNewMessageSocketUpdate({
+            ...params,
+            updateData: buildUpdate({ sid: 's1', messageId: 'm-hidden', messageSeq: 2 }),
+        });
+        await handleNewMessageSocketUpdate({
+            ...params,
+            updateData: buildUpdate({ sid: 's2', messageId: 'm-visible', messageSeq: 3 }),
+        });
+        flushRealtimeFanoutTelemetry();
+
+        expect(markSessionTranscriptDeferred).toHaveBeenCalledTimes(1);
+        expect(decryptMessage).toHaveBeenCalledTimes(1);
+        expect(syncPerformanceTelemetry.snapshot().events).toContainEqual(expect.objectContaining({
+            name: 'sync.sessions.realtime.fanout.window',
+            fields: expect.objectContaining({
+                routeDecisions: 2,
+                distinctSessions: 2,
+                projectionOnly: 1,
+                fullTranscriptApply: 1,
+                visibleSessionMessages: 1,
+                backgroundSessionMessages: 1,
+            }),
+        }));
     });
 
     it('can coalesce socket message applies by passing a coalescer enqueue function', async () => {

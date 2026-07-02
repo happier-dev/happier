@@ -10,12 +10,18 @@ import {
 } from './theme/profiles/themeProfileRuntime';
 import { fireAndForget } from './utils/system/fireAndForget';
 
+type AppThemeName = 'light' | 'dark';
+
+const normalizeColorScheme = (colorScheme: ReturnType<typeof Appearance.getColorScheme>): AppThemeName => {
+    return colorScheme === 'dark' ? 'dark' : 'light';
+};
+
 const themeRuntimeLocalState = loadThemeRuntimeLocalState();
 const themePreference = themeRuntimeLocalState.themePreference;
 const startupThemes = resolveThemeRuntimeStartupThemes({
     themeProfiles: themeRuntimeLocalState.themeProfiles,
     themePreference,
-    systemTheme: Appearance.getColorScheme(),
+    systemTheme: normalizeColorScheme(Appearance.getColorScheme()),
 });
 const appThemes = startupThemes.themes;
 
@@ -35,11 +41,7 @@ declare module 'react-native-unistyles' {
     export interface UnistylesBreakpoints extends AppBreakpoints { }
 }
 
-const normalizeColorScheme = (colorScheme: ReturnType<typeof Appearance.getColorScheme>): 'light' | 'dark' => {
-    return colorScheme === 'dark' ? 'dark' : 'light';
-};
-
-const getInitialTheme = (): 'light' | 'dark' => {
+const getInitialTheme = (): AppThemeName => {
     return resolveThemeRuntimeVisualTheme(themePreference, normalizeColorScheme(Appearance.getColorScheme()));
 };
 
@@ -62,7 +64,7 @@ function isDesktopActivityOverlayWindow(): boolean {
     return window.location.pathname.replace(/\/+$/u, '') === '/desktop/activity-overlay';
 }
 
-const applyRootBackgroundColor = (systemTheme: 'light' | 'dark') => {
+const applyRootBackgroundColor = (systemTheme: AppThemeName) => {
     const color = resolveEffectiveThemeRuntimeBackground({
         themes: appThemes,
         themePreference,

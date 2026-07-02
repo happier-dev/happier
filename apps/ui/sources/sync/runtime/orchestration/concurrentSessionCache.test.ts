@@ -85,4 +85,33 @@ describe('resolveConcurrentTargets', () => {
             },
         ]);
     });
+
+    it('returns targets keyed by stable server identity ids', () => {
+        const result = resolveConcurrentTargets({
+            activeServerId: 'srv-a',
+            profiles: [
+                { id: 'server-a', serverUrl: 'https://a.example.test', name: 'Server A', serverIdentityId: 'srv-a' },
+                { id: 'server-c', serverUrl: 'https://c.example.test', name: 'Server C', serverIdentityId: 'srv-c' },
+            ],
+            settings: {
+                serverSelectionGroups: [
+                    {
+                        id: 'group-main',
+                        name: 'Main',
+                        serverIds: ['server-a', 'server-c'],
+                        presentation: 'grouped',
+                    },
+                ],
+                serverSelectionActiveTargetKind: 'group',
+                serverSelectionActiveTargetId: 'group-main',
+            },
+        });
+        expect(result).toEqual([
+            {
+                id: 'srv-c',
+                serverUrl: 'https://c.example.test',
+                serverName: 'Server C',
+            },
+        ]);
+    });
 });

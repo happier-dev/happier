@@ -2,7 +2,30 @@ import { createServerUrlComparableKey as createProtocolServerUrlComparableKey } 
 
 import { isLocalishHostname } from './serverUrlClassification';
 
-export function canonicalizeServerUrl(raw: string): string {
+const SERVER_URL_CANONICAL_CACHE_LIMIT = 256;
+
+const canonicalServerUrlCache = new Map<string, string>();
+const comparableServerUrlCache = new Map<string, string>();
+
+function readBoundedCache(cache: Map<string, string>, key: string): string | undefined {
+    const value = cache.get(key);
+    if (value === undefined) return undefined;
+    cache.delete(key);
+    cache.set(key, value);
+    return value;
+}
+
+function writeBoundedCache(cache: Map<string, string>, key: string, value: string): string {
+    cache.set(key, value);
+    while (cache.size > SERVER_URL_CANONICAL_CACHE_LIMIT) {
+        const oldestKey = cache.keys().next().value;
+        if (oldestKey === undefined) break;
+        cache.delete(oldestKey);
+    }
+    return value;
+}
+
+function canonicalizeServerUrlUncached(raw: string): string {
     const value = String(raw ?? '').trim();
     if (!value) return '';
     const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(value);
@@ -23,12 +46,22 @@ export function canonicalizeServerUrl(raw: string): string {
     }
 }
 
+export function canonicalizeServerUrl(raw: string): string {
+    const key = String(raw ?? '');
+    const cached = readBoundedCache(canonicalServerUrlCache, key);
+    if (cached !== undefined) return cached;
+    return writeBoundedCache(canonicalServerUrlCache, key, canonicalizeServerUrlUncached(key));
+}
+
 export function createServerUrlComparableKey(raw: string): string {
-    const canonical = canonicalizeServerUrl(raw);
+    const key = String(raw ?? '');
+    const cached = readBoundedCache(comparableServerUrlCache, key);
+    if (cached !== undefined) return cached;
+    const canonical = canonicalizeServerUrl(key);
     if (!canonical) return '';
     try {
-        return createProtocolServerUrlComparableKey(canonical);
+        return writeBoundedCache(comparableServerUrlCache, key, createProtocolServerUrlComparableKey(canonical));
     } catch {
-        return '';
+        return writeBoundedCache(comparableServerUrlCache, key, '');
     }
 }

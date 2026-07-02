@@ -1,14 +1,15 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { ResumeSessionOptions } from '@/sync/ops';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
-import { canResumeSessionWithOptions, getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
+import { canContinueSessionWithFreshSpawn, canResumeSessionWithOptions, getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
 import { deriveAcpBackendIdFromFlavor } from '@/agents/runtime/acpFlavor';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
 import type { PermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import type { ModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { normalizeOptionalNumber, normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessionAuthoring/sessionAuthoringNormalization';
 
 export type ResumeSessionBaseOptions = ResumeSessionOptions;
 
@@ -33,13 +34,11 @@ export function buildResumeSessionBaseOptionsFromSession(opts: {
 }): ResumeSessionBaseOptions | null {
     const { sessionId, session, resumeCapabilityOptions, resumeTargetOverride, permissionOverride, modelOverride } = opts;
 
-    const reachableTarget = readMachineTargetForSession(sessionId);
+    const reachableTarget = readMachineControlTargetForSession(sessionId);
     const machineId = normalizeNonEmptyString(resumeTargetOverride?.machineId)
-        ?? normalizeNonEmptyString(reachableTarget?.machineId)
-        ?? normalizeNonEmptyString(session.metadata?.machineId);
+        ?? normalizeNonEmptyString(reachableTarget?.machineId);
     const directory = normalizeNonEmptyString(resumeTargetOverride?.directory)
-        ?? normalizeNonEmptyString(reachableTarget?.basePath)
-        ?? normalizeNonEmptyString(session.metadata?.path);
+        ?? normalizeNonEmptyString(reachableTarget?.basePath);
     const flavor = session.metadata?.flavor;
     if (!machineId || !directory) return null;
 
@@ -52,10 +51,17 @@ export function buildResumeSessionBaseOptionsFromSession(opts: {
         configuredAcpBackendIdFromFlavor !== null
             ? (configuredAcpBackendIdFromMetadata.length > 0 ? configuredAcpBackendIdFromMetadata : configuredAcpBackendIdFromFlavor)
             : null;
+    const connectedServices = normalizeSessionAuthoringConnectedServices(session.metadata?.connectedServices);
+    const connectedServicesUpdatedAt = normalizeOptionalNumber(session.metadata?.connectedServicesUpdatedAt);
 
     // Note: vendor resume IDs can be missing even for otherwise-resumable sessions.
     // Wake/resume still needs to work (e.g. pending-queue wake) and should attach the vendor id only when present.
-    if (!canResumeSessionWithOptions(session.metadata, resumeCapabilityOptions)) return null;
+    // A provider session that never started (no vendor resume id persisted) is still
+    // continuable by a fresh spawn against the same Happier session (QA A-F5).
+    if (
+        !canResumeSessionWithOptions(session.metadata, resumeCapabilityOptions)
+        && !canContinueSessionWithFreshSpawn(session.metadata, resumeCapabilityOptions)
+    ) return null;
 
     if (configuredAcpBackendId !== null) {
         return {
@@ -63,6 +69,8 @@ export function buildResumeSessionBaseOptionsFromSession(opts: {
             machineId,
             directory,
             backendTarget: { kind: 'configuredAcpBackend', backendId: configuredAcpBackendId },
+            ...(connectedServices ? { connectedServices } : {}),
+            ...(connectedServices && connectedServicesUpdatedAt !== null ? { connectedServicesUpdatedAt } : {}),
             ...(permissionOverride ? permissionOverride : {}),
             ...(modelOverride ? modelOverride : {}),
         };
@@ -80,6 +88,8 @@ export function buildResumeSessionBaseOptionsFromSession(opts: {
         directory,
         backendTarget: { kind: 'builtInAgent', agentId: getAgentCore(agentId).cli.spawnAgent },
         ...(resume ? { resume } : {}),
+        ...(connectedServices ? { connectedServices } : {}),
+        ...(connectedServices && connectedServicesUpdatedAt !== null ? { connectedServicesUpdatedAt } : {}),
         ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
         ...(permissionOverride ? permissionOverride : {}),
         ...(modelOverride ? modelOverride : {}),

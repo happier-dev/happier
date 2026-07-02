@@ -4,6 +4,9 @@ import renderer, { act } from 'react-test-renderer';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useInboxHasContent } from './useInboxHasContent';
 import { renderScreen } from '@/dev/testkit';
+import type { Message } from '@/sync/domains/messages/messageTypes';
+import { createReducer } from '@/sync/reducer/reducer';
+import type { SessionMessages } from '@/sync/store/domains/messages';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -30,6 +33,47 @@ vi.mock('./useChangelog', () => ({
 
 const originalDevFlag = (globalThis as any).__DEV__;
 
+function createPermissionMessage(createdAt: number): Message {
+    return {
+        kind: 'tool-call',
+        id: 'message-permission',
+        localId: null,
+        createdAt,
+        children: [],
+        tool: {
+            id: 'request-permission',
+            name: 'Bash',
+            state: 'running',
+            input: { command: 'ls' },
+            createdAt,
+            startedAt: createdAt,
+            completedAt: null,
+            description: null,
+            permission: {
+                id: 'request-permission',
+                status: 'pending',
+                kind: 'permission',
+            },
+        },
+    };
+}
+
+function createSessionMessages(overrides: Partial<SessionMessages> = {}): SessionMessages {
+    return {
+        messageIdsOldestFirst: [],
+        messagesById: {},
+        messagesMap: {},
+        reducerState: createReducer(),
+        latestThinkingMessageId: null,
+        latestThinkingMessageActivityAtMs: null,
+        latestReadyEventSeq: null,
+        latestReadyEventAt: null,
+        messagesVersion: 1,
+        isLoaded: true,
+        ...overrides,
+    };
+}
+
 describe('useInboxHasContent', () => {
     let tree: renderer.ReactTestRenderer | null = null;
 
@@ -54,6 +98,7 @@ describe('useInboxHasContent', () => {
             });
             tree = null;
         }
+        vi.restoreAllMocks();
         (globalThis as any).__DEV__ = originalDevFlag;
         storage.setState({
             friends: {},
@@ -159,6 +204,7 @@ describe('useInboxHasContent', () => {
     });
 
     it('returns true when there are online sessions with pending permission requests', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
         storage.setState({
             friends: {},
             feedItems: [],
@@ -173,7 +219,7 @@ describe('useInboxHasContent', () => {
                                 tool: 'bash',
                                 kind: 'permission',
                                 arguments: { command: 'echo hello' },
-                                createdAt: 1,
+                                createdAt: 999_000,
                             },
                         },
                     },
@@ -188,6 +234,58 @@ describe('useInboxHasContent', () => {
         }
 
         tree = (await renderScreen(React.createElement(Test))).tree;
+
+        expect(latest).toBe(true);
+    });
+
+    it('updates when an online session gains a transcript-only pending permission', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(1_000);
+        storage.setState({
+            friends: {},
+            feedItems: [],
+            sessions: {
+                s1: {
+                    id: 's1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1_000,
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                    metadata: null,
+                    metadataVersion: 0,
+                    agentState: null,
+                    agentStateVersion: 0,
+                },
+            },
+            sessionMessages: {},
+        } as any);
+
+        let latest: boolean | null = null;
+        function Test() {
+            latest = useInboxHasContent();
+            return React.createElement('View');
+        }
+
+        tree = (await renderScreen(React.createElement(Test))).tree;
+        expect(latest).toBe(false);
+
+        const permissionMessage = createPermissionMessage(1_000);
+        act(() => {
+            storage.setState({
+                sessionMessages: {
+                    s1: createSessionMessages({
+                        messageIdsOldestFirst: [permissionMessage.id],
+                        messagesById: {
+                            [permissionMessage.id]: permissionMessage,
+                        },
+                        messagesVersion: 2,
+                    }),
+                },
+            } as any);
+        });
 
         expect(latest).toBe(true);
     });
@@ -207,6 +305,7 @@ describe('useInboxHasContent', () => {
                     activeAt: 1,
                     thinking: false,
                     thinkingAt: 0,
+                    latestTurnStatus: 'completed',
                     presence: 1,
                     metadata: null,
                     metadataVersion: 0,

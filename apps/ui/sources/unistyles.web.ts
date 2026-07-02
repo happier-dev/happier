@@ -7,12 +7,18 @@ import {
     resolveThemeRuntimeVisualTheme,
 } from './theme/profiles/themeProfileRuntime';
 
+type AppThemeName = 'light' | 'dark';
+
+const normalizeColorScheme = (colorScheme: ReturnType<typeof Appearance.getColorScheme>): AppThemeName => {
+    return colorScheme === 'dark' ? 'dark' : 'light';
+};
+
 const themeRuntimeLocalState = loadThemeRuntimeLocalState();
 const themePreference = themeRuntimeLocalState.themePreference;
 const startupThemes = resolveThemeRuntimeStartupThemes({
     themeProfiles: themeRuntimeLocalState.themeProfiles,
     themePreference,
-    systemTheme: Appearance.getColorScheme(),
+    systemTheme: normalizeColorScheme(Appearance.getColorScheme()),
 });
 const appThemes = startupThemes.themes;
 
@@ -32,8 +38,8 @@ declare module 'react-native-unistyles' {
     export interface UnistylesBreakpoints extends AppBreakpoints {}
 }
 
-const getInitialTheme = (): 'light' | 'dark' => {
-    return resolveThemeRuntimeVisualTheme(themePreference, Appearance.getColorScheme());
+const getInitialTheme = (): AppThemeName => {
+    return resolveThemeRuntimeVisualTheme(themePreference, normalizeColorScheme(Appearance.getColorScheme()));
 };
 
 const settings =

@@ -25,6 +25,7 @@ const ConnectedServiceQuotasV2ResponseSchema = z.object({
 export async function getConnectedServiceQuotaSnapshotSealed(
   credentials: AuthCredentials,
   params: Readonly<{ serviceId: ConnectedServiceId; profileId: string }>,
+  opts?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<Readonly<{
   sealed: SealedConnectedServiceQuotaSnapshotV1;
   metadata: {
@@ -39,6 +40,7 @@ export async function getConnectedServiceQuotaSnapshotSealed(
       `/v2/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/quotas`,
       {
         method: 'GET',
+        signal: opts?.signal,
         headers: {
           Authorization: `Bearer ${credentials.token}`,
           'Content-Type': 'application/json',

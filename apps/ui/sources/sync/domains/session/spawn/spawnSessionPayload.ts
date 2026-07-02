@@ -28,6 +28,7 @@ export interface SpawnSessionOptions {
     transcriptStorage?: 'persisted' | 'direct';
     approvedNewDirectoryCreation?: boolean;
     backendTarget: BackendTargetRefV2Input;
+    spawnNonce?: string;
     // Session-scoped profile identity (non-secret). Empty string means "no profile".
     profileId?: string;
     // Environment variables from AI backend profile
@@ -88,6 +89,7 @@ export type SpawnHappySessionRpcParams = CodexBackendTransportFields & {
     transcriptStorage?: 'persisted' | 'direct'
     approvedNewDirectoryCreation?: boolean
     backendTarget: BackendTargetRefV2
+    spawnNonce?: string
     profileId?: string
     environmentVariables?: Record<string, string>
     resume?: string
@@ -203,6 +205,7 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         transcriptStorage,
         approvedNewDirectoryCreation = false,
         backendTarget,
+        spawnNonce,
         environmentVariables,
         profileId,
         resume,
@@ -234,6 +237,7 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
     const canonicalBackendTarget = readBackendTargetRefV2(backendTarget);
     const codexTransportFields = buildCodexBackendTransportFields({
         backendTarget: canonicalBackendTarget,
+        ...(typeof spawnNonce === 'string' && spawnNonce.trim().length > 0 ? { spawnNonce: spawnNonce.trim() } : {}),
         codexBackendMode,
         experimentalCodexAcp,
         runtimeDescriptorV1,

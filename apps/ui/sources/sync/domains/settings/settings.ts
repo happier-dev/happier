@@ -19,7 +19,7 @@ import { stripDeprecatedSessionOnlyKeys } from './parse/accountSettingsLegacyCle
 // Current schema version for backward compatibility
 // NOTE: This schemaVersion is for the Happy app's settings blob (synced via the server).
 // happy-cli maintains its own local settings schemaVersion separately.
-export const SUPPORTED_SCHEMA_VERSION = 6;
+export const SUPPORTED_SCHEMA_VERSION = 7;
 
 function assertProviderSettingsDoNotShadowCoreKeys(params: {
     coreSettingKeys: readonly string[];

@@ -49,7 +49,7 @@ export const MarkdownViewRenderer = React.memo((props: MarkdownViewRendererProps
     const streamingReveal = props.streamingMode === 'streaming' && props.streamingAnimated === true;
     const staticRenderPlaceholder = useDelayedStaticMarkdownRenderPlaceholder({
         enabled:
-            props.staticRenderPlaceholderEnabled !== false &&
+            props.staticRenderPlaceholderEnabled === true &&
             Platform.OS !== 'web' &&
             props.streamingMode === 'static' &&
             props.markdown.trim().length > 0,

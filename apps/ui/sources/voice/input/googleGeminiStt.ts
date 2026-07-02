@@ -7,8 +7,8 @@ export type GoogleGeminiSttAudio =
 
 async function loadAudioBase64(audio: GoogleGeminiSttAudio): Promise<string> {
   if (audio.kind === 'native') {
-    const FileSystem: any = await import('expo-file-system');
-    return await FileSystem.readAsStringAsync(audio.uri, { encoding: FileSystem.EncodingType.Base64 });
+    const { File } = await import('expo-file-system');
+    return await new File(audio.uri).base64();
   }
 
   const buffer = await audio.blob.arrayBuffer();

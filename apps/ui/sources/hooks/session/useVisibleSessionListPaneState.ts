@@ -17,6 +17,11 @@ export type VisibleSessionListPaneState = Readonly<{
     showEmptyState: boolean;
 }>;
 
+export type VisibleSessionListPaneStateOptions = Readonly<{
+    pathname?: string;
+    sessionListSurfaceDataActive?: boolean;
+}>;
+
 function countVisibleSessions(index: ReadonlyArray<SessionListIndexItem> | null): number {
     if (!index) return 0;
     let count = 0;
@@ -28,9 +33,15 @@ function countVisibleSessions(index: ReadonlyArray<SessionListIndexItem> | null)
     return count;
 }
 
-export function useVisibleSessionListPaneState(storageFilter: SessionListStorageFilter = 'all'): VisibleSessionListPaneState {
+export function useVisibleSessionListPaneState(
+    storageFilter: SessionListStorageFilter = 'all',
+    options: VisibleSessionListPaneStateOptions = {},
+): VisibleSessionListPaneState {
     const { summary } = useVisibleSessionListSummaryState(storageFilter);
-    const { visibleSessionListIndex, hasHiddenInactiveSessions, folderFocus } = useVisibleSessionListViewState(storageFilter);
+    const { visibleSessionListIndex, hasHiddenInactiveSessions, folderFocus } = useVisibleSessionListViewState(storageFilter, {
+        pathname: options.pathname,
+        sessionListSurfaceDataActive: options.sessionListSurfaceDataActive,
+    });
     const visibleSessionCount = React.useMemo(
         () => countVisibleSessions(visibleSessionListIndex),
         [visibleSessionListIndex],

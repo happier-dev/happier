@@ -1,7 +1,9 @@
 import React, { useEffect, useLayoutEffect } from 'react';
-import { View, TouchableWithoutFeedback, Animated, KeyboardAvoidingView, Platform, ScrollView, type ViewStyle } from 'react-native';
+import { View, TouchableWithoutFeedback, Animated, Platform, ScrollView, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { KeyboardAwareModalFrame } from '@/components/ui/keyboardAvoidance';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
+import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popover';
 import { requireRadixDismissableLayer } from '@/utils/web/radixCjs';
 import { requireReactDOM } from '@/utils/web/reactDomCjs';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
@@ -376,10 +378,9 @@ export function BaseModal({
                         />
                         <ModalPortalTargetProvider target={modalPortalTarget}>
                             <ModalBoundaryProvider>
-                                <KeyboardAvoidingView
+                                <KeyboardAwareModalFrame
                                     pointerEvents="auto"
                                     style={[styles.container, autoPlacementContainerStyle]}
-                                    behavior={undefined}
                                 >
                                     <OverlayMotionFrame
                                         visible={visible}
@@ -398,7 +399,7 @@ export function BaseModal({
                                             {children}
                                         </View>
                                     </OverlayMotionFrame>
-                                </KeyboardAvoidingView>
+                                </KeyboardAwareModalFrame>
                             </ModalBoundaryProvider>
                         </ModalPortalTargetProvider>
                     </div>
@@ -428,56 +429,60 @@ export function BaseModal({
 
     return (
         <View style={[styles.portalRoot, { zIndex: baseZ, elevation: baseZ }]} pointerEvents={visible ? 'auto' : 'none'}>
-            <KeyboardAvoidingView
-                style={[
-                    styles.container,
-                    {
-                        paddingTop: insets.top,
-                        paddingBottom: insets.bottom,
-                    },
-                ]}
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                {...webEventHandlers}
-            >
-                {showBackdrop ? (
-                    <TouchableWithoutFeedback onPress={handleBackdropPress}>
-                        <Animated.View
-                            style={[
-                                styles.backdrop,
-                                {
-                                ...createBackdropNativeStyle({
-                                    backgroundColor: theme.colors.overlay.scrimWizard,
-                                }),
-                                    opacity: backdropOpacity,
-                                }
-                            ]}
-                        />
-                    </TouchableWithoutFeedback>
-                ) : null}
-
-                <OverlayMotionFrame
-                    visible={visible}
-                    kind="modal"
-                    pointerEvents="box-none"
+            <OverlayPortalProvider>
+                <KeyboardAwareModalFrame
                     style={[
-                        styles.content,
+                        styles.container,
+                        {
+                            paddingTop: insets.top,
+                            paddingRight: insets.right,
+                            paddingBottom: insets.bottom,
+                            paddingLeft: insets.left,
+                        },
                     ]}
+                    {...webEventHandlers}
                 >
-                    <ModalBoundaryProvider>
-                        <ScrollView
-                            style={styles.scrollContainer}
-                            contentContainerStyle={styles.scrollContent}
-                            showsVerticalScrollIndicator={false}
-                            keyboardShouldPersistTaps="handled"
-                            centerContent={true}
-                        >
-                            <View pointerEvents="auto" style={styles.scrollContentInner}>
-                                {children}
-                            </View>
-                        </ScrollView>
-                    </ModalBoundaryProvider>
-                </OverlayMotionFrame>
-            </KeyboardAvoidingView>
+                    {showBackdrop ? (
+                        <TouchableWithoutFeedback onPress={handleBackdropPress}>
+                            <Animated.View
+                                style={[
+                                    styles.backdrop,
+                                    {
+                                        ...createBackdropNativeStyle({
+                                            backgroundColor: theme.colors.overlay.scrimWizard,
+                                        }),
+                                        opacity: backdropOpacity,
+                                    }
+                                ]}
+                            />
+                        </TouchableWithoutFeedback>
+                    ) : null}
+
+                    <OverlayMotionFrame
+                        visible={visible}
+                        kind="modal"
+                        pointerEvents="box-none"
+                        style={[
+                            styles.content,
+                        ]}
+                    >
+                        <ModalBoundaryProvider>
+                            <ScrollView
+                                style={styles.scrollContainer}
+                                contentContainerStyle={styles.scrollContent}
+                                showsVerticalScrollIndicator={false}
+                                keyboardShouldPersistTaps="handled"
+                                centerContent={true}
+                            >
+                                <View pointerEvents="auto" style={styles.scrollContentInner}>
+                                    {children}
+                                </View>
+                            </ScrollView>
+                        </ModalBoundaryProvider>
+                    </OverlayMotionFrame>
+                    <OverlayPortalHost />
+                </KeyboardAwareModalFrame>
+            </OverlayPortalProvider>
         </View>
     );
 }

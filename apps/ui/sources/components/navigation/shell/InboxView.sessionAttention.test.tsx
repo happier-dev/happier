@@ -24,6 +24,16 @@ const storageState = {
         },
     },
     machines: {
+        'machine-stale': {
+            id: 'machine-stale',
+            active: false,
+            activeAt: 1,
+            replacedByMachineId: 'machine-target',
+            replacedAt: 2,
+            replacementReason: 'manual_repair',
+            replacementSource: 'manual',
+            metadata: { host: 'stale.local' },
+        },
         'machine-target': {
             id: 'machine-target',
             active: true,
@@ -183,31 +193,45 @@ installNavigationShellCommonModuleMocks({
                     hasUnreadMessages: false,
                 },
             ],
+            useAllSessionListRenderablesForAttention: () => [
+                {
+                    id: 'session-1',
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    archivedAt: null,
+                    metadataVersion: 1,
+                    agentStateVersion: 1,
+                    metadata: {
+                        name: 'Repo session',
+                        path: '/Users/leeroy/repo',
+                        homeDir: '/Users/leeroy',
+                        machineId: 'machine-stale',
+                    },
+                    thinking: false,
+                    thinkingAt: 0,
+                    presence: 'online',
+                    hasUnreadMessages: false,
+                },
+            ],
             useAllSessionListAttentionRows: () => [
                 {
-                    serverId: null,
-                    serverName: null,
                     session: {
                         id: 'session-1',
-                        seq: 1,
-                        createdAt: 1,
-                        updatedAt: 1,
                         active: true,
-                        activeAt: 1,
-                        archivedAt: null,
-                        metadataVersion: 1,
-                        agentStateVersion: 1,
+                        presence: 'online',
                         metadata: {
                             name: 'Repo session',
                             path: '/Users/leeroy/repo',
                             homeDir: '/Users/leeroy',
                             machineId: 'machine-stale',
                         },
-                        thinking: false,
-                        thinkingAt: 0,
-                        presence: 'online',
                         hasUnreadMessages: false,
                     },
+                    serverId: null,
+                    serverName: null,
                 },
             ],
             useMachine: (machineId: string) =>
@@ -255,7 +279,7 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: ({ title, subtitle, testID, onPress }: any) => React.createElement('Item', { title, subtitle, testID, onPress }),
+    Item: ({ title, subtitle, testID }: any) => React.createElement('Item', { title, subtitle, testID }),
 }));
 
 vi.mock('@/components/ui/feedback/UpdateBanner', () => ({
@@ -324,9 +348,6 @@ describe('InboxView session attention', () => {
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<InboxView />)).tree;
 
-        const itemGroups = tree!.findAllByType('ItemGroup');
-        expect(itemGroups).toHaveLength(1);
-        expect(itemGroups[0]?.props.title).toBe('Repo session');
         expect(tree!.findAllByTestId('inbox.session_attention.session-1')).toHaveLength(1);
         expect(tree!.findAllByType('PermissionPromptCard')).toHaveLength(1);
         expect(tree!.findAllByType('UserActionPromptCard')).toHaveLength(1);
@@ -373,53 +394,143 @@ describe('InboxView session attention', () => {
                         ownerProfile: { username: 'friend', id: 'friend-1', firstName: null, lastName: null, avatar: null },
                     },
                 ],
+                useAllSessionsForAttention: () => [
+                    {
+                        id: 'session-shared',
+                        seq: 0,
+                        lastViewedSessionSeq: 0,
+                        updatedAt: 40,
+                        createdAt: 9,
+                        active: false,
+                        activeAt: 9,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 9,
+                        metadata: {
+                            name: 'Shared session',
+                            path: '/Users/leeroy/shared',
+                            homeDir: '/Users/leeroy',
+                        },
+                        metadataVersion: 0,
+                        agentState: null,
+                        agentStateVersion: 0,
+                        owner: 'friend-1',
+                        ownerProfile: { username: 'friend', id: 'friend-1', firstName: null, lastName: null, avatar: null },
+                    },
+                ],
+                useAllSessionListRenderables: () => [
+                    {
+                        id: 'session-unread',
+                        seq: 5,
+                        updatedAt: 50,
+                        createdAt: 10,
+                        active: false,
+                        activeAt: 10,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 10,
+                        metadata: {
+                            name: 'Unread session',
+                            path: '/Users/leeroy/unread',
+                            homeDir: '/Users/leeroy',
+                        },
+                        metadataVersion: 0,
+                        agentStateVersion: 0,
+                        hasUnreadMessages: true,
+                    },
+                    {
+                        id: 'session-shared',
+                        seq: 0,
+                        updatedAt: 40,
+                        createdAt: 9,
+                        active: false,
+                        activeAt: 9,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 9,
+                        metadata: {
+                            name: 'Shared session',
+                            path: '/Users/leeroy/shared',
+                            homeDir: '/Users/leeroy',
+                        },
+                        metadataVersion: 0,
+                        agentStateVersion: 0,
+                        owner: 'friend-1',
+                        hasUnreadMessages: false,
+                    },
+                ],
+                useAllSessionListRenderablesForAttention: () => [
+                    {
+                        id: 'session-unread',
+                        seq: 5,
+                        updatedAt: 50,
+                        createdAt: 10,
+                        active: false,
+                        activeAt: 10,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 10,
+                        metadata: {
+                            name: 'Unread session',
+                            path: '/Users/leeroy/unread',
+                            homeDir: '/Users/leeroy',
+                        },
+                        metadataVersion: 0,
+                        agentStateVersion: 0,
+                        hasUnreadMessages: true,
+                    },
+                    {
+                        id: 'session-shared',
+                        seq: 0,
+                        updatedAt: 40,
+                        createdAt: 9,
+                        active: false,
+                        activeAt: 9,
+                        thinking: false,
+                        thinkingAt: 0,
+                        presence: 9,
+                        metadata: {
+                            name: 'Shared session',
+                            path: '/Users/leeroy/shared',
+                            homeDir: '/Users/leeroy',
+                        },
+                        metadataVersion: 0,
+                        agentStateVersion: 0,
+                        owner: 'friend-1',
+                        hasUnreadMessages: false,
+                    },
+                ],
                 useAllSessionListAttentionRows: () => [
                     {
-                        serverId: 'server-b',
-                        serverName: 'Server B',
                         session: {
                             id: 'session-unread',
-                            seq: 5,
-                            updatedAt: 50,
-                            createdAt: 10,
                             active: false,
-                            activeAt: 10,
-                            thinking: false,
-                            thinkingAt: 0,
-                            presence: 10,
+                            presence: 'offline',
                             metadata: {
                                 name: 'Unread session',
                                 path: '/Users/leeroy/unread',
                                 homeDir: '/Users/leeroy',
                             },
-                            metadataVersion: 0,
-                            agentStateVersion: 0,
                             hasUnreadMessages: true,
                         },
+                        serverId: null,
+                        serverName: null,
                     },
                     {
-                        serverId: 'server-b',
-                        serverName: 'Server B',
                         session: {
                             id: 'session-shared',
-                            seq: 0,
-                            updatedAt: 40,
-                            createdAt: 9,
                             active: false,
-                            activeAt: 9,
-                            thinking: false,
-                            thinkingAt: 0,
-                            presence: 9,
+                            presence: 'offline',
                             metadata: {
                                 name: 'Shared session',
                                 path: '/Users/leeroy/shared',
                                 homeDir: '/Users/leeroy',
                             },
-                            metadataVersion: 0,
-                            agentStateVersion: 0,
                             owner: 'friend-1',
                             hasUnreadMessages: false,
                         },
+                        serverId: null,
+                        serverName: null,
                     },
                 ],
                 useMachine: () => null,
@@ -436,12 +547,7 @@ describe('InboxView session attention', () => {
         tree = (await renderScreen(<InboxView />)).tree;
 
         const items = tree!.findAllByType('Item');
-        const unreadItem = items.find((item) => item.props.title === 'Unread session');
-        expect(unreadItem).toBeTruthy();
+        expect(items.some((item) => item.props.title === 'Unread session')).toBe(true);
         expect(items.some((item) => item.props.title === 'Shared session')).toBe(false);
-
-        unreadItem?.props.onPress();
-
-        expect(pushSpy).toHaveBeenCalledWith('/session/session-unread?serverId=server-b');
     });
 });

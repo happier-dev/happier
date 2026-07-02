@@ -2,7 +2,9 @@ import { parseBooleanEnv, type FeatureId } from '@happier-dev/protocol';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { resolveUiFeatureToggleEnabled } from './featureRegistry';
 
-type FeatureLocalPolicyResolver = (settings: Settings) => boolean;
+export type FeatureLocalPolicySettings = Readonly<Pick<Settings, 'experiments' | 'featureToggles'>>;
+
+type FeatureLocalPolicyResolver = (settings: FeatureLocalPolicySettings) => boolean;
 
 const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPolicyResolver>>> = {
     automations: (settings) => resolveUiFeatureToggleEnabled(settings, 'automations'),
@@ -32,6 +34,7 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
     'files.reviewComments': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.reviewComments'),
     'files.diffSyntaxHighlighting': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.diffSyntaxHighlighting'),
     'files.editor': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.editor'),
+    'files.markdownRichEditor': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.markdownRichEditor'),
     'files.syntaxHighlighting.advanced': (settings) => resolveUiFeatureToggleEnabled(settings, 'files.syntaxHighlighting.advanced'),
     'memory.search': (settings) => resolveUiFeatureToggleEnabled(settings, 'memory.search'),
     'terminal.embeddedPty': (settings) => resolveUiFeatureToggleEnabled(settings, 'terminal.embeddedPty'),
@@ -41,7 +44,7 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
     'usage.reporting': (settings) => resolveUiFeatureToggleEnabled(settings, 'usage.reporting'),
 };
 
-export function resolveLocalFeaturePolicyEnabled(featureId: FeatureId, settings: Settings): boolean {
+export function resolveLocalFeaturePolicyEnabled(featureId: FeatureId, settings: FeatureLocalPolicySettings): boolean {
     const resolver = LOCAL_POLICY_BY_FEATURE[featureId];
     if (!resolver) return true;
     return resolver(settings);

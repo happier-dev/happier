@@ -5,6 +5,7 @@ import { renderScreen } from '@/dev/testkit';
 
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { ScmCommitSelectionPatch } from '@/sync/domains/state/storageTypes';
+import type { WorkspaceFileDetailsRefreshResult } from './workspaceFileDetails/refreshWorkspaceFileDetails';
 import { installWorkspaceFileDetailsCommonModuleMocks } from './workspaceFileDetails/workspaceFileDetailsTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -155,7 +156,7 @@ vi.mock('@/components/workspaces/files/details/workspaceFileDetails/useWorkspace
     useWorkspaceFileEditorState: () => fileEditorState,
 }));
 
-const refreshSpy = vi.fn(async (_input: any) => ({
+const refreshSpy = vi.fn(async (_input: any): Promise<WorkspaceFileDetailsRefreshResult> => ({
     status: 'ready' as const,
     error: null,
     diffContent: null,
@@ -272,6 +273,9 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
             ...workspaceSnapshot,
             fetchedAt: 1,
         };
+        fileEditorState.editorSurfaceEnabled = false;
+        fileEditorState.isEditingFile = false;
+        fileEditorState.editorSeedText = '';
         fileEditorState.fileChangedExternally = false;
         refreshSpy.mockReset();
         refreshSpy.mockImplementation(async (_input: any) => ({
@@ -733,6 +737,68 @@ describe('WorkspaceFileDetailsView (workspace SCM snapshot)', () => {
         await act(async () => {});
 
         expect(screen.findAllByTestId('file-editor-external-change-banner')).toHaveLength(1);
+    });
+
+    it('does not switch away from file mode while the file editor is active during an SCM refresh', async () => {
+        fileEditorState.editorSurfaceEnabled = true;
+        fileEditorState.isEditingFile = false;
+        fileEditorState.editorSeedText = 'draft';
+        let call = 0;
+        refreshSpy.mockImplementation(async (_input: any) => {
+            call += 1;
+            return {
+                status: 'ready' as const,
+                error: null,
+                diffContent: call === 1 ? 'diff-1' : 'diff-2',
+                fileContent: { content: 'hello', isBinary: false },
+                fileWriteSupported: true,
+            };
+        });
+
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+
+        const screen = await renderScreen(
+            <WorkspaceFileDetailsView
+                scopeId="workspace:srv1:m1:/repo"
+                scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                filePath="src/a.txt"
+                sessionIdForAugmentation={null}
+            />,
+        );
+        await act(async () => {
+            fileActionToolbarProps.current?.onDisplayMode?.('file');
+        });
+        fileEditorState.isEditingFile = true;
+        await act(async () => {
+            screen.tree.update(
+                <WorkspaceFileDetailsView
+                    scopeId="workspace:srv1:m1:/repo"
+                    scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                    filePath="src/a.txt"
+                    sessionIdForAugmentation={null}
+                />,
+            );
+        });
+        expect(screen.findAllByType('FileEditorPanel')).toHaveLength(1);
+
+        workspaceSnapshot = {
+            ...workspaceSnapshot,
+            fetchedAt: 2,
+        };
+
+        await act(async () => {
+            screen.tree.update(
+                <WorkspaceFileDetailsView
+                    scopeId="workspace:srv1:m1:/repo"
+                    scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/repo' }}
+                    filePath="src/a.txt"
+                    sessionIdForAugmentation={null}
+                />,
+            );
+        });
+        await act(async () => {});
+
+        expect(screen.findAllByType('FileEditorPanel')).toHaveLength(1);
     });
 
     it('keeps the toolbar edit callback stable across unchanged file-detail rerenders', async () => {

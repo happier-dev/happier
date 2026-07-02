@@ -31,6 +31,14 @@ const routerPushMock = vi.fn();
 const sendExpoLocalNotificationMock = vi.fn();
 const tauriIsPermissionGrantedMock = vi.hoisted(() => vi.fn(async () => true));
 const tauriRequestPermissionMock = vi.hoisted(() => vi.fn(async () => 'granted'));
+const enabledLegacyNotificationTopics = {
+    ready: true,
+    permissionRequest: true,
+    userActionRequest: true,
+    connectedServiceAccountSwitch: true,
+    connectedServiceQuotaBlocked: true,
+    connectedServiceQuotaRecovered: true,
+};
 const liveActivityRemoteDiagnosticsState = vi.hoisted(() => ({
     value: {
         modes: {
@@ -89,6 +97,9 @@ const settingsState: {
         readyIncludeMessageText: true,
         permissionRequest: true,
         userActionRequest: true,
+        connectedServiceAccountSwitch: true,
+        connectedServiceQuotaBlocked: true,
+        connectedServiceQuotaRecovered: true,
         foregroundBehavior: 'full',
     },
     notificationChannelsV1: [
@@ -97,11 +108,7 @@ const settingsState: {
             id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
             kind: 'expo_push',
             enabled: true,
-            topics: {
-                ready: true,
-                permissionRequest: true,
-                userActionRequest: true,
-            },
+            topics: enabledLegacyNotificationTopics,
             readyIncludeMessageText: true,
         },
     ],
@@ -301,6 +308,9 @@ describe('NotificationsSettingsView', () => {
             readyIncludeMessageText: true,
             permissionRequest: true,
             userActionRequest: true,
+            connectedServiceAccountSwitch: true,
+            connectedServiceQuotaBlocked: true,
+            connectedServiceQuotaRecovered: true,
             foregroundBehavior: 'full',
         };
         settingsState.notificationChannelsV1 = [
@@ -309,11 +319,7 @@ describe('NotificationsSettingsView', () => {
                 id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
                 kind: 'expo_push',
                 enabled: true,
-                topics: {
-                    ready: true,
-                    permissionRequest: true,
-                    userActionRequest: true,
-                },
+                topics: enabledLegacyNotificationTopics,
                 readyIncludeMessageText: true,
             },
         ];
@@ -997,32 +1003,32 @@ describe('NotificationsSettingsView', () => {
         const delta = applySettingsMock.mock.calls[0]?.[0] as Record<string, unknown>;
         expect(delta).toEqual(expect.objectContaining({
             notificationChannelsV1: [
-                {
+                expect.objectContaining({
                     v: 1,
                     id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
                     kind: 'expo_push',
                     enabled: true,
-                    topics: {
+                    topics: expect.objectContaining({
                         ready: true,
                         permissionRequest: true,
                         userActionRequest: true,
-                    },
+                    }),
                     readyIncludeMessageText: true,
-                },
-                {
+                }),
+                expect.objectContaining({
                     v: 1,
                     id: 'webhook-hooks-example-test-notify',
                     kind: 'webhook',
                     enabled: true,
                     url: 'https://hooks.example.test/notify',
                     signingSecret: null,
-                    topics: {
+                    topics: expect.objectContaining({
                         ready: true,
                         permissionRequest: true,
                         userActionRequest: true,
-                    },
+                    }),
                     readyIncludeMessageText: false,
-                },
+                }),
             ],
             attentionDeliveryPolicyV1: expect.objectContaining({
                 channels: expect.objectContaining({
@@ -1050,11 +1056,7 @@ describe('NotificationsSettingsView', () => {
                 enabled: true,
                 url: 'https://hooks.example.test/notify',
                 signingSecret: null,
-                topics: {
-                    ready: true,
-                    permissionRequest: true,
-                    userActionRequest: true,
-                },
+                topics: enabledLegacyNotificationTopics,
                 readyIncludeMessageText: false,
             },
         ];
@@ -1074,18 +1076,18 @@ describe('NotificationsSettingsView', () => {
 
         expect(applySettingsMock).toHaveBeenCalledWith(expect.objectContaining({
             notificationChannelsV1: [
-                {
+                expect.objectContaining({
                     v: 1,
                     id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
                     kind: 'expo_push',
                     enabled: true,
-                    topics: {
+                    topics: expect.objectContaining({
                         ready: true,
                         permissionRequest: true,
                         userActionRequest: true,
-                    },
+                    }),
                     readyIncludeMessageText: true,
-                },
+                }),
             ],
             attentionDeliveryPolicyV1: expect.objectContaining({
                 channels: expect.objectContaining({
@@ -1107,11 +1109,7 @@ describe('NotificationsSettingsView', () => {
                 enabled: true,
                 url: 'https://hooks.example.test/notify',
                 signingSecret: null,
-                topics: {
-                    ready: true,
-                    permissionRequest: true,
-                    userActionRequest: true,
-                },
+                topics: enabledLegacyNotificationTopics,
                 readyIncludeMessageText: false,
             },
         ];
@@ -1127,19 +1125,19 @@ describe('NotificationsSettingsView', () => {
 
         expect(applySettingsMock).toHaveBeenCalledWith(expect.objectContaining({
             notificationChannelsV1: [
-                {
+                expect.objectContaining({
                     v: 1,
                     id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
                     kind: 'expo_push',
                     enabled: true,
-                    topics: {
+                    topics: expect.objectContaining({
                         ready: true,
                         permissionRequest: true,
                         userActionRequest: true,
-                    },
+                    }),
                     readyIncludeMessageText: true,
-                },
-                {
+                }),
+                expect.objectContaining({
                     v: 1,
                     id: 'webhook-primary',
                     kind: 'webhook',
@@ -1149,13 +1147,13 @@ describe('NotificationsSettingsView', () => {
                         _isSecretValue: true,
                         value: 'shared-webhook-secret',
                     },
-                    topics: {
+                    topics: expect.objectContaining({
                         ready: true,
                         permissionRequest: true,
                         userActionRequest: true,
-                    },
+                    }),
                     readyIncludeMessageText: false,
-                },
+                }),
             ],
             attentionDeliveryPolicyV1: expect.objectContaining({
                 channels: expect.objectContaining({
@@ -1180,11 +1178,7 @@ describe('NotificationsSettingsView', () => {
                     _isSecretValue: true,
                     encryptedValue: { t: 'enc-v1', c: 'abc123' },
                 },
-                topics: {
-                    ready: true,
-                    permissionRequest: true,
-                    userActionRequest: true,
-                },
+                topics: enabledLegacyNotificationTopics,
                 readyIncludeMessageText: false,
             },
         ];
@@ -1203,32 +1197,32 @@ describe('NotificationsSettingsView', () => {
 
         expect(applySettingsMock).toHaveBeenCalledWith(expect.objectContaining({
             notificationChannelsV1: [
-                {
+                expect.objectContaining({
                     v: 1,
                     id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
                     kind: 'expo_push',
                     enabled: true,
-                    topics: {
+                    topics: expect.objectContaining({
                         ready: true,
                         permissionRequest: true,
                         userActionRequest: true,
-                    },
+                    }),
                     readyIncludeMessageText: true,
-                },
-                {
+                }),
+                expect.objectContaining({
                     v: 1,
                     id: 'webhook-primary',
                     kind: 'webhook',
                     enabled: true,
                     url: 'https://hooks.example.test/notify',
                     signingSecret: null,
-                    topics: {
+                    topics: expect.objectContaining({
                         ready: true,
                         permissionRequest: true,
                         userActionRequest: true,
-                    },
+                    }),
                     readyIncludeMessageText: false,
-                },
+                }),
             ],
             attentionDeliveryPolicyV1: expect.objectContaining({
                 channels: expect.objectContaining({

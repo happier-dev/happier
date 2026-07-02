@@ -43,6 +43,32 @@ describe('Deferred', () => {
         vi.useRealTimers();
     });
 
+    it('shows a fallback during the defer window and swaps to children afterwards', async () => {
+        vi.useFakeTimers();
+        const { Deferred } = await import('./Deferred');
+        const host = document.createElement('div');
+        const root = createRoot(host);
+
+        act(() => {
+            root.render(
+                <Deferred enabled={false} fallback={<div data-testid="fallback" />}>
+                    <div data-testid="child" />
+                </Deferred>,
+            );
+        });
+        expect(host.querySelector('[data-testid="fallback"]')).not.toBeNull();
+        expect(host.querySelector('[data-testid="child"]')).toBeNull();
+
+        act(() => {
+            vi.advanceTimersByTime(10);
+        });
+        expect(host.querySelector('[data-testid="fallback"]')).toBeNull();
+        expect(host.querySelector('[data-testid="child"]')).not.toBeNull();
+
+        act(() => root.unmount());
+        vi.useRealTimers();
+    });
+
     it('renders immediately when enabled flips to true', async () => {
         vi.useFakeTimers();
         const { Deferred } = await import('./Deferred');

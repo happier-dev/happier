@@ -234,6 +234,65 @@ describe('useSessionSubagents', () => {
         await hook.unmount();
     });
 
+    it('does not rescan unchanged tool-call payloads when non-subagent text streams', async () => {
+        const now = Date.now();
+        let inputReadCount = 0;
+        const toolCallMessage: any = {
+            kind: 'tool-call',
+            id: 'tool-call-1',
+            localId: null,
+            createdAt: now,
+            tool: {
+                id: 'toolu_run_1',
+                name: 'SubAgentRun',
+                state: 'running',
+                get input() {
+                    inputReadCount += 1;
+                    return { runId: 'run_1' };
+                },
+                createdAt: now,
+                startedAt: now,
+                completedAt: null,
+                description: null,
+            },
+            children: [],
+        };
+        const baseMessages: readonly any[] = [toolCallMessage, {
+            kind: 'agent-text',
+            id: 'agent-text-1',
+            localId: null,
+            createdAt: now + 1,
+            text: 'partial',
+            children: [],
+        }];
+        const hook = await renderHook((messages: readonly any[]) =>
+            useSessionSubagents({
+                sessionId: 'session-1',
+                session: {
+                    id: 'session-1',
+                    metadata: {
+                        flavor: 'claude',
+                    },
+                } as any,
+                messages,
+                externalSessionRuntime: externalSessionRuntimeState as any,
+            }), {
+                initialProps: baseMessages,
+            });
+
+        const readsAfterInitialRender = inputReadCount;
+        await hook.rerender([
+            toolCallMessage,
+            {
+                ...baseMessages[1],
+                text: 'partial response is still streaming',
+            },
+        ]);
+
+        expect(inputReadCount).toBe(readsAfterInitialRender);
+        await hook.unmount();
+    });
+
     it('keeps participant target collections stable when equivalent running execution-run polls arrive', async () => {
         const now = Date.now();
         const messages: readonly any[] = [{

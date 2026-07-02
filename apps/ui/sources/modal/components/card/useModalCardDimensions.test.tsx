@@ -38,7 +38,7 @@ describe('useModalCardDimensions', () => {
 
         expect(hook.getCurrent()).toEqual({
             width: 840,
-            maxHeight: 527,
+            maxHeight: 524,
         });
     });
 
@@ -55,7 +55,7 @@ describe('useModalCardDimensions', () => {
 
         expect(hook.getCurrent()).toEqual({
             width: 320,
-            maxHeight: 357,
+            maxHeight: 324,
         });
     });
 
@@ -74,6 +74,26 @@ describe('useModalCardDimensions', () => {
         expect(hook.getCurrent()).toEqual({
             width: 280,
             maxHeight: 578,
+        });
+    });
+
+    it('preserves a minimum vertical viewport margin for near-full-height cards', async () => {
+        const { renderHook } = await import('@/dev/testkit');
+        const { useModalCardDimensions } = await import('./useModalCardDimensions');
+
+        windowState.width = 393;
+        windowState.height = 736;
+
+        const hook = await renderHook(() => useModalCardDimensions({
+            size: 'lg',
+            width: 720,
+            maxHeightRatio: 0.96,
+            viewportMargin: { horizontal: 12, vertical: 12 },
+        }));
+
+        expect(hook.getCurrent()).toEqual({
+            width: 369,
+            maxHeight: 640,
         });
     });
 

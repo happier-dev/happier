@@ -3,6 +3,7 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionRouteCommonModuleMocks } from './sessionRouteTestHelpers';
+import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -31,7 +32,8 @@ const readMachineTargetForSessionMock = vi.fn((_sessionId: string) => ({
 
 let sessionLogPath: string | null = null;
 let sessionMachineId: string | null = null;
-let sessionHydrated = true;
+let isDataReady = true;
+let routeHydrationState: SessionRouteHydrationState = { kind: 'available', sessionId: 'session-1' };
 
 installSessionRouteCommonModuleMocks({
     reactNative: async () => {
@@ -62,14 +64,17 @@ installSessionRouteCommonModuleMocks({
                               id: 'session-1',
                               metadata: null,
                           }) as unknown) as typeof import('@/sync/domains/state/storage')['useSession'],
-                useIsDataReady: () => true,
+                useIsDataReady: () => isDataReady,
             },
         });
     },
 });
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
-    useHydrateSessionForRoute: () => sessionHydrated,
+    useHydrateSessionForRoute: (sessionId: string) => ({
+        ...routeHydrationState,
+        sessionId,
+    }),
 }));
 
 vi.mock('@expo/vector-icons', async () => {
@@ -108,7 +113,8 @@ describe('Session log screen', () => {
     beforeEach(() => {
         sessionLogPath = null;
         sessionMachineId = null;
-        sessionHydrated = true;
+        isDataReady = true;
+        routeHydrationState = { kind: 'available', sessionId: 'session-1' };
         machineReadSessionLogTailMock.mockClear();
         machineGetBugReportLogTailMock.mockClear();
         readMachineTargetForSessionMock.mockClear();
@@ -119,7 +125,7 @@ describe('Session log screen', () => {
     });
 
     it('does not fetch log tail until session hydration is ready', async () => {
-        sessionHydrated = false;
+        routeHydrationState = { kind: 'loading', sessionId: 'session-1', reason: 'store-miss' };
         sessionLogPath = '/tmp/.happier/logs/session.log';
         sessionMachineId = 'machine-1';
         const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
@@ -128,6 +134,44 @@ describe('Session log screen', () => {
 
         expect(machineReadSessionLogTailMock).not.toHaveBeenCalled();
         expect(machineGetBugReportLogTailMock).not.toHaveBeenCalled();
+    });
+
+    it('does not fetch log tail while route hydration is retrying', async () => {
+        routeHydrationState = { kind: 'retrying', sessionId: 'session-1', cause: 'server_unavailable' };
+        sessionLogPath = '/tmp/.happier/logs/session.log';
+        sessionMachineId = 'machine-1';
+        const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
+
+        const screen = await renderScreen(React.createElement(SessionLogScreen));
+
+        expect(screen.getTextContent()).toContain('common.loading');
+        expect(machineReadSessionLogTailMock).not.toHaveBeenCalled();
+        expect(machineGetBugReportLogTailMock).not.toHaveBeenCalled();
+    });
+
+    it('renders terminal fallback when route hydration is missing', async () => {
+        routeHydrationState = { kind: 'missing', sessionId: 'session-1', cause: 'not_found' };
+        sessionLogPath = '/tmp/.happier/logs/session.log';
+        sessionMachineId = 'machine-1';
+        const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
+
+        const screen = await renderScreen(React.createElement(SessionLogScreen));
+
+        expect(screen.findByProps({ testID: 'session-invalid-link' })).toBeDefined();
+        expect(machineReadSessionLogTailMock).not.toHaveBeenCalled();
+        expect(machineGetBugReportLogTailMock).not.toHaveBeenCalled();
+    });
+
+    it('does not keep the route loading after route hydration is available when global data is not ready', async () => {
+        isDataReady = false;
+        sessionLogPath = '/tmp/.happier/logs/session.log';
+        sessionMachineId = 'machine-1';
+        const { default: SessionLogScreen } = await import('@/app/(app)/session/[id]/log');
+
+        const screen = await renderScreen(React.createElement(SessionLogScreen));
+
+        expect(screen.getTextContent()).not.toContain('common.loading');
+        expect(machineReadSessionLogTailMock).toHaveBeenCalledWith('machine-1', { path: sessionLogPath, maxBytes: 200000 }, undefined);
     });
 
     it('does not fetch log tail when log path is unavailable', async () => {

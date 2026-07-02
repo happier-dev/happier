@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import {
+    createDeferred,
     flushHookEffects,
     renderScreen,
     standardCleanup,
@@ -106,9 +107,10 @@ vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: () => null,
 }));
 
-vi.mock('../presentation/ToolSectionView', () => ({
-    ToolSectionView: () => null,
-}));
+vi.mock('../presentation/ToolSectionView', async (importOriginal) => {
+    const { installToolSectionViewModuleMock } = await import('@/dev/testkit/mocks/toolSectionView');
+    return installToolSectionViewModuleMock('host')(importOriginal);
+});
 
 vi.mock('@/hooks/ui/useElapsedTime', () => ({
     useElapsedTime: () => 0,
@@ -173,6 +175,83 @@ describe('ToolView (tap action: expand)', () => {
         await flushHookEffects();
 
         expect(ensureSidechainMessagesLoadedMock).toHaveBeenCalledWith('s1', 'tool_task_1');
+    });
+
+    it('shows sidechain loading only while an expanded Task transcript request is in flight', async () => {
+        pushSpy.mockReset();
+        navigateWithBlurOnWebSpy.mockClear();
+        renderedToolViewSpy.mockReset();
+        ensureSidechainMessagesLoadedMock.mockReset();
+        const request = createDeferred<'loaded' | 'not_ready' | 'in_flight'>();
+        ensureSidechainMessagesLoadedMock.mockReturnValueOnce(request.promise);
+
+        const { ToolView } = await import('./ToolView');
+
+        const tool = makeToolCall({
+            id: 'tool_task_1',
+            name: 'Task',
+            input: { operation: 'run', description: 'Do stuff' },
+            result: null,
+        });
+
+        const screen = await renderScreen(
+            React.createElement(ToolView, { tool, metadata: null, sessionId: 's1', messageId: 'm1', messages: [] }),
+        );
+
+        await act(async () => {
+            screen.pressByTestId('tool-view-header-primary');
+        });
+        await flushHookEffects();
+
+        expect(screen.findByTestId('tool-sidechain-loading')).not.toBeNull();
+
+        await act(async () => {
+            request.resolve('loaded');
+            await request.promise;
+        });
+        await flushHookEffects();
+
+        expect(screen.findByTestId('tool-sidechain-loading')).toBeNull();
+    });
+
+    it('surfaces an unavailable affordance (not a perpetual spinner) when expanded sidechain hydration fails terminally', async () => {
+        pushSpy.mockReset();
+        navigateWithBlurOnWebSpy.mockClear();
+        renderedToolViewSpy.mockReset();
+        ensureSidechainMessagesLoadedMock.mockReset();
+        const previousMaxRetries = process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_MAX_RETRIES;
+        process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_MAX_RETRIES = '0';
+        try {
+            ensureSidechainMessagesLoadedMock.mockResolvedValue('not_ready');
+
+            const { ToolView } = await import('./ToolView');
+            const tool = makeToolCall({
+                id: 'tool_task_1',
+                name: 'Task',
+                input: { operation: 'run', description: 'Do stuff' },
+                result: null,
+            });
+
+            const screen = await renderScreen(
+                React.createElement(ToolView, { tool, metadata: null, sessionId: 's1', messageId: 'm1', messages: [] }),
+            );
+
+            await act(async () => {
+                screen.pressByTestId('tool-view-header-primary');
+            });
+            await flushHookEffects();
+
+            const statusNode = screen.findByTestId('tool-sidechain-loading');
+            expect(statusNode).not.toBeNull();
+            expect(screen.getTextContent()).toContain('common.unavailable');
+            expect(statusNode?.findAllByProps({ accessibilityRole: 'progressbar' })).toHaveLength(0);
+        } finally {
+            if (previousMaxRetries === undefined) {
+                delete process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_MAX_RETRIES;
+            } else {
+                process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_MAX_RETRIES = previousMaxRetries;
+            }
+        }
     });
 
     it('preloads sidechain messages when expanding SubAgentRun tools (prefers result.sidechainId when present)', async () => {

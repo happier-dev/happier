@@ -14,6 +14,7 @@ const createDefaultActionExecutorSpy = vi.fn((..._args: unknown[]) => ({
 }));
 const useResumeCapabilityOptionsSpy = vi.fn((..._args: unknown[]) => ({ resumeCapabilityOptions: [] }));
 const useMachineCapabilitiesCacheSpy = vi.fn((..._args: unknown[]) => ({ state: { status: 'idle' } }));
+const useHydrateSessionForRouteSpy = vi.fn((sessionId: string) => ({ kind: 'available', sessionId }));
 const launchabilityState = vi.hoisted(() => {
     let sessionServerId = 'server-launcher';
     const listeners = new Set<(nextValue: string) => void>();
@@ -65,6 +66,10 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
 }));
 
+vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({
+    ActivitySpinner: (props: any) => React.createElement('ActivitySpinner', props),
+}));
+
 vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
     useEnabledAgentIds: () => [],
 }));
@@ -97,7 +102,7 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', async (importOriginal) => 
 });
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
-    useHydrateSessionForRoute: () => true,
+    useHydrateSessionForRoute: (sessionId: string) => useHydrateSessionForRouteSpy(sessionId),
 }));
 
 vi.mock('@/hooks/session/useSessionExecutionRunLaunchability', () => ({
@@ -198,6 +203,7 @@ describe('SessionExecutionRunLauncherView', () => {
         createDefaultActionExecutorSpy.mockClear();
         useResumeCapabilityOptionsSpy.mockClear();
         useMachineCapabilitiesCacheSpy.mockClear();
+        useHydrateSessionForRouteSpy.mockClear();
         resolveSessionTargetServerIdSpy.mockClear();
         mockSession = {
             id: 'session-launcher',
@@ -232,6 +238,18 @@ describe('SessionExecutionRunLauncherView', () => {
             resolveServerIdForSessionId: (sessionId: string) => string | null;
         };
         expect(executorConfig.resolveServerIdForSessionId('session-launcher')).toBe('server-launcher');
+    });
+
+    it('uses caller-provided route hydration state without issuing a second hydration request', async () => {
+        const { SessionExecutionRunLauncherView } = await import('./SessionExecutionRunLauncherView');
+        const screen = await renderScreen(React.createElement(SessionExecutionRunLauncherView, {
+            sessionId: 'session-launcher',
+            presentation: 'panel',
+            routeHydrationState: { kind: 'loading', sessionId: 'session-launcher', reason: 'store-miss' },
+        }));
+
+        expect(useHydrateSessionForRouteSpy).not.toHaveBeenCalled();
+        expect(screen.findAllByType('ActivitySpinner')).toHaveLength(1);
     });
 
     it('re-resolves the launcher session server when the launchability hook changes', async () => {

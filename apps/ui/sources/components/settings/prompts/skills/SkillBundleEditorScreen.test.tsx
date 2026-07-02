@@ -18,7 +18,6 @@ import {
 const createSkillPromptBundleSpy = vi.fn(async () => 'new-bundle');
 const updateSkillPromptBundleSpy = vi.fn(async () => {});
 const setPromptFoldersSpy = vi.fn();
-let wrapLinesInDiffsSetting = true;
 let latestFocusEffect: (() => void) | undefined;
 const fetchArtifactWithBodySpy = vi.fn(async () => null);
 const promptExternalLinksState = vi.hoisted(() => ({
@@ -86,7 +85,6 @@ installSkillBundleCommonModuleMocks({
             ]),
             useSetting: (key: string) => {
                 if (key === 'promptExternalLinksV1') return promptExternalLinksState.value;
-                if (key === 'wrapLinesInDiffs') return wrapLinesInDiffsSetting;
                 return null;
             },
             useSettingMutable: (key: string) => {
@@ -117,8 +115,11 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 960 },
 }));
 
-vi.mock('@/components/ui/code/editor/CodeEditor', () => ({
-    CodeEditor: (props: any) => React.createElement('CodeEditor', props),
+vi.mock('@/components/ui/markdown/editor/MarkdownCodeEditorField', () => ({
+    MarkdownCodeEditorField: ({ onChange, ...props }: any) => React.createElement('MarkdownCodeEditorField', {
+        ...props,
+        onChangeText: onChange,
+    }),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
@@ -187,7 +188,6 @@ async function renderSkillBundleEditor(artifactId: string | null) {
 
 describe('SkillBundleEditorScreen', () => {
     beforeEach(() => {
-        wrapLinesInDiffsSetting = true;
         skillBundleRouterBackSpy.mockReset();
         skillBundleRouterReplaceSpy.mockReset();
         skillBundleRouterPushSpy.mockReset();
@@ -317,13 +317,6 @@ describe('SkillBundleEditorScreen', () => {
         expect(screen.findByTestId('skillBundle.editor')).toBeTruthy();
         expect(screen.findByType('SettingsActionFooter').props.primaryTestID).toBe('skillBundle.save');
         expect(screen.findAllByTestId('skillBundle.manageExternalAssets')).toHaveLength(0);
-    });
-
-    it('passes the shared wrap setting through to the skill markdown editor', async () => {
-        wrapLinesInDiffsSetting = false;
-        const screen = await renderSkillBundleEditor(null);
-
-        expect(screen.findByTestId('skillBundle.editor')?.props.wrapLines).toBe(false);
     });
 
     it('shows supporting files for existing skills and a save-first hint for new skills', async () => {

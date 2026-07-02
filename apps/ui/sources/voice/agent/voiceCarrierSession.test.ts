@@ -8,6 +8,7 @@ const spawnSession = vi.fn();
 const refreshSessions = vi.fn();
 const patchSessionMetadataWithRetry = vi.fn();
 const ensureSessionVisibleForMessageRoute = vi.fn();
+const resolveMachineExactSpawnReadiness = vi.fn();
 
 const getActiveServerSnapshot = vi.fn(() => ({ serverId: 'server-a', serverUrl: 'http://localhost', generation: 1 }));
 
@@ -24,14 +25,14 @@ const state: any = {
 
 installVoiceAgentCommonModuleMocks({
     storage: async () => {
-                const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-                return createStorageModuleStub({
-                    storage: {
-                        getState: () => ({ ...state }),
-                    },
-                });
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
+            storage: {
+                getState: () => state,
             },
         });
+    },
+});
 
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => getActiveServerSnapshot(),
@@ -39,6 +40,10 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
 
 vi.mock('@/sync/ops/machines', () => ({
   machineSpawnNewSession: (opts: any) => spawnSession(opts),
+}));
+
+vi.mock('@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness', () => ({
+  resolveMachineExactSpawnReadiness: (...args: any[]) => resolveMachineExactSpawnReadiness(...args),
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -58,6 +63,8 @@ describe('voiceConversationSession', () => {
     refreshSessions.mockReset();
     patchSessionMetadataWithRetry.mockReset();
     ensureSessionVisibleForMessageRoute.mockReset();
+    resolveMachineExactSpawnReadiness.mockReset();
+    resolveMachineExactSpawnReadiness.mockReturnValue({ status: 'ready' });
     getActiveServerSnapshot.mockClear();
     useVoiceTargetStore.setState({ scope: 'global', primaryActionSessionId: null, trackedSessionIds: [], lastFocusedSessionId: null } as any);
 
@@ -67,7 +74,6 @@ describe('voiceConversationSession', () => {
         id: 'm1',
         active: true,
         activeAt: now,
-        spawnReadinessStatus: 'ready',
         metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/.happier', homeDir: '/home/u' },
       },
     };
@@ -168,7 +174,7 @@ describe('voiceConversationSession', () => {
 
     state.machines = {
       m_stale: { id: 'm_stale', active: false, metadata: { host: 'stale', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/stale', homeDir: '/home/u' } },
-      m_active: { id: 'm_active', active: true, spawnReadinessStatus: 'ready', metadata: { host: 'active', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/active', homeDir: '/home/u' } },
+      m_active: { id: 'm_active', active: true, metadata: { host: 'active', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/active', homeDir: '/home/u' } },
     };
     state.settings.voice.adapters.local_conversation.agent.machineTargetMode = 'fixed';
     state.settings.voice.adapters.local_conversation.agent.machineTargetId = 'm_stale';
@@ -196,7 +202,7 @@ describe('voiceConversationSession', () => {
     );
   });
 
-  it('fails closed when the fixed machine target metadata is not hydrated yet', async () => {
+  it('falls back to a recent path when the fixed machine target metadata is not hydrated yet', async () => {
     const { ensureVoiceConversationSessionId } = await import('@/voice/persistence/voiceConversationSession');
 
     state.machines = {};
@@ -207,11 +213,26 @@ describe('voiceConversationSession', () => {
       { machineId: 'm_other', path: '/tmp/other-repo' },
     ];
 
-    await expect(ensureVoiceConversationSessionId()).rejects.toMatchObject({
-      message: 'Target machine daemon is offline. Start or reconnect the daemon before starting local voice.',
-      code: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE',
+    spawnSession.mockResolvedValue({ type: 'success', sessionId: 'sys_voice' });
+    refreshSessions.mockImplementation(async () => {
+      state.sessions.sys_voice = {
+        id: 'sys_voice',
+        updatedAt: 1,
+        metadata: { path: '/tmp/fixed-repo', host: 'fixed', machineId: 'm_fixed', homeDir: '/home/u' },
+      };
     });
-    expect(spawnSession).not.toHaveBeenCalled();
+    patchSessionMetadataWithRetry.mockImplementation(async (sessionId: string, updater: (m: any) => any) => {
+      state.sessions[sessionId].metadata = updater(state.sessions[sessionId].metadata);
+    });
+
+    await expect(ensureVoiceConversationSessionId()).resolves.toBe('sys_voice');
+    expect(spawnSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        machineId: 'm_fixed',
+        directory: '/tmp/fixed-repo',
+        transcriptStorage: 'persisted',
+      }),
+    );
   });
 
   it('ignores stale inactive recent-machine candidates and falls back to an active machine for voice home', async () => {
@@ -226,7 +247,6 @@ describe('voiceConversationSession', () => {
       m_active: {
         id: 'm_active',
         active: true,
-        spawnReadinessStatus: 'ready',
         metadata: { host: 'active', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/active', homeDir: '/home/u' },
       },
     };
@@ -270,14 +290,12 @@ describe('voiceConversationSession', () => {
         id: 'm_recent',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { host: 'recent', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/recent', homeDir: '/home/u' },
       },
       m_sticky: {
         id: 'm_sticky',
         active: true,
         activeAt: Date.now(),
-        spawnReadinessStatus: 'ready',
         metadata: { host: 'sticky', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/sticky', homeDir: '/home/u' },
       },
     };
@@ -322,7 +340,6 @@ describe('voiceConversationSession', () => {
           id: 'm_other',
           active: true,
           activeAt: Date.now(),
-          spawnReadinessStatus: 'ready',
           metadata: { host: 'other', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/other', homeDir: '/home/u' },
         },
       };
@@ -363,7 +380,6 @@ describe('voiceConversationSession', () => {
           id: 'm_server',
           active: true,
           activeAt: Date.now(),
-          spawnReadinessStatus: 'ready',
           metadata: {
             host: 'server-machine',
             platform: 'darwin',
@@ -580,8 +596,9 @@ describe('voiceConversationSession', () => {
     });
   });
 
-  it('fails fast when the target root machine is not spawn-ready', async () => {
+  it('fails fast when the target root machine daemon is offline', async () => {
     const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/persistence/voiceConversationSession');
+    resolveMachineExactSpawnReadiness.mockReturnValue({ status: 'rpcUnavailable' });
 
     state.sessions.s_user = {
       id: 's_user',
@@ -597,38 +614,12 @@ describe('voiceConversationSession', () => {
       createdAt: 0,
       updatedAt: 0,
       active: true,
-      activeAt: 0,
-      spawnReadinessStatus: 'rpcUnavailable',
+      activeAt: Date.now() - 5 * 60_000,
       revokedAt: null,
       metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '1', happyHomeDir: '/tmp/.happier', homeDir: '/home/u' },
       metadataVersion: 0,
       daemonState: null,
       daemonStateVersion: 0,
-    };
-
-    await expect(ensureVoiceConversationSessionForSessionRoot({ sessionId: 's_user' })).rejects.toMatchObject({
-      message: 'Target machine daemon is offline. Start or reconnect the daemon before starting local voice.',
-      code: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE',
-    });
-
-    expect(spawnSession).not.toHaveBeenCalled();
-  });
-
-  it('fails fast when target root machine spawn readiness is unknown even if it appears online', async () => {
-    const { ensureVoiceConversationSessionForSessionRoot } = await import('@/voice/persistence/voiceConversationSession');
-
-    state.sessions.s_user = {
-      id: 's_user',
-      updatedAt: 1,
-      active: true,
-      activeAt: 1,
-      metadata: { path: '/tmp/repo', host: 'm1', machineId: 'm1', homeDir: '/home/u' },
-    };
-    state.machines.m1 = {
-      ...state.machines.m1,
-      active: true,
-      activeAt: Date.now(),
-      spawnReadinessStatus: 'unknown',
     };
 
     await expect(ensureVoiceConversationSessionForSessionRoot({ sessionId: 's_user' })).rejects.toMatchObject({
@@ -758,7 +749,7 @@ describe('voiceConversationSession', () => {
       metadata: {
         path: '/tmp/.happier/voice-agent',
         machineId: 'm1',
-        externalSessionV1: {
+        directSessionV1: {
           v: 1,
           providerId: 'codex',
           machineId: 'm1',

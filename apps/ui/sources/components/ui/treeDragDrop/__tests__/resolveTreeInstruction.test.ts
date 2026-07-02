@@ -252,6 +252,63 @@ describe('resolveTreeInstruction', () => {
                 targetId: 'workspace:alpha',
                 edge: 'top',
                 depth: 0,
+                dropZoneRole: 'root-before-first',
+            },
+        });
+
+        expect(resolveTreeInstruction({
+            rows: baseRows,
+            dropZones: baseDropZones,
+            source: source(),
+            pointer: { x: 12, y: 188 },
+            rules: allowRules,
+        })).toEqual({
+            instruction: {
+                kind: 'move-to-root',
+                containerId: 'workspace:alpha',
+                rootId: 'workspace:alpha',
+                depth: 0,
+            },
+            visual: {
+                kind: 'line',
+                targetId: 'workspace:alpha',
+                edge: 'bottom',
+                depth: 0,
+                dropZoneRole: 'root-after-last',
+            },
+        });
+    });
+
+    it('resolves sibling boundary drop zones as reorder operations', async () => {
+        expect(resolveTreeInstruction({
+            rows: baseRows,
+            dropZones: [
+                {
+                    containerId: 'workspace:alpha',
+                    rootId: 'workspace:alpha',
+                    parentId: null,
+                    depth: 0,
+                    bounds: { x: 0, y: 90, width: 320, height: 10 },
+                    role: 'sibling-before',
+                    targetId: 'folder:b',
+                },
+            ],
+            source: source(),
+            pointer: { x: 12, y: 95 },
+            rules: allowRules,
+        })).toEqual({
+            instruction: {
+                kind: 'reorder-before',
+                targetId: 'folder:b',
+                containerId: 'workspace:alpha',
+                parentId: null,
+                depth: 0,
+            },
+            visual: {
+                kind: 'line',
+                targetId: 'folder:b',
+                edge: 'top',
+                depth: 0,
             },
         });
     });
@@ -452,25 +509,97 @@ describe('resolveTreeInstruction', () => {
         });
     });
 
-    it('uses the bottom edge at the exact two-thirds threshold', async () => {
+    it('uses the bottom edge at the exact two-thirds threshold for leaf rows', async () => {
+        // Leaf rows keep strict thirds: session:root is at y=140 h=30, so the
+        // bottom band starts at the exact two-thirds boundary y=160.
         expect(resolveTreeInstruction({
             rows: baseRows,
             dropZones: baseDropZones,
             source: source(),
-            pointer: { x: 12, y: 120 },
+            pointer: { x: 12, y: 160 },
             rules: allowRules,
         })).toEqual({
             instruction: {
                 kind: 'reorder-after',
-                targetId: 'folder:b',
+                targetId: 'session:root',
                 containerId: 'workspace:alpha',
                 parentId: null,
                 depth: 0,
             },
             visual: {
                 kind: 'line',
-                targetId: 'folder:b',
+                targetId: 'session:root',
                 edge: 'bottom',
+                depth: 0,
+            },
+        });
+    });
+
+    it('widens the nest band for container rows so near-edge hits still nest', async () => {
+        // folder:b is a container at y=100 h=30. Under strict thirds the nest
+        // band would be [110, 120); the widened container band is the centered
+        // half [107.5, 122.5), so hits just inside the old reorder edges now
+        // nest into the folder instead of reordering around it.
+        const nestNearTop = resolveTreeInstruction({
+            rows: baseRows,
+            dropZones: baseDropZones,
+            source: source(),
+            pointer: { x: 12, y: 108 },
+            rules: allowRules,
+        });
+        expect(nestNearTop).toEqual({
+            instruction: {
+                kind: 'nest-into',
+                targetId: 'folder:b',
+                containerId: 'folder:b',
+                parentId: 'folder:b',
+                depth: 1,
+            },
+            visual: { kind: 'outline', targetId: 'folder:b' },
+        });
+
+        const nestNearBottom = resolveTreeInstruction({
+            rows: baseRows,
+            dropZones: baseDropZones,
+            source: source(),
+            pointer: { x: 12, y: 122 },
+            rules: allowRules,
+        });
+        expect(nestNearBottom).toEqual({
+            instruction: {
+                kind: 'nest-into',
+                targetId: 'folder:b',
+                containerId: 'folder:b',
+                parentId: 'folder:b',
+                depth: 1,
+            },
+            visual: { kind: 'outline', targetId: 'folder:b' },
+        });
+    });
+
+    it('keeps the widened band off leaf rows so their near-edge hits still reorder', async () => {
+        // session:root is a leaf at y=140 h=30. A pointer at y=148 sits in the
+        // top third [140, 150): leaves do NOT get the widened nest band (their
+        // middle is a no-op), so this stays a reorder-before instead of falling
+        // into a "blocked: leaf-cannot-be-parent" dead zone.
+        expect(resolveTreeInstruction({
+            rows: baseRows,
+            dropZones: baseDropZones,
+            source: source(),
+            pointer: { x: 12, y: 148 },
+            rules: allowRules,
+        })).toEqual({
+            instruction: {
+                kind: 'reorder-before',
+                targetId: 'session:root',
+                containerId: 'workspace:alpha',
+                parentId: null,
+                depth: 0,
+            },
+            visual: {
+                kind: 'line',
+                targetId: 'session:root',
+                edge: 'top',
                 depth: 0,
             },
         });

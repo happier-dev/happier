@@ -40,6 +40,35 @@ export type NewSessionWizardSectionPresentation = typeof NEW_SESSION_WIZARD_SECT
 const NewSessionWizardSelectionSectionIdSchema = z.enum(NEW_SESSION_WIZARD_SELECTION_SECTION_IDS);
 const NewSessionWizardSectionPresentationSchema = z.enum(NEW_SESSION_WIZARD_SECTION_PRESENTATIONS);
 
+const NewSessionAgentPickerViewV1BackendSchema = z.object({
+    kind: z.literal('backend'),
+    backendTargetKey: BackendTargetKeyV2Schema,
+});
+
+const NewSessionAgentPickerViewV1FavoriteModelsSchema = z.object({
+    kind: z.literal('favoriteModels'),
+});
+
+export const NewSessionAgentPickerViewV1Schema = z.preprocess((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (record.kind === 'favoriteModels') {
+        return { kind: 'favoriteModels' };
+    }
+    if (record.kind === 'backend' && BackendTargetKeyV2Schema.safeParse(record.backendTargetKey).success) {
+        return {
+            kind: 'backend',
+            backendTargetKey: record.backendTargetKey,
+        };
+    }
+    return null;
+}, z.union([
+    NewSessionAgentPickerViewV1BackendSchema,
+    NewSessionAgentPickerViewV1FavoriteModelsSchema,
+]).nullable().default(null));
+
+export type NewSessionAgentPickerViewV1 = z.infer<typeof NewSessionAgentPickerViewV1Schema>;
+
 const NewSessionWizardSectionPresentationByIdSchema = z.preprocess((value) => {
     const record = value && typeof value === 'object' && !Array.isArray(value)
         ? value as Record<string, unknown>
@@ -97,6 +126,12 @@ export const ACCOUNT_SESSION_CREATION_SETTING_DEFINITIONS = defineSettingDefinit
         schema: LastUsedBackendTargetSchema,
         default: null,
         description: 'Last selected backend target for new sessions',
+        storageScope: 'local',
+    },
+    lastNewSessionAgentPickerViewV1: {
+        schema: NewSessionAgentPickerViewV1Schema,
+        default: null,
+        description: 'Last explicitly focused view in the new-session engine picker',
         storageScope: 'local',
     },
     newSessionDefaultPersistenceModeV1: {

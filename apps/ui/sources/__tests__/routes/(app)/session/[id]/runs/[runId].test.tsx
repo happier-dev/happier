@@ -215,7 +215,9 @@ installSessionRouteCommonModuleMocks({
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
-    useHydrateSessionForRoute: () => hydrateReady,
+    useHydrateSessionForRoute: (sessionId: string) => hydrateReady
+        ? { kind: 'available', sessionId }
+        : { kind: 'loading', sessionId, reason: 'store-miss' },
 }));
 
 vi.mock('@/components/sessions/shell/SessionInvalidLinkFallback', () => ({
@@ -239,7 +241,13 @@ vi.mock('@/sync/ops/machineExecutionRuns', () => ({
     machineExecutionRunsList: (...args: MachineExecutionRunsListArgs) => machineExecutionRunsListSpy(...args),
 }));
 
-vi.mock('@/components/ui/layout/layout', () => ({ layout: { maxWidth: 999 } }));
+vi.mock('@/components/ui/layout/layout', () => ({
+    layout: { maxWidth: 999 },
+    useLayoutMaxWidth: () => 999,
+}));
+vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({
+    ActivitySpinner: (props: Record<string, unknown>) => React.createElement('ActivitySpinner', props),
+}));
 vi.mock('@/components/sessions/transcript/details/SessionMessageDetailsView', () => ({
     SessionMessageDetailsView: () => React.createElement('SessionMessageDetailsView'),
 }));
@@ -322,14 +330,14 @@ describe('Session Run Details Screen', () => {
     it('renders invalid-link fallback when the run id param is missing', async () => {
         localSearchParamsMock = { id: 'session-1' };
         const screen = await renderRunDetailsScreen();
-        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(0);
+        expect(screen.findAllByType('ActivitySpinner')).toHaveLength(0);
         expect(screen.findByTestId('session-invalid-link')).toBeTruthy();
     });
 
     it('does not load run details until route hydration is ready', async () => {
         hydrateReady = false;
         const screen = await renderRunDetailsScreen();
-        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(1);
+        expect(screen.findAllByType('ActivitySpinner')).toHaveLength(1);
         expect(getRunSpy).not.toHaveBeenCalled();
     });
 
@@ -337,7 +345,7 @@ describe('Session Run Details Screen', () => {
         hydrateReady = false;
         localSearchParamsMock = {};
         const screen = await renderRunDetailsScreen();
-        expect(screen.findAllByType('ActivityIndicator')).toHaveLength(1);
+        expect(screen.findAllByType('ActivitySpinner')).toHaveLength(1);
         expect(screen.findAllByTestId('session-invalid-link')).toHaveLength(0);
     });
 

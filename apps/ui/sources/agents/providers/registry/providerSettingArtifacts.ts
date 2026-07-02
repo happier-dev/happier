@@ -1,6 +1,6 @@
 import type { SettingArtifacts, SettingDefinitionMap } from '@happier-dev/protocol';
 
-import { PROVIDER_SETTINGS_DESCRIPTORS } from '@/agents/providers/catalog/providerSettingsCatalog';
+import { PROVIDER_SETTINGS_DESCRIPTORS } from '@/agents/catalog/providerSettingsCatalog';
 import { buildProviderSettingArtifactEntries } from './buildProviderSettingArtifactEntries';
 
 export const PROVIDER_SETTING_ARTIFACT_ENTRIES = buildProviderSettingArtifactEntries(PROVIDER_SETTINGS_DESCRIPTORS);

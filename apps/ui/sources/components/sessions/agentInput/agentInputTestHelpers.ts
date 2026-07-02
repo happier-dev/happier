@@ -3,12 +3,14 @@ import { vi } from 'vitest';
 type AgentInputModuleFactory = () => unknown | Promise<unknown>;
 type AgentInputImportOriginal = <T = unknown>() => Promise<T>;
 type AgentInputStorageModuleFactory = (importOriginal: AgentInputImportOriginal) => unknown | Promise<unknown>;
+type AgentInputStorageStoreModuleFactory = AgentInputModuleFactory;
 
 type InstallAgentInputCommonModuleMocksOptions = Readonly<{
     icons?: AgentInputModuleFactory;
     modal?: AgentInputModuleFactory;
     reactNative?: AgentInputModuleFactory;
     storage?: AgentInputStorageModuleFactory;
+    storageStore?: AgentInputStorageStoreModuleFactory;
     text?: AgentInputModuleFactory;
     unistyles?: AgentInputModuleFactory;
 }>;
@@ -19,6 +21,7 @@ const agentInputCommonModuleState = vi.hoisted(() => ({
         modal: undefined as AgentInputModuleFactory | undefined,
         reactNative: undefined as AgentInputModuleFactory | undefined,
         storage: undefined as AgentInputStorageModuleFactory | undefined,
+        storageStore: undefined as AgentInputStorageStoreModuleFactory | undefined,
         text: undefined as AgentInputModuleFactory | undefined,
         unistyles: undefined as AgentInputModuleFactory | undefined,
     },
@@ -32,6 +35,7 @@ export function installAgentInputCommonModuleMocks(
         modal: options.modal,
         reactNative: options.reactNative,
         storage: options.storage,
+        storageStore: options.storageStore,
         text: options.text,
         unistyles: options.unistyles,
     };
@@ -86,6 +90,24 @@ export function installAgentInputCommonModuleMocks(
         return createModalModuleMock().module;
     });
 
+    vi.mock('@/hooks/ui/textInputCaretRect', () => ({
+        useTextInputCaretRect: () => null,
+    }));
+
+    vi.mock('react-native-keyboard-controller', () => ({
+        useFocusedInputHandler: () => {},
+    }));
+
+    vi.mock('react-native-reanimated', async (importOriginal) => {
+        const original = await importOriginal<Record<string, unknown>>();
+        return {
+            ...original,
+            runOnJS: <Args extends readonly unknown[], Return>(
+                fn: (...args: Args) => Return,
+            ) => fn,
+        };
+    });
+
     vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         const activeOptions = agentInputCommonModuleState.options;
         if (activeOptions.storage) {
@@ -103,5 +125,22 @@ export function installAgentInputCommonModuleMocks(
                 fallback: (key) => settingsDefaults[key],
             }),
         });
+    });
+
+    vi.mock('@/sync/domains/state/storageStore', async () => {
+        const activeOptions = agentInputCommonModuleState.options;
+        if (activeOptions.storageStore) {
+            return await activeOptions.storageStore();
+        }
+
+        return {
+            getStorage: () => Object.assign(
+                (selector?: (state: unknown) => unknown) => {
+                    const state = { sessionMessages: {}, localSettings: { uiFontScale: 1 } };
+                    return typeof selector === 'function' ? selector(state) : state;
+                },
+                { getState: () => ({ localSettings: { uiFontScale: 1 } }) },
+            ),
+        };
     });
 }

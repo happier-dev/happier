@@ -3,11 +3,15 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import {
+    createModelBackedSessionItemTestComponent,
+    type ModelBackedSessionItemTestProps,
+} from './sessionItemRowViewModelTestFixture';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-type SessionItemProps = React.ComponentProps<(typeof import('./SessionItem'))['SessionItem']>;
+type SessionItemProps = ModelBackedSessionItemTestProps;
 
 const navigateSpy = vi.fn();
 const splitCanvasActionState = vi.hoisted(() => ({
@@ -121,6 +125,9 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
         testID: props.testID ?? 'session-item-avatar',
     }),
 }));
+vi.mock('@/agents/registry/AgentIcon', () => ({
+    AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
+}));
 vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
 }));
@@ -186,13 +193,31 @@ describe('SessionItem navigation', () => {
 
     async function renderSessionItem(props: SessionItemProps) {
         const { SessionItem } = await import('./SessionItem');
-        return renderScreen(<SessionItem {...props} />);
+        const ModelBackedSessionItem = createModelBackedSessionItemTestComponent(SessionItem, {
+            resolveRowViewModelOverrides: (itemProps) => ({
+                identityDisplay: itemProps.compactMinimal === true ? 'none' : 'avatar',
+            }),
+        });
+        return renderScreen(<ModelBackedSessionItem {...props} />);
     }
 
     function triggerHoverEnter(node: any) {
         node.props.onMouseEnter?.();
         node.props.onHoverIn?.();
         node.props.onPointerEnter?.();
+    }
+
+    async function triggerAllHoverTargets(screen: Awaited<ReturnType<typeof renderSessionItem>>) {
+        const hoverTargets = screen.root.findAll((node: any) => (
+            typeof node.props?.onPointerEnter === 'function'
+            || typeof node.props?.onMouseEnter === 'function'
+            || typeof node.props?.onHoverIn === 'function'
+        ));
+        await act(async () => {
+            for (const target of hoverTargets) {
+                triggerHoverEnter(target);
+            }
+        });
     }
 
     afterEach(() => {
@@ -263,15 +288,16 @@ describe('SessionItem navigation', () => {
             compact: false,
         });
 
-        const row = screen.findByTestId('session-list-item-sess_split') as any;
-        await act(async () => {
-            triggerHoverEnter(row);
-        });
+        await triggerAllHoverTargets(screen);
 
         const moreMenu = screen.findAllByType('DropdownMenu').find((dropdown: any) => dropdown.props.search !== true);
-        expect(moreMenu?.props.items.map((item: any) => item.id)).toEqual(expect.arrayContaining([
+        const moreMenuItemIds = moreMenu?.props.items.map((item: any) => item.id);
+        expect(moreMenuItemIds).toEqual(expect.arrayContaining([
             'openInSplitRight',
             'openInSplitDown',
+            'rename',
+            'stop',
+            'archive',
         ]));
 
         await act(async () => {
@@ -300,10 +326,7 @@ describe('SessionItem navigation', () => {
             compact: false,
         });
 
-        const row = screen.findByTestId('session-list-item-sess_drag') as any;
-        await act(async () => {
-            triggerHoverEnter(row);
-        });
+        await triggerAllHoverTargets(screen);
 
         const handle = screen.findByTestId('session-item-split-drag-handle-sess_drag') as any;
         expect(handle).toBeTruthy();
@@ -333,10 +356,7 @@ describe('SessionItem navigation', () => {
             compact: false,
         });
 
-        const row = screen.findByTestId('session-list-item-sess_reveal') as any;
-        await act(async () => {
-            triggerHoverEnter(row);
-        });
+        await triggerAllHoverTargets(screen);
 
         const moreMenu = screen.findAllByType('DropdownMenu').find((dropdown: any) => dropdown.props.search !== true);
         expect(moreMenu?.props.items.map((item: any) => item.id)).toContain('revealInCurrentSplit');

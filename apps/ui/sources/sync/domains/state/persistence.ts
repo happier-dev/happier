@@ -29,22 +29,24 @@ import {
     type BackendNewSessionOptionStateByTargetKey,
 } from '@/utils/sessions/backendNewSessionOptionState';
 import {
-    serverAccountScopeKeySuffix,
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
 import {
     AcpConfigOptionOverridesV1Schema,
     SessionMcpSelectionV1Schema,
+    WindowsRemoteSessionLaunchModeSchema,
     readBackendTargetRefV2,
     normalizeCodexBackendMode,
     type CodexBackendMode,
     type AcpConfigOptionOverridesV1,
     type BackendTargetRefV2,
     type SessionMcpSelectionV1,
+    type WindowsRemoteSessionLaunchMode,
 } from '@happier-dev/protocol';
 import { getPersistenceStorage } from './persistenceStorage';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { prepareSessionPersistenceScopeForActivation } from './sessionPersistence';
+import { scopedSessionLocalStateKey } from './sessionLocalStateKeys';
 export { loadProfile, saveProfile } from './profilePersistence';
 export { clearPersistence } from './persistenceLifecycle';
 export {
@@ -93,11 +95,6 @@ function deviceAnalyticsIdKey(): string {
     return 'device-analytics-id-v1';
 }
 
-function scopedSessionLocalStateKey(baseKey: string, scope?: ServerAccountScope | null): string {
-    if (!scope) return baseKey;
-    return `${baseKey}:scope:v2:${serverAccountScopeKeySuffix(scope)}`;
-}
-
 function newSessionDraftKey(scope?: ServerAccountScope | null): string {
     return scopedSessionLocalStateKey('new-session-draft-v1', scope);
 }
@@ -138,6 +135,11 @@ export interface NewSessionDraft {
     input: string;
     selectedMachineId: string | null;
     selectedPath: string | null;
+    targetServerId?: string | null;
+    windowsRemoteSessionLaunchModeOverride?: Readonly<{
+        machineId: string;
+        mode: WindowsRemoteSessionLaunchMode;
+    }> | null;
     entryIntent?: 'session' | 'automation' | null;
     checkoutCreationDraft?: NewSessionCheckoutCreationDraft | null;
     selectedProfileId: string | null;
@@ -220,6 +222,25 @@ function parseDraftStringOrNull(value: unknown): string | null | undefined {
     if (value === null) return null;
     if (typeof value === 'string') return value;
     return undefined;
+}
+
+function parseDraftTrimmedString(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed || undefined;
+}
+
+function parseWindowsRemoteSessionLaunchModeOverride(value: unknown): NewSessionDraft['windowsRemoteSessionLaunchModeOverride'] | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const record = value as Record<string, unknown>;
+    const machineId = parseDraftTrimmedString(record.machineId);
+    if (!machineId) return undefined;
+    const mode = WindowsRemoteSessionLaunchModeSchema.safeParse(record.mode);
+    if (!mode.success) return undefined;
+    return {
+        machineId,
+        mode: mode.data,
+    };
 }
 
 function parseDraftSecretStringOrNull(value: unknown): SecretString | null | undefined {
@@ -484,6 +505,10 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
         const input = typeof parsed.input === 'string' ? parsed.input : '';
         const selectedMachineId = typeof parsed.selectedMachineId === 'string' ? parsed.selectedMachineId : null;
         const selectedPath = typeof parsed.selectedPath === 'string' ? parsed.selectedPath : null;
+        const targetServerId = parseDraftTrimmedString((parsed as any).targetServerId);
+        const windowsRemoteSessionLaunchModeOverride = parseWindowsRemoteSessionLaunchModeOverride(
+            (parsed as any).windowsRemoteSessionLaunchModeOverride,
+        );
         const entryIntent = parseDraftEntryIntent((parsed as any).entryIntent);
         const checkoutDraft = readPersistedNewSessionCheckoutDraft(parsed);
         const selectedProfileId = typeof parsed.selectedProfileId === 'string' ? parsed.selectedProfileId : null;
@@ -554,6 +579,8 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             input,
             selectedMachineId,
             selectedPath,
+            ...(targetServerId ? { targetServerId } : {}),
+            ...(windowsRemoteSessionLaunchModeOverride ? { windowsRemoteSessionLaunchModeOverride } : {}),
             ...(entryIntent ? { entryIntent } : {}),
             ...(checkoutDraft.checkoutCreationDraft ? { checkoutCreationDraft: checkoutDraft.checkoutCreationDraft } : {}),
             selectedProfileId,

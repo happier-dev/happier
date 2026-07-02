@@ -80,6 +80,18 @@ export type NormalizedMessage = ({
     usage?: UsageData,
 };
 
+type ContextCompactionAgentEvent = Extract<AgentEvent, { type: 'context-compaction' }>;
+
+function isContextCompactionPhase(value: unknown): value is ContextCompactionAgentEvent['phase'] {
+    return value === 'started' || value === 'progress' || value === 'completed' || value === 'failed' || value === 'cancelled';
+}
+
+function isContextCompactionAgentEvent(value: unknown): value is ContextCompactionAgentEvent {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    return record.type === 'context-compaction' && isContextCompactionPhase(record.phase);
+}
+
 export function normalizeRawMessage(
     id: string,
     localId: string | null,
@@ -589,7 +601,7 @@ export function normalizeRawMessage(
                     meta: raw.meta
                 } satisfies NormalizedMessage;
             }
-              if (raw.content.data.type === 'tool-call-result') {
+              if (raw.content.data.type === 'tool-call-result' || raw.content.data.type === 'tool-result') {
                   // Cast tool call results to agent tool-result messages
                   return {
                       id,
@@ -633,6 +645,22 @@ export function normalizeRawMessage(
           if (raw.content.type === 'acp') {
               const structuredSidechain = resolveStructuredContentSidechain(raw.content.data);
               const acpDataRecord = raw.content.data as unknown as Record<string, unknown>;
+
+              if (isContextCompactionAgentEvent(raw.content.data)) {
+                  const provider = typeof raw.content.data.provider === 'string' && raw.content.data.provider.trim().length > 0
+                      ? raw.content.data.provider
+                      : raw.content.provider;
+                  return {
+                      id,
+                      ...(seq !== undefined ? { seq } : {}),
+                      localId,
+                      createdAt,
+                      role: 'event',
+                      isSidechain: false,
+                      content: { ...raw.content.data, provider },
+                      meta: raw.meta,
+                  } satisfies NormalizedMessage;
+              }
 
               if (raw.content.data.type === 'message') {
                   const messageText = typeof acpDataRecord.message === 'string' ? acpDataRecord.message : '';

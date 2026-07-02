@@ -34,6 +34,7 @@ describe('TokenStorage (web) server scope mismatch', () => {
         // - active server id still points at a different persisted profile
         // TokenStorage should treat this as "unknown server id for this URL" and avoid using the id scope.
         vi.doMock('@/sync/domains/server/serverProfiles', () => ({
+            areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
             getActiveServerId: () => 'stale-profile',
             getActiveServerUrl: () => 'http://localhost:3010',
             listServerProfiles: () => [{ id: 'stale-profile', serverUrl: 'https://remote.example.test' }],

@@ -43,8 +43,25 @@ vi.mock('expo-router', async () => {
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({});
+    return createStorageModuleStub({
+        useLaunchSelectionMachines: () => [],
+        useMachineListByServerId: () => ({ s1: [] }),
+    });
 });
+
+vi.mock('@/components/settings/machines/localControl/useLocalDaemonControl', () => ({
+    useLocalDaemonControl: () => ({
+        status: null,
+    }),
+}));
+
+vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
+    useResolvedActiveServerSelection: () => ({
+        activeTarget: { kind: 'server', id: 's1' },
+        activeServerId: 's1',
+        allowedServerIds: ['s1'],
+    }),
+}));
 
 vi.mock('@/sync/domains/state/persistence', () => ({
     loadNewSessionDraft: () => null,
@@ -59,9 +76,6 @@ vi.mock('@/components/sessions/guidance/SessionGettingStartedGuidance', () => ({
         <View testID={`guidance:${props.variant}`} />
     ),
 }));
-vi.mock('@/components/sessions/guidance/useSessionGettingStartedGuidanceBaseModel', () => ({
-    useSessionGettingStartedGuidanceBaseModel: () => ({ kind: 'connect_machine' }),
-}));
 
 vi.mock('@/components/sessions/new/components/NewSessionSimplePanel', () => ({
     NewSessionSimplePanel: () => <View testID="new-session-inner" />,
@@ -69,6 +83,12 @@ vi.mock('@/components/sessions/new/components/NewSessionSimplePanel', () => ({
 
 vi.mock('@/components/sessions/new/components/NewSessionWizard', () => ({
     NewSessionWizard: () => <View testID="new-session-inner" />,
+}));
+
+vi.mock('@/components/sessions/new/navigation/newSessionContainedModalScreen', () => ({
+    NewSessionScreenPortalScope: (props: { children?: React.ReactNode }) => (
+        <View testID="new-session-portal-scope">{props.children}</View>
+    ),
 }));
 
 vi.mock('@/components/sessions/new/hooks/useNewSessionScreenModel', () => ({

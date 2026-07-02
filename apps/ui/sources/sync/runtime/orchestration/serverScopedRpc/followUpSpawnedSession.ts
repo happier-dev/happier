@@ -3,6 +3,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { createNotAuthenticatedError, isAuthenticationResponseStatus } from '@/sync/runtime/connectivity/authErrors';
+import type { SessionMessageDirectBypassReason } from '@/sync/domains/session/control/submitMode';
 
 import { fetchSessionByIdWithServerScope } from './fetchSessionByIdWithServerScope';
 import { resolveServerScopedSessionContext } from './resolveServerScopedSessionContext';
@@ -116,7 +117,7 @@ function getDefaultActiveSync() {
             text: string,
             displayText?: string,
             metaOverrides?: Record<string, unknown>,
-            options?: Readonly<{ profileId?: string | null }>,
+            options?: Readonly<{ profileId?: string | null; localId?: string | null; bypassPendingQueueReason?: SessionMessageDirectBypassReason }>,
         ) => {
             if (typeof sync.sendMessage === 'function') {
                 await sync.sendMessage(sessionId, text, displayText, metaOverrides, options);
@@ -163,6 +164,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
         displayText?: string | null;
         metaOverrides?: Record<string, unknown> | null;
         profileId?: string | null;
+        messageLocalId?: string | null;
     }>) => Promise<void>;
 }> {
     const resolveContext = deps?.resolveContext ?? resolveServerScopedSessionContext;
@@ -181,6 +183,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
         displayText?: string | null;
         metaOverrides?: Record<string, unknown> | null;
         profileId?: string | null;
+        messageLocalId?: string | null;
     }>): Promise<void> => {
         const sessionId = String(params.sessionId ?? '').trim();
         if (!sessionId) {
@@ -200,7 +203,11 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                         trimmedInitialMessage,
                         typeof params.displayText === 'string' ? params.displayText : undefined,
                         params.metaOverrides ?? undefined,
-                        params.profileId ? { profileId: params.profileId } : undefined,
+                        {
+                            profileId: params.profileId,
+                            localId: params.messageLocalId,
+                            bypassPendingQueueReason: 'server_scoped_rpc',
+                        },
                     );
                     try {
                         await ensureSessionHydratedForNavigation({
@@ -249,6 +256,7 @@ export function createFollowUpSpawnedSessionWithServerScope(deps?: Readonly<{
                     displayText: typeof params.displayText === 'string' ? params.displayText : undefined,
                     metaOverrides: params.metaOverrides ?? undefined,
                     profileId: params.profileId,
+                    messageLocalId: params.messageLocalId,
                 });
                 if (!result.ok) {
                     throw new Error(result.error || 'Failed to send message');

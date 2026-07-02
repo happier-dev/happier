@@ -262,7 +262,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
 
 vi.mock('@/components/ui/lists/ItemRowActions', () => createPassThroughModule(['ItemRowActions']));
 
-vi.mock('@/agents/providers/catalog/providerSettingsCatalog', () => ({
+vi.mock('@/agents/catalog/providerSettingsCatalog', () => ({
     PROVIDER_SETTINGS_DESCRIPTORS: [],
     PROVIDER_SETTINGS_PLUGINS: [],
     PROVIDER_SETTINGS_BEHAVIORS: [],
@@ -274,6 +274,7 @@ vi.mock('@/agents/providers/catalog/providerSettingsCatalog', () => ({
 vi.mock('@happier-dev/agents', () => {
     const base = {
         AGENT_IDS: ['claude', 'codex'],
+        AGENT_PROVIDER_IDS: ['claude', 'codex'],
         CANONICAL_AGENT_IDS: ['claude', 'codex'],
         DEFAULT_AGENT_ID: 'claude',
         getAgentCore: (agentId: string) => ({
@@ -287,7 +288,7 @@ vi.mock('@happier-dev/agents', () => {
         }),
         getAllProviderDefinitions: () => [],
         getAllProviderSettingsDefinitions: () => [],
-        getProviderCliRuntimeSpec: () => ({ binaryName: null }),
+        getAgentCliRuntimeSpec: () => ({ binaryName: null }),
         getProviderCliInstallGuideUrl: () => null,
         isAgentId: (agentId: unknown) => agentId === 'claude' || agentId === 'codex',
         legacyCustomAcpCompat: {

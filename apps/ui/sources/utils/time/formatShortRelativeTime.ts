@@ -3,8 +3,11 @@
  * Returns an empty string for invalid or future timestamps.
  */
 export function formatShortRelativeTime(timestamp: number): string {
-    const now = Date.now();
-    const diff = now - timestamp;
+    return formatShortRelativeTimeAt(timestamp, Date.now());
+}
+
+export function formatShortRelativeTimeAt(timestamp: number, nowMs: number): string {
+    const diff = nowMs - timestamp;
     if (diff < 0 || !Number.isFinite(diff)) return '';
 
     const seconds = Math.floor(diff / 1000);

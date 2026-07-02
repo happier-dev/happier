@@ -8,6 +8,7 @@ import type {
 } from '@/components/appShell/splitCanvas/model/splitCanvasTypes';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { SessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 import {
     type SessionSplitCanvasLeafPayload,
 } from '@/sync/domains/session/sessionSplitCanvasPersistence';
@@ -32,6 +33,7 @@ type SessionSplitCanvasScreenProps = Readonly<{
     jumpToSeq?: number | null;
     paneUrlState?: SessionPaneUrlState;
     initialAttachmentDrafts?: readonly AttachmentDraft[] | null;
+    routeHydrationState?: SessionRouteHydrationState | null;
 }>;
 
 type SessionSplitCanvasHostProps = Readonly<{
@@ -159,6 +161,7 @@ export function SessionSplitCanvasScreen(props: SessionSplitCanvasScreenProps) {
                 surfaceFocused={isFocused}
                 surfaceVisible={isVisible}
                 routeAnchor={isRouteAnchor}
+                routeHydrationState={isRouteAnchor ? (props.routeHydrationState ?? null) : null}
                 onSurfaceInteract={() => focusSession(leaf.payload.sessionId)}
             />
         );
@@ -168,6 +171,7 @@ export function SessionSplitCanvasScreen(props: SessionSplitCanvasScreenProps) {
         props.jumpToSeq,
         props.paneUrlState,
         props.routeServerId,
+        props.routeHydrationState,
         props.sessionId,
         routeAnchorLeafId,
         state.maximizedLeafId,

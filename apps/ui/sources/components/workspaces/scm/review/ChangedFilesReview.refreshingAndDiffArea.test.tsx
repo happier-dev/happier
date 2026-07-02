@@ -574,7 +574,26 @@ vi.mock('@/components/workspaces/scm/review/useScmDiffExpandedKeys', () => ({
         }, [allKeys, initialCollapsedKeysSignature]);
 
         const [collapsedKeys, setCollapsedKeys] = React.useState<Set<string>>(() => new Set(initialCollapsedKeySet));
+        const [manualExpandedKeys, setManualExpandedKeys] = React.useState<Set<string>>(() => new Set());
+        const expandedKeysRef = React.useRef<ReadonlySet<string>>(new Set());
         const toggleCollapsed = React.useCallback((key: string) => {
+            if (input.tooLarge) {
+                const isExpanded = expandedKeysRef.current.has(key);
+                setCollapsedKeys((prev) => {
+                    const next = new Set(prev);
+                    if (isExpanded) next.add(key);
+                    else next.delete(key);
+                    return areStringSetsEqual(prev, next) ? prev : next;
+                });
+                setManualExpandedKeys((prev) => {
+                    const next = new Set(prev);
+                    if (isExpanded) next.delete(key);
+                    else next.add(key);
+                    return areStringSetsEqual(prev, next) ? prev : next;
+                });
+                onToggleCollapsedSideEffect?.();
+                return;
+            }
             setCollapsedKeys((prev) => {
                 const next = new Set(prev);
                 if (next.has(key)) next.delete(key);
@@ -582,12 +601,11 @@ vi.mock('@/components/workspaces/scm/review/useScmDiffExpandedKeys', () => ({
                 return next;
             });
             onToggleCollapsedSideEffect?.();
-        }, []);
+        }, [input.tooLarge]);
 
         const initialAutoExpandedKeySet = React.useMemo(() => {
-            const initialCount = Math.max(1, Number(input.aheadCount ?? 0) + Number(input.behindCount ?? 0) + 1);
-            return new Set<string>(allKeys.slice(0, initialCount));
-        }, [allKeys, input.aheadCount, input.behindCount]);
+            return new Set<string>(allKeys.slice(0, 1));
+        }, [allKeys]);
         const initialAutoExpandedKeysSignature = React.useMemo(() => {
             return Array.from(initialAutoExpandedKeySet).sort().join('\n');
         }, [initialAutoExpandedKeySet]);
@@ -599,6 +617,7 @@ vi.mock('@/components/workspaces/scm/review/useScmDiffExpandedKeys', () => ({
         React.useEffect(() => {
             if (!input.tooLarge) {
                 setAutoExpandedKeys((prev) => (prev.size === 0 ? prev : new Set<string>()));
+                setManualExpandedKeys((prev) => (prev.size === 0 ? prev : new Set<string>()));
                 setCollapsedKeys((prev) => (
                     areStringSetsEqual(prev, initialCollapsedKeySet) ? prev : new Set<string>(initialCollapsedKeySet)
                 ));
@@ -610,26 +629,27 @@ vi.mock('@/components/workspaces/scm/review/useScmDiffExpandedKeys', () => ({
             setCollapsedKeys((prev) => (
                 areStringSetsEqual(prev, initialCollapsedKeySet) ? prev : new Set<string>(initialCollapsedKeySet)
             ));
+            setManualExpandedKeys((prev) => (prev.size === 0 ? prev : new Set<string>()));
         }, [initialAutoExpandedKeysSignature, initialCollapsedKeysStateSignature, input.resetKey, input.tooLarge]);
 
         React.useEffect(() => {
             if (!input.tooLarge) return;
+            if (input.viewableExpansionEnabled === false) return;
             const viewable = Array.isArray(input.viewableIndices) ? input.viewableIndices : [];
-            if (viewable.length === 0) return;
-            const min = Math.max(0, Math.min(...viewable));
-            const max = Math.min(Math.max(0, allKeys.length - 1), Math.max(...viewable) + Number(input.aheadCount ?? 0));
-            const windowKeys = allKeys.slice(min, max + 1);
-            setAutoExpandedKeys((prev) => {
-                let changed = false;
-                const next = new Set<string>(prev);
-                for (const key of windowKeys) {
-                    if (next.has(key)) continue;
-                    next.add(key);
-                    changed = true;
-                }
-                return changed ? next : prev;
-            });
-        }, [allKeys, input.aheadCount, input.tooLarge, input.viewableIndices]);
+            const firstVisibleIndex = viewable.find((index: unknown) => (
+                typeof index === 'number'
+                && Number.isFinite(index)
+                && index >= 0
+                && index < allKeys.length
+            ));
+            if (typeof firstVisibleIndex !== 'number') return;
+            const key = allKeys[firstVisibleIndex];
+            if (!key) return;
+            const nextKeys = new Set<string>([key]);
+            setAutoExpandedKeys((prev) => (
+                areStringSetsEqual(prev, nextKeys) ? prev : nextKeys
+            ));
+        }, [allKeys, input.tooLarge, input.viewableExpansionEnabled, input.viewableIndices]);
 
         const expandedKeys = React.useMemo(() => {
             if (!input.tooLarge) {
@@ -641,13 +661,24 @@ vi.mock('@/components/workspaces/scm/review/useScmDiffExpandedKeys', () => ({
                 return out;
             }
             const autoKeys = autoExpandedKeys.size > 0 ? autoExpandedKeys : initialAutoExpandedKeySet;
+            const allowedKeys = new Set(allKeys);
             const out = new Set<string>();
             for (const key of autoKeys) {
+                if (!allowedKeys.has(key)) continue;
+                if (collapsedKeys.has(key)) continue;
+                out.add(key);
+            }
+            for (const key of manualExpandedKeys) {
+                if (!allowedKeys.has(key)) continue;
                 if (collapsedKeys.has(key)) continue;
                 out.add(key);
             }
             return out;
-        }, [allKeys, autoExpandedKeys, collapsedKeys, initialAutoExpandedKeySet, input.tooLarge]);
+        }, [allKeys, autoExpandedKeys, collapsedKeys, initialAutoExpandedKeySet, input.tooLarge, manualExpandedKeys]);
+
+        React.useEffect(() => {
+            expandedKeysRef.current = expandedKeys;
+        }, [expandedKeys]);
 
         React.useEffect(() => {
             const cb = input.onCollapsedKeysChange;
@@ -1126,6 +1157,36 @@ describe('ChangedFilesReview', () => {
         expect(sessionScmDiffFileSpy.mock.calls.length).toBe(1);
         const calledPaths = sessionScmDiffFileSpy.mock.calls.map((call: any) => call[1]?.path);
         expect(calledPaths).toEqual(['src/a.ts']);
+    });
+
+    it('keeps large-review initial loading to one diff when changed-line thresholds are exceeded', async () => {
+        sessionScmDiffFileSpy.mockClear();
+
+        await renderChangedFilesReview({
+            allRepositoryChangedFiles: [fileA, fileB],
+            maxFiles: 25,
+            maxChangedLines: 1,
+        });
+        await flushReviewEffects();
+
+        expect(sessionScmDiffFileSpy.mock.calls.length).toBe(1);
+        const calledPaths = sessionScmDiffFileSpy.mock.calls.map((call: any) => call[1]?.path);
+        expect(calledPaths).toEqual(['src/a.ts']);
+    });
+
+    it('keeps large-review initial rendering to one comment diff before user scroll', async () => {
+        sessionScmDiffFileSpy.mockClear();
+
+        const screen = await renderChangedFilesReview({
+            allRepositoryChangedFiles: [fileA, fileB, fileC],
+            maxFiles: 25,
+            maxChangedLines: 1,
+            reviewCommentsEnabled: true,
+            reviewCommentDrafts: [],
+        });
+        await flushReviewEffects();
+
+        expect(screen.findAllByType('DiffReviewCommentsViewer' as any)).toHaveLength(1);
     });
 
     it('filters collapsed paths when a file disappears', async () => {

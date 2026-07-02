@@ -223,9 +223,16 @@ vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => 'uuid',
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
-}));
+vi.mock('@/constants/Typography', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/constants/Typography')>();
+    return {
+        ...actual,
+        Typography: {
+            ...actual.Typography,
+            default: () => ({}),
+        },
+    };
+});
 
 async function renderEditorScreen() {
     const { McpServerEditorScreen } = await import('./McpServerEditorScreen');

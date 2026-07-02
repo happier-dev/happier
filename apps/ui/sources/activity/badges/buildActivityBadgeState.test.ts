@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildActivityBadgeState } from './buildActivityBadgeState';
 import type { StorageState } from '@/sync/store/types';
@@ -23,19 +23,30 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 
 beforeEach(async () => {
+    vi.useRealTimers();
     const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
     registerStorageStateReader(readMockStorageState);
     storageState.sessionMessages = {};
 });
 
+afterEach(() => {
+    vi.useRealTimers();
+});
+
 describe('buildActivityBadgeState', () => {
     it('counts a session once even when multiple attention reasons are active', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(1_000));
         const state = buildActivityBadgeState({
             sessions: [
                 {
                     id: 's1',
                     seq: 5,
+                    latestReadyEventSeq: 5,
                     lastViewedSessionSeq: 3,
+                    active: true,
+                    presence: 'online',
+                    pendingRequestObservedAt: 1_000,
                     pendingPermissionRequestCount: 2,
                     pendingUserActionRequestCount: 1,
                     pendingCount: 4,
@@ -162,6 +173,8 @@ describe('buildActivityBadgeState', () => {
     });
 
     it('counts hydrated pending transcript requests for active sessions before a fresh pending fetch completes', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(150));
         storageState.sessionMessages = {
             s1: {
                 messages: [
@@ -194,6 +207,7 @@ describe('buildActivityBadgeState', () => {
                     id: 's1',
                     seq: 5,
                     active: true,
+                    presence: 'online',
                     lastViewedSessionSeq: 5,
                     pendingCount: 0,
                     metadata: { path: '', host: '' },

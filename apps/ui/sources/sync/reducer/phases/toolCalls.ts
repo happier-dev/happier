@@ -2,7 +2,6 @@ import type { TracedMessage } from '../reducerTracer';
 import type { ToolCall } from '../../domains/messages/messageTypes';
 import { compareToolCalls } from '../../../utils/tools/toolComparison';
 import type { ReducerState } from '../reducer';
-import { applyClaudeTaskToolUseTodos } from '../helpers/claudeTaskListTodos';
 import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
 import { setThinkingMergeCursor } from '../helpers/mergeCursors';
 
@@ -122,13 +121,6 @@ export function runToolCallsPhase(params: Readonly<{
                                     };
                                 }
                             }
-                            applyClaudeTaskToolUseTodos({
-                                state,
-                                toolName: message.tool.name,
-                                toolUseId: c.id,
-                                input: message.tool.input,
-                                timestamp: message.tool.createdAt,
-                            });
                         }
                     } else {
                         if (enableLogging) {
@@ -223,13 +215,6 @@ export function runToolCallsPhase(params: Readonly<{
                                 };
                             }
                         }
-                        applyClaudeTaskToolUseTodos({
-                            state,
-                            toolName: toolCall.name,
-                            toolUseId: c.id,
-                            input: toolCall.input,
-                            timestamp: toolCall.createdAt,
-                        });
                     }
                 }
             }

@@ -81,6 +81,13 @@ export type SessionGettingStartedViewModel = Readonly<{
     showServerSetup: boolean;
 }>;
 
+export type SessionGettingStartedMachinesInput = Readonly<{
+    activeMachines: SessionGettingStartedViewModelInput['activeMachines'];
+    localDaemonStatus?: SessionGettingStartedViewModelInput['localDaemonStatus'];
+    selection: SessionGettingStartedViewModelInput['selection'];
+    machineListByServerId: SessionGettingStartedViewModelInput['machineListByServerId'];
+}>;
+
 function hasHealthyLocalDaemon(status: SessionGettingStartedViewModelInput['localDaemonStatus']): boolean {
     return status?.serviceInstalled === true
         && status?.daemonRunning === true
@@ -126,9 +133,7 @@ function resolveTargetLabel(input: SessionGettingStartedViewModelInput, activeSe
     return match?.name ?? 'Selected servers';
 }
 
-export function buildSessionGettingStartedViewModel(input: SessionGettingStartedViewModelInput): SessionGettingStartedViewModel {
-    const activeProfile = input.activeServerProfile;
-    const targetLabel = resolveTargetLabel(input, activeProfile.name);
+export function resolveSessionGettingStartedMachinesSummary(input: SessionGettingStartedMachinesInput): MachinesSummary {
     const localDaemonHealthy = hasHealthyLocalDaemon(input.localDaemonStatus);
 
     const selectedServerIds = input.selection.allowedServerIds;
@@ -173,6 +178,14 @@ export function buildSessionGettingStartedViewModel(input: SessionGettingStarted
                 onlineCount: activeServerSummary.onlineCount ?? 0,
             }
             : selectedMachines;
+
+    return machines;
+}
+
+export function buildSessionGettingStartedViewModel(input: SessionGettingStartedViewModelInput): SessionGettingStartedViewModel {
+    const activeProfile = input.activeServerProfile;
+    const targetLabel = resolveTargetLabel(input, activeProfile.name);
+    const machines = resolveSessionGettingStartedMachinesSummary(input);
 
     const kind = computeSessionGettingStartedDecision({
         sessionsReady: input.sessionsReady,

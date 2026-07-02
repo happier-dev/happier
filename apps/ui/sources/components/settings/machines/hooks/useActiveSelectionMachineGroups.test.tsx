@@ -1,14 +1,18 @@
 import * as React from 'react';
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useActiveSelectionMachineGroups } from './useActiveSelectionMachineGroups';
 import { renderScreen } from '@/dev/testkit';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const selectionMockState = vi.hoisted(() => ({
+    serverIds: ['server-a'] as string[],
+}));
+
 vi.mock('@/sync/domains/server/selection/serverSelectionResolution', () => ({
-    getEffectiveServerSelectionFromRawSettings: () => ({ serverIds: ['server-a'] }),
+    getEffectiveServerSelectionFromRawSettings: () => ({ serverIds: selectionMockState.serverIds }),
 }));
 
 type ProbeProps = Readonly<{
@@ -39,6 +43,10 @@ function Probe(props: ProbeProps) {
 }
 
 describe('useActiveSelectionMachineGroups', () => {
+    beforeEach(() => {
+        selectionMockState.serverIds = ['server-a'];
+    });
+
     it('filters revoked machines out of visible groups and hasAnyVisibleMachines', async () => {
         const captured: any[] = [];
         const allMachines = [
@@ -84,5 +92,52 @@ describe('useActiveSelectionMachineGroups', () => {
         const latest = captured.at(-1);
         expect(latest.visibleMachineGroups[0].machines.map((m: any) => m.id)).toEqual(['m-active']);
         expect(latest.hasAnyVisibleMachines).toBe(true);
+    });
+
+    it('resolves machine groups with identity-backed server scope ids', async () => {
+        selectionMockState.serverIds = ['srv_identity_active'];
+        const captured: any[] = [];
+
+        function IdentityProbe() {
+            const value = useActiveSelectionMachineGroups({
+                activeServerSnapshot: { serverId: 'srv_identity_active', serverUrl: 'https://a.example.test', generation: 1 } as any,
+                allMachines: [],
+                serverProfiles: [
+                    {
+                        id: 'server-a',
+                        name: 'Server A',
+                        serverUrl: 'https://a.example.test',
+                        serverIdentityId: 'srv_identity_active',
+                        lastUsedAt: 1,
+                    },
+                ] as any,
+                machineListByServerId: {
+                    srv_identity_active: [{ id: 'm-identity', revokedAt: null }] as any,
+                },
+                machineListStatusByServerId: { srv_identity_active: 'idle' },
+                settings: {
+                    serverSelectionGroups: null,
+                    serverSelectionActiveTargetKind: null,
+                    serverSelectionActiveTargetId: null,
+                },
+            });
+
+            React.useEffect(() => {
+                captured.push(value);
+            }, [value]);
+
+            return null;
+        }
+
+        await renderScreen(<IdentityProbe />);
+
+        const latest = captured.at(-1);
+        expect(latest.visibleMachineGroups).toEqual([
+            expect.objectContaining({
+                serverId: 'srv_identity_active',
+                serverName: 'Server A',
+                machines: [expect.objectContaining({ id: 'm-identity' })],
+            }),
+        ]);
     });
 });

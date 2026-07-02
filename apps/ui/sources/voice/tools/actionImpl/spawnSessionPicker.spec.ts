@@ -6,7 +6,7 @@ const modalShow = vi.fn();
 const machineSpawnNewSession = vi.fn();
 const refreshSessions = vi.fn(async () => {});
 const patchSessionMetadataWithRetry = vi.fn(async (_sessionId: string, _patcher: unknown) => {});
-const sendMessage = vi.fn(async (_sessionId: string, _message: string) => {});
+const sendMessage = vi.fn(async (..._args: unknown[]) => {});
 const state: any = {
   settings: {
     ...settingsDefaults,
@@ -46,11 +46,18 @@ vi.mock('@/sync/ops/machines', () => ({
   machineSpawnNewSession: (opts: any) => machineSpawnNewSession(opts),
 }));
 
+vi.mock('@/agents/catalog/catalog', () => ({
+  isAgentId: (agentId: unknown) => typeof agentId === 'string' && ['claude', 'codex'].includes(agentId),
+  getAgentCore: (agentId: string) => ({
+    displayNameKey: `agent.${agentId}`,
+  }),
+}));
+
 vi.mock('@/sync/sync', () => ({
   sync: {
     refreshSessions: () => refreshSessions(),
     patchSessionMetadataWithRetry: (sessionId: string, patcher: any) => patchSessionMetadataWithRetry(sessionId, patcher),
-    sendMessage: (sessionId: string, message: string) => sendMessage(sessionId, message),
+    sendMessage: (...args: unknown[]) => sendMessage(...args),
   },
 }));
 
@@ -95,7 +102,9 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
     }));
     expect(refreshSessions).toHaveBeenCalled();
     expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s_new', expect.any(Function));
-    expect(sendMessage).toHaveBeenCalledWith('s_new', 'Hi');
+    expect(sendMessage).toHaveBeenCalledWith('s_new', 'Hi', undefined, undefined, {
+      bypassPendingQueueReason: 'spawn_post_process',
+    });
   });
 
   it('uses the configured last-used backend target when there is no explicit voice tool agent override', async () => {

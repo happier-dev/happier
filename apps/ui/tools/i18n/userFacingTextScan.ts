@@ -17,6 +17,8 @@ const EXCLUDED_DIR_PARTS = new Set([
     `${path.sep}dist${path.sep}`,
     `${path.sep}.project${path.sep}`,
     `${path.sep}sources${path.sep}dev${path.sep}`,
+    // Dev-only UI sections mounted by the debug route.
+    `${path.sep}sources${path.sep}components${path.sep}dev${path.sep}`,
     // Debug-only routes under the app router.
     `${path.sep}sources${path.sep}app${path.sep}(app)${path.sep}dev${path.sep}`,
     `${path.sep}sources${path.sep}text${path.sep}translations${path.sep}`,

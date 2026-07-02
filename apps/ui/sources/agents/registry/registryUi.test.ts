@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { CANONICAL_AGENT_IDS as SHARED_CANONICAL_AGENT_IDS } from '@happier-dev/agents';
+import { AGENT_PROVIDER_IDS as SHARED_AGENT_PROVIDER_IDS } from '@happier-dev/agents';
 import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 
 import { AGENTS_UI, CANONICAL_AGENTS_UI } from './registryUi';
@@ -12,7 +12,7 @@ function sortedKeys(value: Record<string, unknown>): string[] {
 
 describe('agents/registryUi', () => {
     it('covers the full canonical provider universe (no UI-only drift)', () => {
-        expect(sortedKeys(CANONICAL_AGENTS_UI)).toEqual([...SHARED_CANONICAL_AGENT_IDS].sort());
+        expect(sortedKeys(CANONICAL_AGENTS_UI)).toEqual([...SHARED_AGENT_PROVIDER_IDS].sort());
         expect(CANONICAL_AGENTS_UI).not.toHaveProperty('customAcp');
         expect(AGENTS_UI).not.toHaveProperty('customAcp');
     });
@@ -31,8 +31,33 @@ describe('agents/registryUi', () => {
         expect(svgXml).toContain(`fill="${theme.colors.accent.orange}"`);
     });
 
+    it('resolves the plugin-projected OpenCode logo as descriptor-owned SVG data', () => {
+        const theme = createThemeFixture({
+            colors: {
+                text: {
+                    primary: '#123456',
+                },
+            },
+        }) as Parameters<typeof getAgentIconSvgXml>[1];
+
+        const svgXml = getAgentIconSvgXml('opencode', theme) ?? '';
+
+        expect(svgXml).toContain('viewBox="0 0 240 300"');
+        expect(svgXml).toContain(`fill="${theme.colors.text.primary}"`);
+        expect(svgXml).toContain('fill-rule="evenodd"');
+    });
+
     it('uses a neutral fallback for unknown backend/provider ids instead of the custom ACP UI treatment', () => {
         expect(getAgentCliGlyph('acme.review.backend')).toBe('?');
         expect(getAgentPickerIconScale('acme.review.backend')).toBe(1);
+    });
+
+    it('resolves icon metadata for every shared canonical agent id', () => {
+        const theme = createThemeFixture() as Parameters<typeof getAgentIconSvgXml>[1];
+
+        for (const agentId of SHARED_AGENT_PROVIDER_IDS) {
+            expect(() => getAgentIconSvgXml(agentId, theme)).not.toThrow();
+            expect(getAgentCliGlyph(agentId)).not.toBe('');
+        }
     });
 });

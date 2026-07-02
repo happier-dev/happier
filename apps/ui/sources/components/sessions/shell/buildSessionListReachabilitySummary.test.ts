@@ -92,8 +92,8 @@ describe('buildSessionListReachabilitySummary', () => {
         expect(first.displayById.get('sess-a')).toEqual({
             machineId: 'machine-a',
             machineLabel: 'machine-a.local',
-            workspaceSubtitle: '/repo-a',
-            workspaceSubtitleEllipsizeMode: 'head',
+            workspaceSubtitle: 'repo-a',
+            workspaceSubtitleEllipsizeMode: 'tail',
         });
     });
 
@@ -121,8 +121,8 @@ describe('buildSessionListReachabilitySummary', () => {
         expect(summary.displayById.get('sess-path-only')).toEqual({
             machineId: null,
             machineLabel: '',
-            workspaceSubtitle: '/repo-only',
-            workspaceSubtitleEllipsizeMode: 'head',
+            workspaceSubtitle: 'repo-only',
+            workspaceSubtitleEllipsizeMode: 'tail',
         });
         expect(summary.hasMultipleMachines).toBe(false);
     });
@@ -228,8 +228,8 @@ describe('buildSessionListReachabilitySummary', () => {
         expect(summary.displayById.get('sess-replaced')).toEqual({
             machineId: 'machine-current',
             machineLabel: 'Current machine',
-            workspaceSubtitle: '~/repo',
-            workspaceSubtitleEllipsizeMode: 'head',
+            workspaceSubtitle: 'repo',
+            workspaceSubtitleEllipsizeMode: 'tail',
         });
     });
 });

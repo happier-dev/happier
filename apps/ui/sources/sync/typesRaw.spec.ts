@@ -644,6 +644,42 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                 cache_read_input_tokens: 2,
             });
         });
+
+        it('preserves explicit context-window telemetry from token_count records', () => {
+            const acpMessage = {
+                role: 'agent',
+                content: {
+                    type: 'acp',
+                    provider: 'claude',
+                    data: {
+                        type: 'token_count',
+                        context_used_tokens: 938_843,
+                        context_window_tokens: 1_000_000,
+                        tokens: {
+                            input: 4_000_000,
+                            output: 25_000,
+                            cache_creation: 769_000,
+                            cache_read: 39_231_000,
+                        },
+                    },
+                },
+            };
+
+            const normalized = normalizeRawMessage('claude-token-1', null, 1002, acpMessage);
+
+            expect(normalized).not.toBeNull();
+            expect(normalized?.role).toBe('agent');
+            if (!normalized || normalized.role !== 'agent') return;
+            expect(normalized.content).toEqual([]);
+            expect(normalized.usage).toEqual({
+                input_tokens: 4_000_000,
+                output_tokens: 25_000,
+                cache_creation_input_tokens: 769_000,
+                cache_read_input_tokens: 39_231_000,
+                context_used_tokens: 938_843,
+                context_window_tokens: 1_000_000,
+            });
+        });
     });
 
     describe('Handles unexpected data formats gracefully', () => {
@@ -1143,6 +1179,40 @@ describe('Zod Transform - WOLOG Content Normalization', () => {
                     expect(result.data.content.data.mode).toBe('local');
                 }
             }
+        });
+
+        it('normalizes connected-service account switch events with native endpoints', () => {
+            const eventMessage = {
+                role: 'agent',
+                content: {
+                    type: 'event',
+                    id: 'connected-service-account-switch:openai-codex:happier:1',
+                    data: {
+                        type: 'connected-service-account-switch',
+                        serviceId: 'openai-codex',
+                        groupId: 'happier',
+                        fromProfileId: null,
+                        toProfileId: 'team',
+                        reason: 'manual',
+                        mode: 'restart_resume',
+                    },
+                },
+            };
+
+            const normalized = normalizeRawMessage('msg-connected-service-switch', null, Date.now(), eventMessage);
+
+            expect(normalized).toMatchObject({
+                role: 'event',
+                content: {
+                    type: 'connected-service-account-switch',
+                    serviceId: 'openai-codex',
+                    groupId: 'happier',
+                    fromProfileId: null,
+                    toProfileId: 'team',
+                    reason: 'manual',
+                    mode: 'restart_resume',
+                },
+            });
         });
 
         it('handles user role messages with text content', () => {

@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { installErrorUtilityCommonModuleMocks } from './errorUtilityTestHelpers';
 
 const modalAlertSpy = vi.hoisted(() => vi.fn((..._args: unknown[]) => {}));
@@ -149,6 +151,62 @@ describe('daemonUnavailableAlert', () => {
 
         expect(shown).toBe(false);
         expect(modalAlertSpy).not.toHaveBeenCalled();
+    });
+
+    it('classifies daemon-unavailable RPC errors for shared retry flows', async () => {
+        vi.resetModules();
+        const { isDaemonUnavailableAlertError } = await import('./daemonUnavailableAlert');
+
+        expect(isDaemonUnavailableAlertError(
+            new RpcError('Machine target not available for session', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE),
+        )).toBe(true);
+        expect(isDaemonUnavailableAlertError(
+            new RpcError('Machine target not available for session', 'SOME_OTHER_CODE'),
+        )).toBe(false);
+    });
+
+    it('classifies session-target unavailable follow-up failures as retryable', async () => {
+        vi.resetModules();
+        const module = await import('./daemonUnavailableAlert');
+        const classifyLaunchRetryFailure = (module as Record<string, unknown>).classifyLaunchRetryFailure;
+
+        expect(typeof classifyLaunchRetryFailure).toBe('function');
+        if (typeof classifyLaunchRetryFailure !== 'function') return;
+
+        expect(classifyLaunchRetryFailure({
+            phase: 'upload',
+            failure: Object.assign(new Error('Machine target not available for session'), {
+                rpcErrorCode: 'SESSION_MACHINE_TARGET_UNAVAILABLE',
+            }),
+        })).toMatchObject({
+            kind: 'retryable',
+            reason: 'session_target_unavailable',
+        });
+    });
+
+    it('classifies domain errors as fatal and spawn webhook timeouts as retryable', async () => {
+        vi.resetModules();
+        const module = await import('./daemonUnavailableAlert');
+        const classifyLaunchRetryFailure = (module as Record<string, unknown>).classifyLaunchRetryFailure;
+
+        expect(typeof classifyLaunchRetryFailure).toBe('function');
+        if (typeof classifyLaunchRetryFailure !== 'function') return;
+
+        expect(classifyLaunchRetryFailure({
+            phase: 'send',
+            failure: Object.assign(new Error('invalid_parameters'), { errorCode: 'invalid_parameters' }),
+        })).toMatchObject({
+            kind: 'fatal',
+            reason: 'domain_error',
+            errorCode: 'invalid_parameters',
+        });
+        expect(classifyLaunchRetryFailure({
+            phase: 'spawn',
+            failure: { errorCode: 'SESSION_WEBHOOK_TIMEOUT' },
+        })).toMatchObject({
+            kind: 'retryable',
+            reason: 'daemon_unavailable',
+        });
     });
 
     it('does not match by message when a non-daemon rpcErrorCode is present', async () => {

@@ -1,9 +1,10 @@
 import React from 'react';
 import renderer from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { StructuredMessageBlock } from './StructuredMessageBlock';
 import { renderScreen } from '@/dev/testkit';
+import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,7 +13,156 @@ vi.mock('@/components/ui/text/Text', () => ({
     Text: (props: any) => React.createElement('Text', props, props.children),
 }));
 
+vi.mock('@/components/markdown/MarkdownView', () => ({
+    MarkdownView: (props: any) => React.createElement('MarkdownView', props),
+}));
+
+vi.mock('@/components/sessions/reviews/messages/ReviewFindingsMessageCard', () => ({
+    ReviewFindingsMessageCard: (props: any) => React.createElement('ReviewFindingsMessageCard', props),
+}));
+
+vi.mock('@/components/sessions/reviews/messages/ReviewFollowUpMessageCard', () => ({
+    ReviewFollowUpMessageCard: (props: any) => React.createElement('ReviewFollowUpMessageCard', props),
+}));
+
+vi.mock('@/components/sessions/plans/messages/PlanOutputMessageCard', () => ({
+    PlanOutputMessageCard: (props: any) => React.createElement('PlanOutputMessageCard', props),
+}));
+
+vi.mock('@/components/sessions/delegations/messages/DelegateOutputMessageCard', () => ({
+    DelegateOutputMessageCard: (props: any) => React.createElement('DelegateOutputMessageCard', props),
+}));
+
+let StructuredMessageBlock: typeof import('./StructuredMessageBlock').StructuredMessageBlock;
+
+beforeAll(async () => {
+    ({ StructuredMessageBlock } = await import('./StructuredMessageBlock'));
+});
+
 describe('StructuredMessageBlock', () => {
+    it('skips rendering when structured message props are referentially stable', async () => {
+        const meta = {
+            happier: {
+                kind: 'participant_message.v1',
+                payload: {
+                    recipient: {
+                        kind: 'agent_team_member',
+                        teamId: 'team_1',
+                        memberId: 'agent_1',
+                        memberLabel: 'Alice',
+                    },
+                },
+            },
+        };
+        let metaReadCount = 0;
+        const message = {
+            kind: 'user-text',
+            id: 'm1',
+            localId: null,
+            createdAt: 1,
+            text: 'hello there',
+            get meta() {
+                metaReadCount += 1;
+                return meta;
+            },
+        } as any;
+        const onJumpToAnchor = vi.fn();
+        const renderBlock = () => (
+            <StructuredMessageBlock
+                message={message}
+                sessionId="s1"
+                onJumpToAnchor={onJumpToAnchor}
+            />
+        );
+        const screen = await renderScreen(renderBlock());
+
+        metaReadCount = 0;
+        await act(async () => {
+            screen.tree.update(renderBlock());
+        });
+
+        expect(metaReadCount).toBe(0);
+    });
+
+    it('renders projected plugin structured messages through host-owned renderer ids', async () => {
+        const pluginUiProjection = {
+            ...EMPTY_PLUGIN_UI_PROJECTION,
+            structuredMessagesByKind: {
+                'acme.preview/preview-card.v1': {
+                    id: 'structuredMessage:acme.preview:preview-card',
+                    pluginId: 'acme.preview',
+                    contributionKind: 'structuredMessage',
+                    descriptorId: 'preview-card',
+                    kind: 'acme.preview/preview-card.v1',
+                    renderer: { kind: 'host', rendererId: 'summaryCard' },
+                    display: { titleKey: 'title' },
+                    payloadSchema: { type: 'object' },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<StructuredMessageBlock
+            message={{
+                kind: 'user-text',
+                id: 'm_plugin',
+                localId: null,
+                createdAt: 1,
+                text: 'Open preview',
+                meta: {
+                    happier: {
+                        kind: 'acme.preview/preview-card.v1',
+                        payload: { previewId: 'preview_1' },
+                    },
+                },
+            } as any}
+            sessionId="s1"
+            onJumpToAnchor={() => {}}
+            {...({ pluginUiProjection } as any)}
+        />);
+
+        expect(screen.findByTestId('plugin-structured-message-summaryCard')).toBeTruthy();
+    });
+
+    it('does not render projected plugin structured messages with deferred policy until the host can evaluate it', async () => {
+        const pluginUiProjection = {
+            ...EMPTY_PLUGIN_UI_PROJECTION,
+            structuredMessagesByKind: {
+                'acme.preview/preview-card.v1': {
+                    id: 'structuredMessage:acme.preview:preview-card',
+                    pluginId: 'acme.preview',
+                    contributionKind: 'structuredMessage',
+                    descriptorId: 'preview-card',
+                    kind: 'acme.preview/preview-card.v1',
+                    renderer: { kind: 'host', rendererId: 'summaryCard' },
+                    display: { titleKey: 'title' },
+                    payloadSchema: { type: 'object' },
+                    visibility: { operand: 'platform.is', value: 'web' },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<StructuredMessageBlock
+            message={{
+                kind: 'user-text',
+                id: 'm_plugin',
+                localId: null,
+                createdAt: 1,
+                text: 'Open preview',
+                meta: {
+                    happier: {
+                        kind: 'acme.preview/preview-card.v1',
+                        payload: { previewId: 'preview_1' },
+                    },
+                },
+            } as any}
+            sessionId="s1"
+            onJumpToAnchor={() => {}}
+            {...({ pluginUiProjection } as any)}
+        />);
+
+        expect(screen.tree.toJSON()).toBeNull();
+    });
+
     it('returns null for unknown kinds', async () => {
         let tree: renderer.ReactTestRenderer | null = null;
         tree = (await renderScreen(<StructuredMessageBlock

@@ -14,7 +14,23 @@ export type VisibleSessionListSourceState = Readonly<{
 
 export function useVisibleSessionListSourceState(): VisibleSessionListSourceState {
     const selection = useSessionListSelectionState();
-    const byServerId = useSessionListIndexByServerId();
+    const selectedServerIds = React.useMemo(
+        () => {
+            if (selection.enabled) {
+                return selection.allowedServerIds;
+            }
+            const allowedServerIds = selection.allowedServerIds
+                .map((serverId) => String(serverId).trim())
+                .filter((serverId) => serverId.length > 0);
+            if (allowedServerIds.length > 0) {
+                return allowedServerIds;
+            }
+            const activeServerId = String(selection.activeServerId ?? '').trim();
+            return activeServerId ? [activeServerId] : [];
+        },
+        [selection.activeServerId, selection.allowedServerIds, selection.enabled],
+    );
+    const byServerId = useSessionListIndexByServerId(selectedServerIds);
     const activeIndex = React.useMemo(() => {
         const activeServerId = String(selection.activeServerId ?? '').trim();
         if (!activeServerId) return null;

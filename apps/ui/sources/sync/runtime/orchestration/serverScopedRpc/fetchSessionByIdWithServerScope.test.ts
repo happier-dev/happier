@@ -101,4 +101,28 @@ describe('fetchSessionByIdWithServerScope', () => {
             }),
         );
     });
+
+    it('forwards shell-only hydration options to the session-by-id reader', async () => {
+        resolveContextSpy.mockResolvedValue({ scope: 'active', timeoutMs: 5000 });
+        fetchAndApplySessionByIdSpy.mockResolvedValue({ ok: true, session: { id: 'session-1' } });
+
+        const { fetchSessionByIdWithServerScope } = await import('./fetchSessionByIdWithServerScope');
+
+        await fetchSessionByIdWithServerScope({
+            sessionId: 'session-1',
+            serverId: 'server-a',
+            activeCredentials: { token: 'active-token', secret: 'active-secret' },
+            activeEncryption: {} as any,
+            sessionDataKeys: new Map<string, Uint8Array>(),
+            activeRequest: vi.fn(),
+            applySessions: vi.fn(),
+            log: { log: vi.fn() },
+            includeTurnsProjection: false,
+        });
+
+        expect(fetchAndApplySessionByIdSpy).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'session-1',
+            includeTurnsProjection: false,
+        }));
+    });
 });

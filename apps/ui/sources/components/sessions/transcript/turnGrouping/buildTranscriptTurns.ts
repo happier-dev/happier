@@ -167,6 +167,85 @@ function isPrefix(params: Readonly<{ prefix: readonly string[]; full: readonly s
     return true;
 }
 
+function collectTurnMessageIds(turn: TranscriptTurn): string[] {
+    const messageIds: string[] = [];
+    if (turn.userMessageId) messageIds.push(turn.userMessageId);
+    for (const content of turn.content) {
+        if (content.kind === 'message') {
+            messageIds.push(content.messageId);
+            continue;
+        }
+        for (const toolMessageId of content.toolMessageIds) {
+            messageIds.push(toolMessageId);
+        }
+    }
+    return messageIds;
+}
+
+function withTurnId(turn: TranscriptTurn, id: string): TranscriptTurn {
+    if (turn.id === id) return turn;
+    return {
+        id,
+        userMessageId: turn.userMessageId,
+        content: turn.content.map((content) => {
+            if (content.kind !== 'tool_calls') return content;
+            return { ...content, id: `toolCalls:${id}:${content.toolMessageIds[0] ?? ''}` };
+        }),
+    };
+}
+
+/**
+ * Keeps previously-assigned turn ids sticky across full rebuilds within one build-cache lineage
+ * (per mounted session). When an older-page prepend lands mid-turn, the previously-rendered
+ * headless first turn is absorbed into the older turn; without remapping, the merged turn would
+ * derive a NEW id from its new first message, re-keying the on-screen FlashList row exactly at
+ * the pagination anchor and breaking MVCP key-based offset correction (plan C3).
+ *
+ * Rule: a rebuilt turn that fully contains the messages of a previously-emitted turn keeps that
+ * turn's id; embedded tool-group child ids follow. When several previous turns merge into one
+ * rebuilt turn, the bottom-most previously-rendered id wins — that is the key FlashList has on
+ * screen. Fresh turns (no contained predecessor) keep `turn:<firstMessageId>` derivation.
+ */
+function applyStickyTurnIdsFromPreviousBuild(params: Readonly<{
+    previousTurns: readonly TranscriptTurn[];
+    turns: readonly TranscriptTurn[];
+}>): TranscriptTurn[] {
+    const turns = [...params.turns];
+    if (params.previousTurns.length === 0 || turns.length === 0) return turns;
+
+    const previousTurnIndexByMessageId = new Map<string, number>();
+    const previousTurnMessageCounts: number[] = [];
+    params.previousTurns.forEach((previousTurn, previousIndex) => {
+        const messageIds = collectTurnMessageIds(previousTurn);
+        previousTurnMessageCounts.push(messageIds.length);
+        for (const messageId of messageIds) {
+            previousTurnIndexByMessageId.set(messageId, previousIndex);
+        }
+    });
+
+    return turns.map((turn) => {
+        const containedMessageCountByPreviousIndex = new Map<number, number>();
+        for (const messageId of collectTurnMessageIds(turn)) {
+            const previousIndex = previousTurnIndexByMessageId.get(messageId);
+            if (previousIndex == null) continue;
+            containedMessageCountByPreviousIndex.set(
+                previousIndex,
+                (containedMessageCountByPreviousIndex.get(previousIndex) ?? 0) + 1,
+            );
+        }
+
+        let stickyPreviousIndex: number | null = null;
+        for (const [previousIndex, containedMessageCount] of containedMessageCountByPreviousIndex) {
+            if (containedMessageCount !== previousTurnMessageCounts[previousIndex]) continue;
+            if (stickyPreviousIndex == null || previousIndex > stickyPreviousIndex) {
+                stickyPreviousIndex = previousIndex;
+            }
+        }
+        if (stickyPreviousIndex == null) return turn;
+        return withTurnId(turn, params.previousTurns[stickyPreviousIndex]!.id);
+    });
+}
+
 export function buildTranscriptTurnsCached(opts: {
     cache: TranscriptTurnsBuildCache | null;
     messageIdsOldestFirst: string[];
@@ -282,12 +361,16 @@ export function buildTranscriptTurnsCached(opts: {
         lastTurnState = updated.lastTurnState;
     }
 
+    const stickyTurns = opts.cache
+        ? applyStickyTurnIdsFromPreviousBuild({ previousTurns: opts.cache.turns, turns })
+        : turns;
+
     return {
         messageIdsOldestFirst: opts.messageIdsOldestFirst,
         messageGroupingKeysOldestFirst: nextMessageGroupingKeysOldestFirst,
         groupToolCalls: opts.groupToolCalls,
         toolCallsGroupStrategy: opts.toolCallsGroupStrategy,
-        turns,
+        turns: stickyTurns,
         lastTurnState,
     };
 }

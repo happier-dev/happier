@@ -59,7 +59,7 @@ describe('usePetCompanionActivityModel', () => {
         standardCleanup();
     });
 
-    it('does not map a failed tool call to failed session activity', async () => {
+    it('does not map a failed tool call to failed or waiting session activity', async () => {
         const previousState = storage.getState();
         const session = createSessionFixture({
             id: 'failed-session',
@@ -108,15 +108,10 @@ describe('usePetCompanionActivityModel', () => {
             });
 
             expect(hook.getCurrent()).toMatchObject({
-                state: 'waiting',
-                reason: 'waiting',
+                state: 'idle',
+                reason: 'idle',
                 sessionId: session.id,
-                trayItems: [
-                    expect.objectContaining({
-                        sessionId: session.id,
-                        status: 'waiting',
-                    }),
-                ],
+                trayItems: [],
             });
 
             await hook.unmount();
@@ -164,6 +159,279 @@ describe('usePetCompanionActivityModel', () => {
             });
 
             expect(renderCount).toBe(renderCountBeforeUnrelatedUpdate);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState, true);
+        }
+    });
+
+    it('does not recompute activity when a hidden system session changes', async () => {
+        const previousState = storage.getState();
+        const visibleSession = createSessionFixture({
+            id: 'visible-waiting-session',
+            active: true,
+            seq: 1,
+            createdAt: 1_000,
+            updatedAt: 2_000,
+            activeAt: 2_000,
+            lastViewedSessionSeq: 1,
+            pendingUserActionRequestCount: 1,
+            pendingRequestObservedAt: 3_000,
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    action_1: {
+                        tool: 'Read',
+                        kind: 'user_action',
+                        arguments: { path: '/tmp/visible-waiting-session' },
+                        createdAt: 3_000,
+                    },
+                },
+            },
+            thinking: false,
+            thinkingAt: 0,
+        });
+        const hiddenSession = createSessionFixture({
+            id: 'hidden-system-update-session',
+            active: true,
+            seq: 1,
+            createdAt: 1_000,
+            updatedAt: 2_000,
+            activeAt: 2_000,
+            lastViewedSessionSeq: 1,
+            pendingCount: 0,
+            thinking: false,
+            thinkingAt: 0,
+            metadata: {
+                path: '/tmp/hidden-system-update-session',
+                host: 'test-host',
+                summary: { text: 'Hidden system session', updatedAt: 2_000 },
+                systemSessionV1: { v: 1, key: 'voice_carrier', hidden: true },
+            },
+        });
+
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                sessions: {
+                    [visibleSession.id]: visibleSession,
+                    [hiddenSession.id]: hiddenSession,
+                },
+                ...buildSessionListProjection([visibleSession, hiddenSession]),
+                sessionMessages: {},
+            }));
+
+            let renderCount = 0;
+            const hook = await renderHook(() => {
+                renderCount += 1;
+                return usePetCompanionActivityModel();
+            }, {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            expect(hook.getCurrent()).toMatchObject({
+                state: 'waiting',
+                reason: 'waiting',
+                sessionId: visibleSession.id,
+            });
+            const renderCountBeforeHiddenUpdate = renderCount;
+            const hiddenSessionMetadata = hiddenSession.metadata;
+            if (!hiddenSessionMetadata) {
+                throw new Error('Expected hidden session metadata fixture');
+            }
+            const updatedHiddenSession = {
+                ...hiddenSession,
+                updatedAt: 9_000,
+                pendingCount: 2,
+                metadata: {
+                    ...hiddenSessionMetadata,
+                    summary: { text: 'Hidden system session changed', updatedAt: 9_000 },
+                },
+            };
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessions: {
+                        [visibleSession.id]: visibleSession,
+                        [updatedHiddenSession.id]: updatedHiddenSession,
+                    },
+                    ...buildSessionListProjection([visibleSession, updatedHiddenSession]),
+                }));
+            });
+
+            expect(renderCount).toBe(renderCountBeforeHiddenUpdate);
+            expect(hook.getCurrent().sessionId).toBe(visibleSession.id);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState, true);
+        }
+    });
+
+    it('recomputes fallback session activity for meaningful activity without surfacing runtime attention', async () => {
+        vi.mocked(Date.now).mockReturnValue(130_000);
+        const previousState = storage.getState();
+        const session = createSessionFixture({
+            id: 'fallback-meaningful-session',
+            active: true,
+            seq: 1,
+            createdAt: 1_000,
+            updatedAt: 2_000,
+            activeAt: 2_000,
+            lastViewedSessionSeq: 1,
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 1_000,
+            meaningfulActivityAt: null,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        });
+
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                sessions: { [session.id]: session },
+                ...buildSessionListProjection([session]),
+                sessionMessages: {},
+            }));
+
+            let renderCount = 0;
+            const hook = await renderHook(() => {
+                renderCount += 1;
+                return usePetCompanionActivityModel();
+            }, {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            expect(hook.getCurrent()).toMatchObject({
+                state: 'idle',
+                reason: 'idle',
+                sessionId: session.id,
+            });
+            const renderCountBeforeBookkeepingUpdate = renderCount;
+            const bookkeepingSession = { ...session, updatedAt: 3_000 };
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessions: { [bookkeepingSession.id]: bookkeepingSession },
+                    ...buildSessionListProjection([bookkeepingSession]),
+                }));
+            });
+
+            expect(renderCount).toBe(renderCountBeforeBookkeepingUpdate);
+
+            const renderCountBeforeMeaningfulActivityUpdate = renderCount;
+            const meaningfulSession = {
+                ...bookkeepingSession,
+                meaningfulActivityAt: 129_000,
+            };
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessions: { [meaningfulSession.id]: meaningfulSession },
+                    ...buildSessionListProjection([meaningfulSession]),
+                }));
+            });
+
+            expect(renderCount).toBeGreaterThan(renderCountBeforeMeaningfulActivityUpdate);
+            expect(hook.getCurrent()).toMatchObject({
+                state: 'idle',
+                reason: 'idle',
+                sessionId: session.id,
+            });
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState, true);
+        }
+    });
+
+    it('recomputes renderable-only activity for meaningful activity without surfacing runtime attention', async () => {
+        vi.mocked(Date.now).mockReturnValue(130_000);
+        const previousState = storage.getState();
+        const session = createSessionFixture({
+            id: 'renderable-meaningful-session',
+            active: true,
+            seq: 1,
+            createdAt: 1_000,
+            updatedAt: 2_000,
+            activeAt: 2_000,
+            lastViewedSessionSeq: 1,
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 1_000,
+            meaningfulActivityAt: null,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        });
+
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                sessions: {},
+                sessionListRenderables: {
+                    [session.id]: buildSessionListRenderableFromSession(session),
+                },
+                sessionListIndexByServerId: {
+                    'server-a': [
+                        { type: 'session', sessionId: session.id, serverId: 'server-a', serverName: 'Server A' },
+                    ],
+                },
+                sessionMessages: {},
+            }));
+
+            let renderCount = 0;
+            const hook = await renderHook(() => {
+                renderCount += 1;
+                return usePetCompanionActivityModel();
+            }, {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+            expect(hook.getCurrent()).toMatchObject({
+                state: 'idle',
+                reason: 'idle',
+                sessionId: session.id,
+            });
+            const renderCountBeforeBookkeepingUpdate = renderCount;
+            const bookkeepingSession = { ...session, updatedAt: 3_000 };
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessionListRenderables: {
+                        [bookkeepingSession.id]: buildSessionListRenderableFromSession(bookkeepingSession),
+                    },
+                }));
+            });
+
+            expect(renderCount).toBe(renderCountBeforeBookkeepingUpdate);
+
+            const renderCountBeforeMeaningfulActivityUpdate = renderCount;
+            const meaningfulSession = {
+                ...bookkeepingSession,
+                meaningfulActivityAt: 129_000,
+            };
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessionListRenderables: {
+                        [meaningfulSession.id]: buildSessionListRenderableFromSession(meaningfulSession),
+                    },
+                }));
+            });
+
+            expect(renderCount).toBeGreaterThan(renderCountBeforeMeaningfulActivityUpdate);
+            expect(hook.getCurrent()).toMatchObject({
+                state: 'idle',
+                reason: 'idle',
+                sessionId: session.id,
+            });
 
             await hook.unmount();
         } finally {
@@ -244,7 +512,7 @@ describe('usePetCompanionActivityModel', () => {
         const failedSession = {
             ...createSessionFixture({
             id: 'failed-session',
-            active: false,
+            active: true,
             seq: 2,
             createdAt: 1_500,
             updatedAt: 3_000,
@@ -320,7 +588,7 @@ describe('usePetCompanionActivityModel', () => {
         const previousState = storage.getState();
         const session = createSessionFixture({
             id: 'historical-thinking-session',
-            active: false,
+            active: true,
             seq: 1,
             createdAt: 1_000,
             updatedAt: 10_000,
@@ -356,12 +624,12 @@ describe('usePetCompanionActivityModel', () => {
         }
     });
 
-    it('keeps old unread sessions visible as waiting activity until they are read', async () => {
+    it('does not surface old unread sessions as pet waiting activity without projected runtime attention', async () => {
         vi.mocked(Date.now).mockReturnValue(900_000_000);
         const previousState = storage.getState();
         const session = createSessionFixture({
             id: 'old-unread-session',
-            active: false,
+            active: true,
             seq: 5,
             createdAt: 1_000,
             updatedAt: 2_000,
@@ -386,16 +654,10 @@ describe('usePetCompanionActivityModel', () => {
             });
 
             expect(hook.getCurrent()).toMatchObject({
-                state: 'waiting',
-                reason: 'waiting',
+                state: 'idle',
+                reason: 'idle',
                 sessionId: session.id,
-                trayItems: [
-                    expect.objectContaining({
-                        sessionId: session.id,
-                        status: 'waiting',
-                        expiresAtMs: null,
-                    }),
-                ],
+                trayItems: [],
             });
 
             await hook.unmount();
@@ -404,18 +666,20 @@ describe('usePetCompanionActivityModel', () => {
         }
     });
 
-    it('uses unhydrated session-list row attention from the shared activity source', async () => {
+    it('does not use unhydrated unread rows as pet waiting activity without projected runtime attention', async () => {
         const previousState = storage.getState();
         const session = createSessionFixture({
             id: 'renderable-only-unread',
-            active: false,
+            active: true,
             seq: 4,
             createdAt: 1_000,
             updatedAt: 3_000,
-            activeAt: 1_000,
+            activeAt: 3_000,
             lastViewedSessionSeq: 1,
             thinking: false,
             thinkingAt: 0,
+            pendingPermissionRequestCount: 1,
+            pendingRequestObservedAt: 3_000,
             metadata: {
                 path: '/tmp/renderable-only-unread',
                 host: 'test-host',
@@ -444,15 +708,10 @@ describe('usePetCompanionActivityModel', () => {
             });
 
             expect(hook.getCurrent()).toMatchObject({
-                state: 'waiting',
-                reason: 'waiting',
+                state: 'idle',
+                reason: 'idle',
                 sessionId: session.id,
-                trayItems: [
-                    expect.objectContaining({
-                        sessionId: session.id,
-                        status: 'waiting',
-                    }),
-                ],
+                trayItems: [],
             });
 
             await hook.unmount();
@@ -491,6 +750,18 @@ describe('usePetCompanionActivityModel', () => {
             lastViewedSessionSeq: 2,
             pendingCount: 0,
             pendingUserActionRequestCount: 1,
+            pendingRequestObservedAt: Date.now(),
+            agentState: {
+                controlledByUser: null,
+                requests: {
+                    action_1: {
+                        tool: 'Read',
+                        kind: 'user_action',
+                        arguments: { path: '/tmp/visible-session' },
+                        createdAt: Date.now(),
+                    },
+                },
+            },
             thinking: false,
             thinkingAt: 0,
             metadata: {
@@ -547,9 +818,8 @@ describe('usePetCompanionActivityModel', () => {
             updatedAt: 1_000,
             activeAt: 1_000,
             lastViewedSessionSeq: 1,
-            thinking: false,
+            thinking: true,
             thinkingAt: 1_000,
-            optimisticThinkingAt: 1_000,
         });
 
         try {
@@ -631,6 +901,68 @@ describe('usePetCompanionActivityModel', () => {
         }
     });
 
+    it('updates running activity when an online working session goes offline', async () => {
+        vi.mocked(Date.now).mockReturnValue(4_000);
+        const previousState = storage.getState();
+        const onlineSession = createSessionFixture({
+            id: 'presence-session',
+            active: true,
+            seq: 1,
+            createdAt: 1_000,
+            updatedAt: 3_000,
+            activeAt: 3_000,
+            lastViewedSessionSeq: 1,
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 3_000,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        });
+
+        try {
+            storage.setState((state) => ({
+                ...state,
+                isDataReady: true,
+                sessions: { [onlineSession.id]: onlineSession },
+                ...buildSessionListProjection([onlineSession]),
+                sessionMessages: {},
+            }));
+
+            const hook = await renderHook(() => usePetCompanionActivityModel(), {
+                flushOptions: { cycles: 1, turns: 4 },
+            });
+
+            expect(hook.getCurrent()).toMatchObject({
+                state: 'running',
+                reason: 'running',
+                sessionId: onlineSession.id,
+            });
+
+            const offlineSession = {
+                ...onlineSession,
+                presence: 3_500,
+            };
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessions: { [offlineSession.id]: offlineSession },
+                    ...buildSessionListProjection([offlineSession]),
+                }));
+            });
+
+            expect(hook.getCurrent()).toMatchObject({
+                state: 'idle',
+                reason: 'idle',
+                sessionId: onlineSession.id,
+                trayItems: [],
+            });
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState, true);
+        }
+    });
+
     it('uses unhydrated agent-state requests as waiting activity', async () => {
         const previousState = storage.getState();
         const session = createSessionFixture({
@@ -642,8 +974,6 @@ describe('usePetCompanionActivityModel', () => {
             activeAt: 2_000,
             lastViewedSessionSeq: 1,
             pendingCount: 0,
-            pendingPermissionRequestCount: 0,
-            pendingUserActionRequestCount: 0,
             agentState: {
                 controlledByUser: null,
                 requests: {
@@ -651,7 +981,7 @@ describe('usePetCompanionActivityModel', () => {
                         tool: 'Bash',
                         kind: 'permission',
                         arguments: { command: 'git status' },
-                        createdAt: 2_000,
+                        createdAt: Date.now(),
                     },
                 },
             },

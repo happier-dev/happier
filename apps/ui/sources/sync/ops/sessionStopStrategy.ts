@@ -11,7 +11,7 @@ import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import { readMachineTargetForSession, shouldFallbackFromMachineRpc } from './sessionMachineTarget';
+import { readMachineControlTargetForSession, shouldFallbackFromMachineRpc } from './sessionMachineTarget';
 
 type SessionKillRequest = Record<string, never>;
 
@@ -170,7 +170,7 @@ export async function stopSessionUsingCanonicalStrategy(params: Readonly<{
     sessionId: string;
     serverId?: string | null;
 }>): Promise<SessionStopStrategyOutcome> {
-    const machineTarget = readMachineTargetForSession(params.sessionId);
+    const machineTarget = readMachineControlTargetForSession(params.sessionId);
     if (machineTarget) {
         const daemonStop = await stopSessionViaDaemonMachineRpc({
             machineId: machineTarget.machineId,

@@ -60,7 +60,7 @@ describe('sessionAbort', () => {
     expect(before).toBeDefined();
     expect(before?.thinking).toBe(true);
     expect(before?.optimisticThinkingAt ?? null).not.toBeNull();
-    expect(typeof before?.thinkingGraceUntil).toBe('number');
+    expect(before?.thinkingGraceUntil ?? null).toBeNull();
 
     mockSessionRpcWithPreferredSessionScope.mockResolvedValue(undefined);
 
@@ -69,7 +69,7 @@ describe('sessionAbort', () => {
     const after = storage.getState().sessions[sessionId];
     expect(after?.thinking).toBe(false);
     expect(after?.optimisticThinkingAt ?? null).toBeNull();
-    expect(after?.thinkingGraceUntil ?? null).toBeNull();
+    expect(typeof after?.thinkingGraceUntil).toBe('number');
   });
 
   it('does not throw when RPC method is unavailable (errorCode)', async () => {
@@ -92,7 +92,7 @@ describe('sessionAbort', () => {
     const after = storage.getState().sessions[sessionId];
     expect(after?.thinking).toBe(false);
     expect(after?.optimisticThinkingAt ?? null).toBeNull();
-    expect(after?.thinkingGraceUntil ?? null).toBeNull();
+    expect(typeof after?.thinkingGraceUntil).toBe('number');
   });
 
   it('does not treat legacy message-only errors as method-not-available', async () => {

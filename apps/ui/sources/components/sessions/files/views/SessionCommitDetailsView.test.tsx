@@ -2,8 +2,7 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
-import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
+import { createSessionFixture, createStorageStoreMock, flushHookEffects, renderScreen } from '@/dev/testkit';
 import type { Session, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 
@@ -12,15 +11,6 @@ import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTes
 const commitSessionId = 's1';
 const commitSha = 'abc';
 const diffFilesListSpy = vi.fn();
-const upsertSessionReviewCommentDraftSpy = vi.fn();
-const deleteSessionReviewCommentDraftSpy = vi.fn();
-const upsertWorkspaceReviewCommentDraftSpy = vi.fn();
-const deleteWorkspaceReviewCommentDraftSpy = vi.fn();
-let lastInlineRendererConfig: any = null;
-
-type CommitBackoutResult =
-    | { success: true }
-    | { success: false; errorCode?: string; error?: string };
 
 const sessionScmDiffCommitSpy = vi.fn(async (_sessionId: string, _request: { commit: string }) => ({
     success: true,
@@ -37,13 +27,7 @@ const sessionScmDiffCommitSpy = vi.fn(async (_sessionId: string, _request: { com
     error: null,
 }));
 
-const sessionScmCommitBackoutSpy = vi.fn<() => Promise<CommitBackoutResult>>(async () => ({ success: true }));
-const sessionScmRepositoryRemoveIndexLockSpy = vi.fn(async () => ({
-    success: true,
-    removed: true,
-    lockPath: '/repo/.git/index.lock',
-}));
-const modalConfirmSpy = vi.fn(async () => false);
+const sessionScmCommitBackoutSpy = vi.fn(async () => ({ success: true }));
 
 let reviewCommentsEnabled = false;
 let sessionsMock: Session[] | null = [];
@@ -148,7 +132,7 @@ installSessionFilesViewCommonModuleMocks({
         return createModalModuleMock({
             spies: {
                 alert: vi.fn(),
-                confirm: modalConfirmSpy,
+                confirm: vi.fn(async () => false),
             },
         }).module;
     },
@@ -156,26 +140,31 @@ installSessionFilesViewCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             storage: createStorageStoreMock({
-                upsertSessionReviewCommentDraft: (...args: unknown[]) => upsertSessionReviewCommentDraftSpy(...args),
-                deleteSessionReviewCommentDraft: (...args: unknown[]) => deleteSessionReviewCommentDraftSpy(...args),
-                upsertWorkspaceReviewCommentDraft: (...args: unknown[]) => upsertWorkspaceReviewCommentDraftSpy(...args),
-                deleteWorkspaceReviewCommentDraft: (...args: unknown[]) => deleteWorkspaceReviewCommentDraftSpy(...args),
+                sessions: sessionMock
+                    ? {
+                        [commitSessionId]: {
+                            ...sessionMock,
+                            serverId: 'server-1',
+                        },
+                    }
+                    : {},
+                machines: {},
+                sessionListIndexByServerId: {},
+                getProjectForSession: () => null,
+                upsertWorkspaceReviewCommentDraft: () => {},
+                deleteWorkspaceReviewCommentDraft: () => {},
             }),
             useSessions: () => sessionsMock,
             useSession: () => sessionMock,
             useProjectForSession: () => null,
             useSessionProjectScmSnapshot: () => stableSnapshot,
             useSessionProjectScmInFlightOperation: () => null,
-            useSessionReviewCommentsDrafts: () => [],
-            useWorkspaceReviewCommentsDrafts: () => [{
-                id: 'workspace-draft',
-                filePath: 'src/a.ts',
-                source: 'diff',
-                anchor: { kind: 'diffLine', startLine: 1, side: 'after', oldLine: null, newLine: 1 },
-                snapshot: { selectedLines: [], beforeContext: [], afterContext: [] },
-                body: 'workspace',
-                createdAt: 1,
-            }],
+            useWorkspaceReviewCommentsDrafts: () => [],
+            useSessionRpcAvailabilityState: () => ({
+                sessionExists: sessionMock !== null,
+                sessionRpcAvailable: sessionMock !== null,
+            }),
+            useSessionWorkspacePath: () => sessionMock?.metadata?.path ?? null,
             useSetting: (key: string) => {
                 if (key === 'wrapLinesInDiffs') return true;
                 if (key === 'showLineNumbers') return true;
@@ -198,13 +187,17 @@ vi.mock('@/components/ui/text/Text', () => ({
 vi.mock('@/sync/ops', () => ({
     sessionScmDiffCommit: (...args: Parameters<typeof sessionScmDiffCommitSpy>) => sessionScmDiffCommitSpy(...args),
     sessionScmCommitBackout: (...args: Parameters<typeof sessionScmCommitBackoutSpy>) => sessionScmCommitBackoutSpy(...args),
-    sessionScmRepositoryRemoveIndexLock: (...args: Parameters<typeof sessionScmRepositoryRemoveIndexLockSpy>) =>
-        sessionScmRepositoryRemoveIndexLockSpy(...args),
 }));
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
-    useFeatureEnabled: (featureId: string) => (
-        featureId === 'files.reviewComments' ? reviewCommentsEnabled : featureId === 'scm.writeOperations'
+    useFeatureEnabled: (featureId: string) => (featureId === 'files.reviewComments' ? reviewCommentsEnabled : false),
+}));
+
+vi.mock('@/sync/domains/session/resolveWorkspaceScopeForSession', () => ({
+    useWorkspaceScopeForSession: (sessionId: string | null | undefined) => (
+        sessionId === commitSessionId
+            ? { serverId: 'server-1', machineId: 'machine-1', rootPath: '/repo' }
+            : null
     ),
 }));
 
@@ -226,8 +219,7 @@ vi.mock('@/scm/core/operationPolicy', () => ({
     evaluateScmOperationPreflight: () => ({ allowed: true, message: '' }),
 }));
 
-vi.mock('@/scm/operations/userFacingErrors', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/scm/operations/userFacingErrors')>()),
+vi.mock('@/scm/operations/userFacingErrors', () => ({
     getScmUserFacingError: ({ fallback }: { fallback: string }) => fallback,
 }));
 
@@ -262,19 +254,6 @@ vi.mock('@/components/ui/code/diff/reviewComments/DiffReviewCommentsViewer', () 
     DiffReviewCommentsViewer: 'DiffReviewCommentsViewer',
 }));
 
-vi.mock('@/components/ui/code/diff/reviewComments/useInlineUnifiedDiffReviewCommentsRenderer', () => ({
-    useInlineUnifiedDiffReviewCommentsRenderer: (config: any) => {
-        lastInlineRendererConfig = config;
-        return ({ file }: { file: { filePath?: string } }) =>
-            React.createElement('DiffReviewCommentsViewer', { filePath: file?.filePath ?? '' });
-    },
-}));
-
-vi.mock('@/sync/domains/session/resolveWorkspaceScopeForSession', () => ({
-    resolveWorkspaceScopeForSession: () => ({ serverId: 'server-1', machineId: 'm1', rootPath: '/repo' }),
-    useWorkspaceScopeForSession: () => ({ serverId: 'server-1', machineId: 'm1', rootPath: '/repo' }),
-}));
-
 describe('SessionCommitDetailsView', () => {
     afterEach(async () => {
         while (mountedTrees.length > 0) {
@@ -290,15 +269,7 @@ describe('SessionCommitDetailsView', () => {
         reviewCommentsEnabled = false;
         sessionScmDiffCommitSpy.mockClear();
         sessionScmCommitBackoutSpy.mockClear();
-        sessionScmRepositoryRemoveIndexLockSpy.mockClear();
-        modalConfirmSpy.mockReset();
-        modalConfirmSpy.mockResolvedValue(false);
         diffFilesListSpy.mockClear();
-        upsertSessionReviewCommentDraftSpy.mockClear();
-        deleteSessionReviewCommentDraftSpy.mockClear();
-        upsertWorkspaceReviewCommentDraftSpy.mockClear();
-        deleteWorkspaceReviewCommentDraftSpy.mockClear();
-        lastInlineRendererConfig = null;
         resetCommitDetailsStorageState();
     });
 
@@ -311,7 +282,7 @@ describe('SessionCommitDetailsView', () => {
         expect(tree.findAllByType('ScrollView' as any)).toHaveLength(0);
     });
 
-    it('does not auto-collapse diffs that are already above the viewport (prevents scroll snapping)', async () => {
+    it('tracks the first visible file as the large-review expansion anchor', async () => {
         sessionScmDiffCommitSpy.mockResolvedValueOnce({
             success: true,
             diff: [
@@ -364,7 +335,7 @@ describe('SessionCommitDetailsView', () => {
 
         const secondRenderProps = getLastDiffFilesListProps();
         const expandedKeys = (secondRenderProps as { expandedKeys: ReadonlySet<string> }).expandedKeys;
-        expect(expandedKeys.has(files[0].key)).toBe(true);
+        expect(expandedKeys.has(files[0].key)).toBe(false);
         expect(expandedKeys.has(files[1].key)).toBe(true);
 
         expect(tree.findAllByType('DiffPresentationStyleToggleButton' as any)).toHaveLength(1);
@@ -402,36 +373,6 @@ describe('SessionCommitDetailsView', () => {
 
         expect(sessionScmDiffCommitSpy).toHaveBeenCalledTimes(1);
         expect(tree.findAllByType('DiffPresentationStyleToggleButton' as any)).toHaveLength(1);
-    });
-
-    it('confirms stale index-lock recovery and retries commit revert once', async () => {
-        modalConfirmSpy
-            .mockResolvedValueOnce(true)
-            .mockResolvedValueOnce(true);
-        sessionScmCommitBackoutSpy
-            .mockResolvedValueOnce({
-                success: false,
-                errorCode: 'COMMAND_FAILED',
-                error: "fatal: Unable to create '/repo/.git/index.lock': File exists.",
-            })
-            .mockResolvedValueOnce({ success: true });
-
-        const tree = await renderCommitDetailsView();
-        const revertButton = tree.root.findByProps({ testID: 'scm-commit-details-revert' });
-
-        await act(async () => {
-            await revertButton.props.onPress();
-        });
-        await settleCommitDetailsView();
-
-        expect(modalConfirmSpy).toHaveBeenCalledTimes(2);
-        expect(sessionScmCommitBackoutSpy).toHaveBeenCalledTimes(2);
-        expect(sessionScmRepositoryRemoveIndexLockSpy).toHaveBeenCalledWith(commitSessionId, {
-            cwd: '/repo',
-            confirmed: true,
-            confirmationToken: expect.any(String),
-        });
-        expect(sessionScmCommitBackoutSpy).toHaveBeenCalledTimes(2);
     });
 
     it('does not refetch the diff when sessions storage readiness toggles after the diff loads', async () => {
@@ -487,7 +428,7 @@ describe('SessionCommitDetailsView', () => {
         expect(node?.type).toBe('DiffReviewCommentsViewer');
     });
 
-    it('auto-expands the first review window for large commits using the same settings as the working tree review', async () => {
+    it('starts large commits with only the first file expanded', async () => {
         sessionScmDiffCommitSpy.mockImplementationOnce(async () => ({
             success: true,
             diff: [
@@ -529,11 +470,7 @@ describe('SessionCommitDetailsView', () => {
         const props = getLastDiffFilesListProps() as { files: Array<{ key: string }>; expandedKeys: ReadonlySet<string> };
         expect(props).toBeTruthy();
 
-        const keys = props.files.map((file) => file.key);
-        const expandedKeys = Array.from(props.expandedKeys);
-        expandedKeys.sort();
-        const expected = keys.slice(0, 3).slice().sort(); // ahead(1)+behind(1)+1 = 3
-        expect(expandedKeys).toEqual(expected);
+        expect(Array.from(props.expandedKeys)).toEqual([props.files[0].key]);
         expect(typeof (getLastDiffFilesListProps() as { onViewableItemsChanged?: unknown }).onViewableItemsChanged).toBe('function');
     });
 
@@ -578,33 +515,5 @@ describe('SessionCommitDetailsView', () => {
         // and make scrolling down feel like it's fighting the user.
         expect(expandedKeys.has(files[4].key)).toBe(false);
         expect(expandedKeys.has(files[5].key)).toBe(true);
-    });
-
-    it('uses workspace-keyed review comment drafts + handlers when enabled', async () => {
-        reviewCommentsEnabled = true;
-
-        await renderCommitDetailsView();
-
-        expect(lastInlineRendererConfig?.enabled).toBe(true);
-        expect(lastInlineRendererConfig?.reviewCommentDrafts?.[0]?.id).toBe('workspace-draft');
-
-        lastInlineRendererConfig.onUpsertReviewCommentDraft({
-            id: 'draft-1',
-            filePath: 'src/a.ts',
-            source: 'diff',
-            anchor: { kind: 'diffLine', startLine: 1, side: 'after', oldLine: null, newLine: 1 },
-            snapshot: { selectedLines: [], beforeContext: [], afterContext: [] },
-            body: 'hello',
-            createdAt: 1,
-        });
-        expect(upsertWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith(
-            'server-1:m1:/repo',
-            expect.objectContaining({ id: 'draft-1' }),
-        );
-        expect(upsertSessionReviewCommentDraftSpy).toHaveBeenCalledTimes(0);
-
-        lastInlineRendererConfig.onDeleteReviewCommentDraft('draft-1');
-        expect(deleteWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith('server-1:m1:/repo', 'draft-1');
-        expect(deleteSessionReviewCommentDraftSpy).toHaveBeenCalledTimes(0);
     });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { StorageState } from '@/sync/store/types';
 import type { Message } from '@/sync/domains/messages/messageTypes';
@@ -63,6 +63,10 @@ function sessionMessagesRow(params: Readonly<{
 }
 
 describe('getForkedTranscriptSnapshotCached', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('returns null when the session has no fork metadata', () => {
     const state = createState({
       sessions: {
@@ -286,6 +290,61 @@ describe('getForkedTranscriptSnapshotCached', () => {
     }
 
     const evictedSnapshot = getForkedTranscriptSnapshotCached(state, 'child_0');
+    expect(evictedSnapshot).not.toBeNull();
+    expect(evictedSnapshot).not.toBe(firstSnapshot);
+  });
+
+  it('honors the configured forked snapshot cache working set', async () => {
+    vi.resetModules();
+    vi.stubEnv('EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON', JSON.stringify({
+      transcriptForkedSnapshotCacheMaxSessions: 4,
+    }));
+    const {
+      getForkedTranscriptSnapshotCached: getConfiguredForkedTranscriptSnapshotCached,
+    } = await import('./forkedTranscriptSnapshot');
+
+    const sessions: Record<string, Session> = {
+      root: sessionRow('root', { path: '/tmp', host: 'h' }),
+    };
+    const sessionMessages: Record<string, SessionMessages> = {
+      root: sessionMessagesRow({ idsOldestFirst: [], messagesById: {}, messagesVersion: 1, isLoaded: true }),
+    };
+
+    for (let index = 0; index < 6; index += 1) {
+      const childSessionId = `configured_child_${index}`;
+      sessions[childSessionId] = {
+        ...sessionRow(childSessionId, {
+          path: '/tmp',
+          host: 'h',
+          forkV1: {
+            v: 1,
+            parentSessionId: 'root',
+            parentCutoffSeqInclusive: 0,
+            createdAtMs: index + 1,
+            strategy: 'replay',
+          },
+        } as any),
+        seq: 1,
+      };
+      sessionMessages[childSessionId] = sessionMessagesRow({
+        idsOldestFirst: [childSessionId],
+        messagesById: {
+          [childSessionId]: userMessage(childSessionId, 1, childSessionId),
+        },
+        messagesVersion: 1,
+        isLoaded: true,
+      });
+    }
+
+    const state = createState({ sessions, sessionMessages });
+    const firstSnapshot = getConfiguredForkedTranscriptSnapshotCached(state, 'configured_child_0');
+    expect(firstSnapshot).not.toBeNull();
+
+    for (let index = 1; index < 6; index += 1) {
+      expect(getConfiguredForkedTranscriptSnapshotCached(state, `configured_child_${index}`)).not.toBeNull();
+    }
+
+    const evictedSnapshot = getConfiguredForkedTranscriptSnapshotCached(state, 'configured_child_0');
     expect(evictedSnapshot).not.toBeNull();
     expect(evictedSnapshot).not.toBe(firstSnapshot);
   });

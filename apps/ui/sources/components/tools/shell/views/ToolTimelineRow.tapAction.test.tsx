@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { findTestInstanceByTypeWithProps, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, findTestInstanceByTypeWithProps, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installToolShellCommonModuleMocks } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -144,6 +144,20 @@ function findHeaderTitleFontSize(screen: Awaited<ReturnType<typeof renderToolTim
     const styleArray = Array.isArray(style) ? style : [style];
     const merged = Object.assign({}, ...styleArray.filter(Boolean));
     return merged.fontSize;
+}
+
+function findSpinner(screen: Awaited<ReturnType<typeof renderToolTimelineRow>>) {
+    return screen.findAll((node) => {
+        const nodeType = node.type as unknown;
+        return nodeType === 'ActivityIndicator' || node.props?.accessibilityRole === 'progressbar';
+    })[0];
+}
+
+function readSpinnerColor(spinner: ReturnType<typeof findSpinner>) {
+    const style = spinner?.props?.style;
+    const styleArray = Array.isArray(style) ? style : [style];
+    const mergedStyle = Object.assign({}, ...styleArray.filter(Boolean));
+    return spinner?.props?.color ?? mergedStyle.borderColor;
 }
 
 describe('ToolTimelineRow (tap action)', () => {
@@ -326,6 +340,70 @@ describe('ToolTimelineRow (tap action)', () => {
         expect(ensureSidechainMessagesLoadedMock).toHaveBeenCalledWith('s1', 'tool_task_1');
     });
 
+    it('shows sidechain loading only while an expanded Task transcript request is in flight', async () => {
+        const request = createDeferred<'loaded' | 'not_ready' | 'in_flight'>();
+        ensureSidechainMessagesLoadedMock.mockReturnValueOnce(request.promise);
+
+        const screen = await renderToolTimelineRow({
+            tool: {
+                id: 'tool_task_1',
+                name: 'Task',
+            },
+            sessionId: 's1',
+            messageId: 'm1',
+            messages: [],
+        });
+
+        await act(async () => {
+            screen.pressByTestId('tool-timeline-row');
+        });
+        await flushHookEffects();
+
+        expect(screen.findByTestId('tool-sidechain-loading')).not.toBeNull();
+
+        await act(async () => {
+            request.resolve('loaded');
+            await request.promise;
+        });
+        await flushHookEffects();
+
+        expect(screen.findByTestId('tool-sidechain-loading')).toBeNull();
+    });
+
+    it('surfaces an unavailable affordance (not a perpetual spinner) when expanded sidechain hydration fails terminally', async () => {
+        const previousMaxRetries = process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_MAX_RETRIES;
+        process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_MAX_RETRIES = '0';
+        try {
+            ensureSidechainMessagesLoadedMock.mockResolvedValue('not_ready');
+
+            const screen = await renderToolTimelineRow({
+                tool: {
+                    id: 'tool_task_1',
+                    name: 'Task',
+                },
+                sessionId: 's1',
+                messageId: 'm1',
+                messages: [],
+            });
+
+            await act(async () => {
+                screen.pressByTestId('tool-timeline-row');
+            });
+            await flushHookEffects();
+
+            const statusNode = screen.findByTestId('tool-sidechain-loading');
+            expect(statusNode).not.toBeNull();
+            expect(screen.getTextContent()).toContain('common.unavailable');
+            expect(statusNode?.findAllByProps({ accessibilityRole: 'progressbar' })).toHaveLength(0);
+        } finally {
+            if (previousMaxRetries === undefined) {
+                delete process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_MAX_RETRIES;
+            } else {
+                process.env.EXPO_PUBLIC_HAPPIER_ENSURE_SIDECHAIN_MAX_RETRIES = previousMaxRetries;
+            }
+        }
+    });
+
     it('shows a running indicator in the header for Task tools', async () => {
         const screen = await renderToolTimelineRow({
             tool: {
@@ -339,7 +417,7 @@ describe('ToolTimelineRow (tap action)', () => {
             messageId: 'm1',
         });
 
-        expect(screen.findAllByType('ActivityIndicator' as any).length).toBeGreaterThan(0);
+        expect(findSpinner(screen)).toBeTruthy();
     });
 
     it('uses the neutral loading color in the header for running Task tools', async () => {
@@ -354,7 +432,7 @@ describe('ToolTimelineRow (tap action)', () => {
             messageId: 'm1',
         });
 
-        const spinner = screen.findAllByType('ActivityIndicator' as any)[0];
-        expect(spinner?.props?.color).toBe('#555555');
+        const spinner = findSpinner(screen);
+        expect(readSpinnerColor(spinner)).toBe('#555555');
     });
 });

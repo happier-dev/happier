@@ -1,11 +1,13 @@
 import * as React from 'react';
-import { KeyboardAvoidingView, Platform } from 'react-native';
+import type { ScrollView, ScrollViewProps } from 'react-native';
+import { Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance';
 import { SavedServersSection } from '@/components/settings/server/sections/SavedServersSection';
 import { AddTargetsSection } from '@/components/settings/server/sections/AddTargetsSection';
 import { ServerGroupsSection } from '@/components/settings/server/sections/ServerGroupsSection';
@@ -21,13 +23,24 @@ import { t } from '@/text';
 import { buildRelaySetupWizardHref } from '@/utils/routes/setupWizardHref';
 
 const stylesheet = StyleSheet.create((_theme) => ({
-    keyboardAvoidingView: {
-        flex: 1,
-    },
     itemListContainer: {
         flex: 1,
     },
 }));
+
+type KeyboardAwareItemListProps = ScrollViewProps & Readonly<{
+    children?: React.ReactNode;
+}>;
+
+const ServerSettingsKeyboardAwareItemList = React.forwardRef<ScrollView, KeyboardAwareItemListProps>(
+    function ServerSettingsKeyboardAwareItemList({ children, ...props }, ref) {
+        return (
+            <ItemList ref={ref} {...props}>
+                {children}
+            </ItemList>
+        );
+    },
+);
 
 export function ServerSettingsScreen() {
     useUnistyles();
@@ -50,16 +63,13 @@ export function ServerSettingsScreen() {
     }, []);
 
     return (
-            <KeyboardAvoidingView
-                style={styles.keyboardAvoidingView}
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                >
-                    <ItemList
-                        style={styles.itemListContainer}
-                        keyboardShouldPersistTaps="handled"
-                        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-                        {...(Platform.OS === 'ios' ? { automaticallyAdjustKeyboardInsets: true } : {})}
-                    >
+            <KeyboardAwareScrollView
+                style={styles.itemListContainer}
+                ScrollViewComponent={ServerSettingsKeyboardAwareItemList}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                {...(Platform.OS === 'ios' ? { automaticallyAdjustKeyboardInsets: true } : {})}
+            >
                     {controller.relayDriftBanner ? (
                         isDesktop ? (
                             <RelayDriftActionCard banner={controller.relayDriftBanner} />
@@ -156,7 +166,6 @@ export function ServerSettingsScreen() {
                             onToggleGroupServer={controller.onToggleGroupServer}
                         />
                     ) : null}
-                </ItemList>
-            </KeyboardAvoidingView>
+            </KeyboardAwareScrollView>
     );
 }

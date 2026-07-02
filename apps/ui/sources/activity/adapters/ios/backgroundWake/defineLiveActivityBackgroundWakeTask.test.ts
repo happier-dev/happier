@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { Platform } from 'react-native';
 
 function createMemoryStorage() {
     const values = new Map<string, string>();
@@ -62,6 +63,31 @@ async function loadModule() {
 }
 
 describe('defineLiveActivityBackgroundWakeTask', () => {
+    it('does not load iOS notification task modules when evaluated on Android', async () => {
+        vi.resetModules();
+        vi.doMock('expo-notifications', () => {
+            throw new Error('expo-notifications should not be required on Android module evaluation');
+        });
+        vi.doMock('expo-task-manager', () => {
+            throw new Error('expo-task-manager should not be required on Android module evaluation');
+        });
+        const originalOS = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+        try {
+            const mod = await import('./defineLiveActivityBackgroundWakeTask');
+            await expect(mod.syncLiveActivityBackgroundWakeTaskRegistration({
+                fallbackEnabled: true,
+                staticConfigSupportsBackgroundWake: true,
+                platformOS: 'android',
+            })).resolves.toEqual({ status: 'already_unregistered', reason: 'platform_unsupported' });
+        } finally {
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalOS });
+            vi.doUnmock('expo-notifications');
+            vi.doUnmock('expo-task-manager');
+            vi.resetModules();
+        }
+    });
+
     it('registers the notification task only when fallback mode and static background config are both enabled', async () => {
         const mod = await loadModule();
         expect(mod).not.toBeNull();

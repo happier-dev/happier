@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { MetadataSchema } from '@/sync/domains/state/storageTypes';
 
-import { resolveContextWarningWindowTokens } from './resolveContextWarningWindowTokens';
+import { resolveContextWarningWindowTokens, resolveContextWindowTokens } from './resolveContextWarningWindowTokens';
 
 describe('resolveContextWarningWindowTokens', () => {
     it('prefers live usage telemetry over metadata when resolving the warning window', () => {
@@ -65,6 +65,61 @@ describe('resolveContextWarningWindowTokens', () => {
         } as any)).toBe(190000);
     });
 
+    it('uses the catalog context window for legacy Claude Opus 4.7 session metadata without context-window fields', () => {
+        const metadata = MetadataSchema.parse({
+            path: '/tmp/project',
+            host: 'localhost',
+            sessionModelsV1: {
+                v: 1,
+                provider: 'claude',
+                updatedAt: 1,
+                currentModelId: 'claude-opus-4-7',
+                availableModels: [
+                    {
+                        id: 'claude-opus-4-7',
+                        name: 'Opus 4.7',
+                        description: 'Newest highest-capability Claude model for the hardest coding and reasoning tasks.',
+                    },
+                ],
+            },
+        } as any);
+
+        expect(resolveContextWarningWindowTokens({
+            agentId: 'claude',
+            metadata,
+        } as any)).toBe(950000);
+    });
+
+    it('prefers reported Claude session model context window over the static Opus catalog fallback', () => {
+        const metadata = MetadataSchema.parse({
+            path: '/tmp/project',
+            host: 'localhost',
+            modelOverrideV1: {
+                v: 1,
+                updatedAt: 1,
+                modelId: 'claude-opus-4-7',
+            },
+            sessionModelsV1: {
+                v: 1,
+                provider: 'claude',
+                updatedAt: 1,
+                currentModelId: 'claude-opus-4-7',
+                availableModels: [
+                    {
+                        id: 'claude-opus-4-7',
+                        name: 'Opus 4.7',
+                        contextWindowTokens: 200000,
+                    },
+                ],
+            },
+        } as any);
+
+        expect(resolveContextWarningWindowTokens({
+            agentId: 'claude',
+            metadata,
+        } as any)).toBe(190000);
+    });
+
     it('returns null when the provider metadata does not expose a valid context window', () => {
         const metadata = MetadataSchema.parse({
             path: '/tmp/project',
@@ -86,6 +141,66 @@ describe('resolveContextWarningWindowTokens', () => {
         expect(resolveContextWarningWindowTokens({
             agentId: 'codex',
             metadata,
+        } as any)).toBeNull();
+    });
+});
+
+describe('resolveContextWindowTokens observed-usage evidence bump (Claude)', () => {
+    it('bumps a stale 200k assumption to 1M when observed usage exceeds it (incident 733k/200k)', () => {
+        expect(resolveContextWindowTokens({
+            agentId: 'claude',
+            metadata: null,
+            usageData: { contextSize: 733_000 },
+        } as any)).toBe(1_000_000);
+    });
+
+    it('keeps the assumed window when observed usage fits', () => {
+        expect(resolveContextWindowTokens({
+            agentId: 'claude',
+            metadata: null,
+            usageData: { contextSize: 150_000 },
+        } as any)).toBe(200_000);
+    });
+
+    it('bumps a stale session-models window using observed usage evidence', () => {
+        const metadata = MetadataSchema.parse({
+            path: '/tmp/project',
+            host: 'localhost',
+            sessionModelsV1: {
+                v: 1,
+                provider: 'claude',
+                updatedAt: 1,
+                currentModelId: 'claude-sonnet-4-6',
+                availableModels: [
+                    {
+                        id: 'claude-sonnet-4-6',
+                        name: 'Sonnet 4.6',
+                        contextWindowTokens: 200_000,
+                    },
+                ],
+            },
+        } as any);
+
+        expect(resolveContextWindowTokens({
+            agentId: 'claude',
+            metadata,
+            usageData: { contextSize: 733_000 },
+        } as any)).toBe(1_000_000);
+    });
+
+    it('trusts observed usage beyond every known Claude window so percent math never exceeds 100%', () => {
+        expect(resolveContextWindowTokens({
+            agentId: 'claude',
+            metadata: null,
+            usageData: { contextSize: 1_200_000 },
+        } as any)).toBe(1_200_000);
+    });
+
+    it('does not apply the Claude window ladder to other providers', () => {
+        expect(resolveContextWindowTokens({
+            agentId: 'codex',
+            metadata: null,
+            usageData: { contextSize: 733_000 },
         } as any)).toBeNull();
     });
 });

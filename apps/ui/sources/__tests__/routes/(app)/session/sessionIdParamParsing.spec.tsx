@@ -1,21 +1,21 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
-import { installRouteRootCommonModuleMocks } from '../../routeRootTestHelpers';
-
+import { installSessionRouteCommonModuleMocks } from './[id]/sessionRouteTestHelpers';
 
 type SearchParams = { id?: string; jumpSeq?: string };
 let searchParams: SearchParams = {};
 const ensureSessionVisibleSpy = vi.fn((_sessionId: string) => Promise.resolve());
 let hydrateReady = true;
+let lastMobileSurfaceBySessionId: Record<string, string> = {};
 const routerMock = createExpoRouterMock({
     params: () => searchParams,
 });
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-installRouteRootCommonModuleMocks({
+installSessionRouteCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -26,6 +26,33 @@ installRouteRootCommonModuleMocks({
         });
     },
     router: async () => routerMock.module,
+    storageModule: async (importOriginal) => {
+        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleMock({
+            importOriginal,
+            overrides: {
+                useSetting: ((key: string) => {
+                    if (key === 'mobileWorkspaceExperienceV1') return 'classic';
+                    return null;
+                }) as any,
+                useSettingMutable: ((key: string) => [
+                    key === 'mobileWorkspaceExperienceV1' ? 'classic' : null,
+                    vi.fn(),
+                ]) as any,
+                useLocalSetting: ((key: string) => {
+                    if (key === 'sessionLastMobileSurfaceBySessionId') return lastMobileSurfaceBySessionId;
+                    return null;
+                }) as any,
+                getStorage: (() => ({
+                    getState: () => ({
+                        localSettings: {
+                            sessionLastMobileSurfaceBySessionId: lastMobileSurfaceBySessionId,
+                        },
+                    }),
+                })) as any,
+            },
+        });
+    },
 });
 
 vi.mock('@react-navigation/native', () => ({
@@ -39,12 +66,51 @@ vi.mock('@/components/sessions/shell/SessionView', () => ({
         React.createElement('SessionView', { id, jumpToSeq, paneUrlState }),
 }));
 
+vi.mock('@/components/workspaceCockpit/session/SessionCockpitShell', () => ({
+    SessionCockpitShell: (props: any) => React.createElement('SessionCockpitShell', props),
+}));
+
+vi.mock('@/components/sessions/shell/SessionInvalidLinkFallback', () => ({
+    SessionInvalidLinkFallback: () => React.createElement('SessionInvalidLinkFallback', { testID: 'session-invalid-link' }),
+}));
+
+vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
+    useAppPaneScope: () => ({
+        scopeId: 'session:test',
+        scopeState: {
+            right: { activeTabId: null },
+            details: { tabs: [] },
+        },
+        openRight: vi.fn(),
+        closeRight: vi.fn(),
+        setRightTab: vi.fn(),
+        setRightTabState: vi.fn(),
+        openDetailsTab: vi.fn(),
+        setDetailsTabState: vi.fn(),
+        pinDetailsTab: vi.fn(),
+        closeDetails: vi.fn(),
+        closeDetailsTab: vi.fn(),
+        setActiveDetailsTab: vi.fn(),
+    }),
+}));
+
+vi.mock('@/components/sessions/terminal/useSessionTerminalAvailability', () => ({
+    useSessionTerminalAvailability: () => ({
+        deviceType: 'desktop',
+        terminalEnabled: false,
+        dockLocation: 'sidebar',
+        sidebarTabAvailable: false,
+    }),
+}));
+
 vi.mock('@/hooks/session/useHydrateSessionForRoute', () => ({
     useHydrateSessionForRoute: (sessionId: string) => {
         if (sessionId) {
             ensureSessionVisibleSpy(sessionId);
         }
-        return hydrateReady;
+        return hydrateReady
+            ? { kind: 'available', sessionId }
+            : { kind: 'loading', sessionId, reason: 'store-miss' };
     },
 }));
 
@@ -68,6 +134,19 @@ vi.mock('@/auth/context/AuthContext', async (importOriginal) => {
     };
 });
 
+vi.mock('@/sync/domains/server/serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({ serverId: '', serverUrl: '', generation: 1 }),
+    subscribeActiveServer: () => () => undefined,
+}));
+
+vi.mock('@/utils/platform/responsive', () => ({
+    useDeviceType: () => 'desktop',
+}));
+
+vi.mock('@/utils/sessions/tempDataStore', () => ({
+    getTempData: () => null,
+}));
+
 async function renderSessionScreenTree() {
     routerMock.state.params = searchParams;
     const Screen = (await import('@/app/(app)/session/[id]')).default;
@@ -86,9 +165,11 @@ async function renderSessionScreen() {
 
 describe('session/[id] param parsing', () => {
     afterEach(() => {
+        standardCleanup();
         vi.resetModules();
         ensureSessionVisibleSpy.mockClear();
         hydrateReady = true;
+        lastMobileSurfaceBySessionId = {};
     });
 
     it('renders the session view using expo-router search params', async () => {
@@ -136,13 +217,12 @@ describe('session/[id] param parsing', () => {
         expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('session-123');
     });
 
-    it('shows the loading indicator while hydration is pending so deep-link hydration can finish before mounting SessionView', async () => {
+    it('does not mount SessionView while hydration is pending so deep-link hydration can finish first', async () => {
         vi.resetModules();
         hydrateReady = false;
         searchParams = { id: 'session-123' };
         const screen = await renderSessionScreenTree();
         expect(screen.findAllByType('SessionView' as any)).toHaveLength(0);
-        expect(screen.findAllByType('ActivityIndicator' as any)).toHaveLength(1);
     });
 
     it('renders an invalid-link fallback when session id is missing', async () => {
@@ -152,5 +232,5 @@ describe('session/[id] param parsing', () => {
         expect(ensureSessionVisibleSpy).not.toHaveBeenCalled();
         expect(screen.findAllByType('SessionView' as any)).toHaveLength(0);
         expect(screen.findByTestId('session-invalid-link')).toBeTruthy();
-  });
+    });
 });

@@ -158,7 +158,7 @@ async function runProbe<T>(
     const telemetry = options.telemetry ?? syncPerformanceTelemetry;
     const shouldRecordProbe = routing.telemetryEnabled && telemetry.isEnabled();
     if (!shouldRecordProbe) {
-        const capability = await options.probe();
+        const capability = await runWithTimeout(options.probe, routing.timeoutMs);
         rememberNativeCryptoWorkerCapability(options.capabilityCacheKey, capability);
         return capability;
     }
@@ -166,7 +166,7 @@ async function runProbe<T>(
     const now = options.now ?? defaultNow;
     const startedAtMs = now();
     try {
-        const capability = await options.probe();
+        const capability = await runWithTimeout(options.probe, routing.timeoutMs);
         rememberNativeCryptoWorkerCapability(options.capabilityCacheKey, capability);
         recordNativeCryptoWorkerProbe(telemetry, Math.max(0, now() - startedAtMs), {
             operation: options.operation,
@@ -234,7 +234,17 @@ export async function runNativeCryptoWorkerBatch<T>(
         return runReference(options.referenceRun);
     }
 
-    const capability = await runProbe(options, routing);
+    let capability: NativeCryptoWorkerCapability;
+    try {
+        capability = await runProbe(options, routing);
+    } catch (error) {
+        invalidateNativeCryptoWorkerCapability(options.capabilityCacheKey);
+        degradeNativeCryptoWorkerCapability(options.capabilityCacheKey, getNativeWorkerFailureReason(error));
+        if (routing.mode === 'require') {
+            throw error;
+        }
+        return runReference(options.referenceRun);
+    }
     if (!capability.available) {
         if (routing.mode === 'require') {
             throw new NativeCryptoWorkerUnavailableError(capability.failureReason);

@@ -1,14 +1,14 @@
 import {
-    buildOpenCodeAgentRuntimeDescriptor,
     resolveVendorHandoffIdFromSessionMetadata,
     type AgentId,
 } from '@happier-dev/agents';
 import {
     normalizeCodexBackendMode,
-    readCanonicalRuntimeDescriptorV1ForProvider,
+    readRuntimeDescriptorV1ForProvider,
     readRuntimeDescriptorV1FromMetadata,
 } from '@happier-dev/protocol';
-import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
+import { CANONICAL_AGENT_IDS, resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
+import { buildSessionHandoffSourceRecoveryResumePatch } from '@/agents/registry/registryUiBehavior';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 type SessionHandoffRecoveryAction = 'restart_on_source' | 'keep_stopped';
@@ -26,39 +26,14 @@ export type SessionHandoffSourceResumePlan = Readonly<{
     environmentVariables?: Record<string, string>;
 }>;
 
-function buildSourceResumeEnvironmentVariables(metadata: Metadata): Record<string, string> | undefined {
-    const openCodeRuntime = readCanonicalRuntimeDescriptorV1ForProvider(
-        readRuntimeDescriptorV1FromMetadata(metadata),
-        'opencode',
-    );
-    const legacyBackendMode = metadata.opencodeBackendMode === 'server' || metadata.opencodeBackendMode === 'acp'
-        ? metadata.opencodeBackendMode
-        : null;
-    const backendMode = openCodeRuntime?.backendMode ?? legacyBackendMode;
-    if (backendMode === 'server') {
-        const serverBaseUrl = openCodeRuntime?.serverBaseUrl ?? (typeof metadata.opencodeServerBaseUrl === 'string' ? metadata.opencodeServerBaseUrl : null);
-        const serverBaseUrlExplicit = openCodeRuntime?.serverBaseUrlExplicit ?? Boolean(metadata.opencodeServerBaseUrlExplicit);
-        const env: Record<string, string> = {
-            HAPPIER_OPENCODE_BACKEND_MODE: 'server',
-        };
-        if (serverBaseUrl) {
-            env.HAPPIER_OPENCODE_SERVER_URL = serverBaseUrl;
-            if (serverBaseUrlExplicit) {
-                env.HAPPIER_OPENCODE_SERVER_URL_EXPLICIT = '1';
-            }
-        }
-        return env;
-    }
-    return undefined;
-}
-
 function resolveRecoveryAgentId(metadata: Metadata): AgentId | null {
     const byFlavor = resolveAgentIdFromFlavor(metadata.flavor);
     if (byFlavor) return byFlavor;
 
-    if (readCanonicalRuntimeDescriptorV1ForProvider(readRuntimeDescriptorV1FromMetadata(metadata), 'codex')) return 'codex';
-    if (readCanonicalRuntimeDescriptorV1ForProvider(readRuntimeDescriptorV1FromMetadata(metadata), 'opencode')) return 'opencode';
-    if (readCanonicalRuntimeDescriptorV1ForProvider(readRuntimeDescriptorV1FromMetadata(metadata), 'pi')) return 'pi';
+    const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
+    for (const agentId of CANONICAL_AGENT_IDS) {
+        if (readRuntimeDescriptorV1ForProvider(descriptor, agentId)) return agentId;
+    }
     return null;
 }
 
@@ -88,6 +63,10 @@ export function buildSessionHandoffRecoveryPlan(input: Readonly<{
     if (!agent || !directory) return null;
 
     const codexBackendMode = normalizeCodexBackendMode(input.sourceMetadata.codexBackendMode);
+    const sourceRecoveryPatch = buildSessionHandoffSourceRecoveryResumePatch({
+        agentId: agent,
+        metadata: input.sourceMetadata,
+    });
 
     return {
         handoffId: input.handoffId,
@@ -104,8 +83,8 @@ export function buildSessionHandoffRecoveryPlan(input: Readonly<{
                 ? { runtimeDescriptorV1: readRuntimeDescriptorV1FromMetadata(input.sourceMetadata) }
                 : {}),
             ...(codexBackendMode ? { codexBackendMode } : {}),
-            ...(buildSourceResumeEnvironmentVariables(input.sourceMetadata)
-                ? { environmentVariables: buildSourceResumeEnvironmentVariables(input.sourceMetadata)! }
+            ...(sourceRecoveryPatch.environmentVariables
+                ? { environmentVariables: sourceRecoveryPatch.environmentVariables }
                 : {}),
         },
     };

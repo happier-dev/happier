@@ -25,9 +25,12 @@ export function createNativeThemePreferenceTransitionController(
             mutation();
             dependencies.recordBreadcrumb?.({ phase: 'overlay-shown' });
             dependencies.showOverlay(uri);
-            await dependencies.waitForFrame();
-            await dependencies.animateOverlay();
-            dependencies.hideOverlay();
+            try {
+                await dependencies.waitForFrame();
+                await dependencies.animateOverlay();
+            } finally {
+                dependencies.hideOverlay();
+            }
         },
     };
 }

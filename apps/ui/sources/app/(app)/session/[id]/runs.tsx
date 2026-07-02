@@ -12,6 +12,7 @@ import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForR
 import { useSessionExecutionRunLaunchability } from '@/hooks/session/useSessionExecutionRunLaunchability';
 import type { ExecutionRunBackendCapabilityMap } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
+import { isSessionRouteHydrationAvailable, isSessionRouteHydrationMissing } from '@/sync/domains/session/sessionRouteHydrationState';
 import { t } from '@/text';
 import { ExecutionRunList } from '@/components/sessions/runs/ExecutionRunList';
 import { resolveExecutionRunLauncherIntents } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
@@ -44,8 +45,9 @@ export default function SessionRunsScreen() {
   const screenOptions = React.useMemo(() => {
     return { headerShown: true, headerTitle };
   }, [headerTitle]);
-  const hydrateReady = useHydrateSessionForRoute(sessionId, 'SessionRunsScreen.hydrate', routeScope.hydrationOptions);
-  if (!hydrateReady) {
+  const routeHydrationState = useHydrateSessionForRoute(sessionId, 'SessionRunsScreen.hydrate', routeScope.hydrationOptions);
+  const hydrateReady = isSessionRouteHydrationAvailable(routeHydrationState);
+  if (!hydrateReady && !isSessionRouteHydrationMissing(routeHydrationState)) {
     return (
       <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.background?.canvas ?? theme.colors.surface.base }}>
         <Stack.Screen options={screenOptions} />
@@ -64,7 +66,7 @@ export default function SessionRunsScreen() {
     );
   }
 
-  if (!sessionId) {
+  if (!sessionId || isSessionRouteHydrationMissing(routeHydrationState)) {
     return (
       <View testID="session-runs-screen" style={{ flex: 1, backgroundColor: theme.colors.surface.base, padding: 16 }}>
         <Text style={{ color: theme.colors.text.primary }}>{t('errors.sessionDeleted')}</Text>

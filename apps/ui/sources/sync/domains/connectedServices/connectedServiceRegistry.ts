@@ -1,6 +1,5 @@
 import {
   CONNECTED_ACCOUNT_DESCRIPTORS,
-  getConnectedAccountDescriptor,
   type ConnectedAccountOauthAddActionMode,
   type ConnectedAccountTokenKind,
   type ConnectedServiceId,
@@ -24,6 +23,8 @@ export type ConnectedServiceRegistryEntry = Readonly<{
   serviceId: ConnectedServiceId;
   connectCommand: string;
   displayNameKey?: ConnectedServiceDisplayNameKey;
+  /** Short brand-only name for compact surfaces; fall back to the localized display name when absent. */
+  shortName?: string;
   oauthPasteCopyKeyPrefix?: ConnectedServiceOauthPasteCopyKeyPrefix;
   supportsOauth: boolean;
   /**
@@ -42,27 +43,49 @@ export type ConnectedServiceRegistryEntry = Readonly<{
   tokenIdentityMissingValueErrorKey?: string;
 }>;
 
+const CONNECTED_SERVICE_FALLBACK_REGISTRY: readonly ConnectedServiceRegistryEntry[] = Object.freeze([
+  {
+    serviceId: 'bitbucket',
+    connectCommand: 'happier connect bitbucket --token',
+    displayNameKey: 'connectedServices.serviceNames.bitbucket',
+    supportsOauth: false,
+    oauthAddActionModes: [],
+    supportsToken: true,
+    tokenKind: 'api-token',
+    tokenSetupUrl: 'https://bitbucket.org/account/settings/app-passwords/',
+    tokenPromptLabelKey: 'connectedServices.tokenPrompts.bitbucketApiToken',
+    tokenMissingValueErrorKey: 'connectedServices.tokenPrompts.errors.missingApiToken',
+    tokenIdentityPromptLabelKey: 'connectedServices.tokenPrompts.bitbucketEmailOrUsername',
+    tokenIdentityMissingValueErrorKey: 'connectedServices.tokenPrompts.errors.missingBitbucketEmailOrUsername',
+  },
+]);
+
 export const CONNECTED_SERVICES_REGISTRY: readonly ConnectedServiceRegistryEntry[] = Object.freeze(
-  CONNECTED_ACCOUNT_DESCRIPTORS.map((descriptor) => ({
-    serviceId: descriptor.id,
-    connectCommand: descriptor.ui.connectCommand,
-    displayNameKey: descriptor.displayKey as ConnectedServiceDisplayNameKey,
-    oauthPasteCopyKeyPrefix: descriptor.ui.oauthPasteCopyKeyPrefix as ConnectedServiceOauthPasteCopyKeyPrefix | undefined,
-    supportsOauth: descriptor.credentialKinds.includes('oauth'),
-    oauthAddActionModes: descriptor.ui.oauthAddActionModes,
-    supportsToken: descriptor.credentialKinds.includes('token'),
-    tokenKind: descriptor.tokenSetup?.tokenKind,
-    tokenSetupUrl: descriptor.tokenSetup?.setupUrl,
-    tokenPromptLabelKey: descriptor.tokenSetup?.promptLabelKey,
-    tokenMissingValueErrorKey: descriptor.tokenSetup?.missingValueErrorKey,
-    tokenIdentityPromptLabelKey: descriptor.tokenSetup?.identity?.promptLabelKey,
-    tokenIdentityMissingValueErrorKey: descriptor.tokenSetup?.identity?.missingValueErrorKey,
-  })),
+  [
+    ...CONNECTED_ACCOUNT_DESCRIPTORS.map((descriptor) => ({
+      serviceId: descriptor.id,
+      connectCommand: descriptor.ui.connectCommand,
+      displayNameKey: descriptor.displayKey as ConnectedServiceDisplayNameKey,
+      shortName: descriptor.ui.shortName,
+      oauthPasteCopyKeyPrefix: descriptor.ui.oauthPasteCopyKeyPrefix as ConnectedServiceOauthPasteCopyKeyPrefix | undefined,
+      supportsOauth: descriptor.credentialKinds.includes('oauth'),
+      oauthAddActionModes: descriptor.ui.oauthAddActionModes,
+      supportsToken: descriptor.credentialKinds.includes('token'),
+      tokenKind: descriptor.tokenSetup?.tokenKind,
+      tokenSetupUrl: descriptor.tokenSetup?.setupUrl,
+      tokenPromptLabelKey: descriptor.tokenSetup?.promptLabelKey,
+      tokenMissingValueErrorKey: descriptor.tokenSetup?.missingValueErrorKey,
+      tokenIdentityPromptLabelKey: descriptor.tokenSetup?.identity?.promptLabelKey,
+      tokenIdentityMissingValueErrorKey: descriptor.tokenSetup?.identity?.missingValueErrorKey,
+    })),
+    ...CONNECTED_SERVICE_FALLBACK_REGISTRY.filter((fallback) =>
+      !CONNECTED_ACCOUNT_DESCRIPTORS.some((descriptor) => descriptor.id === fallback.serviceId),
+    ),
+  ],
 );
 
 export function getConnectedServiceRegistryEntry(serviceId: ConnectedServiceId): ConnectedServiceRegistryEntry {
-  const descriptor = getConnectedAccountDescriptor(serviceId);
-  const entry = descriptor ? CONNECTED_SERVICES_REGISTRY.find((s) => s.serviceId === descriptor.id) : null;
+  const entry = CONNECTED_SERVICES_REGISTRY.find((s) => s.serviceId === serviceId);
   if (entry) return entry;
   return {
     serviceId,

@@ -35,6 +35,11 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children, ...props }: any) => React.createElement('ItemList', props, children),
 }));
 
+vi.mock('@/components/ui/keyboardAvoidance', () => ({
+    KeyboardAwareScrollView: ({ children, ...props }: any) =>
+        React.createElement('KeyboardAwareScrollView', props, children),
+}));
+
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children, title }: any) => React.createElement('ItemGroup', { title }, children),
 }));
@@ -125,6 +130,8 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
 
         const screen = await renderScreen(React.createElement(ServerSettingsScreen));
 
+        expect(screen.findAllByType('KeyboardAwareScrollView' as any)).toHaveLength(1);
+        expect(screen.findAllByType('KeyboardAvoidingView' as any)).toHaveLength(0);
         expect(screen.findAllByType('ServerGroupsSection' as any)).toHaveLength(0);
     });
 
@@ -270,7 +277,7 @@ describe('ServerSettingsScreen (concurrent section visibility)', () => {
         const { ServerSettingsScreen } = await import('./ServerSettingsScreen');
 
         const screen = await renderScreen(React.createElement(ServerSettingsScreen));
-        const itemList = screen.findByType('ItemList' as any);
+        const itemList = screen.findByType('KeyboardAwareScrollView' as any);
 
         expect(itemList.props.keyboardShouldPersistTaps).toBe('handled');
         expect(itemList.props.keyboardDismissMode).toBe('interactive');

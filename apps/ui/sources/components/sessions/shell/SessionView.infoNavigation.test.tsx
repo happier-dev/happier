@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
@@ -15,6 +16,30 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
+vi.mock('@/agents/registry/registryUiBehavior', () => ({
+    buildResumeCapabilityOptionsFromUiState: () => ({}),
+    buildNewSessionOptionsFromUiState: () => ({}),
+    canSelectAgentWithoutDetectedCli: () => false,
+    getNewSessionAgentInputExtraActionChips: () => [],
+    buildSpawnEnvironmentVariablesFromUiState: () => ({}),
+    buildResumeSessionExtrasFromUiState: () => null,
+    buildSpawnSessionExtrasFromUiState: () => null,
+    buildWakeResumeExtras: () => null,
+    getAgentResumeExperimentsFromSettings: () => null,
+    getNewSessionPreflightIssues: () => [],
+    getNewSessionRelevantInstallableDepKeys: () => [],
+    resolveAgentUiBehavior: () => ({}),
+    resolveAgentUiBehaviorFromFlavor: () => ({}),
+    supportsDetectedMcpConfigScan: () => false,
+    supportsEditableSessionGoals: () => false,
+}));
+vi.mock('@/agents/backendCatalog/getResolvedBackendCatalogEntries', () => ({
+    getResolvedBackendCatalogEntries: () => [],
+}));
+vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
+    useDaemonMergedProjectionInputs: () => ({ inputs: null }),
+}));
+
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const routerNavigateSpy = vi.hoisted(() => vi.fn());
 const routerBackSpy = vi.hoisted(() => vi.fn(() => {
@@ -23,39 +48,13 @@ const routerBackSpy = vi.hoisted(() => vi.fn(() => {
 }));
 const chatHeaderPropsSpy = vi.hoisted(() => vi.fn());
 const capturedOpenSessionSpy = vi.hoisted(() => vi.fn<(sid: string) => void>());
-let workspaceRefsV1: Settings['workspaceRefsV1'] = [];
 const resolveServerIdForSessionIdFromLocalCacheSpy = vi.hoisted(() =>
     vi.fn<(sessionId: string) => string | null>((sessionId: string) =>
         sessionId === 's1' ? 'server-cache' : null
     ),
 );
 
-const themeColors = {
-    text: '#000',
-    textSecondary: '#666',
-    textLink: '#00f',
-    surface: '#fff',
-    surfaceHigh: '#f5f5f5',
-    surfaceSelected: '#eef4ff',
-    divider: '#ddd',
-    border: '#ddd',
-    indigo: '#5856D6',
-    radio: { active: '#007AFF' },
-    accent: {
-        blue: '#007AFF',
-        green: '#34C759',
-        orange: '#FF9500',
-        yellow: '#FFCC00',
-        red: '#FF3B30',
-        indigo: '#5856D6',
-        purple: '#AF52DE',
-    },
-    modal: { border: '#ddd' },
-    input: { background: '#f5f5f5' },
-    header: { tint: '#000', background: '#fff' },
-    status: { error: '#f00' },
-    shadow: { color: '#000', opacity: 0.2 },
-} as const;
+let workspaceLabelsV1: Record<string, string> = {};
 
 installSessionShellCommonModuleMocks({
     reactNative: async () =>
@@ -75,7 +74,7 @@ installSessionShellCommonModuleMocks({
         }),
     unistyles: async () =>
         createUnistylesMock({
-            theme: themeColors,
+            theme: createThemeFixture(),
             runtime: {
                 hairlineWidth: 1,
             },
@@ -103,7 +102,7 @@ installSessionShellCommonModuleMocks({
             presence: 'online',
             active: true,
             accessLevel: 'edit',
-            metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/tmp' },
+            metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/Users/test' },
             agentState: {},
         };
 
@@ -111,6 +110,16 @@ installSessionShellCommonModuleMocks({
             storage: createStorageStoreMock({
                 sessions: { s1: session },
                 settings: settingsDefaults,
+                sessionListIndexByServerId: {
+                    'server-1': [
+                        {
+                            type: 'session',
+                            sessionId: 's1',
+                            serverId: 'server-1',
+                            serverName: 'Server 1',
+                        },
+                    ],
+                },
             }),
             useSession: () => session,
             useIsDataReady: () => true,
@@ -118,6 +127,7 @@ installSessionShellCommonModuleMocks({
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
             useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
             useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
+            useSessionSubagentSourceMessages: () => [],
             useSessionReviewCommentsDrafts: () => [],
             useWorkspaceReviewCommentsDrafts: () => [],
             useSessionUsage: () => null,
@@ -127,13 +137,13 @@ installSessionShellCommonModuleMocks({
                 vi.fn<(value: LocalSettings[K]) => void>(),
             ],
             useSetting: <K extends keyof Settings>(key: K) => {
-                if (key === 'workspaceRefsV1') return workspaceRefsV1 as Settings[K];
+                if (key === 'workspaceLabelsV1') return workspaceLabelsV1 as Settings[K];
                 return settingsDefaults[key];
             },
             useSettings: () => ({ ...settingsDefaults, experiments: true, featureToggles: {} }),
             useAutomations: () => [],
             useMachine: () => null,
-            useServerScopedMachine: () => null,
+            useAllMachines: () => [{ id: 'm1', metadata: {} }],
         });
     },
 });
@@ -212,24 +222,25 @@ vi.mock('@/utils/platform/responsive', () => ({
     useIsLandscape: () => false,
     useIsTablet: () => true,
 }));
-vi.mock('@/hooks/session/useDraft', () => ({
-    useDraft: () => ({ clearDraft: vi.fn() }),
-}));
 vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
     getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true }),
 }));
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
     resolveSessionMachineReachability: () => true,
 }));
-vi.mock('@/components/sessions/model/useSessionMachineReachability', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/components/sessions/model/useSessionMachineReachability')>();
-
-    return {
-        ...actual,
-        useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
-        useSessionReachableMachineTarget: () => null,
-    };
-});
+vi.mock(
+    '@/components/sessions/model/useSessionMachineReachability',
+    async (importOriginal) => {
+        const { createSessionMachineReachabilityModuleMock } = await import('@/dev/testkit/mocks/sessionMachineReachability');
+        return createSessionMachineReachabilityModuleMock({
+            importOriginal,
+            overrides: {
+                useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
+                useSessionReachableMachineTarget: () => ({ machineId: 'm1', basePath: '/tmp' }),
+            },
+        });
+    },
+);
 vi.mock('@/hooks/session/files/useWarmRepositoryDirectoryCacheOnSessionOpen', () => ({
     useWarmRepositoryDirectoryCacheOnSessionOpen: () => {},
 }));
@@ -253,6 +264,12 @@ vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
     useSessionPaneUrlSync: () => {},
 }));
+vi.mock('@/sync/domains/session/activeViewingSession', () => ({
+    setActiveViewingSessionId: () => {},
+    clearActiveViewingSessionId: () => {},
+    markSessionVisible: () => {},
+    markSessionHidden: () => {},
+}));
 vi.mock('@/sync/sync', () => ({
     sync: {
         markSessionViewed: async () => {},
@@ -267,13 +284,19 @@ vi.mock('@/sync/sync', () => ({
         encryption: { getMachineEncryption: () => null },
     },
 }));
-vi.mock('@/sync/ops', () => ({
-    continueSessionWithReplay: vi.fn(),
-    sessionAbort: vi.fn(),
-    resumeSession: vi.fn(),
-    sessionAttachmentsUploadFile: vi.fn(),
-    sessionSwitch: vi.fn(),
-}));
+vi.mock('@/sync/ops', async (importOriginal) => {
+    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
+    return createSyncOpsModuleMock({
+        importOriginal,
+        overrides: {
+            continueSessionWithReplay: vi.fn(),
+            sessionAbort: vi.fn(),
+            resumeSession: vi.fn(),
+            sessionAttachmentsUploadFile: vi.fn(),
+            sessionSwitch: vi.fn(),
+        },
+    });
+});
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     createDefaultActionExecutor: (params: any) => {
         capturedOpenSessionSpy.mockImplementation((sid: string) => params.openSession(sid));
@@ -337,23 +360,13 @@ describe('SessionView info navigation', () => {
         routerBackSpy.mockClear();
         chatHeaderPropsSpy.mockReset();
         capturedOpenSessionSpy.mockReset();
-        workspaceRefsV1 = [];
+        workspaceLabelsV1 = {};
         resolveServerIdForSessionIdFromLocalCacheSpy.mockReset();
         resolveServerIdForSessionIdFromLocalCacheSpy.mockImplementation((sessionId: string) =>
             sessionId === 's1' ? 'server-cache' : null
         );
-        const activeElementBlurSpy = vi.fn();
         Object.defineProperty(globalThis, 'location', {
             value: { href: 'http://localhost/session/s1', pathname: '/session/s1' },
-            writable: true,
-            configurable: true,
-        });
-        Object.defineProperty(globalThis, 'document', {
-            value: {
-                activeElement: {
-                    blur: activeElementBlurSpy,
-                },
-            },
             writable: true,
             configurable: true,
         });
@@ -363,7 +376,7 @@ describe('SessionView info navigation', () => {
         standardCleanup();
     });
 
-    it('opens session info via singular navigate using the cached owning server id before a stale route server id', async () => {
+    it('opens session info via singular navigate using the cached owning server id instead of a stale route server id', async () => {
         const { SessionView } = await import('./SessionView');
 
         await renderScreen(
@@ -381,11 +394,31 @@ describe('SessionView info navigation', () => {
         expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-cache', expect.objectContaining({
             dangerouslySingular: expect.any(Function),
         }));
-        expect((globalThis as any).document.activeElement.blur).toHaveBeenCalledTimes(1);
 
         const singular = routerNavigateSpy.mock.calls[0]?.[1]?.dangerouslySingular;
         expect(typeof singular).toBe('function');
         expect(singular()).toBe('session-info');
+    });
+
+    it('opens session info via singular navigate using the route server id when cache resolution is unavailable', async () => {
+        resolveServerIdForSessionIdFromLocalCacheSpy.mockReturnValue(null);
+        const { SessionView } = await import('./SessionView');
+
+        await renderScreen(
+            <SessionView id="s1" routeServerId="server-2" />,
+            { wrapper: AppPaneProviderWrapper },
+        );
+
+        const headerProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
+        expect(typeof headerProps?.onAvatarPress).toBe('function');
+
+        headerProps?.onAvatarPress?.();
+
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-2', expect.objectContaining({
+            dangerouslySingular: expect.any(Function),
+        }));
     });
 
     it('opens session info via singular navigate using the cached owning server id when the route is missing server scope', async () => {
@@ -405,20 +438,6 @@ describe('SessionView info navigation', () => {
         expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-cache', expect.objectContaining({
             dangerouslySingular: expect.any(Function),
         }));
-    });
-
-    it('opens child sessions with the resolved current session server id when child cache resolution is unavailable', async () => {
-        const { SessionView } = await import('./SessionView');
-
-        await renderScreen(
-            <SessionView id="s1" routeServerId="server-2" />,
-            { wrapper: AppPaneProviderWrapper },
-        );
-
-        capturedOpenSessionSpy('child-session-1');
-
-        expect(routerPushSpy).toHaveBeenCalledTimes(1);
-        expect(routerPushSpy).toHaveBeenCalledWith('/session/child-session-1?serverId=server-cache');
     });
 
     it('uses back navigation for the session header back affordance', async () => {
@@ -446,11 +465,10 @@ describe('SessionView info navigation', () => {
             { wrapper: AppPaneProviderWrapper },
         );
 
-        const headerProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
-        expect(headerProps).toMatchObject({
-            subtitle: '/tmp',
-            subtitleEllipsizeMode: 'head',
-        });
+        expect(chatHeaderPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
+            subtitle: 'tmp',
+            subtitleEllipsizeMode: 'tail',
+        }));
     });
 
     it('keeps the header top inset when only content safe-area padding is external', async () => {
@@ -461,24 +479,15 @@ describe('SessionView info navigation', () => {
             { wrapper: AppPaneProviderWrapper },
         );
 
-        const headerProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
-        expect(headerProps).toMatchObject({
+        expect(chatHeaderPropsSpy).toHaveBeenCalledWith(expect.objectContaining({
             includeTopInset: true,
-        });
+        }));
     });
 
-    it('uses the renamed workspace label for the session header subtitle', async () => {
-        workspaceRefsV1 = [
-            {
-                id: 'workspace-ref-renamed',
-                serverId: 'server-cache',
-                machineId: 'm1',
-                rootPath: '/tmp',
-                label: 'Renamed Workspace',
-                createdAtMs: 1,
-                lastOpenedAtMs: null,
-            },
-        ];
+    it('falls back to the session path subtitle when no matching workspace label key is available', async () => {
+        workspaceLabelsV1 = {
+            wl_07600b8c: 'Renamed Workspace',
+        };
         const { SessionView } = await import('./SessionView');
 
         await renderScreen(
@@ -487,9 +496,20 @@ describe('SessionView info navigation', () => {
         );
 
         const headerProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
-        expect(headerProps).toMatchObject({
-            subtitle: 'Renamed Workspace',
-            subtitleEllipsizeMode: 'tail',
-        });
+        expect(headerProps?.subtitle).toBe('tmp');
+        expect(headerProps?.subtitleEllipsizeMode).toBe('tail');
+    });
+
+    it('opens child sessions with the current session owner when child cache resolution is unavailable', async () => {
+        const { SessionView } = await import('./SessionView');
+
+        await renderScreen(
+            <SessionView id="s1" routeServerId="server-2" />,
+            { wrapper: AppPaneProviderWrapper },
+        );
+
+        capturedOpenSessionSpy('child-session-1');
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/child-session-1?serverId=server-cache');
     });
 });

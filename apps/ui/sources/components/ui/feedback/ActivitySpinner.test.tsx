@@ -51,6 +51,7 @@ describe('ActivitySpinner', () => {
         }
         const style = flattenStyle(spinner.props.style);
         expect(style.animationName).toBe('happierActivitySpinnerSpin');
+        expect(style.animationTimingFunction).toBe('steps(6, end)');
         expect(style.width).toBe(12);
         expect(style.borderColor).toBe('red');
     });
@@ -67,6 +68,24 @@ describe('ActivitySpinner', () => {
         }
         const style = flattenStyle(spinner.props.style);
         expect(style.borderColor).toBe('theme-secondary-text');
+        expect(style.animationTimingFunction).toBe('steps(6, end)');
         expect(style.alignSelf).toBe('center');
+    });
+
+    it('can render a static web spinner without scheduling a continuous CSS animation', async () => {
+        const { ActivitySpinner } = await import('./ActivitySpinner');
+        const screen = await renderScreen(
+            <ActivitySpinner testID="spinner" size={12} animationEnabled={false} />,
+        );
+
+        const spinner = screen.findByTestId('spinner');
+        if (!spinner) {
+            throw new Error('Expected static CSS spinner to render');
+        }
+        const style = flattenStyle(spinner.props.style);
+        expect(style.animationName).toBeUndefined();
+        expect(style.animationIterationCount).toBeUndefined();
+        expect(style.willChange).toBeUndefined();
+        expect(style.opacity).toBe(1);
     });
 });

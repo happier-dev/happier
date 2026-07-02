@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
-import { pressTestInstance, renderScreen, standardCleanup, type RenderScreenResult } from '@/dev/testkit';
+import { flushHookEffects, pressTestInstance, renderScreen, standardCleanup, type RenderScreenResult } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -10,6 +10,8 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 
 const headerActionMenuSpy = vi.hoisted(() => vi.fn());
 const chatHeaderSpy = vi.hoisted(() => vi.fn());
+const agentInputSpy = vi.hoisted(() => vi.fn());
+const connectedServicesAuthSwitchSpy = vi.hoisted(() => vi.fn());
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const routerBackSpy = vi.hoisted(() => vi.fn(() => {
   (globalThis as any).location.href = 'http://localhost/session/s1/previous';
@@ -17,6 +19,9 @@ const routerBackSpy = vi.hoisted(() => vi.fn(() => {
 }));
 const navigateWithBlurOnWebSpy = vi.hoisted(() => vi.fn((action: () => void) => action()));
 const keyboardDismissSpy = vi.hoisted(() => vi.fn());
+const ensureSidechainMessagesLoadedSpy = vi.hoisted(() => vi.fn(async () => 'loaded' as const));
+const paneOpenRightSpy = vi.hoisted(() => vi.fn());
+const paneSetRightTabSpy = vi.hoisted(() => vi.fn());
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'android' }));
 const responsiveState = vi.hoisted(() => ({ deviceType: 'phone' as 'phone' | 'tablet', isLandscape: false }));
 const windowDimensionsState = vi.hoisted(() => ({ width: 800, height: 600 }));
@@ -27,6 +32,17 @@ const sessionMessagesState = vi.hoisted(() => ({ messages: [] as any[] }));
 const automationsSupportState = vi.hoisted(() => ({ enabled: false }));
 const localSettingsState = vi.hoisted(() => ({
   mobileWorkspaceExperienceV1: 'classic' as 'classic' | 'cockpit',
+}));
+const sessionMachineControlTargetState = vi.hoisted(() => ({
+    target: null as { machineId: string; basePath: string; confidence: 'reachable' | 'metadata_direct' } | null,
+}));
+const connectedServicesAuthSwitchState = vi.hoisted(() => ({
+    restartState: null as null | {
+        status: 'restarting' | 'pending_confirmation' | 'failed';
+        attemptId: string;
+        reason: string;
+        startedAtMs: number;
+    },
 }));
 const sessionState = vi.hoisted(() => ({
   session: {
@@ -78,8 +94,8 @@ vi.mock('@/components/sessions/panes/useRegisterSessionPaneDriver', () => ({
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
   useAppPaneScope: () => ({
     scopeState: null,
-    openRight: vi.fn(),
-    setRightTab: vi.fn(),
+    openRight: paneOpenRightSpy,
+    setRightTab: paneSetRightTabSpy,
   }),
 }));
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
@@ -173,7 +189,7 @@ vi.mock('@/agents/providers/registry/providerUniverse', () => ({
   buildProviderUniverseBackendTargetKey: (providerId: string) => `provider:${providerId}`,
   listProviderUniverseIds: () => ['codex'],
 }));
-vi.mock('@/agents/providers/catalog/providerSettingsCatalog', () => ({
+vi.mock('@/agents/catalog/providerSettingsCatalog', () => ({
   PROVIDER_SETTINGS_BEHAVIORS: [],
   PROVIDER_SETTINGS_DESCRIPTORS: [],
   PROVIDER_SETTINGS_PLUGINS: [],
@@ -201,15 +217,15 @@ vi.mock('@/utils/platform/responsive', () => ({
   useIsLandscape: () => responsiveState.isLandscape,
   useIsTablet: () => false,
 }));
-vi.mock('@/hooks/session/useDraft', () => ({
-  useDraft: () => ({ clearDraft: vi.fn() }),
-}));
 vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
   getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true }),
 }));
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
   useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true }),
   useSessionReachableMachineTarget: () => null,
+}));
+vi.mock('@/components/sessions/model/useSessionMachineTarget', () => ({
+  useSessionMachineControlTarget: () => sessionMachineControlTargetState.target,
 }));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
   getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
@@ -219,16 +235,16 @@ vi.mock('@/voice/session/voiceSession', () => ({
   useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
   voiceSessionManager: {},
 }));
-vi.mock('@/sync/sync', () => ({
-  sync: {
-    markSessionViewed: async () => {},
-    fetchPendingMessages: async () => {},
-    refreshSessions: async () => {},
-    onSessionVisible: () => () => {},
-    ensureSidechainMessagesLoaded: async () => {},
-    sendMessage: async () => {},
-    enqueuePendingMessage: async () => {},
-    submitMessage: async () => {},
+	vi.mock('@/sync/sync', () => ({
+	  sync: {
+	    markSessionViewed: async () => {},
+	    fetchPendingMessages: async () => {},
+	    refreshSessions: async () => {},
+	    onSessionVisible: () => () => {},
+	    ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedSpy,
+	    sendMessage: async () => {},
+	    enqueuePendingMessage: async () => {},
+	    submitMessage: async () => {},
     encryption: { getMachineEncryption: () => null },
   },
 }));
@@ -243,7 +259,16 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   createDefaultActionExecutor: () => ({ execute: vi.fn() }),
 }));
 vi.mock('@/components/sessions/agentInput', () => ({
-  AgentInput: () => null,
+  AgentInput: (props: any) => {
+    agentInputSpy(props);
+    return null;
+  },
+}));
+vi.mock('@/components/sessions/agentInput/hooks/useSessionConnectedServicesAuthSwitch', () => ({
+  useSessionConnectedServicesAuthSwitch: (props: any) => {
+    connectedServicesAuthSwitchSpy(props);
+    return { connectedServicesAuthChip: null, statusBadges: [], restartState: connectedServicesAuthSwitchState.restartState };
+  },
 }));
 vi.mock('@/utils/system/versionUtils', () => ({
   isVersionSupported: () => true,
@@ -336,6 +361,7 @@ installSessionShellCommonModuleMocks({
 	      useSession: () => sessionState.session,
 	      useIsDataReady: () => true,
 	      useRealtimeStatus: () => ({ current: { status: 'connected' } as any }),
+      useSessionVisibleReadSeq: () => sessionState.session?.seq ?? 0,
       useSessionMessages: () => ({ messages: sessionMessagesState.messages, isLoaded: true }),
       useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
       useSessionPendingMessages: () => ({ messages: [] }),
@@ -399,6 +425,7 @@ async function renderSessionView() {
 
 describe('SessionView header action menu visibility', () => {
   afterEach(() => {
+    vi.useRealTimers();
     standardCleanup();
     sessionState.session = {
       id: 's1',
@@ -414,12 +441,19 @@ describe('SessionView header action menu visibility', () => {
     sessionExecutionRunsSupportedState.supported = false;
     executionRunsBackendsState.backends = null;
     sessionMessagesState.messages = [];
+    connectedServicesAuthSwitchState.restartState = null;
     automationsSupportState.enabled = false;
     localSettingsState.mobileWorkspaceExperienceV1 = 'classic';
+    sessionMachineControlTargetState.target = null;
     keyboardDismissSpy.mockReset();
-    headerActionMenuSpy.mockClear();
-    chatHeaderSpy.mockClear();
-    routerPushSpy.mockReset();
+	    headerActionMenuSpy.mockClear();
+	    chatHeaderSpy.mockClear();
+	    agentInputSpy.mockClear();
+    connectedServicesAuthSwitchSpy.mockClear();
+    ensureSidechainMessagesLoadedSpy.mockClear();
+    paneOpenRightSpy.mockClear();
+    paneSetRightTabSpy.mockClear();
+	    routerPushSpy.mockReset();
     routerBackSpy.mockReset();
     navigateWithBlurOnWebSpy.mockClear();
     windowDimensionsState.width = 800;
@@ -465,6 +499,23 @@ describe('SessionView header action menu visibility', () => {
 
     expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
     expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/automations?serverId=server-1');
+  });
+
+  it('opens the review comments pane from the visible header badge', async () => {
+    platformState.os = 'web';
+    responsiveState.deviceType = 'phone';
+    responsiveState.isLandscape = false;
+    windowDimensionsState.width = 800;
+
+    const screen = await renderSessionView();
+    const openReviewCommentsButton = findPressableByAccessibilityLabel(screen, 'review.comments.headerA11y');
+
+    expect(openReviewCommentsButton).toBeDefined();
+
+    pressTestInstance(openReviewCommentsButton, 'review.comments.headerA11y');
+
+    expect(paneOpenRightSpy).toHaveBeenCalledWith({ tabId: 'reviews' });
+    expect(paneSetRightTabSpy).toHaveBeenCalledWith('reviews');
   });
 
   it('folds runs and automations buttons into the header action menu when the header is narrow', async () => {
@@ -624,6 +675,76 @@ describe('SessionView header action menu visibility', () => {
     expect(rerenderedHeaderActionMenuProps?.session).not.toBe(firstHeaderActionMenuProps?.session);
   });
 
+  it('passes the session control target to connected-services auth switching', async () => {
+    sessionMachineControlTargetState.target = {
+      machineId: 'machine-origin',
+      basePath: '/repo/origin',
+      confidence: 'metadata_direct',
+    };
+
+    await renderSessionView();
+
+    expect(connectedServicesAuthSwitchSpy).toHaveBeenCalled();
+    expect(connectedServicesAuthSwitchSpy.mock.calls.at(-1)?.[0]).toMatchObject({
+      sessionId: 's1',
+      machineId: 'machine-origin',
+    });
+  });
+
+  it('does not pass stale metadata machine id to connected-services auth switching without a control target', async () => {
+    sessionState.session = {
+      ...sessionState.session,
+      metadata: {
+        machineId: 'stale-machine',
+        path: '/repo/stale',
+      },
+    } as any;
+    sessionMachineControlTargetState.target = null;
+
+    await renderSessionView();
+
+    expect(connectedServicesAuthSwitchSpy).toHaveBeenCalled();
+    expect(connectedServicesAuthSwitchSpy.mock.calls.at(-1)?.[0]).toMatchObject({
+      sessionId: 's1',
+      machineId: null,
+    });
+  });
+
+  it('passes restart-resume switch events to connected-services auth switching and supersedes them with newer session evidence', async () => {
+    sessionMessagesState.messages = [{
+      id: 'event-1',
+      kind: 'agent-event',
+      createdAt: 2_000,
+      event: {
+        type: 'connected-service-account-switch',
+        serviceId: 'openai-codex',
+        groupId: 'primary',
+        fromProfileId: 'work',
+        toProfileId: 'backup',
+        reason: 'usage_limit',
+        mode: 'restart_resume',
+      },
+    }];
+
+    const screen = await renderSessionView();
+
+    expect(connectedServicesAuthSwitchSpy.mock.calls.at(-1)?.[0]?.intentionalRestartSignals).toEqual([{
+      status: 'restarting',
+      attemptId: 'connected-service-account-switch:usage_limit:2000',
+      reason: 'usage_limit_account_switch',
+      startedAtMs: 2_000,
+    }]);
+
+    sessionState.session = {
+      ...sessionState.session,
+      latestReadyEventAt: 2_500,
+    } as any;
+
+    await screen.update(<SessionView id="s1" jumpToSeq={1} />);
+
+    expect(connectedServicesAuthSwitchSpy.mock.calls.at(-1)?.[0]?.intentionalRestartSignals).toEqual([]);
+  });
+
   it('keeps the open runs button visible when the transcript already contains execution-run signals', async () => {
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
@@ -644,7 +765,7 @@ describe('SessionView header action menu visibility', () => {
     expect(openRunsButton).toBeDefined();
   });
 
-  it('renders a header subagents button when the transcript contains subagent activity', async () => {
+	  it('renders a header subagents button when the transcript contains subagent activity', async () => {
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
@@ -669,10 +790,40 @@ describe('SessionView header action menu visibility', () => {
     const screen = await renderSessionView();
     const openSubagentsButton = findPressableByAccessibilityLabel(screen, 'session.openSubagents');
 
-    expect(openSubagentsButton).toBeDefined();
-  });
+	    expect(openSubagentsButton).toBeDefined();
+	  });
 
-  it('renders a header subagents button when launch surfaces are available even before any subagents exist', async () => {
+	  it('does not hydrate discovered sidechains from the session shell or header', async () => {
+	    platformState.os = 'web';
+	    responsiveState.deviceType = 'phone';
+	    responsiveState.isLandscape = false;
+	    executionRunsFeatureState.enabled = false;
+	    sessionExecutionRunsSupportedState.supported = false;
+	    executionRunsBackendsState.backends = null;
+	    sessionMessagesState.messages = [
+	      {
+	        id: 'tool-msg-1',
+	        kind: 'tool-call',
+	        createdAt: 1,
+	        tool: {
+	          name: 'Task',
+	          id: 'toolu_task_1',
+	          input: { name: 'Investigate regression', team_name: 'qa-team', agent_id: 'alpha@qa-team' },
+	          result: { tool_use_result: { team_name: 'qa-team', agent_id: 'alpha@qa-team', name: 'alpha' } },
+	          state: 'running',
+	        },
+	      },
+	    ];
+
+	    const screen = await renderSessionView();
+	    const openSubagentsButton = findPressableByAccessibilityLabel(screen, 'session.openSubagents');
+	    await flushHookEffects();
+
+	    expect(openSubagentsButton).toBeDefined();
+	    expect(ensureSidechainMessagesLoadedSpy).not.toHaveBeenCalled();
+	  });
+
+	  it('renders a header subagents button when launch surfaces are available even before any subagents exist', async () => {
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
@@ -759,5 +910,25 @@ describe('SessionView header action menu visibility', () => {
     expect(landscapeBackButton?.props.hitSlop).toBe(15);
     expect(routerPushSpy).not.toHaveBeenCalled();
     expect(routerBackSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not disable connected-services auth switching for stale in-progress projection', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1_000_000));
+    sessionState.session = {
+      ...sessionState.session,
+      active: true,
+      activeAt: 1,
+      presence: 'online',
+      thinking: false,
+      thinkingAt: 0,
+      latestTurnStatus: 'in_progress',
+      latestTurnStatusObservedAt: 1,
+    } as any;
+
+    await renderSessionView();
+
+    expect(connectedServicesAuthSwitchSpy).toHaveBeenCalled();
+    expect(connectedServicesAuthSwitchSpy.mock.calls.at(-1)?.[0]?.switchingDisabledReason).toBeNull();
   });
 });

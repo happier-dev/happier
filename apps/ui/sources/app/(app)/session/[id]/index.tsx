@@ -15,10 +15,58 @@ import { resolveSessionRouteAuthRecoveryState } from '@/hooks/session/sessionRou
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
-import { useEndpointConnectivity, useLocalSetting, useSyncError } from '@/sync/domains/state/storage';
+import { isSessionRouteHydrationPending } from '@/sync/domains/session/sessionRouteHydrationState';
+import { useEndpointConnectivity, useSyncError } from '@/sync/domains/state/storage';
+import { markSessionRouteEnteredForSessionUiTelemetry } from '@/sync/runtime/performance/sessionUiTelemetry';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { normalizeSessionListKeyParts } from '@/sync/domains/session/listing/sessionListKeyNormalization';
+
+type InitialMobileSurfaceHintCache = Readonly<{
+    sessionId: string;
+    routeServerId: string | null;
+    explicitMobileSurfaceHint: string | null;
+    persistedSurface: string | null;
+}>;
+
+function readPersistedMobileSurfaceSnapshot(sessionId: string, routeServerId: string | null): string | null {
+    const persistedBySessionId = storage.getState().localSettings.sessionLastMobileSurfaceBySessionId;
+    const scopedStorageKey = normalizeSessionListKeyParts(routeServerId, sessionId).sessionKey;
+    const scopedValue = scopedStorageKey ? persistedBySessionId?.[scopedStorageKey] ?? null : null;
+    if (typeof scopedValue === 'string') {
+        return scopedValue;
+    }
+    const legacyValue = persistedBySessionId?.[sessionId] ?? null;
+    return typeof legacyValue === 'string' ? legacyValue : null;
+}
+
+function useInitialMobileSurfaceHint(
+    sessionId: string,
+    routeServerId: string | null,
+    explicitMobileSurfaceHint: string | null,
+): string | null {
+    const cacheRef = React.useRef<InitialMobileSurfaceHintCache | null>(null);
+    const cached = cacheRef.current;
+    if (
+        !cached
+        || cached.sessionId !== sessionId
+        || cached.routeServerId !== routeServerId
+        || cached.explicitMobileSurfaceHint !== explicitMobileSurfaceHint
+    ) {
+        cacheRef.current = {
+            sessionId,
+            routeServerId,
+            explicitMobileSurfaceHint,
+            persistedSurface: explicitMobileSurfaceHint ?? (
+                sessionId
+                    ? readPersistedMobileSurfaceSnapshot(sessionId, routeServerId)
+                    : null
+            ),
+        };
+    }
+    return cacheRef.current?.persistedSurface ?? null;
+}
 
 export default function SessionRouteIndex() {
     const params = useLocalSearchParams<{
@@ -78,7 +126,7 @@ export default function SessionRouteIndex() {
     const scopeId = `session:${sessionId}`;
     const pane = useAppPaneScope(scopeId);
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
-    const lastMobileSurfaceBySessionId = useLocalSetting('sessionLastMobileSurfaceBySessionId');
+    const initialMobileSurfaceHint = useInitialMobileSurfaceHint(sessionId, routeServerId.trim() || null, explicitMobileSurfaceHint);
     const { sidebarTabAvailable: terminalTabAvailable } = useSessionTerminalAvailability();
     const endpointConnectivity = useEndpointConnectivity();
     const syncError = useSyncError();
@@ -86,7 +134,11 @@ export default function SessionRouteIndex() {
     const activeServerSnapshot = useActiveServerSnapshot();
     const activeServerGeneration = activeServerSnapshot.generation;
 
-    const sessionHydrated = useHydrateSessionForRoute(
+    React.useLayoutEffect(() => {
+        markSessionRouteEnteredForSessionUiTelemetry({ sessionId });
+    }, [sessionId]);
+
+    const routeHydrationState = useHydrateSessionForRoute(
         sessionId,
         `SessionRoute.ensureSessionVisible gen=${activeServerGeneration}`,
         routeScope.hydrationOptions,
@@ -106,7 +158,7 @@ export default function SessionRouteIndex() {
         return <SessionInvalidLinkFallback />;
     }
 
-    if (!sessionHydrated && !sessionCached && !authRecoveryActive) {
+    if (isSessionRouteHydrationPending(routeHydrationState) && !sessionCached && !authRecoveryActive) {
         return (
             <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
                 <ActivitySpinner size="small" />
@@ -119,7 +171,7 @@ export default function SessionRouteIndex() {
             routeKind: 'index',
             activeRightTabId: pane.scopeState?.right?.activeTabId,
             detailsTargetPresent: (pane.scopeState?.details?.tabs?.length ?? 0) > 0,
-            persistedSurface: explicitMobileSurfaceHint ?? lastMobileSurfaceBySessionId?.[sessionId] ?? null,
+            persistedSurface: initialMobileSurfaceHint,
             terminalTabAvailable,
         });
         return (
@@ -132,6 +184,7 @@ export default function SessionRouteIndex() {
                 initialAttachmentDrafts={recoverableAttachmentDrafts}
                 terminalTabAvailable={terminalTabAvailable}
                 routeServerId={routeServerId.trim() || undefined}
+                routeHydrationState={routeHydrationState}
             />
         );
     }
@@ -143,6 +196,7 @@ export default function SessionRouteIndex() {
             jumpToSeq={jumpToSeq}
             paneUrlState={paneUrlState ?? undefined}
             initialAttachmentDrafts={recoverableAttachmentDrafts}
+            routeHydrationState={routeHydrationState}
         />
     );
 }

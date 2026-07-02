@@ -113,7 +113,7 @@ describe('SessionListHeaderItem', () => {
         });
     });
 
-    it('shows the ordering menu affordance on active and inactive section headers only', async () => {
+    it('shows the ordering menu affordance on primary session-list section headers only', async () => {
         const onToggleCollapse = vi.fn();
 
         const activeScreen = await renderScreen(
@@ -130,6 +130,25 @@ describe('SessionListHeaderItem', () => {
                 onToggleCollapse={onToggleCollapse}
             />,
         );
+
+        expect(activeScreen.findByType('CollapsibleSectionHeader').props.showOrderingMenu).toBe(true);
+
+        await act(async () => {
+            activeScreen.tree.update(
+                <SessionListHeaderItem
+                    item={{ type: 'header', title: 'Pinned', headerKind: 'pinned', groupKey: 'pinned', serverId: 'server_a' } as any}
+                    collapsedKeys={{}}
+                    projectHeaderViewModelByGroupKey={new Map()}
+                    hasMultipleMachines={false}
+                    onOpenProject={vi.fn()}
+                    onCreateSessionFromWorkspaceScope={vi.fn()}
+                    onAddFolderToWorkspace={vi.fn()}
+                    onRenameWorkspace={vi.fn()}
+                    onResetWorkspaceName={vi.fn()}
+                    onToggleCollapse={onToggleCollapse}
+                />,
+            );
+        });
 
         expect(activeScreen.findByType('CollapsibleSectionHeader').props.showOrderingMenu).toBe(true);
 
@@ -173,18 +192,24 @@ describe('SessionListHeaderItem', () => {
     });
 
     it('wires folder headers into the shared inline drag gesture', async () => {
-        const dropVisual = {
-            visualKind: { value: 0 as const },
-            visualTargetId: { value: null as string | null },
-            visualEdge: { value: null as 'top' | 'bottom' | null },
-            visualDepth: { value: 0 },
+        const overlayShared = {
+            overlayVisible: { value: 0 },
+            overlayKind: { value: 0 as const },
+            overlayTop: { value: 0 },
+            overlayHeight: { value: 0 },
+            overlayLeft: { value: 0 },
+            overlayRight: { value: 0 },
+            overlayDepth: { value: 0 },
         };
         const onFolderDragStart = vi.fn();
         const onFolderDropResult = vi.fn();
         const onFolderDragUpdate = vi.fn();
         const resolveDropResult = vi.fn(() => ({
-            instruction: { kind: 'idle' },
-            visual: { kind: 'none' },
+            result: {
+                instruction: { kind: 'idle' },
+                visual: { kind: 'none' },
+            },
+            geometry: { kind: 'none' },
         } as const));
 
         const screen = await renderScreen(
@@ -209,13 +234,11 @@ describe('SessionListHeaderItem', () => {
                 onResetWorkspaceName={vi.fn()}
                 onToggleCollapse={vi.fn()}
                 dataIndex={3}
-                dropVisual={dropVisual}
-                activeDropVisual={{ kind: 'none' }}
+                overlayShared={overlayShared}
                 onFolderDragStart={onFolderDragStart}
                 onFolderDropResult={onFolderDropResult}
                 onFolderDragUpdate={onFolderDragUpdate}
                 resolveDropResult={resolveDropResult}
-                activeFolderDropTargetId="folder:target"
             />,
         );
 
@@ -225,5 +248,34 @@ describe('SessionListHeaderItem', () => {
             .find(Boolean);
         expect(panGesture).toBeTruthy();
         expect(onFolderDropResult).not.toHaveBeenCalled();
+    });
+
+    it('does not pass drag-hover outline state into header chrome', async () => {
+        const screen = await renderScreen(
+            <SessionListHeaderItem
+                item={{
+                    type: 'header',
+                    title: 'Planning',
+                    headerKind: 'folder',
+                    groupKey: 'folder:folder_planning',
+                    folderId: 'folder_planning',
+                    folderDepth: 0,
+                    serverId: 'server_a',
+                    workspace: { t: 'workspaceRef', serverId: 'server_a', workspaceRefId: 'workspace_a' },
+                } as any}
+                collapsedKeys={{}}
+                projectHeaderViewModelByGroupKey={new Map()}
+                hasMultipleMachines={false}
+                onOpenProject={vi.fn()}
+                onCreateSessionFromWorkspaceScope={vi.fn()}
+                onAddFolderToWorkspace={vi.fn()}
+                onRenameWorkspace={vi.fn()}
+                onResetWorkspaceName={vi.fn()}
+                onToggleCollapse={vi.fn()}
+            />,
+        );
+
+        const folderHeader = screen.findByType('FolderGroupHeader');
+        expect(folderHeader.props).not.toHaveProperty('activeDropTargetId');
     });
 });

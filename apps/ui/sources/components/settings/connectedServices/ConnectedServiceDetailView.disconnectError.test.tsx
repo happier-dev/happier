@@ -63,9 +63,14 @@ vi.mock('@/sync/store/settingsWriters', () => ({
   useApplySettings: () => applySettingsSpy,
 }));
 
-const deleteSpy = vi.fn(async () => {
-  throw new Error('boom');
-});
+function createConnectedServiceApiError(code: string): Error & { code: string; status: number } {
+  const error = new Error(code) as Error & { code: string; status: number };
+  error.code = code;
+  error.status = 409;
+  return error;
+}
+
+const deleteSpy = vi.fn(async () => {});
 vi.mock('@/sync/domains/connectedServices/storeConnectedServiceCredentialForAccount', () => ({
   storeConnectedServiceCredentialForAccount: vi.fn(async () => {}),
   deleteConnectedServiceCredentialForAccount: deleteSpy,
@@ -79,8 +84,9 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => {
 });
 
 describe('ConnectedServiceDetailView disconnect error handling', () => {
-  it('shows an alert instead of throwing when disconnect fails', async () => {
+  it('confirms and retries cleanup when the server reports a group reference', async () => {
     const { ConnectedServiceDetailView } = await import('./ConnectedServiceDetailView');
+    deleteSpy.mockRejectedValueOnce(createConnectedServiceApiError('connect_credential_referenced_by_group'));
 
     let tree!: renderer.ReactTestRenderer;
     tree = (await renderScreen(<ConnectedServiceDetailView />)).tree;
@@ -96,7 +102,16 @@ describe('ConnectedServiceDetailView disconnect error handling', () => {
     });
 
     expect(confirmSpy).toHaveBeenCalled();
-    expect(deleteSpy).toHaveBeenCalled();
-    expect(alertSpy).toHaveBeenCalled();
+    expect(confirmSpy).toHaveBeenCalledWith(
+      'modals.disconnect',
+      'connectedServices.errors.credentialReferencedByGroup',
+      expect.objectContaining({ confirmText: 'modals.disconnect' }),
+    );
+    expect(deleteSpy).toHaveBeenCalledTimes(2);
+    expect(deleteSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ token: 't' }),
+      { serviceId: 'claude-subscription', profileId: 'work', cleanupGroupReferences: true },
+    );
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 });

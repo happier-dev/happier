@@ -145,6 +145,7 @@ describe('SessionCockpitSurfaceScreen', () => {
         const sessionView = screen.tree.findByType('SessionView' as never);
         expect(sessionView.props.id).toBe('s_1');
         expect(sessionView.props.routeServerId).toBe('server-b');
+        expect(sessionView.props.routeAnchorOverride).toBe(true);
         expect(sessionView.props.chatBottomSpacing).toBe('none');
     });
 

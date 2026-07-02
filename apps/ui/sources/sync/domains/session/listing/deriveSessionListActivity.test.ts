@@ -18,7 +18,19 @@ describe('deriveSessionListMeaningfulActivityAt', () => {
         expect(result).toBe(1_200);
     });
 
-    it('uses the latest thinking activity when it is newer than the last committed message', () => {
+    it('keeps newer session-level meaningful activity over older committed transcript evidence', () => {
+        const result = deriveSessionListMeaningfulActivityAt({
+            sessionMeaningfulActivityAt: 2_400,
+            sessionCreatedAt: 100,
+            latestCommittedMessageCreatedAt: 1_200,
+            latestThinkingActivityAt: null,
+            latestPendingMessageCreatedAt: null,
+        });
+
+        expect(result).toBe(2_400);
+    });
+
+    it('ignores thinking heartbeat activity when choosing meaningful activity', () => {
         const result = deriveSessionListMeaningfulActivityAt({
             sessionCreatedAt: 100,
             latestCommittedMessageCreatedAt: 1_200,
@@ -26,7 +38,7 @@ describe('deriveSessionListMeaningfulActivityAt', () => {
             latestPendingMessageCreatedAt: null,
         });
 
-        expect(result).toBe(1_800);
+        expect(result).toBe(1_200);
     });
 
     it('falls back to the session createdAt when there is no transcript activity', () => {
@@ -84,10 +96,19 @@ describe('deriveSessionListAttentionState', () => {
         })).toBe('thinking');
     });
 
-    it('uses failed attention for failed primary-session runtime issues', () => {
+    it('uses failed attention for failed primary turns without requiring runtime issue audit data', () => {
         expect(deriveSessionListAttentionState({
             hasUnreadMessages: true,
             pendingCount: 2,
+            sessionState: 'thinking',
+            latestTurnStatus: 'failed',
+        })).toBe('failed');
+    });
+
+    it('keeps failed attention when only meaningful activity is newer than a failed primary turn projection', () => {
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: true,
+            pendingCount: 0,
             sessionState: 'thinking',
             latestTurnStatus: 'failed',
             lastRuntimeIssue: {
@@ -99,7 +120,95 @@ describe('deriveSessionListAttentionState', () => {
                 occurredAt: 100,
                 sanitizedPreview: 'Provider reported an error',
             },
+            latestTurnStatusObservedAt: 1_000,
+            meaningfulActivityAt: 1_500,
+            seq: 10,
+            latestReadyEventSeq: null,
+            lastViewedSessionSeq: 9,
         })).toBe('failed');
+    });
+
+    it('prioritizes failed primary turns over action-required attention', () => {
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: true,
+            pendingCount: 2,
+            sessionState: 'action_required',
+            latestTurnStatus: 'failed',
+        })).toBe('failed');
+    });
+
+    it('does not use stale in-progress primary turns as thinking attention', () => {
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: false,
+            pendingCount: 0,
+            sessionState: 'waiting',
+            latestTurnStatus: 'in_progress',
+        })).toBe('quiet');
+    });
+
+    it('uses fresh in-progress primary turns as thinking attention', () => {
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: false,
+            pendingCount: 0,
+            sessionState: 'waiting',
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 1_000,
+            active: true,
+            presence: 'online',
+            nowMs: 1_100,
+        })).toBe('thinking');
+    });
+
+    it('uses unread completed primary turns as ready attention', () => {
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: true,
+            pendingCount: 0,
+            sessionState: 'thinking',
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: 1_000,
+            meaningfulActivityAt: 1_000,
+            seq: 10,
+            lastViewedSessionSeq: 9,
+        })).toBe('ready');
+    });
+
+    it('uses unread attention when only meaningful activity is clearly newer than a completed primary turn projection', () => {
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: true,
+            pendingCount: 0,
+            sessionState: 'thinking',
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: 1_000,
+            meaningfulActivityAt: 3_500,
+            seq: 10,
+            lastViewedSessionSeq: 9,
+        })).toBe('unread');
+    });
+
+    it('uses ready attention when final activity lands just after the completed primary turn projection', () => {
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: true,
+            pendingCount: 0,
+            sessionState: 'thinking',
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: 1_000,
+            meaningfulActivityAt: 1_044,
+            seq: 10,
+            lastViewedSessionSeq: 9,
+        })).toBe('ready');
+    });
+
+    it('does not mark post-terminal work as ready just because later tool events advance the session seq', () => {
+        expect(deriveSessionListAttentionState({
+            hasUnreadMessages: true,
+            pendingCount: 0,
+            sessionState: 'waiting',
+            latestTurnStatus: 'completed',
+            latestTurnStatusObservedAt: 1_000,
+            meaningfulActivityAt: 3_500,
+            seq: 10,
+            lastViewedSessionSeq: 9,
+        })).toBe('unread');
     });
 
     it('preserves running attention while a new turn is in progress with a previous audit issue', () => {

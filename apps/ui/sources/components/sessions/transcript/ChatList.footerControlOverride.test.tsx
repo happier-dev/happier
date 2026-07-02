@@ -58,6 +58,13 @@ installTranscriptCommonModuleMocks({
             useForkedTranscriptSnapshot: () => null,
             useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: false }),
             useSessionActionDrafts: () => ([]),
+            // The footer reads its banner state through this store hook (in-flight wave);
+            // the testkit default stubs it to null, which hides the footer entirely.
+            useSessionChatFooterState: () => ({
+                controlledByUser: true,
+                localControl: null,
+                permissionsInUiWhileLocal: {},
+            }),
             useSessionLatestThinkingMessageId: () => null,
             useSessionLatestThinkingMessageActivityAtMs: () => null,
             useMessage: () => null,
@@ -80,10 +87,12 @@ vi.mock('./ChatFooter', () => ({
 
 vi.mock('./MessageView', () => ({
     MessageView: () => React.createElement('MessageView'),
+    MessageViewWithSessionCommon: () => React.createElement('MessageView'),
 }));
 
 vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
     TurnView: () => React.createElement('TurnView'),
+    TurnViewWithSessionCommon: () => React.createElement('TurnView'),
 }));
 
 vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({

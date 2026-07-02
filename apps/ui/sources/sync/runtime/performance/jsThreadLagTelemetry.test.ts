@@ -39,7 +39,7 @@ describe('createJsThreadLagTelemetry', () => {
             telemetry,
             now: () => nowMs,
             sampleIntervalMs: 50,
-            thresholdMs: 20,
+            thresholdMs: 15,
             maxSamples: 8,
         });
 
@@ -52,10 +52,64 @@ describe('createJsThreadLagTelemetry', () => {
         expect(lagTelemetry.snapshot()).toMatchObject({
             count: 2,
             p50Ms: 10,
-            p99Ms: 30,
-            maxMs: 30,
+            p99Ms: 20,
+            maxMs: 20,
             thresholdExceededCount: 1,
             lastSampleAtMs: 130,
+        });
+    });
+
+    it('does not accumulate old scheduling delay into later samples', async () => {
+        let nowMs = 0;
+        const telemetry = createSyncPerformanceTelemetry({ enabled: true });
+        const lagTelemetry = createJsThreadLagTelemetry({
+            telemetry,
+            now: () => nowMs,
+            sampleIntervalMs: 50,
+            thresholdMs: 100,
+            maxSamples: 8,
+        });
+
+        expect(lagTelemetry.start()).toBe(true);
+        nowMs = 200;
+        await vi.advanceTimersByTimeAsync(50);
+        nowMs = 260;
+        await vi.advanceTimersByTimeAsync(50);
+
+        expect(lagTelemetry.snapshot()).toMatchObject({
+            count: 2,
+            p50Ms: 10,
+            p99Ms: 150,
+            maxMs: 150,
+            thresholdExceededCount: 1,
+            lastSampleAtMs: 260,
+        });
+    });
+
+    it('realigns the active timer baseline when reset', async () => {
+        let nowMs = 0;
+        const telemetry = createSyncPerformanceTelemetry({ enabled: true });
+        const lagTelemetry = createJsThreadLagTelemetry({
+            telemetry,
+            now: () => nowMs,
+            sampleIntervalMs: 50,
+            thresholdMs: 20,
+            maxSamples: 8,
+        });
+
+        expect(lagTelemetry.start()).toBe(true);
+        nowMs = 1_000;
+        lagTelemetry.reset();
+        nowMs = 1_060;
+        await vi.advanceTimersByTimeAsync(50);
+
+        expect(lagTelemetry.snapshot()).toMatchObject({
+            count: 1,
+            p50Ms: 10,
+            p99Ms: 10,
+            maxMs: 10,
+            thresholdExceededCount: 0,
+            lastSampleAtMs: 1_060,
         });
     });
 

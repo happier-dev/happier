@@ -32,7 +32,6 @@ type NativeOverrides = {
   fs?: {
     File: any;
     Paths: { cache: any; document: any };
-    deleteAsync: (uri: string, opts?: { idempotent?: boolean }) => Promise<void>;
   };
   resolveOutWavPath?: (jobId: string) => string;
 };
@@ -116,6 +115,14 @@ async function getFs(overrides: NativeOverrides): Promise<NonNullable<NativeOver
 function resolveOutWavPathUri(jobId: string, fs: NonNullable<NativeOverrides['fs']>, overrides: NativeOverrides): string {
   if (overrides.resolveOutWavPath) return overrides.resolveOutWavPath(jobId);
   return new fs.File(fs.Paths.cache, `happier-kokoro-${jobId}.wav`).uri;
+}
+
+async function deleteFileBestEffort(fs: NonNullable<NativeOverrides['fs']>, uri: string): Promise<void> {
+  try {
+    await new fs.File(uri).delete();
+  } catch {
+    // ignore cleanup failures
+  }
 }
 
 export async function synthesizeKokoroWav(
@@ -202,17 +209,13 @@ export async function synthesizeKokoroWav(
     const wavFile = new fs.File(wavUri);
     const bytes = await Promise.race([wavFile.arrayBuffer(), createAbortPromise(opts.signal), createTimeoutPromise(opts.timeoutMs)]);
 
-    await fs.deleteAsync(wavUriToDelete, { idempotent: true });
+    await deleteFileBestEffort(fs, wavUriToDelete);
     wavUriToDelete = null;
     return bytes;
   } finally {
     opts.signal.removeEventListener('abort', onAbort);
     if (wavUriToDelete) {
-      try {
-        await fs.deleteAsync(wavUriToDelete, { idempotent: true });
-      } catch {
-        // ignore
-      }
+      await deleteFileBestEffort(fs, wavUriToDelete);
     }
   }
 }

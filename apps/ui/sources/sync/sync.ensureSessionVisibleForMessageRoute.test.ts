@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
 // Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
 const kvStore = vi.hoisted(() => new Map<string, string>());
@@ -93,6 +94,7 @@ vi.mock('@/auth/encryption/createEncryptionFromAuthCredentials', () => ({
 }));
 
 import { storage } from './domains/state/storage';
+import { renderHook } from '@/dev/testkit';
 import { setActiveServerId, upsertServerProfile } from './domains/server/serverProfiles';
 import { loadSessionMaterializedMaxSeqById } from './domains/state/persistence';
 import type { AccountSettingsScope } from './domains/settings/scope/accountSettingsScope';
@@ -150,6 +152,47 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         expect(storage.getState().sessionListRowStateByServerId?.[activeServerId]).toBeUndefined();
         expect(storage.getState().sessionListIndexByServerId?.[activeServerId]).toBeUndefined();
+    });
+
+    it('clears stale transcript array caches on disconnect', async () => {
+        const { useSessionMessages } = await import('./domains/state/storage');
+        const sessionId = 'cached_transcript_session';
+        const messagesById = {
+            'm-old': { id: 'm-old', kind: 'user-text', localId: null, createdAt: 1, text: 'cached' } as any,
+        };
+        storage.setState((state) => ({
+            ...state,
+            sessionMessages: {
+                ...state.sessionMessages,
+                [sessionId]: {
+                    messageIdsOldestFirst: ['m-old'],
+                    messagesById,
+                    messagesMap: messagesById,
+                    reducerState: {} as any,
+                    latestThinkingMessageId: null,
+                    latestThinkingMessageActivityAtMs: null,
+                    messagesVersion: 1,
+                    isLoaded: true,
+                },
+            },
+        }));
+        const hook = await renderHook(() => useSessionMessages(sessionId), {
+            flushOptions: { cycles: 1, turns: 4 },
+        });
+        const cached = hook.getCurrent().messages;
+        expect(cached).toHaveLength(1);
+
+        const { sync } = await import('./sync');
+        await act(async () => {
+            sync.disconnectServer();
+            storage.getState().resetSessionMessages(sessionId);
+        });
+
+        const afterDisconnectReset = (await hook.rerender()).messages;
+        expect(hook.getCurrent().isLoaded).toBe(false);
+        expect(afterDisconnectReset).toEqual([]);
+
+        await hook.unmount();
     });
 
     it('keeps the current transcript visible while pinned catch-up refreshes in the background', async () => {
@@ -295,6 +338,23 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect(syncInternals.sessionMaterializedMaxSeqFlushTimer).toBeNull();
     });
 
+    it('resets account settings sync status when clearing the account/server scope', async () => {
+        const { sync } = await import('./sync');
+        const syncInternals = sync as any;
+
+        storage.getState().setAccountSettingsSyncStatus({
+            state: 'failed',
+            message: 'stale settings sync failure',
+            retryable: true,
+            kind: 'network',
+            at: 123,
+        });
+
+        syncInternals.clearActiveAccountSettingsScope();
+
+        expect(storage.getState().accountSettingsSyncStatus).toEqual({ state: 'idle', lastSyncedAt: null });
+    });
+
     it('flushes old session materialization progress before activating a new account/server scope', async () => {
         const { upsertAndActivateServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
         upsertAndActivateServer({ serverUrl: 'https://server-a.example.test', scope: 'tab' });
@@ -316,6 +376,27 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect(syncInternals.pendingSettingsScope).toEqual({ serverId, accountId: 'account-b' });
         expect(syncInternals.sessionMaterializedMaxSeqById).toEqual({});
         expect(syncInternals.sessionMaterializedMaxSeqFlushTimer).toBeNull();
+    });
+
+    it('resets stale account settings sync status when activating a new account/server scope', async () => {
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        upsertAndActivateServer({ serverUrl: 'https://server-a.example.test', scope: 'tab' });
+        const { sync } = await import('./sync');
+        const syncInternals = sync as any;
+
+        storage.getState().setAccountSettingsSyncStatus({
+            state: 'retrying',
+            message: 'previous scope retry',
+            retryable: true,
+            kind: 'server',
+            at: 123,
+            failuresCount: 2,
+            nextRetryAt: 456,
+        });
+
+        syncInternals.activateAccountSettingsScope('account-b');
+
+        expect(storage.getState().accountSettingsSyncStatus).toEqual({ state: 'idle', lastSyncedAt: null });
     });
 
     it('hydrates e2ee session encryption on deep link before sessions snapshot fetch', async () => {
@@ -365,7 +446,10 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             ),
         );
 
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toBe(true);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'available',
+            sessionId,
+        });
 
         const sessionByIdCalls = requestMock.mock.calls.filter(
             (call) => call?.[0] === `/v2/sessions/${sessionId}`,
@@ -374,7 +458,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         expect((sync as any).activeServerSessionIds.has(sessionId)).toBe(true);
     });
 
-    it('returns false when credentials are not yet available', async () => {
+    it('returns a retryable result when credentials are not yet available', async () => {
         const sessionId = 'deep_link_missing_creds';
         storage.getState().applySessions([createSession({ sessionId })]);
         storage.getState().resetSessionMessages(sessionId);
@@ -387,11 +471,66 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             getSessionEncryption: () => null,
         };
 
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toBe(false);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'retryable_failure',
+            sessionId,
+            cause: 'unknown',
+        });
         expect(requestMock).not.toHaveBeenCalled();
     });
 
-    it('treats not-found session ids as terminal (returns true) so deep links can fail closed instead of spinning forever', async () => {
+    it('fast-paths a known encrypted session with metadata, encryption, and null agent state', async () => {
+        const sessionId = 'known_session_null_agent_state';
+        storage.getState().applySessions([
+            {
+                ...createSession({ sessionId }),
+                metadata: { path: '/tmp/demo', host: 'local' },
+                agentState: null,
+            },
+        ]);
+        storage.getState().resetSessionMessages(sessionId);
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = { token: 't' };
+        (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
+        (sync as any).encryption = {
+            getSessionEncryption: vi.fn(() => ({ decryptMetadata: vi.fn(), decryptAgentState: vi.fn() })),
+        };
+
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'available',
+            sessionId,
+        });
+        expect(requestMock).not.toHaveBeenCalled();
+    });
+
+    it('classifies session-by-id reachability failures as server unavailable retry results', async () => {
+        const sessionId = 'deep_link_server_unavailable';
+        storage.getState().resetSessionMessages(sessionId);
+
+        const { sync } = await import('./sync');
+        (sync as any).credentials = { token: 't' };
+        (sync as any).activeServerSessionIds = new Set<string>();
+        (sync as any).hasFetchedSessionsSnapshotForActiveServer = false;
+        (sync as any).encryption = {
+            decryptEncryptionKey: async () => null,
+            initializeSessions: async () => {},
+            getSessionEncryption: () => null,
+        };
+
+        const connectivityError = new Error('active server request timed out');
+        connectivityError.name = 'ServerFetchConnectivityTimeoutError';
+        requestMock.mockRejectedValue(connectivityError);
+
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'retryable_failure',
+            sessionId,
+            cause: 'server_unavailable',
+        });
+    });
+
+    it('returns a terminal missing result for not-found session ids so deep links can fail closed instead of spinning forever', async () => {
         const sessionId = 'deep_link_missing_session';
 
         const { sync } = await import('./sync');
@@ -407,7 +546,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
 
         requestMock.mockResolvedValue(new Response('not found', { status: 404 }));
 
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toBe(true);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'missing',
+            sessionId,
+            cause: 'not_found',
+        });
     });
 
     it('initializes session encryption on the current encryption instance when it changes mid-hydration', async () => {
@@ -476,7 +619,10 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             ),
         );
 
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toBe(true);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'available',
+            sessionId,
+        });
 
         expect((sync as any).encryption).toBe(encryption2);
         expect(encryption2.getSessionEncryption(sessionId)).not.toBeNull();
@@ -521,7 +667,10 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             ),
         );
 
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true })).resolves.toBe(true);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true })).resolves.toMatchObject({
+            kind: 'available',
+            sessionId,
+        });
 
         const sessionByIdCalls = requestMock.mock.calls.filter(
             (call) => call?.[0] === `/v2/sessions/${sessionId}`,
@@ -572,7 +721,10 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             ),
         );
 
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toBe(true);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'available',
+            sessionId,
+        });
 
         expect(requestMock).toHaveBeenCalledWith(
             `/v2/sessions/${sessionId}`,
@@ -618,7 +770,10 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             getSessionEncryption: vi.fn(() => ({ decryptMetadata: vi.fn(), decryptAgentState: vi.fn() })),
         };
 
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toBe(true);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'available',
+            sessionId,
+        });
         expect(requestMock).not.toHaveBeenCalled();
     });
 
@@ -656,7 +811,10 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             getSessionEncryption,
         };
 
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toBe(true);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'available',
+            sessionId,
+        });
         expect(requestMock).not.toHaveBeenCalled();
         expect(getSessionEncryption).not.toHaveBeenCalled();
     });
@@ -731,7 +889,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             ),
         );
 
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true })).resolves.toBe(true);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true })).resolves.toMatchObject({
+            kind: 'available',
+            sessionId,
+            serverId: ownerServer.id,
+        });
 
         expect(requestMock).not.toHaveBeenCalled();
         expect(runtimeFetchMock).toHaveBeenCalledWith(
@@ -816,7 +978,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             ),
         );
 
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, serverId: ownerServer.id })).resolves.toBe(true);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, serverId: ownerServer.id })).resolves.toMatchObject({
+            kind: 'available',
+            sessionId,
+            serverId: ownerServer.id,
+        });
 
         expect(requestMock).not.toHaveBeenCalled();
         expect(runtimeFetchMock).toHaveBeenCalledWith(
@@ -901,7 +1067,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             ),
         );
 
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, serverId: ownerServer.id })).resolves.toBe(true);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true, serverId: ownerServer.id })).resolves.toMatchObject({
+            kind: 'available',
+            sessionId,
+            serverId: ownerServer.id,
+        });
 
         expect(requestMock).not.toHaveBeenCalled();
         expect(scopedInitializeSessions).toHaveBeenCalled();
@@ -955,7 +1125,10 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         await expect(sync.ensureSessionVisibleForMessageRoute(sessionId, {
             forceRefresh: true,
             serverId: '127.0.0.1-52753',
-        })).resolves.toBe(true);
+        })).resolves.toMatchObject({
+            kind: 'available',
+            sessionId,
+        });
 
         expect(runtimeFetchMock).not.toHaveBeenCalled();
         expect(requestMock).toHaveBeenCalledWith(
@@ -1007,7 +1180,10 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             getSessionEncryption: vi.fn(() => ({ decryptMetadata: vi.fn(), decryptAgentState: vi.fn() })),
         };
 
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toBe(true);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'available',
+            sessionId,
+        });
         expect(localStorageMock.getItem).toHaveBeenCalledWith('happier.debug.sessionHydrate');
     });
 
@@ -1025,7 +1201,11 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             ),
         );
 
-        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toBe(true);
+        await expect(sync.ensureSessionVisibleForMessageRoute(sessionId)).resolves.toMatchObject({
+            kind: 'missing',
+            sessionId,
+            cause: 'unauthorized',
+        });
 
         expect(storage.getState().syncError).toMatchObject({
             kind: 'auth',

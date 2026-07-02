@@ -18,7 +18,8 @@ export type ComposerKeyEvent = Readonly<{
     webPlatform?: string;
 }>;
 
-export type ComposerEnterAction = 'send' | 'sendImmediate';
+export type ComposerEnterAction = 'send';
+export type ComposerSendShortcutAction = 'sendImmediate' | 'sendPending';
 export type ComposerEscapeAction = 'armAbort' | 'confirmAbort';
 
 export type ComposerShortcutSettings = Readonly<{
@@ -114,6 +115,56 @@ export function shouldRunComposerModeCycleShortcut(
     return handled;
 }
 
+export function resolveComposerSendShortcutAction(
+    event: ComposerKeyEvent,
+    input: ComposerShortcutSettings & Readonly<{
+        hasSendableInput: boolean;
+        sendActionDisabled: boolean;
+        platformOS?: string;
+        webPlatform?: string;
+    }>,
+): ComposerSendShortcutAction | null {
+    if (shouldIgnoreComposerKeyboardEvent(event)) return null;
+    if (input.sendActionDisabled || !input.hasSendableInput) return null;
+
+    let action: ComposerSendShortcutAction | null = null;
+    const dispatcher = createKeyboardShortcutDispatcher({
+        enabled: input.keyboardShortcutsV2Enabled,
+        enabledWhenDisabledCommandIds: ['composer.sendImmediate'],
+        platform: resolveComposerKeyboardPlatform({
+            platformOS: event.platformOS ?? input.platformOS,
+            webPlatform: event.webPlatform ?? input.webPlatform,
+        }),
+        surface: Platform.OS === 'web' ? 'web' : 'native',
+        singleKeyShortcutsEnabled: input.keyboardSingleKeyShortcutsEnabled,
+        disabledCommandIds: input.keyboardShortcutDisabledCommandIdsV1,
+        overrides: input.keyboardShortcutOverridesV1,
+        handlers: {
+            'composer.sendImmediate': () => {
+                action = 'sendImmediate';
+            },
+            'composer.sendPending': () => {
+                action = 'sendPending';
+            },
+        },
+        getContext: () => ({
+            isEditableTarget: true,
+            isComposing: event.isComposing === true,
+        }),
+    });
+    dispatcher({
+        key: event.key,
+        code: event.code ?? '',
+        altKey: event.altKey === true,
+        ctrlKey: event.ctrlKey === true,
+        metaKey: event.metaKey === true,
+        shiftKey: event.shiftKey === true,
+        repeat: event.repeat === true,
+        isComposing: event.isComposing === true,
+    });
+    return action;
+}
+
 export function resolveComposerEnterAction(
     event: ComposerKeyEvent,
     input: Readonly<{
@@ -128,10 +179,6 @@ export function resolveComposerEnterAction(
     if (shouldIgnoreComposerKeyboardEvent(event)) return null;
     if (event.shiftKey === true) return null;
     if (input.sendActionDisabled || !input.hasSendableInput) return null;
-
-    if (isComposerPlatformModPressed(event, input)) {
-        return 'sendImmediate';
-    }
 
     const hasNonShiftModifier = event.altKey === true || event.ctrlKey === true || event.metaKey === true;
     if (input.enterToSendEnabled && !hasNonShiftModifier) {

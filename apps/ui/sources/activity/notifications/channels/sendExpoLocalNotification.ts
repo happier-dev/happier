@@ -1,4 +1,4 @@
-import * as Notifications from 'expo-notifications';
+import { loadExpoNotifications } from '@/utils/platform/loadExpoNotifications';
 
 export async function sendExpoLocalNotification(params: Readonly<{
     title: string;
@@ -8,6 +8,7 @@ export async function sendExpoLocalNotification(params: Readonly<{
     sound?: string | null;
     channelId?: string;
 }>): Promise<string> {
+    const Notifications = await loadExpoNotifications();
     const categoryIdentifier = typeof params.categoryIdentifier === 'string' && params.categoryIdentifier.trim().length > 0
         ? params.categoryIdentifier
         : undefined;

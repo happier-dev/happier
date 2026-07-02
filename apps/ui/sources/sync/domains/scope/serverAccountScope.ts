@@ -34,3 +34,7 @@ function encodeScopePart(value: string): string {
 export function serverAccountScopeKeySuffix(scope: ServerAccountScope): string {
     return `${encodeScopePart(scope.serverId)}${encodeScopePart(scope.accountId)}`;
 }
+
+export function serverAccountScopedStorageKey(prefix: string, scope: ServerAccountScope): string {
+    return `${prefix}:${serverAccountScopeKeySuffix(scope)}`;
+}

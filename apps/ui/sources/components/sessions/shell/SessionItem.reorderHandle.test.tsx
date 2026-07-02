@@ -3,12 +3,16 @@ import { act } from 'react-test-renderer';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createModelBackedSessionItemTestComponent } from './sessionItemRowViewModelTestFixture';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-reanimated', () => ({}));
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    return createReanimatedModuleMock();
+});
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
@@ -37,11 +41,9 @@ installSessionShellCommonModuleMocks({
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock().module;
     },
-    storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({
-            importOriginal,
-            overrides: {
+    storage: async () => {
+        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        return createStorageModuleStub({
             useHasUnreadMessages: () => false,
             useProfile: () => ({
                 id: 'u1',
@@ -56,7 +58,6 @@ installSessionShellCommonModuleMocks({
             }),
             useSession: () => null,
             useSessionListMeaningfulActivityAt: () => null,
-            },
         });
     },
 });
@@ -89,8 +90,9 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
 }));
 
+const navigateToSessionSpy = vi.hoisted(() => vi.fn());
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
-    useNavigateToSession: () => vi.fn(),
+    useNavigateToSession: () => navigateToSessionSpy,
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -106,7 +108,9 @@ vi.mock('@/sync/ops', () => ({
     sessionArchiveWithServerScope: vi.fn(async () => ({ success: true })),
 }));
 
-const sessionItemModulePromise = import('./SessionItem');
+const sessionItemModulePromise = import('./SessionItem').then(({ SessionItem }) => (
+    createModelBackedSessionItemTestComponent(SessionItem)
+));
 
 function triggerHoverEnter(node: ReactTestInstance) {
     node.props.onMouseEnter?.();
@@ -116,11 +120,12 @@ function triggerHoverEnter(node: ReactTestInstance) {
 
 describe('SessionItem reorder handle', () => {
     afterEach(() => {
+        navigateToSessionSpy.mockClear();
         standardCleanup();
     });
 
     it('renders a GestureDetector-wrapped reorder handle when reorderHandleGesture is provided', async () => {
-        const { SessionItem } = await sessionItemModulePromise;
+        const SessionItem = await sessionItemModulePromise;
         const session = {
             id: 'sess_1',
             seq: 1,
@@ -156,8 +161,16 @@ describe('SessionItem reorder handle', () => {
         // On web, actions are only rendered on hover. Trigger hover first.
         const row = screen.findByTestId('session-list-item-sess_1');
         expect(row).toBeTruthy();
+        const hoverTargets = screen.tree.root.findAll((node) => (
+            typeof node.props?.onPointerEnter === 'function'
+            || typeof node.props?.onMouseEnter === 'function'
+            || typeof node.props?.onHoverIn === 'function'
+        ));
+        expect(hoverTargets.length).toBeGreaterThan(0);
         await act(async () => {
-            triggerHoverEnter(row!);
+            for (const target of hoverTargets) {
+                triggerHoverEnter(target);
+            }
         });
 
         const handles = screen.findAllByTestId('session-item-reorder-handle');
@@ -169,7 +182,7 @@ describe('SessionItem reorder handle', () => {
     });
 
     it('renders the reorder handle without hover when isBeingDragged is true', async () => {
-        const { SessionItem } = await sessionItemModulePromise;
+        const SessionItem = await sessionItemModulePromise;
         const session = {
             id: 'sess_3',
             seq: 1,
@@ -209,7 +222,7 @@ describe('SessionItem reorder handle', () => {
     });
 
     it('does not render a reorder handle when reorderHandleGesture is not provided', async () => {
-        const { SessionItem } = await sessionItemModulePromise;
+        const SessionItem = await sessionItemModulePromise;
         const session = {
             id: 'sess_2',
             seq: 1,
@@ -249,5 +262,74 @@ describe('SessionItem reorder handle', () => {
 
         const handles = screen.findAllByTestId('session-item-reorder-handle');
         expect(handles).toHaveLength(0);
+    });
+
+    it('suppresses the next row press when the reorder handle receives a pointer gesture', async () => {
+        const SessionItem = await sessionItemModulePromise;
+        const session = {
+            id: 'sess_4',
+            seq: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            active: true,
+            activeAt: 1,
+            metadata: null,
+            metadataVersion: 1,
+            agentState: null,
+            agentStateVersion: 1,
+            thinking: false,
+            thinkingAt: 0,
+            presence: 'online',
+        } as any;
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_a"
+                serverName="Server A"
+                showServerBadge={true}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                reorderHandleGesture={mockGesture as any}
+            />,
+        );
+
+        const row = screen.findByTestId('session-list-item-sess_4');
+        expect(row).toBeTruthy();
+        const hoverTargets = screen.tree.root.findAll((node) => (
+            typeof node.props?.onPointerEnter === 'function'
+            || typeof node.props?.onMouseEnter === 'function'
+            || typeof node.props?.onHoverIn === 'function'
+        ));
+        expect(hoverTargets.length).toBeGreaterThan(0);
+        await act(async () => {
+            for (const target of hoverTargets) {
+                triggerHoverEnter(target);
+            }
+        });
+
+        const handle = screen.findByTestId('session-item-reorder-handle');
+        expect(handle).toBeTruthy();
+
+        await act(async () => {
+            handle?.props.onPointerDown?.({});
+            handle?.props.onPointerUp?.({});
+        });
+        await act(async () => {
+            await pressTestInstanceAsync(row, 'session list row after handle pointer gesture');
+        });
+
+        expect(navigateToSessionSpy).not.toHaveBeenCalled();
+
+        await act(async () => {
+            await pressTestInstanceAsync(row, 'session list row follow-up press');
+        });
+
+        expect(navigateToSessionSpy).toHaveBeenCalledTimes(1);
+        expect(navigateToSessionSpy).toHaveBeenCalledWith('sess_4', { serverId: 'server_a' });
     });
 });

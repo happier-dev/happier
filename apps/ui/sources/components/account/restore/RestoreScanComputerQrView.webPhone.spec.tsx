@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import type { AuthCredentials } from '@/auth/flows/qrWait';
 import type { QRAuthKeyPair } from '@/auth/flows/qrStart';
@@ -21,6 +21,10 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
+
+const navigationState = vi.hoisted(() => ({
+    isFocused: true,
+}));
 
 const restoreScanSuccessState = vi.hoisted(() => ({
     loginSpy: vi.fn(async () => {}),
@@ -48,6 +52,13 @@ installRestoreScanComputerQrViewCommonModuleMocks({
                 select: (options: any) => options?.web ?? options?.default ?? options?.ios ?? options?.android,
             },
         });
+    },
+    reactNavigation: async () => {
+        const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+        return {
+            ...createReactNavigationNativeMock(),
+            useIsFocused: () => navigationState.isFocused,
+        };
     },
 });
 
@@ -107,11 +118,14 @@ vi.mock('@/track', () => ({
 }));
 
 describe('RestoreScanComputerQrView (web phone)', () => {
-    it('renders the QR scanner in idle state on web', async () => {
+    beforeEach(() => {
         vi.resetModules();
         resetRestoreScanComputerQrViewCommonModuleMockState();
+        navigationState.isFocused = true;
         lastScannerProps = null;
+    });
 
+    it('renders the QR scanner in idle state on web', async () => {
         const { RestoreScanComputerQrView } = await import('./RestoreScanComputerQrView');
 
         const screen = await renderScreen(<RestoreScanComputerQrView />);
@@ -120,6 +134,17 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         expect(screen.findByTestId('restore-open-manual')).toBeTruthy();
         expect(screen.findByTestId('restore-show-qr-instead')).toBeTruthy();
         expect(lastScannerProps?.testIDPrefix).toBe('restore-scan');
+        expect(lastScannerProps?.active).toBe(true);
+    });
+
+    it('marks the QR scanner inactive when the restore route is covered by another screen', async () => {
+        navigationState.isFocused = false;
+
+        const { RestoreScanComputerQrView } = await import('./RestoreScanComputerQrView');
+
+        await renderScreen(<RestoreScanComputerQrView />);
+
+        expect(lastScannerProps?.active).toBe(false);
     });
 
     it('tracks account restoration after a successful computer-QR restore flow', async () => {

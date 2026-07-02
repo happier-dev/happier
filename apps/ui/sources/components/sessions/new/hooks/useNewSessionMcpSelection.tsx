@@ -217,7 +217,7 @@ export function useNewSessionMcpSelection(params: Readonly<{
             popoverContent: ({ maxHeight }) => (
                 <NewSessionMcpSelectionContent
                     {...contentProps}
-                    maxHeight={Math.min(760, Math.max(420, maxHeight))}
+                    maxHeight={Math.min(760, maxHeight)}
                 />
             ),
             maxHeightCap: 760,

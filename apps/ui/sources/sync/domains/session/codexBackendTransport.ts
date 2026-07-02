@@ -1,4 +1,8 @@
-import { buildCodexAgentRuntimeDescriptor, type CodexBackendMode } from '@happier-dev/agents';
+import {
+    buildCodexAgentRuntimeDescriptor,
+    normalizeCodexBackendMode,
+    type CodexBackendMode,
+} from '@happier-dev/agents';
 import {
     readRuntimeDescriptorV1ForProvider,
     readBackendTargetRefV2,
@@ -34,7 +38,7 @@ function isCodexTargetBackend(backendTarget: BackendTargetInput | undefined): bo
 
 export function buildCodexBackendTransportFields(params: Readonly<{
     backendTarget?: BackendTargetInput;
-    codexBackendMode?: CodexBackendMode;
+    codexBackendMode?: unknown;
     experimentalCodexAcp?: boolean;
     runtimeDescriptorV1?: RuntimeDescriptorV1;
     resume?: string;
@@ -45,8 +49,9 @@ export function buildCodexBackendTransportFields(params: Readonly<{
 
     const runtimeDescriptor =
         readRuntimeDescriptorV1ForProvider(params.runtimeDescriptorV1, 'codex');
-    const resolvedBackendMode = runtimeDescriptor?.provider.backendMode
-        ?? params.codexBackendMode
+    const resolvedBackendMode =
+        normalizeCodexBackendMode(runtimeDescriptor?.provider.backendMode)
+        ?? normalizeCodexBackendMode(params.codexBackendMode)
         ?? (params.experimentalCodexAcp === true ? 'acp' : undefined);
 
     if (!resolvedBackendMode) {
@@ -54,15 +59,16 @@ export function buildCodexBackendTransportFields(params: Readonly<{
     }
 
     if (runtimeDescriptor) {
+        const runtimeBackendMode = normalizeCodexBackendMode(runtimeDescriptor.provider.backendMode);
         return {
-            codexBackendMode: runtimeDescriptor.provider.backendMode,
+            ...(runtimeBackendMode ? { codexBackendMode: runtimeBackendMode } : {}),
             runtimeDescriptorV1: runtimeDescriptor,
         };
     }
 
     const synthesizedRuntimeDescriptor = buildCodexAgentRuntimeDescriptor({
         backendMode: resolvedBackendMode,
-        vendorSessionId: params.resume,
+        providerSessionId: params.resume,
     });
 
     return {

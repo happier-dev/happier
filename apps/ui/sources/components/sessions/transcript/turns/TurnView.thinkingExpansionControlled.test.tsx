@@ -11,9 +11,14 @@ import {
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let renderedMessageViewProps: any[] = [];
+let renderedMessageViewWithCommonProps: any[] = [];
 let messageById: Record<string, any> = {};
 let renderedToolCallsGroupRowProps: any[] = [];
+let renderedToolCallsGroupRowWithCommonProps: any[] = [];
 let renderedRollbackButtonProps: any[] = [];
+const flashListCompatMockState = vi.hoisted(() => ({
+    getMappingKey: vi.fn((itemKey: string, index: number) => `mapped:${itemKey}:${index}`),
+}));
 
 installTranscriptCommonModuleMocks({
     reactNative: async () => {
@@ -28,14 +33,27 @@ installTranscriptCommonModuleMocks({
             useMessage: (_sessionId: string, messageId: string) => messageById[messageId] ?? null,
             useMessagesByIds: (_sessionId: string, messageIds: readonly string[]) =>
                 messageIds.map((id) => messageById[id]).filter(Boolean),
+            useSessionForkSupportSource: () => null,
+            useSessionMessagesById: () => ({}),
+            useSessionMessagesReducerState: () => null,
+            useSessionWorkspacePath: () => null,
+            useSetting: () => null,
         });
     },
 });
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+  useFeatureEnabled: () => false,
+}));
 
 vi.mock('@/components/sessions/transcript/MessageView', () => ({
   MessageView: (props: any) => {
     renderedMessageViewProps.push(props);
     return React.createElement('MessageView', props);
+  },
+  MessageViewWithSessionCommon: (props: any) => {
+    renderedMessageViewWithCommonProps.push(props);
+    return React.createElement('MessageViewWithSessionCommon', props);
   },
 }));
 
@@ -52,6 +70,16 @@ vi.mock('@/components/sessions/transcript/toolCalls/ToolCallsGroupRow', () => ({
     renderedToolCallsGroupRowProps.push(props);
     return React.createElement('ToolCallsGroupRow', props);
   },
+  ToolCallsGroupRowWithSessionCommon: (props: any) => {
+    renderedToolCallsGroupRowWithCommonProps.push(props);
+    return React.createElement('ToolCallsGroupRowWithSessionCommon', props);
+  },
+}));
+
+vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
+  useMappingHelper: () => ({
+    getMappingKey: flashListCompatMockState.getMappingKey,
+  }),
 }));
 
 vi.mock('@/components/sessions/transcript/TranscriptRollbackActionButton', () => ({
@@ -61,6 +89,14 @@ vi.mock('@/components/sessions/transcript/TranscriptRollbackActionButton', () =>
   },
 }));
 
+function getRenderedMessageViewProps() {
+  return [...renderedMessageViewProps, ...renderedMessageViewWithCommonProps];
+}
+
+function getRenderedToolCallsGroupRowProps() {
+  return [...renderedToolCallsGroupRowProps, ...renderedToolCallsGroupRowWithCommonProps];
+}
+
 describe('TurnView (thinking expansion controlled)', () => {
   afterEach(() => {
     resetTranscriptCommonModuleMockState();
@@ -68,9 +104,93 @@ describe('TurnView (thinking expansion controlled)', () => {
 
   beforeEach(() => {
     renderedMessageViewProps = [];
+    renderedMessageViewWithCommonProps = [];
     messageById = {};
     renderedToolCallsGroupRowProps = [];
+    renderedToolCallsGroupRowWithCommonProps = [];
     renderedRollbackButtonProps = [];
+    flashListCompatMockState.getMappingKey.mockClear();
+  });
+
+  it('forwards parent-provided transcript session common to nested message and tool rows', async () => {
+    const messageDisplayCommon = {
+      sessionThinkingDisplayMode: 'inline',
+      sessionThinkingInlineChrome: 'plain',
+      sessionThinkingInlinePresentation: 'summary',
+      transcriptMessageTimestampDisplayMode: 'always',
+      transcriptStreamingMarkdownRenderingEnabled: false,
+      transcriptStreamingPartialOutputEnabled: true,
+      transcriptStreamingSettleDelayMs: 0,
+      transcriptStreamingSmoothingEnabled: false,
+      workspacePath: null,
+    } as const;
+    const forkCommon = {
+      executionRunsEnabled: false,
+      sessionForkSupportSource: null,
+      sessionReplayEnabled: false,
+      sessionReplayMaxSeedChars: 120_000,
+      sessionReplayStrategy: 'recent_messages',
+      sessionReplaySummaryRunnerV1: null,
+    } as const;
+    const toolChromeCommon = {
+      toolViewTimelineChromeMode: 'cards',
+      transcriptToolCallsCollapsedPreviewCount: 1,
+      transcriptToolCallsGroupShowBackground: false,
+    } as const;
+    const toolRouteCommon = {
+      messagesById: {},
+      reducerState: null,
+    } as const;
+    messageById = {
+      'agent-1': { kind: 'agent-text', id: 'agent-1', localId: null, createdAt: 1, text: 'reply', isThinking: false },
+      'tool-1': { kind: 'tool-call', id: 'tool-1', localId: null, createdAt: 2, tool: { name: 'Bash', state: 'completed' }, children: [] },
+    };
+    const turn: any = {
+      id: 'turn-1',
+      userMessageId: null,
+      content: [
+        { kind: 'message', messageId: 'agent-1' },
+        { kind: 'tool_calls', id: 'tool-group-1', toolMessageIds: ['tool-1'] },
+      ],
+    };
+
+    const { TurnViewWithSessionCommon } = await import('./TurnView');
+    await renderScreen(React.createElement(TurnViewWithSessionCommon as any, {
+      turn,
+      metadata: null,
+      sessionId: 's1',
+      activeThinkingMessageId: null,
+      expandedToolCallsAnchorMessageIds: new Set(),
+      setToolCallsGroupExpanded: () => {},
+      interaction: { canSendMessages: true, canApprovePermissions: true },
+      forkCommon,
+      messageDisplayCommon,
+      toolChromeCommon,
+      toolRouteCommon,
+    }));
+
+    expect(renderedMessageViewProps).toHaveLength(0);
+    expect(renderedMessageViewWithCommonProps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.objectContaining({ id: 'agent-1' }),
+          forkCommon,
+          messageDisplayCommon,
+          toolChromeCommon,
+          toolRouteCommon,
+        }),
+      ]),
+    );
+    expect(renderedToolCallsGroupRowProps).toHaveLength(0);
+    expect(renderedToolCallsGroupRowWithCommonProps).toEqual([
+      expect.objectContaining({
+        toolMessageIds: ['tool-1'],
+        forkCommon,
+        messageDisplayCommon,
+        toolChromeCommon,
+        toolRouteCommon,
+      }),
+    ]);
   });
 
   it('forwards list-owned thinking expansion state to MessageView for thinking messages', async () => {
@@ -102,8 +222,9 @@ describe('TurnView (thinking expansion controlled)', () => {
           setThinkingExpanded,
         }));
 
-    const thinkingProps = renderedMessageViewProps.find((p) => p?.message?.id === 't1');
-    const normalProps = renderedMessageViewProps.find((p) => p?.message?.id === 'a1');
+    const renderedMessageProps = getRenderedMessageViewProps();
+    const thinkingProps = renderedMessageProps.find((p) => p?.message?.id === 't1');
+    const normalProps = renderedMessageProps.find((p) => p?.message?.id === 'a1');
 
     expect(resolveThinkingExpanded).toHaveBeenCalledWith('t1');
     expect(thinkingProps?.thinkingExpanded).toBe(true);
@@ -143,8 +264,39 @@ describe('TurnView (thinking expansion controlled)', () => {
           interaction: { canSendMessages: true, canApprovePermissions: true },
         }));
 
-    expect(renderedToolCallsGroupRowProps).toHaveLength(1);
-    expect(renderedToolCallsGroupRowProps[0]?.expanded).toBe(true);
+    const renderedToolGroupProps = getRenderedToolCallsGroupRowProps();
+    expect(renderedToolGroupProps).toHaveLength(1);
+    expect(renderedToolGroupProps[0]?.expanded).toBe(true);
+  });
+
+  it('uses FlashList recycling-aware keys for mapped turn content rows', async () => {
+    messageById = {
+      'agent-1': { kind: 'agent-text', id: 'agent-1', localId: null, createdAt: 1, text: 'reply', isThinking: false },
+      'tool-1': { kind: 'tool-call', id: 'tool-1', localId: null, createdAt: 2, tool: { name: 'Bash', state: 'completed' }, children: [] },
+    };
+
+    const turn: any = {
+      id: 'turn-1',
+      userMessageId: null,
+      content: [
+        { kind: 'message', messageId: 'agent-1' },
+        { kind: 'tool_calls', id: 'tool-group-1', toolMessageIds: ['tool-1'] },
+      ],
+    };
+
+    const { TurnView } = await import('./TurnView');
+    await renderScreen(React.createElement(TurnView as any, {
+      turn,
+      metadata: null,
+      sessionId: 's1',
+      activeThinkingMessageId: null,
+      expandedToolCallsAnchorMessageIds: new Set(),
+      setToolCallsGroupExpanded: () => {},
+      interaction: { canSendMessages: true, canApprovePermissions: true },
+    }));
+
+    expect(flashListCompatMockState.getMappingKey).toHaveBeenCalledWith('agent-1', 0);
+    expect(flashListCompatMockState.getMappingKey).toHaveBeenCalledWith('tool-group-1', 1);
   });
 
   it('forwards forced transcript permission prompts to nested message and tool-call rows', async () => {
@@ -174,7 +326,7 @@ describe('TurnView (thinking expansion controlled)', () => {
           forcePermissionPromptsInTranscript: true,
         }));
 
-    expect(renderedMessageViewProps).toEqual(
+    expect(getRenderedMessageViewProps()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           message: expect.objectContaining({ id: 'agent-1' }),
@@ -182,7 +334,7 @@ describe('TurnView (thinking expansion controlled)', () => {
         }),
       ]),
     );
-    expect(renderedToolCallsGroupRowProps).toEqual(
+    expect(getRenderedToolCallsGroupRowProps()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           toolMessageIds: ['tool-1'],
@@ -216,7 +368,7 @@ describe('TurnView (thinking expansion controlled)', () => {
           getMessageById: (messageId: string) => (messageId === 'agent-sidechain-1' ? agentMessage : null),
         }));
 
-    expect(renderedMessageViewProps).toEqual(
+    expect(getRenderedMessageViewProps()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           message: expect.objectContaining({ id: 'agent-sidechain-1', text: 'sidechain reply' }),
@@ -255,7 +407,7 @@ describe('TurnView (thinking expansion controlled)', () => {
         }));
 
     expect(renderedRollbackButtonProps).toHaveLength(0);
-    expect(renderedMessageViewProps).toEqual(
+    expect(getRenderedMessageViewProps()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           message: expect.objectContaining({ id: 'user-1' }),

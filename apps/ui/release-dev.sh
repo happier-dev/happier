@@ -1,4 +1,5 @@
 set -e
+export EXPO_UNSTABLE_WEB_MODAL=1
 eas build --profile development --platform ios --no-wait --non-interactive
 eas build --profile development --platform android --no-wait --non-interactive
 eas build --profile preview --platform ios --no-wait --non-interactive

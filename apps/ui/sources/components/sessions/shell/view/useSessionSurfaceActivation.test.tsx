@@ -3,12 +3,27 @@ import { act } from 'react-test-renderer';
 import { renderHook, renderScreen } from '@/dev/testkit';
 import {
     getSessionSurfaceVisibilitySnapshot,
+    isSessionSurfaceVisible,
     setFocusedSessionId,
     resetSessionSurfaceVisibilityForTests,
     useSessionSurfaceVisibilitySnapshot,
 } from '@/sync/domains/session/sessionSurfaceVisibility';
 
 const setLastFocusedSessionId = vi.fn();
+
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+    return {
+        ...original,
+        areServerProfileIdentifiersEquivalent: (leftRaw: string | null | undefined, rightRaw: string | null | undefined) => {
+            const left = String(leftRaw ?? '').trim();
+            const right = String(rightRaw ?? '').trim();
+            if (!left || !right) return false;
+            if (left === right) return true;
+            return [left, right].sort().join('\u0000') === ['server-actual', 'server-alias'].sort().join('\u0000');
+        },
+    };
+});
 
 vi.mock('@/voice/runtime/voiceTargetStore', () => ({
     useVoiceTargetStore: {
@@ -117,6 +132,80 @@ describe('useSessionSurfaceActivation', () => {
         expect(renderCount).toBe(1);
 
         await hook.unmount();
+    });
+
+    it('treats mounted server aliases as visible for realtime routing', async () => {
+        const { useSessionSurfaceActivation } = await import('./useSessionSurfaceActivation');
+        const hook = await renderHook((props: {
+            sessionId: string;
+            serverId: string | null;
+            surfaceFocused: boolean;
+            surfaceVisible: boolean;
+            routeAnchor: boolean;
+        }) => useSessionSurfaceActivation({
+            sessionId: props.sessionId,
+            serverId: props.serverId,
+            surfaceFocused: props.surfaceFocused,
+            surfaceVisible: props.surfaceVisible,
+            routeAnchor: props.routeAnchor,
+        }), {
+            initialProps: {
+                sessionId: 'shared-session',
+                serverId: 'server-actual',
+                surfaceFocused: true,
+                surfaceVisible: true,
+                routeAnchor: false,
+            },
+        });
+
+        expect(isSessionSurfaceVisible('shared-session', 'server-actual')).toBe(true);
+        expect(isSessionSurfaceVisible('shared-session', 'server-alias')).toBe(true);
+        expect(isSessionSurfaceVisible('shared-session', 'server-unrelated')).toBe(false);
+
+        await hook.unmount();
+        expect(isSessionSurfaceVisible('shared-session', 'server-alias')).toBe(false);
+    });
+
+    it('scopes visible participation to the mounted server', async () => {
+        const { useSessionSurfaceActivation } = await import('./useSessionSurfaceActivation');
+        const hook = await renderHook((props: {
+            sessionId: string;
+            serverId: string | null;
+            surfaceFocused: boolean;
+            surfaceVisible: boolean;
+            routeAnchor: boolean;
+        }) => useSessionSurfaceActivation({
+            sessionId: props.sessionId,
+            serverId: props.serverId,
+            surfaceFocused: props.surfaceFocused,
+            surfaceVisible: props.surfaceVisible,
+            routeAnchor: props.routeAnchor,
+        }), {
+            initialProps: {
+                sessionId: 'shared-session',
+                serverId: 'server-a',
+                surfaceFocused: true,
+                surfaceVisible: true,
+                routeAnchor: false,
+            },
+        });
+
+        expect(isSessionSurfaceVisible('shared-session', 'server-a')).toBe(true);
+        expect(isSessionSurfaceVisible('shared-session', 'server-b')).toBe(false);
+
+        await hook.rerender({
+            sessionId: 'shared-session',
+            serverId: 'server-b',
+            surfaceFocused: true,
+            surfaceVisible: true,
+            routeAnchor: false,
+        });
+
+        expect(isSessionSurfaceVisible('shared-session', 'server-a')).toBe(false);
+        expect(isSessionSurfaceVisible('shared-session', 'server-b')).toBe(true);
+
+        await hook.unmount();
+        expect(isSessionSurfaceVisible('shared-session', 'server-b')).toBe(false);
     });
 
     it('clears visible participation for retained surfaces that become hidden without unmounting', async () => {

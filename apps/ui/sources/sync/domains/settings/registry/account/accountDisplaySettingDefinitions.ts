@@ -167,6 +167,13 @@ export const ACCOUNT_DISPLAY_SETTING_DEFINITIONS = defineSettingDefinitions({
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
     },
+    sessionListWorkingStatusAnimatedTextEnabled: {
+        schema: z.boolean(),
+        default: true,
+        description: 'Animate working status text in session rows',
+        storageScope: 'account',
+        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+    },
     mobileWorkspaceExperienceV1: {
         schema: z.enum(['classic', 'cockpit']),
         default: 'cockpit',

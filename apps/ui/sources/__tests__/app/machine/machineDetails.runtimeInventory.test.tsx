@@ -95,7 +95,10 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({ useMachineCapabil
 vi.mock('@/hooks/session/useNavigateToSession', () => ({ useNavigateToSession: () => () => {} }));
 vi.mock('@/hooks/ui/useMountedShouldContinue', () => ({ useMountedShouldContinue: () => () => true }));
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({ setActiveServerAndSwitch: setActiveServerAndSwitchMock }));
-vi.mock('@/sync/domains/server/serverProfiles', () => ({ getActiveServerId: () => activeServerIdRef.current }));
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
+    getActiveServerId: () => activeServerIdRef.current,
+}));
 vi.mock('@/sync/sync', () => ({ sync: { refreshMachinesThrottled: vi.fn(), refreshMachines: vi.fn(), retryNow: vi.fn() } }));
 vi.mock('@/utils/errors/daemonUnavailableAlert', () => ({
     tryShowDaemonUnavailableAlertForRpcError: () => false,

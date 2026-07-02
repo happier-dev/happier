@@ -26,6 +26,20 @@ const availableCapability: NativeCryptoWorkerCapability = {
     nativeVersion: 1,
 };
 
+async function getPromiseSettlement<T>(promise: Promise<T>): Promise<PromiseSettledResult<T> | null> {
+    let settlement: PromiseSettledResult<T> | null = null;
+    promise.then(
+        (value) => {
+            settlement = { status: 'fulfilled', value };
+        },
+        (reason: unknown) => {
+            settlement = { status: 'rejected', reason };
+        },
+    );
+    await Promise.resolve();
+    return settlement;
+}
+
 describe('normalizeNativeCryptoWorkerRouting', () => {
     it('pins canonical defaults', () => {
         expect(normalizeNativeCryptoWorkerRouting()).toMatchObject({
@@ -117,6 +131,64 @@ describe('runNativeCryptoWorkerBatch', () => {
         });
 
         expect(result).toEqual({ status: 'ok', source: 'reference', items: ['reference'] });
+    });
+
+    it('falls back in auto mode when the native capability probe exceeds the routing timeout', async () => {
+        vi.useFakeTimers();
+        try {
+            const result = runNativeCryptoWorkerBatch({
+                operation: 'decryptSecretboxJson',
+                routing: { mode: 'auto', timeoutMs: 100, minPayloadBytes: 0 },
+                itemCount: 4,
+                payloadBytes: 50_000,
+                probe: () => createDeferred<NativeCryptoWorkerCapability>().promise,
+                nativeRun: async () => ['native'],
+                referenceRun: async () => ['reference-after-probe-timeout'],
+            });
+
+            await Promise.resolve();
+            expect(await getPromiseSettlement(result)).toBeNull();
+
+            await vi.advanceTimersByTimeAsync(100);
+            expect(await getPromiseSettlement(result)).toEqual({
+                status: 'fulfilled',
+                value: {
+                    status: 'ok',
+                    source: 'reference',
+                    items: ['reference-after-probe-timeout'],
+                },
+            });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('rejects in require mode when the native capability probe exceeds the routing timeout', async () => {
+        vi.useFakeTimers();
+        try {
+            const result = runNativeCryptoWorkerBatch({
+                operation: 'decryptSecretboxJson',
+                routing: { mode: 'require', timeoutMs: 100, minPayloadBytes: 0 },
+                itemCount: 4,
+                payloadBytes: 50_000,
+                probe: () => createDeferred<NativeCryptoWorkerCapability>().promise,
+                nativeRun: async () => ['native'],
+                referenceRun: async () => ['reference'],
+            });
+
+            await Promise.resolve();
+            expect(await getPromiseSettlement(result)).toBeNull();
+            await vi.advanceTimersByTimeAsync(100);
+            const settlement = await getPromiseSettlement(result);
+            expect(settlement?.status).toBe('rejected');
+            if (settlement?.status === 'rejected') {
+                expect(settlement.reason).toEqual(expect.objectContaining({
+                    message: 'native crypto worker timed out',
+                }));
+            }
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('fails in require mode when native is unavailable', async () => {

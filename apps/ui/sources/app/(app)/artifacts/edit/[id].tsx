@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ScrollView, Pressable, Platform, KeyboardAvoidingView as RNKeyboardAvoidingView } from 'react-native';
+import { View, Pressable, Platform } from 'react-native';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -7,10 +7,9 @@ import { t } from '@/text';
 import { layout } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useArtifact } from '@/sync/domains/state/storage';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -194,19 +193,6 @@ export default function EditArtifactScreen() {
         </Pressable>
     ), [handleSave, hasChanges, isSaving, styles]);
     
-    const KeyboardWrapper = Platform.select({
-        ios: KeyboardAvoidingView,
-        default: React.Fragment,
-    });
-    
-    const keyboardProps = Platform.select({
-        ios: {
-            behavior: 'padding' as const,
-            keyboardVerticalOffset: 0,
-        },
-        default: {},
-    });
-
     const loadingTitle = t('artifacts.loading');
     const errorTitle = t('common.error');
     const headerTitle = t('artifacts.edit');
@@ -267,8 +253,7 @@ export default function EditArtifactScreen() {
                 options={screenOptions}
             />
             <View style={styles.container}>
-                <KeyboardWrapper {...keyboardProps}>
-                    <ScrollView 
+                    <KeyboardAwareScrollView
                         style={styles.scrollView}
                         contentContainerStyle={[
                             styles.contentContainer,
@@ -327,8 +312,7 @@ export default function EditArtifactScreen() {
                                 autoCapitalize="sentences"
                             />
                         </View>
-                    </ScrollView>
-                </KeyboardWrapper>
+                    </KeyboardAwareScrollView>
             </View>
         </>
     );

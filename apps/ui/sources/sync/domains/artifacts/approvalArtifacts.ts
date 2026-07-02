@@ -1,6 +1,7 @@
 import { ApprovalRequestV1Schema, type ApprovalRequestV1 } from '@happier-dev/protocol';
 
 import type { DecryptedArtifact } from './artifactTypes';
+import { normalizeSessionListKeyParts } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 
 export type OpenApprovalArtifactForSession = Readonly<{
     artifact: DecryptedArtifact;
@@ -15,6 +16,20 @@ function readTimestampMs(value: unknown): number {
     return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : 0;
 }
 
+function addNormalizedSessionId(ids: Set<string>, value: unknown, serverId?: unknown): void {
+    const sessionId = readString(value);
+    if (!sessionId) return;
+    const scopedSessionKey = normalizeSessionListKeyParts(serverId, sessionId).sessionKey;
+    ids.add(scopedSessionKey ?? sessionId);
+}
+
+function collectSessionIdsFromUnknownArray(ids: Set<string>, value: unknown, serverId?: unknown): void {
+    if (!Array.isArray(value)) return;
+    for (const entry of value) {
+        addNormalizedSessionId(ids, entry, serverId);
+    }
+}
+
 function parseApprovalRequestBody(body: string): ApprovalRequestV1 | null {
     try {
         const parsed = ApprovalRequestV1Schema.safeParse(JSON.parse(body));
@@ -24,12 +39,21 @@ function parseApprovalRequestBody(body: string): ApprovalRequestV1 | null {
     }
 }
 
+function collectApprovalLinkedSessionIds(
+    artifact: DecryptedArtifact,
+    approval?: ApprovalRequestV1 | null,
+): Set<string> {
+    const ids = new Set<string>();
+    const serverId = readString(artifact.header?.serverId);
+    addNormalizedSessionId(ids, artifact.header?.sessionId, serverId);
+    collectSessionIdsFromUnknownArray(ids, artifact.sessions, serverId);
+    collectSessionIdsFromUnknownArray(ids, artifact.header?.sessions, serverId);
+    addNormalizedSessionId(ids, approval?.createdBy.sessionId, serverId);
+    return ids;
+}
+
 function isApprovalLinkedToSession(artifact: DecryptedArtifact, sessionId: string): boolean {
-    const headerSessionId = readString(artifact.header?.sessionId);
-    if (headerSessionId === sessionId) return true;
-    if (artifact.sessions?.includes(sessionId) === true) return true;
-    if (artifact.header?.sessions?.includes(sessionId) === true) return true;
-    return false;
+    return collectApprovalLinkedSessionIds(artifact).has(sessionId);
 }
 
 function readCreatedBySurface(artifact: DecryptedArtifact): ApprovalRequestV1['createdBy']['surface'] {
@@ -98,4 +122,25 @@ export function listOpenApprovalArtifactsForSession(
 
         return [{ artifact, approval }];
     });
+}
+
+export function collectOpenApprovalSessionIds(
+    artifacts: readonly DecryptedArtifact[],
+): ReadonlySet<string> {
+    const ids = new Set<string>();
+
+    for (const artifact of artifacts) {
+        if (artifact.header?.kind !== 'approval_request.v1') continue;
+        if (artifact.header?.approvalStatus !== 'open') continue;
+
+        const body = typeof artifact.body === 'string' ? artifact.body : null;
+        const approval = body ? parseApprovalRequestBody(body) : null;
+        if (body && approval?.status !== 'open') continue;
+
+        for (const sessionId of collectApprovalLinkedSessionIds(artifact, approval)) {
+            ids.add(sessionId);
+        }
+    }
+
+    return ids;
 }

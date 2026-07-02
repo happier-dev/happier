@@ -1,6 +1,10 @@
 import * as React from 'react';
 
-export const Deferred = React.memo((props: { children: React.ReactNode, enabled?: boolean }) => {
+export const Deferred = React.memo((props: {
+    children: React.ReactNode;
+    enabled?: boolean;
+    fallback?: React.ReactNode;
+}) => {
     const [enabled, setEnabled] = React.useState(props.enabled ?? false);
 
     React.useEffect(() => {
@@ -17,7 +21,7 @@ export const Deferred = React.memo((props: { children: React.ReactNode, enabled?
 
     return (
         <React.Fragment>
-            {enabled ? props.children : null}
+            {enabled ? props.children : (props.fallback ?? null)}
         </React.Fragment>
     )
 });

@@ -1,7 +1,12 @@
 import type { ExternalSessionsSource } from '@happier-dev/protocol';
 
-function normalizeOptionalString(value: string | null | undefined): string | null {
-    const normalized = value?.trim() ?? '';
+export type ExternalSessionBrowseCompatibleLinkSourceResolver = (ctx: Readonly<{
+    selectedSource: ExternalSessionsSource;
+    candidateSource: ExternalSessionsSource;
+}>) => ExternalSessionsSource | null;
+
+function normalizeOptionalString(value: unknown): string | null {
+    const normalized = typeof value === 'string' ? value.trim() : '';
     return normalized.length > 0 ? normalized : null;
 }
 
@@ -26,13 +31,6 @@ function isCompatibleExternalSessionBrowseLinkSource(selectedSource: ExternalSes
         return selectedAgentDir == null || selectedAgentDir === normalizeOptionalString(candidateSource.agentDir);
     }
 
-    if (selectedSource.kind === 'opencodeServer' && candidateSource.kind === 'opencodeServer') {
-        const selectedBaseUrl = normalizeOptionalString(selectedSource.baseUrl);
-        const selectedDirectory = normalizeOptionalString(selectedSource.directory);
-        return (selectedBaseUrl == null || selectedBaseUrl === normalizeOptionalString(candidateSource.baseUrl))
-            && (selectedDirectory == null || selectedDirectory === normalizeOptionalString(candidateSource.directory));
-    }
-
     if (selectedSource.kind === 'claudeConfig' && candidateSource.kind === 'claudeConfig') {
         const selectedConfigDir = normalizeOptionalString(selectedSource.configDir);
         const selectedProjectId = normalizeOptionalString(selectedSource.projectId);
@@ -46,9 +44,17 @@ function isCompatibleExternalSessionBrowseLinkSource(selectedSource: ExternalSes
 export function resolveCompatibleExternalSessionBrowseLinkSource(params: Readonly<{
     selectedSource: ExternalSessionsSource;
     candidateSource?: ExternalSessionsSource | null;
+    resolveCompatibleLinkSource?: ExternalSessionBrowseCompatibleLinkSourceResolver;
 }>): ExternalSessionsSource {
     if (!params.candidateSource) {
         return params.selectedSource;
+    }
+    const resolved = params.resolveCompatibleLinkSource?.({
+        selectedSource: params.selectedSource,
+        candidateSource: params.candidateSource,
+    });
+    if (resolved) {
+        return resolved;
     }
     return isCompatibleExternalSessionBrowseLinkSource(params.selectedSource, params.candidateSource)
         ? params.candidateSource

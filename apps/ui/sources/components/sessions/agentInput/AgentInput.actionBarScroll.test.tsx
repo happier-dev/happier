@@ -1,8 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-
 import { renderScreen } from '@/dev/testkit';
+
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -43,27 +43,34 @@ function getActionBarContentView(tree: renderer.ReactTestRenderer, index = 0) {
 
 async function mockWebPlatform() {
     vi.doMock('react-native', async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'web',
-                select: (value: any) => value?.web ?? value?.default ?? value?.native ?? value?.ios ?? value?.android,
-            },
-        });
-    });
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock(
+        {
+                            Platform: {
+                                OS: 'web',
+                                select: (v: any) => v?.web ?? v?.default ?? v?.default ?? v?.web ?? v?.native ?? v?.ios ?? v?.android,
+                            },
+                        }
+    );
+});
 }
 
 function mockCommonDeps() {
-    vi.mock('@/text', async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({
-            translate: (key: string) => key,
-        });
+    vi.doMock('react-native-unistyles', async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock();
     });
 
+    vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key: string) => key,
+    });
+});
+
     vi.doMock('@/components/ui/theme/haptics', () => ({
-        hapticsLight: () => {},
-        hapticsError: () => {},
+        hapticsLight: () => { },
+        hapticsError: () => { },
     }));
 
     vi.doMock('@/hooks/server/useFeatureEnabled', () => ({
@@ -74,8 +81,12 @@ function mockCommonDeps() {
         useKeyboardHeight: () => 0,
     }));
 
+    vi.doMock('@/hooks/ui/textInputCaretRect', () => ({
+        useTextInputCaretRect: () => null,
+    }));
+
     vi.doMock('@/hooks/session/useUserMessageHistory', () => ({
-        useUserMessageHistory: () => ({ reset: () => {}, moveUp: () => {}, moveDown: () => {}, setText: () => {} }),
+        useUserMessageHistory: () => ({ reset: () => { }, moveUp: () => { }, moveDown: () => { }, setText: () => { } }),
     }));
 
     vi.doMock('@/components/ui/forms/MultiTextInput', () => ({
@@ -132,6 +143,10 @@ function mockCommonDeps() {
         PermissionFooter: () => null,
     }));
 
+    vi.doMock('@/components/tools/normalization/policy/permissionSummary', () => ({
+        formatPermissionRequestSummary: () => '',
+    }));
+
     vi.doMock('@/components/sessions/sourceControl/status', () => ({
         SourceControlStatusBadge: () => null,
         useHasMeaningfulScmStatus: () => false,
@@ -142,18 +157,27 @@ function mockCommonDeps() {
     }));
 
     vi.doMock('@/modal', async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock().module;
-    });
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
     vi.doMock('@/agents/catalog/catalog', () => ({
         AGENT_IDS: ['codex'],
         DEFAULT_AGENT_ID: 'codex',
         resolveAgentIdFromFlavor: () => null,
         getAgentCore: () => ({ displayNameKey: 'agents.codex', toolRendering: { hideUnknownToolsByDefault: false } }),
+    getAgentBehavior: (agentId: string) => ({
+        sessionUsage: {
+            supportsExactContextUsageBadge: agentId !== 'codex' && agentId !== 'gemini',
+        },
+    }),
     }));
 
     vi.doMock('@/sync/domains/models/modelOptions', () => ({
+    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
+        options?.find?.((option: any) => option.value === effectiveModelId)
+            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
+            ?? null,
         getModelOptionsForSession: () => [{ value: 'default', label: 'Default' }],
         supportsFreeformModelSelectionForSession: () => false,
     }));
@@ -174,36 +198,23 @@ function mockCommonDeps() {
     }));
 
     vi.doMock('./ResumeChip', () => ({
-        ResumeChip: (props: Record<string, unknown>) => React.createElement('ResumeChip', { ...props, testID: 'agent-input-resume-chip' }, null),
+        ResumeChip: (props: Record<string, unknown>) => React.createElement('ResumeChip', props, null),
         formatResumeChipLabel: () => '',
         RESUME_CHIP_ICON_NAME: 'play',
         RESUME_CHIP_ICON_SIZE: 12,
     }));
 
     vi.doMock('./PathAndResumeRow', () => ({
-        PathAndResumeRow: (props: {
-            leadingControls?: ReadonlyArray<React.ReactNode>;
-            onPathClick?: () => void;
-            onResumeClick?: () => void;
-        }) => React.createElement(
-            'View',
-            { testID: 'agentInput-pathResumeRow' },
-            ...(props.leadingControls ?? []),
-            props.onPathClick ? React.createElement('Pressable', { testID: 'agent-input-path-chip', onPress: props.onPathClick }) : null,
-            props.onResumeClick ? React.createElement('Pressable', { testID: 'agent-input-resume-chip', onPress: props.onResumeClick }) : null,
-        ),
+        PathAndResumeRow: () => null,
     }));
 
-    vi.doMock('./components/AgentInputAutocomplete', () => ({
-        AgentInputAutocomplete: () => null,
-    }));
 }
 
 function mockSettings() {
     vi.doMock('@/sync/domains/state/storage', async (importOriginal) => {
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createPartialStorageModuleMock(importOriginal, {
-            useSetting: (key: string) => {
+    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createPartialStorageModuleMock(importOriginal, {
+    useSetting: (key: string) => {
                 if (key === 'profiles') return [];
                 if (key === 'agentInputEnterToSend') return true;
                 if (key === 'agentInputActionBarLayout') return 'scroll';
@@ -211,8 +222,8 @@ function mockSettings() {
                 if (key === 'sessionPermissionModeApplyTiming') return 'immediate';
                 return null;
             },
-        });
-    });
+});
+});
 }
 
 function mockScrollEdgeFades(params: { canScrollX: boolean; showRight: boolean }) {
@@ -228,28 +239,6 @@ function mockScrollEdgeFades(params: { canScrollX: boolean; showRight: boolean }
     }));
 }
 
-async function renderScrollLayoutAgentInput(props: React.ComponentProps<any> = {}) {
-    vi.resetModules();
-    vi.clearAllMocks();
-    await mockWebPlatform();
-    mockCommonDeps();
-    mockSettings();
-    mockScrollEdgeFades({ canScrollX: true, showRight: true });
-
-    const { AgentInput } = await import('./AgentInput');
-    return (await renderScreen(
-        <AgentInput
-            value=""
-            placeholder="Type"
-            onChangeText={() => {}}
-            onSend={() => {}}
-            autocompletePrefixes={[]}
-            autocompleteSuggestions={async () => []}
-            {...props}
-        />,
-    )).tree;
-}
-
 describe('AgentInput (action bar scroll layout)', () => {
     it('keeps both chip rows horizontally scrollable on web', async () => {
         vi.resetModules();
@@ -261,23 +250,22 @@ describe('AgentInput (action bar scroll layout)', () => {
 
         const { AgentInput } = await import('./AgentInput');
 
-        const tree = (await renderScreen(
-            <AgentInput
-                value=""
-                placeholder="Type"
-                onChangeText={() => {}}
-                onSend={() => {}}
-                onPermissionClick={() => {}}
-                onPathClick={() => {}}
-                onResumeClick={() => {}}
-                currentPath="/tmp"
-                resumeSessionId="s2"
-                autocompletePrefixes={[]}
-                autocompleteSuggestions={async () => []}
-            />,
-        )).tree;
+        let tree: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onPathClick={() => {}}
+                    onResumeClick={() => {}}
+                    currentPath="/tmp"
+                    resumeSessionId="s2"
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />)).tree;
 
-        const scrollViews = getActionBarScrollViews(tree);
+        const scrollViews = getActionBarScrollViews(tree!);
         expect(scrollViews).toHaveLength(2);
         for (const scrollView of scrollViews) {
             expect(scrollView.props?.horizontal).toBe(true);
@@ -286,54 +274,89 @@ describe('AgentInput (action bar scroll layout)', () => {
             expect(typeof scrollView.props?.onContentSizeChange).toBe('function');
         }
 
-        act(() => tree.unmount());
+        act(() => tree!.unmount());
     });
 
     it('keeps the primary scroll row content padded with the right gutter for fades', async () => {
-        const tree = await renderScrollLayoutAgentInput({
-            onPermissionClick: () => {},
-            onPathClick: () => {},
-            onResumeClick: () => {},
-            currentPath: '/tmp',
-            resumeSessionId: 's2',
-        });
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: true, showRight: true });
 
-        const contentContainer = getActionBarContentView(tree, 0);
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onPathClick={() => {}}
+                    onResumeClick={() => {}}
+                    currentPath="/tmp"
+                    resumeSessionId="s2"
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />)).tree;
+
+        const scrollView = getActionBarScrollView(tree!, 0);
+        expect(typeof scrollView?.props?.onContentSizeChange).toBe('function');
+
+        const contentContainer = getActionBarContentView(tree!, 0);
         expect(typeof contentContainer?.props?.onLayout).toBe('undefined');
 
         const style = flattenStyle(contentContainer.props.style);
         expect(typeof style.paddingRight).toBe('number');
         expect((style.paddingRight as number) > 6).toBe(true);
 
-        act(() => tree.unmount());
+        act(() => tree!.unmount());
     });
 
     it('keeps primary chips in the first scroll row and machine/path/resume in the second', async () => {
-        const tree = await renderScrollLayoutAgentInput({
-            onPermissionClick: () => {},
-            onAgentClick: () => {},
-            agentType: 'codex',
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            onResumeClick: () => {},
-            resumeSessionId: 'session-1',
-            onAbort: () => {},
-            showAbortButton: true,
-        });
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: true, showRight: true });
 
-        const primaryRowIds = getOrderedTestIdsWithin(getActionBarScrollView(tree, 0), [
-            'agent-input-agent-chip',
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onAgentClick={() => {}}
+                    agentType="codex"
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                    onPathClick={() => {}}
+                    currentPath="/tmp"
+                    onResumeClick={() => {}}
+                    resumeSessionId="session-1"
+                    onAbort={() => {}}
+                    showAbortButton
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />)).tree;
+
+        const primaryRowIds = getOrderedTestIdsWithin(getActionBarScrollView(tree!, 0), [
             'agent-input-permission-chip',
+            'agent-input-agent-chip',
             'agent-input-abort',
             'agent-input-machine-chip',
             'agent-input-path-chip',
             'agent-input-resume-chip',
         ]);
-        const secondaryRowIds = getOrderedTestIdsWithin(getActionBarScrollView(tree, 1), [
-            'agent-input-agent-chip',
+        const secondaryRowIds = getOrderedTestIdsWithin(getActionBarScrollView(tree!, 1), [
             'agent-input-permission-chip',
+            'agent-input-agent-chip',
             'agent-input-abort',
             'agent-input-machine-chip',
             'agent-input-path-chip',
@@ -351,33 +374,52 @@ describe('AgentInput (action bar scroll layout)', () => {
             'agent-input-resume-chip',
         ]);
 
-        act(() => tree.unmount());
+        act(() => tree!.unmount());
     });
 
     it('keeps extra primary chips in the first scroll row while the secondary row stays dedicated to location controls', async () => {
-        const tree = await renderScrollLayoutAgentInput({
-            onPermissionClick: () => {},
-            onAgentClick: () => {},
-            agentType: 'codex',
-            onMachineClick: () => {},
-            machineName: 'Builder',
-            onPathClick: () => {},
-            currentPath: '/tmp',
-            extraActionChips: [{
-                key: 'execution-run-delivery',
-                controlId: 'delivery',
-                render: () => React.createElement('View', { testID: 'agent-input-delivery-chip' }),
-            }],
-        });
+        vi.resetModules();
+        vi.clearAllMocks();
+        await mockWebPlatform();
+        mockCommonDeps();
+        mockSettings();
+        mockScrollEdgeFades({ canScrollX: true, showRight: true });
 
-        const primaryRowIds = getOrderedTestIdsWithin(getActionBarScrollView(tree, 0), [
+        const { AgentInput } = await import('./AgentInput');
+
+        let tree: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<AgentInput
+                    value=""
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onPermissionClick={() => {}}
+                    onAgentClick={() => {}}
+                    agentType="codex"
+                    onMachineClick={() => {}}
+                    machineName="Builder"
+                    onPathClick={() => {}}
+                    currentPath="/tmp"
+                    onAbort={() => {}}
+                    showAbortButton
+                    extraActionChips={[{
+                        key: 'execution-run-delivery',
+                        controlId: 'delivery',
+                        render: () => React.createElement('View', { testID: 'agent-input-delivery-chip' }),
+                    }]}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                />)).tree;
+
+        const primaryRowIds = getOrderedTestIdsWithin(getActionBarScrollView(tree!, 0), [
             'agent-input-agent-chip',
             'agent-input-permission-chip',
+            'agent-input-abort',
             'agent-input-delivery-chip',
             'agent-input-machine-chip',
             'agent-input-path-chip',
         ]);
-        const secondaryRowIds = getOrderedTestIdsWithin(getActionBarScrollView(tree, 1), [
+        const secondaryRowIds = getOrderedTestIdsWithin(getActionBarScrollView(tree!, 1), [
             'agent-input-delivery-chip',
             'agent-input-machine-chip',
             'agent-input-path-chip',
@@ -386,6 +428,7 @@ describe('AgentInput (action bar scroll layout)', () => {
         expect(primaryRowIds).toEqual([
             'agent-input-agent-chip',
             'agent-input-permission-chip',
+            'agent-input-abort',
             'agent-input-delivery-chip',
         ]);
         expect(secondaryRowIds).toEqual([
@@ -393,6 +436,6 @@ describe('AgentInput (action bar scroll layout)', () => {
             'agent-input-path-chip',
         ]);
 
-        act(() => tree.unmount());
+        act(() => tree!.unmount());
     });
 });

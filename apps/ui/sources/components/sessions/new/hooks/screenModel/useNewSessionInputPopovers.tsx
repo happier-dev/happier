@@ -27,6 +27,20 @@ const LARGE_PICKER_LAYOUT: Pick<
 
 type ExternalSessionBrowseLockContext = Parameters<typeof resolveExternalSessionBrowseLockedSource>[0];
 
+function buildNewSessionPopoverSignature(value: unknown): string {
+    try {
+        return JSON.stringify(value) ?? 'null';
+    } catch {
+        return 'unserializable';
+    }
+}
+
+function useLatestRef<Value>(value: Value): React.MutableRefObject<Value> {
+    const ref = React.useRef(value);
+    ref.current = value;
+    return ref;
+}
+
 export function useNewSessionInputPopovers(params: Readonly<{
     selectedMachine: Machine | null;
     selectedMachineId: string | null;
@@ -42,7 +56,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
     allowedTargetServerIds: ReadonlyArray<string>;
     resolvedSettingsAllowedServerIds: ReadonlyArray<string>;
     activeServerId: string;
-    activeServerGeneration: number;
+    activeServerProfilesSignature: string;
     activeMachines: ReadonlyArray<Machine>;
     selectedServerId: string | null;
     recentMachines: ReadonlyArray<Machine>;
@@ -72,7 +86,18 @@ export function useNewSessionInputPopovers(params: Readonly<{
         allowedServerIds: machinePopoverServerIds,
         activeServerId: params.activeServerId,
         activeMachines: params.activeMachines,
-        refreshToken: params.activeServerGeneration,
+        refreshToken: params.activeServerProfilesSignature,
+    });
+    const machinePopoverRenderParamsRef = useLatestRef({
+        favoriteMachineItems: params.favoriteMachineItems,
+        getBestPathForMachine: params.getBestPathForMachine,
+        machinePopoverGroups,
+        recentMachines: params.recentMachines,
+        selectedMachine: params.selectedMachine,
+        selectedServerId: params.selectedServerId,
+        setSelectedMachineId: params.setSelectedMachineId,
+        setSelectedPath: params.setSelectedPath,
+        useMachinePickerSearch: params.useMachinePickerSearch,
     });
 
     const pathPopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
@@ -80,6 +105,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
             <NewSessionPathSelectionContent
                 machineHomeDir={params.selectedMachine?.metadata?.homeDir || '/home'}
                 selectedPath={params.selectedPath}
+                initialSuggestionMode="history"
                 onChangeSelectedPath={params.setSelectedPath}
                 onChangeDraftSelectedPath={params.setDraftSelectedPath}
                 // Keep the path popover mounted under the tree-browser modal so
@@ -126,42 +152,54 @@ export function useNewSessionInputPopovers(params: Readonly<{
         params.usePathPickerSearch,
     ]);
 
-    const machinePopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
-        renderContent: ({ maxHeight, requestClose }) => (
-            <NewSessionMachineSelectionContent
-                groups={machinePopoverGroups}
-                selectedMachine={params.selectedMachine}
-                selectedServerId={params.selectedServerId}
-                recentMachines={params.recentMachines}
-                favoriteMachines={params.favoriteMachineItems}
-                serverId={params.selectedServerId}
-                onSelectMachine={(machine) => {
-                    params.setSelectedMachineId(machine.id);
-                    params.setSelectedPath(params.getBestPathForMachine(machine.id));
-                    requestClose();
-                }}
-                onSelectScopedMachine={(machine) => {
-                    params.setSelectedMachineId(machine.id);
-                    params.setSelectedPath(params.getBestPathForMachine(machine.id));
-                    requestClose();
-                }}
-                showSearch={params.useMachinePickerSearch}
-                searchPlacement="header"
-                testIdPrefix="new-session-machine"
-                maxHeight={maxHeight}
-            />
-        ),
-        ...LARGE_PICKER_LAYOUT,
+    const machinePopoverSignature = React.useMemo(() => buildNewSessionPopoverSignature({
+        favoriteMachineItems: params.favoriteMachineItems,
+        machinePopoverGroups,
+        recentMachines: params.recentMachines,
+        selectedMachineId: params.selectedMachine?.id ?? null,
+        selectedServerId: params.selectedServerId,
+        useMachinePickerSearch: params.useMachinePickerSearch,
     }), [
         machinePopoverGroups,
         params.favoriteMachineItems,
-        params.getBestPathForMachine,
         params.recentMachines,
-        params.selectedMachine,
+        params.selectedMachine?.id,
         params.selectedServerId,
-        params.setSelectedMachineId,
-        params.setSelectedPath,
         params.useMachinePickerSearch,
+    ]);
+
+    const machinePopover = React.useMemo<AgentInputContentPopoverConfig>(() => ({
+        renderContent: ({ maxHeight, requestClose }) => {
+            const renderParams = machinePopoverRenderParamsRef.current;
+            return (
+                <NewSessionMachineSelectionContent
+                    groups={renderParams.machinePopoverGroups}
+                    selectedMachine={renderParams.selectedMachine}
+                    selectedServerId={renderParams.selectedServerId}
+                    recentMachines={renderParams.recentMachines}
+                    favoriteMachines={renderParams.favoriteMachineItems}
+                    serverId={renderParams.selectedServerId}
+                    onSelectMachine={(machine) => {
+                        renderParams.setSelectedMachineId(machine.id);
+                        renderParams.setSelectedPath(renderParams.getBestPathForMachine(machine.id));
+                        requestClose();
+                    }}
+                    onSelectScopedMachine={(machine) => {
+                        renderParams.setSelectedMachineId(machine.id);
+                        renderParams.setSelectedPath(renderParams.getBestPathForMachine(machine.id));
+                        requestClose();
+                    }}
+                    showSearch={renderParams.useMachinePickerSearch}
+                    searchPlacement="header"
+                    testIdPrefix="new-session-machine"
+                    maxHeight={maxHeight}
+                />
+            );
+        },
+        ...LARGE_PICKER_LAYOUT,
+    }), [
+        machinePopoverRenderParamsRef,
+        machinePopoverSignature,
     ]);
 
     const resumePopover = React.useMemo<AgentInputContentPopoverConfig>(() => {
@@ -199,7 +237,7 @@ export function useNewSessionInputPopovers(params: Readonly<{
                             if (!source) return null;
                             requestClose();
                             const nextResumeSessionId = await openExternalSessionsResumeIdPickerModal({
-                                title: t('externalSessions.browseTitle'),
+                                title: t('directSessions.browseTitle'),
                                 webPortalTarget: modalPortalTarget,
                                 lockScope: {
                                     machineId: params.selectedMachineId,

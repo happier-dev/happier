@@ -1,6 +1,5 @@
 import type { TracedMessage } from '../reducerTracer';
 import type { ReducerState } from '../reducer';
-import { cancelRunningTools } from '../helpers/cancelRunningApprovedTools';
 import { setThinkingMergeCursor } from '../helpers/mergeCursors';
 
 export function runModeSwitchEventsPhase(params: Readonly<{
@@ -23,15 +22,6 @@ export function runModeSwitchEventsPhase(params: Readonly<{
             state.messageIds.set(msg.id, msg.id);
 
             if (msg.content.type === 'task-lifecycle') {
-                if (msg.content.event === 'turn_aborted' || msg.content.event === 'task_complete') {
-                    cancelRunningTools({
-                        state,
-                        changed,
-                        completedAt: msg.createdAt,
-                        reason: 'Request interrupted',
-                        preferredToolId: msg.content.id ?? null,
-                    });
-                }
                 continue;
             }
 

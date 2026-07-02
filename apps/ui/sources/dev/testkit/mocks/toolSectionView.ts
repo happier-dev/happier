@@ -11,8 +11,9 @@ type ToolSectionViewMockProps = Readonly<Record<string, unknown> & {
 type ToolSectionViewRenderMode = 'fragment' | 'host' | 'null';
 
 export type CreateToolSectionViewModuleMockOptions = Readonly<
-    MergeModuleMockOptions<ToolSectionViewModule> & {
+    Omit<MergeModuleMockOptions<ToolSectionViewModule>, 'overrides'> & {
         mode?: ToolSectionViewRenderMode;
+        overrides?: Partial<ToolSectionViewModule>;
     }
 >;
 
@@ -33,10 +34,12 @@ function createToolSectionViewMockComponent(mode: ToolSectionViewRenderMode) {
 export async function createToolSectionViewModuleMock({
     importOriginal,
     mode = 'fragment',
+    overrides,
 }: CreateToolSectionViewModuleMockOptions): Promise<ToolSectionViewModule> {
     return mergeModuleMock<ToolSectionViewModule>({
         importOriginal,
         overrides: {
+            ...overrides,
             ToolSectionView: createToolSectionViewMockComponent(mode) as ToolSectionViewModule['ToolSectionView'],
         },
     });

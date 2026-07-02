@@ -10,6 +10,20 @@ import {
     resolveLiveActivitySnapshotFreshness,
 } from './buildLiveActivitySnapshots';
 
+function pendingAgentState(kind: 'permission' | 'user_action', createdAt = 950) {
+    return {
+        controlledByUser: null,
+        requests: {
+            request_1: {
+                tool: kind === 'permission' ? 'Bash' : 'Read',
+                kind,
+                arguments: {},
+                createdAt,
+            },
+        },
+    };
+}
+
 describe('buildLiveActivitySnapshots', () => {
     it('does not promote ready unread sessions into focused live activities when includeReady is disabled', () => {
         const snapshots = buildLiveActivitySnapshots({
@@ -30,6 +44,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     thinking: true,
+                    thinkingAt: 950,
                     metadata: {
                         path: '/Users/tester/project/thinking',
                         host: 'tester.local',
@@ -57,6 +72,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -69,6 +85,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    agentState: pendingAgentState('user_action'),
                     metadata: {
                         path: '/Users/tester/project/action',
                         host: 'tester.local',
@@ -81,6 +98,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     thinking: true,
+                    thinkingAt: 950,
                     metadata: {
                         path: '/Users/tester/project/thinking',
                         host: 'tester.local',
@@ -121,6 +139,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -148,6 +167,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -160,6 +180,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     pendingUserActionRequestCount: 1,
+                    agentState: pendingAgentState('user_action'),
                     metadata: {
                         path: '/Users/tester/project/action',
                         host: 'tester.local',
@@ -216,6 +237,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -243,6 +265,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -266,6 +289,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -293,6 +317,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -325,6 +350,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     metadata: {
                         path: '/Users/tester/project/private',
                         host: 'tester.local',
@@ -350,6 +376,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -374,6 +401,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -386,6 +414,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     thinking: true,
+                    thinkingAt: 950,
                     metadata: {
                         path: '/Users/tester/project/thinking',
                         host: 'tester.local',
@@ -433,6 +462,7 @@ describe('buildLiveActivitySnapshots', () => {
                     active: true,
                     presence: 'online',
                     pendingPermissionRequestCount: 1,
+                    agentState: pendingAgentState('permission'),
                     metadata: {
                         path: '/Users/tester/project/permission',
                         host: 'tester.local',
@@ -457,10 +487,11 @@ describe('buildLiveActivitySnapshots', () => {
     it('builds a stable fingerprint that ignores generated time', () => {
         const session = createSessionFixture({
             id: 'permission',
-            active: true,
-            presence: 'online',
-            pendingPermissionRequestCount: 1,
-            metadata: {
+        active: true,
+        presence: 'online',
+        pendingPermissionRequestCount: 1,
+        agentState: pendingAgentState('permission'),
+        metadata: {
                 path: '/Users/tester/project/permission',
                 host: 'tester.local',
                 homeDir: '/Users/tester',

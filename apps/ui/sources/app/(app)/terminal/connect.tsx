@@ -9,7 +9,7 @@ import { t } from '@/text';
 import { clearPendingTerminalConnect, getPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
 import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
-import { resolveEffectiveServerUrlOverride } from '@/sync/domains/server/url/serverUrlOverridePolicy';
+import { resolveEffectiveServerUrlOverride, shouldSwitchToServerUrl } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import {
     buildTerminalConnectAuthRedirectHref,
@@ -60,7 +60,7 @@ export default function TerminalConnectScreen() {
             const effectiveTarget = resolveEffectiveServerUrlOverride({
                 requestedServerUrl,
                 activeServerUrl,
-                allowLoopbackOverride: true,
+                allowLoopbackOverride: auth.isAuthenticated,
             });
             const desiredServerUrl = effectiveTarget || activeServerUrl || getActiveServerUrl();
             if (desiredServerUrl) {
@@ -81,7 +81,7 @@ export default function TerminalConnectScreen() {
         }
 
         setHashProcessed(true);
-    }, [hashProcessed]);
+    }, [auth.isAuthenticated, hashProcessed]);
 
     React.useEffect(() => {
         if (auth.isAuthenticated || !hashProcessed || !publicKey || authRedirectTriggeredRef.current) {
@@ -93,7 +93,6 @@ export default function TerminalConnectScreen() {
         const effectiveTarget = resolveEffectiveServerUrlOverride({
             requestedServerUrl: serverUrlFromHash,
             activeServerUrl,
-            allowLoopbackOverride: true,
         });
         const desiredServerUrl = effectiveTarget || activeServerUrl || getActiveServerUrl();
         setPendingTerminalConnect({
@@ -102,7 +101,7 @@ export default function TerminalConnectScreen() {
         });
 
         fireAndForget((async () => {
-            if (effectiveTarget && effectiveTarget !== activeServerUrl) {
+            if (effectiveTarget && shouldSwitchToServerUrl({ targetServerUrl: effectiveTarget, activeServerUrl })) {
                 try {
                     await upsertActivateAndSwitchServer({
                         serverUrl: effectiveTarget,

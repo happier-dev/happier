@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
-import { View, KeyboardAvoidingView, Platform, FlatList } from 'react-native';
+import type { ScrollView, ScrollViewProps } from 'react-native';
+import { View, FlatList } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { UserSearchResult } from '@/components/friends/UserSearchResult';
 import { searchUsersByUsername, sendFriendRequest } from '@/sync/api/social/apiFriends';
@@ -10,6 +11,7 @@ import { t } from '@/text';
 import { trackFriendsConnect } from '@/track';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { KeyboardAwareScrollView } from '@/components/ui/keyboardAvoidance';
 import { useSearch } from '@/hooks/search/useSearch';
 import { useRequireFriendsEnabled } from '@/hooks/friends/useRequireFriendsEnabled';
 import { HappyError } from '@/utils/errors/errors';
@@ -17,6 +19,19 @@ import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFr
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
+type KeyboardAwareItemListProps = ScrollViewProps & Readonly<{
+    children?: React.ReactNode;
+}>;
+
+const FriendsSearchKeyboardAwareItemList = React.forwardRef<ScrollView, KeyboardAwareItemListProps>(
+    function FriendsSearchKeyboardAwareItemList({ children, ...props }, ref) {
+        return (
+            <ItemList ref={ref} {...props}>
+                {children}
+            </ItemList>
+        );
+    },
+);
 
 export default function SearchFriendsScreen() {
     const { theme } = useUnistyles();
@@ -94,14 +109,12 @@ export default function SearchFriendsScreen() {
 
     return (
         <RequireFriendsIdentityForFriends>
-            <KeyboardAvoidingView
+            <KeyboardAwareScrollView
                 style={styles.container}
-                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                ScrollViewComponent={FriendsSearchKeyboardAwareItemList}
+                keyboardShouldPersistTaps="handled"
             >
-                <ItemList
-                    style={{ paddingTop: 0 }}
-                    keyboardShouldPersistTaps="handled"
-                >
+                <View style={{ paddingTop: 0 }}>
                     <ItemGroup
                         title={t('friends.searchInstructions')}
                         style={styles.searchSection}
@@ -169,8 +182,8 @@ export default function SearchFriendsScreen() {
                             )}
                         </View>
                     </ItemGroup>
-                </ItemList>
-            </KeyboardAvoidingView>
+                </View>
+            </KeyboardAwareScrollView>
         </RequireFriendsIdentityForFriends>
     );
 }

@@ -20,7 +20,15 @@ import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 import { ConnectedServiceQuotaCard } from '../ConnectedServiceQuotaCard';
+import {
+  isConnectedServiceCredentialReferencedByGroupError,
+  resolveConnectedServiceSettingsErrorMessage,
+} from '../connectedServiceSettingsErrors';
 import { resolveConnectedServiceDisplayName } from '../model/resolveConnectedServiceDisplayName';
+import {
+  formatConnectedServiceProfileGroupReferenceLabels,
+  resolveConnectedServiceProfileGroupReferenceLabels,
+} from '../model/resolveConnectedServiceProfileGroupReferences';
 
 function asStringParam(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === 'string' ? value[0] : '';
@@ -38,6 +46,7 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
 
   const connectedServicesEnabled = useFeatureEnabled('connectedServices');
   const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
+  const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
 
   const rawServiceId = asStringParam((params as Record<string, unknown>).serviceId).trim();
   const parsedServiceId = ConnectedServiceIdSchema.safeParse(rawServiceId);
@@ -107,16 +116,56 @@ export const ConnectedServiceProfileDetailView = React.memo(function ConnectedSe
   };
 
   const handleDisconnect = async () => {
+    const rawGroups = accountGroupsEnabled && svc && typeof svc === 'object'
+      ? (svc as { groups?: unknown }).groups
+      : null;
+    const groupReferenceLabels = resolveConnectedServiceProfileGroupReferenceLabels({
+      profileId,
+      groups: Array.isArray(rawGroups) ? rawGroups : [],
+    });
+    const cleanupGroupReferences = groupReferenceLabels.length > 0;
     const ok = await Modal.confirm(
       t('modals.disconnect'),
-      t('connectedServices.detail.disconnectConfirmBody', { service: serviceLabel, profileId }),
+      cleanupGroupReferences
+        ? t('connectedServices.detail.disconnectGroupCleanupConfirmBody', {
+          service: serviceLabel,
+          profileId,
+          groups: formatConnectedServiceProfileGroupReferenceLabels(groupReferenceLabels),
+        })
+        : t('connectedServices.detail.disconnectConfirmBody', { service: serviceLabel, profileId }),
       { confirmText: t('modals.disconnect'), cancelText: t('common.cancel') },
     );
     if (!ok) return;
-    const credentials = ensureCredentials();
-    await deleteConnectedServiceCredentialForAccount(credentials, { serviceId, profileId });
-    await sync.refreshProfile();
-    router.back();
+    const disconnect = async (cleanup: boolean) => {
+      const credentials = ensureCredentials();
+      await deleteConnectedServiceCredentialForAccount(credentials, {
+        serviceId,
+        profileId,
+        ...(cleanup ? { cleanupGroupReferences: true } : {}),
+      });
+      await sync.refreshProfile();
+      router.back();
+    };
+    try {
+      await disconnect(cleanupGroupReferences);
+    } catch (e: unknown) {
+      if (!cleanupGroupReferences && isConnectedServiceCredentialReferencedByGroupError(e)) {
+        const retry = await Modal.confirm(
+          t('modals.disconnect'),
+          t('connectedServices.errors.credentialReferencedByGroup'),
+          { confirmText: t('modals.disconnect'), cancelText: t('common.cancel') },
+        );
+        if (!retry) return;
+        try {
+          await disconnect(true);
+          return;
+        } catch (retryError: unknown) {
+          await Modal.alert(t('common.error'), resolveConnectedServiceSettingsErrorMessage(retryError));
+          return;
+        }
+      }
+      await Modal.alert(t('common.error'), resolveConnectedServiceSettingsErrorMessage(e));
+    }
   };
 
   const handleSetDefault = async () => {

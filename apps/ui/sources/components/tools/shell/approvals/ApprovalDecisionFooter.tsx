@@ -36,21 +36,6 @@ export const ApprovalDecisionFooter = React.memo(function ApprovalDecisionFooter
     return (
         <View style={styles.container}>
             <Pressable
-                testID="approval-prompt-reject"
-                accessibilityRole="button"
-                accessibilityLabel={t('approvals.reject')}
-                disabled={disabled}
-                onPress={props.onReject}
-                style={({ pressed }) => [
-                    styles.button,
-                    styles.rejectButton,
-                    pressed && !disabled ? styles.buttonPressed : null,
-                    disabled ? styles.buttonDisabled : null,
-                ]}
-            >
-                <Text style={styles.rejectText}>{t('approvals.reject')}</Text>
-            </Pressable>
-            <Pressable
                 testID="approval-prompt-approve"
                 accessibilityRole="button"
                 accessibilityLabel={t('approvals.approve')}
@@ -68,6 +53,21 @@ export const ApprovalDecisionFooter = React.memo(function ApprovalDecisionFooter
                 ) : (
                     <Text style={styles.approveText}>{t('approvals.approve')}</Text>
                 )}
+            </Pressable>
+            <Pressable
+                testID="approval-prompt-reject"
+                accessibilityRole="button"
+                accessibilityLabel={t('approvals.reject')}
+                disabled={disabled}
+                onPress={props.onReject}
+                style={({ pressed }) => [
+                    styles.button,
+                    styles.rejectButton,
+                    pressed && !disabled ? styles.buttonPressed : null,
+                    disabled ? styles.buttonDisabled : null,
+                ]}
+            >
+                <Text style={styles.rejectText}>{t('approvals.reject')}</Text>
             </Pressable>
         </View>
     );

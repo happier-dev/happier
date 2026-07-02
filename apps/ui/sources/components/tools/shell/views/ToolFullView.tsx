@@ -17,10 +17,17 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Text, TextSelectabilityScope } from '@/components/ui/text/Text';
 import { resolveToolHeaderTextPresentation } from '@/components/tools/shell/presentation/resolveToolHeaderTextPresentation';
 import { resolvePermissionPromptSurface, shouldShowGenericPermissionPromptForRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
-import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
+import {
+    isSidechainHydrationPendingStatus,
+    useEnsureSidechainsLoaded,
+} from '@/hooks/session/useEnsureSidechainsLoaded';
 import { ChainTranscriptList } from '@/components/sessions/transcript/ChainTranscriptList';
 import { sync } from '@/sync/sync';
 import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
+import {
+    SidechainHydrationInlineStatus,
+    shouldShowSidechainHydrationInlineStatus,
+} from './SidechainHydrationInlineStatus';
 import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { resolveInactiveSessionToolCallFailure } from '../permissions/resolveInactiveSessionToolCallFailure';
 import { ToolError } from '@/components/tools/shell/presentation/ToolError';
@@ -73,15 +80,32 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
     const transcriptSidechainId = React.useMemo(() => {
         return resolveToolTranscriptSidechainId({ tool: toolForRendering, normalizedToolName });
     }, [normalizedToolName, toolForRendering]);
+    const isSubAgentTranscriptTool = isSubAgentTranscriptToolName(normalizedToolName);
 
-    useEnsureSidechainsLoaded({
+    const sidechainHydration = useEnsureSidechainsLoaded({
         enabled:
             typeof sessionId === 'string' &&
             sessionId.length > 0 &&
-            isSubAgentTranscriptToolName(normalizedToolName),
+            isSubAgentTranscriptTool,
         sessionId,
         sidechainIds: [transcriptSidechainId],
     });
+    const sidechainHydrationStatus = transcriptSidechainId
+        ? sidechainHydration.bySidechainId[transcriptSidechainId]?.status ?? sidechainHydration.status
+        : sidechainHydration.status;
+    const showSidechainLoading =
+        isSubAgentTranscriptTool &&
+        messages.length === 0 &&
+        isSidechainHydrationPendingStatus(
+            transcriptSidechainId ? sidechainHydration.bySidechainId[transcriptSidechainId]?.status : undefined,
+        );
+    const showSidechainHydrationStatus =
+        isSubAgentTranscriptTool &&
+        shouldShowSidechainHydrationInlineStatus({
+            messageCount: messages.length,
+            sidechainId: transcriptSidechainId,
+            status: sidechainHydrationStatus,
+        });
 
     // Check if there's a specialized content view for this tool.
     // ToolFullView always renders the same tool renderer in `detailLevel="full"` mode.
@@ -97,7 +121,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
     const sidechainId = transcriptSidechainId;
     const canRenderTaskTranscript =
         normalizedSessionId !== null &&
-        isSubAgentTranscriptToolName(normalizedToolName) &&
+        isSubAgentTranscriptTool &&
         (sidechainId !== null || messages.length > 0);
     const resolvedPermissionPromptSurface =
         forcePermissionFooterInTranscript
@@ -174,16 +198,26 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
 
     if (canRenderTaskTranscript && normalizedSessionId) {
         const transcriptHeader =
-            messages.length === 0 && SpecializedFullView ? (
+            messages.length === 0 && (SpecializedFullView || showSidechainHydrationStatus) ? (
                 <TextSelectabilityScope selectable>
-                    <SpecializedFullView
-                        tool={toolForRendering}
-                        metadata={metadata || null}
-                        messages={messages}
-                        sessionId={sessionId}
-                        detailLevel="full"
-                        interaction={interaction}
-                    />
+                    <>
+                        {SpecializedFullView ? (
+                            <SpecializedFullView
+                                tool={toolForRendering}
+                                metadata={metadata || null}
+                                messages={messages}
+                                sessionId={sessionId}
+                                detailLevel="full"
+                                interaction={interaction}
+                            />
+                        ) : null}
+                        {showSidechainHydrationStatus ? (
+                            <SidechainHydrationInlineStatus
+                                testID="tool-sidechain-loading"
+                                status={sidechainHydrationStatus}
+                            />
+                        ) : null}
+                    </>
                 </TextSelectabilityScope>
             ) : null;
 
@@ -197,6 +231,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], jumpChi
                             metadata={metadata || null}
                             interaction={transcriptInteraction}
                             forcePermissionPromptsInTranscript={forcePermissionFooterInTranscript}
+                            isInitialLoadInFlight={showSidechainLoading}
                             loadOlder={sidechainId ? loadOlderSidechain : undefined}
                             jumpToMessageId={normalizedJumpChildId}
                             header={transcriptHeader}

@@ -15,6 +15,13 @@ vi.mock('expo-camera', () => ({
     useCameraPermissions: () => [{ granted: true }, vi.fn(async () => ({ granted: true }))],
 }));
 
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+}));
+vi.mock('@expo/vector-icons/Ionicons', () => ({
+    default: 'Ionicons',
+}));
+
 const expoRouterMock = createExpoRouterMock({
     router: { push: vi.fn(), replace: vi.fn() },
 });
@@ -223,8 +230,28 @@ vi.mock('@/components/navigation/shell/MainView', () => ({
     MainView: () => null,
 }));
 
-vi.mock('@/components/onboarding/preAuth/WelcomeProvidersShowcase', () => ({
-    WelcomeProvidersShowcase: () => null,
+vi.mock('@/components/onboarding/unauthShell', () => ({
+    UnauthenticatedSplitShell: (props: any) => React.createElement('UnauthenticatedSplitShell', props, props.children),
+    useApplyBrandHeroSeen: () => vi.fn(),
+}));
+
+vi.mock('@/components/onboarding/preAuth/WelcomeDecisionPanel', () => ({
+    WelcomeDecisionPanel: (props: any) => React.createElement(
+        'WelcomeDecisionPanel',
+        props,
+        React.createElement('ActionButton', {
+            testID: 'welcome-restore',
+            onPress: props.onOpenRestore,
+        }),
+        props.authEntryOptions?.showProviderSignup ? React.createElement('ActionButton', {
+            testID: 'welcome-signup-provider',
+            action: () => props.onCreateAccountViaProvider?.(props.authEntryOptions.providerId),
+        }) : null,
+        React.createElement('ActionButton', {
+            testID: 'welcome-create-account',
+            action: () => props.onLoginWithKeylessProvider?.(props.authEntryOptions?.keylessProviderId ?? 'github'),
+        }),
+    ),
 }));
 
 vi.mock('@/components/account/auth/AuthEntryView', () => ({
@@ -344,7 +371,10 @@ async function advanceWizardToAuth(screen: RenderScreenResult) {
 }
 
 function findActionButton(screen: RenderScreenResult, testID: string) {
-    const button = screen.findAllByTestId(testID).find((node) => typeof node.props.action === 'function');
+    const button = screen.findAllByTestId(testID).find((node) => (
+        typeof node.props.action === 'function'
+        || typeof node.props.onPress === 'function'
+    ));
     if (!button) {
         throw new Error(`Unable to find action button "${testID}"`);
     }
@@ -470,7 +500,7 @@ describe('Home external auth start', () => {
         expect(screen.findAllByTestId('welcome-create-account').length).toBeGreaterThan(0);
     });
 
-    it('lets users skip directly to auth from the wizard header', async () => {
+    it('lets users enter restore from the welcome decision', async () => {
         tauriDesktopState.value = true;
 
         const Home = await loadHome();
@@ -479,11 +509,11 @@ describe('Home external auth start', () => {
         const screen = await renderScreen(<Home />);
         await flushHookEffects({ cycles: 3, turns: 3 });
 
-        const skip = screen.findByTestId('onboarding-wizard-skip');
-        expect(skip).not.toBeNull();
+        const restore = screen.findByTestId('welcome-restore');
+        expect(restore).not.toBeNull();
 
         await act(async () => {
-            const handler = skip?.props.onPress ?? skip?.props.action;
+            const handler = restore?.props.onPress ?? restore?.props.action;
             await handler?.();
         });
 

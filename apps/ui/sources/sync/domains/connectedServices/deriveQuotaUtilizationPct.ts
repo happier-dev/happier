@@ -2,6 +2,8 @@ export type QuotaUtilizationMeterLike = Readonly<{
   used: number | null;
   limit: number | null;
   utilizationPct: number | null;
+  usedPct?: number | null;
+  remainingPct?: number | null;
 }>;
 
 export function clampQuotaPct(value: number): number {
@@ -11,6 +13,14 @@ export function clampQuotaPct(value: number): number {
 export function deriveQuotaUtilizationPct(meter: QuotaUtilizationMeterLike): number | null {
   if (typeof meter.utilizationPct === 'number' && Number.isFinite(meter.utilizationPct)) {
     return clampQuotaPct(meter.utilizationPct);
+  }
+
+  if (typeof meter.usedPct === 'number' && Number.isFinite(meter.usedPct)) {
+    return clampQuotaPct(meter.usedPct);
+  }
+
+  if (typeof meter.remainingPct === 'number' && Number.isFinite(meter.remainingPct)) {
+    return clampQuotaPct(100 - meter.remainingPct);
   }
 
   if (
@@ -25,4 +35,3 @@ export function deriveQuotaUtilizationPct(meter: QuotaUtilizationMeterLike): num
 
   return null;
 }
-

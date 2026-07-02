@@ -1,5 +1,5 @@
 import React from 'react';
-import { Animated, Platform, Pressable, View, type LayoutChangeEvent } from 'react-native';
+import { Animated, Platform, Pressable, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
 import { GestureDetector, Swipeable, type ComposedGesture, type GestureType } from 'react-native-gesture-handler';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -12,49 +12,62 @@ import {
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
-import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Typography } from '@/constants/Typography';
 import { formatPendingCountBadge } from '@/components/sessions/pendingBadge';
-import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { HappyError } from '@/utils/errors/errors';
-import { Modal } from '@/modal';
 import { t } from '@/text';
-import { sessionArchiveWithServerScope, sessionRename, sessionSetManualReadStateWithServerScope, sessionStopWithServerScope } from '@/sync/ops';
-import { useHasUnreadMessages, useSessionListActivityTimeLabel, useSessionListRenderableWithServerScope, useSetting } from '@/sync/domains/state/storage';
-import { resolveSessionReadStateAction } from '@/sync/domains/session/readState/sessionReadState';
-import { createSessionReadStateDropdownItem, resolveSessionReadStateFromActionId } from '@/components/sessions/actions/sessionReadStateActionItems';
-import type { SessionListSecondaryLineMode } from '@/sync/domains/session/listing/deriveSessionListActivity';
+import {
+    deriveSessionListAttentionState,
+    type SessionListSecondaryLineMode,
+} from '@/sync/domains/session/listing/deriveSessionListActivity';
 import { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { getSessionAvatarId, getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
+import { getSessionAvatarId, getSessionName, getSessionSubtitle, type SessionStatus } from '@/utils/sessions/sessionUtils';
 import { PinIcon, PinSlashIcon } from './sessionPinIcons';
 import { TagIcon } from './sessionTagIcons';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ContextMenu } from '@/components/ui/forms/dropdown/ContextMenu';
-import { shouldEmphasizeSessionRowTitle } from './row/resolveSessionRowPresentation';
 import {
-    deriveSessionRowTitleAttentionState,
+    resolveSessionRowAttentionState,
+    resolveSessionRowPresentation,
+} from './row/resolveSessionRowPresentation';
+import {
     normalizeSessionListActiveColorMode,
     resolveSessionRowTitleColorRole,
 } from './row/sessionRowTitleColorRole';
+import { SessionRowAttentionIndicator } from './row/SessionRowAttentionIndicator';
 import {
     SESSION_LIST_ROW_HEIGHT_COMPACT,
     SESSION_LIST_ROW_HEIGHT_DEFAULT,
     SESSION_LIST_ROW_HEIGHT_MINIMAL,
 } from './sessionListRowHeights';
-import { clearSessionVisibleWhenInactive, isSessionActiveArchiveResult, stopSessionAndMaybeArchive } from '../sessionStopArchiveFlow';
 import { resolveSessionRowInteractionPolicy } from './row/resolveSessionRowInteractionPolicy';
 import { resolveSessionItemTagCollections } from './sessionTagUtils';
-import { resolveSessionTagPlacement } from './sessionTagPlacement';
+import { planSessionTagDisplay } from './sessionTagPlacement';
 import { useSessionSplitCanvasRowActionsForScope } from '@/components/sessions/canvas/useSessionSplitCanvasRowActions';
 import { SessionSplitCanvasDragHandle } from '@/components/sessions/canvas/SessionSplitCanvasDragHandle';
-import { useSessionListRenderableStatus } from './row/useSessionListRenderableStatus';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import { resolveSessionSplitCanvasScope } from '@/sync/domains/session/sessionSplitCanvasScope';
 import type { SessionFolderMoveTarget } from '@/sync/domains/session/folders';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { useIsTablet } from '@/utils/platform/responsive';
+import type { SessionListRowViewModel } from './sessionListRowViewModels';
+import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
+import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
+import {
+    SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_PIN_ID,
+    SESSION_ACTION_UNPIN_ID,
+} from '@/components/sessions/actions/sessionActionIds';
+import { resolveKeyboardPlatform } from '@/keyboard/runtime';
+import { SessionListSelectionCheckbox } from './selection/SessionListSelectionCheckbox';
+import { useOptionalSessionListSelectionRow } from './selection/SessionListSelectionContext';
+import { resolveSessionListSelectionPointerAction } from './selection/sessionListSelectionPointer';
+import { useSessionRowActionMenu } from './row/actionMenu/useSessionRowActionMenu';
+import {
+    SESSION_ROW_ACTION_OPEN_SPLIT_DOWN_ID,
+    SESSION_ROW_ACTION_OPEN_SPLIT_RIGHT_ID,
+    SESSION_ROW_ACTION_REVEAL_IN_CURRENT_SPLIT_ID,
+} from './row/actionMenu/sessionRowActionMenuTypes';
 
 const AVATAR_SIZE_DEFAULT = 48;
 const AVATAR_SIZE_COMPACT = 30;
@@ -69,18 +82,160 @@ const CONTEXT_MENU_PRESS_SUPPRESSION_TIMEOUT_MS = 600;
 const SESSION_IDENTITY_SKELETON_ANIMATION_MS = 900;
 const SESSION_FOLDER_ROW_CHROME_INDENT_BASE = 38;
 const SESSION_FOLDER_ROW_CHROME_INDENT_STEP = 12;
-const SESSION_MOVE_TO_FOLDER_ACTION_ID = 'session.move-to-folder';
 const SESSION_FOLDER_MOVE_MENU_INDENT_BASE = 16;
 const SESSION_FOLDER_MOVE_MENU_INDENT_STEP = 12;
 
+type SessionItemWorkingIndicatorMode = 'spinner' | 'pulse';
+type SessionItemIdentityDisplay = 'avatar' | 'agentLogo' | 'none';
+type SessionItemActiveColorMode = 'activityAndAttention' | 'attentionOnly' | 'allActive';
+
+export type SessionItemBaseProps = Readonly<{
+    embedded?: boolean;
+    embeddedIsLast?: boolean;
+    session: Session | SessionListRenderableSession;
+    subtitleOverride?: string | null;
+    subtitleEllipsizeMode?: 'head' | 'tail';
+    serverId?: string;
+    serverName?: string;
+    currentUserId?: string | null;
+    showServerBadge?: boolean;
+    pinned?: boolean;
+    onTogglePinned?: (() => void) | null;
+    tags?: string[];
+    allKnownTags?: string[];
+    onSetTags?: ((newTags: string[]) => void) | null;
+    tagsEnabled?: boolean;
+    selectionKey?: string | null;
+    selected?: boolean;
+    isFirst?: boolean;
+    isLast?: boolean;
+    isSingle?: boolean;
+    variant?: 'default' | 'no-path';
+    secondaryLineMode?: SessionListSecondaryLineMode;
+    compact?: boolean;
+    compactMinimal?: boolean;
+    folderDepth?: number;
+    folderMoveTargets?: readonly SessionFolderMoveTarget[];
+    onMoveToSessionFolder?: (folderId: string | null) => void | Promise<void>;
+    onMoveToFolder?: () => void;
+    onMoveToWorkspaceRoot?: () => void;
+    onMoveUp?: () => void;
+    onMoveDown?: () => void;
+    reorderHandleGesture?: GestureType | ComposedGesture;
+    isBeingDragged?: boolean;
+    nativeInlineDragEnabled?: boolean;
+    nativeContextMenuOpen?: boolean;
+    onNativeContextMenuOpenChange?: (next: boolean) => void;
+    rowAttentionAnimationEnabled?: boolean;
+}>;
+
+export type SessionItemProps = SessionItemBaseProps & Readonly<{
+    rowViewModel: SessionListRowViewModel;
+    hideInactiveSessions?: boolean;
+}>;
+
+type SessionItemContentProps = Omit<SessionItemBaseProps, 'subtitleOverride'> & Readonly<{
+    sessionStatus: SessionStatus;
+    sessionNameResolved: string;
+    sessionSubtitle: string;
+    isSessionIdentityLoading: boolean;
+    activityTimeLabel: string;
+    hasUnreadMessages: boolean;
+    workingIndicatorMode: SessionItemWorkingIndicatorMode;
+    rowAttentionAnimationEnabled: boolean;
+    sessionListIdentityDisplay: SessionItemIdentityDisplay;
+    sessionListActiveColorMode: SessionItemActiveColorMode;
+    hideInactiveSessions: boolean;
+}>;
+
 function resolveSessionListAgentLogoSize(slotSize: number): number {
     return Math.max(SESSION_LIST_AGENT_LOGO_MIN_SIZE, Math.round(slotSize * SESSION_LIST_AGENT_LOGO_SIZE_RATIO));
+}
+
+function normalizeSessionItemIdentityDisplay(value: unknown): SessionItemIdentityDisplay {
+    return value === 'agentLogo' || value === 'none' ? value : 'avatar';
+}
+
+function normalizeSessionItemActiveColorMode(value: unknown): SessionItemActiveColorMode {
+    return value === 'attentionOnly' || value === 'allActive' ? value : 'activityAndAttention';
+}
+
+function hasPendingUserActionRequests(session: Session | SessionListRenderableSession): boolean {
+    return 'hasPendingUserActionRequests' in session && session.hasPendingUserActionRequests === true;
+}
+
+function hasPendingPermissionRequests(session: Session | SessionListRenderableSession): boolean {
+    return 'hasPendingPermissionRequests' in session && session.hasPendingPermissionRequests === true;
+}
+
+function resolveSessionItemEffectiveStatus(input: Readonly<{
+    rowSession: SessionListRenderableSession;
+    renderedSession: Session | SessionListRenderableSession;
+    rowStatus: SessionStatus;
+}>): SessionStatus {
+    if (input.renderedSession === input.rowSession) {
+        return input.rowStatus;
+    }
+
+    if (
+        hasPendingUserActionRequests(input.renderedSession)
+        && !hasPendingUserActionRequests(input.rowSession)
+    ) {
+        return {
+            ...input.rowStatus,
+            state: 'action_required',
+            statusText: t('status.actionRequired'),
+            shouldShowStatus: true,
+            isPulsing: true,
+        };
+    }
+
+    if (
+        hasPendingPermissionRequests(input.renderedSession)
+        && !hasPendingPermissionRequests(input.rowSession)
+    ) {
+        return {
+            ...input.rowStatus,
+            state: 'permission_required',
+            statusText: t('status.permissionRequired'),
+            shouldShowStatus: true,
+            isPulsing: true,
+        };
+    }
+
+    return input.rowStatus;
+}
+
+function resolveSessionItemEffectiveSession(input: Readonly<{
+    rowSession: SessionListRenderableSession;
+    providedSession: Session | SessionListRenderableSession;
+}>): Session | SessionListRenderableSession {
+    if (input.providedSession.id !== input.rowSession.id) {
+        return input.rowSession;
+    }
+    if (
+        hasPendingUserActionRequests(input.providedSession)
+        && !hasPendingUserActionRequests(input.rowSession)
+    ) {
+        return input.providedSession;
+    }
+    if (
+        hasPendingPermissionRequests(input.providedSession)
+        && !hasPendingPermissionRequests(input.rowSession)
+    ) {
+        return input.providedSession;
+    }
+    return input.rowSession;
 }
 
 function resolveSessionFolderMoveTargetRowContainerStyle(depth: number) {
     const normalizedDepth = Math.max(0, Math.floor(Number.isFinite(depth) ? depth : 0));
     if (normalizedDepth === 0) return undefined;
     return { paddingLeft: SESSION_FOLDER_MOVE_MENU_INDENT_BASE + normalizedDepth * SESSION_FOLDER_MOVE_MENU_INDENT_STEP };
+}
+
+function resolveSessionFolderMoveTargetTestId(target: SessionFolderMoveTarget): string {
+    return `dropdown-option-move-to-folder_${target.folderId ?? 'null'}`;
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -496,12 +651,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export const SessionItem = React.memo(
+const SessionItemContent = React.memo(
     ({
         embedded,
         embeddedIsLast,
         session,
-        subtitleOverride,
         subtitleEllipsizeMode,
         serverId,
         serverName,
@@ -513,6 +667,7 @@ export const SessionItem = React.memo(
         allKnownTags,
         onSetTags,
         tagsEnabled,
+        selectionKey,
         selected,
         isFirst,
         isLast,
@@ -533,56 +688,24 @@ export const SessionItem = React.memo(
         nativeInlineDragEnabled,
         nativeContextMenuOpen,
         onNativeContextMenuOpenChange,
-    }: {
-        embedded?: boolean;
-        embeddedIsLast?: boolean;
-        session: Session | SessionListRenderableSession;
-        subtitleOverride?: string | null;
-        subtitleEllipsizeMode?: 'head' | 'tail';
-        serverId?: string;
-        serverName?: string;
-        currentUserId?: string | null;
-        showServerBadge?: boolean;
-        pinned?: boolean;
-        onTogglePinned?: (() => void) | null;
-        tags?: string[];
-        allKnownTags?: string[];
-        onSetTags?: ((newTags: string[]) => void) | null;
-        tagsEnabled?: boolean;
-        selected?: boolean;
-        isFirst?: boolean;
-        isLast?: boolean;
-        isSingle?: boolean;
-        variant?: 'default' | 'no-path';
-        secondaryLineMode?: SessionListSecondaryLineMode;
-        compact?: boolean;
-        compactMinimal?: boolean;
-        folderDepth?: number;
-        folderMoveTargets?: readonly SessionFolderMoveTarget[];
-        onMoveToSessionFolder?: (folderId: string | null) => void | Promise<void>;
-        onMoveToFolder?: () => void;
-        onMoveToWorkspaceRoot?: () => void;
-        onMoveUp?: () => void;
-        onMoveDown?: () => void;
-        reorderHandleGesture?: GestureType | ComposedGesture;
-        isBeingDragged?: boolean;
-        nativeInlineDragEnabled?: boolean;
-        nativeContextMenuOpen?: boolean;
-        onNativeContextMenuOpenChange?: (next: boolean) => void;
-    }) => {
+        sessionStatus,
+        sessionNameResolved,
+        sessionSubtitle,
+        isSessionIdentityLoading,
+        activityTimeLabel,
+        hasUnreadMessages,
+        workingIndicatorMode,
+        rowAttentionAnimationEnabled,
+        sessionListIdentityDisplay,
+        sessionListActiveColorMode,
+        hideInactiveSessions,
+    }: SessionItemContentProps) => {
         const styles = stylesheet;
         const { theme } = useUnistyles();
-        const sessionId = String(session?.id ?? '').trim();
-        const sessionFromStore = useSessionListRenderableWithServerScope(serverId ?? null, sessionId);
-        const resolvedSession = sessionFromStore ?? session;
-        const sessionStatus = useSessionListRenderableStatus(resolvedSession);
-        const sessionNameResolved = getSessionName(resolvedSession);
-        const isSessionMetadataUnavailable =
-            (resolvedSession as SessionListRenderableSession).metadataUnavailable === true;
-        const isSessionIdentityLoading =
-            !isSessionMetadataUnavailable
-            && resolvedSession.metadata == null
-            && sessionNameResolved === t('status.unknown');
+        const resolvedSession = session;
+        const sessionId = String(resolvedSession?.id ?? '').trim();
+        const resolvedSelectionKey = selectionKey ?? '';
+        const rowSelection = useOptionalSessionListSelectionRow(resolvedSelectionKey);
         const identitySkeletonOpacity = React.useRef(new Animated.Value(0.45)).current;
         React.useEffect(() => {
             if (!isSessionIdentityLoading) return;
@@ -607,7 +730,6 @@ export const SessionItem = React.memo(
                 animation.stop();
             };
         }, [isSessionIdentityLoading, identitySkeletonOpacity]);
-        const sessionSubtitle = subtitleOverride ?? getSessionSubtitle(resolvedSession);
         const navigateToSession = useNavigateToSession();
         const splitCanvasScope = React.useMemo(() => {
             return resolveSessionSplitCanvasScope(resolveWorkspaceTargetForSession(sessionId), {
@@ -619,20 +741,17 @@ export const SessionItem = React.memo(
             scope: splitCanvasScope,
         });
         const swipeableRef = React.useRef<Swipeable | null>(null);
-        const sessionOwnerId = typeof resolvedSession.owner === 'string' ? resolvedSession.owner : null;
-        const isOwnedByCurrentUser = !sessionOwnerId || Boolean(currentUserId && sessionOwnerId === currentUserId);
-        const hasAdminAccess = isOwnedByCurrentUser || resolvedSession.accessLevel === 'admin';
-        const isActiveSession = resolvedSession.active === true;
-        const isArchivedSession = resolvedSession.archivedAt != null;
+        const sessionActionTarget = React.useMemo(() => createSessionActionTarget({
+            session: resolvedSession,
+            serverId: serverId ?? null,
+            currentUserId: currentUserId ?? null,
+            isConnected: sessionStatus.isConnected,
+            isPinned: Boolean(pinned),
+        }), [currentUserId, pinned, resolvedSession, serverId, sessionStatus.isConnected]);
+        const isActiveSession = sessionActionTarget.isActive;
         const isMinimal = Boolean(compact && compactMinimal);
-        const sessionListWorkingIndicatorStyle = useSetting('sessionListNarrowWorkingIndicatorStyle');
-        const sessionListIdentityDisplay = useSetting('sessionListIdentityDisplay');
-        const sessionListActiveColorMode = useSetting('sessionListActiveColorModeV1');
-        const workingIndicatorMode = sessionListWorkingIndicatorStyle === 'pulse' ? 'pulse' : 'spinner';
-        const canStopSession = isOwnedByCurrentUser;
-        const canArchiveSession = hasAdminAccess && !isArchivedSession;
-        const canRenameSession = hasAdminAccess;
-        const hideInactiveSessions = useSetting('hideInactiveSessions');
+        const canStopSession = sessionActionTarget.canStop;
+        const canArchiveSession = sessionActionTarget.canArchive;
         const [isRowHovered, setIsRowHovered] = React.useState(false);
         const [isActionsHovered, setIsActionsHovered] = React.useState(false);
         const [tagMenuOpen, setTagMenuOpen] = React.useState(false);
@@ -645,16 +764,22 @@ export const SessionItem = React.memo(
         const useReadableNativePhoneMinimalRow = isMinimal && isNativeMobile && !isTablet;
         const showRowActions = isWeb && (isRowHovered || isActionsHovered || tagMenuOpen || moreMenuOpen || isBeingDragged === true);
         const rowActionIconColor = theme.colors.text.secondary;
-        const readStateAction = React.useMemo(() => {
-            if (isArchivedSession) return { kind: 'none' as const, visible: false as const };
-            return resolveSessionReadStateAction(resolvedSession);
-        }, [isArchivedSession, resolvedSession]);
-        const readStateMenuItem = React.useMemo(
-            () => createSessionReadStateDropdownItem(readStateAction, rowActionIconColor),
-            [readStateAction, rowActionIconColor],
-        );
         const supportsPin = typeof onTogglePinned === 'function';
         const supportsTag = tagsEnabled === true && typeof onSetTags === 'function';
+        const handleTogglePinnedAction = React.useCallback(() => {
+            if (!onTogglePinned) return;
+            void executeSessionAction({
+                actionId: pinned ? SESSION_ACTION_UNPIN_ID : SESSION_ACTION_PIN_ID,
+                target: sessionActionTarget,
+                context: {
+                    operations: {
+                        setPinned: () => {
+                            onTogglePinned();
+                        },
+                    },
+                },
+            });
+        }, [onTogglePinned, pinned, sessionActionTarget]);
         const showTagAction = supportsTag && showRowActions;
         const showSplitCanvasDragHandle = splitCanvasRowActions.mode === 'open' && showRowActions;
         const { activeTags, knownTags } = React.useMemo(() => resolveSessionItemTagCollections({
@@ -670,6 +795,22 @@ export const SessionItem = React.memo(
         const clearSuppressionTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
         const contextMenuPressInTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
         const isBeingDraggedRef = React.useRef<boolean>(false);
+        const suppressNextPressForPointerGesture = React.useCallback(() => {
+            suppressNextPressRef.current = true;
+            if (clearSuppressionTimeoutRef.current) {
+                clearTimeout(clearSuppressionTimeoutRef.current);
+            }
+            clearSuppressionTimeoutRef.current = setTimeout(() => {
+                suppressNextPressRef.current = false;
+                clearSuppressionTimeoutRef.current = null;
+            }, CONTEXT_MENU_PRESS_SUPPRESSION_TIMEOUT_MS);
+        }, []);
+        React.useEffect(() => () => {
+            if (clearSuppressionTimeoutRef.current) {
+                clearTimeout(clearSuppressionTimeoutRef.current);
+                clearSuppressionTimeoutRef.current = null;
+            }
+        }, []);
         const clearContextMenuPressInTimer = React.useCallback(() => {
             if (!contextMenuPressInTimerRef.current) return;
             clearTimeout(contextMenuPressInTimerRef.current);
@@ -677,8 +818,13 @@ export const SessionItem = React.memo(
         }, []);
         React.useEffect(() => clearContextMenuPressInTimer, [clearContextMenuPressInTimer]);
         React.useEffect(() => {
-            isBeingDraggedRef.current = isBeingDragged === true;
-        }, [isBeingDragged]);
+            const wasBeingDragged = isBeingDraggedRef.current;
+            const isReorderDragActive = isBeingDragged === true;
+            isBeingDraggedRef.current = isReorderDragActive;
+            if (Platform.OS === 'web' && reorderHandleGesture && (isReorderDragActive || wasBeingDragged)) {
+                suppressNextPressForPointerGesture();
+            }
+        }, [isBeingDragged, reorderHandleGesture, suppressNextPressForPointerGesture]);
         const handleRowPointerEnter = React.useCallback(() => {
             setIsRowHovered(true);
         }, []);
@@ -712,254 +858,174 @@ export const SessionItem = React.memo(
             if (e && typeof e.preventDefault === 'function') e.preventDefault();
         }, []);
 
-        const tagMenuItems = React.useMemo((): DropdownMenuItem[] => {
-            return knownTags.map((tag) => ({
-                id: tag,
-                title: tag,
-                rightElement: activeTags.includes(tag) ? (
-                    <Ionicons name="checkmark" size={16} color={rowActionIconColor} />
-                ) : undefined,
-            }));
-        }, [knownTags, activeTags, rowActionIconColor]);
+        const folderMoveMenuItems = React.useMemo((): DropdownMenuItem[] => (
+            (folderMoveTargets ?? []).map((target): DropdownMenuItem => ({
+                id: target.id,
+                testID: resolveSessionFolderMoveTargetTestId(target),
+                title: target.title,
+                icon: target.folderId
+                    ? <Ionicons name="folder-outline" size={16} color={rowActionIconColor} />
+                    : <Ionicons name="file-tray-outline" size={16} color={rowActionIconColor} />,
+                rowContainerStyle: resolveSessionFolderMoveTargetRowContainerStyle(target.depth),
+                disabled: target.disabled,
+            }))
+        ), [folderMoveTargets, rowActionIconColor]);
 
-        const handleTagMenuSelect = React.useCallback((tagId: string) => {
-            if (!onSetTags) return;
-            const next = activeTags.includes(tagId)
-                ? activeTags.filter((t) => t !== tagId)
-                : [...activeTags, tagId];
-            onSetTags(next);
-        }, [onSetTags, activeTags]);
+        const splitCanvasMenuItems = React.useMemo((): DropdownMenuItem[] => {
+            if (splitCanvasRowActions.mode === 'open') {
+                return [
+                    {
+                        id: SESSION_ROW_ACTION_OPEN_SPLIT_RIGHT_ID,
+                        title: t('sessionInfo.openInSplitRight'),
+                        icon: <Ionicons name="arrow-forward-outline" size={16} color={rowActionIconColor} />,
+                    },
+                    {
+                        id: SESSION_ROW_ACTION_OPEN_SPLIT_DOWN_ID,
+                        title: t('sessionInfo.openInSplitDown'),
+                        icon: <Ionicons name="arrow-down-outline" size={16} color={rowActionIconColor} />,
+                    },
+                ];
+            }
+            if (splitCanvasRowActions.mode === 'reveal') {
+                return [{
+                    id: SESSION_ROW_ACTION_REVEAL_IN_CURRENT_SPLIT_ID,
+                    title: t('sessionInfo.revealInCurrentSplit'),
+                    icon: <Ionicons name="locate-outline" size={16} color={rowActionIconColor} />,
+                }];
+            }
+            return [];
+        }, [rowActionIconColor, splitCanvasRowActions.mode]);
 
-        const handleTagMenuCreate = React.useCallback((query: string) => {
-            if (!onSetTags) return;
-            const newTag = query.trim();
-            if (!newTag || activeTags.includes(newTag)) return;
-            onSetTags([...activeTags, newTag]);
-        }, [onSetTags, activeTags]);
+        const handleSelectSplitCanvasMenuItem = React.useCallback((itemId: string): boolean => {
+            switch (itemId) {
+                case SESSION_ROW_ACTION_OPEN_SPLIT_RIGHT_ID:
+                    splitCanvasRowActions.openInSplitRight();
+                    return true;
+                case SESSION_ROW_ACTION_OPEN_SPLIT_DOWN_ID:
+                    splitCanvasRowActions.openInSplitDown();
+                    return true;
+                case SESSION_ROW_ACTION_REVEAL_IN_CURRENT_SPLIT_ID:
+                    splitCanvasRowActions.revealInSplit();
+                    return true;
+                default:
+                    return false;
+            }
+        }, [splitCanvasRowActions]);
 
-        const [stoppingSession, performStopMutation] = useHappyAction(async () => {
-            await stopSessionAndMaybeArchive({
-                sessionId: resolvedSession.id,
-                hideInactiveSessions: Boolean(hideInactiveSessions),
-                isPinned: Boolean(pinned),
-                archiveAfterStop: 'never',
-                stopSession: async () => await sessionStopWithServerScope(resolvedSession.id, { serverId: serverId ?? null }),
-                archiveSession: async () => await sessionArchiveWithServerScope(resolvedSession.id, { serverId: serverId ?? null }),
-                stopErrorMessage: t('sessionInfo.failedToStopSession'),
-                archiveErrorMessage: t('sessionInfo.failedToArchiveSession'),
-            });
-        });
+        const handleSelectFolderMoveMenuItem = React.useCallback(async (itemId: string) => {
+            if (itemId === 'session-folder-move-root') {
+                await onMoveToSessionFolder?.(null);
+                return;
+            }
+            const target = folderMoveTargets?.find((candidate) => candidate.id === itemId);
+            if (target) {
+                await onMoveToSessionFolder?.(target.folderId);
+            }
+        }, [folderMoveTargets, onMoveToSessionFolder]);
 
-        const [archivingSession, performArchiveMutation] = useHappyAction(async () => {
-            const stopThenArchiveSession = async () => {
-                await stopSessionAndMaybeArchive({
-                    sessionId: resolvedSession.id,
-                    hideInactiveSessions: Boolean(hideInactiveSessions),
-                    isPinned: Boolean(pinned),
-                    archiveAfterStop: 'always',
-                    stopSession: async () => await sessionStopWithServerScope(resolvedSession.id, { serverId: serverId ?? null }),
-                    archiveSession: async () => await sessionArchiveWithServerScope(resolvedSession.id, { serverId: serverId ?? null }),
-                    stopErrorMessage: t('sessionInfo.failedToStopSession'),
-                    archiveErrorMessage: t('sessionInfo.failedToArchiveSession'),
-                });
-            };
+        const handleEnterSelectionMode = React.useCallback(() => {
+            if (!resolvedSelectionKey) return;
+            rowSelection.replace();
+        }, [resolvedSelectionKey, rowSelection]);
 
-            if (isActiveSession) {
-                await stopThenArchiveSession();
+        const handleRowPress = React.useCallback((event?: GestureResponderEvent) => {
+            if (suppressNextPressRef.current) {
+                suppressNextPressRef.current = false;
                 return;
             }
 
-            const result = await sessionArchiveWithServerScope(resolvedSession.id, { serverId: serverId ?? null });
-            if (!result.success) {
-                if (isSessionActiveArchiveResult(result)) {
-                    await stopThenArchiveSession();
-                    return;
+            const rawEvent = event as unknown as Record<string, unknown> | undefined;
+            const nativeEvent = event?.nativeEvent as Record<string, unknown> | undefined;
+            const shiftKey = rawEvent?.shiftKey === true || nativeEvent?.shiftKey === true;
+            const ctrlKey = rawEvent?.ctrlKey === true || nativeEvent?.ctrlKey === true;
+            const metaKey = rawEvent?.metaKey === true || nativeEvent?.metaKey === true;
+            const selectionAction = resolvedSelectionKey
+                ? Platform.OS === 'web'
+                    ? resolveSessionListSelectionPointerAction({
+                        isSelectionMode: rowSelection.isSelectionMode,
+                        platform: resolveKeyboardPlatform(),
+                        shiftKey,
+                        ctrlKey,
+                        metaKey,
+                    })
+                    : rowSelection.isSelectionMode
+                        ? 'toggle'
+                        : 'open'
+                : 'open';
+
+            if (selectionAction !== 'open') {
+                stopRowPressPropagation(event);
+                if (contextMenuOpen) {
+                    setContextMenuOpen(false);
                 }
-                throw new HappyError(result.message || t('sessionInfo.failedToArchiveSession'), false);
+                switch (selectionAction) {
+                    case 'toggle':
+                        rowSelection.toggle();
+                        return;
+                    case 'selectRange':
+                        rowSelection.selectRange();
+                        return;
+                    case 'addRange':
+                        rowSelection.addRange();
+                        return;
+                }
             }
-            clearSessionVisibleWhenInactive(resolvedSession.id);
+
+            if (contextMenuOpen) {
+                setContextMenuOpen(false);
+            }
+            navigateToSession(resolvedSession.id, serverId ? { serverId } : undefined);
+        }, [
+            contextMenuOpen,
+            navigateToSession,
+            resolvedSelectionKey,
+            resolvedSession.id,
+            rowSelection,
+            serverId,
+            setContextMenuOpen,
+            stopRowPressPropagation,
+        ]);
+
+        const {
+            tagMenuItems,
+            handleTagMenuSelect,
+            handleTagMenuCreate,
+            moreMenuItems,
+            handleMoreMenuSelect,
+            contextMenuItems,
+            handleContextMenuSelect,
+            mutatingSession,
+        } = useSessionRowActionMenu({
+            target: sessionActionTarget,
+            sessionName: sessionNameResolved,
+            hideInactiveSessions: Boolean(hideInactiveSessions),
+            iconColor: rowActionIconColor,
+            activeTags,
+            knownTags,
+            tagsEnabled: tagsEnabled === true,
+            onSetTags,
+            onTogglePinned,
+            leadingMenuItems: splitCanvasMenuItems,
+            onSelectLeadingMenuItem: handleSelectSplitCanvasMenuItem,
+            folderMoveMenuItems,
+            onMoveToFolder,
+            onSelectFolderMoveMenuItem: handleSelectFolderMoveMenuItem,
+            selectionModeAvailable: Boolean(resolvedSelectionKey),
+            selectionModeActive: rowSelection.isSelectionMode,
+            onEnterSelectionMode: handleEnterSelectionMode,
+            isNativeMobile,
+            setContextMenuOpen,
+            openTagsMenuFromContext: () => {
+                setTagMenuEverOpened(true);
+                setTagMenuOpen(true);
+            },
+            deferredContextActionDelayMs: CONTEXT_MENU_DEFERRED_ACTION_DELAY_MS,
         });
-        const mutatingSession = stoppingSession || archivingSession;
-
-        const confirmStopSession = React.useCallback(async () => {
-            const confirmed = await Modal.confirm(
-                t('sessionInfo.stopSession'),
-                t('sessionInfo.stopSessionConfirm'),
-                {
-                    cancelText: t('common.cancel'),
-                    confirmText: t('sessionInfo.stopSession'),
-                    destructive: true,
-                },
-            );
-            if (!confirmed) return;
-            await performStopMutation();
-        }, [performStopMutation]);
-
-        const confirmArchiveSession = React.useCallback(async () => {
-            const confirmed = await Modal.confirm(
-                t('sessionInfo.archiveSession'),
-                t('sessionInfo.archiveSessionConfirm'),
-                {
-                    cancelText: t('common.cancel'),
-                    confirmText: t('sessionInfo.archiveSession'),
-                    destructive: true,
-                },
-            );
-            if (!confirmed) return;
-            await performArchiveMutation();
-        }, [performArchiveMutation]);
 
         const handleSwipeAction = React.useCallback(async () => {
             swipeableRef.current?.close();
-            await confirmArchiveSession();
-        }, [confirmArchiveSession]);
-
-        const handleRenameSession = React.useCallback(async () => {
-            const newName = await Modal.prompt(
-                t('sessionInfo.renameSession'),
-                undefined,
-                {
-                    defaultValue: sessionNameResolved,
-                    placeholder: t('sessionInfo.renameSessionPlaceholder'),
-                    confirmText: t('common.save'),
-                    cancelText: t('common.cancel'),
-                },
-            );
-            if (newName?.trim()) {
-                const result = await sessionRename(resolvedSession.id, newName.trim(), { serverId: serverId ?? null });
-                if (!result.success) {
-                    Modal.alert(t('common.error'), result.message || t('sessionInfo.failedToRenameSession'));
-                }
-            }
-        }, [resolvedSession.id, serverId, sessionNameResolved]);
-
-        const handleReadStateAction = React.useCallback(async (targetState: 'read' | 'unread') => {
-            const result = await sessionSetManualReadStateWithServerScope(resolvedSession.id, targetState, { serverId: serverId ?? null });
-            if (!result.success) {
-                Modal.alert(
-                    t('common.error'),
-                    result.message || t(targetState === 'read' ? 'sessionInfo.failedToMarkSessionRead' : 'sessionInfo.failedToMarkSessionUnread'),
-                );
-            }
-        }, [resolvedSession.id, serverId]);
-
-        const moreMenuItems = React.useMemo((): DropdownMenuItem[] => {
-            const items: DropdownMenuItem[] = [];
-            if (splitCanvasRowActions.mode === 'open') {
-                items.push({
-                    id: 'openInSplitRight',
-                    title: t('sessionInfo.openInSplitRight'),
-                    icon: <Ionicons name="arrow-forward-outline" size={16} color={rowActionIconColor} />,
-                });
-                items.push({
-                    id: 'openInSplitDown',
-                    title: t('sessionInfo.openInSplitDown'),
-                    icon: <Ionicons name="arrow-down-outline" size={16} color={rowActionIconColor} />,
-                });
-            } else if (splitCanvasRowActions.mode === 'reveal') {
-                items.push({
-                    id: 'revealInCurrentSplit',
-                    title: t('sessionInfo.revealInCurrentSplit'),
-                    icon: <Ionicons name="locate-outline" size={16} color={rowActionIconColor} />,
-                });
-            }
-            if (readStateMenuItem) {
-                items.push(readStateMenuItem);
-            }
-            if (canRenameSession) {
-                items.push({
-                    id: 'rename',
-                    title: t('sessionInfo.renameSession'),
-                    icon: <Ionicons name="pencil-outline" size={16} color={rowActionIconColor} />,
-                });
-            }
-            if (
-                typeof onMoveToFolder === 'function'
-                || (folderMoveTargets && folderMoveTargets.length > 0 && typeof onMoveToSessionFolder === 'function')
-            ) {
-                const folderMoveMenuItems = (folderMoveTargets ?? []).map((target): DropdownMenuItem => ({
-                    id: target.id,
-                    testID: target.id,
-                    title: target.title,
-                    icon: target.folderId
-                        ? <Ionicons name="folder-outline" size={16} color={rowActionIconColor} />
-                        : <Ionicons name="file-tray-outline" size={16} color={rowActionIconColor} />,
-                    rowContainerStyle: resolveSessionFolderMoveTargetRowContainerStyle(target.depth),
-                    disabled: target.disabled,
-                }));
-                items.push({
-                    id: SESSION_MOVE_TO_FOLDER_ACTION_ID,
-                    title: t('sessionsList.moveToFolder'),
-                    icon: <Ionicons name="folder-outline" size={16} color={rowActionIconColor} />,
-                    disabled: typeof onMoveToFolder === 'function'
-                        ? false
-                        : !folderMoveMenuItems.some((item) => item.disabled !== true),
-                    submenu: typeof onMoveToFolder === 'function' ? undefined : {
-                        items: folderMoveMenuItems,
-                        search: folderMoveMenuItems.length > 8,
-                        searchPlaceholder: t('sessionsList.moveToFolder'),
-                    },
-                });
-            }
-            if (isActiveSession && canStopSession) {
-                items.push({
-                    id: 'stop',
-                    title: t('sessionInfo.stopSession'),
-                    icon: <Ionicons name="stop-circle-outline" size={16} color={rowActionIconColor} />,
-                });
-            }
-            if (canArchiveSession) {
-                items.push({
-                    id: 'archive',
-                    title: t('sessionInfo.archiveSession'),
-                    icon: <Ionicons name="archive-outline" size={16} color={rowActionIconColor} />,
-                });
-            }
-            return items;
-        }, [canArchiveSession, canRenameSession, canStopSession, folderMoveTargets, isActiveSession, onMoveToFolder, onMoveToSessionFolder, readStateMenuItem, rowActionIconColor, splitCanvasRowActions.mode]);
-
-        const handleMoreMenuSelect = React.useCallback(async (itemId: string) => {
-            if (itemId === SESSION_MOVE_TO_FOLDER_ACTION_ID) {
-                onMoveToFolder?.();
-                return;
-            }
-            const readState = resolveSessionReadStateFromActionId(itemId);
-            if (readState) {
-                await handleReadStateAction(readState);
-                return;
-            }
-            switch (itemId) {
-                case 'session-folder-move-root':
-                    await onMoveToSessionFolder?.(null);
-                    break;
-                case 'openInSplitRight':
-                    splitCanvasRowActions.openInSplitRight();
-                    break;
-                case 'openInSplitDown':
-                    splitCanvasRowActions.openInSplitDown();
-                    break;
-                case 'revealInCurrentSplit':
-                    splitCanvasRowActions.revealInSplit();
-                    break;
-                case 'rename':
-                    handleRenameSession();
-                    break;
-                case 'stop':
-                    await confirmStopSession();
-                    break;
-                case 'archive':
-                    await confirmArchiveSession();
-                    break;
-                default:
-                    if (itemId.startsWith('session-folder-move-')) {
-                        const target = folderMoveTargets?.find((candidate) => candidate.id === itemId);
-                        if (target) {
-                            await onMoveToSessionFolder?.(target.folderId);
-                        }
-                    }
-                    break;
-            }
-        }, [confirmArchiveSession, confirmStopSession, folderMoveTargets, handleReadStateAction, handleRenameSession, onMoveToFolder, onMoveToSessionFolder, splitCanvasRowActions]);
+            await handleMoreMenuSelect(SESSION_ACTION_ARCHIVE_ID);
+        }, [handleMoreMenuSelect]);
 
         const rowAccessibilityActions = React.useMemo(() => {
             const actions: Array<{ name: string; label: string }> = [];
@@ -997,28 +1063,6 @@ export const SessionItem = React.memo(
             }
         }, [onMoveDown, onMoveToFolder, onMoveToWorkspaceRoot, onMoveUp]);
 
-        const contextMenuItems = React.useMemo((): DropdownMenuItem[] => {
-            if (!isNativeMobile) return [];
-            const items: DropdownMenuItem[] = [];
-            if (supportsTag) {
-                items.push({
-                    id: 'tags',
-                    title: t('sessionTags.editTagsLabel'),
-                    icon: <TagIcon size={14} color={rowActionIconColor} />,
-                });
-            }
-            if (supportsPin) {
-                items.push({
-                    id: 'pin',
-                    title: pinned ? t('sessionInfo.unpinSession') : t('sessionInfo.pinSession'),
-                    icon: pinned
-                        ? <PinSlashIcon size={14} color={rowActionIconColor} />
-                        : <PinIcon size={14} color={rowActionIconColor} />,
-                });
-            }
-            items.push(...moreMenuItems);
-            return items;
-        }, [isNativeMobile, moreMenuItems, pinned, rowActionIconColor, supportsPin, supportsTag]);
         const {
             swipeEnabled,
             showReorderHandle,
@@ -1078,103 +1122,111 @@ export const SessionItem = React.memo(
             setContextMenuOpen(true);
         }, [clearContextMenuPressInTimer, enableLongPressContextMenu, setContextMenuOpen]);
 
-        const handleContextMenuSelect = React.useCallback((itemId: string) => {
-            if (itemId === 'tags') {
-                setContextMenuOpen(false);
-                setTagMenuEverOpened(true);
-                setTagMenuOpen(true);
-                return;
-            }
-            if (itemId === 'pin') {
-                setContextMenuOpen(false);
-                onTogglePinned?.();
-                return;
-            }
-            setContextMenuOpen(false);
-            if (itemId === 'rename') {
-                setTimeout(() => {
-                    void handleMoreMenuSelect(itemId);
-                }, CONTEXT_MENU_DEFERRED_ACTION_DELAY_MS);
-                return;
-            }
-            void handleMoreMenuSelect(itemId);
-        }, [handleMoreMenuSelect, onTogglePinned]);
-
         const avatarId = getSessionAvatarId(resolvedSession);
-        const hasUnreadMessages = useHasUnreadMessages(resolvedSession.id);
-        const unreadIndicatorTestID = `session-list-item-unread-indicator-${resolvedSession.id}`;
         const pendingCount = resolvedSession.pendingCount ?? 0;
         const pendingBadge = formatPendingCountBadge(pendingCount);
-        const activityTimeLabel = useSessionListActivityTimeLabel(resolvedSession.id);
         const tagChipDensity: 'default' | 'compact' | 'minimal' = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
-        const tagLimit = isMinimal ? 1 : compact ? 2 : 3;
-        const tagChips = React.useMemo(() => {
+        const sourceTagChips = React.useMemo(() => {
             if (!tagsEnabled || activeTags.length === 0) return [];
-            const slice = activeTags.slice(0, tagLimit);
-            const remaining = activeTags.length - slice.length;
-            if (remaining <= 0) return slice.map((tag) => ({ key: tag, label: tag, isOverflow: false }));
-            return [
-                ...slice.map((tag) => ({ key: tag, label: tag, isOverflow: false })),
-                { key: '__more__', label: `+${remaining}`, isOverflow: true },
-            ];
-        }, [activeTags, tagLimit, tagsEnabled]);
+            return activeTags.map((tag, index) => ({ key: `${tag}:${index}`, label: tag }));
+        }, [activeTags, tagsEnabled]);
         const fallbackSecondaryLineMode: SessionListSecondaryLineMode = variant === 'no-path' ? 'status' : 'path';
         const requestedSecondaryLineMode = secondaryLineMode ?? fallbackSecondaryLineMode;
-        const effectiveSecondaryLineMode: SessionListSecondaryLineMode =
-            requestedSecondaryLineMode === 'path'
-                ? (sessionSubtitle ? 'path' : 'status')
-                : (sessionStatus.statusText ? 'status' : sessionSubtitle ? 'path' : 'status');
+        const rowDensity = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
+        const rowAttentionState = resolveSessionRowAttentionState(deriveSessionListAttentionState({
+            hasUnreadMessages,
+            pendingCount,
+            sessionState: sessionStatus.state,
+            latestTurnStatus: resolvedSession.latestTurnStatus ?? null,
+            lastRuntimeIssue: resolvedSession.lastRuntimeIssue ?? null,
+            active: resolvedSession.active,
+            activeAt: resolvedSession.activeAt,
+            presence: resolvedSession.presence,
+            thinking: resolvedSession.thinking,
+            thinkingAt: resolvedSession.thinkingAt,
+            seq: resolvedSession.seq,
+            meaningfulActivityAt: resolvedSession.meaningfulActivityAt ?? null,
+            latestTurnStatusObservedAt: resolvedSession.latestTurnStatusObservedAt ?? null,
+            latestReadyEventSeq: resolvedSession.latestReadyEventSeq ?? null,
+            lastViewedSessionSeq: resolvedSession.lastViewedSessionSeq ?? null,
+            pendingRequestObservedAt: resolvedSession.pendingRequestObservedAt ?? null,
+        }));
+        const rowPresentation = resolveSessionRowPresentation({
+            attentionState: rowAttentionState,
+            density: rowDensity,
+            requestedSecondaryLineMode,
+            hasPathSubtitle: Boolean(sessionSubtitle),
+        });
+        const effectiveSecondaryLineMode: SessionListSecondaryLineMode = rowPresentation.secondaryLine === 'path' ? 'path' : 'status';
+        const statusLineText = rowPresentation.statusTextKey ? t(rowPresentation.statusTextKey) : sessionStatus.statusText;
+        const rowStatusColor = (() => {
+            switch (rowAttentionState) {
+                case 'working':
+                    return theme.colors.state.info.foreground;
+                case 'ready':
+                    return theme.colors.state.success.foreground;
+                case 'failed':
+                    return theme.colors.state.danger.foreground;
+                case 'permission_required':
+                case 'action_required':
+                    return theme.colors.state.warning.foreground;
+                case 'unread':
+                    return theme.colors.text.link;
+                case 'pending':
+                    return theme.colors.state.neutral.foreground;
+                case 'quiet':
+                    return theme.colors.text.secondary;
+            }
+        })();
+        const rowAttentionAccessibilityLabel =
+            rowAttentionState === 'failed'
+                ? t('status.error')
+                : rowPresentation.attentionIndicator === 'working'
+                    || rowPresentation.attentionIndicator === 'permission'
+                    || rowPresentation.attentionIndicator === 'action'
+                    ? statusLineText
+                    : rowPresentation.statusTextKey
+                        ? statusLineText
+                        : undefined;
         const effectiveSubtitleEllipsizeMode = subtitleEllipsizeMode ?? 'head';
-        const shouldUsePathSubtitleStartEllipsis = effectiveSecondaryLineMode === 'path'
-            && effectiveSubtitleEllipsizeMode === 'head';
+        const shouldShowStatusSecondaryLine = rowPresentation.secondaryLine === 'status' && statusLineText.trim().length > 0;
+        const shouldShowPathSecondaryLine = rowPresentation.secondaryLine === 'path' && Boolean(sessionSubtitle);
+        const shouldUsePathSubtitleStartEllipsis = shouldShowPathSecondaryLine && effectiveSubtitleEllipsizeMode === 'head';
         const shouldUseWebPathSubtitleStartEllipsis = shouldUsePathSubtitleStartEllipsis && isWeb;
         const shouldShowIdentitySubtitleSkeleton = !isMinimal && isSessionIdentityLoading && requestedSecondaryLineMode === 'path';
         const showStandardSecondaryLine = !isMinimal && (
             shouldShowIdentitySubtitleSkeleton
-            || effectiveSecondaryLineMode === 'status'
-            || Boolean(sessionSubtitle)
+            || shouldShowStatusSecondaryLine
+            || shouldShowPathSecondaryLine
         );
-        const shouldEmphasizeTitle = shouldEmphasizeSessionRowTitle({
-            hasUnreadMessages,
-            pendingCount,
-            sessionStatus,
-        });
-        const titleAttentionState = deriveSessionRowTitleAttentionState({
-            hasUnreadMessages,
-            pendingCount,
-            sessionStatus,
-        });
-        const showTagChips = tagChips.length > 0;
-        const showTrailingStatusDot = isMinimal && (hasUnreadMessages || sessionStatus.shouldShowStatus);
-        const showWorkingSpinner = sessionStatus.shouldShowStatus
-            && sessionStatus.state === 'thinking'
-            && workingIndicatorMode === 'spinner';
-        const trailingStatusReplacesTime = showTrailingStatusDot
-            && sessionStatus.shouldShowStatus
-            && sessionStatus.state === 'thinking';
-        const showTrailingActivityTime = Boolean(activityTimeLabel) && !trailingStatusReplacesTime;
-        const hasTrailingMeta = showTrailingStatusDot || showTrailingActivityTime;
-        const tagPlacement = showTagChips
-            ? resolveSessionTagPlacement({
-                density: isMinimal ? 'minimal' : compact ? 'compact' : 'default',
-                tags: tagChips,
-                rowWidth,
-                hasTrailingMeta,
-                hasRowActions: showRowActions,
-            })
-            : 'below';
-        const showInlineTagChips = showTagChips && tagPlacement === 'inline' && !showRowActions;
-        const showBelowTagChips = showTagChips && tagPlacement === 'below' && !showRowActions;
-        const trailingStatusDotColor = sessionStatus.shouldShowStatus
-            ? sessionStatus.statusDotColor
-            : theme.colors.text.link;
-        const trailingStatusDotPulsing = sessionStatus.shouldShowStatus ? sessionStatus.isPulsing : false;
+        const shouldEmphasizeTitle = rowPresentation.titleTone === 'emphasized';
+        const trailingAttentionIndicator = isMinimal ? rowPresentation.attentionIndicator : 'none';
+        const showTrailingAttentionIndicator = trailingAttentionIndicator !== 'none';
+        const trailingAttentionReplacesTime = trailingAttentionIndicator === 'working';
+        const showTrailingActivityTime = Boolean(activityTimeLabel) && !trailingAttentionReplacesTime;
+        const hasTrailingMeta = showTrailingAttentionIndicator || showTrailingActivityTime;
         const resolvedSessionListIdentityDisplay =
             sessionListIdentityDisplay === 'agentLogo' || sessionListIdentityDisplay === 'none'
                 ? sessionListIdentityDisplay
                 : 'avatar';
         const shouldRenderSessionListIdentity = resolvedSessionListIdentityDisplay !== 'none';
+        const shouldRenderSelectionCheckbox = Boolean(resolvedSelectionKey)
+            && (rowSelection.isSelectionMode || rowSelection.isSelected);
         const shouldRenderSessionListAvatar = resolvedSessionListIdentityDisplay === 'avatar';
+        const tagDisplayPlan = React.useMemo(() => (
+            planSessionTagDisplay({
+                density: isMinimal ? 'minimal' : compact ? 'compact' : 'default',
+                tags: sourceTagChips,
+                rowWidth,
+                hasTrailingMeta,
+                hasRowActions: showRowActions,
+                hasLeadingIdentity: shouldRenderSessionListIdentity || shouldRenderSelectionCheckbox,
+            })
+        ), [compact, hasTrailingMeta, isMinimal, rowWidth, shouldRenderSelectionCheckbox, shouldRenderSessionListIdentity, showRowActions, sourceTagChips]);
+        const tagChips = tagDisplayPlan.chips;
+        const showTagChips = tagChips.length > 0;
+        const showInlineTagChips = showTagChips && tagDisplayPlan.placement === 'inline';
+        const showBelowTagChips = showTagChips && tagDisplayPlan.placement === 'below';
         const avatarSize = isMinimal
             ? useReadableNativePhoneMinimalRow
                 ? AVATAR_SIZE_MINIMAL_NATIVE_PHONE
@@ -1193,11 +1245,11 @@ export const SessionItem = React.memo(
                 : styles.sessionTitleLoading;
         const sessionTitleColorRole = resolveSessionRowTitleColorRole({
             mode: normalizeSessionListActiveColorMode(sessionListActiveColorMode),
-            selected: selected === true,
+            selected: selected === true || rowSelection.isSelected,
             isConnected: sessionStatus.isConnected,
             isSessionActive: resolvedSession.active === true,
-            attentionState: titleAttentionState,
-            titleTone: shouldEmphasizeTitle ? 'emphasized' : 'quiet',
+            attentionState: rowAttentionState,
+            titleTone: rowPresentation.titleTone === 'quiet' ? 'quiet' : 'emphasized',
         });
         const sessionTitleColor = sessionTitleColorRole === 'primary'
             ? theme.colors.text.primary
@@ -1208,7 +1260,7 @@ export const SessionItem = React.memo(
             isMinimal ? styles.sessionTitleMinimal : null,
             shouldEmphasizeTitle ? styles.sessionTitleEmphasized : null,
             sessionStatus.isConnected ? styles.sessionTitleConnected : styles.sessionTitleDisconnected,
-            selected ? styles.sessionTitleSelected : null,
+            selected || rowSelection.isSelected ? styles.sessionTitleSelected : null,
             { color: sessionTitleColor },
         ];
         const renderTagChipRow = (placement: 'below' | 'inline') => (
@@ -1248,7 +1300,7 @@ export const SessionItem = React.memo(
         const itemContent = (
             <Pressable
                 testID={`session-list-item-${resolvedSession.id}`}
-                accessibilityState={{ selected }}
+                accessibilityState={{ selected: Boolean(selected || rowSelection.isSelected) }}
                 accessibilityActions={rowAccessibilityActions}
                 onAccessibilityAction={rowAccessibilityActions.length > 0 ? handleRowAccessibilityAction : undefined}
                 android_ripple={Platform.OS === 'android' ? {
@@ -1256,26 +1308,17 @@ export const SessionItem = React.memo(
                     borderless: false,
                     foreground: true,
                 } : undefined}
-                onLayout={showTagChips ? handleRowLayout : undefined}
+                onLayout={sourceTagChips.length > 0 ? handleRowLayout : undefined}
                 style={[
                     styles.sessionItem,
                     isFirst ? styles.sessionItemFirst : null,
                     isLast ? styles.sessionItemLast : null,
                     compact ? styles.sessionItemCompact : null,
                     isMinimal ? styles.sessionItemMinimal : null,
-                    selected ? styles.sessionItemSelected : null,
+                    selected || rowSelection.isSelected ? styles.sessionItemSelected : null,
                     embedded && !embeddedIsLast ? styles.embeddedSeparator : null,
                 ]}
-                onPress={() => {
-                    if (suppressNextPressRef.current) {
-                        suppressNextPressRef.current = false;
-                        return;
-                    }
-                    if (contextMenuOpen) {
-                        setContextMenuOpen(false);
-                    }
-                    navigateToSession(resolvedSession.id, serverId ? { serverId } : undefined);
-                }}
+                onPress={handleRowPress}
                 onPressIn={enableLongPressContextMenu ? () => {
                     clearContextMenuPressInTimer();
                     contextMenuPressInTimerRef.current = setTimeout(() => {
@@ -1286,7 +1329,7 @@ export const SessionItem = React.memo(
                 onPressOut={enableLongPressContextMenu ? clearContextMenuPressInTimer : undefined}
                 onLongPress={enableLongPressContextMenu ? openContextMenuFromLongPress : undefined}
             >
-                {shouldRenderSessionListIdentity ? (
+                {shouldRenderSessionListIdentity || shouldRenderSelectionCheckbox ? (
                     <View
                         style={[
                             styles.avatarContainer,
@@ -1295,7 +1338,19 @@ export const SessionItem = React.memo(
                             useReadableNativePhoneMinimalRow ? styles.avatarContainerMinimalNativePhone : null,
                         ]}
                     >
-                        {isSessionIdentityLoading ? (
+                        {shouldRenderSelectionCheckbox ? (
+                            <SessionListSelectionCheckbox
+                                sessionId={resolvedSession.id}
+                                selectionKey={resolvedSelectionKey}
+                                selected={rowSelection.isSelected}
+                                onPress={rowSelection.toggle}
+                                style={[
+                                    compact ? styles.avatarContainerCompact : null,
+                                    isMinimal ? styles.avatarContainerMinimal : null,
+                                    useReadableNativePhoneMinimalRow ? styles.avatarContainerMinimalNativePhone : null,
+                                ]}
+                            />
+                        ) : isSessionIdentityLoading ? (
                             <Animated.View
                                 testID={`session-list-avatar-loading-${resolvedSession.id}`}
                                 style={[
@@ -1315,8 +1370,7 @@ export const SessionItem = React.memo(
                                 size={avatarSize}
                                 monochrome={resolvedSession.active !== true || !sessionStatus.isConnected}
                                 flavor={resolvedSession.metadata?.flavor}
-                                hasUnreadMessages={hasUnreadMessages}
-                                unreadBadgeTestID={unreadIndicatorTestID}
+                                hasUnreadMessages={false}
                             />
                         ) : (
                             <AgentIcon
@@ -1350,7 +1404,7 @@ export const SessionItem = React.memo(
                         styles.sessionContent,
                         compact ? styles.sessionContentCompact : null,
                         isMinimal ? styles.sessionContentMinimal : null,
-                        isMinimal && shouldRenderSessionListIdentity ? styles.sessionContentMinimalWithIdentity : null,
+                        isMinimal && (shouldRenderSessionListIdentity || shouldRenderSelectionCheckbox) ? styles.sessionContentMinimalWithIdentity : null,
                     ]}
                 >
                     <View style={styles.sessionTitleRow}>
@@ -1389,32 +1443,37 @@ export const SessionItem = React.memo(
                                 ]}
                             />
                         ) : effectiveSecondaryLineMode === 'status' ? (
-                            <View style={styles.secondaryLineRow}>
+                            <View
+                                testID={`session-list-status-subtitle-${resolvedSession.id}-${rowAttentionState}`}
+                                style={styles.secondaryLineRow}
+                            >
                                 <View
                                     style={[
                                         styles.secondaryStatusDotContainer,
                                         compact ? styles.secondaryStatusDotContainerCompact : null,
                                     ]}
                                 >
-                                    {showWorkingSpinner ? (
-                                        <ActivitySpinner
-                                            testID={`session-list-status-working-spinner-${resolvedSession.id}`}
-                                            size={12}
-                                            color={theme.colors.text.tertiary}
+                                    {rowPresentation.attentionIndicator !== 'none' ? (
+                                        <SessionRowAttentionIndicator
+                                            indicator={rowPresentation.attentionIndicator}
+                                            sessionId={`${resolvedSession.id}-secondary`}
+                                            attentionState={rowAttentionState}
+                                            accessibilityLabel={rowAttentionAccessibilityLabel}
+                                            workingMode={workingIndicatorMode}
+                                            animationEnabled={rowAttentionAnimationEnabled}
                                         />
-                                    ) : (
-                                        <StatusDot color={sessionStatus.statusDotColor} isPulsing={sessionStatus.isPulsing} />
-                                    )}
+                                    ) : null}
                                 </View>
                                 <Text
+                                    testID={`session-list-status-subtitle-text-${resolvedSession.id}-${rowAttentionState}`}
                                     style={[
                                         styles.statusText,
                                         compact ? styles.statusTextCompact : null,
-                                        { color: sessionStatus.statusColor },
+                                        { color: rowStatusColor },
                                     ]}
                                     numberOfLines={1}
                                 >
-                                    {sessionStatus.statusText}
+                                    {statusLineText}
                                 </Text>
                             </View>
                         ) : (
@@ -1457,7 +1516,13 @@ export const SessionItem = React.memo(
                             ) : null}
                             {showReorderHandle && reorderHandleGesture ? (
                                 <GestureDetector gesture={reorderHandleGesture}>
-                                    <View testID="session-item-reorder-handle" style={styles.rowActionButton}>
+                                    <View
+                                        testID="session-item-reorder-handle"
+                                        style={styles.rowActionButton}
+                                        onPointerDown={isWeb ? suppressNextPressForPointerGesture : undefined}
+                                        onPointerUp={isWeb ? suppressNextPressForPointerGesture : undefined}
+                                        onPointerCancel={isWeb ? suppressNextPressForPointerGesture : undefined}
+                                    >
                                         <Ionicons name="reorder-three-outline" size={16} color={rowActionIconColor} />
                                     </View>
                                 </GestureDetector>
@@ -1537,7 +1602,7 @@ export const SessionItem = React.memo(
                                     style={styles.rowActionButton}
                                     onPress={(e) => {
                                         stopRowPressPropagation(e);
-                                        onTogglePinned?.();
+                                        handleTogglePinnedAction();
                                     }}
                                     accessibilityRole="button"
                                     accessibilityLabel={pinned ? t('sessionInfo.unpinSession') : t('sessionInfo.pinSession')}
@@ -1581,22 +1646,18 @@ export const SessionItem = React.memo(
                                 />
                             ) : null}
                         </View>
-                    ) : showTrailingStatusDot || showTrailingActivityTime ? (
+                    ) : showTrailingAttentionIndicator || showTrailingActivityTime ? (
                         <View style={styles.trailingMetaRow}>
-                            {showTrailingStatusDot ? (
-                                showWorkingSpinner ? (
-                                    <ActivitySpinner
-                                        testID={`session-item-trailing-working-spinner-${resolvedSession.id}`}
-                                        size={12}
-                                        color={theme.colors.text.tertiary}
-                                    />
-                                ) : (
-                                    <StatusDot
-                                        testID={`session-item-trailing-status-dot-${resolvedSession.id}`}
-                                        color={trailingStatusDotColor}
-                                        isPulsing={trailingStatusDotPulsing}
-                                    />
-                                )
+                            {showTrailingAttentionIndicator ? (
+                                <SessionRowAttentionIndicator
+                                    indicator={trailingAttentionIndicator}
+                                    sessionId={`${resolvedSession.id}-trailing`}
+                                    attentionState={rowAttentionState}
+                                    accessibilityLabel={rowAttentionAccessibilityLabel}
+                                    workingMode={workingIndicatorMode}
+                                    workingSpinnerTone="neutral"
+                                    animationEnabled={rowAttentionAnimationEnabled}
+                                />
                             ) : null}
                             {showTrailingActivityTime ? (
                                 <Text
@@ -1630,17 +1691,19 @@ export const SessionItem = React.memo(
 
         const menuNodes = isNativeMobile ? (
             <>
-                <ContextMenu
-                    open={contextMenuOpen}
-                    onOpenChange={setContextMenuOpen}
-                    anchorRef={contextMenuAnchorRef}
-                    items={contextMenuItems}
-                    onSelect={handleContextMenuSelect}
-                    placement="auto"
-                    variant="slim"
-                    showCategoryTitles={false}
-                    maxWidthCap={260}
-                />
+                {contextMenuItems.length > 0 ? (
+                    <ContextMenu
+                        open={contextMenuOpen}
+                        onOpenChange={setContextMenuOpen}
+                        anchorRef={contextMenuAnchorRef}
+                        items={contextMenuItems}
+                        onSelect={handleContextMenuSelect}
+                        placement="auto"
+                        variant="slim"
+                        showCategoryTitles={false}
+                        maxWidthCap={260}
+                    />
+                ) : null}
                 {supportsTag ? (
                     <ContextMenu
                         open={tagMenuOpen}
@@ -1725,3 +1788,57 @@ export const SessionItem = React.memo(
         );
     },
 );
+
+function SessionItemFromRowViewModel(props: SessionItemProps) {
+    const { rowViewModel, ...itemProps } = props;
+    const rowSession = rowViewModel.session;
+    const rowStatus = rowViewModel.sessionStatus;
+    if (!rowSession || !rowStatus) {
+        return null;
+    }
+    const session = resolveSessionItemEffectiveSession({
+        rowSession,
+        providedSession: itemProps.session,
+    });
+    const sessionStatus = resolveSessionItemEffectiveStatus({
+        rowSession,
+        renderedSession: session,
+        rowStatus,
+    });
+    const sessionNameResolved = getSessionName(session);
+
+    return (
+        <SessionItemContent
+            {...itemProps}
+            session={session}
+            subtitleEllipsizeMode={itemProps.subtitleEllipsizeMode ?? rowViewModel.subtitleEllipsizeMode}
+            serverId={itemProps.serverId}
+            serverName={itemProps.serverName}
+            showServerBadge={rowViewModel.showServerBadge}
+            pinned={rowViewModel.pinned}
+            tags={[...rowViewModel.tags]}
+            tagsEnabled={itemProps.tagsEnabled}
+            selected={rowViewModel.selected}
+            isFirst={rowViewModel.isFirst}
+            isLast={rowViewModel.isLast}
+            isSingle={rowViewModel.isSingle}
+            secondaryLineMode={itemProps.secondaryLineMode ?? rowViewModel.secondaryLineMode}
+            activityTimeLabel={rowViewModel.activityTimeLabel}
+            sessionStatus={sessionStatus}
+            sessionNameResolved={sessionNameResolved}
+            sessionSubtitle={itemProps.subtitleOverride ?? rowViewModel.subtitleOverride ?? getSessionSubtitle(session)}
+            isSessionIdentityLoading={rowViewModel.isIdentityLoading}
+            hasUnreadMessages={rowViewModel.hasUnreadMessages}
+            workingIndicatorMode={rowViewModel.workingIndicatorMode}
+            rowAttentionAnimationEnabled={itemProps.rowAttentionAnimationEnabled !== false}
+            sessionListIdentityDisplay={normalizeSessionItemIdentityDisplay(rowViewModel.identityDisplay)}
+            sessionListActiveColorMode={normalizeSessionItemActiveColorMode(rowViewModel.activeColorMode)}
+            hideInactiveSessions={itemProps.hideInactiveSessions ?? rowViewModel.hideInactiveSessions}
+        />
+    );
+}
+
+export const SessionItem = React.memo(function SessionItem(props: SessionItemProps) {
+    if (!props.rowViewModel) return null;
+    return <SessionItemFromRowViewModel {...props} />;
+});

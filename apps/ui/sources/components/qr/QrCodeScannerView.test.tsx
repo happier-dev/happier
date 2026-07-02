@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { lightTheme } from '@/theme';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -46,21 +47,7 @@ vi.mock('react-native', async () => {
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-        theme: {
-            colors: {
-                surface: '#fff',
-                text: '#000',
-                textSecondary: '#666',
-                overlay: {
-                    scrim: 'rgba(0,0,0,0.45)',
-                    scrimStrong: 'rgba(0,0,0,0.6)',
-                    text: '#fff',
-                    textSecondary: 'rgba(255,255,255,0.9)',
-                },
-            },
-        },
-    });
+    return createUnistylesMock();
 });
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -78,6 +65,13 @@ vi.mock('@/utils/platform/responsive', () => ({
 vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
 }));
+
+vi.mock('@expo/vector-icons', async () => {
+    const ReactModule = await import('react');
+    return {
+        Ionicons: (props: Record<string, unknown>) => ReactModule.createElement('Ionicons', props),
+    };
+});
 
 let lastCameraProps: any = null;
 vi.mock('expo-camera', () => ({
@@ -169,6 +163,59 @@ describe('QrCodeScannerView', () => {
                     testIDPrefix="test"
                 />);
         expect(lastCameraProps).not.toBeNull();
+    });
+
+    it('does not keep the camera mounted when scanner activity is paused', async () => {
+        const { QrCodeScannerView } = await import('./QrCodeScannerView');
+
+        await renderScreen(<QrCodeScannerView
+                    active={false}
+                    title="t"
+                    subtitle="s"
+                    permissionRequiredMessage="perm"
+                    onCancel={vi.fn()}
+                    onScan={vi.fn()}
+                    testIDPrefix="test"
+                />);
+
+        expect(lastCameraProps).toBeNull();
+    });
+
+    it('uses the screen canvas behind the native camera instead of painting a surface card', async () => {
+        const { QrCodeScannerView } = await import('./QrCodeScannerView');
+
+        const screen = await renderScreen(<QrCodeScannerView
+                    title="t"
+                    subtitle="s"
+                    permissionRequiredMessage="perm"
+                    onCancel={vi.fn()}
+                    onScan={vi.fn()}
+                    testIDPrefix="test"
+                />);
+
+        const camera = screen.root.findByProps({ testID: 'test-camera' });
+        const rootStyle = flattenStyle(camera.parent?.props.style);
+        expect(rootStyle.backgroundColor).toBe(lightTheme.colors.background.canvas);
+    });
+
+    it('renders a high-contrast close affordance over the camera preview', async () => {
+        const { QrCodeScannerView } = await import('./QrCodeScannerView');
+
+        const screen = await renderScreen(<QrCodeScannerView
+                    title="t"
+                    subtitle="s"
+                    permissionRequiredMessage="perm"
+                    onCancel={vi.fn()}
+                    onScan={vi.fn()}
+                    testIDPrefix="test"
+                />);
+
+        const closeButton = screen.root.findByProps({ testID: 'test-close' });
+        const closeIcon = screen.root.findByProps({ testID: 'test-close-icon' });
+        const closeStyle = flattenStyle(closeButton.props.style);
+        const closeIconStyle = flattenStyle(closeIcon.props.style);
+        expect(closeStyle.backgroundColor).toBe(lightTheme.colors.overlay.foreground);
+        expect(closeIconStyle.color).toBe(lightTheme.colors.text.primary);
     });
 
     it('auto-requests camera permission on web instead of waiting for a manual retry tap', async () => {

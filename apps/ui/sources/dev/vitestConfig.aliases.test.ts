@@ -46,10 +46,10 @@ describe('vitest config aliases', () => {
         );
         expect(
             resolver?.resolveId?.(
-                './providers/providerCliRuntime.js',
+                './cli/runtime.js',
                 resolve('/Users/leeroy/Documents/Development/happier/dev/packages/agents/src/index.ts'),
             ),
-        ).toContain('/packages/agents/src/providers/providerCliRuntime.ts');
+        ).toContain('/packages/agents/src/cli/runtime.ts');
         expect(
             resolver?.resolveId?.(
                 './localControl',

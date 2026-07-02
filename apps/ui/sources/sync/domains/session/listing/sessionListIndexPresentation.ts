@@ -1,6 +1,7 @@
 import type { ServerSelectionPresentation } from '@/sync/domains/server/selection/serverSelectionTypes';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 import { normalizeTrimmedStringArrayWithSharedEmpty } from './normalizeTrimmedStringArrayWithSharedEmpty';
 import { normalizeTrimmedString } from './normalizeTrimmedString';
@@ -55,7 +56,7 @@ function resolveSelectedServerSources(
 
     for (const serverId of selectedServerIds) {
         const fromCache = scoped[serverId];
-        const source = serverId === activeServerId
+        const source = areServerProfileIdentifiersEquivalent(serverId, activeServerId)
             ? (params.activeIndex ?? fromCache ?? null)
             : (fromCache ?? null);
         if (source == null) {

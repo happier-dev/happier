@@ -7,11 +7,13 @@ import {
     RuntimeDescriptorV1Schema,
     SessionAttachMetadataIdentityPolicySchema,
     SessionAuthoringValueV1Schema,
+    SessionInitialGoalRequestV1Schema,
     type SessionAttachMetadataIdentityPolicy,
     type BackendTargetRefV2,
     type BackendTargetRefV2Input,
     type RuntimeDescriptorV1,
     type SessionAuthoringValueV1,
+    type SessionInitialGoalRequestV1,
 } from '@happier-dev/protocol';
 import { isPermissionMode, type PermissionMode } from '../../permissions/permissionTypes';
 
@@ -26,6 +28,7 @@ export type ResumeHappySessionRpcParams = CodexBackendTransportFields & {
     runtimeDescriptorV1?: RuntimeDescriptorV1;
     environmentVariables?: Record<string, string>;
     connectedServices?: SessionAuthoringValueV1['connectedServices'];
+    connectedServicesUpdatedAt?: number;
     transcriptStorage?: 'direct' | 'persisted';
     attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy;
     permissionMode?: PermissionMode;
@@ -34,6 +37,7 @@ export type ResumeHappySessionRpcParams = CodexBackendTransportFields & {
     modelUpdatedAt?: number;
     accountSettingsVersionHint?: number;
     initialTranscriptAfterSeq?: number;
+    initialGoal?: SessionInitialGoalRequestV1;
 };
 
 type BuildResumeHappySessionRpcInput = Omit<ResumeHappySessionRpcParams, 'type' | 'backendTarget' | keyof CodexBackendTransportFields> & {
@@ -51,6 +55,7 @@ const ResumeHappySessionRpcParamsSchema = z.object({
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
     environmentVariables: z.record(z.string(), z.string()).optional(),
     connectedServices: SessionAuthoringValueV1Schema.shape.connectedServices.optional(),
+    connectedServicesUpdatedAt: z.number().optional(),
     transcriptStorage: z.enum(['direct', 'persisted']).optional(),
     attachMetadataIdentityPolicy: SessionAttachMetadataIdentityPolicySchema.optional(),
     permissionMode: z.string().refine((value) => isPermissionMode(value)).optional(),
@@ -59,8 +64,9 @@ const ResumeHappySessionRpcParamsSchema = z.object({
     modelUpdatedAt: z.number().optional(),
     accountSettingsVersionHint: z.number().int().nonnegative().optional(),
     initialTranscriptAfterSeq: z.number().int().nonnegative().optional(),
+    initialGoal: SessionInitialGoalRequestV1Schema.optional(),
     experimentalCodexAcp: z.literal(true).optional(),
-    codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
+    codexBackendMode: z.enum(['acp', 'appServer']).optional(),
 });
 
 export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionRpcInput): ResumeHappySessionRpcParams {
@@ -71,6 +77,7 @@ export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionR
         experimentalCodexAcp,
         runtimeDescriptorV1,
         connectedServices,
+        connectedServicesUpdatedAt,
         ...rest
     } = input;
     const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
@@ -94,6 +101,11 @@ export function buildResumeHappySessionRpcParams(input: BuildResumeHappySessionR
         backendTarget: canonicalBackendTarget,
         ...(codexTransportFields.codexBackendMode ? { codexBackendMode: codexTransportFields.codexBackendMode } : {}),
         ...(connectedServices === undefined || connectedServices === null ? {} : { connectedServices }),
+        ...(connectedServices === undefined || connectedServices === null ? {} : (
+            typeof connectedServicesUpdatedAt === 'number' && Number.isFinite(connectedServicesUpdatedAt)
+                ? { connectedServicesUpdatedAt }
+                : {}
+        )),
         ...(runtimeDescriptorV1
             ? { runtimeDescriptorV1 }
             : codexTransportFields.runtimeDescriptorV1

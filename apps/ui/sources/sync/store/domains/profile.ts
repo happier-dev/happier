@@ -2,7 +2,11 @@ import type { Profile } from '../../domains/profiles/profile';
 import { profileDefaults } from '../../domains/profiles/profile';
 import type { ServerAccountScope } from '../../domains/scope/serverAccountScope';
 import { areServerAccountScopesEqual } from '../../domains/scope/serverAccountScope';
-import { loadAccountProfile, saveAccountProfile } from '../../domains/state/accountProfilePersistence';
+import {
+    loadAccountProfile,
+    prepareAccountProfileScopeForActivation,
+    saveAccountProfile,
+} from '../../domains/state/accountProfilePersistence';
 import { loadProfile, saveProfile } from '../../domains/state/profilePersistence';
 
 import type { StoreGet, StoreSet } from './_shared';
@@ -10,7 +14,7 @@ import type { StoreGet, StoreSet } from './_shared';
 export type ProfileDomain = {
     profile: Profile;
     profileScope: ServerAccountScope | null;
-    activateProfileScope: (scope: ServerAccountScope) => void;
+    activateProfileScope: (scope: ServerAccountScope, legacyScopes?: readonly ServerAccountScope[]) => void;
     clearProfileScope: () => void;
     applyProfile: (profile: Profile) => void;
     applyProfileForScope: (scope: ServerAccountScope, profile: Profile) => void;
@@ -27,12 +31,15 @@ export function createProfileDomain<S extends ProfileDomain>({
     return {
         profile,
         profileScope: null,
-        activateProfileScope: (scope) =>
-            set((state) => ({
-                ...state,
-                profile: loadAccountProfile(scope),
-                profileScope: scope,
-            })),
+        activateProfileScope: (scope, legacyScopes = []) =>
+            set((state) => {
+                prepareAccountProfileScopeForActivation(scope, legacyScopes);
+                return {
+                    ...state,
+                    profile: loadAccountProfile(scope),
+                    profileScope: scope,
+                };
+            }),
         clearProfileScope: () =>
             set((state) => ({
                 ...state,

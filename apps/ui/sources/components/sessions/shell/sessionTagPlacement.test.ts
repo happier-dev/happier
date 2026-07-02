@@ -13,14 +13,46 @@ describe('resolveSessionTagPlacement', () => {
         })).toBe('inline');
     });
 
-    it('keeps long compact tags below the title', () => {
+    it('places compact tags inline when their combined labels fit the inline budget', () => {
         expect(resolveSessionTagPlacement({
             density: 'compact',
-            tags: [{ label: 'release' }],
+            tags: [{ label: 'a' }, { label: 'b' }, { label: 'c' }],
+            rowWidth: null,
+            hasTrailingMeta: true,
+            hasRowActions: false,
+        })).toBe('inline');
+    });
+
+    it('keeps compact tags below when their combined labels exceed the inline budget', () => {
+        expect(resolveSessionTagPlacement({
+            density: 'compact',
+            tags: [{ label: 'tag' }, { label: 'tag 12' }, { label: 'tag 3' }],
             rowWidth: null,
             hasTrailingMeta: true,
             hasRowActions: false,
         })).toBe('below');
+    });
+
+    it('keeps cozy tags below when the leading identity leaves only a small inline budget', () => {
+        expect(resolveSessionTagPlacement({
+            density: 'compact',
+            tags: [{ label: 'tag' }, { label: 'tag 2' }],
+            rowWidth: null,
+            hasTrailingMeta: true,
+            hasRowActions: false,
+            hasLeadingIdentity: true,
+        })).toBe('below');
+    });
+
+    it('places the same cozy tags inline when the leading identity is hidden', () => {
+        expect(resolveSessionTagPlacement({
+            density: 'compact',
+            tags: [{ label: 'tag' }, { label: 'tag 2' }],
+            rowWidth: null,
+            hasTrailingMeta: true,
+            hasRowActions: false,
+            hasLeadingIdentity: false,
+        })).toBe('inline');
     });
 
     it('keeps compact tags below when actions own the trailing area', () => {
@@ -41,6 +73,16 @@ describe('resolveSessionTagPlacement', () => {
             hasTrailingMeta: true,
             hasRowActions: false,
         })).toBe('below');
+    });
+
+    it('keeps short compact tags inline even when they take modest title space', () => {
+        expect(resolveSessionTagPlacement({
+            density: 'compact',
+            tags: [{ label: 'v2' }],
+            rowWidth: 250,
+            hasTrailingMeta: true,
+            hasRowActions: false,
+        })).toBe('inline');
     });
 
     it('does not place default-density tags inline', () => {

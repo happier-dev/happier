@@ -1,8 +1,8 @@
 import React from 'react';
 import { Platform } from 'react-native';
 import { storage } from '@/sync/domains/state/storage';
-import { derivePendingRequestFlagsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { updateFaviconWithNotification, resetFavicon } from '@/utils/web/faviconGenerator';
+import { createFaviconPermissionSnapshotSelector } from './faviconPermissionSnapshot';
 
 /**
  * Component that monitors all sessions and updates the favicon
@@ -13,24 +13,24 @@ export const FaviconPermissionIndicator = React.memo(() => {
         return null;
     }
 
-    const hasOnlineSessionWithPermissions = storage((state) => {
-        return Object.values(state.sessions).some(session => {
-            // Use centralized presence logic - only "online" sessions matter
-            const isOnline = session.presence === 'online';
-            const isSessionActive = session.active === true;
-            const hasPermissions = derivePendingRequestFlagsFromSession(session).hasPendingPermissionRequests;
-
-            return isOnline && isSessionActive && hasPermissions;
-        });
-    });
+    const [runtimeFreshnessVersion, refreshRuntimeFreshness] = React.useReducer((value: number) => value + 1, 0);
+    const selector = React.useMemo(() => createFaviconPermissionSnapshotSelector(), []);
+    void runtimeFreshnessVersion;
+    const faviconSnapshot = storage(selector);
 
     React.useLayoutEffect(() => {
-        if (hasOnlineSessionWithPermissions) {
+        if (faviconSnapshot.hasFreshPermission) {
             updateFaviconWithNotification();
         } else {
             resetFavicon();
         }
-    }, [hasOnlineSessionWithPermissions]);
+    }, [faviconSnapshot.hasFreshPermission]);
+
+    React.useEffect(() => {
+        if (faviconSnapshot.nextRefreshDelayMs === null) return undefined;
+        const timeoutId = setTimeout(refreshRuntimeFreshness, faviconSnapshot.nextRefreshDelayMs);
+        return () => clearTimeout(timeoutId);
+    }, [faviconSnapshot.nextRefreshDelayMs]);
 
     React.useLayoutEffect(() => {
         return () => {

@@ -417,6 +417,55 @@ describe('useCreateNewSession (worktree gating)', () => {
         }));
     });
 
+    it('clears the persisted new-session draft with the screen draft scope after successful creation', async () => {
+        const { useCreateNewSession } = await import('./useCreateNewSession');
+        const draftScope = { serverId: 'server-a', accountId: 'account-a' };
+        const routerReplace = vi.fn();
+        const disableDraftPersistence = vi.fn();
+        const params = {
+            router: { push: vi.fn(), replace: routerReplace },
+            selectedMachineId: 'machine-1',
+            selectedPath: '/repo',
+            selectedMachine: { id: 'machine-1', metadata: {} },
+            setIsCreating: vi.fn(),
+            setIsResumeSupportChecking: vi.fn(),
+            settings: testSettingsDefaults,
+            useProfiles: false,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            recentMachinePaths: [],
+            agentType: 'codex' as const,
+            permissionMode: 'default' as const,
+            modelMode: 'auto' as const,
+            sessionPrompt: 'hi',
+            resumeSessionId: '',
+            agentNewSessionOptions: null,
+            machineEnvPresence: {
+                isPreviewEnvSupported: false,
+                isLoading: false,
+                meta: {},
+            } as unknown as Parameters<typeof useCreateNewSession>[0]['machineEnvPresence'],
+            secrets: [],
+            secretBindingsByProfileId: {},
+            selectedSecretIdByProfileIdByEnvVarName: {},
+            sessionOnlySecretValueByProfileIdByEnvVarName: {},
+            selectedMachineCapabilities: null,
+            targetServerId: null,
+            allowedTargetServerIds: [],
+            draftScope,
+            disableDraftPersistence,
+        } satisfies Parameters<typeof useCreateNewSession>[0];
+
+        const hook = await renderHook(() => useCreateNewSession(params));
+        await act(async () => {
+            await hook.handleCreateSession();
+        });
+
+        expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
+        expect(clearNewSessionDraftMock).toHaveBeenCalledWith(draftScope);
+        expect(routerReplace).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
+    });
+
     it('creates a git worktree on the resolved target server when checkoutCreationDraft is selected', async () => {
         const { useCreateNewSession } = await import('./useCreateNewSession');
         const typecheck = useCreateNewSession;
@@ -1271,9 +1320,11 @@ describe('useCreateNewSession (worktree gating)', () => {
         expect(spawnedOptions?.workspaceLocationId).toBeUndefined();
         expect(spawnedOptions?.workspaceCheckoutId).toBeUndefined();
         expect(updateSessionDraftMock).not.toHaveBeenCalled();
-        expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenCalledWith('session-created', { forceRefresh: true });
-        expect(routerReplace).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
-        expect(routerReplace).toHaveBeenCalledTimes(1);
+        expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenCalledWith('session-created', expect.objectContaining({
+            forceRefresh: true,
+            serverId: 'server-a',
+        }));
+        expect(routerReplace).not.toHaveBeenCalled();
         expect(disableDraftPersistence).not.toHaveBeenCalled();
         expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
         expect(setIsCreating).toHaveBeenCalledWith(false);
@@ -1283,7 +1334,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         );
     });
 
-    it('recovers the created-session draft and opens the hydrated session when afterCreated fails', async () => {
+    it('keeps the new-session draft surface active when afterCreated fails after session creation', async () => {
         const { useCreateNewSession } = await import('./useCreateNewSession');
         const { Modal } = await import('@/modal');
 
@@ -1377,31 +1428,15 @@ describe('useCreateNewSession (worktree gating)', () => {
             });
         });
 
-        expect(updateSessionDraftMock).toHaveBeenCalledWith('session-created', 'Recover this first message');
-        expect(storeTempDataMock).toHaveBeenCalledWith({
-            attachmentDrafts: [{
-                id: 'draft-retry',
-                source: {
-                    kind: 'native',
-                    uri: 'file:///tmp/retry.txt',
-                    name: 'retry.txt',
-                    sizeBytes: 12,
-                    mimeType: 'text/plain',
-                },
-                status: 'uploaded',
-                uploadedPath: 'uploads/retry.txt',
-                uploadedSizeBytes: 12,
-                uploadedMimeType: 'text/plain',
-                sha256: 'sha-retry',
-            }],
-        });
-        expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
-        expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(1);
-        expect(routerReplace).toHaveBeenCalledWith('/session/session-created?serverId=server-a&recoveryDataId=temp-recovery-1', expect.anything());
+        expect(updateSessionDraftMock).not.toHaveBeenCalledWith('session-created', 'Recover this first message');
+        expect(storeTempDataMock).not.toHaveBeenCalled();
+        expect(disableDraftPersistence).not.toHaveBeenCalled();
+        expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
+        expect(routerReplace).not.toHaveBeenCalled();
         expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'afterCreated failed');
     });
 
-    it('preserves the recoverable created-session payload when afterCreated fails before the created session hydrates locally', async () => {
+    it('keeps the new-session surface active when afterCreated fails before the created session hydrates locally', async () => {
         const { useCreateNewSession } = await import('./useCreateNewSession');
         const { readRecoverableFollowUpPayload } = await import('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession');
         const { Modal } = await import('@/modal');
@@ -1490,9 +1525,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             });
         });
 
-        expect(saveSessionDraftsMock).toHaveBeenCalledWith({
-            'session-created': 'Investigate this bug\n\n[attachments block]',
-        });
+        expect(saveSessionDraftsMock).not.toHaveBeenCalled();
         expect(saveNewSessionDraftMock).not.toHaveBeenCalled();
         expect(updateSessionDraftMock).not.toHaveBeenCalled();
         expect(disableDraftPersistence).not.toHaveBeenCalled();

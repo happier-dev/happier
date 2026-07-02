@@ -66,8 +66,11 @@ export function installConnectionStatusCommonModuleMocks(
         }
 
         return {
+            areServerProfileIdentifiersEquivalent: (left: unknown, right: unknown) => String(left ?? '').trim() === String(right ?? '').trim(),
+            getActiveServerId: () => '',
             getActiveServerSnapshot: () => null,
             listServerProfiles: () => [],
+            resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) => profile.serverIdentityId ?? profile.id,
             subscribeActiveServer: () => () => {},
         };
     });

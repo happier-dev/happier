@@ -11,11 +11,14 @@ import { readStoredSessionMessagesFromStateLike } from '../../domains/messages/r
 import {
     areSessionListRenderablesEqual,
     buildSessionListRenderableFromSession,
-    didSessionListRenderableStructuralFieldsChange,
     preserveSessionListRenderableStaleFields,
     preserveSessionListRenderableTransientState,
     type SessionListRenderableSession,
 } from '../../domains/session/listing/sessionListRenderable';
+import {
+    shouldRebuildSessionListIndexForRenderableChange,
+    type SessionListIndexRebuildSettings,
+} from '../../domains/session/listing/sessionListIndexRebuildImpact';
 import type { SessionListIndexItem } from '../../domains/sessionList/sessionListIndex';
 import { nowServerMs } from '../../runtime/time';
 import {
@@ -52,10 +55,6 @@ import { isModelMode, type PermissionMode } from '@/sync/domains/permissions/per
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
 import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import { resolveMetadataStringOverrideV1, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
-import {
-    buildActiveServerSessionListIndex,
-    buildSessionListIndexWithServerScope,
-} from '../sessionListIndex/buildSessionListIndexWithServerScope';
 import { applyReachableTargetsToSessionListRenderables } from '../../domains/session/listing/applyReachableTargetsToSessionListRenderables';
 import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
@@ -73,7 +72,9 @@ import type { StoreGet, StoreSet } from './_shared';
 import { areStoredSessionsEqual } from './areStoredSessionsEqual';
 import { applyAgentStateUpdateToSessionMessages } from './messages';
 import type { SessionMessages } from './messages';
+import { finalizeSessionListIndexUpdate } from './sessionListIndexFinalization';
 import { resolveSessionListRenderableChangeImpact } from './sessionListRenderableChange';
+import { persistSessionModelData } from './sessionModelPersistence';
 import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import { resolveMergedSessionPermissionMode } from './resolveMergedSessionPermissionMode';
 import {
@@ -87,13 +88,34 @@ import {
 } from './sessions.repositoryTreeExpansion';
 import { resolveWorkspaceTargetForSessionFromState } from '@/sync/domains/session/resolveWorkspaceTargetForSessionFromState';
 import { preserveSessionRuntimeLocalMetadata } from '@/sync/domains/session/preserveSessionRuntimeLocalMetadata';
-import { normalizeTrimmedString } from '@/sync/domains/session/listing/normalizeTrimmedString';
+import {
+    hasTerminalPrimaryTurnStatus,
+    resolveSessionRuntimePresenceFields,
+} from '@/sync/domains/session/attention/runtimePresentation';
 
 type SessionModelMode = NonNullable<Session['modelMode']>;
 type ScmOperationLogEntry = import('../../runtime/orchestration/projectManager').ScmProjectOperationLogEntry;
 type ScmInFlightOperation = import('../../runtime/orchestration/projectManager').ScmProjectInFlightOperation;
 type BeginScmOperationResult = import('../../runtime/orchestration/projectManager').BeginScmProjectOperationResult;
 type ProjectScmSnapshotError = import('../../runtime/orchestration/projectManager').ProjectScmSnapshotError;
+
+type SessionListIndexSettingsSource = Readonly<{
+    groupInactiveSessionsByProject?: boolean;
+    sessionListActiveGroupingV1?: 'project' | 'date';
+    sessionListInactiveGroupingV1?: 'project' | 'date';
+    sessionListSectionModeV1?: 'activity' | 'single';
+}>;
+
+function resolveSessionListIndexRebuildSettings(
+    settings: SessionListIndexSettingsSource,
+): SessionListIndexRebuildSettings {
+    return {
+        groupInactiveSessionsByProject: settings.groupInactiveSessionsByProject === true,
+        activeGroupingV1: settings.sessionListActiveGroupingV1,
+        inactiveGroupingV1: settings.sessionListInactiveGroupingV1,
+        sectionModeV1: settings.sessionListSectionModeV1,
+    };
+}
 
 export type SessionsDomain = {
     sessions: Record<string, Session>;
@@ -116,6 +138,7 @@ export type SessionsDomain = {
     getActiveSessions: () => Session[];
     applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;
     replaceSessionListRenderables: (sessions: SessionListRenderableSession[]) => void;
+    mergeSessionListRenderables: (sessions: SessionListRenderableSession[]) => void;
     applySessionListRenderablePatches: (
         patches: ReadonlyArray<Readonly<{
             sessionId: string;
@@ -233,6 +256,7 @@ type SessionsDomainDependencies = {
         groupInactiveSessionsByProject?: boolean;
         sessionListActiveGroupingV1?: 'project' | 'date';
         sessionListInactiveGroupingV1?: 'project' | 'date';
+        sessionListSectionModeV1?: 'activity' | 'single';
     };
 };
 
@@ -246,11 +270,121 @@ const optimisticThinkingTimeoutBySessionId = new Map<string, ReturnType<typeof s
 // between "working" and "online" between output chunks.
 const SESSION_THINKING_GRACE_TIMEOUT_MS = 3_000;
 const thinkingGraceTimeoutBySessionId = new Map<string, ReturnType<typeof setTimeout>>();
+const SESSION_LIST_WARM_CACHE_PROGRESS_SAVE_DEBOUNCE_MS = 1_000;
 
 let actionDraftIdCounter = 0;
 function createActionDraftId(nowMs: number): string {
     actionDraftIdCounter += 1;
     return `action_draft_${nowMs}_${actionDraftIdCounter}`;
+}
+
+type IncomingSessionApply = Omit<Session, 'presence'> & { presence?: 'online' | number };
+
+function normalizeSessionOrderingNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value)
+        ? Math.trunc(value)
+        : null;
+}
+
+function isIncomingOrderingTimestampOlder(incoming: unknown, previous: unknown): boolean {
+    const incomingNumber = normalizeSessionOrderingNumber(incoming);
+    const previousNumber = normalizeSessionOrderingNumber(previous);
+    return incomingNumber !== null && previousNumber !== null && incomingNumber < previousNumber;
+}
+
+function resolveNonRegressingNumber<T>(incoming: T, previous: unknown): T | number {
+    const incomingNumber = normalizeSessionOrderingNumber(incoming);
+    const previousNumber = normalizeSessionOrderingNumber(previous);
+    if (previousNumber === null) return incoming;
+    if (incomingNumber === null || incomingNumber < previousNumber) return previousNumber;
+    return incoming;
+}
+
+function shouldPreservePreviousTurnProjection(
+    previousSession: Session,
+    incomingSession: IncomingSessionApply,
+): boolean {
+    const incomingObservedAt = normalizeSessionOrderingNumber(incomingSession.latestTurnStatusObservedAt);
+    const incomingOrderingAt = incomingObservedAt ?? normalizeSessionOrderingNumber(incomingSession.updatedAt);
+    const previousObservedAt = normalizeSessionOrderingNumber(previousSession.latestTurnStatusObservedAt);
+    if (incomingOrderingAt !== null && previousObservedAt !== null && incomingOrderingAt < previousObservedAt) {
+        return true;
+    }
+    return incomingOrderingAt !== null
+        && previousObservedAt !== null
+        && incomingOrderingAt === previousObservedAt
+        && hasTerminalPrimaryTurnStatus(previousSession.latestTurnStatus)
+        && incomingSession.latestTurnStatus === 'in_progress';
+}
+
+function resolveOrderedSessionApply(
+    previousSession: Session | undefined,
+    incomingSession: IncomingSessionApply,
+): IncomingSessionApply {
+    if (!previousSession) return incomingSession;
+
+    let nextSession: IncomingSessionApply = incomingSession;
+    const applyPatch = (patch: Partial<IncomingSessionApply>): void => {
+        nextSession = { ...nextSession, ...patch };
+    };
+
+    const mergedSeq = resolveNonRegressingNumber(incomingSession.seq, previousSession.seq);
+    if (mergedSeq !== incomingSession.seq) {
+        applyPatch({ seq: mergedSeq as number });
+    }
+
+    const mergedUpdatedAt = resolveNonRegressingNumber(incomingSession.updatedAt, previousSession.updatedAt);
+    if (mergedUpdatedAt !== incomingSession.updatedAt) {
+        applyPatch({ updatedAt: mergedUpdatedAt as number });
+    }
+
+    const mergedMeaningfulActivityAt = resolveNonRegressingNumber(
+        incomingSession.meaningfulActivityAt,
+        previousSession.meaningfulActivityAt,
+    );
+    if (mergedMeaningfulActivityAt !== incomingSession.meaningfulActivityAt) {
+        applyPatch({ meaningfulActivityAt: mergedMeaningfulActivityAt as Session['meaningfulActivityAt'] });
+    }
+
+    const mergedLastTurnCompletedAt = resolveNonRegressingNumber(
+        incomingSession.lastTurnCompletedAt,
+        previousSession.lastTurnCompletedAt,
+    );
+    if (mergedLastTurnCompletedAt !== incomingSession.lastTurnCompletedAt) {
+        applyPatch({ lastTurnCompletedAt: mergedLastTurnCompletedAt as Session['lastTurnCompletedAt'] });
+    }
+
+    if (isIncomingOrderingTimestampOlder(incomingSession.activeAt, previousSession.activeAt)) {
+        applyPatch({
+            active: previousSession.active,
+            activeAt: previousSession.activeAt,
+        });
+    }
+
+    if (isIncomingOrderingTimestampOlder(incomingSession.thinkingAt, previousSession.thinkingAt)) {
+        applyPatch({
+            thinking: previousSession.thinking,
+            thinkingAt: previousSession.thinkingAt,
+        });
+    }
+
+    if (shouldPreservePreviousTurnProjection(previousSession, incomingSession)) {
+        applyPatch({
+            latestTurnId: previousSession.latestTurnId,
+            latestTurnStatus: previousSession.latestTurnStatus,
+            latestTurnStatusObservedAt: previousSession.latestTurnStatusObservedAt,
+        });
+    }
+
+    if (isIncomingOrderingTimestampOlder(incomingSession.pendingRequestObservedAt, previousSession.pendingRequestObservedAt)) {
+        applyPatch({
+            pendingPermissionRequestCount: previousSession.pendingPermissionRequestCount,
+            pendingUserActionRequestCount: previousSession.pendingUserActionRequestCount,
+            pendingRequestObservedAt: previousSession.pendingRequestObservedAt,
+        });
+    }
+
+    return nextSession;
 }
 
 function measureSessionApplyPhase<T>(
@@ -306,208 +440,6 @@ function saveWarmSessionCacheForState(
     );
 }
 
-function partitionSessionListRenderablesByOwnerServer(params: Readonly<{
-    sessions: Record<string, Session>;
-    sessionListRenderables: Record<string, SessionListRenderableSession>;
-    concurrentSessionListCacheByServerId: ConcurrentSessionListCacheByServerId;
-    activeServerId: string;
-}>): Readonly<{
-    activeServerRenderables: Record<string, SessionListRenderableSession>;
-    foreignServerRenderablesByServerId: Record<string, Record<string, SessionListRenderableSession>>;
-}> {
-    let nextActiveServerRenderables = params.sessionListRenderables;
-    let activeServerRenderablesMutated = false;
-    let foreignServerRenderablesByServerId: Record<string, Record<string, SessionListRenderableSession>> | null = null;
-
-    for (const sessionId in params.sessionListRenderables) {
-        const renderable = params.sessionListRenderables[sessionId];
-        const ownerServerId = normalizeTrimmedString(params.sessions[sessionId]?.serverId);
-        if (!ownerServerId || ownerServerId === params.activeServerId) {
-            continue;
-        }
-
-        if (!activeServerRenderablesMutated) {
-            nextActiveServerRenderables = { ...params.sessionListRenderables };
-            activeServerRenderablesMutated = true;
-        }
-        delete nextActiveServerRenderables[sessionId];
-
-        const concurrentRows = params.concurrentSessionListCacheByServerId?.[ownerServerId]?.sessions ?? null;
-        const existingRows = foreignServerRenderablesByServerId?.[ownerServerId];
-        const nextRows = existingRows
-            ?? (concurrentRows && typeof concurrentRows === 'object'
-                ? { ...concurrentRows }
-                : {});
-        nextRows[sessionId] = renderable;
-
-        if (!foreignServerRenderablesByServerId) {
-            foreignServerRenderablesByServerId = {};
-        }
-        foreignServerRenderablesByServerId[ownerServerId] = nextRows;
-    }
-
-    return {
-        activeServerRenderables: nextActiveServerRenderables,
-        foreignServerRenderablesByServerId: foreignServerRenderablesByServerId ?? {},
-    };
-}
-
-function finalizeSessionListIndexUpdate<S extends SessionsDomain & SessionsDomainDependencies>(
-    state: S,
-    nextStateBase: S,
-    needsSessionListIndexRebuild: boolean,
-    didAnyWarmCacheRelevantRenderableChange: boolean,
-    telemetry?: Readonly<{
-        indexRebuildEventName?: string;
-        warmCacheEventName?: string;
-        fields?: () => Record<string, number>;
-    }>,
-): S {
-    type MutableSessionListRowsByServerId = Record<string, Readonly<Record<string, SessionListRenderableSession>>>;
-    type MutableSessionListIndexByServerId = Record<string, SessionListIndexItem[] | null | undefined>;
-    const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
-    const previousIndexByServerId = nextStateBase.sessionListIndexByServerId ?? state.sessionListIndexByServerId ?? {};
-    const {
-        activeServerRenderables,
-        foreignServerRenderablesByServerId,
-    } = partitionSessionListRenderablesByOwnerServer({
-        sessions: nextStateBase.sessions,
-        sessionListRenderables: nextStateBase.sessionListRenderables,
-        concurrentSessionListCacheByServerId: nextStateBase.concurrentSessionListCacheByServerId,
-        activeServerId,
-    });
-    const previousActiveIndex = activeServerId
-        ? (previousIndexByServerId[activeServerId] ?? null)
-        : null;
-    const extraFields = telemetry?.fields?.() ?? {};
-    const nextActiveIndex = needsSessionListIndexRebuild && activeServerId
-        ? measureSessionApplyPhase(
-            telemetry?.indexRebuildEventName ?? 'sync.store.sessions.apply.indexRebuild',
-            () => ({
-                renderables: Object.keys(activeServerRenderables).length,
-                ...extraFields,
-            }),
-            () => buildActiveServerSessionListIndex({
-                sessions: activeServerRenderables,
-                sessionRecords: nextStateBase.sessions,
-                machines: nextStateBase.machineDisplayById,
-                machineRecords: nextStateBase.machines,
-                groupInactiveSessionsByProject: nextStateBase.settings.groupInactiveSessionsByProject === true,
-                activeGroupingV1: nextStateBase.settings.sessionListActiveGroupingV1,
-                inactiveGroupingV1: nextStateBase.settings.sessionListInactiveGroupingV1,
-                getProjectForSession: nextStateBase.getProjectForSession,
-                previousIndex: previousActiveIndex,
-            }),
-        )
-        : previousActiveIndex;
-
-    const previousRowStateByServerId = nextStateBase.sessionListRowStateByServerId ?? state.sessionListRowStateByServerId ?? {};
-    let nextSessionListRowStateByServerId = previousRowStateByServerId as MutableSessionListRowsByServerId;
-    let nextSessionListIndexByServerId = previousIndexByServerId as MutableSessionListIndexByServerId;
-
-    const writeServerScopedRows = (
-        serverId: string,
-        renderables: Record<string, SessionListRenderableSession>,
-    ): void => {
-        if (nextSessionListRowStateByServerId[serverId] !== renderables) {
-            if (nextSessionListRowStateByServerId === previousRowStateByServerId) {
-                nextSessionListRowStateByServerId = { ...previousRowStateByServerId };
-            }
-            nextSessionListRowStateByServerId[serverId] = renderables;
-        }
-    };
-
-    const writeServerScopedIndex = (
-        serverId: string,
-        index: SessionListIndexItem[] | null | undefined,
-    ): void => {
-        if (nextSessionListIndexByServerId[serverId] !== index) {
-            if (nextSessionListIndexByServerId === previousIndexByServerId) {
-                nextSessionListIndexByServerId = { ...previousIndexByServerId };
-            }
-            nextSessionListIndexByServerId[serverId] = index;
-        }
-    };
-
-    const deleteServerScopedProjection = (serverId: string): void => {
-        if (serverId in nextSessionListRowStateByServerId) {
-            if (nextSessionListRowStateByServerId === previousRowStateByServerId) {
-                nextSessionListRowStateByServerId = { ...previousRowStateByServerId };
-            }
-            delete nextSessionListRowStateByServerId[serverId];
-        }
-        if (serverId in nextSessionListIndexByServerId) {
-            if (nextSessionListIndexByServerId === previousIndexByServerId) {
-                nextSessionListIndexByServerId = { ...previousIndexByServerId };
-            }
-            delete nextSessionListIndexByServerId[serverId];
-        }
-    };
-
-    if (activeServerId) {
-        writeServerScopedRows(activeServerId, activeServerRenderables);
-        writeServerScopedIndex(activeServerId, nextActiveIndex);
-    }
-
-    for (const serverId in foreignServerRenderablesByServerId) {
-        const renderables = foreignServerRenderablesByServerId[serverId];
-        const concurrentEntry = nextStateBase.concurrentSessionListCacheByServerId?.[serverId];
-        writeServerScopedRows(serverId, renderables);
-        writeServerScopedIndex(serverId, buildSessionListIndexWithServerScope({
-            sessions: renderables,
-            sessionRecords: nextStateBase.sessions,
-            machines: nextStateBase.machineDisplayById,
-            machineRecords: nextStateBase.machines,
-            groupInactiveSessionsByProject: nextStateBase.settings.groupInactiveSessionsByProject === true,
-            activeGroupingV1: nextStateBase.settings.sessionListActiveGroupingV1,
-            inactiveGroupingV1: nextStateBase.settings.sessionListInactiveGroupingV1,
-            getProjectForSession: nextStateBase.getProjectForSession,
-            previousIndex: previousIndexByServerId[serverId] ?? null,
-            serverScope: {
-                serverId,
-                serverName: concurrentEntry?.serverName ?? null,
-            },
-        }));
-    }
-
-    const candidateServerIds = new Set<string>([
-        ...Object.keys(previousRowStateByServerId),
-        ...Object.keys(previousIndexByServerId),
-    ]);
-    for (const serverId of candidateServerIds) {
-        if (!serverId || serverId === activeServerId) {
-            continue;
-        }
-        if (serverId in foreignServerRenderablesByServerId) {
-            continue;
-        }
-        const concurrentRows = nextStateBase.concurrentSessionListCacheByServerId?.[serverId]?.sessions ?? null;
-        if (concurrentRows && typeof concurrentRows === 'object') {
-            continue;
-        }
-        deleteServerScopedProjection(serverId);
-    }
-
-    const nextState = {
-        ...nextStateBase,
-        sessionListRowStateByServerId: nextSessionListRowStateByServerId,
-        sessionListIndexByServerId: nextSessionListIndexByServerId,
-    };
-
-    if (didAnyWarmCacheRelevantRenderableChange) {
-        measureSessionApplyPhase(
-            telemetry?.warmCacheEventName ?? 'sync.store.sessions.apply.warmCache',
-            () => ({
-                renderables: Object.keys(nextState.sessionListRenderables).length,
-                ...extraFields,
-            }),
-            () => saveWarmSessionCacheForState(nextState),
-        );
-    }
-
-    return nextState as S;
-}
-
 export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDependencies>({
     set,
     get,
@@ -527,6 +459,29 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
     let sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]> = {};
     let workspaceRepositoryTreeExpandedPathsByWorkspaceCacheKey: Record<string, string[]> = {};
     let actionDraftsBySessionId: Record<string, SessionActionDraft[]> = loadSessionActionDrafts();
+    let deferredWarmCacheSaveTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const clearDeferredWarmCacheSave = (): void => {
+        if (!deferredWarmCacheSaveTimeout) return;
+        clearTimeout(deferredWarmCacheSaveTimeout);
+        deferredWarmCacheSaveTimeout = null;
+    };
+
+    const saveWarmSessionCacheImmediately = (
+        state: SessionsDomain & SessionsDomainDependencies,
+        previousEntries?: Record<string, SessionListCacheEntryV1>,
+    ): void => {
+        clearDeferredWarmCacheSave();
+        saveWarmSessionCacheForState(state, previousEntries);
+    };
+
+    const scheduleWarmSessionCacheSave = (): void => {
+        if (deferredWarmCacheSaveTimeout) return;
+        deferredWarmCacheSaveTimeout = setTimeout(() => {
+            deferredWarmCacheSaveTimeout = null;
+            saveWarmSessionCacheForState(get());
+        }, SESSION_LIST_WARM_CACHE_PROGRESS_SAVE_DEBOUNCE_MS);
+    };
     const hydrateSessionLocalStateScope = (scope: ServerAccountScope) => {
         sessionLocalStateScope = scope;
         sessionDrafts = loadSessionDrafts(scope);
@@ -575,6 +530,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         sessionLocalStateScope,
         isDataReady: false,
         activateSessionLocalStateScope: (scope) => {
+            clearDeferredWarmCacheSave();
             prepareSessionLocalStateScopeForActivation(scope);
             hydrateSessionLocalStateScope(scope);
             set((state) => {
@@ -619,6 +575,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             });
         },
         clearSessionLocalStateScope: () => {
+            clearDeferredWarmCacheSave();
             sessionLocalStateScope = null;
             sessionDrafts = {};
             sessionPermissionModes = {};
@@ -740,9 +697,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             let mergedRenderables: Record<string, SessionListRenderableSession> = state.sessionListRenderables;
             const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
             let needsSessionListIndexRebuild = Boolean(activeServerId) && (state.sessionListIndexByServerId?.[activeServerId] == null);
+            const sessionListIndexSettings = resolveSessionListIndexRebuildSettings(state.settings);
             let needsProjectManagerUpdate = Object.keys(state.sessions).length === 0;
             let needsReachablePeerReevaluation = false;
-            let didAnyWarmCacheRelevantRenderableChange = false;
+            let didAnyImmediateWarmCacheRelevantRenderableChange = false;
+            let didAnyDeferredWarmCacheRelevantRenderableChange = false;
             let changedSessionCount = 0;
             let changedRenderableCount = 0;
             let reconciledSessionMessageCount = 0;
@@ -754,30 +713,53 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 () => ({ sessions: sessions.length }),
                 () => {
             // Update sessions with calculated presence using centralized resolver
-            sessions.forEach(session => {
+            sessions.forEach(incomingSession => {
+                const previousSession = state.sessions[incomingSession.id];
+                const session = resolveOrderedSessionApply(previousSession, incomingSession);
                 // Use centralized resolver for consistent state management
                 const presence = session.active ? 'online' : session.activeAt;
 
                 // Preserve existing draft and permission mode if they exist, or load from saved data
-                const hasLoadedSession = state.sessions[session.id] !== undefined;
-                const existingDraft = state.sessions[session.id]?.draft;
+                const hasLoadedSession = previousSession !== undefined;
+                const existingDraft = previousSession?.draft;
                 const savedDraft = sessionDrafts[session.id];
-                const existingPermissionMode = state.sessions[session.id]?.permissionMode;
+                const existingPermissionMode = previousSession?.permissionMode;
                 const savedPermissionMode = savedPermissionModes[session.id];
-                const existingModelMode = state.sessions[session.id]?.modelMode;
+                const existingModelMode = previousSession?.modelMode;
                 const savedModelMode = savedModelModes[session.id];
-                const existingPermissionModeUpdatedAt = state.sessions[session.id]?.permissionModeUpdatedAt;
+                const existingPermissionModeUpdatedAt = previousSession?.permissionModeUpdatedAt;
                 const savedPermissionModeUpdatedAt = savedPermissionModeUpdatedAts[session.id];
-                const existingModelModeUpdatedAt = state.sessions[session.id]?.modelModeUpdatedAt;
+                const existingModelModeUpdatedAt = previousSession?.modelModeUpdatedAt;
                 const savedModelModeUpdatedAt = savedModelModeUpdatedAts[session.id];
-                const existingOptimisticThinkingAt = state.sessions[session.id]?.optimisticThinkingAt ?? null;
-                const existingThinkingGraceUntil = state.sessions[session.id]?.thinkingGraceUntil ?? null;
-                const previousSession = state.sessions[session.id];
-                const wasThinking = previousSession?.thinking === true;
+                const existingOptimisticThinkingAt = previousSession?.optimisticThinkingAt ?? null;
+                const existingThinkingGraceUntil = previousSession?.thinkingGraceUntil ?? null;
+                const runtimePresence = resolveSessionRuntimePresenceFields({
+                    thinking: session.thinking,
+                    thinkingAt: session.thinkingAt,
+                    latestTurnStatus: session.latestTurnStatus,
+                    latestTurnStatusObservedAt: session.latestTurnStatusObservedAt,
+                });
+                const wasThinking = previousSession
+                    ? resolveSessionRuntimePresenceFields({
+                        thinking: previousSession.thinking,
+                        thinkingAt: previousSession.thinkingAt,
+                        latestTurnStatus: previousSession.latestTurnStatus,
+                        latestTurnStatusObservedAt: previousSession.latestTurnStatusObservedAt,
+                    }).thinking
+                    : false;
                 const existingLastTurnCompletedAt = state.sessions[session.id]?.lastTurnCompletedAt ?? null;
+                const hasTerminalPrimaryTurnProjection = hasTerminalPrimaryTurnStatus(session.latestTurnStatus);
                 const incomingLastTurnCompletedAt = typeof session.lastTurnCompletedAt === 'number'
                     && Number.isFinite(session.lastTurnCompletedAt)
                     ? session.lastTurnCompletedAt
+                    : null;
+                const incomingLatestReadyEventSeq = typeof session.latestReadyEventSeq === 'number'
+                    && Number.isFinite(session.latestReadyEventSeq)
+                    ? Math.max(0, Math.trunc(session.latestReadyEventSeq))
+                    : null;
+                const incomingLatestReadyEventAt = typeof session.latestReadyEventAt === 'number'
+                    && Number.isFinite(session.latestReadyEventAt)
+                    ? session.latestReadyEventAt
                     : null;
 
                 // CLI may publish a session permission mode in encrypted metadata for local-only starts.
@@ -847,14 +829,26 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 }
 
                 let mergedThinkingGraceUntil = existingThinkingGraceUntil;
-                if (presence !== 'online') {
+                if (hasTerminalPrimaryTurnProjection) {
+                    mergedThinkingGraceUntil = null;
+                    const optimisticTimeout = optimisticThinkingTimeoutBySessionId.get(session.id);
+                    if (optimisticTimeout) {
+                        clearTimeout(optimisticTimeout);
+                        optimisticThinkingTimeoutBySessionId.delete(session.id);
+                    }
+                    const graceTimeout = thinkingGraceTimeoutBySessionId.get(session.id);
+                    if (graceTimeout) {
+                        clearTimeout(graceTimeout);
+                        thinkingGraceTimeoutBySessionId.delete(session.id);
+                    }
+                } else if (presence !== 'online') {
                     mergedThinkingGraceUntil = null;
                     const graceTimeout = thinkingGraceTimeoutBySessionId.get(session.id);
                     if (graceTimeout) {
                         clearTimeout(graceTimeout);
                         thinkingGraceTimeoutBySessionId.delete(session.id);
                     }
-                } else if (session.thinking === true) {
+                } else if (runtimePresence.thinking === true) {
                     mergedThinkingGraceUntil = null;
                     const graceTimeout = thinkingGraceTimeoutBySessionId.get(session.id);
                     if (graceTimeout) {
@@ -907,11 +901,15 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                         state.sessions[session.id]?.metadata,
                         session.metadata,
                     ),
+                    thinking: runtimePresence.thinking,
+                    thinkingAt: runtimePresence.thinkingAt,
                     presence,
+                    latestReadyEventSeq: incomingLatestReadyEventSeq ?? previousSession?.latestReadyEventSeq ?? null,
+                    latestReadyEventAt: incomingLatestReadyEventAt ?? previousSession?.latestReadyEventAt ?? null,
                     draft: hasLoadedSession
                         ? (existingDraft ?? null)
                         : (savedDraft ?? session.draft ?? null),
-                    optimisticThinkingAt: session.thinking === true ? null : existingOptimisticThinkingAt,
+                    optimisticThinkingAt: runtimePresence.thinking || hasTerminalPrimaryTurnProjection ? null : existingOptimisticThinkingAt,
                     thinkingGraceUntil: mergedThinkingGraceUntil,
                     lastTurnCompletedAt: incomingLastTurnCompletedAt ?? existingLastTurnCompletedAt,
                     permissionMode: mergedPermissionMode,
@@ -935,6 +933,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const nextRenderableBase = buildSessionListRenderableFromSession(
                     mergedSessions[session.id]!,
                     previousRenderable,
+                    readStoredSessionMessagesFromStateLike(state.sessionMessages[session.id]),
                 );
                 const nextRenderable = previousRenderable
                     ? preserveSessionListRenderableTransientState(previousRenderable, nextRenderableBase)
@@ -942,14 +941,23 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const mergedRenderable = areSessionListRenderablesEqual(previousRenderable, nextRenderable)
                     ? previousRenderable
                     : nextRenderable;
-                const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, mergedRenderable);
+                const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, mergedRenderable, {
+                    sessionListIndexSettings,
+                });
                 if (mergedRenderable !== previousRenderable) {
                     changedRenderableCount += 1;
                     if (renderableChangeImpact.needsSessionListIndexRebuild) {
                         listViewFieldChangeCount += 1;
                     }
                     if (renderableChangeImpact.didWarmCacheRelevantRenderableChange) {
-                        didAnyWarmCacheRelevantRenderableChange = true;
+                        if (
+                            !renderableChangeImpact.needsSessionListIndexRebuild
+                            && renderableChangeImpact.isWarmCacheProgressOnlyChange
+                        ) {
+                            didAnyDeferredWarmCacheRelevantRenderableChange = true;
+                        } else {
+                            didAnyImmediateWarmCacheRelevantRenderableChange = true;
+                        }
                     }
                     if (mergedRenderables === state.sessionListRenderables) {
                         mergedRenderables = { ...state.sessionListRenderables };
@@ -999,7 +1007,25 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                             const previousRenderable = previousReachableRenderables[sessionId];
                             const nextRenderable = nextReachableRenderables[sessionId];
                             if (!nextRenderable) continue;
-                            const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, nextRenderable);
+                            const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, nextRenderable, {
+                                sessionListIndexSettings,
+                            });
+                            if (nextRenderable !== previousRenderable) {
+                                changedRenderableCount += 1;
+                                if (renderableChangeImpact.needsSessionListIndexRebuild) {
+                                    listViewFieldChangeCount += 1;
+                                }
+                                if (renderableChangeImpact.didWarmCacheRelevantRenderableChange) {
+                                    if (
+                                        !renderableChangeImpact.needsSessionListIndexRebuild
+                                        && renderableChangeImpact.isWarmCacheProgressOnlyChange
+                                    ) {
+                                        didAnyDeferredWarmCacheRelevantRenderableChange = true;
+                                    } else {
+                                        didAnyImmediateWarmCacheRelevantRenderableChange = true;
+                                    }
+                                }
+                            }
 
                             if (
                                 !needsSessionListIndexRebuild
@@ -1018,6 +1044,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                             if (needsSessionListIndexRebuild && needsProjectManagerUpdate) {
                                 break;
                             }
+                        }
+                        if (nextReachableRenderables !== mergedRenderables) {
+                            mergedRenderables = nextReachableRenderables;
                         }
                     },
                 );
@@ -1090,7 +1119,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     const mergedRenderable = areSessionListRenderablesEqual(currentRenderable, nextRenderable)
                         ? currentRenderable
                         : nextRenderable;
-                    const renderableChangeImpact = resolveSessionListRenderableChangeImpact(currentRenderable, mergedRenderable);
+                    const renderableChangeImpact = resolveSessionListRenderableChangeImpact(currentRenderable, mergedRenderable, {
+                        sessionListIndexSettings,
+                    });
 
                     if (mergedRenderable !== currentRenderable) {
                         changedRenderableCount += 1;
@@ -1098,7 +1129,14 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                             listViewFieldChangeCount += 1;
                         }
                         if (renderableChangeImpact.didWarmCacheRelevantRenderableChange) {
-                            didAnyWarmCacheRelevantRenderableChange = true;
+                            if (
+                                !renderableChangeImpact.needsSessionListIndexRebuild
+                                && renderableChangeImpact.isWarmCacheProgressOnlyChange
+                            ) {
+                                didAnyDeferredWarmCacheRelevantRenderableChange = true;
+                            } else {
+                                didAnyImmediateWarmCacheRelevantRenderableChange = true;
+                            }
                         }
                         if (mergedRenderables === state.sessionListRenderables) {
                             mergedRenderables = { ...state.sessionListRenderables };
@@ -1127,7 +1165,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 listViewFieldChanges: listViewFieldChangeCount,
                 projectManagerUpdate: needsProjectManagerUpdate ? 1 : 0,
                 reachablePeerReevaluation: needsReachablePeerReevaluation ? 1 : 0,
-                warmCacheRelevant: didAnyWarmCacheRelevantRenderableChange ? 1 : 0,
+                warmCacheRelevant: (didAnyImmediateWarmCacheRelevantRenderableChange || didAnyDeferredWarmCacheRelevantRenderableChange) ? 1 : 0,
             });
 
             if (
@@ -1178,12 +1216,19 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 reachablePeerReevaluation: didReachablePeerReevaluation ? 1 : 0,
             });
 
-                return finalizeSessionListIndexUpdate(
-                    state,
-                    nextStateBase,
-                    needsSessionListIndexRebuild,
-                    didAnyWarmCacheRelevantRenderableChange,
-                );
+            return finalizeSessionListIndexUpdate(
+                state,
+                nextStateBase,
+                needsSessionListIndexRebuild,
+                didAnyImmediateWarmCacheRelevantRenderableChange,
+                didAnyDeferredWarmCacheRelevantRenderableChange,
+                undefined,
+                {
+                    deferImmediateSaveWhenAlreadyWarm: true,
+                    scheduleDeferredSave: scheduleWarmSessionCacheSave,
+                    saveImmediately: saveWarmSessionCacheImmediately,
+                },
+            );
             }),
         ),
         replaceSessionListRenderables: (sessions) => set((state) => {
@@ -1196,9 +1241,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             let listViewFieldChangeCount = 0;
             let staleMetadataPreservedCount = 0;
             let stalePendingFlagsPreservedCount = 0;
-            let didAnyWarmCacheRelevantRenderableChange = false;
+            let didAnyImmediateWarmCacheRelevantRenderableChange = false;
+            let didAnyDeferredWarmCacheRelevantRenderableChange = false;
             const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
             let needsSessionListIndexRebuild = Boolean(activeServerId) && (state.sessionListIndexByServerId?.[activeServerId] == null);
+            const sessionListIndexSettings = resolveSessionListIndexRebuildSettings(state.settings);
 
             for (const session of sessions) {
                 incomingIds.add(session.id);
@@ -1211,7 +1258,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const nextRenderable = areSessionListRenderablesEqual(previousRenderable, nextRenderableBase)
                     ? previousRenderable
                     : nextRenderableBase;
-                const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, nextRenderable);
+                const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, nextRenderable, {
+                    sessionListIndexSettings,
+                });
 
                 if (didPreserveRenderableMetadata(previousRenderable, session, nextRenderable)) {
                     staleMetadataPreservedCount += 1;
@@ -1227,7 +1276,14 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                         listViewFieldChangeCount += 1;
                     }
                     if (renderableChangeImpact.didWarmCacheRelevantRenderableChange) {
-                        didAnyWarmCacheRelevantRenderableChange = true;
+                        if (
+                            !renderableChangeImpact.needsSessionListIndexRebuild
+                            && renderableChangeImpact.isWarmCacheProgressOnlyChange
+                        ) {
+                            didAnyDeferredWarmCacheRelevantRenderableChange = true;
+                        } else {
+                            didAnyImmediateWarmCacheRelevantRenderableChange = true;
+                        }
                     }
                     if (nextRenderables === state.sessionListRenderables) {
                         nextRenderables = { ...state.sessionListRenderables };
@@ -1266,7 +1322,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 }
                 delete nextRenderables[sessionId];
                 removedCount += 1;
-                didAnyWarmCacheRelevantRenderableChange = true;
+                didAnyImmediateWarmCacheRelevantRenderableChange = true;
             }
 
             if (!needsSessionListIndexRebuild) {
@@ -1278,7 +1334,13 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     for (const sessionId of nextIds) {
                         const previousRenderable = state.sessionListRenderables[sessionId];
                         const nextRenderable = nextRenderables[sessionId];
-                        if (didSessionListRenderableStructuralFieldsChange(previousRenderable, nextRenderable)) {
+                        if (
+                            shouldRebuildSessionListIndexForRenderableChange(
+                                previousRenderable,
+                                nextRenderable,
+                                sessionListIndexSettings,
+                            )
+                        ) {
                             needsSessionListIndexRebuild = true;
                             break;
                         }
@@ -1296,7 +1358,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 listViewFieldChanges: listViewFieldChangeCount,
                 staleMetadataPreserved: staleMetadataPreservedCount,
                 stalePendingFlagsPreserved: stalePendingFlagsPreservedCount,
-                warmCacheRelevant: didAnyWarmCacheRelevantRenderableChange ? 1 : 0,
+                warmCacheRelevant: (didAnyImmediateWarmCacheRelevantRenderableChange || didAnyDeferredWarmCacheRelevantRenderableChange) ? 1 : 0,
             });
 
             const nextStateBase = {
@@ -1308,7 +1370,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 state,
                 nextStateBase,
                 needsSessionListIndexRebuild,
-                didAnyWarmCacheRelevantRenderableChange,
+                didAnyImmediateWarmCacheRelevantRenderableChange,
+                didAnyDeferredWarmCacheRelevantRenderableChange,
                 {
                     indexRebuildEventName: 'sync.store.sessions.renderables.replace.indexRebuild',
                     warmCacheEventName: 'sync.store.sessions.renderables.replace.warmCache',
@@ -1318,6 +1381,131 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                         removed: removedCount,
                         listViewFieldChanges: listViewFieldChangeCount,
                     }),
+                },
+                {
+                    saveImmediately: saveWarmSessionCacheImmediately,
+                    scheduleDeferredSave: scheduleWarmSessionCacheSave,
+                },
+            );
+        }),
+        mergeSessionListRenderables: (sessions) => set((state) => {
+            if (sessions.length === 0) {
+                return state;
+            }
+
+            let nextRenderables = state.sessionListRenderables;
+            const previousRenderableIds = Object.keys(state.sessionListRenderables);
+            let didAnyRenderableChange = false;
+            let changedCount = 0;
+            let listViewFieldChangeCount = 0;
+            let staleMetadataPreservedCount = 0;
+            let stalePendingFlagsPreservedCount = 0;
+            let didAnyImmediateWarmCacheRelevantRenderableChange = false;
+            let didAnyDeferredWarmCacheRelevantRenderableChange = false;
+            const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+            let needsSessionListIndexRebuild = Boolean(activeServerId) && (state.sessionListIndexByServerId?.[activeServerId] == null);
+            const sessionListIndexSettings = resolveSessionListIndexRebuildSettings(state.settings);
+
+            for (const session of sessions) {
+                const previousRenderable = state.sessionListRenderables[session.id];
+                const nextRenderableWithFallbacks = preserveSessionListRenderableStaleFields(previousRenderable, session);
+                const nextRenderableBase = preserveSessionListRenderableTransientState(
+                    previousRenderable,
+                    nextRenderableWithFallbacks,
+                );
+                const nextRenderable = areSessionListRenderablesEqual(previousRenderable, nextRenderableBase)
+                    ? previousRenderable
+                    : nextRenderableBase;
+                const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, nextRenderable, {
+                    sessionListIndexSettings,
+                });
+
+                if (didPreserveRenderableMetadata(previousRenderable, session, nextRenderable)) {
+                    staleMetadataPreservedCount += 1;
+                }
+                if (didPreserveRenderablePendingFlags(previousRenderable, session, nextRenderable)) {
+                    stalePendingFlagsPreservedCount += 1;
+                }
+
+                if (!previousRenderable || nextRenderable !== previousRenderable) {
+                    didAnyRenderableChange = true;
+                    changedCount += 1;
+                    if (renderableChangeImpact.needsSessionListIndexRebuild) {
+                        listViewFieldChangeCount += 1;
+                        needsSessionListIndexRebuild = true;
+                    }
+                    if (renderableChangeImpact.didWarmCacheRelevantRenderableChange) {
+                        if (
+                            !renderableChangeImpact.needsSessionListIndexRebuild
+                            && renderableChangeImpact.isWarmCacheProgressOnlyChange
+                        ) {
+                            didAnyDeferredWarmCacheRelevantRenderableChange = true;
+                        } else {
+                            didAnyImmediateWarmCacheRelevantRenderableChange = true;
+                        }
+                    }
+                    if (nextRenderables === state.sessionListRenderables) {
+                        nextRenderables = { ...state.sessionListRenderables };
+                    }
+                    nextRenderables[session.id] = nextRenderable;
+                }
+            }
+
+            if (!didAnyRenderableChange && !needsSessionListIndexRebuild) {
+                syncPerformanceTelemetry.count('sync.store.sessions.renderables.merge', {
+                    incoming: sessions.length,
+                    previous: previousRenderableIds.length,
+                    changed: changedCount,
+                    removed: 0,
+                    noop: 1,
+                    indexRebuild: 0,
+                    listRebuild: 0,
+                    listViewFieldChanges: 0,
+                    staleMetadataPreserved: staleMetadataPreservedCount,
+                    stalePendingFlagsPreserved: stalePendingFlagsPreservedCount,
+                    warmCacheRelevant: 0,
+                });
+                return state;
+            }
+
+            syncPerformanceTelemetry.count('sync.store.sessions.renderables.merge', {
+                incoming: sessions.length,
+                previous: previousRenderableIds.length,
+                changed: changedCount,
+                removed: 0,
+                noop: !didAnyRenderableChange && !needsSessionListIndexRebuild ? 1 : 0,
+                indexRebuild: needsSessionListIndexRebuild ? 1 : 0,
+                listRebuild: needsSessionListIndexRebuild ? 1 : 0,
+                listViewFieldChanges: listViewFieldChangeCount,
+                staleMetadataPreserved: staleMetadataPreservedCount,
+                stalePendingFlagsPreserved: stalePendingFlagsPreservedCount,
+                warmCacheRelevant: (didAnyImmediateWarmCacheRelevantRenderableChange || didAnyDeferredWarmCacheRelevantRenderableChange) ? 1 : 0,
+            });
+
+            const nextStateBase = {
+                ...state,
+                sessionListRenderables: nextRenderables,
+            };
+
+            return finalizeSessionListIndexUpdate(
+                state,
+                nextStateBase,
+                needsSessionListIndexRebuild,
+                didAnyImmediateWarmCacheRelevantRenderableChange,
+                didAnyDeferredWarmCacheRelevantRenderableChange,
+                {
+                    indexRebuildEventName: 'sync.store.sessions.renderables.merge.indexRebuild',
+                    warmCacheEventName: 'sync.store.sessions.renderables.merge.warmCache',
+                    fields: () => ({
+                        incoming: sessions.length,
+                        changed: changedCount,
+                        removed: 0,
+                        listViewFieldChanges: listViewFieldChangeCount,
+                    }),
+                },
+                {
+                    saveImmediately: saveWarmSessionCacheImmediately,
+                    scheduleDeferredSave: scheduleWarmSessionCacheSave,
                 },
             );
         }),
@@ -1329,7 +1517,9 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             let nextRenderables = state.sessionListRenderables;
             const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
             let needsSessionListIndexRebuild = Boolean(activeServerId) && (state.sessionListIndexByServerId?.[activeServerId] == null);
-            let didAnyWarmCacheRelevantRenderableChange = false;
+            const sessionListIndexSettings = resolveSessionListIndexRebuildSettings(state.settings);
+            let didAnyImmediateWarmCacheRelevantRenderableChange = false;
+            let didAnyDeferredWarmCacheRelevantRenderableChange = false;
             let changedCount = 0;
             let missingCount = 0;
             let noopPatchCount = 0;
@@ -1354,13 +1544,22 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 }
 
                 changedCount += 1;
-                const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, nextRenderable);
+                const renderableChangeImpact = resolveSessionListRenderableChangeImpact(previousRenderable, nextRenderable, {
+                    sessionListIndexSettings,
+                });
                 if (renderableChangeImpact.needsSessionListIndexRebuild) {
                     listViewFieldChangeCount += 1;
                 }
 
                 if (renderableChangeImpact.didWarmCacheRelevantRenderableChange) {
-                    didAnyWarmCacheRelevantRenderableChange = true;
+                    if (
+                        !renderableChangeImpact.needsSessionListIndexRebuild
+                        && renderableChangeImpact.isWarmCacheProgressOnlyChange
+                    ) {
+                        didAnyDeferredWarmCacheRelevantRenderableChange = true;
+                    } else {
+                        didAnyImmediateWarmCacheRelevantRenderableChange = true;
+                    }
                 }
 
                 if (!needsSessionListIndexRebuild) {
@@ -1382,7 +1581,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 missing: missingCount,
                 listRebuild: needsSessionListIndexRebuild ? 1 : 0,
                 listViewFieldChanges: listViewFieldChangeCount,
-                warmCacheRelevant: didAnyWarmCacheRelevantRenderableChange ? 1 : 0,
+                warmCacheRelevant: (didAnyImmediateWarmCacheRelevantRenderableChange || didAnyDeferredWarmCacheRelevantRenderableChange) ? 1 : 0,
             });
 
             if (nextRenderables === state.sessionListRenderables) {
@@ -1400,7 +1599,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 state,
                 nextStateBase,
                 needsSessionListIndexRebuild,
-                didAnyWarmCacheRelevantRenderableChange,
+                false,
+                didAnyImmediateWarmCacheRelevantRenderableChange || didAnyDeferredWarmCacheRelevantRenderableChange,
                 {
                     indexRebuildEventName: 'sync.store.sessions.renderables.patch.indexRebuild',
                     warmCacheEventName: 'sync.store.sessions.renderables.patch.warmCache',
@@ -1410,6 +1610,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                         missing: missingCount,
                         listViewFieldChanges: listViewFieldChangeCount,
                     }),
+                },
+                {
+                    saveImmediately: saveWarmSessionCacheImmediately,
+                    scheduleDeferredSave: scheduleWarmSessionCacheSave,
                 },
             );
         }),
@@ -1434,11 +1638,13 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             // Don't store empty strings, convert to null
             const normalizedDraft = draft?.trim() ? draft : null;
 
-            // Collect all drafts for persistence
-            const allDrafts: Record<string, string> = {};
+            // Preserve drafts for sessions that have not been materialized into this store slice yet.
+            const allDrafts: Record<string, string> = { ...sessionDrafts };
             Object.entries(state.sessions).forEach(([id, sess]) => {
-                if (sess.draft) {
+                if (sess.draft?.trim()) {
                     allDrafts[id] = sess.draft;
+                } else {
+                    delete allDrafts[id];
                 }
             });
             if (normalizedDraft) {
@@ -1783,7 +1989,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 [sessionId]: mutateSessionPermissionModeField({ session, mode, updatedAt: now }),
             };
 
-            const persisted = persistSessionPermissionData(updatedSessions, sessionLocalStateScope);
+            const persisted = persistSessionPermissionData(updatedSessions, sessionLocalStateScope, {
+                modes: sessionPermissionModes,
+                updatedAts: sessionPermissionModeUpdatedAts,
+            });
             if (persisted) {
                 sessionPermissionModes = persisted.modes;
                 sessionPermissionModeUpdatedAts = persisted.updatedAts;
@@ -1818,22 +2027,14 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     }),
 	            };
 
-            // Collect all model modes for persistence (only non-default values to save space)
-            const allModes: Record<string, SessionModelMode> = {};
-            const allUpdatedAts: Record<string, number> = {};
-            Object.entries(updatedSessions).forEach(([id, sess]) => {
-                if (sess.modelMode && sess.modelMode !== 'default') {
-                    allModes[id] = sess.modelMode;
-                }
-                if (typeof (sess as any).modelModeUpdatedAt === 'number') {
-                    allUpdatedAts[id] = (sess as any).modelModeUpdatedAt;
-                }
+            const persisted = persistSessionModelData(updatedSessions, sessionLocalStateScope, {
+                modes: sessionModelModes,
+                updatedAts: sessionModelModeUpdatedAts,
             });
-
-            saveSessionModelModes(allModes, sessionLocalStateScope);
-            saveSessionModelModeUpdatedAts(allUpdatedAts, sessionLocalStateScope);
-            sessionModelModes = allModes as any;
-            sessionModelModeUpdatedAts = allUpdatedAts;
+            if (persisted) {
+                sessionModelModes = persisted.modes;
+                sessionModelModeUpdatedAts = persisted.updatedAts;
+            }
 
             // No need to rebuild session-list index since model mode doesn't affect list grouping/presentation.
             return {
@@ -2154,6 +2355,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 nextStateBase,
                 true,
                 true,
+                false,
             );
         }),
     };

@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
-import { renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from '../sessionDetailsPanelTestHelpers';
 
 
@@ -34,6 +34,36 @@ const externalSessionRuntimeState = vi.hoisted(() => ({
     },
     status: null as null | { runnerActive?: boolean },
 }));
+const settingsState = vi.hoisted(() => ({
+    transcriptToolCallsCollapsedPreviewCount: 1 as number | null,
+}));
+const reducerState = vi.hoisted(() => ({
+    current: {
+        sidechains: new Map([
+            ['toolu_1', [
+                {
+                    id: 'sidechain-msg-1',
+                    role: 'agent',
+                    text: 'Alpha is validating the auth flow now.',
+                    tool: {
+                        permission: {
+                            id: 'perm-alpha',
+                            status: 'pending',
+                            kind: 'permission',
+                        },
+                    },
+                    event: null,
+                },
+            ]],
+        ]),
+        permissions: new Map(),
+    } as any,
+}));
+const ensureSidechainMessagesLoadedSpy = vi.hoisted(() =>
+    vi.fn<(sessionId: string, sidechainId: string) => Promise<'loaded' | 'not_ready' | 'in_flight'>>(
+        async () => 'loaded',
+    ),
+);
 
 installSessionDetailsPanelCommonModuleMocks({
     router: async () => {
@@ -99,11 +129,17 @@ installSessionDetailsPanelCommonModuleMocks({
     },
     storage: async (importOriginal) => {
         const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createPartialStorageModuleMock(importOriginal, {
-            useSession: () => sessionState.session,
-            useSettings: () => ({}),
-        });
-    },
+            return createPartialStorageModuleMock(importOriginal, {
+                useSession: () => sessionState.session,
+                useSetting: (key: string) => {
+                    if (key === 'transcriptToolCallsCollapsedPreviewCount') {
+                        return settingsState.transcriptToolCallsCollapsedPreviewCount;
+                    }
+                    return null;
+                },
+                useSettings: () => ({}),
+            });
+        },
 });
 
 vi.mock('@/components/ui/text/Text', () => ({
@@ -113,6 +149,10 @@ vi.mock('@/components/ui/text/Text', () => ({
 
 vi.mock('@/sync/sync', () => ({
     sync: {
+        ensureSidechainMessagesLoaded: ensureSidechainMessagesLoadedSpy,
+        getSyncTuning: () => ({
+            sidechainDemandHydrationConcurrencyLimit: 2,
+        }),
         sendMessage: vi.fn(async () => undefined),
     },
 }));
@@ -124,26 +164,7 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
 vi.mock('@/sync/store/hooks', () => ({
     useSessionServerId: () => 'server-1',
     useSessionMessages: () => ({ messages: [] }),
-    useSessionMessagesReducerState: () => ({
-        sidechains: new Map([
-            ['toolu_1', [
-                {
-                    id: 'sidechain-msg-1',
-                    role: 'agent',
-                    text: 'Alpha is validating the auth flow now.',
-                    tool: {
-                        permission: {
-                            id: 'perm-alpha',
-                            status: 'pending',
-                            kind: 'permission',
-                        },
-                    },
-                    event: null,
-                },
-            ]],
-        ]),
-        permissions: new Map(),
-    }),
+    useSessionMessagesReducerState: () => reducerState.current,
 }));
 
 const subagents: readonly SessionSubagent[] = [
@@ -220,6 +241,29 @@ describe('SessionRightPanelAgentsView', () => {
         sessionMachineReachabilityState.machineRpcTargetAvailable = true;
         externalSessionRuntimeState.externalSessionLink = null;
         externalSessionRuntimeState.status = null;
+        settingsState.transcriptToolCallsCollapsedPreviewCount = 1;
+        reducerState.current = {
+            sidechains: new Map([
+                ['toolu_1', [
+                    {
+                        id: 'sidechain-msg-1',
+                        role: 'agent',
+                        text: 'Alpha is validating the auth flow now.',
+                        tool: {
+                            permission: {
+                                id: 'perm-alpha',
+                                status: 'pending',
+                                kind: 'permission',
+                            },
+                        },
+                        event: null,
+                    },
+                ]],
+            ]),
+            permissions: new Map(),
+        } as any;
+        ensureSidechainMessagesLoadedSpy.mockReset();
+        ensureSidechainMessagesLoadedSpy.mockResolvedValue('loaded');
     });
 
     it('renders active and recent sections and opens preview/full routes from agent rows', async () => {
@@ -424,6 +468,31 @@ describe('SessionRightPanelAgentsView', () => {
         expect(screen.findByTestId('session-subagent-activity:agent_team_member:team-1:alpha')?.props.children).toContain(
             'Alpha is validating the auth flow now.',
         );
+    });
+
+    it('requests only bounded rendered preview sidechains when activity is not loaded yet', async () => {
+        const request = createDeferred<'loaded' | 'not_ready' | 'in_flight'>();
+        ensureSidechainMessagesLoadedSpy.mockReturnValue(request.promise);
+        reducerState.current = {
+            sidechains: new Map(),
+            permissions: new Map(),
+        } as any;
+        settingsState.transcriptToolCallsCollapsedPreviewCount = 1;
+
+        const screen = await renderScreen(<SessionRightPanelAgentsView sessionId="s1" scopeId="session:s1" />);
+        await flushHookEffects();
+
+        expect(ensureSidechainMessagesLoadedSpy).toHaveBeenCalledTimes(1);
+        expect(ensureSidechainMessagesLoadedSpy).toHaveBeenCalledWith('s1', 'toolu_1');
+        expect(screen.findByTestId('session-subagent-activity:agent_team_member:team-1:alpha')?.props.children).toBe(
+            'common.loading',
+        );
+        expect(screen.findByTestId('session-subagent-activity:execution_run:run_1')).toBeNull();
+
+        await act(async () => {
+            request.resolve('loaded');
+            await request.promise;
+        });
     });
 
     it('marks subagent rows that are blocked waiting for permission', async () => {

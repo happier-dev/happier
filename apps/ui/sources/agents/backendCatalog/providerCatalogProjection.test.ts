@@ -22,7 +22,7 @@ vi.mock('@/agents/providers/catalog/providerLocalAuthCatalog', () => ({
     getProviderLocalAuthPlugin: (providerId: string) => (providerId === 'claude' ? { providerId: 'claude' } : null),
 }));
 
-vi.mock('@/agents/providers/catalog/providerSettingsCatalog', () => ({
+vi.mock('@/agents/catalog/providerSettingsCatalog', () => ({
     PROVIDER_SETTINGS_DESCRIPTORS: [],
     getProviderSettingsDescriptor: (providerId: string) => (
         providerId === 'claude'

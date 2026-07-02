@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { Message } from '@/sync/domains/messages/messageTypes';
-import { derivePendingRequestFlagsFromSession } from './listPendingSessionRequests';
+import {
+    deriveLatestPendingRequestObservedAtFromSession,
+    derivePendingRequestFlagsFromSession,
+} from './listPendingSessionRequests';
 
 describe('derivePendingRequestFlagsFromSession', () => {
     it('uses projected pending request counts without scanning large transcript message lists', () => {
@@ -42,5 +45,31 @@ describe('derivePendingRequestFlagsFromSession', () => {
             hasPendingPermissionRequests: false,
             hasPendingUserActionRequests: false,
         });
+    });
+
+    it('uses projected pending counts and timestamps before stale hydrated request details', () => {
+        const session = createSessionFixture({
+            active: true,
+            agentState: {
+                requests: {
+                    stale_permission: {
+                        tool: 'Bash',
+                        kind: 'permission',
+                        arguments: { command: 'git status' },
+                        createdAt: 1_000,
+                    },
+                },
+                completedRequests: null,
+            },
+            pendingPermissionRequestCount: 0,
+            pendingUserActionRequestCount: 1,
+            pendingRequestObservedAt: 5_000,
+        });
+
+        expect(derivePendingRequestFlagsFromSession(session)).toEqual({
+            hasPendingPermissionRequests: false,
+            hasPendingUserActionRequests: true,
+        });
+        expect(deriveLatestPendingRequestObservedAtFromSession(session)).toBe(5_000);
     });
 });

@@ -50,6 +50,7 @@ const settingsState = vi.hoisted((): PetNativeMountTestState => ({
     },
 }));
 const applyLocalSettingsSpy = vi.hoisted(() => vi.fn());
+const useActivityAttentionSourceSpy = vi.hoisted(() => vi.fn());
 const hapticsSpy = vi.hoisted(() => vi.fn(async () => {}));
 const dimensionsState = vi.hoisted(() => ({ width: 390, height: 844 }));
 const safeAreaState = vi.hoisted(() => ({
@@ -144,7 +145,10 @@ vi.mock('@/hooks/server/useFeatureDecision', () => ({
 }));
 
 vi.mock('@/activity/source/useActivityAttentionSource', () => ({
-    useActivityAttentionSource: () => activitySourceState.source,
+    useActivityAttentionSource: () => {
+        useActivityAttentionSourceSpy();
+        return activitySourceState.source;
+    },
 }));
 
 vi.mock('@/sync/store/settingsWriters', () => ({
@@ -185,8 +189,10 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
 
 describe('PetAppShellCompanionMount.native', () => {
     afterEach(() => {
+        vi.restoreAllMocks();
         standardCleanup();
         applyLocalSettingsSpy.mockReset();
+        useActivityAttentionSourceSpy.mockClear();
         hapticsSpy.mockClear();
         featureState.companion = { state: 'enabled' };
         featureState.sync = { state: 'disabled' };
@@ -308,6 +314,7 @@ describe('PetAppShellCompanionMount.native', () => {
 
         const screen = await renderScreen(<PetAppShellCompanionMount />);
         expect(screen.findByTestId('pet-app-shell-companion-root')).toBeNull();
+        expect(useActivityAttentionSourceSpy).not.toHaveBeenCalled();
 
         featureState.companion = { state: 'enabled' };
         settingsState.account.petsEnabled = true;
@@ -319,13 +326,16 @@ describe('PetAppShellCompanionMount.native', () => {
     });
 
     it('renders shared activity bubbles and keeps quick reply input taps out of session open handling', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(12_000);
         sessionsState.current = [
             createSessionFixture({
                 id: 'native-pet-session',
                 serverId: 'server-a',
                 active: true,
-                pendingCount: 1,
+                pendingPermissionRequestCount: 1,
+                pendingRequestObservedAt: 11_000,
                 updatedAt: 11_000,
+                activeAt: 11_000,
             }),
         ];
         activitySourceState.source = createActivitySource(sessionsState.current);
@@ -435,13 +445,16 @@ describe('PetAppShellCompanionMount.native', () => {
     });
 
     it('closes native quick reply before dismissing the activity bubble', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(12_000);
         sessionsState.current = [
             createSessionFixture({
                 id: 'native-close-reply-session',
                 serverId: 'server-a',
                 active: true,
-                pendingCount: 1,
+                pendingPermissionRequestCount: 1,
+                pendingRequestObservedAt: 11_000,
                 updatedAt: 11_000,
+                activeAt: 11_000,
             }),
         ];
         activitySourceState.source = createActivitySource(sessionsState.current);

@@ -8,6 +8,8 @@ export type SessionComposerSendResolution =
     | { kind: 'noop' }
     | { kind: 'send'; text: string }
     | { kind: 'action'; actionId: ActionId; rest: string }
+    | { kind: 'goal'; command: 'open' | 'status' | 'pause' | 'resume' | 'complete' | 'clear' }
+    | { kind: 'goal'; command: 'set'; objective: string }
     | {
         kind: 'template';
         invocationId: string;
@@ -20,6 +22,37 @@ export type SessionComposerSendResolution =
     };
 
 const RESERVED_TOKENS: ReadonlySet<string> = new Set(['/clear', '/compact']);
+
+function resolveGoalCommand(input: string): Extract<SessionComposerSendResolution, { kind: 'goal' }> | null {
+    const trimmed = input.trim();
+    if (!trimmed.startsWith('/goal')) return null;
+
+    const firstSpace = trimmed.search(/\s/);
+    const token = firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace);
+    if (token !== '/goal') return null;
+
+    const rest = firstSpace === -1 ? '' : trimmed.slice(firstSpace).trim();
+    if (!rest) return { kind: 'goal', command: 'open' };
+
+    const commandEnd = rest.search(/\s/);
+    const command = commandEnd === -1 ? rest : rest.slice(0, commandEnd);
+    const commandRest = commandEnd === -1 ? '' : rest.slice(commandEnd).trim();
+
+    if (command === 'set') {
+        return commandRest.length > 0 ? { kind: 'goal', command: 'set', objective: commandRest } : null;
+    }
+    if (
+        command === 'status' ||
+        command === 'pause' ||
+        command === 'resume' ||
+        command === 'complete' ||
+        command === 'clear'
+    ) {
+        return commandRest.length === 0 ? { kind: 'goal', command } : null;
+    }
+
+    return null;
+}
 
 export function resolveSessionComposerSend(args: {
     input: string;
@@ -47,6 +80,9 @@ export function resolveSessionComposerSend(args: {
         }
         return parsedSlash;
     }
+
+    const goalCommand = resolveGoalCommand(args.input);
+    if (goalCommand) return goalCommand;
 
     // Built-in core slash prompts (for example /happier-diagnose) are available without
     // a live provider process and cannot be shadowed by user prompt invocations.

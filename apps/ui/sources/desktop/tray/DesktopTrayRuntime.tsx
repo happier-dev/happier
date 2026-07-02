@@ -9,7 +9,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { applyTauriTrayState } from './applyTauriTrayState';
 import { buildDesktopTrayState } from './buildDesktopTrayState';
 
-export function DesktopTrayRuntime(): React.ReactElement | null {
+function TauriDesktopTrayRuntime(): React.ReactElement | null {
     const connectionHealth = useConnectionHealth();
     const relayDriftBanner = useRelayDriftBanner();
 
@@ -33,14 +33,15 @@ export function DesktopTrayRuntime(): React.ReactElement | null {
     ]);
 
     React.useEffect(() => {
-        if (!isTauriDesktop()) {
-            return;
-        }
-
         fireAndForget(applyTauriTrayState(trayState), {
             tag: 'DesktopTrayRuntime.applyTauriTrayState',
         });
     }, [trayState]);
 
     return null;
+}
+
+export function DesktopTrayRuntime(): React.ReactElement | null {
+    if (!isTauriDesktop()) return null;
+    return <TauriDesktopTrayRuntime />;
 }

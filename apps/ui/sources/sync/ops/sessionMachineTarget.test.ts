@@ -183,6 +183,36 @@ describe('sessionMachineTarget', () => {
         });
     });
 
+    it('uses a unique active machine with matching host for inactive legacy sessions without machine ids', async () => {
+        const { readMachineTargetForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    active: false,
+                    metadata: {
+                        machineId: '',
+                        path: '/workspace/repo',
+                        host: 'mbp-host',
+                    },
+                },
+            },
+            machines: {
+                'm-host': {
+                    id: 'm-host',
+                    active: true,
+                    activeAt: 1,
+                    metadata: { host: 'mbp-host' },
+                },
+            },
+            getProjectForSession: () => null,
+        });
+
+        expect(readMachineTargetForSession('s1')).toEqual({
+            machineId: 'm-host',
+            basePath: '/workspace/repo',
+        });
+    });
+
     it('does not map host-scoped project keys to a latest-active machine id', async () => {
         const { readMachineTargetForSession } = await import('./sessionMachineTarget');
         getStateSpy.mockReturnValue({
@@ -257,6 +287,75 @@ describe('sessionMachineTarget', () => {
         });
 
         expect(readMachineTargetForSession('s1')).toBeNull();
+    });
+
+    it('routes a stale session machine id to the unique same-host and same-home active replacement', async () => {
+        const { readMachineTargetForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    active: false,
+                    metadata: {
+                        machineId: 'm-stale',
+                        path: '/Users/alice/work/repo',
+                        host: 'Alice-MBP.local',
+                        homeDir: '/Users/alice/',
+                    },
+                },
+            },
+            machines: {
+                'm-stale': {
+                    id: 'm-stale',
+                    active: false,
+                    activeAt: 1,
+                    replacedByMachineId: 'm-replacement',
+                    metadata: { host: 'Alice-MBP', homeDir: '/Users/alice' },
+                },
+                'm-replacement': {
+                    id: 'm-replacement',
+                    active: true,
+                    activeAt: 10,
+                    metadata: { host: 'alice-mbp', homeDir: '/Users/alice' },
+                },
+            },
+            getProjectForSession: () => null,
+        });
+
+        expect(readMachineTargetForSession('s1')).toEqual({
+            machineId: 'm-replacement',
+            basePath: '/Users/alice/work/repo',
+        });
+    });
+
+    it('routes a missing stale session machine id to the unique same-host and same-home active machine', async () => {
+        const { readMachineTargetForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    active: false,
+                    metadata: {
+                        machineId: 'm-stale',
+                        path: '/Users/alice/work/repo',
+                        host: 'Alice-MBP.local',
+                        homeDir: '/Users/alice/',
+                    },
+                },
+            },
+            machines: {
+                'm-replacement': {
+                    id: 'm-replacement',
+                    active: true,
+                    activeAt: 10,
+                    metadata: { host: 'alice-mbp', homeDir: '/Users/alice' },
+                },
+            },
+            getProjectForSession: () => null,
+        });
+
+        expect(readMachineTargetForSession('s1')).toEqual({
+            machineId: 'm-replacement',
+            basePath: '/Users/alice/work/repo',
+        });
     });
 
     it('uses visible lookup session metadata when the raw session is not hydrated', async () => {
@@ -581,6 +680,164 @@ describe('sessionMachineTarget', () => {
             machineId: 'm-new',
             basePath: '/Volumes/target/workspace/live',
         });
+    });
+
+    it('prefers a hydrated raw session replacement target over stale visible list metadata', async () => {
+        const { readMachineTargetForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    active: false,
+                    metadata: {
+                        machineId: 'm-old',
+                        path: '/Users/test/workspace/stale',
+                        homeDir: '/Users/test',
+                        host: 'stale.local',
+                    },
+                },
+            },
+            sessionListRenderables: {
+                s1: {
+                    id: 's1',
+                    updatedAt: 1,
+                    metadata: {
+                        machineId: 'm-cached',
+                        path: '/Users/test/workspace/cached',
+                    },
+                },
+            },
+            sessionListIndexByServerId: {
+                'server-a': [
+                    {
+                        type: 'session',
+                        sessionId: 's1',
+                        serverId: 'server-a',
+                        serverName: 'Server A',
+                    },
+                ],
+            },
+            machines: {
+                'm-old': {
+                    id: 'm-old',
+                    active: false,
+                    activeAt: 1,
+                    replacedByMachineId: 'm-new',
+                    replacedAt: 100,
+                    replacementReason: 'manual_repair',
+                    replacementSource: 'manual',
+                    metadata: {
+                        host: 'stale.local',
+                        homeDir: '/Users/test',
+                    },
+                },
+                'm-new': {
+                    id: 'm-new',
+                    active: true,
+                    activeAt: 10,
+                    metadata: {
+                        host: 'project.local',
+                        homeDir: '/workspace',
+                    },
+                },
+            },
+            getProjectForSession: (sessionId: string) =>
+                sessionId === 's1'
+                    ? {
+                        key: {
+                            machineId: 'm-new',
+                            rootPath: '/Volumes/target/workspace/live',
+                        },
+                    }
+                    : null,
+        });
+
+        expect(readMachineTargetForSession('s1')).toEqual({
+            machineId: 'm-new',
+            basePath: '/Volumes/target/workspace/live',
+        });
+    });
+
+    it('uses direct session metadata as a control target when machine inventory has not loaded yet', async () => {
+        const { readMachineControlTargetForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    active: false,
+                    metadata: {
+                        machineId: 'm-session',
+                        path: '/workspace/repo',
+                    },
+                },
+            },
+            machines: {},
+            getProjectForSession: () => null,
+        });
+
+        expect(readMachineControlTargetForSession('s1')).toEqual({
+            machineId: 'm-session',
+            basePath: '/workspace/repo',
+            confidence: 'metadata_direct',
+        });
+    });
+
+    it('does not use direct metadata as a control target when local machine state proves it is offline', async () => {
+        const { readMachineControlTargetForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    active: false,
+                    metadata: {
+                        machineId: 'm-session',
+                        path: '/workspace/repo',
+                    },
+                },
+            },
+            machines: {
+                'm-session': {
+                    id: 'm-session',
+                    active: false,
+                    activeAt: 1,
+                    metadata: { host: 'offline.local' },
+                },
+            },
+            getProjectForSession: () => null,
+        });
+
+        expect(readMachineControlTargetForSession('s1')).toBeNull();
+    });
+
+    it('does not use a project display target for control when direct session metadata points at another machine', async () => {
+        const { readMachineControlTargetForSession } = await import('./sessionMachineTarget');
+        getStateSpy.mockReturnValue({
+            sessions: {
+                s1: {
+                    active: false,
+                    metadata: {
+                        machineId: 'm-session',
+                        path: '/workspace/session',
+                    },
+                },
+            },
+            machines: {
+                'm-project': {
+                    id: 'm-project',
+                    active: true,
+                    activeAt: 1,
+                    metadata: { host: 'project.local' },
+                },
+            },
+            getProjectForSession: (sessionId: string) =>
+                sessionId === 's1'
+                    ? {
+                        key: {
+                            machineId: 'm-project',
+                            rootPath: '/workspace/project',
+                        },
+                    }
+                    : null,
+        });
+
+        expect(readMachineControlTargetForSession('s1')).toBeNull();
     });
 
     it('treats inactive sessions as session-rpc unavailable', async () => {

@@ -24,7 +24,7 @@ describe('control gradient theme tokens', () => {
     }
 
     it('defines subtle fallback-compatible gradients for FAB controls', () => {
-        expect(darkTheme.colors.fab.gradient?.colors).toEqual(['#303030', '#323232']);
+        expect(darkTheme.colors.fab.gradient?.colors).toEqual(['#221C1C', '#251F1F']);
         expect(lightTheme.colors.fab.gradient?.colors).toEqual(['#000000', '#171717']);
         expect(darkTheme.colors.fab.gradient?.start).toEqual({ x: 0.5, y: 1 });
         expect(darkTheme.colors.fab.gradient?.end).toEqual({ x: 0.5, y: 0 });
@@ -36,17 +36,17 @@ describe('control gradient theme tokens', () => {
         expect(lightTheme.colors.segmentedControl.trackGradient).toBeUndefined();
         expect(lightTheme.colors.segmentedControl.activeGradient?.colors).toEqual(['#FDFDFD', '#FFFFFF']);
 
-        expect(darkTheme.colors.segmentedControl.trackBackground).toBe(darkTheme.colors.surface.elevated);
-        expect(darkTheme.colors.segmentedControl.activeBackground).toBe(darkTheme.colors.surface.base);
+        expect(darkTheme.colors.segmentedControl.trackBackground).toBe('#201A1A');
+        expect(darkTheme.colors.segmentedControl.activeBackground).toBe('#2A2222');
         expect(darkTheme.colors.segmentedControl.trackGradient).toBeUndefined();
-        expect(darkTheme.colors.segmentedControl.activeGradient?.colors).toEqual(['#202020', '#212121']);
+        expect(darkTheme.colors.segmentedControl.activeGradient?.colors).toEqual(['#242020', '#2A2222']);
     });
 
     it('defines primary button gradients separately from color tokens used by non-fill consumers', () => {
         expect(lightTheme.colors.button.primary.background).toBe('#000000');
         expect(lightTheme.colors.button.primary.gradient?.colors).toEqual(['#000000', '#020202']);
-        expect(darkTheme.colors.button.primary.background).toBe('#1b1b1b');
-        expect(darkTheme.colors.button.primary.gradient?.colors).toEqual(['#1b1b1b', '#1c1c1c']);
+        expect(darkTheme.colors.button.primary.background).toBe('#221C1C');
+        expect(darkTheme.colors.button.primary.gradient?.colors).toEqual(['#221C1C', '#251F1F']);
     });
 
     it('keeps raised control gradients lighter at the top than the bottom', () => {
@@ -69,8 +69,8 @@ describe('control gradient theme tokens', () => {
 
     it('keeps wizard scrim aligned for modal and route overlays across light and dark themes', () => {
         expect(lightTheme.colors.overlay.scrimWizard).toBe('rgba(255, 255, 255, 0.52)');
-        expect(darkTheme.colors.overlay.scrimWizard).toBe('rgba(0, 0, 0, 0.42)');
+        expect(darkTheme.colors.overlay.scrimWizard).toBe('rgba(19,17,17,0.78)');
         expect(lightTheme.colors.overlay.scrimStrong).toBe('rgba(255, 255, 255, 0.68)');
-        expect(darkTheme.colors.overlay.scrimStrong).toBe('rgba(0, 0, 0, 0.58)');
+        expect(darkTheme.colors.overlay.scrimStrong).toBe('rgba(19,17,17,0.86)');
     });
 });

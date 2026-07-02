@@ -4,11 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { createSessionItemRowViewModel } from './sessionItemRowViewModelTestFixture';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const useProfileSpy = vi.hoisted(() => vi.fn(() => ({ id: 'u1' })));
 const useSessionListRenderableWithServerScopeSpy = vi.hoisted(() => vi.fn(() => null));
+const useHasUnreadMessagesSpy = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock('react-native-reanimated', () => ({}));
 
@@ -43,7 +45,7 @@ installSessionShellCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
-            useHasUnreadMessages: () => false,
+            useHasUnreadMessages: useHasUnreadMessagesSpy,
             useProfile: useProfileSpy,
             useSessionListRenderableWithServerScope: useSessionListRenderableWithServerScopeSpy,
             useSessionListMeaningfulActivityAt: () => 0,
@@ -175,6 +177,7 @@ describe('SessionItem loading identity', () => {
     beforeEach(() => {
         useProfileSpy.mockClear();
         useSessionListRenderableWithServerScopeSpy.mockClear();
+        useHasUnreadMessagesSpy.mockClear();
     });
 
     afterEach(() => {
@@ -183,10 +186,17 @@ describe('SessionItem loading identity', () => {
 
     it('renders identity placeholders instead of unknown metadata text while metadata is pending', async () => {
         const { SessionItem } = await import('./SessionItem');
+        const session = createMetadataPendingSession('sess_loading');
 
         const screen = await renderScreen(
             <SessionItem
-                session={createMetadataPendingSession('sess_loading')}
+                session={session}
+                rowViewModel={createSessionItemRowViewModel({
+                    session,
+                    overrides: {
+                        isIdentityLoading: true,
+                    },
+                })}
                 serverId="server_a"
                 pinned={false}
                 selected={false}
@@ -206,10 +216,17 @@ describe('SessionItem loading identity', () => {
 
     it('keeps compact identity placeholders in one static style entry before animated opacity', async () => {
         const { SessionItem } = await import('./SessionItem');
+        const session = createMetadataPendingSession('sess_compact_loading');
 
         const screen = await renderScreen(
             <SessionItem
-                session={createMetadataPendingSession('sess_compact_loading')}
+                session={session}
+                rowViewModel={createSessionItemRowViewModel({
+                    session,
+                    overrides: {
+                        isIdentityLoading: true,
+                    },
+                })}
                 serverId="server_a"
                 pinned={false}
                 selected={false}
@@ -255,10 +272,17 @@ describe('SessionItem loading identity', () => {
 
     it('renders settled unknown identity instead of placeholders when metadata is unavailable', async () => {
         const { SessionItem } = await import('./SessionItem');
+        const session = createMetadataUnavailableSession('sess_unavailable');
 
         const screen = await renderScreen(
             <SessionItem
-                session={createMetadataUnavailableSession('sess_unavailable')}
+                session={session}
+                rowViewModel={createSessionItemRowViewModel({
+                    session,
+                    overrides: {
+                        isIdentityLoading: false,
+                    },
+                })}
                 serverId="server_a"
                 pinned={false}
                 selected={false}
@@ -274,5 +298,28 @@ describe('SessionItem loading identity', () => {
         expect(screen.findByTestId('session-list-title-loading-sess_unavailable')).toBeNull();
         expect(screen.findByTestId('session-list-subtitle-loading-sess_unavailable')).toBeNull();
         expect(screen.getTextContent()).toContain('status.unknown');
+    });
+
+    it('does not fall back to hot row hooks when a row view model is missing', async () => {
+        const { SessionItem } = await import('./SessionItem');
+
+        const screen = await renderScreen(
+            // @ts-expect-error Deliberately verifies stale runtime callers cannot re-enter the removed legacy hook path.
+            <SessionItem
+                session={createMetadataPendingSession('sess_missing_model')}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+            />,
+        );
+
+        expect(screen.findByTestId('session-list-item-sess_missing_model')).toBeNull();
+        expect(useSessionListRenderableWithServerScopeSpy).not.toHaveBeenCalled();
+        expect(useHasUnreadMessagesSpy).not.toHaveBeenCalled();
     });
 });

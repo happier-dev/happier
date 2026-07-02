@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Platform } from 'react-native';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
-const readAsStringAsyncSpy = vi.fn<(...args: any[]) => Promise<string>>().mockResolvedValue('BASE64_AUDIO');
+const fileBase64Spy = vi.fn<() => Promise<string>>().mockResolvedValue('BASE64_AUDIO');
 
 const ORIGINAL_PLATFORM_OS = Platform.OS;
 const ORIGINAL_PLATFORM_SELECT = Platform.select;
@@ -18,8 +18,16 @@ class FakeAudioBuffer {
 }
 
 vi.mock('expo-file-system', () => ({
-  readAsStringAsync: (...args: any[]) => readAsStringAsyncSpy(...args),
-  EncodingType: { Base64: 'base64' },
+  File: class {
+    uri: string;
+    constructor(uri: string) {
+      this.uri = uri;
+    }
+    base64 = fileBase64Spy;
+  },
+  readAsStringAsync: () => {
+    throw new Error('deprecated_readAsStringAsync_called');
+  },
 }));
 
 vi.mock('expo-audio', () => ({
@@ -136,7 +144,7 @@ describe('recordedAudioTranscriptionController', () => {
       decryptSecretValue: () => 'gemini-key',
     });
 
-    expect(readAsStringAsyncSpy).toHaveBeenCalled();
+    expect(fileBase64Spy).toHaveBeenCalled();
     expect(fetchSpy).toHaveBeenCalledWith(expect.stringContaining('generativelanguage.googleapis.com'), expect.anything());
     expect(text).toBe('hello gemini');
   });

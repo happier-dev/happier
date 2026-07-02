@@ -29,11 +29,6 @@ export const CODEX_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
                             title: { key: 'settingsProviders.plugins.codex.fields.codexBackendMode.options.acp.title' },
                             subtitle: { key: 'settingsProviders.plugins.codex.fields.codexBackendMode.options.acp.subtitle' },
                         },
-                        {
-                            id: 'mcp',
-                            title: { key: 'settingsProviders.plugins.codex.fields.codexBackendMode.options.mcp.title' },
-                            subtitle: { key: 'settingsProviders.plugins.codex.fields.codexBackendMode.options.mcp.subtitle' },
-                        },
                     ],
                 },
             ],

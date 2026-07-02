@@ -21,6 +21,7 @@ import type * as React from 'react';
  */
 
 export type SelectionListAccessory = React.ReactNode | (() => React.ReactNode);
+export type SelectionListTextEllipsizeMode = 'head' | 'middle' | 'tail' | 'clip';
 
 export type SelectionListKeyboardHint = Readonly<{
     /** Stable id used for testIDs and registry mapping later. */
@@ -60,6 +61,10 @@ type SelectionListOptionBase = Readonly<{
      */
     content?: React.ReactNode;
     subtitle?: string;
+    /** Optional assistive label for rows whose visible label repeats across sections. */
+    accessibilityLabel?: string;
+    labelEllipsizeMode?: SelectionListTextEllipsizeMode;
+    subtitleEllipsizeMode?: SelectionListTextEllipsizeMode;
     icon?: React.ReactNode;
     /** Right-side accessory (status pill, relative time, key chip, etc.) */
     rightAccessory?: SelectionListAccessory;
@@ -305,7 +310,11 @@ export type SelectionListInputBehavior = Readonly<{
 
 export type SelectionListInputMode = 'search' | 'value';
 
-export type SelectionListHeightBehavior = 'content' | 'fixedToMaxHeight';
+export type SelectionListHeightBehavior =
+    | 'content'
+    | 'fixedToMaxHeight'
+    | 'stabilizedContentHeight'
+    | 'measuredToMaxHeight';
 
 /**
  * Quick-action keyboard shortcut binding. The orchestrator forwards these to
@@ -352,6 +361,8 @@ export type SelectionListProps = Readonly<{
     inputSuffix?: React.ReactNode;
     /** Optional controlled input value. Library is uncontrolled when omitted. */
     inputValue?: string;
+    /** Optional visual truncation for the input value (useful for path-like values). */
+    inputValueEllipsizeMode?: SelectionListTextEllipsizeMode;
     onChangeInputValue?: (next: string) => void;
     /** Called when an option is selected (may close the popover). */
     onSelect: (id: string, option: SelectionListOption) => void;
@@ -377,12 +388,24 @@ export type SelectionListProps = Readonly<{
     /** Cap container height; defaults to undefined (popover-driven). */
     maxHeight?: number;
     /**
+     * Whether the owned scroll hosts should show the platform vertical scroll
+     * indicator. Defaults to false so compact popovers keep their chrome quiet.
+     */
+    showsVerticalScrollIndicator?: boolean;
+    /**
      * Height policy for the outer list container.
      *
      * - `content` (default): natural content height, capped by `maxHeight`.
      * - `fixedToMaxHeight`: use `maxHeight` as the actual height as well as
-     *   the cap. Dynamic/typeahead popovers use this to keep the viewport
-     *   stable while async sections resolve or filtering changes row count.
+     *   the cap. Use only when the surface is intentionally a fixed viewport.
+     * - `stabilizedContentHeight`: natural content height capped by
+     *   `maxHeight`, with immediate growth and debounced shrink. Dynamic
+     *   popovers use this to avoid per-keystroke height jitter without
+     *   forcing empty space.
+     * - `measuredToMaxHeight`: measure the body/header/footer segments and
+     *   use a concrete native height of `min(contentHeight, maxHeight)`.
+     *   The first paint stays hidden at the max-height fallback until a real
+     *   measurement exists, and later shrink updates are debounced.
      */
     heightBehavior?: SelectionListHeightBehavior;
     /**
