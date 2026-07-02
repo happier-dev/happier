@@ -403,6 +403,8 @@ describe('persistSessionMedia', () => {
       expect(second.success).toBe(true);
       if (!first.success || !second.success) throw new Error('expected persistence to succeed');
       expect(second.item.path).toBe(first.item.path);
+      expect(first.created).toBe(true);
+      expect(second.created).toBe(false);
       await expect(readFile(resolve(workingDirectory, second.item.path))).resolves.toEqual(pngBytes);
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });

@@ -39,12 +39,6 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     allowTmux: true,
   },
   {
-    command: 'opencode',
-    rootHelpLabel: 'happier opencode',
-    rootHelpDescription: 'Start OpenCode mode (ACP)',
-    allowTmux: true,
-  },
-  {
     command: 'gemini',
     rootHelpLabel: 'happier gemini',
     rootHelpDescription: 'Start Gemini mode (ACP)',
@@ -150,29 +144,44 @@ function readProjectedProviderRootHelpEntries(): readonly CliCommandSurfaceEntry
   const entries: CliCommandSurfaceEntry[] = [];
 
   for (const provider of registry.providerDefinitionsById.values()) {
-    if (provider.provenance !== 'external') {
-      continue;
-    }
     const catalogEntry = registry.catalogEntriesById[provider.id];
     if (!catalogEntry?.getCliCommandHandler) {
       continue;
     }
 
     const command = catalogEntry.cliSubcommand;
-    if (!command || command === 'claude') {
+    if (!command) {
       continue;
     }
 
     const title = provider.runtimeSpec?.title?.trim() || command;
     entries.push({
       command,
-      rootHelpLabel: `happier ${command}`,
-      rootHelpDescription: `Start ${title}`,
-      allowTmux: true,
+      rootHelpLabel: catalogEntry.rootHelpLabel ?? `happier ${command}`,
+      rootHelpDescription: catalogEntry.rootHelpDescription ?? `Start ${title}`,
+      ...(catalogEntry.rootHelpDetail ? { rootHelpDetail: catalogEntry.rootHelpDetail } : {}),
+      allowTmux: catalogEntry.allowTmux ?? true,
     });
   }
 
   return entries;
+}
+
+function mergeCommandSurfaceEntries(
+  entries: readonly CliCommandSurfaceEntry[],
+): readonly CliCommandSurfaceEntry[] {
+  const entriesByCommand = new Map<string | null, CliCommandSurfaceEntry>();
+  const orderedCommands: Array<string | null> = [];
+
+  for (const entry of entries) {
+    const command = entry.command ?? null;
+    if (!entriesByCommand.has(command)) {
+      orderedCommands.push(command);
+    }
+    entriesByCommand.set(command, entry);
+  }
+
+  return orderedCommands.map((command) => entriesByCommand.get(command)!);
 }
 
 export function listRootHelpCommands(): readonly CliCommandSurfaceEntry[] {
@@ -181,13 +190,13 @@ export function listRootHelpCommands(): readonly CliCommandSurfaceEntry[] {
 
 export function isTmuxAllowedCommand(command: string | null | undefined): boolean {
   if (!command) return true;
-  const entry = COMMAND_SURFACE_MANIFEST.find((candidate) => candidate.command === command);
+  const entry = resolveCommandSurfaceCatalog().commands.find((candidate) => candidate.command === command);
   return entry ? entry.allowTmux : true;
 }
 
 export function resolveCommandSurfaceCatalog(): CommandSurfaceCatalog {
-  return createCommandSurfaceCatalog([
+  return createCommandSurfaceCatalog(mergeCommandSurfaceEntries([
     ...COMMAND_SURFACE_MANIFEST,
     ...readProjectedProviderRootHelpEntries(),
-  ]);
+  ]));
 }

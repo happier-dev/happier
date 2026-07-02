@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { buildOpenCodeRuntimeIdentityDescriptorV1 } from '@happier-dev/plugins-opencode/agent/identity/runtimeDescriptor';
 import { resolveSessionHandoffEligibility } from './resolveSessionHandoffEligibility';
-import { buildOpenCodeRuntimeIdentityDescriptorV1 } from '@happier-dev/protocol';
 
 describe('resolveSessionHandoffEligibility', () => {
   it('allows an eligible persisted Claude session', () => {
@@ -62,7 +62,7 @@ describe('resolveSessionHandoffEligibility', () => {
             linkedAtMs: 1,
             agentRuntimeDescriptorV1: buildOpenCodeRuntimeIdentityDescriptorV1({
               backendMode: 'server',
-              vendorSessionId: 'opencode_runtime_1',
+              providerSessionId: 'opencode_runtime_1',
               serverBaseUrl: 'http://127.0.0.1:4096/',
               serverBaseUrlExplicit: true,
             }),

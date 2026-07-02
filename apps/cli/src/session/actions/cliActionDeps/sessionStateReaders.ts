@@ -57,6 +57,18 @@ export function readSessionMetadata(params: Readonly<{
   });
 }
 
+export function readSessionAgentState(params: Readonly<{
+  rawSession?: Readonly<{ agentState?: unknown }> | null;
+  mode?: SessionStoredContentEncryptionMode;
+  ctx: SessionEncryptionContext;
+}>): Record<string, unknown> | null {
+  return readStoredSessionRecord({
+    rawValue: params.rawSession?.agentState,
+    mode: params.mode,
+    ctx: params.ctx,
+  });
+}
+
 export function readSessionModesState(metadata: Record<string, unknown> | null): Readonly<{
   provider?: string;
   availableModes?: readonly Readonly<{ id?: string; name?: string; description?: string }>[];

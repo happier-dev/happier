@@ -1,3 +1,4 @@
+import { releaseExternalSessionFollowLeasesForArchivedSession } from '@/api/session/external/leases/externalSessionFollowLeaseArchiveRegistry';
 import type { Credentials } from '@/persistence';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { archiveSession, unarchiveSession } from '@/session/transport/http/sessionsHttp';
@@ -18,6 +19,10 @@ export async function setSessionArchivedStateById(params: Readonly<{
         token: params.token,
         sessionId: params.sessionId,
       });
+
+  if (params.archived) {
+    await releaseExternalSessionFollowLeasesForArchivedSession(params.sessionId);
+  }
 
   return {
     archivedAt: result.archivedAt,

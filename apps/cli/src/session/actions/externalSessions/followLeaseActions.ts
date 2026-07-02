@@ -15,7 +15,7 @@ import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 
 import { resolveExternalSessionAttachLeaseTtlMs } from './actionConfiguration';
 import type { ExternalSessionActionContext } from './externalSessionActionContext';
-import { getExternalSessionProviderOps } from './providerOpsResolution';
+import { resolveExternalSessionSurfaceOps } from './providerOpsResolution';
 import { externalSessionsError, internalErrorResponse } from './responseErrors';
 
 export async function executeExternalSessionAttachAction(
@@ -38,7 +38,7 @@ export async function executeExternalSessionAttachAction(
         return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionAttachResponse;
     }
     try {
-        const providerOps = await getExternalSessionProviderOps(parsed.data.providerId);
+        const providerOps = await resolveExternalSessionSurfaceOps(parsed.data.providerId);
         const attached = await context.followLeaseManager.attach({
             sessionId: parsed.data.sessionId,
             leaseId: parsed.data.leaseId,
@@ -52,6 +52,7 @@ export async function executeExternalSessionAttachAction(
                             source: validatedSource.source,
                             remoteSessionId: parsed.data.remoteSessionId,
                             reason: 'attached_view',
+                            linkedSessionId: parsed.data.sessionId,
                         }),
                         emitExternalSessionTranscriptUpdate: context.emitExternalSessionTranscriptUpdate,
                         shouldProcessBackgroundFollowEffects: () => false,
@@ -110,9 +111,9 @@ export async function executeExternalSessionFollowPolicySetAction(
         return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionFollowPolicySetResponse;
     }
 
-    let providerOps: Awaited<ReturnType<typeof getExternalSessionProviderOps>>;
+    let providerOps: Awaited<ReturnType<typeof resolveExternalSessionSurfaceOps>>;
     try {
-        providerOps = await getExternalSessionProviderOps(parsed.data.providerId);
+        providerOps = await resolveExternalSessionSurfaceOps(parsed.data.providerId);
     } catch (error) {
         return internalErrorResponse(
             'external_session_follow_policy_set.provider_ops',
@@ -177,6 +178,7 @@ export async function executeExternalSessionFollowPolicySetAction(
                         source: validatedSource.source,
                         remoteSessionId: parsed.data.remoteSessionId,
                         reason: 'background_follow',
+                        linkedSessionId: parsed.data.sessionId,
                     }),
                     emitExternalSessionTranscriptUpdate: context.emitExternalSessionTranscriptUpdate,
                     shouldProcessBackgroundFollowEffects: () =>

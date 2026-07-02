@@ -9,8 +9,8 @@ export async function validateDirectMachineSource(params: Readonly<{
   env: NodeJS.ProcessEnv;
 }>): Promise<DirectSourceValidationResult> {
   const { providerId, source, env } = params;
-  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(providerId)).externalSessions;
-  if (!providerOps) {
+  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(providerId)).externalSession;
+  if (!providerOps?.validateSource) {
     return { ok: false, error: `Unsupported direct-session provider: ${providerId}` };
   }
   return await providerOps.validateSource({ source, env });

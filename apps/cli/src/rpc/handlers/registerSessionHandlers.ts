@@ -1,24 +1,28 @@
 import type { TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import type { PermissionMode } from '@/api/types';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 import type { Metadata } from '@/api/types';
 import type { CodexBackendMode } from '@happier-dev/agents';
 import {
     AcpConfigOptionOverridesV1,
     type RuntimeDescriptorV1,
     type BackendTargetRefV2,
+    type ConnectedServiceMaterializationIdentityV1,
     type SessionAttachMetadataIdentityPolicy,
     SessionMcpSelectionV1,
     SpawnSessionErrorCode,
+    type SpawnSessionErrorDetail,
 } from '@happier-dev/protocol';
 export { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
-export type { SpawnSessionErrorCode } from '@happier-dev/protocol';
+export type { SpawnSessionErrorCode, SpawnSessionErrorDetail } from '@happier-dev/protocol';
 import { registerCapabilitiesHandlers } from './capabilities';
 import { registerPreviewEnvHandler } from './previewEnv';
 import { registerBashHandler } from './bash';
 import { registerRipgrepHandler } from './ripgrep';
 import { registerDifftasticHandler } from './difftastic';
 import { registerSessionUserMessageSendHandler } from './sessionUserMessageSend';
+import { registerSessionControlHandlers, type SessionRuntimeControls } from './sessionControls';
 import { registerDaemonContributionRegistryProjectionHandler } from './daemonContributionRegistryProjection';
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import { SESSION_TRANSCRIPT_RPC_SCOPES } from './actionSpecRpcRegistration';
@@ -160,6 +164,16 @@ export interface SpawnSessionOptions {
      */
     connectedServices?: unknown;
     /**
+     * Optional timestamp for connectedServices (ms). Used to preserve the caller's latest
+     * connected-service selection ordering across retries/restarts.
+     */
+    connectedServicesUpdatedAt?: number;
+    /**
+     * Stable daemon-owned materialization identity for connected-service runtime state.
+     * This is generated before first materialization and reused on respawn/restart paths.
+     */
+    connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1;
+    /**
      * Optional per-session MCP selection overlay for Happier-managed MCP servers.
      * This is stored in session metadata and applied at runner startup.
      */
@@ -176,7 +190,7 @@ export interface SpawnSessionOptions {
 export type SpawnSessionResult =
     | { type: 'success'; sessionId?: string }
     | { type: 'requestToApproveDirectoryCreation'; directory: string }
-    | { type: 'error'; errorCode: SpawnSessionErrorCode; errorMessage: string };
+    | { type: 'error'; errorCode: SpawnSessionErrorCode; errorMessage: string; errorDetail?: SpawnSessionErrorDetail };
 
 type RpcRegistrar = Readonly<{
     registerHandler(method: string, handler: (input: unknown) => Promise<unknown>): void;
@@ -226,11 +240,14 @@ export function registerSessionHandlers(
     workingDirectory: string,
     opts?: Readonly<{
         getSessionMetadata?: () => Metadata | null;
+        enqueueRegisteredSessionStateFieldMutation?: ((mutation: RegisteredSessionStateFieldMutationV1) => Promise<void> | void) | null;
+        isUsageLimitRecoveryEnabled?: (() => Promise<boolean> | boolean) | null;
         enqueueSessionUserMessage?: ((request: {
             text: string;
             localId?: string;
             meta: Record<string, unknown>;
         }) => Promise<void> | void) | null;
+        sessionRuntimeControls?: SessionRuntimeControls | null;
         accessPolicy?: FilesystemAccessPolicy;
         transcriptActionExecutor?: RpcActionExecutor | null;
     }>,
@@ -245,7 +262,15 @@ export function registerSessionHandlers(
     registerRipgrepHandler(rpcHandlerManager, workingDirectory, { accessPolicy });
     registerDifftasticHandler(rpcHandlerManager, workingDirectory, { accessPolicy });
     registerSessionUserMessageSendHandler(rpcHandlerManager, {
+        workingDirectory,
         enqueueSessionUserMessage: opts?.enqueueSessionUserMessage ?? null,
+        sessionRuntimeControls: opts?.sessionRuntimeControls ?? null,
+    });
+    registerSessionControlHandlers(rpcHandlerManager, {
+        getSessionMetadata: opts?.getSessionMetadata ?? null,
+        enqueueRegisteredSessionStateFieldMutation: opts?.enqueueRegisteredSessionStateFieldMutation ?? null,
+        isUsageLimitRecoveryEnabled: opts?.isUsageLimitRecoveryEnabled ?? null,
+        sessionRuntimeControls: opts?.sessionRuntimeControls ?? null,
     });
     registerSessionTranscriptRpcHandlers({
         rpcHandlerManager,

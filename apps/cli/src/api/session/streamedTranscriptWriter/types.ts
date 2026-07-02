@@ -9,6 +9,8 @@ export type StreamedTranscriptWriter = Readonly<{
   appendThinkingDelta: (deltaText: string, opts?: { sidechainId?: string | null }) => void;
   overrideAssistantText: (text: string, opts?: { sidechainId?: string | null }) => boolean;
   overrideThinkingText: (text: string, opts?: { sidechainId?: string | null }) => boolean;
+  enableDurableCommits: () => void;
+  discard: () => void;
   flushAll: (opts: {
     reason: 'tool-call-boundary' | 'turn-end' | 'abort';
     interruptedReason?: string;

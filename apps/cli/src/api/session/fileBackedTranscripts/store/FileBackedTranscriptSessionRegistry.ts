@@ -15,6 +15,10 @@ type RegistryEntry<TStore extends FileBackedTranscriptSessionStore> = {
     disposed: boolean;
 };
 
+type FileBackedTranscriptSessionAcquireOptions = Readonly<{
+    hotAttach?: boolean;
+}>;
+
 function clearTimer(timer: ReturnType<typeof setTimeout> | null): void {
     if (timer) {
         clearTimeout(timer);
@@ -36,11 +40,17 @@ export class FileBackedTranscriptSessionRegistry<TStore extends FileBackedTransc
         return this.entries.get(cacheKey)?.store ?? null;
     }
 
-    async getOrCreate(key: FileBackedTranscriptSessionStoreKey): Promise<FileBackedTranscriptSessionLease<TStore>> {
-        return this.acquire(key);
+    async getOrCreate(
+        key: FileBackedTranscriptSessionStoreKey,
+        options?: FileBackedTranscriptSessionAcquireOptions,
+    ): Promise<FileBackedTranscriptSessionLease<TStore>> {
+        return this.acquire(key, options);
     }
 
-    async acquire(key: FileBackedTranscriptSessionStoreKey): Promise<FileBackedTranscriptSessionLease<TStore>> {
+    async acquire(
+        key: FileBackedTranscriptSessionStoreKey,
+        options?: FileBackedTranscriptSessionAcquireOptions,
+    ): Promise<FileBackedTranscriptSessionLease<TStore>> {
         this.assertNotDisposed();
         const cacheKey = buildSessionStoreCacheKey(key);
         const entry = await this.getOrCreateEntry(cacheKey, key);
@@ -52,7 +62,7 @@ export class FileBackedTranscriptSessionRegistry<TStore extends FileBackedTransc
         entry.coldTimer = null;
         entry.leaseCount += 1;
 
-        if (wasDetached) {
+        if (wasDetached && options?.hotAttach !== false) {
             await entry.store.setLifecycleState('hot_attached');
         }
 

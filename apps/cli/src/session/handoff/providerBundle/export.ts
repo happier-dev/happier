@@ -30,18 +30,21 @@ export async function exportSessionHandoffProviderBundle(params: Readonly<{
     throw new Error('Session path is unavailable for handoff');
   }
 
-  const providerOps = (await bridge.resolveExecutionSurfaces(eligibility.agentId)).sessionHandoff;
+  const providerOps = (await bridge.resolveExecutionSurfaces(eligibility.agentId)).handoff;
   if (!providerOps) {
     throw new Error(`Unsupported handoff provider: ${eligibility.agentId}`);
   }
 
-  const providerBundle = await providerOps.exportBundle({
-    metadata,
-    remoteSessionId: eligibility.vendorHandoffId,
-    activeServerDir: params.activeServerDir,
-  });
-  return {
-    providerBundle,
-    targetPath,
-  };
+	  const providerBundle = await providerOps.exportBundle({
+	    sessionId: eligibility.vendorHandoffId,
+	    metadata,
+	    directory: params.activeServerDir,
+	  });
+	  if (!providerBundle.ok) {
+	    throw new Error(providerBundle.message ?? `Session handoff export failed: ${providerBundle.code}`);
+	  }
+	  return {
+	    providerBundle: providerBundle.value.bundle as SessionHandoffProviderBundle,
+	    targetPath,
+	  };
 }

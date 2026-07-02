@@ -423,7 +423,7 @@ describe('happier resume', () => {
             v: 1,
             // Configured ACP sessions often publish a configured-backend provider id,
             // so resume eligibility must be able to rely on the provider-declared
-            // vendorResumeIdField instead of only runtimeDescriptor.provider.vendorSessionId.
+            // vendorResumeIdField instead of only runtimeDescriptor.provider.providerSessionId.
             providerId: 'acp:acme.resume.backend',
             provider: {},
           },

@@ -1,14 +1,24 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { logger } from '@/ui/logger';
 import type { VoiceInferenceWorkerHandle } from '@/daemon/voiceInference/voiceInferenceWorker';
 import type { Machine } from './types';
 
-const { configurationMock, mockIo } = vi.hoisted(() => ({
+const { configurationMock, mockAxiosIsAxiosError, mockAxiosPost, mockIo } = vi.hoisted(() => ({
   configurationMock: {
     apiServerUrl: 'http://localhost:3005',
+    activeServerDir: '',
     socketIoTransports: ['polling', 'websocket'] as string[],
   },
+  mockAxiosIsAxiosError: vi.fn((error: unknown) => (
+    typeof error === 'object' && error !== null && (error as { isAxiosError?: unknown }).isAxiosError === true
+  )),
+  mockAxiosPost: vi.fn(),
   mockIo: vi.fn<(url: string, opts: Record<string, unknown>) => any>(() => ({
     on: vi.fn(),
     emit: vi.fn(),
@@ -24,6 +34,14 @@ const registerMachineRpcHandlersMock = vi.hoisted(() => vi.fn());
 
 vi.mock('socket.io-client', () => ({
   io: mockIo,
+}));
+
+vi.mock('axios', () => ({
+  default: {
+    isAxiosError: mockAxiosIsAxiosError,
+    post: mockAxiosPost,
+  },
+  isAxiosError: mockAxiosIsAxiosError,
 }));
 
 vi.mock('@/configuration', () => ({
@@ -45,6 +63,7 @@ vi.mock('@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers', 
 vi.mock('./machine/rpcHandlers', () => ({ registerMachineRpcHandlers: registerMachineRpcHandlersMock }));
 vi.mock('./rpc/RpcHandlerManager', () => ({
   RpcHandlerManager: class {
+    registerHandler() {}
     onSocketConnect() {}
     onSocketDisconnect() {}
     async handleRequest() {
@@ -65,6 +84,7 @@ describe('ApiMachineClient transports', () => {
   beforeEach(() => {
     configurationMock.apiServerUrl = 'http://localhost:3005';
     configurationMock.socketIoTransports = ['polling', 'websocket'];
+    mockAxiosPost.mockResolvedValue({ status: 200, data: { success: true, applied: true } });
     registerFileSystemHandlersMock.mockReset();
     registerFileSystemHandlersMock.mockReturnValue({ transferSessionStore: {} });
     registerMachineRpcHandlersMock.mockReset();
@@ -73,7 +93,10 @@ describe('ApiMachineClient transports', () => {
 
   afterEach(() => {
     configurationMock.apiServerUrl = 'http://localhost:3005';
+    configurationMock.activeServerDir = '';
     configurationMock.socketIoTransports = ['polling', 'websocket'];
+    vi.mocked(logger.warn).mockReset();
+    mockAxiosPost.mockReset();
   });
 
   it('uses polling-first transports by default (upgrade to websocket when available)', async () => {
@@ -122,6 +145,211 @@ describe('ApiMachineClient transports', () => {
     expect(opts.transports).toEqual(['websocket']);
     expect(opts.reconnection).toBe(false);
     expect(opts.autoConnect).toBe(false);
+  });
+
+  it('confirms session-end over HTTP even when the machine socket is absent', async () => {
+    const mod = await import('./apiMachine');
+
+    const machine: Machine = {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    const client = new mod.ApiMachineClient('fake-token', machine);
+    client.emitSessionEnd({ sid: 'session-1', time: 1234 });
+
+    await vi.waitFor(() => {
+      expect(mockAxiosPost).toHaveBeenCalledWith(
+        'http://localhost:3005/v1/sessions/session-1/end',
+        { time: 1234 },
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer fake-token',
+          }),
+        }),
+      );
+    });
+  });
+
+  it('keeps startup cleanup session-end queued when HTTP delivery fails', async () => {
+    const tempServerDir = await mkdtemp(join(tmpdir(), 'happier-machine-session-end-'));
+    configurationMock.activeServerDir = tempServerDir;
+    mockAxiosPost.mockRejectedValue(new Error('server offline'));
+    const mod = await import('./apiMachine');
+
+    const machine: Machine = {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    const client = new mod.ApiMachineClient('fake-token', machine);
+
+    try {
+      const durableClient: {
+        enqueueSessionEndMutation?: (payload: { sid: string; time: number; exit?: unknown }) => void;
+      } = client;
+
+      expect(durableClient.enqueueSessionEndMutation).toBeTypeOf('function');
+      durableClient.enqueueSessionEndMutation?.({
+        sid: 'session-1',
+        time: 1234,
+        exit: { observedBy: 'daemon', reason: 'process-missing' },
+      });
+
+      await vi.waitFor(async () => {
+        const parsed = JSON.parse(
+          await readFile(join(tempServerDir, 'session-mutations', 'session-session-1.json'), 'utf8'),
+        ) as { mutations?: Array<{ kind?: string; payload?: { sessionId?: string; observedAt?: number } }> };
+        expect(parsed.mutations).toEqual([
+          expect.objectContaining({
+            kind: 'session_end',
+            payload: expect.objectContaining({
+              sessionId: 'session-1',
+              observedAt: 1234,
+            }),
+          }),
+        ]);
+      });
+    } finally {
+      await client.shutdown();
+      await rm(tempServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps daemon turn settlement queued durably when delivery fails', async () => {
+    const tempServerDir = await mkdtemp(join(tmpdir(), 'happier-machine-turn-settlement-'));
+    configurationMock.activeServerDir = tempServerDir;
+    mockAxiosPost.mockRejectedValue(new Error('server offline'));
+    const mod = await import('./apiMachine');
+
+    const machine: Machine = {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    const client = new mod.ApiMachineClient('fake-token', machine);
+
+    try {
+      const durableClient: {
+        enqueueSessionTurnSettlementMutation?: (payload: { sid: string; time: number }) => void;
+      } = client;
+
+      expect(durableClient.enqueueSessionTurnSettlementMutation).toBeTypeOf('function');
+      durableClient.enqueueSessionTurnSettlementMutation?.({
+        sid: 'session-1',
+        time: 1234,
+      });
+
+      await vi.waitFor(async () => {
+        const parsed = JSON.parse(
+          await readFile(join(tempServerDir, 'session-mutations', 'session-session-1.json'), 'utf8'),
+        ) as { mutations?: Array<{ kind?: string; payload?: { sessionId?: string; action?: string; mutationId?: string; observedAt?: number } }> };
+        expect(parsed.mutations).toEqual([
+          expect.objectContaining({
+            kind: 'session_turn_mutation',
+            payload: expect.objectContaining({
+              sessionId: 'session-1',
+              action: 'end_session',
+              mutationId: 'daemon-exit-turn-settlement:session-1:1234',
+              observedAt: 1234,
+            }),
+          }),
+        ]);
+      });
+    } finally {
+      await client.shutdown();
+      await rm(tempServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('redacts authorization headers when session-end HTTP confirmation fails', async () => {
+    const mod = await import('./apiMachine');
+
+    const machine: Machine = {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    mockAxiosPost.mockRejectedValueOnce({
+      isAxiosError: true,
+      name: 'AxiosError',
+      message: 'socket hang up',
+      code: 'ECONNRESET',
+      config: {
+        method: 'post',
+        url: 'http://localhost:3005/v1/sessions/session-1/end?token=secret',
+        headers: { Authorization: 'Bearer fake-token' },
+        data: { time: 1234 },
+      },
+    });
+
+    const client = new mod.ApiMachineClient('fake-token', machine);
+    client.emitSessionEnd({ sid: 'session-1', time: 1234 });
+
+    await vi.waitFor(() => {
+      expect(logger.warn).toHaveBeenCalled();
+    });
+
+    const logged = JSON.stringify(vi.mocked(logger.warn).mock.calls);
+    expect(logged).not.toContain('fake-token');
+    expect(logged).not.toContain('Authorization');
+    expect(logged).not.toContain('token=secret');
+  });
+
+  it('does not warn when connected legacy session-end delivery reaches a server without the durable route', async () => {
+    const machineSocket = createApiSessionSocketStub({ connected: true });
+    bindApiSessionSocketMock(mockIo, machineSocket);
+    mockAxiosPost.mockResolvedValueOnce({ status: 404, data: { error: 'not found' } });
+
+    const mod = await import('./apiMachine');
+
+    const machine: Machine = {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    const client = new mod.ApiMachineClient('fake-token', machine);
+    client.connect();
+    client.emitSessionEnd({ sid: 'session-1', time: 1234 });
+
+    await vi.waitFor(() => {
+      expect(mockAxiosPost).toHaveBeenCalledWith(
+        'http://localhost:3005/v1/sessions/session-1/end',
+        { time: 1234 },
+        expect.any(Object),
+      );
+    });
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 0);
+    });
+
+    expect(machineSocket.emit).toHaveBeenCalledWith('session-end', { sid: 'session-1', time: 1234 });
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it('includes takeover auth when explicitly requested', async () => {
@@ -302,6 +530,114 @@ describe('ApiMachineClient transports', () => {
         },
       },
     ]);
+  });
+
+  it('emits and receives TCP tunnel relay envelopes over the machine-scoped socket', async () => {
+    const machineSocket = createApiSessionSocketStub();
+    bindApiSessionSocketMock(mockIo, machineSocket);
+
+    const mod = await import('./apiMachine');
+    const { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT } = await import('@happier-dev/protocol');
+
+    const machine: Machine = {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    const client = new mod.ApiMachineClient('fake-token', machine);
+    const received: unknown[] = [];
+    client.onPeerTcpTunnelRelayEnvelope((payload) => {
+      received.push(payload);
+    });
+    client.connect();
+
+    const envelope = {
+      v: 1,
+      scopeUserId: 'user-1',
+      sender: { kind: 'machine', machineId: 'test-machine' },
+      recipient: { kind: 'user' },
+      frame: {
+        v: 1,
+        kind: 'abort',
+        tunnelId: 'tun_1',
+        reasonCode: 'relay_authorization_invalid',
+      },
+    } as const;
+
+    client.sendPeerTcpTunnelRelayEnvelope(envelope);
+
+    expect(machineSocket.emit).toHaveBeenCalledWith(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, envelope);
+
+    machineSocket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, {
+      ...envelope,
+      sender: { kind: 'user' },
+      recipient: { kind: 'machine', machineId: 'test-machine' },
+    });
+
+    expect(received).toEqual([{
+      ...envelope,
+      sender: { kind: 'user' },
+      recipient: { kind: 'machine', machineId: 'test-machine' },
+    }]);
+  });
+
+  it('emits and receives live-stream relay envelopes over the machine-scoped socket', async () => {
+    const machineSocket = createApiSessionSocketStub();
+    bindApiSessionSocketMock(mockIo, machineSocket);
+
+    const mod = await import('./apiMachine');
+    const { MACHINE_LIVE_STREAM_SOCKET_EVENT } = await import('@happier-dev/protocol');
+
+    const machine: Machine = {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+
+    const client = new mod.ApiMachineClient('fake-token', machine);
+    const received: unknown[] = [];
+    client.onMachineLiveStreamRelayEnvelope((payload) => {
+      received.push(payload);
+    });
+    client.connect();
+
+    const envelope = {
+      v: 1,
+      sourceMachineId: 'test-machine',
+      targetMachineId: 'viewer-machine',
+      message: {
+        kind: 'receipt',
+        receipt: {
+          v: 1,
+          id: 'stream.paused',
+          flowKind: 'live_stream',
+          routeKind: 'server_relay',
+          streamId: 'stream_1',
+          reasonCode: 'capture_source_unavailable',
+          maxBitrateBps: 64_000,
+          maxFramesPerSecond: 12,
+          maxFrameBytes: 8_192,
+          maxDurationMs: 60_000,
+        },
+      },
+    } as const;
+
+    client.sendMachineLiveStreamRelayEnvelope(envelope);
+
+    expect(machineSocket.emit).toHaveBeenCalledWith(MACHINE_LIVE_STREAM_SOCKET_EVENT, envelope);
+
+    machineSocket.trigger(MACHINE_LIVE_STREAM_SOCKET_EVENT, envelope);
+
+    expect(received).toEqual([envelope]);
   });
 
   it('emits direct-session transcript delta updates over the machine-scoped socket', async () => {

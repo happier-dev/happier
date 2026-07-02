@@ -219,6 +219,7 @@ vi.mock('@/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers', 
 vi.mock('./machine/rpcHandlers', () => ({ registerMachineRpcHandlers: vi.fn() }));
 vi.mock('./rpc/RpcHandlerManager', () => ({
     RpcHandlerManager: class {
+        registerHandler() {}
         onSocketConnect() {}
         onSocketDisconnect() {}
         async handleRequest() {
@@ -438,6 +439,75 @@ describe('ApiMachineClient reconnect race handling', () => {
                 serviceLabel: 'com.happier.cli.daemon.default',
             },
         });
+    });
+
+    it('logs active non-ownership connect_error diagnostics without stopping the supervisor', async () => {
+        const { ApiMachineClient } = await import('./apiMachine');
+        const { logger } = await import('@/ui/logger');
+
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        const client = new ApiMachineClient('token', machine);
+        client.connect();
+
+        harness.getSocket(0).trigger('connect_error', {
+            message: 'transport rejected',
+            name: 'Error',
+            code: 'ERR_BAD_REQUEST',
+            data: {
+                error: 'transport-not-ready',
+                statusCode: 503,
+                secret: 'must-not-log',
+            },
+        });
+
+        const supervisor = createManagedConnectionSupervisorMock.mock.results[0]?.value;
+        expect(supervisor?.stop).not.toHaveBeenCalled();
+        expect(logger.warn).toHaveBeenCalledWith('[API MACHINE] Machine socket connect error', {
+            message: 'transport rejected',
+            name: 'Error',
+            code: 'ERR_BAD_REQUEST',
+            statusCode: 503,
+        });
+        expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain('must-not-log');
+    });
+
+    it('stops reconnecting and reports a replaced machine from connect_error', async () => {
+        const { ApiMachineClient } = await import('./apiMachine');
+
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        const client = new ApiMachineClient('token', machine);
+        const machineReplaced = vi.fn();
+        client.connect({ onMachineReplaced: machineReplaced });
+
+        harness.getSocket(0).trigger('connect_error', {
+            message: 'machine-replaced',
+            data: {
+                error: 'machine-replaced',
+                statusCode: 410,
+            },
+        });
+
+        const supervisor = createManagedConnectionSupervisorMock.mock.results[0]?.value;
+        expect(supervisor?.stop).toHaveBeenCalledTimes(1);
+        expect(machineReplaced).toHaveBeenCalledWith({ machineId: 'machine-1' });
     });
 
     it('ignores a stale connect_error ownership conflict from an older transport socket', async () => {

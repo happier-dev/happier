@@ -53,7 +53,7 @@ const {
 
     if (backendId === 'opencode') {
       const attach: ProviderAttachOps = {
-        evaluateEligibility: async ({ currentMachineId, sessionMachineId, hasLocalAttachmentInfo, metadata }) => ({
+        evaluateAvailability: async ({ currentMachineId, sessionMachineId, hasLocalAttachmentInfo, metadata }) => ({
           eligible: true,
           scope:
             (currentMachineId && sessionMachineId && currentMachineId === sessionMachineId) || hasLocalAttachmentInfo
@@ -62,38 +62,44 @@ const {
           metadata,
         }),
         probeReachability: async () => ({ reachable: true }),
-        runAttach: async () => 0,
+        attach: async () => 0,
       };
       return {
         terminalRuntime: null,
-        externalSessions: null,
+        externalSession: null,
         attach,
-        sessionHandoff: null,
+        handoff: null,
+        fork: null,
+        checkpoint: null,
       };
     }
 
     if (backendId === 'claude' || backendId === 'codex' || backendId === 'ohMyPi') {
       const terminalRuntime: AnyTerminalRuntimeOps = backendId === 'ohMyPi'
         ? {
-            bindTranscript: async () => createMockTerminalRuntimeBinding('ohMyPi'),
+            resolveTranscriptBinding: async () => createMockTerminalRuntimeBinding('ohMyPi'),
           }
         : {
             launch: async () => 'launched',
-            bindTranscript: async () => createMockTerminalRuntimeBinding(backendId),
+            resolveTranscriptBinding: async () => createMockTerminalRuntimeBinding(backendId),
           };
       return {
         terminalRuntime,
-        externalSessions: null,
+        externalSession: null,
         attach: null,
-        sessionHandoff: null,
+        handoff: null,
+        fork: null,
+        checkpoint: null,
       };
     }
 
     return {
       terminalRuntime: null,
-      externalSessions: null,
+      externalSession: null,
       attach: null,
-      sessionHandoff: null,
+      handoff: null,
+      fork: null,
+      checkpoint: null,
     };
   };
   const resolveBackendExecutionSurfaces = vi.fn(createMockBackendExecutionSurfaces);
@@ -284,17 +290,19 @@ describe('happier attach', () => {
     resolveBackendExecutionSurfaces.mockImplementation((backendId) => backendId === 'plugin-review-bot'
       ? {
           terminalRuntime: null,
-          externalSessions: null,
+          externalSession: null,
           attach: {
-            evaluateEligibility: async ({ metadata }) => ({
+            evaluateAvailability: async ({ metadata }) => ({
               eligible: true,
               scope: 'remote',
               metadata,
             }),
             probeReachability: async () => ({ reachable: true }),
-            runAttach: async () => 0,
+            attach: async () => 0,
           },
-          sessionHandoff: null,
+          handoff: null,
+          fork: null,
+          checkpoint: null,
         }
       : createMockBackendExecutionSurfaces(backendId));
 

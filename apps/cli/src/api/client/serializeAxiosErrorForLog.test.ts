@@ -1,17 +1,31 @@
 import { describe, expect, it } from 'vitest';
 
-import { AxiosError } from 'axios';
+import { AxiosError, AxiosHeaders, type InternalAxiosRequestConfig } from 'axios';
 
 import { serializeAxiosErrorForLog } from './serializeAxiosErrorForLog';
 
+function createAxiosConfig(params: Readonly<{
+  method: string;
+  url: string;
+  headers?: AxiosHeaders;
+  data?: unknown;
+}>): InternalAxiosRequestConfig {
+  return {
+    method: params.method,
+    url: params.url,
+    headers: params.headers ?? new AxiosHeaders(),
+    ...(params.data === undefined ? {} : { data: params.data }),
+  };
+}
+
 describe('serializeAxiosErrorForLog', () => {
   it('redacts query params and does not include headers/body', () => {
-    const err = new AxiosError('boom', 'ECONNABORTED', {
+    const err = new AxiosError('boom', 'ECONNABORTED', createAxiosConfig({
       method: 'get',
       url: 'https://api.example.test/v1/account/settings?token=secret&x=1#hash',
-      headers: { Authorization: 'Bearer SECRET', 'Content-Type': 'application/json' },
+      headers: new AxiosHeaders({ Authorization: 'Bearer SECRET', 'Content-Type': 'application/json' }),
       data: { secret: 'nope' },
-    } as any);
+    }));
 
     const serialized = serializeAxiosErrorForLog(err);
     expect(serialized).toEqual(expect.objectContaining({
@@ -26,15 +40,117 @@ describe('serializeAxiosErrorForLog', () => {
   });
 
   it('redacts Telegram bot tokens embedded in path segments', () => {
-    const err = new AxiosError('boom', 'ECONNRESET', {
+    const err = new AxiosError('boom', 'ECONNRESET', createAxiosConfig({
       method: 'post',
       url: 'https://api.telegram.org/bot123456:ABC-SECRET/sendMessage',
-    } as any);
+    }));
 
     const serialized = serializeAxiosErrorForLog(err);
     expect(serialized).toEqual(expect.objectContaining({
       method: 'POST',
       url: 'https://api.telegram.org/<redacted>/sendMessage',
     }));
+  });
+
+  it('redacts URL userinfo credentials', () => {
+    const err = new AxiosError('boom', 'ECONNRESET', createAxiosConfig({
+      method: 'get',
+      url: 'https://alice:SUPER_SECRET_PASSWORD@api.example.test/v1/features?token=secret',
+    }));
+
+    const serialized = serializeAxiosErrorForLog(err);
+    expect(serialized).toEqual(expect.objectContaining({
+      method: 'GET',
+      url: 'https://api.example.test/v1/features',
+    }));
+    expect(JSON.stringify(serialized)).not.toContain('SUPER_SECRET_PASSWORD');
+    expect(JSON.stringify(serialized)).not.toContain('alice');
+    expect(JSON.stringify(serialized)).not.toContain('token=secret');
+  });
+
+  it('redacts userinfo from scheme-relative URL-like strings in the fallback path', () => {
+    const err = new AxiosError('boom', 'ECONNRESET', createAxiosConfig({
+      method: 'get',
+      url: '//alice:SUPER_SECRET_PASSWORD@api.example.test/v1/features?token=secret',
+    }));
+
+    const serialized = serializeAxiosErrorForLog(err);
+    expect(serialized).toEqual(expect.objectContaining({
+      method: 'GET',
+      url: '//api.example.test/v1/features',
+    }));
+    expect(JSON.stringify(serialized)).not.toContain('SUPER_SECRET_PASSWORD');
+    expect(JSON.stringify(serialized)).not.toContain('alice');
+    expect(JSON.stringify(serialized)).not.toContain('token=secret');
+  });
+
+  it('redacts URL userinfo credentials in opaque URL-like strings', () => {
+    const err = new AxiosError('boom', 'ECONNRESET', createAxiosConfig({
+      method: 'get',
+      url: 'alice:SUPER_SECRET_PASSWORD@api.example.test/v1/features?token=secret',
+    }));
+
+    const serialized = serializeAxiosErrorForLog(err);
+    expect(serialized).toEqual(expect.objectContaining({
+      method: 'GET',
+      url: 'api.example.test/v1/features',
+    }));
+    expect(JSON.stringify(serialized)).not.toContain('SUPER_SECRET_PASSWORD');
+    expect(JSON.stringify(serialized)).not.toContain('alice');
+    expect(JSON.stringify(serialized)).not.toContain('token=secret');
+  });
+
+  it('redacts username-only userinfo in no-scheme URL-like strings', () => {
+    const err = new AxiosError('boom', 'ECONNRESET', createAxiosConfig({
+      method: 'get',
+      url: 'TOKEN_ONLY@api.example.test/v1/features?token=secret',
+    }));
+
+    const serialized = serializeAxiosErrorForLog(err);
+    expect(serialized).toEqual(expect.objectContaining({
+      method: 'GET',
+      url: 'api.example.test/v1/features',
+    }));
+    expect(JSON.stringify(serialized)).not.toContain('TOKEN_ONLY');
+    expect(JSON.stringify(serialized)).not.toContain('token=secret');
+  });
+
+  it('redacts URL secrets embedded in Error messages', () => {
+    const err = new Error(
+      'socket failed for https://alice:SUPER_SECRET_PASSWORD@api.example.test/v1/features?token=secret#hash',
+    );
+
+    const serialized = serializeAxiosErrorForLog(err);
+    expect(serialized).toEqual(expect.objectContaining({
+      name: 'Error',
+      message: 'socket failed for https://api.example.test/v1/features',
+    }));
+    expect(JSON.stringify(serialized)).not.toContain('SUPER_SECRET_PASSWORD');
+    expect(JSON.stringify(serialized)).not.toContain('alice');
+    expect(JSON.stringify(serialized)).not.toContain('token=secret');
+  });
+
+  it('redacts Telegram bot tokens embedded in string errors', () => {
+    const serialized = serializeAxiosErrorForLog(
+      'failed https://api.telegram.org/bot123456:ABC-SECRET/sendMessage?chat_id=secret',
+    );
+
+    expect(serialized).toEqual({
+      message: 'failed https://api.telegram.org/<redacted>/sendMessage',
+    });
+    expect(JSON.stringify(serialized)).not.toContain('123456:ABC-SECRET');
+    expect(JSON.stringify(serialized)).not.toContain('chat_id=secret');
+  });
+
+  it('redacts authorization tokens embedded in string errors', () => {
+    const serialized = serializeAxiosErrorForLog(
+      'request failed with Authorization: Bearer SUPER_SECRET_TOKEN',
+    );
+
+    expect(serialized).toEqual({
+      message: 'request failed with Authorization: <redacted>',
+    });
+    expect(JSON.stringify(serialized)).not.toContain('SUPER_SECRET_TOKEN');
+    expect(JSON.stringify(serialized)).not.toContain('Bearer');
   });
 });

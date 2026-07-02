@@ -11,6 +11,8 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { searchTier1Memory, searchTier2Memory } from '@/daemon/memory/searchMemory';
 import { getMemoryWindow } from '@/daemon/memory/getMemoryWindow';
+import { openDeepIndexDb } from '@/daemon/memory/deepIndex/deepIndexDb';
+import { openSummaryShardIndexDb } from '@/daemon/memory/summaryShardIndexDb';
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
@@ -59,6 +61,39 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
     const deepDbPath = memoryWorker.getDeepDbPath();
     const hintsIndexReady = typeof tier1DbPath === 'string' && tier1DbPath.trim().length > 0;
     const deepIndexReady = typeof deepDbPath === 'string' && deepDbPath.trim().length > 0;
+    const tier1Stats = (() => {
+      if (!tier1DbPath) return null;
+      try {
+        const db = openSummaryShardIndexDb({ dbPath: tier1DbPath });
+        try {
+          return {
+            stats: db.getSummaryIndexStats(),
+            queue: db.getMemoryIndexQueueTelemetry(),
+          };
+        } finally {
+          db.close();
+        }
+      } catch {
+        return null;
+      }
+    })();
+    const deepStats = (() => {
+      if (!deepDbPath) return null;
+      try {
+        const db = openDeepIndexDb({ dbPath: deepDbPath });
+        try {
+          return db.getDeepIndexStats();
+        } finally {
+          db.close();
+        }
+      } catch {
+        return null;
+      }
+    })();
+    const hintsIndexHasContent = (tier1Stats?.stats.lightShardCount ?? 0) > 0;
+    const deepIndexHasContent = (deepStats?.deepChunkCount ?? 0) > 0;
+    const activeIndexSearchable = settings.indexMode === 'deep' ? deepIndexHasContent : hintsIndexHasContent;
+    const workerStatus = memoryWorker.getWorkerStatus();
 
     const readBytes = async (path: string | null): Promise<number | null> => {
       if (!path) return null;
@@ -70,13 +105,34 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
       }
     };
 
+    const indexContent = tier1Stats || deepStats
+      ? {
+          lightShardCount: tier1Stats?.stats.lightShardCount ?? 0,
+          lightTermCount: tier1Stats?.stats.lightTermCount ?? 0,
+          deepChunkCount: deepStats?.deepChunkCount ?? 0,
+          deepEmbeddingCount: deepStats?.deepEmbeddingCount ?? 0,
+          searchableSessionCount:
+            settings.indexMode === 'deep'
+              ? (deepStats?.searchableSessionCount ?? 0)
+              : (tier1Stats?.stats.searchableSessionCount ?? 0),
+          lastIndexedAtMs: tier1Stats?.stats.lastIndexedAtMs ?? null,
+          latestIndexedMessageAtMs:
+            settings.indexMode === 'deep'
+              ? (deepStats?.latestIndexedMessageAtMs ?? null)
+              : (tier1Stats?.stats.latestIndexedMessageAtMs ?? null),
+        }
+      : null;
+
     return MemoryStatusV1Schema.parse({
       v: 1,
       enabled: settings.enabled,
       indexMode: settings.indexMode,
       hintsIndexReady,
+      hintsIndexHasContent,
       deepIndexReady,
+      deepIndexHasContent,
       activeIndexReady: settings.indexMode === 'deep' ? deepIndexReady : hintsIndexReady,
+      activeIndexSearchable,
       embeddingsEnabled: resolveOperationalMemoryEmbeddingsSettings(settings.embeddings)?.enabled === true,
       embeddingsMode: embeddingsDiagnostics.mode,
       embeddingsPresetId: embeddingsDiagnostics.presetId,
@@ -88,6 +144,34 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
       deepDbPath,
       tier1DbBytes: await readBytes(tier1DbPath),
       deepDbBytes: await readBytes(deepDbPath),
+      indexContent,
+      worker: workerStatus ?? null,
+      queue: tier1Stats?.queue
+        ? {
+            selectedSessionCount: tier1Stats.queue.selectedSessionCount,
+            queuedSessionCount: tier1Stats.queue.queuedSessionCount,
+            indexingSessionCount: tier1Stats.queue.indexingSessionCount,
+            indexedSessionCount: tier1Stats.queue.indexedSessionCount,
+            emptySessionCount: tier1Stats.queue.emptySessionCount,
+            failedSessionCount: tier1Stats.queue.failedSessionCount,
+            waitingSessionCount: tier1Stats.queue.waitingSessionCount,
+            oldestQueuedAtMs: tier1Stats.queue.oldestQueuedAtMs,
+          }
+        : null,
+      lastRun: tier1Stats?.queue.lastRun
+        ? {
+            startedAtMs: tier1Stats.queue.lastRun.startedAtMs,
+            finishedAtMs: tier1Stats.queue.lastRun.finishedAtMs,
+            sessionsConsidered: tier1Stats.queue.lastRun.sessionsConsidered,
+            sessionsProcessed: tier1Stats.queue.lastRun.sessionsProcessed,
+            rawRowsFetched: tier1Stats.queue.lastRun.rawRowsFetched,
+            semanticRowsFound: tier1Stats.queue.lastRun.semanticRowsFound,
+            lightShardsCreated: tier1Stats.queue.lastRun.lightShardsCreated,
+            deepChunksCreated: tier1Stats.queue.lastRun.deepChunksCreated,
+            failures: tier1Stats.queue.lastRun.sessionsFailed,
+            skipReasons: tier1Stats.queue.lastRun.skipReasons,
+          }
+        : null,
     });
   });
 
@@ -189,6 +273,7 @@ export function registerMachineMemoryRpcHandlers(params: Readonly<{
       seqFrom: parsed.data.seqFrom,
       seqTo: parsed.data.seqTo,
       paddingMessages: memoryWorker.getSettings().hints.paddingMessagesOnVerify,
+      contentPolicy: settings.contentPolicy,
     });
     return MemoryWindowV1Schema.parse(window);
   });

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { CodexBackendMode } from '@happier-dev/agents';
 
 import { writeFakeCodexAppServerThreadListScript } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
@@ -27,7 +28,7 @@ function createLinkedCodexSessionFixture(params: Readonly<{
   source: LoadedLinkedExternalSession['source'];
   sessionPath?: string | null;
   metadata?: LoadedLinkedExternalSession['metadata'];
-  codexBackendMode?: 'mcp' | 'acp' | 'appServer';
+  codexBackendMode?: CodexBackendMode;
 }>): LoadedLinkedExternalSession {
   return {
     rawSession: {} as RawSessionRecord,

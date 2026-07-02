@@ -95,11 +95,17 @@ export const SESSION_LIFECYCLE_RPC_SCOPES = Object.freeze([
     ...MACHINE_SESSION_STOP_RPC_SCOPES,
     { id: 'session.rollback', methods: [SESSION_RPC_METHODS.SESSION_ROLLBACK] },
     { id: 'session.checkpoint_code_rollback', methods: [SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK] },
+    { id: 'session.checkpoint', methods: [SESSION_RPC_METHODS.SESSION_CHECKPOINT] },
+    { id: 'session.restore', methods: [SESSION_RPC_METHODS.SESSION_RESTORE] },
     ...SESSION_HANDOFF_LIFECYCLE_RPC_SCOPES,
 ] satisfies readonly ActionSpecRpcRegistrationScope[]);
 
 export const EXECUTION_RUN_RPC_SCOPES = Object.freeze([
     { id: 'execution.runs', methodPrefixes: ['execution.run.'] },
+] satisfies readonly ActionSpecRpcRegistrationScope[]);
+
+export const REVIEW_COMMENT_RPC_SCOPES = Object.freeze([
+    { id: 'reviews.comments', methodPrefixes: ['reviews.comments.'] },
 ] satisfies readonly ActionSpecRpcRegistrationScope[]);
 
 export const SESSION_TRANSCRIPT_RPC_SCOPES = Object.freeze([
@@ -186,6 +192,7 @@ export const REQUIRED_GENERIC_ACTION_SPEC_RPC_SCOPES = Object.freeze([
     ...APPROVAL_RPC_SCOPES,
     ...SESSION_LIFECYCLE_RPC_SCOPES,
     ...EXECUTION_RUN_RPC_SCOPES,
+    ...REVIEW_COMMENT_RPC_SCOPES,
     ...SESSION_TRANSCRIPT_RPC_SCOPES,
     ...EXTERNAL_SESSION_REQUIRED_GENERIC_RPC_SCOPES,
     ...DAEMON_ADMIN_RPC_SCOPES,

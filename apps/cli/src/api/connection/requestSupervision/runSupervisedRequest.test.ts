@@ -87,6 +87,39 @@ describe('request supervision', () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it('allows probe-purpose requests while the connection is offline', async () => {
+    const supervisor = createSupervisor(createState({ phase: 'offline', reason: 'server_unreachable' }));
+    const request = vi.fn(async () => 'ok');
+
+    await expect(
+      runSupervisedRequest({
+        supervisor,
+        purpose: 'probe',
+        request,
+      }),
+    ).resolves.toBe('ok');
+
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('defers recovery-read requests while the connection is offline by default', async () => {
+    const supervisor = createSupervisor(createState({ phase: 'offline', reason: 'server_unreachable' }));
+    const request = vi.fn(async () => 'ok');
+
+    await expect(
+      runSupervisedRequest({
+        supervisor,
+        purpose: 'recovery_read',
+        request,
+      }),
+    ).rejects.toMatchObject({
+      name: 'HttpStatusError',
+      response: { status: 503 },
+    });
+
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it('reports terminal auth errors back into the supervisor', async () => {
     const supervisor = createSupervisor();
 

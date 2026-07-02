@@ -44,6 +44,7 @@ export async function startHappyServer(
     const toolNamesSnapshot = listBuiltInHappierTools({
         surface: 'session_agent',
         isActionEnabled,
+        actionsSettings: opts?.accountSettings?.actionsSettingsV1 ?? null,
     }).map((tool) => tool.name);
     const keepAliveIntervalMs = configuration.mcpSseKeepAliveIntervalMs;
 

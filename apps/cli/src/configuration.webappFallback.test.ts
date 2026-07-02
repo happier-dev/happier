@@ -273,6 +273,46 @@ describe('configuration env url fallback', () => {
     expect(configMod.configuration.webappUrl).toBe('http://192.168.1.115:8081');
   });
 
+  it('prefers an explicit active server id when that saved profile matches the env-selected URL', async () => {
+    const homeDir = createTempDirSync('happier-cli-config-duplicate-url-explicit-');
+    tempDirs.push(homeDir);
+    const settingsFile = join(homeDir, 'settings.json');
+    writeFileSync(
+      settingsFile,
+      JSON.stringify(
+        {
+          schemaVersion: 5,
+          activeServerId: 'manual-profile',
+          servers: {
+            'manual-profile': {
+              id: 'manual-profile',
+              serverUrl: 'http://192.168.1.115:26851',
+              webappUrl: 'http://192.168.1.115:8081',
+            },
+            'stack_repo__id_default': {
+              id: 'stack_repo__id_default',
+              serverUrl: 'http://192.168.1.115:26851',
+              webappUrl: 'http://192.168.1.115:8081',
+            },
+          },
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_PUBLIC_SERVER_URL = 'http://192.168.1.115:26851';
+    process.env.HAPPIER_SERVER_URL = 'http://192.168.1.115:26851';
+    process.env.HAPPIER_WEBAPP_URL = 'http://192.168.1.115:8081';
+    process.env.HAPPIER_ACTIVE_SERVER_ID = 'stack_repo__id_default';
+
+    const configMod = await import('./configuration');
+    configMod.reloadConfiguration();
+    expect(configMod.configuration.activeServerId).toBe('stack_repo__id_default');
+  });
+
   it('reads execution-run and one-shot task budget env vars', async () => {
     const homeDir = createTempDirSync('happier-cli-config-budget-');
     tempDirs.push(homeDir);

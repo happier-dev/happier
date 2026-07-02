@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { openDeepIndexDb } from '@/daemon/memory/deepIndex/deepIndexDb';
+import { DEFAULT_MEMORY_SETTINGS } from '@/settings/memorySettings';
 import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 
 describe('rpcHandlers.memory (deep search routing)', () => {
@@ -54,7 +55,15 @@ describe('rpcHandlers.memory (deep search routing)', () => {
           usingFallback: false,
           lastError: null,
         }),
+        getWorkerStatus: () => ({
+          state: 'idle' as const,
+          lastTickAtMs: null,
+          lastInventoryAtMs: null,
+          currentSessionId: null,
+          currentPhase: null,
+        }),
         getSettings: () => ({
+          ...DEFAULT_MEMORY_SETTINGS,
           v: 1,
           enabled: true,
           enabledAtMs: 1,
@@ -63,6 +72,7 @@ describe('rpcHandlers.memory (deep search routing)', () => {
           backfillPolicy: 'new_only' as const,
           deleteOnDisable: false,
           hints: {
+            ...DEFAULT_MEMORY_SETTINGS.hints,
             summarizerBackendId: 'claude',
             summarizerModelId: 'default',
             summarizerPermissionMode: 'no_tools',
@@ -81,6 +91,7 @@ describe('rpcHandlers.memory (deep search routing)', () => {
             maxDecisions: 12,
           },
           deep: {
+            ...DEFAULT_MEMORY_SETTINGS.deep,
             recentDays: 30,
             maxChunkChars: 12_000,
             maxChunkMessages: 50,
@@ -170,7 +181,15 @@ describe('rpcHandlers.memory (deep search routing)', () => {
           usingFallback: false,
           lastError: null,
         }),
+        getWorkerStatus: () => ({
+          state: 'idle' as const,
+          lastTickAtMs: null,
+          lastInventoryAtMs: null,
+          currentSessionId: null,
+          currentPhase: null,
+        }),
         getSettings: () => ({
+          ...DEFAULT_MEMORY_SETTINGS,
           v: 1,
           enabled: true,
           enabledAtMs: 1,
@@ -179,6 +198,7 @@ describe('rpcHandlers.memory (deep search routing)', () => {
           backfillPolicy: 'new_only' as const,
           deleteOnDisable: false,
           hints: {
+            ...DEFAULT_MEMORY_SETTINGS.hints,
             summarizerBackendId: 'claude',
             summarizerModelId: 'default',
             summarizerPermissionMode: 'no_tools',
@@ -197,6 +217,7 @@ describe('rpcHandlers.memory (deep search routing)', () => {
             maxDecisions: 12,
           },
           deep: {
+            ...DEFAULT_MEMORY_SETTINGS.deep,
             recentDays: 30,
             maxChunkChars: 12_000,
             maxChunkMessages: 50,

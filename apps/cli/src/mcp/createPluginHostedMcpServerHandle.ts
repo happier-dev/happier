@@ -1,4 +1,6 @@
-import type { McpServerHandleV1, McpServerSpecV1 } from '@happier-dev/plugin-sdk';
+import type { McpHostedRuntimeEndpointV1, McpServerHandleV1, McpServerSpecV1 } from '@happier-dev/plugin-sdk';
+
+import { assertMcpRuntimeServerRegistrationSafe } from './hosted/safety';
 
 /**
  * Per-runtime registry of active hosted MCP server specs.
@@ -39,25 +41,96 @@ export function createPluginHostedMcpServerRegistry(): PluginHostedMcpServerRegi
     });
 }
 
-export function createPluginHostedMcpServerHandle(params: Readonly<{
+export type PluginHostedMcpRuntimeEndpointHandle = Readonly<{
+    endpoint: McpHostedRuntimeEndpointV1;
+    dispose: () => Promise<void> | void;
+}>;
+
+export type StartPluginHostedMcpRuntimeEndpoint = (params: Readonly<{
+    pluginId: string;
+    spec: McpServerSpecV1;
+}>) => Promise<PluginHostedMcpRuntimeEndpointHandle> | PluginHostedMcpRuntimeEndpointHandle;
+
+function requestsLoopbackHttpExposure(spec: McpServerSpecV1): boolean {
+    return spec.transport.kind === 'hosted'
+        && spec.transport.exposure?.kind === 'loopbackHttp'
+        && spec.transport.exposure.requested === true;
+}
+
+function assertSanitizedHostedEndpoint(endpoint: McpHostedRuntimeEndpointV1): void {
+    if (endpoint.kind !== 'loopbackHttp') {
+        throw new Error('Hosted MCP runtime endpoint must be a sanitized loopback endpoint');
+    }
+    let parsed: URL;
+    try {
+        parsed = new URL(endpoint.url);
+    } catch {
+        throw new Error('Hosted MCP runtime endpoint must be a sanitized loopback endpoint URL');
+    }
+    if (
+        endpoint.host !== '127.0.0.1'
+        || parsed.protocol !== 'http:'
+        || parsed.hostname !== '127.0.0.1'
+        || parsed.username.length > 0
+        || parsed.password.length > 0
+        || parsed.pathname !== '/'
+        || parsed.search.length > 0
+        || parsed.hash.length > 0
+        || Number(parsed.port) !== endpoint.port
+        || !Number.isInteger(endpoint.port)
+        || endpoint.port <= 0
+        || endpoint.port > 65535
+    ) {
+        throw new Error('Hosted MCP runtime endpoint must be a sanitized loopback endpoint');
+    }
+}
+
+export async function createPluginHostedMcpServerHandle(params: Readonly<{
     pluginId: string;
     spec: McpServerSpecV1;
     registry: PluginHostedMcpServerRegistryV1;
-}>): McpServerHandleV1 {
+    startRuntimeEndpoint?: StartPluginHostedMcpRuntimeEndpoint;
+}>): Promise<McpServerHandleV1> {
+    assertMcpRuntimeServerRegistrationSafe(params.spec, { pluginId: params.pluginId });
     if (params.registry.has(params.pluginId, params.spec.id)) {
         throw new Error(`Hosted MCP server '${params.spec.id}' is already active for plugin '${params.pluginId}'`);
     }
     params.registry.add(params.pluginId, params.spec);
+    let endpointHandle: PluginHostedMcpRuntimeEndpointHandle | null = null;
+    try {
+        if (requestsLoopbackHttpExposure(params.spec)) {
+            if (!params.startRuntimeEndpoint) {
+                throw new Error(`Hosted MCP server '${params.spec.id}' requested loopback exposure but no host runtime endpoint adapter is available`);
+            }
+            endpointHandle = await params.startRuntimeEndpoint({
+                pluginId: params.pluginId,
+                spec: params.spec,
+            });
+            assertSanitizedHostedEndpoint(endpointHandle.endpoint);
+        }
+    } catch (error) {
+        try {
+            await endpointHandle?.dispose();
+        } finally {
+            params.registry.remove(params.pluginId, params.spec.id);
+        }
+        throw error;
+    }
     let disposed = false;
     return Object.freeze({
         id: params.spec.id,
         spec: params.spec,
+        endpoint: endpointHandle?.endpoint,
         async dispose() {
             if (disposed) {
                 return;
             }
             disposed = true;
-            params.registry.remove(params.pluginId, params.spec.id);
+            try {
+                await endpointHandle?.dispose();
+            } finally {
+                params.registry.remove(params.pluginId, params.spec.id);
+            }
         },
     });
 }

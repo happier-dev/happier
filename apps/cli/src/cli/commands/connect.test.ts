@@ -6,12 +6,20 @@ import type { ApiClient } from '@/api/api';
 type RegisterPlainCredentialParams = Parameters<ApiClient['registerConnectedServiceCredentialPlain']>[0];
 type RegisterSealedCredentialParams = Parameters<ApiClient['registerConnectedServiceCredentialSealed']>[0];
 
-const { promptInputMock, promptSecretInputMock, registerPlainMock, registerSealedMock, getAccountEncryptionModeMock } = vi.hoisted(() => ({
+const {
+  promptInputMock,
+  promptSecretInputMock,
+  registerPlainMock,
+  registerSealedMock,
+  getAccountEncryptionModeMock,
+  cloudAuthenticateMock,
+} = vi.hoisted(() => ({
   promptInputMock: vi.fn(async () => 'github_pat_123'),
   promptSecretInputMock: vi.fn(async () => 'github_pat_123'),
   registerPlainMock: vi.fn<(params: RegisterPlainCredentialParams) => Promise<void>>(async () => {}),
   registerSealedMock: vi.fn<(params: RegisterSealedCredentialParams) => Promise<void>>(async () => {}),
   getAccountEncryptionModeMock: vi.fn<() => Promise<'plain' | 'e2ee'>>(async () => 'plain'),
+  cloudAuthenticateMock: vi.fn(async () => ({})),
 }));
 
 vi.mock('@/persistence', () => ({
@@ -63,7 +71,7 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', asyn
             vendorDisplayName: 'Plugin Target',
             vendorKey: 'openai',
             status: 'wired',
-            authenticate: async () => ({}),
+            authenticate: cloudAuthenticateMock,
           }),
         },
       },
@@ -80,6 +88,90 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', asyn
           },
         ],
       ]),
+      connectedAccountDescriptors: [
+        {
+          definition: {
+            id: 'bitbucket',
+            kind: 'auth.connectedAccount',
+            version: '1',
+            displayKey: 'connectedServices.serviceNames.bitbucket',
+            aliases: ['bitbucket'],
+            credentialKinds: ['token'],
+            defaultCredentialKind: 'token',
+            connectModes: [
+              {
+                targetId: 'bitbucket',
+                mode: 'token',
+                credentialKind: 'token',
+                default: true,
+                tokenKind: 'api-token',
+              },
+            ],
+            tokenSetup: {
+              tokenKind: 'api-token',
+              promptLabelKey: 'connectedServices.tokenPrompts.bitbucketApiToken',
+              missingValueErrorKey: 'connectedServices.tokenPrompts.errors.missingApiToken',
+              setupUrl: 'https://bitbucket.org/account/settings/app-passwords/',
+              credentialPayloadKind: 'bitbucket_basic_auth',
+              identity: {
+                kind: 'email_or_username',
+                promptLabelKey: 'connectedServices.tokenPrompts.bitbucketEmailOrUsername',
+                missingValueErrorKey: 'connectedServices.tokenPrompts.errors.missingBitbucketEmailOrUsername',
+              },
+            },
+            ui: {
+              connectCommand: 'happier connect bitbucket --token',
+              oauthAddActionModes: [],
+            },
+            materialization: {
+              materializationKinds: ['scm_hosting_basic_auth'],
+              hookKey: 'connectedServices.materialization.bitbucketScmHostingBasicAuth',
+            },
+            quota: { capabilityIds: [] },
+          },
+        },
+        {
+          definition: {
+            id: 'openai',
+            kind: 'auth.connectedAccount',
+            version: '1',
+            displayKey: 'connectedServices.serviceNames.openai',
+            aliases: ['openai'],
+            credentialKinds: ['oauth'],
+            defaultCredentialKind: 'oauth',
+            connectModes: [
+              {
+                targetId: 'plugin-target',
+                mode: 'oauth',
+                credentialKind: 'oauth',
+                default: true,
+              },
+            ],
+            oauth: {
+              publicClientId: { envKey: 'TEST_OPENAI_CLIENT_ID', defaultValue: 'test-client' },
+              tokenUrl: { envKey: 'TEST_OPENAI_TOKEN_URL', defaultValue: 'https://example.test/token' },
+              authorization: {
+                endpointUrl: 'https://example.test/authorize',
+                defaultRedirectUri: 'http://localhost/callback',
+                scopes: ['openid'],
+                pkce: true,
+                query: { responseType: 'code', extraParams: {} },
+              },
+              refresh: { body: 'json', hookKey: 'test.refresh' },
+              payloadMapping: {
+                accessTokenField: 'access_token',
+                refreshTokenField: 'refresh_token',
+              },
+            },
+            ui: {
+              connectCommand: 'happier connect plugin-target',
+              oauthAddActionModes: [],
+            },
+            materialization: { materializationKinds: [] },
+            quota: { capabilityIds: [] },
+          },
+        },
+      ],
     })),
   };
 });
@@ -92,6 +184,8 @@ describe('handleConnectCommand help', () => {
     registerPlainMock.mockClear();
     registerSealedMock.mockClear();
     getAccountEncryptionModeMock.mockClear();
+    cloudAuthenticateMock.mockReset();
+    cloudAuthenticateMock.mockResolvedValue({});
   });
 
   it('renders merged-registry connect targets in help output', async () => {
@@ -201,6 +295,40 @@ describe('handleConnectCommand help', () => {
       }));
       const rendered = output.logs.join('\n');
       expect(rendered).not.toContain('bitbucket-token-secret');
+    } finally {
+      exitSpy.mockRestore();
+      errorSpy.mockRestore();
+      output.restore();
+    }
+  });
+
+  it('accepts typed plugin custom-auth success without treating it as a raw OAuth payload', async () => {
+    cloudAuthenticateMock.mockResolvedValueOnce({
+      ok: true,
+      credentialRef: 'openai/work',
+      diagnostics: [
+        {
+          code: 'stored-by-plugin',
+          message: 'accessToken=secret-plugin-token',
+        },
+      ],
+    });
+    const output = captureConsoleLogAndMuteStdout();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => {
+      throw new Error(`exit:${code ?? 0}`);
+    }) as never);
+    try {
+      const { handleConnectCommand } = await import('./connect');
+      await expect(handleConnectCommand(['plugin-target', '--profile', 'work'])).rejects.toThrow('exit:0');
+
+      expect(cloudAuthenticateMock).toHaveBeenCalledWith(expect.objectContaining({
+        profileId: 'work',
+        serviceId: 'openai',
+      }));
+      expect(registerPlainMock).not.toHaveBeenCalled();
+      expect(registerSealedMock).not.toHaveBeenCalled();
+      expect(output.logs.join('\n')).not.toContain('secret-plugin-token');
     } finally {
       exitSpy.mockRestore();
       errorSpy.mockRestore();

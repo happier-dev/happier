@@ -177,9 +177,12 @@ export async function createSessionHandoffWorkspaceReplicationState(input: Reado
 }>): Promise<Readonly<{
   workspaceReplicationMetadata?: SessionHandoffWorkspaceReplicationMetadata;
 }>> {
+  const providerBundleReferencedMediaPaths = await collectReferencedSessionMediaWorkspacePathsFromProviderBundle(
+    input.providerBundle,
+  );
   const referencedMediaPaths = [
     ...collectReferencedSessionMediaWorkspacePaths(input.sessionTranscriptRecords ?? []),
-    ...collectReferencedSessionMediaWorkspacePathsFromProviderBundle(input.providerBundle),
+    ...providerBundleReferencedMediaPaths,
     ...collectReferencedSessionMediaWorkspacePathsFromSessionMetadata(input.sessionMetadata),
   ];
   const workspaceTransfer = mergeReferencedMediaWorkspaceTransfer({

@@ -3,7 +3,7 @@ import type { ExternalSessionsProviderId } from '@happier-dev/protocol';
 
 import type { DaemonSessionMarker } from '@/daemon/sessionRegistry';
 
-function extractVendorSessionIdFromMarkerMetadata(params: Readonly<{
+function extractProviderSessionIdFromMarkerMetadata(params: Readonly<{
   providerId: ExternalSessionsProviderId;
   metadata: unknown;
 }>): string | null {
@@ -29,7 +29,7 @@ export function findTrustedExternalSessionOwner(params: Readonly<{
     .filter((marker) => marker.flavor === params.providerId)
     .filter(
       (marker) =>
-        extractVendorSessionIdFromMarkerMetadata({
+        extractProviderSessionIdFromMarkerMetadata({
           providerId: params.providerId,
           metadata: marker.metadata,
         }) === remoteSessionId,

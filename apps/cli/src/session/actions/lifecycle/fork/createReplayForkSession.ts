@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 
-import { getReplayForkContinuationHandler } from '@/backends/catalog';
 import { configuration } from '@/configuration';
 import {
     SPAWN_SESSION_ERROR_CODES,
@@ -8,12 +7,16 @@ import {
 } from '@/rpc/handlers/registerSessionHandlers';
 import { createReplaySeededSession } from '@/session/replay/createReplaySeededSession';
 import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
+import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
 import { logger } from '@/ui/logger';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
+import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
 
 import { archiveSessionBestEffort } from './forkChildSessionRecovery';
 import type {
     ForkBackendResolution,
+    ForkBridgeSurface,
     ForkInheritedOverrides,
     ForkLifecycleCredentials,
     ForkLifecycleMetadata,
@@ -37,16 +40,29 @@ export async function createReplayForkSession(params: Readonly<{
     maxTextChars: number | undefined;
     forkBackendResolution: ForkBackendResolution;
     inheritedForkOverrides: ForkInheritedOverrides;
+    forkSurface: ForkBridgeSurface;
     spawnSession: ForkSpawnSession;
     deps?: SessionLifecycleMachineDeps;
 }>): Promise<ForkLifecycleResult> {
-    const providerAgentId = params.forkBackendResolution.providerAgentId;
-    const replayForkContinuation = providerAgentId
-        ? await (async () => {
-            const handler = await getReplayForkContinuationHandler(providerAgentId);
-            return handler ? await handler({ parentMetadata: params.parentMetadata }) : null;
-        })()
+    const replayForkContinuation = params.forkSurface?.resolveReplayChildLaunch
+        ? await params.forkSurface.resolveReplayChildLaunch({
+            parentSessionId: params.parentSessionId,
+            parentMetadata: params.parentMetadata,
+            directory: params.directory,
+            forkPoint: params.forkPointType === 'seq'
+                ? { kind: 'message_seq', upToSeqInclusive: params.effectiveCutoffSeqInclusive }
+                : { kind: 'latest' },
+        })
         : null;
+    const replayLaunchMetadata = applySessionStateUpdatesToMetadata(
+        {},
+        replayForkContinuation?.sessionStateUpdates ?? [],
+    );
+    const replayChildDirectory = replayForkContinuation?.directory ?? params.directory;
+    const replayRuntimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(replayLaunchMetadata) ?? undefined;
+    const inheritedForkOverrides = createConnectedServiceForkLaunchContext({
+        inherited: params.inheritedForkOverrides,
+    }).inherited;
     const resolvedSeed = await resolveReplaySeedDraft({
         credentials: params.credentials,
         cwd: params.directory,
@@ -89,13 +105,13 @@ export async function createReplayForkSession(params: Readonly<{
         try {
             return await createReplaySeededSession({
                 credentials: params.credentials,
-                directory: params.directory,
+                directory: replayChildDirectory,
                 flavor: params.forkBackendResolution.replayFlavor,
                 tag: `fork:${params.parentSessionId}:${params.effectiveCutoffSeqInclusive}:${randomUUID()}`,
                 metadata: {
-                    ...params.inheritedForkOverrides.metadata,
+                    ...inheritedForkOverrides.metadata,
                     ...params.forkBackendResolution.metadataOverlay,
-                    ...(replayForkContinuation?.metadata ?? {}),
+                    ...replayLaunchMetadata,
                     forkV1: {
                         v: 1,
                         parentSessionId: params.parentSessionId,
@@ -141,13 +157,16 @@ export async function createReplayForkSession(params: Readonly<{
     }
 
     const spawnResult = await params.spawnSession({
-        directory: params.directory,
+        directory: replayChildDirectory,
         backendTarget: params.forkBackendResolution.backendTargetV2,
         approvedNewDirectoryCreation: true,
         spawnNonce: params.spawnNonce,
         existingSessionId: created.sessionId,
-        ...(replayForkContinuation?.spawn ?? {}),
-        ...params.inheritedForkOverrides.spawn,
+        ...(replayRuntimeDescriptorV1 ? { runtimeDescriptorV1: replayRuntimeDescriptorV1 } : {}),
+        ...(replayForkContinuation?.environmentVariables
+            ? { environmentVariables: { ...replayForkContinuation.environmentVariables } }
+            : {}),
+        ...inheritedForkOverrides.spawn,
     } satisfies SpawnSessionOptions);
 
     if (spawnResult.type !== 'success') {

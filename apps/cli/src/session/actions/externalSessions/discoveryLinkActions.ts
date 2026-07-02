@@ -9,9 +9,10 @@ import {
 import { ensureExternalSessionLink } from '@/api/session/external/linking/ensureExternalSessionLink';
 import { validateDirectMachineSource } from '@/api/session/external/security/validateDirectMachineSource';
 import { readCredentials } from '@/persistence';
+import { logger } from '@/utils/logger';
 
 import { resolveDefaultCandidatesLimit } from './actionConfiguration';
-import { getExternalSessionProviderOps } from './providerOpsResolution';
+import { resolveExternalSessionSurfaceOps } from './providerOpsResolution';
 import { externalSessionsError, internalErrorResponse } from './responseErrors';
 
 export async function executeExternalSessionCandidatesListAction(
@@ -28,11 +29,35 @@ export async function executeExternalSessionCandidatesListAction(
         if (!validatedSource.ok) {
             return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionsCandidatesListResponse;
         }
-        const { providerId, cursor, searchTerm } = parsed.data;
+        const { providerId, cursor, searchTerm, searchMode } = parsed.data;
         const source = validatedSource.source;
         const limit = parsed.data.limit ?? resolveDefaultCandidatesLimit();
-        const res = await (await getExternalSessionProviderOps(providerId)).listCandidates({ source, cursor, limit, searchTerm });
-        return { ok: true, candidates: res.candidates, nextCursor: res.nextCursor } satisfies ExternalSessionsCandidatesListResponse;
+        const startedAtMs = Date.now();
+        const startMemory = process.memoryUsage();
+        const providerOps = await resolveExternalSessionSurfaceOps(providerId);
+        if (!providerOps.listCandidates) {
+            return externalSessionsError('provider_unavailable', 'candidates_list_not_supported') satisfies ExternalSessionsCandidatesListResponse;
+        }
+        const res = await providerOps.listCandidates({ source, cursor, limit, searchTerm, searchMode });
+        logger.debug('[externalSessions.actions.candidates] list finished', {
+            providerId,
+            elapsedMs: Date.now() - startedAtMs,
+            searchTermLength: typeof searchTerm === 'string' ? searchTerm.trim().length : 0,
+            searchMode: searchMode ?? 'default',
+            cursorPresent: Boolean(cursor),
+            limit,
+            returnedCandidates: res.candidates.length,
+            hasNextCursor: Boolean(res.nextCursor),
+            searchIncomplete: Boolean(res.searchIncomplete),
+            heapDeltaBytes: process.memoryUsage().heapUsed - startMemory.heapUsed,
+            rssBytes: process.memoryUsage().rss,
+        });
+        return {
+            ok: true,
+            candidates: [...res.candidates],
+            nextCursor: res.nextCursor,
+            ...(res.searchIncomplete ? { searchIncomplete: true } : {}),
+        } satisfies ExternalSessionsCandidatesListResponse;
     } catch (error) {
         return internalErrorResponse(
             'external_sessions_candidates_list',

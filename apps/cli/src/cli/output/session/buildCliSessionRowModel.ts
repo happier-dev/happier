@@ -129,7 +129,7 @@ function evaluatePluginVendorResumeEligibility(params: Readonly<{
 
   const runtimeProviderRecord = asRecord(runtimeDescriptor?.provider);
   const runtimeDescriptorVendorResumeId = runtimeDescriptor?.providerId === providerId && runtimeProviderRecord
-    ? readOptionalNonEmptyString(runtimeProviderRecord, 'vendorSessionId')
+    ? readOptionalNonEmptyString(runtimeProviderRecord, 'providerSessionId')
     : null;
   const metadataVendorResumeId = resumeConfig.vendorResumeIdField
     ? readOptionalNonEmptyString(metadata, resumeConfig.vendorResumeIdField)

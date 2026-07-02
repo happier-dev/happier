@@ -23,7 +23,7 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
 vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
   getSessionHostBridge: () => ({
     resolveExecutionSurfaces: async () => ({
-      externalSessions: {
+      externalSession: {
         pageTranscript: pageTranscriptMock,
         resolveTranscriptMediaReadRoots: resolveTranscriptMediaReadRootsMock,
       },

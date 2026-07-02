@@ -2,6 +2,7 @@ import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { readSessionHandoffProviderBundleRecords } from '@/session/handoff/providerBundle/records';
 import type { SessionHandoffProviderBundle } from '@/session/handoff/types';
 
 const SESSION_MEDIA_ENVELOPE_KIND = 'session_media.v1';
@@ -255,54 +256,13 @@ export function collectTransientSessionMediaReadFiles(
   return [...files].sort((left, right) => left.localeCompare(right));
 }
 
-function decodeBase64Utf8(value: string): string {
-  return Buffer.from(value, 'base64').toString('utf8');
-}
-
-function parseJsonLines(text: string): readonly unknown[] {
-  const records: unknown[] = [];
-  for (const line of text.split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    try {
-      records.push(JSON.parse(trimmed) as unknown);
-    } catch {
-      // Provider transcript bundles can include diagnostics or partial lines.
-    }
-  }
-  return records;
-}
-
-function parseOpenCodeExportRecords(text: string): readonly unknown[] {
-  try {
-    const parsed = JSON.parse(text) as unknown;
-    if (Array.isArray(parsed)) return parsed;
-
-    const record = asRecord(parsed);
-    const messages = Array.isArray(record?.messages) ? record.messages : [];
-    return record ? [record, ...messages] : messages;
-  } catch {
-    return [];
-  }
-}
-
-export function collectReferencedSessionMediaWorkspacePathsFromProviderBundle(
+export async function collectReferencedSessionMediaWorkspacePathsFromProviderBundle(
   providerBundle: SessionHandoffProviderBundle | undefined,
-): readonly string[] {
+): Promise<readonly string[]> {
   if (!providerBundle) return [];
-
-  switch (providerBundle.providerId) {
-    case 'claude':
-      return collectReferencedSessionMediaWorkspacePaths(parseJsonLines(decodeBase64Utf8(providerBundle.transcriptBase64)));
-    case 'codex':
-      return collectReferencedSessionMediaWorkspacePaths(
-        providerBundle.files.flatMap((file) => parseJsonLines(decodeBase64Utf8(file.contentBase64))),
-      );
-    case 'opencode':
-      return collectReferencedSessionMediaWorkspacePaths(parseOpenCodeExportRecords(decodeBase64Utf8(providerBundle.exportJsonBase64)));
-    default:
-      return [];
-  }
+  return collectReferencedSessionMediaWorkspacePaths(
+    await readSessionHandoffProviderBundleRecords(providerBundle),
+  );
 }
 
 export function collectReferencedSessionMediaWorkspacePathsFromSessionMetadata(

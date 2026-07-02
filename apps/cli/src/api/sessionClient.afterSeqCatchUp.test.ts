@@ -15,6 +15,7 @@ vi.mock('socket.io-client', () => ({
 }));
 
 vi.mock('@/persistence', () => ({
+    readCredentials: vi.fn(async () => null),
     readLastChangesCursor: vi.fn(async () => 0),
     writeLastChangesCursor: vi.fn(async () => {}),
 }));

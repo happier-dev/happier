@@ -1,5 +1,5 @@
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
-import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
+import type { RawJSONLines } from '@happier-dev/plugins-claude/agent/transcripts';
 
 export function isToolTraceEnabled(): boolean {
     return ['1', 'true', 'yes', 'on'].includes((process.env.HAPPIER_STACK_TOOL_TRACE ?? '').toLowerCase());

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import {
   createApiSessionSocketStub,
   flushApiSessionClientMessageCommitQueue,
@@ -48,6 +49,24 @@ vi.mock('@happier-dev/connection-supervisor', () => ({
 
 import { ApiSessionClient } from './sessionClient';
 
+function createRuntimeDescriptorMetadata(backendId: string) {
+  return createTestMetadata({
+    runtimeDescriptorV1: {
+      v: 1,
+      providerId: backendId,
+      provider: {
+        backendMode: 'plugin',
+        providerExtra: {
+          owner: 'happier',
+          schemaId: 'test.runtime',
+          v: 1,
+          runtimeHandle: { backendId },
+        },
+      },
+    },
+  });
+}
+
 describe('ApiSessionClient sendCodexMessage change_title', () => {
   it('does not update session metadata summary when Codex emits a change_title tool call (action handlers own metadata updates)', async () => {
     const emitted: Array<{ event: string; payload: any }> = [];
@@ -64,10 +83,12 @@ describe('ApiSessionClient sendCodexMessage change_title', () => {
     });
     userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
 
-    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({
+      id: 's1',
+      metadata: createRuntimeDescriptorMetadata('codex'),
+    }));
 
     client.sendProviderMessage({
-      provider: 'codex',
       body: {
         type: 'tool-call',
         name: 'change_title',

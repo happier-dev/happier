@@ -45,20 +45,37 @@ import {
 import { extractAssistantTextSnapshotFromAcpMessage } from '../../turns/extractAssistantTextSnapshot';
 import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshot';
 import {
+    garbageCollectFailedSessionMediaCommit,
     persistSessionMediaForTranscript,
     type SendAgentSessionMediaCommittedRequest,
 } from './sessionMediaBridge';
+import type {
+    SessionEndMutationV1,
+} from '../transport/mutations/sessionClientDurableMutationTypes';
+import { isDefinitiveSessionMessageCommitError } from '../transport/createSessionClientCommitQueueRuntime';
 
 type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
 type SessionMessageRole = 'user' | 'agent' | 'event' | 'unknown';
+type SessionEventType = 'ready';
 
 type CommitSessionMessageParams = Readonly<{
     message: PlainOrEncryptedPayload;
     localId: string;
     sidechainId: string | null;
     messageRole: SessionMessageRole;
+    sessionEventType?: SessionEventType;
     requireCommit: boolean;
     markAsUserMessage?: boolean;
+}>;
+
+type EnqueueCommittedTranscriptMessageParams = Readonly<{
+    message: PlainOrEncryptedPayload;
+    localId: string;
+    sidechainId: string | null;
+    messageRole: SessionMessageRole;
+    sessionEventType?: SessionEventType;
+    createdAt: number;
+    updatedAt: number;
 }>;
 
 export type SessionClientTranscriptApiDeps = Readonly<{
@@ -79,6 +96,12 @@ export type SessionClientTranscriptApiDeps = Readonly<{
     getMetadataSnapshot: () => Metadata | null;
     updateAgentState: (handler: (metadata: AgentState) => AgentState) => Promise<void>;
     updateMetadata: (handler: (metadata: Metadata) => Metadata) => Promise<void>;
+    enqueueSessionEndMutation: (mutation: SessionEndMutationV1) => Promise<void>;
+    createSessionEndMutation: (observedAt: number) => SessionEndMutationV1;
+    enqueueCommittedTranscriptMessage: (params: EnqueueCommittedTranscriptMessageParams) => Promise<Readonly<{
+        persisted: boolean;
+        delivered: boolean;
+    }>>;
     usageObservationPublisher: SessionUsageObservationPublisher;
     buildOutboundSessionMessagePayload: (content: unknown) => PlainOrEncryptedPayload;
     commitSessionMessageBestEffort: (params: Readonly<{
@@ -87,6 +110,7 @@ export type SessionClientTranscriptApiDeps = Readonly<{
         sidechainId: string | null;
         logErrorMessage: string;
         messageRole: SessionMessageRole;
+        sessionEventType?: SessionEventType;
         markAsUserMessage?: boolean;
     }>) => void;
     enqueueMessageCommit: <T>(fn: () => Promise<T>) => Promise<T>;
@@ -125,6 +149,11 @@ export type SessionClientTranscriptApi = Readonly<{
         body: ACPMessageData,
         opts: { localId: string; meta?: Record<string, unknown> },
     ) => Promise<void>;
+    enqueueAgentMessageCommitted: (
+        provider: ACPProvider,
+        body: ACPMessageData,
+        opts: { localId: string; meta?: Record<string, unknown> },
+    ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
     sendAgentSessionMediaCommitted: (
         provider: ACPProvider,
         request: SendAgentSessionMediaCommittedRequest,
@@ -216,11 +245,64 @@ export function createSessionClientTranscriptApi(
         }
     };
 
+    const enqueueAgentMessageCommitted = async (
+        provider: ACPProvider,
+        body: ACPMessageData,
+        opts: { localId: string; meta?: Record<string, unknown> },
+    ): Promise<Readonly<{ persisted: boolean; delivered: boolean }>> => {
+        const { normalizedBody, payload, localId, sidechainId, messageRole } = prepareCommittedAgentMessageViaPort(
+            getTranscriptSendPort(),
+            provider,
+            body,
+            opts,
+        );
+
+        if (shouldTraceAcpMessageType(normalizedBody.type)) {
+            recordAcpToolTraceEventIfNeeded({ sessionId: deps.sessionId, provider, body: normalizedBody, localId });
+        }
+
+        const streamSegmentMeta = opts.meta?.happierStreamSegmentV1;
+        const metaRecord = streamSegmentMeta && typeof streamSegmentMeta === 'object'
+            ? streamSegmentMeta as Record<string, unknown>
+            : null;
+        const createdAt =
+            metaRecord && typeof metaRecord.startedAtMs === 'number' && Number.isFinite(metaRecord.startedAtMs)
+                ? Math.max(0, Math.trunc(metaRecord.startedAtMs))
+                : Date.now();
+        const updatedAt =
+            metaRecord && typeof metaRecord.updatedAtMs === 'number' && Number.isFinite(metaRecord.updatedAtMs)
+                ? Math.max(createdAt, Math.trunc(metaRecord.updatedAtMs))
+                : createdAt;
+        const result = await deps.enqueueCommittedTranscriptMessage({
+            message: payload,
+            localId,
+            sidechainId,
+            messageRole,
+            createdAt,
+            updatedAt,
+        });
+        if (result.delivered) {
+            const extracted = extractAssistantTextSnapshotFromAcpMessage(provider, normalizedBody);
+            if (extracted) {
+                deps.turnAssistantTextSnapshotStore?.observe({
+                    text: extracted.text,
+                    provider: extracted.provider,
+                    sidechainId: extracted.sidechainId,
+                    localId,
+                    source: 'committed',
+                });
+            }
+        }
+        return result;
+    };
+
     return {
         sendProviderMessage(request) {
-            dispatchProviderTranscriptMessage(getTranscriptSendPort(), request, {
+            void dispatchProviderTranscriptMessage(getTranscriptSendPort(), request, {
                 sessionId: deps.sessionId,
                 postSendReactionPort: getPostSendReactionPort(),
+            }).catch((error) => {
+                logger.debug('[SOCKET] Failed to dispatch provider transcript message (non-fatal)', { error });
             });
         },
 
@@ -291,6 +373,7 @@ export function createSessionClientTranscriptApi(
         },
 
         sendAgentMessageCommitted,
+        enqueueAgentMessageCommitted,
 
         async sendAgentSessionMediaCommitted(provider, request) {
             const workingDirectory = deps.getMetadataSnapshot()?.path;
@@ -298,17 +381,35 @@ export function createSessionClientTranscriptApi(
                 sessionId: deps.sessionId,
                 workingDirectory,
                 request,
+                logger,
             });
             const messageText = request.messageText ?? '';
 
-            await sendAgentMessageCommitted(
-                provider,
-                { type: 'message', message: messageText },
-                {
-                    localId: request.localId,
-                    meta: persisted.meta,
-                },
-            );
+            try {
+                await sendAgentMessageCommitted(
+                    provider,
+                    { type: 'message', message: messageText },
+                    {
+                        localId: request.localId,
+                        meta: persisted.meta,
+                    },
+                );
+            } catch (error) {
+                if (
+                    isDefinitiveSessionMessageCommitError(error)
+                    &&
+                    typeof workingDirectory === 'string'
+                    && workingDirectory.trim().length > 0
+                    && persisted.createdWorkspaceRelativePaths.length > 0
+                ) {
+                    await garbageCollectFailedSessionMediaCommit({
+                        workingDirectory,
+                        persisted,
+                        logger,
+                    });
+                }
+                throw error;
+            }
             if (messageText.trim().length === 0) {
                 deps.turnAssistantTextSnapshotStore?.clearSnapshot({ reason: 'media_only_commit' });
             }
@@ -398,11 +499,10 @@ export function createSessionClientTranscriptApi(
         },
 
         sendSessionDeath() {
-            const socket = deps.getSocket();
-            if (!socket.connected) {
-                return;
-            }
-            socket.emit('session-end', { sid: deps.sessionId, time: Date.now() });
+            const observedAt = Date.now();
+            void deps.enqueueSessionEndMutation(deps.createSessionEndMutation(observedAt)).catch((error) => {
+                logger.debug('[API] Failed to enqueue session-end mutation (non-fatal)', { error });
+            });
         },
     };
 }

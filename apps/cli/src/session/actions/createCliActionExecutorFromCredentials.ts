@@ -1,6 +1,7 @@
 import { commitSessionStoredMessage } from '@/session/transport/http/sessionsHttp';
 import { createServerBackedSessionTranscriptStore } from '@/api/session/createServerBackedSessionTranscriptStore';
 import {
+  DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
   createSessionTranscriptFollowLeaseRegistry,
 } from '@/api/session/transcriptQueries';
 import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscriptActionInput';
@@ -31,7 +32,10 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
       sessionId,
       ctx,
     }),
-    transcriptFollowLeaseRegistry: createSessionTranscriptFollowLeaseRegistry({ maxLeases: 16, idleTtlMs: 60_000 }),
+    transcriptFollowLeaseRegistry: createSessionTranscriptFollowLeaseRegistry({
+      maxLeases: 16,
+      idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
+    }),
     writeTranscriptItems: async (sessionId: string, items: readonly SessionTranscriptActionItem[]) => {
       let imported = 0;
       let cursor: string | null = null;

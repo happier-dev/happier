@@ -1,4 +1,5 @@
 import { logger } from '../../../ui/logger';
+import { serializeAxiosErrorForLog } from '../../client/serializeAxiosErrorForLog';
 
 import type { ACPProvider } from '../sessionMessageTypes';
 import type { StreamedTranscriptWriterSession } from './types';
@@ -7,27 +8,6 @@ import {
   buildStreamedTranscriptSegmentSnapshotBody,
   buildStreamedTranscriptSegmentSnapshotMeta,
 } from './buildStreamedTranscriptSegmentSnapshot';
-
-function serializeCommitErrorForLog(error: unknown): Record<string, unknown> {
-  if (error instanceof Error) {
-    return {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
-    };
-  }
-
-  if (error && typeof error === 'object') {
-    const maybeError = error as Record<string, unknown>;
-    return {
-      name: typeof maybeError.name === 'string' ? maybeError.name : undefined,
-      message: typeof maybeError.message === 'string' ? maybeError.message : String(error),
-      code: typeof maybeError.code === 'string' ? maybeError.code : undefined,
-    };
-  }
-
-  return { message: String(error) };
-}
 
 export function commitStreamedTranscriptSegmentSnapshot(params: {
   provider: ACPProvider;
@@ -53,20 +33,41 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
   const body = buildStreamedTranscriptSegmentSnapshotBody(segment);
   const meta = buildStreamedTranscriptSegmentSnapshotMeta({ segment, state, interruptedReason, nowMs });
 
-  void session
-    .sendAgentMessageCommitted(provider, body, { localId: durableLocalId, meta })
-    .then(() => {
-      segment.didWriteDurable = true;
-      segment.lastDurableText = commitText;
-      segment.lastCheckpointAtMs = Date.now();
-      segment.lastCheckpointTextLen = commitTextLen;
-      segment.lastCommittedTextVersion = commitVersion;
-      segment.lastCommittedState = state;
-    })
-    .catch(async (error) => {
+  const markDurablyPersisted = () => {
+    segment.didWriteDurable = true;
+    segment.lastDurableText = commitText;
+    segment.lastCheckpointAtMs = Date.now();
+    segment.lastCheckpointTextLen = commitTextLen;
+    segment.lastCommittedTextVersion = commitVersion;
+    segment.lastCommittedState = state;
+  };
+
+  let committedSnapshotPromise: Promise<void>;
+  try {
+    if (typeof session.enqueueAgentMessageCommitted === 'function') {
+      committedSnapshotPromise = session
+        .enqueueAgentMessageCommitted(provider, body, { localId: durableLocalId, meta })
+        .then((result) => {
+          if (result.persisted) markDurablyPersisted();
+        });
+    } else if (typeof session.sendAgentMessageCommitted === 'function') {
+      committedSnapshotPromise = session
+        .sendAgentMessageCommitted(provider, body, { localId: durableLocalId, meta })
+        .then(() => {
+          markDurablyPersisted();
+        });
+    } else {
+      throw new Error('sendAgentMessageCommitted unavailable');
+    }
+  } catch (error) {
+    committedSnapshotPromise = Promise.reject(error);
+  }
+
+  void committedSnapshotPromise
+    .catch((error) => {
       segment.lastCommitFailedAtMs = Date.now();
       logger.debug('[StreamedTranscriptWriter] Durable snapshot commit failed (non-fatal)', {
-        error: serializeCommitErrorForLog(error),
+        error: serializeAxiosErrorForLog(error),
         localId: durableLocalId,
         segmentLocalId: segment.segmentLocalId,
         kind: segment.kind,
@@ -77,23 +78,6 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
         lastCommittedTextVersion: segment.lastCommittedTextVersion,
         lastCommittedState: segment.lastCommittedState,
       });
-
-      if (typeof session.sendAgentMessage === 'function') {
-        try {
-          await Promise.resolve(session.sendAgentMessage(provider, body, { localId: durableLocalId, meta }));
-        } catch (fallbackError) {
-          logger.debug('[StreamedTranscriptWriter] Durable snapshot fallback commit failed (non-fatal)', {
-            error: serializeCommitErrorForLog(fallbackError),
-            localId: durableLocalId,
-            segmentLocalId: segment.segmentLocalId,
-            kind: segment.kind,
-            sidechainId: segment.sidechainId,
-            state,
-            textLength: commitTextLen,
-            textVersion: commitVersion,
-          });
-        }
-      }
     })
     .finally(() => {
       segment.isCommittingDurable = false;

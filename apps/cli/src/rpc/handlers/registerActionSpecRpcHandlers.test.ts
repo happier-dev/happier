@@ -1,9 +1,30 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
-import { SUBAGENT_RPC_SCOPES } from './actionSpecRpcRegistration';
+import {
+    REQUIRED_GENERIC_ACTION_SPEC_RPC_SCOPES,
+    SUBAGENT_RPC_SCOPES,
+} from './actionSpecRpcRegistration';
+
+const REVIEW_COMMENT_ACTION_IDS = Object.freeze([
+    'reviews.comments.create',
+    'reviews.comments.list',
+    'reviews.comments.get',
+    'reviews.comments.transition',
+    'reviews.comments.edit',
+    'reviews.comments.reply',
+    'reviews.comments.redact',
+    'reviews.comments.setDisposition',
+    'reviews.comments.attachEvidence',
+    'reviews.comments.bulkTransition',
+] as const);
+
+// These registrar tests inject focused specs directly; loading the full catalog belongs to catalog tests.
+vi.mock('@happier-dev/protocol/actions/actionSpecs', () => ({
+    ACTION_SPECS: [],
+}));
 
 function createRpcHarness() {
     const handlers = new Map<string, (input: unknown) => Promise<unknown>>();
@@ -134,6 +155,46 @@ describe('ActionSpec-derived RPC registrar', () => {
             actionId: 'sessions.subagents.inspect',
             input: { sessionId: 'session-1' },
         });
+    });
+
+    it('registers review-comment ActionSpec rows through required generic scopes', async () => {
+        const module = await import('./registerActionSpecRpcHandlers');
+
+        const calls: unknown[] = [];
+        const actionExecutor: RpcActionExecutor = {
+            execute: async (actionId, input, context) => {
+                calls.push({ actionId, input, context });
+                return { ok: true, result: { actionId, input } };
+            },
+        };
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+
+        module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor,
+            scopes: REQUIRED_GENERIC_ACTION_SPEC_RPC_SCOPES,
+            actionIds: REVIEW_COMMENT_ACTION_IDS,
+            actionSpecs: REVIEW_COMMENT_ACTION_IDS.map((actionId) => ({
+                id: actionId,
+                surfaces: { rpc: true },
+                bindings: { rpcMethod: actionId },
+            })),
+        });
+
+        expect([...handlers.keys()]).toEqual([...REVIEW_COMMENT_ACTION_IDS]);
+        await expect(handlers.get('reviews.comments.create')?.({
+            projectId: 'project-1',
+        })).resolves.toEqual({
+            actionId: 'reviews.comments.create',
+            input: { projectId: 'project-1' },
+        });
+        expect(calls).toEqual([
+            {
+                actionId: 'reviews.comments.create',
+                input: { projectId: 'project-1' },
+                context: { surface: 'rpc' },
+            },
+        ]);
     });
 
     it('honors scope exclusions for typed ABI exceptions', async () => {

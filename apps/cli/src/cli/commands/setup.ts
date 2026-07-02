@@ -18,7 +18,7 @@ import {
     syncInstalledFirstPartyShims,
     writeDefaultManagedReleaseChannel,
 } from '@happier-dev/cli-common/firstPartyRuntime';
-import { getProviderCliSetupRecommendedIds } from '@happier-dev/agents';
+import { getAgentCliSetupRecommendedIds } from '@happier-dev/agents';
 import { resolvePublicReleaseRingIdForLabel } from '@happier-dev/release-runtime/releaseRings';
 
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
@@ -32,7 +32,7 @@ import {
 } from '@happier-dev/cli-common/systemTasks';
 
 function buildSetupHelpPage(): HelpPageOptions {
-    const recommendedProviderIds = getProviderCliSetupRecommendedIds();
+    const recommendedProviderIds = getAgentCliSetupRecommendedIds();
     const providerExample = recommendedProviderIds.length > 0
         ? `happier setup --relay-url https://relay.example.test ${recommendedProviderIds.map((id) => `--provider ${id}`).join(' ')}`
         : 'happier setup --relay-url https://relay.example.test --provider <id>';

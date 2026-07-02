@@ -6,7 +6,10 @@ import { UpdateContainerSchema, type UpdateContainer } from '@happier-dev/protoc
 import { decodeBase64, decrypt } from '@/api/encryption';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import {
+  detectSessionTurnActivityFromProjection,
   isSessionUserMessage,
+  readSessionProjectedPendingRequestCount,
+  readSessionProjectedTurnStatus,
   type SessionTurnActivity,
 } from '@/session/query/detectSessionTurnInFlight';
 import {
@@ -34,6 +37,14 @@ export function isIdle(summary: AgentStateSummary | null): boolean {
   if (!summary) return true;
   if (summary.controlledByUser === true) return false;
   return summary.pendingRequestsCount === 0;
+}
+
+function summarizeProjectedPendingRequests(value: unknown): AgentStateSummary | null {
+  const pendingRequestsCount = readSessionProjectedPendingRequestCount(value);
+  if (pendingRequestsCount === null) {
+    return null;
+  }
+  return { pendingRequestsCount };
 }
 
 function summarizeAgentStateCiphertext(params: Readonly<{
@@ -84,17 +95,23 @@ export async function waitForIdleViaSocket(params: Readonly<{
   timeoutMs: number;
   initialTurnActivity: SessionTurnActivity;
   recheckTurnActivity?: () => Promise<SessionTurnActivity>;
+  initialAgentStateSummary?: AgentStateSummary | null;
+  preferProjectionUpdates?: boolean;
   // Seed with the latest agentState ciphertext from snapshot, if available.
   initialAgentStateCiphertextBase64: string | null;
 }>): Promise<{ idle: true; observedAt: number }> {
-  const initial = summarizeAgentStateCiphertext({
-    ciphertextBase64: params.initialAgentStateCiphertextBase64,
-    sessionEncryptionMode: params.sessionEncryptionMode,
-    ctx: params.ctx,
-  });
+  const initial =
+    params.initialAgentStateSummary !== undefined
+      ? params.initialAgentStateSummary
+      : summarizeAgentStateCiphertext({
+          ciphertextBase64: params.initialAgentStateCiphertextBase64,
+          sessionEncryptionMode: params.sessionEncryptionMode,
+          ctx: params.ctx,
+        });
   let latestSummary = initial;
   let pendingUserTurns = params.initialTurnActivity.pendingUserTurns;
   let activeTaskInFlight = params.initialTurnActivity.activeTaskInFlight;
+  const preferProjectionUpdates = params.preferProjectionUpdates === true;
   const hasTurnInFlight = () => activeTaskInFlight || pendingUserTurns > 0;
   const initiallyIdle = isIdle(initial) && !hasTurnInFlight();
   const idleConfirmMs = initiallyIdle ? resolveSessionControlWaitIdleConfirmMs() : 0;
@@ -176,14 +193,23 @@ export async function waitForIdleViaSocket(params: Readonly<{
               token: params.token,
               sessionId: params.sessionId,
             }).catch(() => null);
-            latestSummary = summarizeAgentStateCiphertext({
-              ciphertextBase64:
-                typeof refreshedSession?.agentState === 'string'
-                  ? String(refreshedSession.agentState).trim() || null
-                  : null,
-              sessionEncryptionMode: params.sessionEncryptionMode,
-              ctx: params.ctx,
-            });
+            const refreshedProjectionActivity = preferProjectionUpdates
+              ? detectSessionTurnActivityFromProjection(refreshedSession)
+              : null;
+            if (refreshedProjectionActivity) {
+              pendingUserTurns = refreshedProjectionActivity.pendingUserTurns;
+              activeTaskInFlight = refreshedProjectionActivity.activeTaskInFlight;
+            }
+            latestSummary =
+              (preferProjectionUpdates ? summarizeProjectedPendingRequests(refreshedSession) : null)
+              ?? summarizeAgentStateCiphertext({
+                ciphertextBase64:
+                  typeof refreshedSession?.agentState === 'string'
+                    ? String(refreshedSession.agentState).trim() || null
+                    : null,
+                sessionEncryptionMode: params.sessionEncryptionMode,
+                ctx: params.ctx,
+              });
             if (latestSummary) {
               hasFreshAgentStateObservation = true;
             }
@@ -226,6 +252,60 @@ export async function waitForIdleViaSocket(params: Readonly<{
         const body = update.body as any;
         if (String(body.id ?? '') !== params.sessionId) return;
 
+        const projectedActivity = preferProjectionUpdates ? detectSessionTurnActivityFromProjection(body) : null;
+        const projectedSummary = preferProjectionUpdates ? summarizeProjectedPendingRequests(body) : null;
+        const projectedTurnStatus = preferProjectionUpdates ? readSessionProjectedTurnStatus(body.latestTurnStatus) : null;
+        if (projectedActivity && projectedSummary) {
+          pendingUserTurns = projectedActivity.pendingUserTurns;
+          activeTaskInFlight = projectedActivity.activeTaskInFlight;
+          latestSummary = projectedSummary;
+          hasFreshAgentStateObservation = true;
+
+          if (hasTurnInFlight() || !isIdle(latestSummary)) {
+            waitingForIdleAfterFreshBusy = true;
+            if (idleConfirmTimer) {
+              clearTimeout(idleConfirmTimer);
+              idleConfirmTimer = null;
+            }
+            return;
+          }
+          if (!waitingForIdleAfterFreshBusy) {
+            return;
+          }
+
+          clearTimeout(timer);
+          cleanup();
+          resolve({ idle: true, observedAt: Math.min(Date.now(), deadlineMs) });
+          return;
+        }
+        if (projectedTurnStatus || projectedSummary) {
+          if (projectedTurnStatus) {
+            pendingUserTurns = 0;
+            activeTaskInFlight = projectedTurnStatus === 'in_progress';
+          }
+          if (projectedSummary) {
+            latestSummary = projectedSummary;
+            hasFreshAgentStateObservation = true;
+          }
+
+          if (hasTurnInFlight() || !isIdle(latestSummary)) {
+            waitingForIdleAfterFreshBusy = true;
+            if (idleConfirmTimer) {
+              clearTimeout(idleConfirmTimer);
+              idleConfirmTimer = null;
+            }
+            return;
+          }
+          if (!waitingForIdleAfterFreshBusy || latestSummary === null) {
+            return;
+          }
+
+          clearTimeout(timer);
+          cleanup();
+          resolve({ idle: true, observedAt: Math.min(Date.now(), deadlineMs) });
+          return;
+        }
+
         const agentStateCiphertext = body.agentState?.value;
         if (typeof agentStateCiphertext !== 'string' || agentStateCiphertext.trim().length === 0) return;
 
@@ -258,6 +338,7 @@ export async function waitForIdleViaSocket(params: Readonly<{
       }
 
       if (update.body?.t !== 'new-message') return;
+      if (preferProjectionUpdates) return;
       const body = update.body as any;
       if (String(body.sid ?? '') !== params.sessionId) return;
 

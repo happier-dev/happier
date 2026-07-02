@@ -1,14 +1,16 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import { AGENTS, type AgentCatalogEntry } from '@/backends/catalog';
+import { AGENTS, type AgentCatalogEntry, type CatalogAgentId } from '@/backends/catalog';
 import { checklists } from '@/capabilities/checklists';
 import { buildDetectContext } from '@/capabilities/context/buildDetectContext';
 import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
+import { createAcpCliCapability } from '@/capabilities/probes/createAcpCliCapability';
 import { tmuxCapability } from '@/capabilities/registry/toolTmux';
 import { windowsTerminalCapability } from '@/capabilities/registry/toolWindowsTerminal';
 import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
 import { systemTasksCapability } from '@/capabilities/registry/toolSystemTasks';
 import { ghDepCapability } from '@/capabilities/registry/depGh';
 import { azDepCapability } from '@/capabilities/registry/depAz';
+import { createInstallableCapabilitiesFromContributions } from '@/capabilities/registry/installables';
 import { createCapabilitiesService } from '@/capabilities/service';
 import type { Capability } from '@/capabilities/service';
 import type {
@@ -29,7 +31,10 @@ import type { AgentId } from '@happier-dev/agents';
 import { applyAgentRuntimeKindOverrideToAccountSettings } from '@happier-dev/agents';
 import { BackendTargetRefSchema, type BackendTargetRefV1, type CapabilityId } from '@happier-dev/protocol';
 import { invokeProviderCliInstall as invokeSharedProviderCliInstall } from '@/packagedRuntime/managedTools/invokeProviderCliInstall';
-import { primeResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import {
+    getResolvedContributionRegistry,
+    primeResolvedContributionRegistry,
+} from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { installMarketplacePlugin as installMarketplacePluginFromCatalog } from '@/plugins/store/marketplace/catalog';
 import { readInstalledPluginCatalog, readInstalledPluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import { setInstalledPluginEnabled } from '@/plugins/store/enabled';
@@ -481,7 +486,8 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
 }
 
 export async function createCliCapabilitiesService(): Promise<ReturnType<typeof createCapabilitiesService>> {
-    await primeResolvedContributionRegistry({ happyHomeDir: configuration.happyHomeDir }).catch(() => undefined);
+    const resolvedContributionRegistry = await primeResolvedContributionRegistry({ happyHomeDir: configuration.happyHomeDir })
+        .catch(() => getResolvedContributionRegistry());
 
     const cliCapabilities = await Promise.all(
         (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
@@ -489,29 +495,43 @@ export async function createCliCapabilitiesService(): Promise<ReturnType<typeof 
                 const override = await entry.getCliCapabilityOverride();
                 return augmentCliCapabilityWithProbeModels(override, entry.id);
             }
+            const acpRuntimeDefinitionBridge = entry.getAcpRuntimeDefinitionBridge
+                ? await entry.getAcpRuntimeDefinitionBridge()
+                : null;
+            if (acpRuntimeDefinitionBridge) {
+                return createAcpCliCapability({
+                    agentId: entry.id as CatalogAgentId,
+                    title: resolvePublicCliCapabilityTitle(entry.id),
+                    runtimeDefinitionBridge: acpRuntimeDefinitionBridge,
+                });
+            }
             return createGenericCliCapability(entry.id);
         }),
     );
 
-    const extraCapabilitiesNested = await Promise.all(
-        (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
-            if (!entry.getCapabilities) return [];
-            return [...(await entry.getCapabilities())];
-        }),
-    );
-    const extraCapabilities: Capability[] = extraCapabilitiesNested.flat();
+    const explicitCapabilities: Capability[] = [
+        tmuxCapability,
+        windowsTerminalCapability,
+        createPluginMarketplaceCapability(),
+        ghDepCapability,
+        azDepCapability,
+        executionRunsCapability,
+        systemTasksCapability,
+    ];
+    const existingCapabilityIds = new Set([
+        ...cliCapabilities.map((capability) => capability.descriptor.id),
+        ...explicitCapabilities.map((capability) => capability.descriptor.id),
+    ]);
+    const installableCapabilities = await createInstallableCapabilitiesFromContributions({
+        installables: resolvedContributionRegistry.installables,
+        existingCapabilityIds,
+    });
 
     return createCapabilitiesService({
         capabilities: [
             ...cliCapabilities,
-            ...extraCapabilities,
-            tmuxCapability,
-            windowsTerminalCapability,
-            createPluginMarketplaceCapability(),
-            ghDepCapability,
-            azDepCapability,
-            executionRunsCapability,
-            systemTasksCapability,
+            ...installableCapabilities,
+            ...explicitCapabilities,
         ],
         checklists,
         buildContext: buildDetectContext,

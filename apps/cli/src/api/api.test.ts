@@ -745,6 +745,86 @@ describe('Api server error handling', () => {
             output.restore();
         });
 
+        it('throws a stable error when the server reports that the machine was replaced', async () => {
+            connectionState.reset();
+            mockPost.mockResolvedValue({
+                data: {
+                    machine: {
+                        id: 'test-machine',
+                        replacedByMachineId: 'replacement-machine',
+                        metadata: testMachineMetadata,
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                    },
+                },
+            });
+
+            await expect(
+                api.getOrCreateMachine({
+                    machineId: 'test-machine',
+                    metadata: testMachineMetadata,
+                }),
+            ).rejects.toMatchObject({
+                name: 'MachineReplacedError',
+                machineId: 'test-machine',
+                replacementMachineId: 'replacement-machine',
+            });
+
+            expect(connectionState.isOffline()).toBe(false);
+        });
+
+        it('throws a stable error on 410 machine replaced with replacement id', async () => {
+            connectionState.reset();
+            mockPost.mockRejectedValue({
+                response: {
+                    status: 410,
+                    data: {
+                        error: 'machine_replaced',
+                        replacementMachineId: 'replacement-machine',
+                    },
+                },
+                isAxiosError: true,
+            });
+
+            await expect(
+                api.getOrCreateMachine({
+                    machineId: 'test-machine',
+                    metadata: testMachineMetadata,
+                }),
+            ).rejects.toMatchObject({
+                name: 'MachineReplacedError',
+                machineId: 'test-machine',
+                replacementMachineId: 'replacement-machine',
+            });
+
+            expect(connectionState.isOffline()).toBe(false);
+        });
+
+        it('throws a stable error on 410 machine-replaced socket-style payloads', async () => {
+            connectionState.reset();
+            mockPost.mockRejectedValue({
+                response: {
+                    status: 410,
+                    data: {
+                        error: 'machine-replaced',
+                        replacementMachineId: 'replacement-machine',
+                    },
+                },
+                isAxiosError: true,
+            });
+
+            await expect(
+                api.getOrCreateMachine({
+                    machineId: 'test-machine',
+                    metadata: testMachineMetadata,
+                }),
+            ).rejects.toMatchObject({
+                name: 'MachineReplacedError',
+                replacementMachineId: 'replacement-machine',
+            });
+        });
+
         it('throws a stable error when server rejects machine registration due to content public key mismatch', async () => {
             connectionState.reset();
 

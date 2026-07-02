@@ -1,20 +1,16 @@
-import type { DetectedMcpPreviewEntryV1, DetectedMcpServerV1 } from '@happier-dev/protocol';
+import {
+  McpDetectedProviderV1Schema,
+  type DetectedMcpPreviewEntryV1,
+  type DetectedMcpServerV1,
+} from '@happier-dev/protocol';
 
 function resolvePreviewProviderScopeKind(sourceKind: DetectedMcpServerV1['source']['kind']): 'providerUser' | 'providerProject' {
   return sourceKind === 'project' ? 'providerProject' : 'providerUser';
 }
 
 function resolveAgentDetectedProvider(agentId: string): DetectedMcpServerV1['provider'] | null {
-  switch (agentId) {
-    case 'claude':
-      return 'claude';
-    case 'codex':
-      return 'codex';
-    case 'opencode':
-      return 'opencode';
-    default:
-      return null;
-  }
+  const parsed = McpDetectedProviderV1Schema.safeParse(agentId);
+  return parsed.success ? parsed.data : null;
 }
 
 function countHeaderKeys(server: DetectedMcpServerV1): number {

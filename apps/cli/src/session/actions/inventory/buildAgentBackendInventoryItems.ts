@@ -1,7 +1,9 @@
-import { AGENT_IDS, getProviderCliRuntimeSpec, type AgentId } from '@happier-dev/agents'
+import { AGENT_IDS, getAgentCliRuntimeSpec, type AgentId } from '@happier-dev/agents'
 import { buildBackendTargetKey, buildBackendTargetKeyV2, type AccountSettings } from '@happier-dev/protocol'
 
 import { listConfiguredAcpBackendsFromAccountSettingsOrPlugins } from '@/agent/acp/catalog/configured/resolveBackend'
+
+import { isBackendEnabled } from './backendAvailability'
 
 export type ActionBackendInventoryItem = Readonly<{
   targetKey: string;
@@ -18,19 +20,6 @@ function normalizeLimit(value: unknown): number | null {
   return Math.max(1, Math.min(200, Math.floor(parsed)))
 }
 
-function isBackendEnabled(
-  accountSettings: AccountSettings | null,
-  targetKeys: readonly string[],
-): boolean {
-  const enabledByTargetKey = accountSettings?.backendEnabledByTargetKey
-  if (!enabledByTargetKey) return true
-  for (const targetKey of targetKeys) {
-    if (enabledByTargetKey[targetKey] === false) return false
-    if (enabledByTargetKey[targetKey] === true) return true
-  }
-  return true
-}
-
 function buildBuiltInBackendInventoryItems(
   accountSettings: AccountSettings | null,
 ): readonly ActionBackendInventoryItem[] {
@@ -44,7 +33,7 @@ function buildBuiltInBackendInventoryItems(
       const legacyTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId })
       return {
         targetKey,
-        label: getProviderCliRuntimeSpec(agentId).title,
+        label: getAgentCliRuntimeSpec(agentId).title,
         enabled: isBackendEnabled(accountSettings, [targetKey, legacyTargetKey]),
         agentId,
       }

@@ -1,5 +1,3 @@
-import { buildSynopsisLocalId } from './buildMemoryArtifactLocalId';
-
 export type MemorySynopsisPointerV1 = Readonly<{
   v: 1;
   localId: string;
@@ -30,30 +28,3 @@ export function readMemorySynopsisPointerV1FromSessionMetadata(metadata: Record<
   const value = (metadata as any)?.memorySynopsisPointerV1;
   return normalizePointerCandidate(value);
 }
-
-export function applyMemorySynopsisPointerV1ToSessionMetadata(params: Readonly<{
-  metadata: Record<string, unknown>;
-  next: Readonly<{ seqTo: number; updatedAtMs: number }>;
-}>): Record<string, unknown> {
-  const seqTo = typeof params.next.seqTo === 'number' && Number.isFinite(params.next.seqTo) ? Math.max(0, Math.floor(params.next.seqTo)) : NaN;
-  const updatedAtMs =
-    typeof params.next.updatedAtMs === 'number' && Number.isFinite(params.next.updatedAtMs) ? Math.max(0, Math.floor(params.next.updatedAtMs)) : NaN;
-  if (!Number.isFinite(seqTo) || !Number.isFinite(updatedAtMs)) return params.metadata;
-
-  const existing = readMemorySynopsisPointerV1FromSessionMetadata(params.metadata);
-  if (existing) {
-    if (existing.updatedAtMs > updatedAtMs) return params.metadata;
-    if (existing.updatedAtMs === updatedAtMs && existing.seqTo >= seqTo) return params.metadata;
-  }
-
-  return {
-    ...params.metadata,
-    memorySynopsisPointerV1: {
-      v: 1,
-      localId: buildSynopsisLocalId({ seqTo }),
-      seqTo,
-      updatedAtMs,
-    },
-  };
-}
-

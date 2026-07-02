@@ -86,6 +86,36 @@ describe('handleSessionStateUpdate', () => {
     expect(onWarning).toHaveBeenCalledTimes(1);
   });
 
+  it('returns pending queue state from pending-changed updates', () => {
+    const onMetadataUpdated = vi.fn();
+
+    const result = handleSessionStateUpdate({
+      update: {
+        id: 'u-pending',
+        seq: 7,
+        createdAt: Date.now(),
+        body: { t: 'pending-changed', sid: 's1', pendingCount: 0, pendingVersion: 12 },
+      } as any,
+      updateSource: 'user-scoped',
+      sessionId: 's1',
+      sessionEncryptionMode: 'e2ee',
+      metadata: null,
+      metadataVersion: 0,
+      agentState: null,
+      agentStateVersion: 0,
+      pendingWakeSeq: 3,
+      encryptionKey: new Uint8Array(),
+      encryptionVariant: 'dataKey',
+      onMetadataUpdated,
+      onWarning: () => {},
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.pendingWakeSeq).toBe(4);
+    expect(result.pendingQueueState).toEqual({ known: true, pendingCount: 0, pendingVersion: 12 });
+    expect(onMetadataUpdated).toHaveBeenCalledTimes(1);
+  });
+
   it('does not advance metadataVersion when an encrypted metadata update cannot be decrypted', () => {
     const onWarning = vi.fn();
     const onMetadataUpdated = vi.fn();

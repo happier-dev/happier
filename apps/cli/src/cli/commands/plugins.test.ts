@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import * as tar from 'tar';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
 import { createMarketplaceCatalogDocument, createMarketplaceCatalogEntry } from '@/plugins/testkit/marketplaceCatalog';
@@ -14,6 +14,7 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
 import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/plugins/testkit/samplePackage';
 import { createPluginStateStore } from '@/plugins/store/state';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
 import { handlePluginsCommand } from './plugins';
 
@@ -102,7 +103,7 @@ async function writeDisposableActivationPlugin(rootDir: string, disposeMarkerPat
   await writeFile(
     join(rootDir, '.happier-plugin', 'plugin.json'),
     JSON.stringify(
-      {
+      createPluginManifestV2Fixture({
         schemaVersion: 2,
         id: 'acme.reload-disposable',
         version: '1.0.0',
@@ -120,9 +121,11 @@ async function writeDisposableActivationPlugin(rootDir: string, disposeMarkerPat
             entry: './daemon.mjs',
           },
         },
-        permissions: [],
-        contributions: [],
-      },
+        capabilities: {
+          permissions: [],
+        },
+        contributes: {},
+      }),
       null,
       2,
     ),
@@ -193,7 +196,10 @@ describe('handlePluginsCommand', () => {
 
       const installOutput = captureConsoleJsonOutput();
       try {
-        await handlePluginsCommand(['marketplace', 'install', SAMPLE_PLUGIN_ID, '--json']);
+        const publishInstalledManifestProjections = vi.fn(async () => undefined);
+        await handlePluginsCommand(['marketplace', 'install', SAMPLE_PLUGIN_ID, '--json'], {
+          publishInstalledManifestProjections,
+        });
 
         const parsed = installOutput.json<{
           v: 1;
@@ -213,6 +219,9 @@ describe('handlePluginsCommand', () => {
         expect(parsed.data?.plugin.source).toMatchObject({
           kind: 'archive',
           locator: marketplace.archiveUrl,
+        });
+        expect(publishInstalledManifestProjections).toHaveBeenCalledWith({
+          pluginIds: [SAMPLE_PLUGIN_ID],
         });
       } finally {
         installOutput.restore();
@@ -415,7 +424,7 @@ describe('handlePluginsCommand', () => {
         expect(parsed.data?.plugin.title).toBe('Acme Sample');
         expect(parsed.data?.plugin.contributions.providers).toEqual(['acme.sample.provider']);
         expect(parsed.data?.plugin.contributions.backends).toEqual(['acme.sample.backend']);
-        expect(parsed.data?.plugin.contributions.hooks).toEqual(['backend.terminalRuntime.bindTranscript']);
+        expect(parsed.data?.plugin.contributions.hooks).toEqual(['backend.terminalRuntime.resolveTranscriptBinding']);
       } finally {
         output.restore();
       }
@@ -440,7 +449,11 @@ describe('handlePluginsCommand', () => {
       const installOutput = captureConsoleJsonOutput();
       try {
         await handlePluginsCommand(['install', sourceRoot, '--json']);
-        expect(installOutput.json<{ ok: boolean }>().ok).toBe(true);
+        const installResult = installOutput.json<{ ok: boolean }>();
+        if (!installResult.ok) {
+          throw new Error(installOutput.logs.join('\n'));
+        }
+        expect(installResult.ok).toBe(true);
       } finally {
         installOutput.restore();
       }
@@ -643,7 +656,7 @@ describe('handlePluginsCommand', () => {
         expect(parsed.data.plugins[0].source.locator).toBe(canonicalSourceRoot);
         expect(parsed.data.plugins[0].contributions.providers).toEqual(['acme.sample.provider']);
         expect(parsed.data.plugins[0].contributions.backends).toEqual(['acme.sample.backend']);
-        expect(parsed.data.plugins[0].contributions.hooks).toEqual(['backend.terminalRuntime.bindTranscript']);
+        expect(parsed.data.plugins[0].contributions.hooks).toEqual(['backend.terminalRuntime.resolveTranscriptBinding']);
       } finally {
         output.restore();
       }
@@ -695,7 +708,7 @@ describe('handlePluginsCommand', () => {
         expect(parsed.data.plugin.source.locator).toBe(canonicalSourceRoot);
         expect(parsed.data.plugin.contributions.providers).toEqual(['acme.sample.provider']);
         expect(parsed.data.plugin.contributions.backends).toEqual(['acme.sample.backend']);
-        expect(parsed.data.plugin.contributions.hooks).toEqual(['backend.terminalRuntime.bindTranscript']);
+        expect(parsed.data.plugin.contributions.hooks).toEqual(['backend.terminalRuntime.resolveTranscriptBinding']);
       } finally {
         output.restore();
       }
@@ -841,7 +854,7 @@ describe('handlePluginsCommand', () => {
         expect(parsed.data.plugins[0].source.locator).toBe(marketplace.archiveUrl);
         expect(parsed.data.plugins[0].contributions.providers).toEqual(['acme.sample.provider']);
         expect(parsed.data.plugins[0].contributions.backends).toEqual(['acme.sample.backend']);
-        expect(parsed.data.plugins[0].contributions.hooks).toEqual(['backend.terminalRuntime.bindTranscript']);
+        expect(parsed.data.plugins[0].contributions.hooks).toEqual(['backend.terminalRuntime.resolveTranscriptBinding']);
       } finally {
         installedOutput.restore();
       }

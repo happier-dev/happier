@@ -1,0 +1,1630 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
+import {
+  type ApiSessionSocketStub,
+  createApiSessionSocketStub,
+} from '@/testkit/backends/apiSessionSocketHarness';
+import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
+import type { createSessionSocketTransport } from './connection/createSessionSocketTransport';
+import type { createUserScopedSocket } from './sockets';
+
+type SessionSocketTransportResult = ReturnType<typeof createSessionSocketTransport>;
+type UserScopedSocket = ReturnType<typeof createUserScopedSocket>;
+
+let sessionSocketStub: ApiSessionSocketStub | null = null;
+let userSocketStub: ApiSessionSocketStub | null = null;
+let tempHomeDir: string | null = null;
+const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
+const originalSocketAckTimeoutMs = process.env.HAPPIER_SESSION_SOCKET_ACK_TIMEOUT_MS;
+const originalOutboxBaseRetryMs = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS;
+const originalOutboxMaxRetryMs = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_RETRY_MS;
+const originalOutboxJitterMs = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS;
+const originalOutboxMaxAttempts = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS;
+const originalOutboxTranscriptFlushBatchLimit = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_TRANSCRIPT_FLUSH_BATCH_LIMIT;
+const originalOutboxDeliveryConcurrency = process.env.HAPPIER_SESSION_MUTATION_OUTBOX_DELIVERY_CONCURRENCY;
+
+function restoreEnvValue(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+  process.env[key] = value;
+}
+
+vi.mock('axios');
+
+vi.mock('./sockets', () => ({
+  createUserScopedSocket: () => {
+    if (!userSocketStub) throw new Error('Missing user socket stub');
+    return userSocketStub as unknown as UserScopedSocket;
+  },
+}));
+
+vi.mock('./connection/createSessionSocketTransport', () => ({
+  createSessionSocketTransport: () => {
+    if (!sessionSocketStub) throw new Error('Missing session socket stub');
+    const transportResult: SessionSocketTransportResult = {
+      socket: sessionSocketStub as unknown as SessionSocketTransportResult['socket'],
+      transport: {
+        connect: async () => {},
+        disconnect: async () => {},
+        destroy: async () => {},
+        isConnected: () => sessionSocketStub?.connected === true,
+        onConnected: () => () => {},
+        onDisconnected: () => () => {},
+        onError: () => () => {},
+      },
+    };
+    return transportResult;
+  },
+}));
+
+vi.mock('@happier-dev/connection-supervisor', () => ({
+  DEFAULT_MANAGED_CONNECTION_POLICY: {},
+  createManagedConnectionSupervisor: (params: { createTransport: () => unknown; onConnected?: () => Promise<void> | void }) => ({
+    start: async () => {
+      params.createTransport();
+      if (sessionSocketStub?.connected === true) {
+        await params.onConnected?.();
+      }
+    },
+    getState: () => ({ phase: 'online' }),
+    stop: async () => {},
+  }),
+}));
+
+async function useTempHappyHome(): Promise<void> {
+  tempHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-session-outbox-'));
+  process.env.HAPPIER_HOME_DIR = tempHomeDir;
+}
+
+async function getAxiosPostMock() {
+  const { default: mockedAxios } = await import('axios');
+  return vi.mocked(mockedAxios.post);
+}
+
+async function getAxiosGetMock() {
+  const { default: mockedAxios } = await import('axios');
+  return vi.mocked(mockedAxios.get);
+}
+
+async function readPersistedOutboxMutationCount(sessionId: string): Promise<number> {
+  const { configuration } = await import('@/configuration');
+  const filePath = join(configuration.activeServerDir, 'session-mutations', `session-${sessionId}.json`);
+  try {
+    const parsed = JSON.parse(await readFile(filePath, 'utf8')) as { mutations?: unknown[] };
+    return Array.isArray(parsed.mutations) ? parsed.mutations.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function readPersistedOutboxMutations(sessionId: string): Promise<unknown[]> {
+  const { configuration } = await import('@/configuration');
+  const filePath = join(configuration.activeServerDir, 'session-mutations', `session-${sessionId}.json`);
+  try {
+    const parsed = JSON.parse(await readFile(filePath, 'utf8')) as { mutations?: unknown[] };
+    return Array.isArray(parsed.mutations) ? parsed.mutations : [];
+  } catch {
+    return [];
+  }
+}
+
+async function readPersistedOutboxDeadLetters(sessionId: string): Promise<unknown[]> {
+  const { configuration } = await import('@/configuration');
+  const filePath = join(configuration.activeServerDir, 'session-mutations', `session-${sessionId}.dead-letter.json`);
+  try {
+    const parsed = JSON.parse(await readFile(filePath, 'utf8')) as { entries?: unknown[] };
+    return Array.isArray(parsed.entries) ? parsed.entries : [];
+  } catch {
+    return [];
+  }
+}
+
+function createDeferred<T>(): Readonly<{
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+}> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+async function drainAsyncWork(cycles = 5): Promise<void> {
+  for (let index = 0; index < cycles; index += 1) {
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+  }
+}
+
+async function waitForAsyncCondition(predicate: () => Promise<boolean>, cycles = 100): Promise<void> {
+  for (let index = 0; index < cycles; index += 1) {
+    if (await predicate()) return;
+    await drainAsyncWork(1);
+  }
+  throw new Error('Timed out waiting for async condition');
+}
+
+function createFailTurnMutation(params: Readonly<{
+  sessionId?: string;
+  mutationId?: string;
+  turnId?: string;
+}> = {}): SessionTurnMutationV1 {
+  return {
+    v: 1,
+    sessionId: params.sessionId ?? 's1',
+    mutationId: params.mutationId ?? 'mutation-fail',
+    action: 'fail',
+    turnId: params.turnId ?? 'turn-1',
+    issue: {
+      v: 1,
+      scope: 'primary_session',
+      status: 'failed',
+      code: 'provider_turn_failed',
+      source: 'unknown',
+      occurredAt: 200,
+      sanitizedPreview: 'Provider reported turn failure',
+    },
+    observedAt: 200,
+  };
+}
+
+function createTranscriptAppendMutation(params: Readonly<{
+  sessionId?: string;
+  localId?: string;
+  text?: string;
+  sidechainId?: string | null;
+  createdAt?: number;
+  updatedAt?: number;
+}> = {}) {
+  const sessionId = params.sessionId ?? 's1';
+  const localId = params.localId ?? 'segment-1';
+  const text = params.text ?? 'snapshot';
+  return {
+    v: 1,
+    sessionId,
+    mutationId: `transcript:${sessionId}:${localId}`,
+    source: 'transcript_message_append',
+    localId,
+    sidechainId: params.sidechainId ?? null,
+    messageRole: 'agent',
+    content: {
+      t: 'plain',
+      v: {
+        role: 'agent',
+        content: {
+          id: localId,
+          type: 'message',
+          data: { type: 'message', message: text },
+        },
+      },
+    },
+    createdAt: params.createdAt ?? 100,
+    updatedAt: params.updatedAt ?? 100,
+  } as const;
+}
+
+async function saveQueuedSessionTurnMutation(mutation: SessionTurnMutationV1): Promise<void> {
+  const { saveSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/sessionClientDurableMutationPersistence');
+  await saveSessionClientDurableMutationOutbox(mutation.sessionId, [{
+    kind: 'session_turn_mutation',
+    mutationId: mutation.mutationId,
+    payload: mutation,
+    createdAt: mutation.observedAt,
+    attempts: 0,
+    nextAttemptAt: 0,
+  }]);
+}
+
+describe('ApiSessionClient durable mutation outbox', () => {
+  beforeEach(async () => {
+    vi.resetModules();
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockReset();
+    const axiosGet = await getAxiosGetMock();
+    axiosGet.mockReset();
+    axiosGet.mockRejectedValue(new Error('session-end proof unavailable'));
+    sessionSocketStub = null;
+    userSocketStub = null;
+    process.env.HAPPIER_SESSION_SOCKET_ACK_TIMEOUT_MS = '50';
+    await useTempHappyHome();
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    restoreEnvValue('HAPPIER_HOME_DIR', originalHappyHomeDir);
+    restoreEnvValue('HAPPIER_SESSION_SOCKET_ACK_TIMEOUT_MS', originalSocketAckTimeoutMs);
+    restoreEnvValue('HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS', originalOutboxBaseRetryMs);
+    restoreEnvValue('HAPPIER_SESSION_MUTATION_OUTBOX_MAX_RETRY_MS', originalOutboxMaxRetryMs);
+    restoreEnvValue('HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS', originalOutboxJitterMs);
+    restoreEnvValue('HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS', originalOutboxMaxAttempts);
+    restoreEnvValue('HAPPIER_SESSION_MUTATION_OUTBOX_TRANSCRIPT_FLUSH_BATCH_LIMIT', originalOutboxTranscriptFlushBatchLimit);
+    restoreEnvValue('HAPPIER_SESSION_MUTATION_OUTBOX_DELIVERY_CONCURRENCY', originalOutboxDeliveryConcurrency);
+    if (tempHomeDir) {
+      await rm(tempHomeDir, { recursive: true, force: true });
+      tempHomeDir = null;
+    }
+  });
+
+  it('delivers queued session turn mutations after reconnect', async () => {
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue(new Error('server offline'));
+    const deliveredEvents: string[] = [];
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: false,
+      emitWithAck: async (event: string) => {
+        deliveredEvents.push(event);
+        return { ok: true };
+      },
+    });
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+    await outbox.enqueueSessionTurnMutation({
+      v: 1,
+      sessionId: 's1',
+      mutationId: 'mutation-turn-1',
+      action: 'complete',
+      turnId: 'turn-1',
+      observedAt: 123,
+    });
+
+    expect(await readPersistedOutboxMutationCount('s1')).toBe(1);
+
+    sessionSocketStub.connected = true;
+    await outbox.flush('flush');
+
+    expect(deliveredEvents).toContain('session-turn-mutation');
+    await expect.poll(() => readPersistedOutboxMutationCount('s1')).toBe(0);
+    await outbox.close();
+  });
+
+  it('persists disconnected transcript commits and flushes them through socket ack on reconnect', async () => {
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue(new Error('server offline'));
+    const deliveredMessages: unknown[] = [];
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: false,
+      emitWithAck: async (event: string, payload: unknown) => {
+        if (event === 'message') {
+          deliveredMessages.push(payload);
+        }
+        return { ok: true, id: 'message-1', seq: 7, localId: 'stream-1' };
+      },
+    });
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    await (outbox as any).enqueueTranscriptMessage(createTranscriptAppendMutation({
+      localId: 'stream-1',
+      text: 'committed while offline',
+    }));
+
+    await expect.poll(() => readPersistedOutboxMutations('s1')).toEqual([
+      expect.objectContaining({
+        kind: 'transcript_message_append',
+        payload: expect.objectContaining({
+          localId: 'stream-1',
+        }),
+      }),
+    ]);
+
+    sessionSocketStub.connected = true;
+    await outbox.flush('flush');
+
+    expect(deliveredMessages).toEqual([
+      expect.objectContaining({
+        sid: 's1',
+        localId: 'stream-1',
+        sidechainId: null,
+        messageRole: 'agent',
+        message: expect.objectContaining({ t: 'plain' }),
+      }),
+    ]);
+    await expect.poll(() => readPersistedOutboxMutationCount('s1')).toBe(0);
+    await outbox.close();
+  });
+
+  it('coalesces repeated transcript snapshots by session and local id', async () => {
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue(new Error('server offline'));
+    sessionSocketStub = createApiSessionSocketStub({ connected: false });
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    await (outbox as any).enqueueTranscriptMessage(createTranscriptAppendMutation({
+      localId: 'stream-1',
+      text: 'older snapshot',
+      updatedAt: 100,
+    }));
+    await (outbox as any).enqueueTranscriptMessage(createTranscriptAppendMutation({
+      localId: 'stream-1',
+      text: 'newer snapshot',
+      updatedAt: 200,
+    }));
+
+    const persisted = await readPersistedOutboxMutations('s1');
+    expect(persisted).toHaveLength(1);
+    expect(JSON.stringify(persisted[0])).toContain('newer snapshot');
+    expect(JSON.stringify(persisted[0])).not.toContain('older snapshot');
+    await outbox.close();
+  });
+
+  it('keeps the newest transcript snapshot when an older snapshot is enqueued later', async () => {
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue(new Error('server offline'));
+    sessionSocketStub = createApiSessionSocketStub({ connected: false });
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    await (outbox as any).enqueueTranscriptMessage(createTranscriptAppendMutation({
+      localId: 'stream-1',
+      text: 'newer snapshot',
+      updatedAt: 300,
+    }));
+    await (outbox as any).enqueueTranscriptMessage(createTranscriptAppendMutation({
+      localId: 'stream-1',
+      text: 'older snapshot',
+      updatedAt: 200,
+    }));
+
+    const persisted = await readPersistedOutboxMutations('s1');
+    expect(persisted).toHaveLength(1);
+    expect(JSON.stringify(persisted[0])).toContain('newer snapshot');
+    expect(JSON.stringify(persisted[0])).not.toContain('older snapshot');
+    await outbox.close();
+  });
+
+  it('keeps the newest transcript snapshot when duplicate persisted records load stale last', async () => {
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue(new Error('server offline'));
+    sessionSocketStub = createApiSessionSocketStub({ connected: false });
+
+    const newer = createTranscriptAppendMutation({
+      localId: 'stream-1',
+      text: 'newer persisted snapshot',
+      updatedAt: 300,
+    });
+    const older = createTranscriptAppendMutation({
+      localId: 'stream-1',
+      text: 'older persisted snapshot',
+      updatedAt: 200,
+    });
+    const { saveSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/sessionClientDurableMutationPersistence');
+    await saveSessionClientDurableMutationOutbox('s1', [newer, older].map((mutation) => ({
+      kind: 'transcript_message_append',
+      mutationId: mutation.mutationId,
+      payload: mutation,
+      createdAt: mutation.createdAt,
+      attempts: 0,
+      nextAttemptAt: 0,
+    } as any)));
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    await expect.poll(() => readPersistedOutboxMutations('s1')).toEqual([
+      expect.objectContaining({
+        kind: 'transcript_message_append',
+        payload: expect.objectContaining({
+          updatedAt: 300,
+        }),
+      }),
+    ]);
+    const persisted = await readPersistedOutboxMutations('s1');
+    expect(JSON.stringify(persisted[0])).toContain('newer persisted snapshot');
+    expect(JSON.stringify(persisted[0])).not.toContain('older persisted snapshot');
+    await outbox.close();
+  });
+
+  it('coalesces repeated session-end mutations by session id before retrying', async () => {
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue(new Error('server offline'));
+    sessionSocketStub = createApiSessionSocketStub({ connected: false });
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    await outbox.enqueueSessionEnd({
+      v: 1,
+      sessionId: 's1',
+      mutationId: 'end-older',
+      source: 'session_end',
+      observedAt: 100,
+    });
+    await outbox.enqueueSessionEnd({
+      v: 1,
+      sessionId: 's1',
+      mutationId: 'end-newer',
+      source: 'session_end',
+      observedAt: 200,
+    });
+
+    await expect.poll(() => readPersistedOutboxMutations('s1')).toEqual([
+      expect.objectContaining({
+        kind: 'session_end',
+        mutationId: 'end-newer',
+        payload: expect.objectContaining({ observedAt: 200 }),
+      }),
+    ]);
+    await outbox.close();
+  });
+
+  it('coalesces duplicate persisted session-end records on startup', async () => {
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue(new Error('server offline'));
+    sessionSocketStub = createApiSessionSocketStub({ connected: false });
+
+    const { saveSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/sessionClientDurableMutationPersistence');
+    await saveSessionClientDurableMutationOutbox('s1', [
+      {
+        kind: 'session_end',
+        mutationId: 'end-older',
+        payload: {
+          v: 1,
+          sessionId: 's1',
+          mutationId: 'end-older',
+          source: 'session_end',
+          observedAt: 100,
+        },
+        createdAt: 100,
+        attempts: 3,
+        nextAttemptAt: Date.now() + 60_000,
+      },
+      {
+        kind: 'session_end',
+        mutationId: 'end-newer',
+        payload: {
+          v: 1,
+          sessionId: 's1',
+          mutationId: 'end-newer',
+          source: 'session_end',
+          observedAt: 200,
+        },
+        createdAt: 200,
+        attempts: 0,
+        nextAttemptAt: Date.now() + 60_000,
+      },
+    ]);
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    await expect.poll(() => readPersistedOutboxMutations('s1')).toEqual([
+      expect.objectContaining({
+        kind: 'session_end',
+        mutationId: 'end-newer',
+        payload: expect.objectContaining({ observedAt: 200 }),
+      }),
+    ]);
+    await outbox.close();
+  });
+
+  it('rejects transcript coalescing across sidechains', async () => {
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue(new Error('server offline'));
+    sessionSocketStub = createApiSessionSocketStub({ connected: false });
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    await (outbox as any).enqueueTranscriptMessage(createTranscriptAppendMutation({
+      localId: 'stream-1',
+      sidechainId: 'tool-a',
+    }));
+
+    await expect((outbox as any).enqueueTranscriptMessage(createTranscriptAppendMutation({
+      localId: 'stream-1',
+      sidechainId: 'tool-b',
+    }))).rejects.toThrow(/sidechain/i);
+
+    await expect(readPersistedOutboxMutations('s1')).resolves.toEqual([
+      expect.objectContaining({
+        kind: 'transcript_message_append',
+        payload: expect.objectContaining({ sidechainId: 'tool-a' }),
+      }),
+    ]);
+    await outbox.close();
+  });
+
+  it('reports closed transcript enqueues as non-persisted', async () => {
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => createApiSessionSocketStub({ connected: false }),
+      requestReconnect: () => {},
+    });
+
+    await outbox.close();
+    await expect(outbox.enqueueTranscriptMessage(createTranscriptAppendMutation({
+      localId: 'stream-after-close',
+      text: 'dropped after close',
+    }))).resolves.toEqual({ persisted: false, delivered: false });
+  });
+
+  it('dead-letters malformed persisted transcript append records', async () => {
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockResolvedValue({ status: 200, data: { ok: true } } as never);
+    sessionSocketStub = createApiSessionSocketStub({ connected: false });
+
+    const { saveSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/sessionClientDurableMutationPersistence');
+    await saveSessionClientDurableMutationOutbox('s1', [{
+      kind: 'transcript_message_append',
+      mutationId: 'custom-transcript-id',
+      payload: {
+        ...createTranscriptAppendMutation({ localId: 'stream-1' }),
+        mutationId: 'custom-transcript-id',
+      },
+      createdAt: 100,
+      attempts: 0,
+      nextAttemptAt: 0,
+    } as any]);
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    await expect.poll(() => readPersistedOutboxMutationCount('s1')).toBe(0);
+    await expect.poll(() => readPersistedOutboxDeadLetters('s1')).toEqual([
+      expect.objectContaining({
+        kind: 'transcript_message_append',
+        reason: expect.stringMatching(/transcript/i),
+        mutationId: 'custom-transcript-id',
+      }),
+    ]);
+    await outbox.close();
+  });
+
+  it('delivers the newest transcript snapshot after a stale in-flight retry fails', async () => {
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '10';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_RETRY_MS = '10';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+    const axiosPost = await getAxiosPostMock();
+    const firstAttempt = createDeferred<{ status: number; data: { ok: true } }>();
+    const deliveredBodies: unknown[] = [];
+    axiosPost.mockImplementation(async (_url, body) => {
+      deliveredBodies.push(body);
+      if (deliveredBodies.length === 1) {
+        return await firstAttempt.promise as never;
+      }
+      return { status: 200, data: { ok: true } } as never;
+    });
+    sessionSocketStub = createApiSessionSocketStub({ connected: false });
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    const oldEnqueue = (outbox as any).enqueueTranscriptMessage(createTranscriptAppendMutation({
+      localId: 'stream-1',
+      text: 'stale snapshot',
+      updatedAt: 100,
+    }));
+    await expect.poll(() => deliveredBodies).toHaveLength(1);
+
+    const newestEnqueue = (outbox as any).enqueueTranscriptMessage(createTranscriptAppendMutation({
+      localId: 'stream-1',
+      text: 'fresh snapshot',
+      updatedAt: 200,
+    }));
+    firstAttempt.reject(new Error('first attempt failed'));
+
+    await oldEnqueue;
+    await newestEnqueue;
+    await waitForAsyncCondition(async () => deliveredBodies.length >= 2);
+
+    expect(JSON.stringify(deliveredBodies[1])).toContain('fresh snapshot');
+    expect(JSON.stringify(deliveredBodies[1])).not.toContain('stale snapshot');
+    await expect.poll(() => readPersistedOutboxMutationCount('s1')).toBe(0);
+    await outbox.close();
+  });
+
+  it('caps transcript deliveries during reconnect flushes', async () => {
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_TRANSCRIPT_FLUSH_BATCH_LIMIT = '1';
+    const deliveredLocalIds: string[] = [];
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async (_event: string, payload: any) => {
+        deliveredLocalIds.push(String(payload?.localId ?? ''));
+        return {
+          ok: true,
+          id: `message-${deliveredLocalIds.length}`,
+          seq: deliveredLocalIds.length,
+          localId: String(payload?.localId ?? ''),
+        };
+      },
+    });
+
+    const { saveSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/sessionClientDurableMutationPersistence');
+    await saveSessionClientDurableMutationOutbox('s1', [
+      createTranscriptAppendMutation({ localId: 'stream-1', text: 'one', updatedAt: 100 }),
+      createTranscriptAppendMutation({ localId: 'stream-2', text: 'two', updatedAt: 200 }),
+      createTranscriptAppendMutation({ localId: 'stream-3', text: 'three', updatedAt: 300 }),
+    ].map((mutation) => ({
+      kind: 'transcript_message_append',
+      mutationId: mutation.mutationId,
+      payload: mutation,
+      createdAt: mutation.createdAt,
+      attempts: 0,
+      nextAttemptAt: 0,
+    } as any)));
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    await expect.poll(() => deliveredLocalIds).toEqual(['stream-1']);
+    await expect.poll(() => readPersistedOutboxMutations('s1')).toEqual([
+      expect.objectContaining({ payload: expect.objectContaining({ localId: 'stream-2' }) }),
+      expect.objectContaining({ payload: expect.objectContaining({ localId: 'stream-3' }) }),
+    ]);
+    await outbox.close();
+  });
+
+  it('drains in-flight durable session mutations before close returns', async () => {
+    const axiosPost = await getAxiosPostMock();
+    const httpDelivery = createDeferred<{ status: number; data: { ok: true } }>();
+    const httpActions: string[] = [];
+    let closeSettled = false;
+    axiosPost.mockImplementation(async (_url, body) => {
+      const action = (body as { action?: unknown }).action;
+      httpActions.push(typeof action === 'string' ? action : 'unknown');
+      return await httpDelivery.promise as never;
+    });
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: false,
+      emitWithAck: async () => {
+        throw new Error('socket emit should not be reached while disconnected');
+      },
+    });
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+    await outbox.enqueueSessionTurnMutation({
+      v: 1,
+      sessionId: 's1',
+      mutationId: 'mutation-turn-1',
+      action: 'begin',
+      turnId: 'turn-1',
+      observedAt: 123,
+    });
+
+    await expect.poll(() => httpActions).toEqual(['begin']);
+    const closePromise = outbox.close().then(() => {
+      closeSettled = true;
+    });
+    await expect.poll(() => closeSettled, { timeout: 50 }).toBe(false);
+
+    httpDelivery.resolve({ status: 200, data: { ok: true } });
+    await closePromise;
+
+    await expect.poll(() => readPersistedOutboxMutationCount('s1')).toBe(0);
+  });
+
+  it('serializes durable outbox persistence so older saves cannot overwrite newer queued mutations', async () => {
+    vi.resetModules();
+    const saveCalls: Array<{
+      mutations: readonly unknown[];
+      deferred: ReturnType<typeof createDeferred<void>>;
+    }> = [];
+    let persistedSnapshot: readonly unknown[] = [];
+    vi.doMock('./client/transport/mutations/sessionClientDurableMutationPersistence', () => ({
+      loadSessionClientDurableMutationOutbox: vi.fn(async () => []),
+      saveSessionClientDurableMutationOutbox: vi.fn(async (_sessionId: string, mutations: readonly unknown[]) => {
+        const deferred = createDeferred<void>();
+        saveCalls.push({ mutations, deferred });
+        if (saveCalls.length > 2) {
+          persistedSnapshot = mutations;
+          return;
+        }
+        await deferred.promise;
+        persistedSnapshot = mutations;
+      }),
+      appendSessionClientDurableMutationDeadLetters: vi.fn(async () => {}),
+      createSessionClientDurableMutationDeadLetterEntry: vi.fn((input: unknown) => input),
+    }));
+    const axiosPost = await getAxiosPostMock();
+    const blockedDelivery = createDeferred<never>();
+    axiosPost.mockImplementation(async () => await blockedDelivery.promise);
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => createApiSessionSocketStub({ connected: false }),
+      requestReconnect: () => {},
+    });
+
+    try {
+      const olderEnqueue = outbox.enqueueSessionTurnMutation({
+        v: 1,
+        sessionId: 's1',
+        mutationId: 'older-turn',
+        action: 'begin',
+        turnId: 'turn-older',
+        observedAt: 1_000,
+      });
+      await expect.poll(() => saveCalls).toHaveLength(1);
+      const newerEnqueue = outbox.enqueueSessionTurnMutation({
+        v: 1,
+        sessionId: 's1',
+        mutationId: 'newer-turn',
+        action: 'complete',
+        turnId: 'turn-newer',
+        observedAt: 2_000,
+      });
+      await drainAsyncWork();
+      expect(saveCalls).toHaveLength(1);
+
+      saveCalls[0]?.deferred.resolve();
+      await olderEnqueue;
+      await expect.poll(() => saveCalls).toHaveLength(2);
+      saveCalls[1]?.deferred.resolve();
+      await newerEnqueue;
+
+      expect(JSON.stringify(persistedSnapshot)).toContain('newer-turn');
+      expect(JSON.stringify(persistedSnapshot)).toContain('older-turn');
+    } finally {
+      blockedDelivery.reject(new Error('stop background delivery'));
+      await outbox.close().catch(() => {});
+      vi.doUnmock('./client/transport/mutations/sessionClientDurableMutationPersistence');
+    }
+  });
+
+  it('does not expose the legacy primary turn runtime state writer', async () => {
+    const { ApiSessionClient } = await import('./sessionClient');
+    expect(ApiSessionClient.prototype).not.toHaveProperty('updatePrimaryTurnRuntimeState');
+  });
+
+  it('keeps unsupported old-preview session turn mutations queued without consuming retry budget or emitting update-state', async () => {
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS = '1';
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue({ response: { status: 404 } });
+    const deliveredEvents: string[] = [];
+    const { logger } = await import('@/ui/logger');
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async (event: string) => {
+        deliveredEvents.push(event);
+        if (event === 'session-turn-mutation') return { ok: false, errorCode: 'unsupported' };
+        if (event === 'update-state') {
+          throw new Error('unsupported session turn mutations must not fall back to update-state');
+        }
+        return { ok: true };
+      },
+    });
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const mutation = createFailTurnMutation();
+    await saveQueuedSessionTurnMutation(mutation);
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    await expect.poll(() => deliveredEvents).toEqual(['session-turn-mutation']);
+    await expect.poll(() => readPersistedOutboxMutations('s1')).toEqual([
+      expect.objectContaining({
+        kind: 'session_turn_mutation',
+        mutationId: 'mutation-fail',
+        attempts: 0,
+      }),
+    ]);
+    await expect(readPersistedOutboxDeadLetters('s1')).resolves.toEqual([]);
+    const unsupportedDiagnostics = debugSpy.mock.calls.filter(([message]) =>
+      message === '[API] Session turn mutation unsupported by server; keeping durable outbox mutation queued'
+    );
+    expect(unsupportedDiagnostics).toHaveLength(1);
+    expect(unsupportedDiagnostics[0]?.[1]).toEqual(expect.objectContaining({
+      sessionId: 's1',
+      mutationId: 'mutation-fail',
+      action: 'fail',
+      turnId: 'turn-1',
+      serverOrigin: expect.any(String),
+      socket: expect.objectContaining({ transport: 'socket', evidence: 'unsupported_ack' }),
+      http: expect.objectContaining({ transport: 'http', evidence: 'unsupported_status', status: 404 }),
+    }));
+    debugSpy.mockRestore();
+    await outbox.close();
+  });
+
+  it('keeps 400 session turn mutation rejections queued without emitting update-state', async () => {
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue({ response: { status: 400 } });
+    const deliveredEvents: string[] = [];
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async (event: string) => {
+        deliveredEvents.push(event);
+        if (event === 'session-turn-mutation') return { result: 'error' };
+        if (event === 'update-state') {
+          throw new Error('400 session turn mutation rejection must not fall back to update-state');
+        }
+        return { ok: true };
+      },
+    });
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const mutation = createFailTurnMutation();
+    await saveQueuedSessionTurnMutation(mutation);
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    await expect.poll(() => deliveredEvents).toEqual(['session-turn-mutation']);
+    await expect.poll(() => readPersistedOutboxMutations('s1')).toEqual([
+      expect.objectContaining({
+        kind: 'session_turn_mutation',
+        payload: expect.objectContaining({ action: 'fail' }),
+        attempts: 1,
+      }),
+    ]);
+    expect(sessionSocketStub.emitWithAck).not.toHaveBeenCalledWith(
+      'update-state',
+      expect.anything(),
+    );
+    await outbox.close();
+  });
+
+  it('redacts durable outbox delivery errors before logging', async () => {
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue(Object.assign(
+      new Error(
+        'delivery failed for https://alice:SUPER_SECRET_PASSWORD@api.example.test/v1/sessions/s1/turns/mutations?token=secret Authorization: Bearer OUTBOX_SECRET',
+      ),
+      { response: { status: 401 } },
+    ));
+    const { logger } = await import('@/ui/logger');
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: false,
+      emitWithAck: async () => {
+        throw new Error('socket emit should not be reached while disconnected');
+      },
+    });
+
+    try {
+      const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+      const mutation = createFailTurnMutation();
+      await saveQueuedSessionTurnMutation(mutation);
+      const outbox = createSessionClientDurableMutationOutbox({
+        token: 'tok',
+        sessionId: 's1',
+        getSocket: () => sessionSocketStub,
+        requestReconnect: () => {},
+      });
+
+      await expect.poll(() => axiosPost.mock.calls.length).toBe(1);
+      const [, logged] = debugSpy.mock.calls.find(([message]) =>
+        message === '[API] Durable session mutation delivery failed'
+      ) ?? [];
+      expect(logged).toEqual(expect.objectContaining({
+        error: expect.objectContaining({
+          name: 'Error',
+          message: 'delivery failed for https://api.example.test/v1/sessions/s1/turns/mutations Authorization: <redacted>',
+        }),
+      }));
+      expect(JSON.stringify(logged)).not.toContain('SUPER_SECRET_PASSWORD');
+      expect(JSON.stringify(logged)).not.toContain('token=secret');
+      expect(JSON.stringify(logged)).not.toContain('OUTBOX_SECRET');
+      await outbox.close();
+    } finally {
+      debugSpy.mockRestore();
+    }
+  });
+
+  it('ignores persisted legacy primary turn projection outbox records', async () => {
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue(new Error('canonical delivery should not run'));
+    const deliveredEvents: string[] = [];
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async (event: string) => {
+        deliveredEvents.push(event);
+        return { ok: true };
+      },
+    });
+
+    const { resolveSessionClientDurableMutationOutboxPath } = await import('./client/transport/mutations/sessionClientDurableMutationPersistence');
+    const filePath = resolveSessionClientDurableMutationOutboxPath('s1');
+    await mkdir(dirname(filePath), { recursive: true });
+    await writeFile(filePath, JSON.stringify({
+      v: 1,
+      mutations: [{
+        kind: 'primary_turn_projection',
+        mutationId: 'legacy-projection-1',
+        payload: {
+          v: 1,
+          sessionId: 's1',
+          mutationId: 'legacy-projection-1',
+          status: 'failed',
+          observedAt: 200,
+        },
+        createdAt: 200,
+        attempts: 0,
+        nextAttemptAt: 0,
+      }],
+    }), 'utf8');
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+    await outbox.flush('flush');
+
+    expect(deliveredEvents).toEqual([]);
+    await outbox.close();
+    await expect(readPersistedOutboxMutationCount('s1')).resolves.toBe(0);
+  });
+
+  it('keeps later turn mutations queued behind a failed begin mutation until backoff expires', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(0);
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '100';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_RETRY_MS = '200';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+
+    const firstHttpAttempt = createDeferred<never>();
+    const httpActions: string[] = [];
+    let isFirstHttpAttempt = true;
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockImplementation(async (_url, body) => {
+      const action = (body as { action?: unknown }).action;
+      httpActions.push(typeof action === 'string' ? action : 'unknown');
+      if (isFirstHttpAttempt) {
+        isFirstHttpAttempt = false;
+        return await firstHttpAttempt.promise;
+      }
+      return { status: 200, data: { ok: true } } as never;
+    });
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: false,
+      emitWithAck: async () => {
+        throw new Error('socket emit should not be reached while disconnected');
+      },
+    });
+    const reconnectReasons: string[] = [];
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: (reason) => {
+        reconnectReasons.push(reason);
+      },
+    });
+
+    await outbox.enqueueSessionTurnMutation({
+      v: 1,
+      sessionId: 's1',
+      mutationId: 'mutation-begin',
+      action: 'begin',
+      turnId: 'turn-1',
+      provider: 'codex',
+      providerTurnId: 'turn-1',
+      observedAt: 100,
+    });
+    await drainAsyncWork();
+    expect(httpActions).toEqual(['begin']);
+
+    await outbox.enqueueSessionTurnMutation({
+      v: 1,
+      sessionId: 's1',
+      mutationId: 'mutation-complete',
+      action: 'complete',
+      turnId: 'turn-1',
+      provider: 'codex',
+      providerTurnId: 'turn-1',
+      observedAt: 200,
+    });
+    await expect(readPersistedOutboxMutations('s1')).resolves.toEqual([
+      expect.objectContaining({
+        kind: 'session_turn_mutation',
+        payload: expect.objectContaining({ action: 'begin' }),
+      }),
+      expect.objectContaining({
+        kind: 'session_turn_mutation',
+        payload: expect.objectContaining({ action: 'complete' }),
+      }),
+    ]);
+
+    firstHttpAttempt.reject(new Error('server offline'));
+
+    await waitForAsyncCondition(async () => {
+      const [head] = await readPersistedOutboxMutations('s1');
+      const attempts = typeof head === 'object' && head !== null && 'attempts' in head
+        ? head.attempts
+        : undefined;
+      return httpActions.length > 1 || attempts === 1;
+    });
+    expect(httpActions).toEqual(['begin']);
+    await expect(readPersistedOutboxMutations('s1')).resolves.toEqual([
+      expect.objectContaining({
+        attempts: 1,
+        nextAttemptAt: 200,
+        kind: 'session_turn_mutation',
+        payload: expect.objectContaining({ action: 'begin' }),
+      }),
+      expect.objectContaining({
+        attempts: 0,
+        kind: 'session_turn_mutation',
+        payload: expect.objectContaining({ action: 'complete' }),
+      }),
+    ]);
+
+    await vi.advanceTimersToNextTimerAsync();
+    expect(Date.now()).toBe(200);
+    expect(reconnectReasons).not.toContain('timer');
+    await drainAsyncWork();
+    expect(httpActions).toEqual(['begin', 'begin', 'complete']);
+    await expect(readPersistedOutboxMutationCount('s1')).resolves.toBe(0);
+    await outbox.close();
+  });
+
+  it('keeps disconnected session turn mutations queued without consuming retry budget when HTTP fallback reports an unsupported route', async () => {
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue({ response: { status: 404 } });
+    const deliveredEvents: string[] = [];
+    const { logger } = await import('@/ui/logger');
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: false,
+      emitWithAck: async (event: string) => {
+        deliveredEvents.push(event);
+        throw new Error('socket emit should not be reached while disconnected');
+      },
+    });
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const mutation = createFailTurnMutation();
+    await saveQueuedSessionTurnMutation(mutation);
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    await expect.poll(() => deliveredEvents).toEqual([]);
+    await expect.poll(() => readPersistedOutboxMutations('s1')).toEqual([
+      expect.objectContaining({
+        kind: 'session_turn_mutation',
+        payload: expect.objectContaining({ action: 'fail' }),
+        attempts: 0,
+      }),
+    ]);
+    expect(debugSpy.mock.calls.some(([message]) =>
+      message === '[API] Session turn mutation unsupported by server; dropping durable outbox mutation'
+    )).toBe(false);
+    debugSpy.mockRestore();
+    await outbox.close();
+  });
+
+  it('waits for pending turn mutation enqueues and session-end enqueue before closing the durable mutation outbox', async () => {
+    const turnMutationEnqueue = createDeferred<void>();
+    const sessionEndEnqueue = createDeferred<void>();
+    const outboxClose = createDeferred<void>();
+    const outboxEvents: string[] = [];
+    vi.doMock('./client/transport/mutations/createSessionClientDurableMutationOutbox', () => ({
+      createSessionClientDurableMutationOutbox: () => ({
+        enqueueSessionTurnMutation: async (mutation: { action: string }) => {
+          outboxEvents.push(`enqueue:${mutation.action}:start`);
+          await turnMutationEnqueue.promise;
+          outboxEvents.push(`enqueue:${mutation.action}:end`);
+        },
+        enqueueSessionEnd: async () => {
+          outboxEvents.push('enqueue:end-session:start');
+          await sessionEndEnqueue.promise;
+          outboxEvents.push('enqueue:end-session:end');
+        },
+        flush: async () => {
+          outboxEvents.push('flush');
+        },
+        close: async () => {
+          outboxEvents.push('outbox-close:start');
+          await outboxClose.promise;
+          outboxEvents.push('outbox-close:end');
+        },
+      }),
+    }));
+
+    sessionSocketStub = createApiSessionSocketStub({ connected: false });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+
+    try {
+      const { ApiSessionClient } = await import('./sessionClient');
+      const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+
+      void client.enqueueSessionTurnMutation({
+        v: 1,
+        sessionId: 's1',
+        mutationId: 'mutation-cancel',
+        action: 'cancel',
+        turnId: 'turn-1',
+        provider: 'codex',
+        providerTurnId: 'turn-1',
+        observedAt: 100,
+      });
+      client.sendSessionDeath();
+
+      let closeSettled = false;
+      const closePromise = client.close().then(() => {
+        closeSettled = true;
+      });
+
+      await expect.poll(() => outboxEvents).toContain('enqueue:cancel:start');
+      await expect.poll(() => outboxEvents).toContain('enqueue:end-session:start');
+      await expect.poll(() => closeSettled, { timeout: 50 }).toBe(false);
+      expect(outboxEvents).not.toContain('outbox-close:start');
+
+      turnMutationEnqueue.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(outboxEvents).not.toContain('outbox-close:start');
+
+      sessionEndEnqueue.resolve();
+      await expect.poll(() => outboxEvents).toContain('outbox-close:start');
+      outboxClose.resolve();
+      await closePromise;
+
+      expect(outboxEvents).toContain('enqueue:cancel:end');
+      expect(outboxEvents).toContain('enqueue:end-session:end');
+      expect(outboxEvents.at(-1)).toBe('outbox-close:end');
+    } finally {
+      turnMutationEnqueue.resolve();
+      sessionEndEnqueue.resolve();
+      outboxClose.resolve();
+      vi.doUnmock('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+      vi.resetModules();
+    }
+  });
+
+  it('uses HTTP fallback for session-end when the socket is disconnected', async () => {
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockResolvedValue({ status: 200, data: { ok: true } } as never);
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: false,
+      emitWithAck: async () => {
+        throw new Error('socket emit should not be reached while disconnected');
+      },
+    });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    client.sendSessionDeath();
+    await Promise.resolve();
+    await client.flush();
+
+    expect(axiosPost.mock.calls.length).toBeGreaterThan(0);
+    expect(axiosPost.mock.calls[0]?.[0]).toContain('/v1/sessions/s1/end');
+    expect(axiosPost.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      time: expect.any(Number),
+    }));
+    await client.close();
+  });
+
+  it('flushes newer session-turn mutations without delivering superseded session-end mutations', async () => {
+    const axiosPost = await getAxiosPostMock();
+    const postCalls: string[] = [];
+    axiosPost.mockImplementation(async (url) => {
+      const requestUrl = String(url);
+      postCalls.push(requestUrl);
+      if (requestUrl.includes('/end')) {
+        throw new Error('superseded session-end should not be delivered');
+      }
+      return { status: 200, data: { ok: true } } as never;
+    });
+    const socket = createApiSessionSocketStub({
+      connected: false,
+      emitWithAck: async () => {
+        throw new Error('socket emit should not be reached while disconnected');
+      },
+    });
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const { saveSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/sessionClientDurableMutationPersistence');
+    const { createSessionEndMutation } = await import('./client/transport/mutations/sessionClientDurableMutationTypes');
+
+    const staleEnd = createSessionEndMutation({
+      sessionId: 's1',
+      observedAt: 1_000,
+    });
+    const newerBegin: SessionTurnMutationV1 = {
+      v: 1,
+      sessionId: 's1',
+      mutationId: 'begin-new',
+      action: 'begin',
+      turnId: 'session-turn:new',
+      provider: 'codex',
+      observedAt: 2_000,
+    };
+    await saveSessionClientDurableMutationOutbox('s1', [
+      {
+        kind: 'session_end',
+        mutationId: staleEnd.mutationId,
+        payload: staleEnd,
+        createdAt: 1_000,
+        attempts: 3,
+        nextAttemptAt: 0,
+      },
+      {
+        kind: 'session_turn_mutation',
+        mutationId: newerBegin.mutationId,
+        payload: newerBegin,
+        createdAt: 2_000,
+        attempts: 0,
+        nextAttemptAt: 0,
+      },
+    ]);
+
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => socket,
+      requestReconnect: () => {},
+    });
+
+    await expect.poll(() => postCalls.some((url) => url.includes('/turns/mutations'))).toBe(true);
+    expect(postCalls.some((url) => url.includes('/end'))).toBe(false);
+    await expect.poll(() => readPersistedOutboxMutationCount('s1')).toBe(0);
+    await outbox.close();
+  });
+
+  it('limits durable deliveries globally across reattached session outboxes', async () => {
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_DELIVERY_CONCURRENCY = '1';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+    const axiosPost = await getAxiosPostMock();
+    const releases: Array<() => void> = [];
+    const startedUrls: string[] = [];
+    let activeDeliveries = 0;
+    let maxActiveDeliveries = 0;
+    axiosPost.mockImplementation(async (url) => {
+      startedUrls.push(String(url));
+      activeDeliveries += 1;
+      maxActiveDeliveries = Math.max(maxActiveDeliveries, activeDeliveries);
+      await new Promise<void>((resolve) => {
+        releases.push(resolve);
+      });
+      activeDeliveries -= 1;
+      return { status: 200, data: { ok: true } } as never;
+    });
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: false,
+      emitWithAck: async () => {
+        throw new Error('socket emit should not be reached while disconnected');
+      },
+    });
+
+    const { saveSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/sessionClientDurableMutationPersistence');
+    for (const sessionId of ['s1', 's2']) {
+      const mutation = createTranscriptAppendMutation({ sessionId, localId: 'stream-1' });
+      await saveSessionClientDurableMutationOutbox(sessionId, [{
+        kind: 'transcript_message_append',
+        mutationId: mutation.mutationId,
+        payload: mutation,
+        createdAt: mutation.createdAt,
+        attempts: 0,
+        nextAttemptAt: 0,
+      }]);
+    }
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox1 = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+    const outbox2 = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's2',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+    const flushes = [outbox1.flush('connect'), outbox2.flush('connect')];
+
+    try {
+      await waitForAsyncCondition(async () => startedUrls.length >= 1);
+      expect(startedUrls).toHaveLength(1);
+      expect(maxActiveDeliveries).toBe(1);
+
+      releases.shift()?.();
+      await waitForAsyncCondition(async () => startedUrls.length >= 2);
+      expect(maxActiveDeliveries).toBe(1);
+
+      releases.shift()?.();
+      await Promise.all(flushes);
+      await expect.poll(() => readPersistedOutboxMutationCount('s1')).toBe(0);
+      await expect.poll(() => readPersistedOutboxMutationCount('s2')).toBe(0);
+    } finally {
+      while (releases.length > 0) releases.shift()?.();
+      await Promise.allSettled(flushes);
+      await outbox1.close();
+      await outbox2.close();
+    }
+  });
+
+  it('loads persisted registered session-state field mutations as durable outbox entries', async () => {
+    const { resolveSessionClientDurableMutationOutboxPath, loadSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/sessionClientDurableMutationPersistence');
+    const filePath = resolveSessionClientDurableMutationOutboxPath('s1');
+    const fieldMutation = {
+      kind: 'registered_session_state_field',
+      mutationId: 'field-work-state-1',
+      payload: {
+        v: 1,
+        sessionId: 's1',
+        mutationId: 'field-work-state-1',
+        fieldId: 'runtime.workState',
+        deliveryClass: 'durable_required',
+        op: {
+          kind: 'set',
+          value: {
+            v: 1,
+            backendId: 'codex-app-server',
+            updatedAt: 100,
+            items: [],
+          },
+        },
+        source: 'runtime',
+        observedAt: 100,
+      },
+      createdAt: 100,
+      attempts: 0,
+      nextAttemptAt: 0,
+    };
+    await mkdir(dirname(filePath), { recursive: true });
+    await writeFile(filePath, JSON.stringify({ v: 1, mutations: [fieldMutation] }), 'utf8');
+
+    await expect(loadSessionClientDurableMutationOutbox('s1')).resolves.toEqual([
+      expect.objectContaining({
+        kind: 'registered_session_state_field',
+        mutationId: 'field-work-state-1',
+        payload: expect.objectContaining({
+          fieldId: 'runtime.workState',
+          source: 'runtime',
+        }),
+      }),
+    ]);
+  });
+
+  it('dead-letters dependent mutations when their prerequisite exhausts retry attempts', async () => {
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS = '1';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+    const axiosPost = await getAxiosPostMock();
+    const attemptedActions: string[] = [];
+    axiosPost.mockImplementation(async (_url, body) => {
+      const action = (body as { action?: unknown }).action;
+      attemptedActions.push(typeof action === 'string' ? action : 'unknown');
+      throw new Error('server unavailable');
+    });
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: false,
+      emitWithAck: async () => {
+        throw new Error('socket emit should not be reached while disconnected');
+      },
+    });
+
+    const { saveSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/sessionClientDurableMutationPersistence');
+    await saveSessionClientDurableMutationOutbox('s1', [
+      {
+        kind: 'session_turn_mutation',
+        mutationId: 'mutation-begin',
+        payload: {
+          v: 1,
+          sessionId: 's1',
+          mutationId: 'mutation-begin',
+          action: 'begin',
+          turnId: 'turn-1',
+          observedAt: 100,
+        },
+        createdAt: 100,
+        attempts: 0,
+        nextAttemptAt: 0,
+      },
+      {
+        kind: 'session_turn_mutation',
+        mutationId: 'mutation-complete',
+        payload: {
+          v: 1,
+          sessionId: 's1',
+          mutationId: 'mutation-complete',
+          action: 'complete',
+          turnId: 'turn-1',
+          observedAt: 200,
+        },
+        dependsOn: [{
+          mutationId: 'mutation-begin',
+          relationship: 'same_turn_prerequisite',
+        }],
+        createdAt: 200,
+        attempts: 0,
+        nextAttemptAt: 0,
+      },
+    ]);
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    await waitForAsyncCondition(async () => (await readPersistedOutboxDeadLetters('s1')).length >= 2);
+    expect(attemptedActions).toEqual(['begin']);
+    await expect(readPersistedOutboxDeadLetters('s1')).resolves.toEqual([
+      expect.objectContaining({
+        kind: 'session_turn_mutation',
+        mutationId: 'mutation-begin',
+        reason: 'retry_exhausted',
+      }),
+      expect.objectContaining({
+        kind: 'session_turn_mutation',
+        mutationId: 'mutation-complete',
+        reason: 'failed_prerequisite',
+        diagnostic: expect.objectContaining({
+          prerequisiteMutationId: 'mutation-begin',
+        }),
+      }),
+    ]);
+    await expect(readPersistedOutboxMutationCount('s1')).resolves.toBe(0);
+    await outbox.close();
+  });
+
+  it('pauses authentication failures without consuming retry attempts', async () => {
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_MAX_ATTEMPTS = '1';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '60000';
+    process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+    const axiosPost = await getAxiosPostMock();
+    axiosPost.mockRejectedValue(Object.assign(new Error('expired bearer secret-token'), {
+      response: { status: 401 },
+    }));
+    sessionSocketStub = createApiSessionSocketStub({
+      connected: false,
+      emitWithAck: async () => {
+        throw new Error('socket emit should not be reached while disconnected');
+      },
+    });
+
+    await saveQueuedSessionTurnMutation({
+      v: 1,
+      sessionId: 's1',
+      mutationId: 'mutation-auth',
+      action: 'begin',
+      turnId: 'turn-auth',
+      observedAt: 100,
+    });
+
+    const { createSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/createSessionClientDurableMutationOutbox');
+    const outbox = createSessionClientDurableMutationOutbox({
+      token: 'tok',
+      sessionId: 's1',
+      getSocket: () => sessionSocketStub,
+      requestReconnect: () => {},
+    });
+
+    await waitForAsyncCondition(async () => {
+      const mutations = await readPersistedOutboxMutations('s1');
+      const first = mutations[0];
+      return Boolean(
+        first
+        && typeof first === 'object'
+        && !Array.isArray(first)
+        && (first as Record<string, unknown>).paused !== undefined,
+      );
+    });
+
+    const [queued] = await readPersistedOutboxMutations('s1');
+    expect(queued).toMatchObject({
+      mutationId: 'mutation-auth',
+      attempts: 0,
+      paused: {
+        reason: 'session_auth_recovery',
+      },
+    });
+    expect(JSON.stringify(queued)).not.toContain('secret-token');
+    await expect(readPersistedOutboxDeadLetters('s1')).resolves.toEqual([]);
+    await outbox.close();
+  });
+
+});

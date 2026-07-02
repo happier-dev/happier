@@ -2,7 +2,10 @@ import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSup
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 
 import type { AgentState, Metadata } from '../../../types';
+import type { KnownPendingQueueState } from '../../pendingQueueState';
 import { fetchSessionSnapshotUpdateFromServer } from '../../snapshotSync';
+import type { SessionSnapshotRefreshReason } from '../../sessionSnapshotRefreshReason';
+import type { LatestTurnStatusSnapshot } from '../../sessionTurnStatusSnapshot';
 
 export async function syncSessionSnapshotFromServer(
     params: Readonly<{
@@ -18,8 +21,11 @@ export async function syncSessionSnapshotFromServer(
         isClosed: () => boolean;
         setMetadataSnapshot: (metadata: Metadata, version: number) => void;
         setAgentStateSnapshot: (agentState: AgentState | null, version: number) => void;
+        applyPendingQueueState: (state: KnownPendingQueueState) => void;
+        applyLatestTurnStatus: (status: LatestTurnStatusSnapshot) => void;
+        reason: SessionSnapshotRefreshReason;
     }>,
-): Promise<void> {
+): Promise<boolean> {
     const request = () => fetchSessionSnapshotUpdateFromServer({
         token: params.token,
         sessionId: params.sessionId,
@@ -29,6 +35,7 @@ export async function syncSessionSnapshotFromServer(
         currentAgentStateVersion: params.currentAgentStateVersion,
         currentMetadata: params.currentMetadata,
         currentAgentState: params.currentAgentState,
+        reason: params.reason,
     });
     const update = params.sessionConnectionSupervisor
         ? await runSupervisedRequest({
@@ -39,7 +46,7 @@ export async function syncSessionSnapshotFromServer(
         })
         : await request();
 
-    if (params.isClosed()) return;
+    if (params.isClosed()) return false;
 
     if (update.metadata) {
         params.setMetadataSnapshot(update.metadata.metadata, update.metadata.metadataVersion);
@@ -48,4 +55,15 @@ export async function syncSessionSnapshotFromServer(
     if (update.agentState) {
         params.setAgentStateSnapshot(update.agentState.agentState, update.agentState.agentStateVersion);
     }
+
+    if (update.pendingQueueState) {
+        params.applyPendingQueueState(update.pendingQueueState);
+    }
+
+    const latestTurnStatus = update.latestTurnStatus;
+    if (latestTurnStatus !== undefined) {
+        params.applyLatestTurnStatus(latestTurnStatus);
+    }
+
+    return true;
 }

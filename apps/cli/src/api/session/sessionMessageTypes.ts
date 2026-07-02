@@ -1,4 +1,38 @@
+import type { TranscriptRawAgentEventV1 } from '@happier-dev/protocol';
+
 type AcpSidechainMeta = { sidechainId?: string };
+type TranscriptEventLifecycle = {
+  lifecycleId?: string;
+};
+type ConnectedServiceRuntimeAuthRecoverySessionEventMessage = Extract<
+  TranscriptRawAgentEventV1,
+  { type: 'connected-service-runtime-auth-recovery' }
+>;
+type ContextCompactionPhase = 'started' | 'progress' | 'completed' | 'failed' | 'cancelled';
+type ContextCompactionSource =
+  | 'provider-event'
+  | 'provider-status'
+  | 'provider-hook'
+  | 'transcript-inference'
+  | 'user-command'
+  | 'runtime';
+type ContextCompactionEventFields = {
+  phase: ContextCompactionPhase;
+  provider?: string;
+  backendId?: string;
+  agentId?: string;
+  trigger?: 'manual' | 'auto' | 'threshold' | 'overflow' | 'unknown';
+  source?: ContextCompactionSource;
+  providerEventId?: string;
+  providerSessionId?: string;
+  turnId?: string;
+  tokenCountBefore?: number;
+  tokenCountAfter?: number;
+  tokenCountSource?: string;
+  retryAttempt?: number;
+  errorCode?: string;
+  sanitizedErrorPreview?: string;
+};
 
 export type ACPMessageData = AcpSidechainMeta & (
   | { type: 'message'; message: string }
@@ -16,12 +50,15 @@ export type ACPMessageData = AcpSidechainMeta & (
   | { type: 'permission-request'; permissionId: string; toolName: string; description: string; options?: unknown }
   | { type: 'permission-response'; permissionId: string; approved: boolean; decision?: string; toolName?: string }
   | { type: 'token_count'; [key: string]: unknown }
+  | (TranscriptEventLifecycle & { type: 'context-compaction' } & ContextCompactionEventFields)
 );
 
 export type ACPProvider = string;
 
 export type SessionEventMessage =
-  | { type: 'switch'; mode: 'local' | 'remote' }
-  | { type: 'message'; message: string }
+  | (TranscriptEventLifecycle & { type: 'switch'; mode: 'local' | 'remote' })
+  | (TranscriptEventLifecycle & { type: 'message'; message: string })
+  | (TranscriptEventLifecycle & { type: 'context-compaction' } & ContextCompactionEventFields)
+  | ConnectedServiceRuntimeAuthRecoverySessionEventMessage
   | { type: 'permission-mode-changed'; mode: import('../types').PermissionMode }
-  | { type: 'ready' };
+  | (TranscriptEventLifecycle & { type: 'ready' });

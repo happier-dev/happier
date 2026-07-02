@@ -12,7 +12,7 @@ import { readCredentials } from '@/persistence';
 
 import { resolveRecentActivityWindowMs } from './actionConfiguration';
 import type { ExternalSessionActionContext } from './externalSessionActionContext';
-import { getExternalSessionProviderOps } from './providerOpsResolution';
+import { resolveExternalSessionSurfaceOps } from './providerOpsResolution';
 import { isPidAlive } from './processLiveness';
 import { externalSessionsError, internalErrorResponse } from './responseErrors';
 
@@ -66,10 +66,16 @@ export async function executeExternalSessionStatusGetAction(
     }
 
     try {
-        const res = await (await getExternalSessionProviderOps(parsed.data.providerId)).getActivity({
+        const providerOps = await resolveExternalSessionSurfaceOps(parsed.data.providerId);
+        const res = providerOps.getActivity
+            ? await providerOps.getActivity({
             source: validatedSource.source,
             remoteSessionId: parsed.data.remoteSessionId,
-        });
+        })
+            : null;
+        if (!res) {
+            throw new Error('external_session_activity_not_supported');
+        }
         if (typeof res.lastActivityAtMs === 'number' && Number.isFinite(res.lastActivityAtMs) && res.lastActivityAtMs >= 0) {
             lastKnownActivityAtMs = res.lastActivityAtMs;
             const ageMs = nowMs - res.lastActivityAtMs;

@@ -14,6 +14,7 @@ import { SessionForkRpcParamsSchema } from '@happier-dev/protocol';
 import { attemptAcpLatestFork } from './fork/attemptAcpLatestFork';
 import { attemptProviderNativeFork } from './fork/attemptProviderNativeFork';
 import { createReplayForkSession } from './fork/createReplayForkSession';
+import type { ForkLifecycleResult } from './fork/forkLifecycleTypes';
 import { readReplayTextLimitFromEnv } from './fork/readReplayTextLimitFromEnv';
 import type {
     SessionLifecycleActionHandler,
@@ -26,6 +27,8 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
     handlers: SessionLifecycleMachineHandlers;
     deps?: SessionLifecycleMachineDeps;
 }>): SessionLifecycleActionHandler {
+    const inFlightForks = new Map<string, Promise<ForkLifecycleResult>>();
+
     return async (raw: unknown) => {
         const parsed = SessionForkRpcParamsSchema.safeParse(raw);
         if (!parsed.success) {
@@ -117,7 +120,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
 
         const forkIsConfiguredAcp = forkBackendResolution.configuredAcp !== null;
         const forkProviderAgentId = forkBackendResolution.providerAgentId;
-        const inheritedForkOverrides = resolveForkInheritedOverridesFromMetadata(parentMetadata);
+        const inheritedForkOverrides = resolveForkInheritedOverridesFromMetadata(parentMetadata, forkProviderAgentId);
 
         const targetSeqInclusive = forkPoint.type === 'seq'
             ? forkPoint.upToSeqInclusive
@@ -146,79 +149,101 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                 ? resolvedCutoff.cutoffSeqInclusive
                 : cutoffSeqInclusive;
 
-        const spawnNonce = `fork:${parentSessionId}:${effectiveCutoffSeqInclusive}:${randomUUID()}`;
-        const maxTextChars = readReplayTextLimitFromEnv();
+        const forkSingleFlightKey = `${parentSessionId}:${forkPoint.type}:${effectiveCutoffSeqInclusive}`;
+        const existingFork = inFlightForks.get(forkSingleFlightKey);
+        if (existingFork) {
+            return await existingFork;
+        }
 
-        const providerNativeFork = await attemptProviderNativeFork({
-            requestedStrategy,
-            credentials,
-            parentSessionId,
-            parentSession,
-            parentMetadata,
-            directory,
-            forkPoint,
-            targetSeqInclusive,
-            effectiveCutoffSeqInclusive,
-            spawnNonce,
-            forkBackendResolution,
-            inheritedForkOverrides,
-            spawnSession: params.handlers.spawnSession,
-            stopSession: params.handlers.stopSession,
-        });
-        if (providerNativeFork) return providerNativeFork;
+        const forkPromise = (async (): Promise<ForkLifecycleResult> => {
+            const spawnNonce = `fork:${parentSessionId}:${effectiveCutoffSeqInclusive}:${randomUUID()}`;
+            const maxTextChars = readReplayTextLimitFromEnv();
+            const forkSurface = (await params.sessionHostBridge.resolveExecutionSurfaces(
+                forkBackendResolution.backendTargetV2.backendId,
+            )).fork;
 
-        const shouldAttemptAcpForkLatest =
-            (requestedStrategy === 'auto' || requestedStrategy === 'acp_fork_latest') &&
-            forkPoint.type === 'latest' &&
-            (
-                forkIsConfiguredAcp ||
-                (forkProviderAgentId !== null && isAcpForkEligibleForProvider({
-                    providerId: forkProviderAgentId,
-                    metadata: parentMetadata,
-                }))
-            );
-
-        if (shouldAttemptAcpForkLatest) {
-            const acpLatestFork = await attemptAcpLatestFork({
+            const providerNativeFork = await attemptProviderNativeFork({
                 requestedStrategy,
+                credentials,
+                parentSessionId,
+                parentSession,
+                parentMetadata,
+                directory,
+                forkPoint,
+                targetSeqInclusive,
+                effectiveCutoffSeqInclusive,
+                spawnNonce,
+                forkBackendResolution,
+                inheritedForkOverrides,
+                forkSurface,
+                spawnSession: params.handlers.spawnSession,
+                stopSession: params.handlers.stopSession,
+            });
+            if (providerNativeFork) return providerNativeFork;
+
+            const shouldAttemptAcpForkLatest =
+                (requestedStrategy === 'auto' || requestedStrategy === 'acp_fork_latest') &&
+                forkPoint.type === 'latest' &&
+                (
+                    forkIsConfiguredAcp ||
+                    (forkProviderAgentId !== null && isAcpForkEligibleForProvider({
+                        providerId: forkProviderAgentId,
+                        metadata: parentMetadata,
+                    }))
+                );
+
+            if (shouldAttemptAcpForkLatest) {
+                const acpLatestFork = await attemptAcpLatestFork({
+                    requestedStrategy,
+                    credentials,
+                    parentSessionId,
+                    parentMetadata,
+                    directory,
+                    effectiveCutoffSeqInclusive,
+                    forkIsConfiguredAcp,
+                    forkProviderAgentId,
+                    forkBackendResolution,
+                    inheritedForkOverrides,
+                    forkSurface,
+                    spawnSession: params.handlers.spawnSession,
+                    stopSession: params.handlers.stopSession,
+                });
+                if (acpLatestFork) return acpLatestFork;
+            }
+
+            if (requestedStrategy !== 'auto' && requestedStrategy !== 'replay') {
+                return {
+                    ok: false,
+                    errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                    errorMessage: 'Requested fork strategy is not supported',
+                };
+            }
+
+            return await createReplayForkSession({
                 credentials,
                 parentSessionId,
                 parentMetadata,
                 directory,
                 effectiveCutoffSeqInclusive,
-                forkIsConfiguredAcp,
-                forkProviderAgentId,
+                spawnNonce,
+                forkPointType: forkPoint.type,
+                replaySummaryRunner: parsed.data.replaySummaryRunner,
+                replayMaxSeedChars: parsed.data.replayMaxSeedChars,
+                maxTextChars: maxTextChars ?? undefined,
                 forkBackendResolution,
                 inheritedForkOverrides,
+                forkSurface,
                 spawnSession: params.handlers.spawnSession,
-                stopSession: params.handlers.stopSession,
+                deps: params.deps,
             });
-            if (acpLatestFork) return acpLatestFork;
+        })();
+        inFlightForks.set(forkSingleFlightKey, forkPromise);
+        try {
+            return await forkPromise;
+        } finally {
+            if (inFlightForks.get(forkSingleFlightKey) === forkPromise) {
+                inFlightForks.delete(forkSingleFlightKey);
+            }
         }
-
-        if (requestedStrategy !== 'auto' && requestedStrategy !== 'replay') {
-            return {
-                ok: false,
-                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-                errorMessage: 'Requested fork strategy is not supported',
-            };
-        }
-
-        return await createReplayForkSession({
-            credentials,
-            parentSessionId,
-            parentMetadata,
-            directory,
-            effectiveCutoffSeqInclusive,
-            spawnNonce,
-            forkPointType: forkPoint.type,
-            replaySummaryRunner: parsed.data.replaySummaryRunner,
-            replayMaxSeedChars: parsed.data.replayMaxSeedChars,
-            maxTextChars: maxTextChars ?? undefined,
-            forkBackendResolution,
-            inheritedForkOverrides,
-            spawnSession: params.handlers.spawnSession,
-            deps: params.deps,
-        });
     };
 }

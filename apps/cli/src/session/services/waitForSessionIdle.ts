@@ -1,5 +1,10 @@
 import type { Credentials } from '@/persistence';
-import { detectSessionTurnActivity } from '@/session/query/detectSessionTurnInFlight';
+import {
+  detectSessionTurnActivity,
+  detectSessionTurnActivityFromProjection,
+  readSessionProjectedPendingRequestCount,
+} from '@/session/query/detectSessionTurnInFlight';
+import { detectLatestSessionTurnActivity } from '@/session/query/detectLatestSessionTurnActivity';
 import { waitForIdleViaSocket } from '@/session/transport/socket/sessionSocketAgentState';
 
 import { resolveSessionTransportContext } from './resolveSessionTransportContext';
@@ -26,13 +31,16 @@ export async function waitForSessionIdle(params: Readonly<{
 
   const agentStateCiphertext =
     typeof sessionTarget.rawSession.agentState === 'string' ? String(sessionTarget.rawSession.agentState).trim() : null;
-  const initialTurnActivity = await detectSessionTurnActivity({
-    token: params.credentials.token,
-    sessionId: sessionTarget.sessionId,
-    encryptionMode: sessionTarget.mode,
-    encryptionKey: sessionTarget.ctx.encryptionKey,
-    encryptionVariant: sessionTarget.ctx.encryptionVariant,
-  });
+  const initialProjectedActivity = detectSessionTurnActivityFromProjection(sessionTarget.rawSession);
+  const initialTurnActivity = initialProjectedActivity
+    ?? await detectSessionTurnActivity({
+      token: params.credentials.token,
+      sessionId: sessionTarget.sessionId,
+      encryptionMode: sessionTarget.mode,
+      encryptionKey: sessionTarget.ctx.encryptionKey,
+      encryptionVariant: sessionTarget.ctx.encryptionVariant,
+    });
+  const initialProjectedPendingRequestCount = readSessionProjectedPendingRequestCount(sessionTarget.rawSession);
 
   try {
     const result = await waitForIdleViaSocket({
@@ -43,15 +51,29 @@ export async function waitForSessionIdle(params: Readonly<{
       timeoutMs: params.timeoutMs,
       initialTurnActivity,
       recheckTurnActivity: async () =>
-        detectSessionTurnActivity({
-          token: params.credentials.token,
-          sessionId: sessionTarget.sessionId,
-          encryptionMode: sessionTarget.mode,
-          encryptionKey: sessionTarget.ctx.encryptionKey,
-          encryptionVariant: sessionTarget.ctx.encryptionVariant,
-        }),
+        initialProjectedActivity
+          ? detectLatestSessionTurnActivity({
+            token: params.credentials.token,
+            sessionId: sessionTarget.sessionId,
+            encryptionMode: sessionTarget.mode,
+            encryptionKey: sessionTarget.ctx.encryptionKey,
+            encryptionVariant: sessionTarget.ctx.encryptionVariant,
+          })
+          : detectSessionTurnActivity({
+            token: params.credentials.token,
+            sessionId: sessionTarget.sessionId,
+            encryptionMode: sessionTarget.mode,
+            encryptionKey: sessionTarget.ctx.encryptionKey,
+            encryptionVariant: sessionTarget.ctx.encryptionVariant,
+          }),
+      ...(initialProjectedPendingRequestCount !== null
+        ? { initialAgentStateSummary: { pendingRequestsCount: initialProjectedPendingRequestCount } }
+        : {}),
+      preferProjectionUpdates: initialProjectedActivity !== null,
       initialAgentStateCiphertextBase64:
-        agentStateCiphertext && agentStateCiphertext.length > 0 ? agentStateCiphertext : null,
+        initialProjectedPendingRequestCount === null && agentStateCiphertext && agentStateCiphertext.length > 0
+          ? agentStateCiphertext
+          : null,
     });
     return {
       ok: true,

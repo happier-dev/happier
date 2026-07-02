@@ -77,10 +77,12 @@ export function createStreamedTranscriptWriter(params: {
   checkpointMinChars?: number | null;
   liveSnapshotIntervalMs?: number | null;
   liveSnapshotMinChars?: number | null;
+  durableCommitsRequireExplicitEnable?: boolean;
 }): StreamedTranscriptWriter {
   const provider = params.provider;
   const session = params.session;
   const makeLocalId = typeof params.makeLocalId === 'function' ? params.makeLocalId : () => randomUUID();
+  let durableCommitsEnabled = params.durableCommitsRequireExplicitEnable !== true;
 
   const initialCheckpointDelayMs = resolveInitialCheckpointDelayMs(params.initialCheckpointDelayMs);
   const checkpointIntervalMs = resolveCheckpointIntervalMs(params.checkpointIntervalMs);
@@ -90,8 +92,9 @@ export function createStreamedTranscriptWriter(params: {
 
   const segments = new Map<SegmentKey, SegmentRuntime>();
 
-  const commitDurableSnapshot = (segment: SegmentRuntime, opts: { state: SegmentState; interruptedReason?: string }) => {
+  const commitDurableSnapshot = (segment: SegmentRuntime, opts: { state: SegmentState; interruptedReason?: string; force?: boolean }) => {
     clearDurableCheckpointTimer(segment);
+    if (!durableCommitsEnabled && opts.force !== true) return;
     commitStreamedTranscriptSegmentSnapshot({
       provider,
       session,
@@ -167,6 +170,10 @@ export function createStreamedTranscriptWriter(params: {
   };
 
   const scheduleDurableCheckpoint = (segment: SegmentRuntime) => {
+    if (!durableCommitsEnabled) {
+      clearDurableCheckpointTimer(segment);
+      return;
+    }
     if (!hasDirtyDurableText(segment)) {
       clearDurableCheckpointTimer(segment);
       return;
@@ -286,6 +293,10 @@ export function createStreamedTranscriptWriter(params: {
   };
 
   const maybeCommitDurableStreamingSnapshot = (segment: SegmentRuntime) => {
+    if (!durableCommitsEnabled) {
+      clearDurableCheckpointTimer(segment);
+      return;
+    }
     if (!hasDirtyDurableText(segment)) {
       clearDurableCheckpointTimer(segment);
       return;
@@ -372,7 +383,7 @@ export function createStreamedTranscriptWriter(params: {
       clearDurableCheckpointTimer(segment);
       clearLiveSnapshotTimer(segment);
       emitLiveSnapshot(segment, { state, interruptedReason: opts.interruptedReason });
-      commitDurableSnapshot(segment, { state, interruptedReason: opts.interruptedReason });
+      commitDurableSnapshot(segment, { state, interruptedReason: opts.interruptedReason, force: true });
       drainPromises.push(waitForSegmentDrain(segment));
       segments.delete(segment.key);
     }
@@ -381,11 +392,35 @@ export function createStreamedTranscriptWriter(params: {
     return buildFlushSummary({ flushedSegments, expectedState: state });
   };
 
+  const enableDurableCommits = () => {
+    if (durableCommitsEnabled) return;
+    durableCommitsEnabled = true;
+    for (const segment of segments.values()) {
+      maybeCommitDurableStreamingSnapshot(segment);
+    }
+  };
+
+  const discard = () => {
+    for (const segment of segments.values()) {
+      clearDurableCheckpointTimer(segment);
+      clearLiveSnapshotTimer(segment);
+      segment.pendingDurableCommit = null;
+      const currentSnapshot = session.turnAssistantTextSnapshotStore?.getCurrentTurnSnapshot();
+      if (currentSnapshot?.localId === segment.segmentLocalId) {
+        session.turnAssistantTextSnapshotStore?.clearSnapshot({ reason: 'clear' });
+      }
+      segment.idleWaiters.splice(0, segment.idleWaiters.length).forEach((resolve) => resolve());
+    }
+    segments.clear();
+  };
+
   return {
     appendAssistantDelta: (deltaText, opts) => appendDelta('assistant', deltaText, normalizeSidechainId(opts?.sidechainId)),
     appendThinkingDelta: (deltaText, opts) => appendDelta('thinking', deltaText, normalizeSidechainId(opts?.sidechainId)),
     overrideAssistantText: (text, opts) => overrideSegmentText('assistant', text, normalizeSidechainId(opts?.sidechainId)),
     overrideThinkingText: (text, opts) => overrideSegmentText('thinking', text, normalizeSidechainId(opts?.sidechainId)),
+    enableDurableCommits,
+    discard,
     flushAll,
   };
 }

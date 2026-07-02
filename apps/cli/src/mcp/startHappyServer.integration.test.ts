@@ -12,7 +12,7 @@ import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { Metadata } from '@/api/types';
 import type { AgentBackend } from '@/agent/core/AgentBackend';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
+import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/runtime/bridges/executionRun/testkit';
 import { reloadConfiguration } from '@/configuration';
 import { registerExecutionRunHandlers as registerExecutionRunHandlersBase } from '@/rpc/handlers/executionRuns';
 import { HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI } from '@/mcp/resources/registerHappierMcpResources';
@@ -35,7 +35,7 @@ const runtimeFactoryState = vi.hoisted(() => ({
   current: null as TestExecutionRunRuntimeFactory | null,
 }));
 
-vi.mock('@/agent/executionRuns/runtime/createExecutionRunRuntime', () => ({
+vi.mock('@/agent/runtime/bridges/executionRun/runtime/create', () => ({
   createExecutionRunRuntime: vi.fn((opts: Parameters<TestExecutionRunRuntimeFactory>[0]) => {
     const factory = runtimeFactoryState.current;
     if (!factory) {
@@ -235,7 +235,7 @@ describe('startHappyServer (MCP integration)', () => {
         actionsSettingsV1: {
           v: 1,
           actions: {
-            'session.list': { disabledSurfaces: [] },
+            'session.list': { disabledSurfaces: [], toolExposureModes: { session_agent: 'direct' } },
           },
         },
       },
@@ -247,7 +247,7 @@ describe('startHappyServer (MCP integration)', () => {
     }
   });
 
-  it('exposes execution_run_* tools and can start/get/action a review run over HTTP transport', async () => {
+  it('executes discoverable-only execution-run actions through action_execute over HTTP transport', async () => {
     const remote = await mkdtemp(join(tmpdir(), 'happier-coderabbit-review-remote-'));
     const workspace = await mkdtemp(join(tmpdir(), 'happier-coderabbit-review-workspace-'));
     runGit(remote, ['init', '--bare', '--initial-branch=main']);
@@ -306,12 +306,12 @@ describe('startHappyServer (MCP integration)', () => {
       expect(names.has('action_spec_get')).toBe(true);
       expect(names.has('action_options_resolve')).toBe(true);
       expect(names.has('action_execute')).toBe(true);
-      expect(names.has('review_start')).toBe(true);
-      expect(names.has('subagents_plan_start')).toBe(true);
-      expect(names.has('subagents_delegate_start')).toBe(true);
-      expect(names.has('execution_run_start')).toBe(true);
-      expect(names.has('execution_run_get')).toBe(true);
-      expect(names.has('execution_run_action')).toBe(true);
+      expect(names.has('review_start')).toBe(false);
+      expect(names.has('subagents_plan_start')).toBe(false);
+      expect(names.has('subagents_delegate_start')).toBe(false);
+      expect(names.has('execution_run_start')).toBe(false);
+      expect(names.has('execution_run_get')).toBe(false);
+      expect(names.has('execution_run_action')).toBe(false);
 
       const resolvedOptionsRaw = await client.callTool({
         name: 'action_options_resolve',
@@ -335,16 +335,19 @@ describe('startHappyServer (MCP integration)', () => {
       );
 
       const startedRaw = await client.callTool({
-        name: 'execution_run_start',
+        name: 'action_execute',
         arguments: {
-          sessionId: fakeClient.sessionId,
-          intent: 'review',
-          backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-          instructions: 'Review.',
-          permissionMode: 'read_only',
-          retentionPolicy: 'resumable',
-          runClass: 'bounded',
-          ioMode: 'request_response',
+          actionId: 'execution.run.start',
+          input: {
+            sessionId: fakeClient.sessionId,
+            intent: 'review',
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+            instructions: 'Review.',
+            permissionMode: 'read_only',
+            retentionPolicy: 'resumable',
+            runClass: 'bounded',
+            ioMode: 'request_response',
+          },
         },
       });
       const started = parseMcpJsonText(startedRaw);
@@ -353,27 +356,30 @@ describe('startHappyServer (MCP integration)', () => {
       const startedRunId = started.runId;
 
       const gotNoStructuredRaw = await client.callTool({
-        name: 'execution_run_get',
-        arguments: { runId: startedRunId },
+        name: 'action_execute',
+        arguments: { actionId: 'execution.run.get', input: { runId: startedRunId } },
       });
       const gotNoStructured = parseMcpJsonText(gotNoStructuredRaw);
       expect(gotNoStructured.run?.runId).toBe(startedRunId);
       expect(gotNoStructured.structuredMeta).toBeUndefined();
 
       const gotStructuredRaw = await client.callTool({
-        name: 'execution_run_get',
-        arguments: { runId: startedRunId, includeStructured: true },
+        name: 'action_execute',
+        arguments: { actionId: 'execution.run.get', input: { runId: startedRunId, includeStructured: true } },
       });
       const gotStructured = parseMcpJsonText(gotStructuredRaw);
       expect(gotStructured.structuredMeta?.kind).toBe('review_findings.v2');
       expect(gotStructured.structuredMeta?.payload?.runRef?.runId).toBe(startedRunId);
 
       const actionRaw = await client.callTool({
-        name: 'execution_run_action',
+        name: 'action_execute',
         arguments: {
-          runId: startedRunId,
-          actionId: 'review.triage',
-          input: { findings: [{ id: 'f1', status: 'accept' }] },
+          actionId: 'execution.run.action',
+          input: {
+            runId: startedRunId,
+            actionId: 'review.triage',
+            input: { findings: [{ id: 'f1', status: 'accept' }] },
+          },
         },
       });
       const action = parseMcpJsonText(actionRaw);
@@ -464,16 +470,19 @@ describe('startHappyServer (MCP integration)', () => {
       await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
 
       const resultRaw = await client.callTool({
-        name: 'execution_run_start',
+        name: 'action_execute',
         arguments: {
-          sessionId: fakeClient.sessionId,
-          intent: 'review',
-          backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-          instructions: 'Review.',
-          permissionMode: 'read_only',
-          retentionPolicy: 'resumable',
-          runClass: 'bounded',
-          ioMode: 'request_response',
+          actionId: 'execution.run.start',
+          input: {
+            sessionId: fakeClient.sessionId,
+            intent: 'review',
+            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+            instructions: 'Review.',
+            permissionMode: 'read_only',
+            retentionPolicy: 'resumable',
+            runClass: 'bounded',
+            ioMode: 'request_response',
+          },
         },
       });
       expect(resultRaw.isError).toBe(true);
@@ -513,10 +522,13 @@ describe('startHappyServer (MCP integration)', () => {
       await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
 
       const resultRaw = await client.callTool({
-        name: 'execution_run_send',
+        name: 'action_execute',
         arguments: {
-          runId: 'run_1',
-          message: 'still there?',
+          actionId: 'execution.run.send',
+          input: {
+            runId: 'run_1',
+            message: 'still there?',
+          },
         },
       });
       expect(fakeClient.rpcHandlerManager.invokeLocal).toHaveBeenCalledWith(
@@ -625,7 +637,7 @@ describe('startHappyServer (MCP integration)', () => {
       const tools = await client.listTools();
       const names = new Set((tools.tools ?? []).map((t: any) => String(t.name)));
       expect(names.has('review_start')).toBe(false);
-      expect(names.has('subagents_plan_start')).toBe(true);
+      expect(names.has('subagents_plan_start')).toBe(false);
 
       const got = await client.callTool({
         name: 'action_spec_get',
@@ -727,12 +739,14 @@ describe('startHappyServer (MCP integration)', () => {
       await clientA.connect(new StreamableHTTPClientTransport(new URL(server.url)));
       const toolsA = await clientA.listTools();
       const namesA = new Set((toolsA.tools ?? []).map((t: any) => String(t.name)));
-      expect(namesA.has('execution_run_start')).toBe(true);
+      expect(namesA.has('action_execute')).toBe(true);
+      expect(namesA.has('execution_run_start')).toBe(false);
 
       await clientB.connect(new StreamableHTTPClientTransport(new URL(server.url)));
       const toolsB = await clientB.listTools();
       const namesB = new Set((toolsB.tools ?? []).map((t: any) => String(t.name)));
-      expect(namesB.has('execution_run_start')).toBe(true);
+      expect(namesB.has('action_execute')).toBe(true);
+      expect(namesB.has('execution_run_start')).toBe(false);
 
       await (clientA as any).close?.();
       await (clientB as any).close?.();

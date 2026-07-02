@@ -51,7 +51,7 @@ export type PersistSessionMediaInput = Readonly<{
 }>;
 
 export type PersistSessionMediaResult =
-  | Readonly<{ success: true; item: SessionMediaItemV1 }>
+  | Readonly<{ success: true; item: SessionMediaItemV1; created: boolean }>
   | Readonly<{ success: false; code: string; error: string }>;
 
 type ImageDimensions = Readonly<{
@@ -254,6 +254,7 @@ export async function persistSessionMedia(params: Readonly<{
 
   let storedFileName: string | null = null;
   let mediaPath: string | null = null;
+  let created = false;
   const maxCollisionAttempts = 100;
 
   for (let collisionIndex = 0; collisionIndex < maxCollisionAttempts; collisionIndex += 1) {
@@ -282,6 +283,7 @@ export async function persistSessionMedia(params: Readonly<{
     if (await fileExistsWithHash(uploadTarget.target.destPath, sha256)) {
       storedFileName = candidateFileName;
       mediaPath = candidateMediaPath;
+      created = false;
       break;
     }
 
@@ -309,6 +311,7 @@ export async function persistSessionMedia(params: Readonly<{
 
     storedFileName = candidateFileName;
     mediaPath = candidateMediaPath;
+    created = writeResult === 'written';
     break;
   }
 
@@ -332,6 +335,7 @@ export async function persistSessionMedia(params: Readonly<{
 
   return {
     success: true,
+    created,
     item: {
       id: sha256.slice(0, 16),
       role: params.input.role,

@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -43,8 +43,10 @@ import { runBackendSessionCliCommand } from './runBackendSessionCliCommand';
 import * as authModule from '@/ui/auth';
 import * as persistenceModule from '@/persistence';
 import * as accountSettingsModule from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { AIBackendProfileSchema } from '@happier-dev/protocol';
+import { AIBackendProfileSchema, AccountSettingsSchema } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
+import type { CommandContext } from '@/cli/commandRegistry';
+import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -56,11 +58,24 @@ afterEach(() => {
 });
 
 describe('runBackendSessionCliCommand', () => {
+  function readRunBackendSessionCliCommandSource(): string {
+    return readFileSync(new URL('./runBackendSessionCliCommand.ts', import.meta.url), 'utf8');
+  }
+
   function makeJwtWithSub(sub: string): string {
     const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
     const payload = Buffer.from(JSON.stringify({ sub })).toString('base64url');
     return `${header}.${payload}.signature`;
   }
+
+  it('resolves plugin runtime preferences through the provider catalog hook seam', () => {
+    const source = readRunBackendSessionCliCommandSource();
+    expect(source).toMatch(/resolveProviderSessionRuntimePreferences/);
+    expect(source).not.toMatch(/@happier-dev\/plugins-opencode/);
+    expect(source).not.toMatch(/agentId\s*={2,3}\s*['"]opencode['"]/);
+    expect(source).not.toMatch(/resolveCodexSessionRuntimePreferences/);
+    expect(source).not.toMatch(/agentId\s*={2,3}\s*['"]codex['"]/);
+  });
 
   it('fast-paths terminal starts by avoiding auth/setup and using fast account settings bootstrap', async () => {
     const credentials = { token: 'x' } as any;
@@ -306,6 +321,37 @@ describe('runBackendSessionCliCommand', () => {
     }));
   });
 
+  it('passes plugin-owned Kimi runtime preference environment into the backend run', async () => {
+    const credentials = { token: 'x' } as any;
+
+    vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+    vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' } as any);
+    vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue({
+      source: 'network',
+      settings: { kimiAcpPythonSelector: 'poll' } as any,
+      settingsVersion: 1,
+      loadedAtMs: Date.now(),
+      whenRefreshed: null,
+    } as any);
+
+    runSessionCommandSpy.mockResolvedValue(undefined);
+
+    await runBackendSessionCliCommand({
+      context: { args: ['kimi'], terminalRuntime: null } as any,
+      backendIdForSessionRuntime: 'kimi',
+      agentIdForAccountSettings: 'kimi' as any,
+    });
+
+    expect(runSessionCommandSpy).toHaveBeenCalledWith('kimi', expect.objectContaining({
+      environmentVariables: {
+        HAPPIER_KIMI_ACP_SELECTOR: 'poll',
+      },
+    }));
+    expect(runSessionCommandSpy).toHaveBeenCalledWith('kimi', expect.not.objectContaining({
+      kimiAcpPythonSelector: 'poll',
+    }));
+  });
+
   it('forwards canonical session-mode fields to the session bridge for direct CLI starts', async () => {
     const credentials = { token: 'x' } as any;
 
@@ -484,6 +530,54 @@ describe('runBackendSessionCliCommand', () => {
         delete process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP;
       } else {
         process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP = previous;
+      }
+    }
+  });
+
+  it('keeps daemon-selected canonical Codex backend mode ahead of account settings defaults', async () => {
+    const previous = process.env.HAPPIER_CODEX_BACKEND_MODE;
+    process.env.HAPPIER_CODEX_BACKEND_MODE = 'acp';
+
+    try {
+      const credentials: Credentials = {
+        token: 'x',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      };
+      const accountSettingsContext: AccountSettingsContext = {
+        source: 'network',
+        settings: AccountSettingsSchema.parse({}),
+        settingsVersion: 1,
+        settingsSecretsReadKeys: [],
+        loadedAtMs: Date.now(),
+        whenRefreshed: null,
+      };
+      const context: CommandContext = {
+        args: ['codex', '--started-by', 'daemon'],
+        rawArgv: ['codex', '--started-by', 'daemon'],
+        terminalRuntime: null,
+      };
+
+      vi.spyOn(persistenceModule, 'readCredentials').mockResolvedValue(credentials);
+      vi.spyOn(authModule, 'ensureMachineIdForCredentials').mockResolvedValue({ machineId: 'machine-1' });
+      vi.spyOn(accountSettingsModule, 'bootstrapAccountSettingsContext').mockResolvedValue(accountSettingsContext);
+
+      runSessionCommandSpy.mockResolvedValue(undefined);
+
+      await runBackendSessionCliCommand({
+        context,
+        backendIdForSessionRuntime: 'codex',
+        agentIdForAccountSettings: 'codex',
+      });
+
+      expect(runSessionCommandSpy).toHaveBeenCalledWith('codex', expect.objectContaining({
+        startedBy: 'daemon',
+        codexBackendMode: 'acp',
+      }));
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HAPPIER_CODEX_BACKEND_MODE;
+      } else {
+        process.env.HAPPIER_CODEX_BACKEND_MODE = previous;
       }
     }
   });

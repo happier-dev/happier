@@ -1,20 +1,39 @@
-import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
+import { buildDaemonInitialPromptLocalId } from '@/agent/runtime/daemonInitialPrompt';
 
 import type { AgentState, Metadata, Update, UserMessage } from '../../../types';
 import { handleSessionNewMessageUpdate } from '../../sessionNewMessageUpdate';
 import { handleSessionStateUpdate } from '../../sessionStateUpdateHandling';
+import type { KnownPendingQueueState } from '../../pendingQueueState';
 import { extractAssistantTextSnapshotFromSessionContent } from '../../turns/extractAssistantTextSnapshot';
 import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshot';
 
 export type SessionClientUpdateRuntime = Readonly<{
-    handleUpdate: (data: Update, opts: { source: 'session-scoped' | 'user-scoped' }) => void;
-    observeCommittedAck: (params: { seq: number; markAsUserMessage?: boolean }) => void;
+    handleUpdate: (data: Update, opts: { source: 'session-scoped' | 'user-scoped'; catchUpAfterSeq?: number; catchUpAfterSeqIsExplicit?: boolean }) => void;
+    observeCommittedAck: (params: { seq: number; localId?: string | null; markAsUserMessage?: boolean }) => void;
     getLastObservedMessageSeq: () => number;
     setLastObservedMessageSeq: (value: number) => void;
     getLastObservedUserMessageSeq: () => number;
     getPendingWakeSeq: () => number;
 }>;
+
+function readMessageSeqFromUpdate(update: Update): number | null {
+    const body = update.body;
+    const bodyRecord = body && typeof body === 'object' && !Array.isArray(body)
+        ? body as Record<string, unknown>
+        : null;
+    const messageRecord = bodyRecord?.message && typeof bodyRecord.message === 'object' && !Array.isArray(bodyRecord.message)
+        ? bodyRecord.message as Record<string, unknown>
+        : null;
+    const seq = messageRecord?.seq;
+    return typeof seq === 'number' && Number.isFinite(seq) ? Math.trunc(seq) : null;
+}
+
+function normalizeCatchUpAfterSeq(value: number | undefined): number | null {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0
+        ? Math.trunc(value)
+        : null;
+}
 
 export function createSessionClientUpdateRuntime(
     deps: Readonly<{
@@ -30,9 +49,11 @@ export function createSessionClientUpdateRuntime(
         setAgentState: (agentState: AgentState | null) => void;
         getAgentStateVersion: () => number;
         setAgentStateVersion: (version: number) => void;
+        applyPendingQueueState: (state: KnownPendingQueueState) => boolean;
         getPendingMessages: () => UserMessage[];
         getPendingMessageCallback: () => ((message: UserMessage) => void) | null;
         getUserMessageCallbackAttachedAtMs: () => number | null;
+        onConnectedServiceTurnLifecycleEvent?: (event: 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled') => void;
         emit: (event: string, payload?: unknown) => void;
         hasSelfEchoSuppressedLocalId: (localId: string) => boolean;
         hasAgentQueueEchoSuppressedLocalId: (localId: string) => boolean;
@@ -40,6 +61,7 @@ export function createSessionClientUpdateRuntime(
         hasPendingQueueMaterializedLocalId: (localId: string) => boolean;
         deleteMaterializedLocalId: (localId: string) => void;
         initialLastObservedMessageSeq: number;
+        observeCommittedUserMessageSeq?: (params: { localId: string | null | undefined; seq: number }) => void;
         turnAssistantTextSnapshotStore?: TurnAssistantTextSnapshotStore;
     }>,
 ): SessionClientUpdateRuntime {
@@ -58,16 +80,35 @@ export function createSessionClientUpdateRuntime(
                     return;
                 }
 
+                const body = data.body;
+                const bodyRecord = body && typeof body === 'object' && !Array.isArray(body)
+                    ? body as Record<string, unknown>
+                    : null;
+                const messageRecord = bodyRecord?.message && typeof bodyRecord.message === 'object' && !Array.isArray(bodyRecord.message)
+                    ? bodyRecord.message as Record<string, unknown>
+                    : null;
                 if (
-                    (data.body as any)?.t === 'message-updated'
-                    && (data.body as any)?.sid === deps.sessionId
+                    bodyRecord?.t === 'message-updated'
+                    && bodyRecord.sid === deps.sessionId
                 ) {
-                    const updatedLocalId = typeof (data.body as any)?.message?.localId === 'string'
-                        ? (data.body as any).message.localId
+                    const updatedLocalId = typeof messageRecord?.localId === 'string'
+                        ? messageRecord.localId
                         : null;
                     if (updatedLocalId && deps.hasSelfEchoSuppressedLocalId(updatedLocalId)) {
                         deps.deleteMaterializedLocalId(updatedLocalId);
                     }
+                }
+                if (
+                    bodyRecord?.sid === deps.sessionId
+                    && (bodyRecord.t === 'new-message' || bodyRecord.t === 'message-updated')
+                    && messageRecord?.messageRole === 'user'
+                    && typeof messageRecord.seq === 'number'
+                    && Number.isFinite(messageRecord.seq)
+                ) {
+                    deps.observeCommittedUserMessageSeq?.({
+                        localId: typeof messageRecord.localId === 'string' ? messageRecord.localId : null,
+                        seq: messageRecord.seq,
+                    });
                 }
 
                 const newMessageHandlingResult = handleSessionNewMessageUpdate({
@@ -87,17 +128,32 @@ export function createSessionClientUpdateRuntime(
                     pendingMessages: deps.getPendingMessages(),
                     shouldDeliverUserMessageToAgentQueue: (message, update) => {
                         if (!update?.id?.startsWith('catchup-')) return true;
-                        if (message.meta?.source === 'daemon-initial-prompt') return true;
-                        if (lastObservedMessageSeq > 0) return true;
+                        const localId = typeof message.localId === 'string' ? message.localId.trim() : '';
+                        if (message.meta?.source === 'daemon-initial-prompt') {
+                            const expectedLocalId = buildDaemonInitialPromptLocalId(deps.sessionId);
+                            return Boolean(expectedLocalId && localId === expectedLocalId);
+                        }
 
-                        const attachedAtMs = deps.getUserMessageCallbackAttachedAtMs();
-                        if (typeof attachedAtMs !== 'number' || !Number.isFinite(attachedAtMs)) return true;
-                        const lookbackMs = configuration.startupTranscriptCatchUpLookbackMs;
-                        if (typeof lookbackMs !== 'number' || !Number.isFinite(lookbackMs) || lookbackMs < 0) return true;
-                        const createdAtMs = typeof (message as any).createdAt === 'number' ? (message as any).createdAt : null;
-                        if (typeof createdAtMs !== 'number' || !Number.isFinite(createdAtMs)) return true;
-                        return createdAtMs >= attachedAtMs - lookbackMs;
+                        const catchUpAfterSeq = normalizeCatchUpAfterSeq(opts.catchUpAfterSeq);
+                        if (catchUpAfterSeq !== null && (opts.catchUpAfterSeqIsExplicit === true || catchUpAfterSeq > 0)) {
+                            const msgSeq = readMessageSeqFromUpdate(update);
+                            return msgSeq !== null && msgSeq > catchUpAfterSeq;
+                        }
+
+                        logger.warn('[DELIVERY-DECISION] catch-up user-message suppressed (no explicit authorization)', {
+                            sessionId: deps.sessionId,
+                            updateId: update?.id,
+                            messageLocalId: localId || null,
+                            catchUpAfterSeq,
+                            catchUpAfterSeqIsExplicit: opts.catchUpAfterSeqIsExplicit,
+                            callbackAttachedAtMs: deps.getUserMessageCallbackAttachedAtMs(),
+                            messageCreatedAtMs: typeof (message as { createdAt?: unknown })?.createdAt === 'number'
+                                ? (message as { createdAt: number }).createdAt
+                                : null,
+                        });
+                        return false;
                     },
+                    onConnectedServiceTurnLifecycleEvent: (event) => deps.onConnectedServiceTurnLifecycleEvent?.(event),
                     emit: (event, payload) => deps.emit(event, payload),
                     debug: (message, payload) => logger.debug(message, payload),
                     debugLargeJson: (message, payload) => logger.debugLargeJson(message, payload),
@@ -149,6 +205,9 @@ export function createSessionClientUpdateRuntime(
                     deps.setAgentState(stateUpdateResult.agentState);
                     deps.setAgentStateVersion(stateUpdateResult.agentStateVersion);
                     pendingWakeSeq = stateUpdateResult.pendingWakeSeq;
+                    if (stateUpdateResult.pendingQueueState) {
+                        shouldEmitMetadataUpdated = deps.applyPendingQueueState(stateUpdateResult.pendingQueueState) || shouldEmitMetadataUpdated;
+                    }
                     if (shouldEmitMetadataUpdated) {
                         deps.emit('metadata-updated');
                     }
@@ -165,6 +224,10 @@ export function createSessionClientUpdateRuntime(
             lastObservedMessageSeq = Math.max(lastObservedMessageSeq, params.seq);
             if (params.markAsUserMessage === true) {
                 lastObservedUserMessageSeq = Math.max(lastObservedUserMessageSeq, params.seq);
+                deps.observeCommittedUserMessageSeq?.({
+                    localId: params.localId,
+                    seq: params.seq,
+                });
             }
         },
 

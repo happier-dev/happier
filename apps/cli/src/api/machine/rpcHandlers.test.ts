@@ -10,12 +10,14 @@ import axios from 'axios';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { accountSettingsParse, sealEncryptedDataKeyEnvelopeV1, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { buildCodexAgentRuntimeDescriptor } from '@happier-dev/agents';
 import { encrypt, encodeBase64 } from '@/api/encryption';
 import { collectBugReportMachineDiagnosticsSnapshot } from '@/diagnostics/bugReportMachineDiagnostics';
 import { removeExecutionRunMarker, writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
 import { registerMachineRpcHandlers } from './rpcHandlers';
 import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 import type { Credentials } from '@/persistence';
+import { DEFAULT_MEMORY_SETTINGS } from '@/settings/memorySettings';
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createAuthenticationHttpStatusError } from '@/api/client/httpStatusError';
 
@@ -112,7 +114,7 @@ vi.mock('@/agent/acp/catalog/configured/createConfiguredAcpBackend', () => ({
   createConfiguredAcpBackend: createConfiguredAcpBackendMock,
 }));
 
-vi.mock('@/backends/codex/appServer/client/createCodexAppServerClient', () => ({
+vi.mock('@happier-dev/plugins-codex/agent/runtime/appServer/client', () => ({
   createCodexAppServerClient: createCodexAppServerClientMock,
 }));
 
@@ -161,6 +163,37 @@ describe('registerMachineRpcHandlers', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('registers a spawn nonce resolver for recovering timed-out session creation', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+    const resolveSpawnSessionByNonce = vi.fn(async (_spawnNonce: string) => ({
+      status: 'success',
+      sessionId: 'session-from-nonce',
+    } as const));
+
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession: async () => ({ type: 'success', sessionId: 's1' } as const),
+        stopSession: async () => true,
+        requestShutdown: () => {},
+        resolveSpawnSessionByNonce,
+      },
+    });
+
+    const handler = registered.get('daemon.spawnSession.resolveByNonce');
+    expect(handler).toBeDefined();
+    await expect(handler!({ spawnNonce: ' spawn-nonce-1 ' })).resolves.toEqual({
+      status: 'success',
+      sessionId: 'session-from-nonce',
+    });
+    expect(resolveSpawnSessionByNonce).toHaveBeenCalledWith('spawn-nonce-1');
   });
 
   it('normalizes empty modelId to undefined when spawning a session', async () => {
@@ -922,14 +955,14 @@ describe('registerMachineRpcHandlers', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'mcp',
-          vendorSessionId: 'codex-session-legacy',
+          providerSessionId: 'codex-session-legacy',
           providerExtra: {
             owner: 'codex',
             schemaId: 'codex.agentRuntimeDescriptorExtra',
             v: 1,
             runtimeAffinity: {
               backendMode: 'appServer',
-              vendorSessionId: 'codex-session-1',
+              providerSessionId: 'codex-session-1',
             },
           },
         },
@@ -946,14 +979,14 @@ describe('registerMachineRpcHandlers', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'mcp',
-          vendorSessionId: 'codex-session-legacy',
+          providerSessionId: 'codex-session-legacy',
           providerExtra: {
             owner: 'codex',
             schemaId: 'codex.agentRuntimeDescriptorExtra',
             v: 1,
             runtimeAffinity: {
               backendMode: 'appServer',
-              vendorSessionId: 'codex-session-1',
+              providerSessionId: 'codex-session-1',
             },
           },
         },
@@ -3260,7 +3293,7 @@ describe('registerMachineRpcHandlers', () => {
         agentRuntimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
-          provider: { backendMode: 'acp', vendorSessionId: 'codex_parent' },
+          provider: { backendMode: 'acp', providerSessionId: 'codex_parent' },
         },
         acpSessionModelsV1: {
           v: 1,
@@ -3348,7 +3381,7 @@ describe('registerMachineRpcHandlers', () => {
     const updated = updater({ path: '/repo', flavor: 'codex' });
     expect(updated.codexBackendMode).toBe('acp');
     expect(updated.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_parent', strategy: 'acp_fork_latest' });
-    expect(updated.forkV1.providerHint).toMatchObject({ providerId: 'codex', backendMode: 'acp', vendorSessionId: 'codex_forked' });
+    expect(updated.forkV1.providerHint).toMatchObject({ providerId: 'codex', backendMode: 'acp', providerSessionId: 'codex_forked' });
     expect(updated.replaySeedV1).toBeUndefined();
   });
 
@@ -3395,7 +3428,7 @@ describe('registerMachineRpcHandlers', () => {
         agentRuntimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
-          provider: { backendMode: 'acp', vendorSessionId: 'codex_parent' },
+          provider: { backendMode: 'acp', providerSessionId: 'codex_parent' },
         },
       }),
     );
@@ -3709,7 +3742,7 @@ describe('registerMachineRpcHandlers', () => {
                 v: 1,
                 providerId: 'acp:review-bot',
                 provider: {
-                  vendorSessionId: 'review_parent',
+                  providerSessionId: 'review_parent',
                 },
               },
             }),
@@ -3781,7 +3814,7 @@ describe('registerMachineRpcHandlers', () => {
       v: 1,
       parentSessionId: 'sess_parent',
       strategy: 'acp_fork_latest',
-      providerHint: { providerId: 'acp:review-bot', vendorSessionId: 'review_forked' },
+      providerHint: { providerId: 'acp:review-bot', providerSessionId: 'review_forked' },
     });
     expect(updated.replaySeedV1).toBeUndefined();
   });
@@ -3909,7 +3942,7 @@ describe('registerMachineRpcHandlers', () => {
     expect(updated.opencodeServerBaseUrl).toBe('http://127.0.0.1:4096/');
     expect(updated.opencodeServerBaseUrlExplicit).toBe(true);
     expect(updated.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_parent', strategy: 'acp_fork_latest' });
-    expect(updated.forkV1.providerHint).toMatchObject({ providerId: 'opencode', backendMode: 'acp', vendorSessionId: 'op_forked' });
+    expect(updated.forkV1.providerHint).toMatchObject({ providerId: 'opencode', backendMode: 'acp', providerSessionId: 'op_forked' });
     expect(updated.replaySeedV1).toBeUndefined();
   });
 
@@ -3955,7 +3988,7 @@ describe('registerMachineRpcHandlers', () => {
         agentRuntimeDescriptorV1: {
           v: 1,
           providerId: 'codex',
-          provider: { backendMode: 'acp', vendorSessionId: 'codex_parent' },
+          provider: { backendMode: 'acp', providerSessionId: 'codex_parent' },
         },
       }),
     );
@@ -4032,7 +4065,7 @@ describe('registerMachineRpcHandlers', () => {
     const updated = updater({ path: '/repo', flavor: 'codex' });
     expect(updated.codexBackendMode).toBe('acp');
     expect(updated.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_parent', strategy: 'acp_fork_latest' });
-    expect(updated.forkV1.providerHint).toMatchObject({ providerId: 'codex', backendMode: 'acp', vendorSessionId: 'codex_forked' });
+    expect(updated.forkV1.providerHint).toMatchObject({ providerId: 'codex', backendMode: 'acp', providerSessionId: 'codex_forked' });
     expect(updated.replaySeedV1).toBeUndefined();
   });
 
@@ -4415,7 +4448,7 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     dispatchProviderNativeForkMock.mockResolvedValueOnce({
-      vendorSessionId: 'op_ses_forked',
+      providerSessionId: 'op_ses_forked',
       spawn: {
         resume: 'op_ses_forked',
         environmentVariables: {
@@ -4430,7 +4463,7 @@ describe('registerMachineRpcHandlers', () => {
         opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
         opencodeServerBaseUrlExplicit: true,
       },
-      providerHint: { providerId: 'opencode', backendMode: 'server', vendorSessionId: 'op_ses_forked' },
+      providerHint: { providerId: 'opencode', backendMode: 'server', providerSessionId: 'op_ses_forked' },
     });
 
     const parentMetadataPlain = JSON.stringify({
@@ -4532,7 +4565,7 @@ describe('registerMachineRpcHandlers', () => {
       parentSessionId: 'sess_parent',
       parentCutoffSeqInclusive: 5,
       strategy: 'provider_native',
-      providerHint: { providerId: 'opencode', backendMode: 'server', vendorSessionId: 'op_ses_forked' },
+      providerHint: { providerId: 'opencode', backendMode: 'server', providerSessionId: 'op_ses_forked' },
     });
   });
 
@@ -4563,10 +4596,10 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     dispatchProviderNativeForkMock.mockResolvedValueOnce({
-      vendorSessionId: 'op_ses_forked',
+      providerSessionId: 'op_ses_forked',
       spawn: {},
       metadata: {},
-      providerHint: { providerId: 'opencode', backendMode: 'server', vendorSessionId: 'op_ses_forked' },
+      providerHint: { providerId: 'opencode', backendMode: 'server', providerSessionId: 'op_ses_forked' },
     });
 
     const getSpy = vi.spyOn(axios, 'get');
@@ -4640,10 +4673,10 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     dispatchProviderNativeForkMock.mockResolvedValueOnce({
-      vendorSessionId: 'op_ses_forked',
+      providerSessionId: 'op_ses_forked',
       spawn: {},
       metadata: {},
-      providerHint: { providerId: 'opencode', backendMode: 'server', vendorSessionId: 'op_ses_forked' },
+      providerHint: { providerId: 'opencode', backendMode: 'server', providerSessionId: 'op_ses_forked' },
     });
 
     const parentMetadataPlain = JSON.stringify({
@@ -4741,10 +4774,10 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     dispatchProviderNativeForkMock.mockResolvedValueOnce({
-      vendorSessionId: 'codex-thread-forked',
+      providerSessionId: 'codex-thread-forked',
       spawn: { resume: 'codex-thread-forked', codexBackendMode: 'appServer' },
       metadata: { codexSessionId: 'codex-thread-forked', codexBackendMode: 'appServer' },
-      providerHint: { providerId: 'codex', backendMode: 'appServer', vendorSessionId: 'codex-thread-forked' },
+      providerHint: { providerId: 'codex', backendMode: 'appServer', providerSessionId: 'codex-thread-forked' },
     });
 
     const parentMetadataPlain = JSON.stringify({
@@ -4752,6 +4785,15 @@ describe('registerMachineRpcHandlers', () => {
       flavor: 'codex',
       codexSessionId: 'codex-thread-parent',
       codexBackendMode: 'appServer',
+      agentRuntimeDescriptorV1: buildCodexAgentRuntimeDescriptor({
+        backendMode: 'appServer',
+        providerSessionId: 'codex-thread-parent',
+        home: 'connectedService',
+        connectedServiceId: 'openai-codex',
+        connectedServiceGroupId: 'happier',
+        connectedServiceProfileId: 'codex1',
+        homePath: '/tmp/codex-home',
+      }),
       permissionMode: 'acceptEdits',
       permissionModeUpdatedAt: 123,
       modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'gpt-5.4' },
@@ -4820,18 +4862,40 @@ describe('registerMachineRpcHandlers', () => {
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       resume: 'codex-thread-forked',
       codexBackendMode: 'appServer',
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'group',
+            groupId: 'happier',
+            profileId: 'codex1',
+          },
+        },
+      },
     }));
     expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
     const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
     const updated = updater({ path: '/repo', flavor: 'codex' });
     expect(updated.codexSessionId).toBe('codex-thread-forked');
     expect(updated.codexBackendMode).toBe('appServer');
+    expect(updated.connectedServices).toEqual({
+      v: 1,
+      bindingsByServiceId: {
+        'openai-codex': {
+          source: 'connected',
+          selection: 'group',
+          groupId: 'happier',
+          profileId: 'codex1',
+        },
+      },
+    });
     expect(updated.forkV1).toMatchObject({
       v: 1,
       parentSessionId: 'sess_parent',
       parentCutoffSeqInclusive: 5,
       strategy: 'provider_native',
-      providerHint: { providerId: 'codex', backendMode: 'appServer', vendorSessionId: 'codex-thread-forked' },
+      providerHint: { providerId: 'codex', backendMode: 'appServer', providerSessionId: 'codex-thread-forked' },
     });
     expect(updated.replaySeedV1).toBeUndefined();
   });
@@ -4863,10 +4927,10 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     dispatchProviderNativeForkMock.mockResolvedValueOnce({
-      vendorSessionId: 'codex-thread-forked',
+      providerSessionId: 'codex-thread-forked',
       spawn: { resume: 'codex-thread-forked', codexBackendMode: 'appServer' },
       metadata: { codexSessionId: 'codex-thread-forked', codexBackendMode: 'appServer' },
-      providerHint: { providerId: 'codex', backendMode: 'appServer', vendorSessionId: 'codex-thread-forked' },
+      providerHint: { providerId: 'codex', backendMode: 'appServer', providerSessionId: 'codex-thread-forked' },
     });
 
     const parentMetadataPlain = JSON.stringify({
@@ -4968,10 +5032,10 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     dispatchProviderNativeForkMock.mockResolvedValueOnce({
-      vendorSessionId: 'codex-thread-forked',
+      providerSessionId: 'codex-thread-forked',
       spawn: { resume: 'codex-thread-forked', codexBackendMode: 'appServer' },
       metadata: { codexSessionId: 'codex-thread-forked', codexBackendMode: 'appServer' },
-      providerHint: { providerId: 'codex', backendMode: 'appServer', vendorSessionId: 'codex-thread-forked' },
+      providerHint: { providerId: 'codex', backendMode: 'appServer', providerSessionId: 'codex-thread-forked' },
     });
 
     const getSpy = vi.spyOn(axios, 'get');
@@ -5107,10 +5171,10 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     dispatchProviderNativeForkMock.mockResolvedValueOnce({
-      vendorSessionId: 'codex-thread-forked',
+      providerSessionId: 'codex-thread-forked',
       spawn: { resume: 'codex-thread-forked', codexBackendMode: 'appServer' },
       metadata: { codexSessionId: 'codex-thread-forked', codexBackendMode: 'appServer' },
-      providerHint: { providerId: 'codex', backendMode: 'appServer', vendorSessionId: 'codex-thread-forked' },
+      providerHint: { providerId: 'codex', backendMode: 'appServer', providerSessionId: 'codex-thread-forked' },
     });
 
     vi.spyOn(axios, 'get').mockResolvedValueOnce({
@@ -5179,10 +5243,10 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     dispatchProviderNativeForkMock.mockResolvedValueOnce({
-      vendorSessionId: 'op_ses_forked',
+      providerSessionId: 'op_ses_forked',
       spawn: {},
       metadata: {},
-      providerHint: { providerId: 'opencode', backendMode: 'server', vendorSessionId: 'op_ses_forked' },
+      providerHint: { providerId: 'opencode', backendMode: 'server', providerSessionId: 'op_ses_forked' },
     });
 
     const parentMetadataPlain = JSON.stringify({
@@ -5346,10 +5410,10 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     dispatchProviderNativeForkMock.mockResolvedValueOnce({
-      vendorSessionId: 'op_ses_forked',
+      providerSessionId: 'op_ses_forked',
       spawn: {},
       metadata: {},
-      providerHint: { providerId: 'opencode', backendMode: 'server', vendorSessionId: 'op_ses_forked' },
+      providerHint: { providerId: 'opencode', backendMode: 'server', providerSessionId: 'op_ses_forked' },
     });
 
     const parentMetadataPlain = JSON.stringify({
@@ -6343,8 +6407,16 @@ describe('registerMachineRpcHandlers', () => {
           usingFallback: false,
           lastError: null,
         }),
-	        getSettings: () => ({
-	          v: 1,
+        getWorkerStatus: () => ({
+          state: 'idle' as const,
+          lastTickAtMs: null,
+          lastInventoryAtMs: null,
+          currentSessionId: null,
+          currentPhase: null,
+        }),
+        getSettings: () => ({
+          ...DEFAULT_MEMORY_SETTINGS,
+          v: 1,
           enabled: false,
           enabledAtMs: 0,
           indexMode: 'hints',
@@ -6352,6 +6424,7 @@ describe('registerMachineRpcHandlers', () => {
           backfillPolicy: 'new_only' as const,
           deleteOnDisable: false,
           hints: {
+            ...DEFAULT_MEMORY_SETTINGS.hints,
             summarizerBackendId: 'claude',
             summarizerModelId: 'default',
             summarizerPermissionMode: 'no_tools',
@@ -6369,18 +6442,19 @@ describe('registerMachineRpcHandlers', () => {
             maxEntities: 12,
             maxDecisions: 12,
           },
-	          deep: {
-	            recentDays: 30,
-	            maxChunkChars: 12_000,
-	            maxChunkMessages: 50,
-	            minChunkMessages: 5,
-	            includeAssistantAcpMessage: true,
-	            includeToolOutput: false,
-	            candidateLimit: 200,
-	            previewChars: 800,
-	            failureBackoffBaseMs: 60_000,
-	            failureBackoffMaxMs: 3_600_000,
-	          },
+          deep: {
+            ...DEFAULT_MEMORY_SETTINGS.deep,
+            recentDays: 30,
+            maxChunkChars: 12_000,
+            maxChunkMessages: 50,
+            minChunkMessages: 5,
+            includeAssistantAcpMessage: true,
+            includeToolOutput: false,
+            candidateLimit: 200,
+            previewChars: 800,
+            failureBackoffBaseMs: 60_000,
+            failureBackoffMaxMs: 3_600_000,
+          },
           embeddings: {
             mode: 'disabled',
             presetId: 'balanced',
@@ -6394,17 +6468,17 @@ describe('registerMachineRpcHandlers', () => {
             maxDiskMbLight: 64,
             maxDiskMbDeep: 512,
           },
-	          worker: {
-	            tickIntervalMs: 10_000,
-	            inventoryRefreshIntervalMs: 60_000,
-	            maxSessionsPerTick: 2,
-	            sessionListPageLimit: 50,
-	          },
-	        }),
-	        getTier1DbPath: () => null,
-	        getDeepDbPath: () => null,
-	      },
-	    });
+          worker: {
+            tickIntervalMs: 10_000,
+            inventoryRefreshIntervalMs: 60_000,
+            maxSessionsPerTick: 2,
+            sessionListPageLimit: 50,
+          },
+        }),
+        getTier1DbPath: () => null,
+        getDeepDbPath: () => null,
+      },
+    });
 
     expect(registered.has((RPC_METHODS as any).DAEMON_MEMORY_SEARCH)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_MEMORY_GET_WINDOW)).toBe(true);

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY } from '@happier-dev/protocol';
 
 const {
   createSpawnedSession,
@@ -9,6 +10,13 @@ const {
   executeExecutionRunAction,
   callSessionRpc,
   hostSubagentStore,
+  routeSessionGoalControl,
+  routeSessionCatalogControl,
+  routeSessionUsageLimitRecoveryCheckNow,
+  routeSessionUsageLimitRecoverySwitchAccountNow,
+  routeSessionUsageLimitRecoveryWaitResumeCancel,
+  routeSessionUsageLimitRecoveryWaitResumeEnable,
+  readSettings,
 } = vi.hoisted(() => ({
   createSpawnedSession: vi.fn(),
   sendSessionMessage: vi.fn(),
@@ -17,6 +25,13 @@ const {
   resolveSessionTransportContext: vi.fn(),
   executeExecutionRunAction: vi.fn(),
   callSessionRpc: vi.fn(),
+  routeSessionGoalControl: vi.fn(),
+  routeSessionCatalogControl: vi.fn(),
+  routeSessionUsageLimitRecoveryCheckNow: vi.fn(),
+  routeSessionUsageLimitRecoverySwitchAccountNow: vi.fn(),
+  routeSessionUsageLimitRecoveryWaitResumeCancel: vi.fn(),
+  routeSessionUsageLimitRecoveryWaitResumeEnable: vi.fn(),
+  readSettings: vi.fn(),
   hostSubagentStore: {
     list: vi.fn(),
     get: vi.fn(),
@@ -55,6 +70,32 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
   callSessionRpc,
 }));
 
+vi.mock('@/session/goalControls/sessionGoalControlRouter', () => ({
+  routeSessionGoalControl,
+}));
+
+vi.mock('@/session/catalogControls/sessionCatalogControlRouter', () => ({
+  routeSessionCatalogControl,
+}));
+
+vi.mock('@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlRouter', () => ({
+  routeSessionUsageLimitRecoveryCheckNow,
+  routeSessionUsageLimitRecoveryWaitResumeCancel,
+  routeSessionUsageLimitRecoveryWaitResumeEnable,
+}));
+
+vi.mock('@/session/usageLimitRecoveryControls/sessionUsageLimitRecoverySwitchAccountNow', () => ({
+  routeSessionUsageLimitRecoverySwitchAccountNow,
+}));
+
+vi.mock('@/persistence', async () => {
+  const actual = await vi.importActual<any>('@/persistence');
+  return {
+    ...actual,
+    readSettings,
+  };
+});
+
 vi.mock('@/session/subagents/hostSubagentStore', async () => {
   const actual = await vi.importActual<any>('@/session/subagents/hostSubagentStore');
   return {
@@ -80,6 +121,14 @@ describe('createCliActionDeps hook dispatch', () => {
     resolveSessionTransportContext.mockReset();
     executeExecutionRunAction.mockReset();
     callSessionRpc.mockReset();
+    routeSessionGoalControl.mockReset();
+    routeSessionCatalogControl.mockReset();
+    routeSessionUsageLimitRecoveryCheckNow.mockReset();
+    routeSessionUsageLimitRecoverySwitchAccountNow.mockReset();
+    routeSessionUsageLimitRecoveryWaitResumeCancel.mockReset();
+    routeSessionUsageLimitRecoveryWaitResumeEnable.mockReset();
+    readSettings.mockReset();
+    readSettings.mockResolvedValue({ machineId: 'local-machine' });
     hostSubagentStore.list.mockReset();
     hostSubagentStore.get.mockReset();
     hostSubagentStore.watch.mockReset();
@@ -457,6 +506,533 @@ describe('createCliActionDeps hook dispatch', () => {
       request: { id: 'perm-1', approved: true },
     }));
     expect(executeExecutionRunAction).not.toHaveBeenCalled();
+  });
+
+  it('fails explicit completed permission request ids locally instead of acknowledging stale responses', async () => {
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: {
+        metadata: {},
+        agentState: {
+          requests: {},
+          completedRequests: {
+            'perm-done': {
+              kind: 'permission',
+              tool: 'Bash',
+              status: 'approved',
+            },
+          },
+        },
+      },
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      mode: 'plain',
+    });
+    callSessionRpc.mockResolvedValue({ ok: true });
+
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        metadata: {},
+      },
+    });
+
+    await expect(deps.sessionPermissionRespond?.({
+      sessionId: 'sess-1',
+      decision: 'allow',
+      requestId: 'perm-done',
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'permission_request_not_found',
+      errorMessage: 'permission_request_not_found',
+      sessionId: 'sess-1',
+    });
+
+    expect(callSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('fails explicit completed user-action request ids locally instead of acknowledging stale answers', async () => {
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: {
+        metadata: {},
+        agentState: {
+          requests: {},
+          completedRequests: {
+            'question-done': {
+              kind: 'user_action',
+              tool: 'AskUserQuestion',
+              status: 'approved',
+            },
+          },
+        },
+      },
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      mode: 'plain',
+    });
+    callSessionRpc.mockResolvedValue({ ok: true });
+
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        metadata: {},
+      },
+    });
+
+    await expect(deps.sessionUserActionAnswer?.({
+      sessionId: 'sess-1',
+      requestId: 'question-done',
+      answers: [{ question: 'Continue?', answer: 'Yes' }],
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'permission_request_not_found',
+      errorMessage: 'permission_request_not_found',
+      sessionId: 'sess-1',
+    });
+
+    expect(callSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('routes inactive session goal controls with the local machine id from settings', async () => {
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-remote',
+      rawSession: {
+        id: 'sess-remote',
+        machineId: 'target-machine',
+        path: '/remote/repo',
+        metadata: { machineId: 'target-machine' },
+      },
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      mode: 'plain',
+    });
+    routeSessionGoalControl.mockResolvedValue({ ok: true });
+
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-current',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        machineId: 'target-machine',
+        metadata: { machineId: 'target-machine' },
+      },
+    });
+
+    await expect(deps.sessionGoalGet?.({ sessionId: 'sess-remote' })).resolves.toEqual({ ok: true });
+
+    expect(routeSessionGoalControl).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess-remote',
+      currentMachineId: 'local-machine',
+    }));
+  });
+
+  it('routes usage-limit wait-resume controls through the recovery control router when enabled', async () => {
+    const recovery = {
+      v: 1,
+      status: 'waiting',
+      issueFingerprint: 'usage-limit:sess-remote:reset',
+      armedAtMs: 1,
+      resetAtMs: 2,
+      nextCheckAtMs: 2,
+      attemptCount: 0,
+      maxAttempts: 3,
+      lastProbeError: null,
+      selectedAuth: { kind: 'native' },
+      resumePromptMode: 'off',
+    } as const;
+    const scheduleInactiveSessionUsageLimitRecoveryCheck = vi.fn();
+    const cancelInactiveSessionUsageLimitRecoveryCheck = vi.fn();
+    routeSessionUsageLimitRecoveryWaitResumeEnable.mockResolvedValueOnce({
+      ok: true,
+      recovery: { status: 'waiting' },
+      metadata: {
+        [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: recovery,
+      },
+    });
+    routeSessionUsageLimitRecoveryWaitResumeCancel.mockResolvedValueOnce({ ok: true, recovery: { status: 'cancelled' } });
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-remote',
+      rawSession: {
+        id: 'sess-remote',
+        active: false,
+        path: '/repo',
+        machineId: 'target-machine',
+        metadata: { machineId: 'target-machine' },
+      },
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      mode: 'plain',
+    });
+    callSessionRpc.mockResolvedValue({ ok: true, recovery: { status: 'waiting' } });
+
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-current',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        metadata: {},
+      },
+      isUsageLimitRecoveryEnabled: async () => true,
+      scheduleInactiveSessionUsageLimitRecoveryCheck,
+      cancelInactiveSessionUsageLimitRecoveryCheck,
+    });
+
+    await expect(deps.sessionUsageLimitWaitResumeEnable?.({
+      sessionId: 'sess-remote',
+      issueFingerprint: 'usage-limit:sess-remote:reset',
+      remember: true,
+      resumePromptMode: 'off',
+    })).resolves.toMatchObject({ ok: true, status: 'waiting', sessionId: 'sess-remote' });
+    await expect(deps.sessionUsageLimitWaitResumeCancel?.({
+      sessionId: 'sess-remote',
+      issueFingerprint: null,
+    })).resolves.toEqual({ ok: true, status: 'cancelled', sessionId: 'sess-remote' });
+    expect(callSessionRpc).not.toHaveBeenCalled();
+    expect(routeSessionUsageLimitRecoveryWaitResumeEnable).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess-remote',
+      currentMachineId: 'local-machine',
+      request: {
+        sessionId: 'sess-remote',
+        issueFingerprint: 'usage-limit:sess-remote:reset',
+        rememberPreference: true,
+        resumePromptMode: 'off',
+      },
+    }));
+    expect(routeSessionUsageLimitRecoveryWaitResumeCancel).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess-remote',
+      currentMachineId: 'local-machine',
+      request: {
+        sessionId: 'sess-remote',
+        issueFingerprint: null,
+      },
+    }));
+    expect(scheduleInactiveSessionUsageLimitRecoveryCheck).toHaveBeenCalledWith({
+      sessionId: 'sess-remote',
+      recovery,
+      runCheckNow: expect.any(Function),
+    });
+    routeSessionUsageLimitRecoveryCheckNow.mockResolvedValueOnce({ ok: true, status: 'ready' });
+    await expect(scheduleInactiveSessionUsageLimitRecoveryCheck.mock.calls[0]?.[0].runCheckNow()).resolves.toEqual({
+      ok: true,
+      status: 'ready',
+      sessionId: 'sess-remote',
+    });
+    expect(routeSessionUsageLimitRecoveryCheckNow).toHaveBeenCalledWith(expect.objectContaining({
+      request: {
+        sessionId: 'sess-remote',
+        resumePromptMode: 'off',
+      },
+    }));
+    expect(cancelInactiveSessionUsageLimitRecoveryCheck).toHaveBeenCalledWith({
+      sessionId: 'sess-remote',
+    });
+  });
+
+  it('routes usage-limit check-now through the recovery control router when enabled', async () => {
+    routeSessionUsageLimitRecoveryCheckNow.mockResolvedValueOnce({ ok: true, status: 'ready' });
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-remote',
+      rawSession: {
+        id: 'sess-remote',
+        active: false,
+        path: '/repo',
+        machineId: 'target-machine',
+        metadata: { machineId: 'target-machine' },
+      },
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      mode: 'plain',
+    });
+    readSettings.mockResolvedValue({ machineId: 'target-machine' });
+    const resumeInactiveSessionWhenUsageLimitReady = vi.fn(async () => true);
+    const retryTemporaryThrottleNow = vi.fn(async () => ({ status: 'resumed' }));
+
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-current',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        metadata: {},
+      },
+      isUsageLimitRecoveryEnabled: async () => true,
+      resumeInactiveSessionWhenUsageLimitReady,
+      retryTemporaryThrottleNow,
+    });
+
+    await expect(deps.sessionUsageLimitCheckNow?.({
+      sessionId: 'sess-remote',
+      provider: ' codex ',
+    })).resolves.toEqual({ ok: true, status: 'ready', sessionId: 'sess-remote' });
+
+    expect(callSessionRpc).not.toHaveBeenCalled();
+    expect(routeSessionUsageLimitRecoveryCheckNow).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess-remote',
+      currentMachineId: 'target-machine',
+      rawSession: expect.objectContaining({ active: false }),
+      request: { sessionId: 'sess-remote', provider: 'codex' },
+      resumeInactiveSessionWhenReady: expect.any(Function),
+      retryTemporaryThrottleNow,
+    }));
+    await expect(routeSessionUsageLimitRecoveryCheckNow.mock.calls[0]?.[0].resumeInactiveSessionWhenReady({
+      sessionId: 'sess-remote',
+      rawSession: { id: 'sess-remote' },
+      metadata: { machineId: 'target-machine' },
+    })).resolves.toBe(true);
+    expect(resumeInactiveSessionWhenUsageLimitReady).toHaveBeenCalledWith({
+      sessionId: 'sess-remote',
+      rawSession: { id: 'sess-remote' },
+      metadata: { machineId: 'target-machine' },
+    });
+  });
+
+  it('routes usage-limit switch-account controls through daemon runtime-auth recovery', async () => {
+    routeSessionUsageLimitRecoverySwitchAccountNow.mockResolvedValueOnce({ ok: true, status: 'waiting' });
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-group',
+      rawSession: {
+        id: 'sess-group',
+        active: true,
+        latestTurnStatus: 'failed',
+        lastRuntimeIssue: {
+          v: 1,
+          scope: 'primary_session',
+          status: 'failed',
+          code: 'usage_limit',
+          source: 'usage_limit',
+          provider: 'codex',
+          providerTurnId: 'turn-1',
+          occurredAt: 1_700_000_000_000,
+          usageLimit: {
+            v: 1,
+            resetAtMs: null,
+            retryAfterMs: null,
+            quotaScope: 'account',
+            recoverability: 'switch_account',
+            connectedService: {
+              serviceId: 'openai-codex',
+              profileId: 'primary',
+              groupId: 'codex-main',
+            },
+          },
+        },
+        metadata: {
+          machineId: 'target-machine',
+        },
+      },
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      mode: 'plain',
+    });
+
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-current',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        metadata: {},
+      },
+      isUsageLimitRecoveryEnabled: async () => true,
+    });
+
+    await expect(deps.sessionUsageLimitSwitchAccountNow?.({
+      sessionId: 'sess-group',
+      provider: ' codex ',
+      resumePromptMode: 'custom',
+    })).resolves.toEqual({ ok: true, status: 'waiting', sessionId: 'sess-group' });
+
+    expect(callSessionRpc).not.toHaveBeenCalled();
+    expect(routeSessionUsageLimitRecoverySwitchAccountNow).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess-group',
+      rawSession: expect.objectContaining({ active: true }),
+      request: { sessionId: 'sess-group', provider: 'codex', resumePromptMode: 'custom' },
+    }));
+  });
+
+  it('normalizes usage-limit recovery action-deps authentication failures', async () => {
+    const deps = createCliActionDeps({
+      token: 'token',
+      sessionId: 'sess-current',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        metadata: {},
+      },
+      isUsageLimitRecoveryEnabled: async () => true,
+    });
+
+    await expect(deps.sessionUsageLimitCheckNow?.({
+      sessionId: 'sess-remote',
+    })).resolves.toEqual({
+      ok: false,
+      status: 'unsupported',
+      sessionId: 'sess-remote',
+      errorCode: 'not_authenticated',
+    });
+    expect(resolveSessionTransportContext).not.toHaveBeenCalled();
+  });
+
+  it('normalizes usage-limit recovery action-deps transport failures', async () => {
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: false,
+      code: 'session_transport_unresolved',
+      candidates: [{ sessionId: 'other-session' }],
+    });
+
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-current',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        metadata: {},
+      },
+      isUsageLimitRecoveryEnabled: async () => true,
+    });
+
+    await expect(deps.sessionUsageLimitWaitResumeEnable?.({
+      sessionId: 'sess-remote',
+    })).resolves.toEqual({
+      ok: false,
+      status: 'unsupported',
+      sessionId: 'sess-remote',
+      errorCode: 'session_transport_unresolved',
+    });
+  });
+
+  it('fails closed for usage-limit recovery controls when the feature is disabled', async () => {
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-current',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        metadata: {},
+      },
+      isUsageLimitRecoveryEnabled: async () => false,
+    });
+
+    await expect(deps.sessionUsageLimitWaitResumeEnable?.({
+      sessionId: 'sess-remote',
+    })).resolves.toEqual({
+      ok: false,
+      status: 'unsupported',
+      sessionId: 'sess-remote',
+      errorCode: 'feature_disabled',
+    });
+
+    expect(callSessionRpc).not.toHaveBeenCalled();
   });
 
   it('registers subagent watches through the bounded host watcher and returns the initial snapshot', async () => {

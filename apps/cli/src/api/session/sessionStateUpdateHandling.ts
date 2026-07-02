@@ -1,6 +1,7 @@
 import { decodeBase64, decrypt } from '../encryption';
 import type { AgentState, Metadata, Update } from '../types';
 import { tryParseJsonObject } from '@/utils/tryParseJsonRecord';
+import { readKnownPendingQueueState, type KnownPendingQueueState } from './pendingQueueState';
 
 function tryDecodeSessionStateValue<T>(params: {
     rawValue: unknown;
@@ -50,6 +51,7 @@ export function handleSessionStateUpdate(params: {
     agentState: AgentState | null;
     agentStateVersion: number;
     pendingWakeSeq: number;
+    pendingQueueState?: KnownPendingQueueState;
 } {
     const body = params.update.body as any;
     if (body?.t === 'pending-changed') {
@@ -66,6 +68,7 @@ export function handleSessionStateUpdate(params: {
         }
 
         params.onMetadataUpdated();
+        const pendingQueueState = readKnownPendingQueueState(body);
         return {
             handled: true,
             metadata: params.metadata,
@@ -73,6 +76,7 @@ export function handleSessionStateUpdate(params: {
             agentState: params.agentState,
             agentStateVersion: params.agentStateVersion,
             pendingWakeSeq: params.pendingWakeSeq + 1,
+            ...(pendingQueueState ? { pendingQueueState } : {}),
         };
     }
 

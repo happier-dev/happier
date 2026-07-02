@@ -13,6 +13,8 @@ import { connectionState } from '@/api/offline/serverConnectionErrors';
 import { createUserScopedSocket } from '../../sockets';
 import type { ClientToServerEvents, ServerToClientEvents, Update } from '../../../types';
 import { logger } from '@/ui/logger';
+import { serializeAxiosErrorForLog } from '../../../client/serializeAxiosErrorForLog';
+import type { SessionSnapshotRefreshReason } from '../../sessionSnapshotRefreshReason';
 
 export function initializeSessionClientConnection(
     params: Readonly<{
@@ -32,8 +34,9 @@ export function initializeSessionClientConnection(
         kickUserSocketConnect: () => void;
         syncChangesOnConnect: (opts: { reason: 'connect' | 'reconnect' }) => Promise<void>;
         shouldSyncSessionSnapshotOnConnect: () => boolean;
-        syncSessionSnapshotFromServer: (opts: { reason: 'connect' | 'waitForMetadataUpdate' | 'primaryTurnRuntimeState' }) => Promise<void>;
+        syncSessionSnapshotFromServer: (opts: { reason: SessionSnapshotRefreshReason }) => Promise<void>;
         flushQueuedSessionMessagesOnReconnect: () => Promise<void>;
+        flushDurableSessionMutationsOnReconnect: () => Promise<void>;
         markConnected: () => 'connect' | 'reconnect';
     }>,
 ): Readonly<{
@@ -90,13 +93,22 @@ export function initializeSessionClientConnection(
                 params.kickUserSocketConnect();
             }
             await params.syncChangesOnConnect({ reason: connectReason }).catch((error) => {
-                logger.debug('[API] Session changes sync on connect failed (non-fatal)', { error });
+                logger.debug('[API] Session changes sync on connect failed (non-fatal)', {
+                    error: serializeAxiosErrorForLog(error),
+                });
             });
             if (params.shouldSyncSessionSnapshotOnConnect()) {
                 void params.syncSessionSnapshotFromServer({ reason: 'connect' });
             }
             await params.flushQueuedSessionMessagesOnReconnect().catch((error) => {
-                logger.debug('[API] Failed to replay queued session messages on reconnect', { error });
+                logger.debug('[API] Failed to replay queued session messages on reconnect', {
+                    error: serializeAxiosErrorForLog(error),
+                });
+            });
+            await params.flushDurableSessionMutationsOnReconnect().catch((error) => {
+                logger.debug('[API] Failed to flush durable session mutations on reconnect', {
+                    error: serializeAxiosErrorForLog(error),
+                });
             });
         },
         onDisconnected: async ({ event }) => {

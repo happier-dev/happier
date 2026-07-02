@@ -16,7 +16,7 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', asyn
 });
 
 describe('CLI command-surface manifest', () => {
-  it('exposes the current root help command list from one manifest', () => {
+  it('exposes the current root help command list from static and projected command surfaces', () => {
     const entries = listRootHelpCommands();
     expect(entries.map((entry) => entry.command)).toEqual([
       null,
@@ -24,7 +24,6 @@ describe('CLI command-surface manifest', () => {
       'auth',
       'mcp',
       'codex',
-      'opencode',
       'gemini',
       'connect',
       'providers',
@@ -38,6 +37,17 @@ describe('CLI command-surface manifest', () => {
       'self',
       'self-update',
       'session',
+      'claude',
+      'opencode',
+      'auggie',
+      'qwen',
+      'kimi',
+      'kilo',
+      'kiro',
+      'cursor',
+      'ohMyPi',
+      'pi',
+      'copilot',
     ]);
 
     for (const entry of entries) {
@@ -56,6 +66,10 @@ describe('CLI command-surface manifest', () => {
     expect(entries.find((entry) => entry.command === 'session')).toMatchObject({
       rootHelpLabel: 'happier session',
       rootHelpDescription: 'Manage sessions and execution runs',
+    });
+    expect(entries.find((entry) => entry.command === 'opencode')).toMatchObject({
+      rootHelpLabel: 'happier opencode',
+      rootHelpDescription: 'Start OpenCode CLI',
     });
   });
 
@@ -120,5 +134,61 @@ describe('CLI command-surface manifest', () => {
       rootHelpLabel: 'happier acme.ohmypi',
       allowTmux: true,
     });
+  });
+
+  it('uses projected first-party root help metadata for bundled provider commands', () => {
+    getResolvedContributionRegistryMock.mockReturnValue({
+      providers: [],
+      backends: [],
+      hookRegistrations: [],
+      runtimeAdaptersByBackendId: new Map(),
+      catalogEntriesById: {
+        opencode: {
+          id: 'opencode',
+          cliSubcommand: 'opencode',
+          getCliCommandHandler: async () => async () => {},
+          rootHelpLabel: 'happier opencode',
+          rootHelpDescription: 'Start OpenCode through projected metadata',
+          allowTmux: false,
+        },
+      },
+      providerDefinitionsById: new Map([
+        [
+          'opencode',
+          {
+            id: 'opencode',
+            provenance: 'first_party',
+            source: { kind: 'bundled' },
+            definition: {
+              kindVersion: 1,
+              id: 'opencode',
+              ownedBackendIds: ['opencode'],
+            },
+            runtimeSpec: {
+              id: 'opencode',
+              title: 'OpenCode CLI',
+              binaryName: 'opencode',
+              sourcePreferenceDefault: 'system-first',
+              managedInstall: null,
+              manualInstallKind: 'command',
+              manualInstallRecipes: null,
+              acceptsJavaScriptFileOverride: false,
+            },
+          },
+        ],
+      ]),
+      backendDefinitionsById: new Map(),
+      pluginDiagnosticsByPluginId: {},
+    });
+
+    const entries = listRootHelpCommands().filter((entry) => entry.command === 'opencode');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      command: 'opencode',
+      rootHelpLabel: 'happier opencode',
+      rootHelpDescription: 'Start OpenCode through projected metadata',
+      allowTmux: false,
+    });
+    expect(isTmuxAllowedCommand('opencode')).toBe(false);
   });
 });

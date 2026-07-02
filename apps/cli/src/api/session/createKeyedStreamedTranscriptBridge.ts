@@ -20,6 +20,7 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
   checkpointMinChars?: number | null;
   liveSnapshotIntervalMs?: number | null;
   liveSnapshotMinChars?: number | null;
+  durableCommitsRequireExplicitEnable?: boolean | ((args: TArgs) => boolean);
 }>) {
   const writerByStreamKey = new Map<string, StreamedTranscriptWriter>();
 
@@ -27,6 +28,9 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
     const existing = writerByStreamKey.get(args.streamKey);
     if (existing) return existing;
 
+    const durableCommitsRequireExplicitEnable = typeof params.durableCommitsRequireExplicitEnable === 'function'
+      ? params.durableCommitsRequireExplicitEnable(args)
+      : params.durableCommitsRequireExplicitEnable;
     const writer = createStreamedTranscriptWriter({
       provider: params.provider,
       session: params.createSessionForStream(args),
@@ -35,6 +39,7 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
       checkpointMinChars: params.checkpointMinChars,
       liveSnapshotIntervalMs: params.liveSnapshotIntervalMs,
       liveSnapshotMinChars: params.liveSnapshotMinChars,
+      durableCommitsRequireExplicitEnable,
     });
     writerByStreamKey.set(args.streamKey, writer);
     return writer;
@@ -57,12 +62,26 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
       getOrCreateWriter(args).overrideThinkingText(args.text, { sidechainId: args.sidechainId });
     },
 
+    enableDurableCommitsForStream(args: TArgs) {
+      getOrCreateWriter(args).enableDurableCommits();
+    },
+
+    discardStream(args: TArgs) {
+      const writer = writerByStreamKey.get(args.streamKey);
+      if (!writer) return;
+      writer.discard();
+      writerByStreamKey.delete(args.streamKey);
+    },
+
     async flushAll(args: Readonly<{ reason: FlushReason; interruptedReason?: string }>) {
       await Promise.all(Array.from(writerByStreamKey.values(), (writer) => writer.flushAll(args)));
       writerByStreamKey.clear();
     },
 
     clear() {
+      for (const writer of writerByStreamKey.values()) {
+        writer.discard();
+      }
       writerByStreamKey.clear();
     },
   };

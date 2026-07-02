@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 
 import { ApiSessionClient } from './session/sessionClient';
 import { createMockSession } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { bindApiSessionSocketPairMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { withToolTraceFile } from '@/testkit/logger/toolTraceFile';
 
@@ -13,6 +14,24 @@ const { mockIo } = vi.hoisted(() => ({
 vi.mock('socket.io-client', () => ({
     io: mockIo,
 }));
+
+function createRuntimeDescriptorMetadata(backendId: string) {
+    return createTestMetadata({
+        runtimeDescriptorV1: {
+            v: 1,
+            providerId: backendId,
+            provider: {
+                backendMode: 'plugin',
+                providerExtra: {
+                    owner: 'happier',
+                    schemaId: 'test.runtime',
+                    v: 1,
+                    runtimeHandle: { backendId },
+                },
+            },
+        },
+    });
+}
 
 describe('ApiSessionClient tool tracing', () => {
     let sessionSocket: any;
@@ -118,9 +137,10 @@ describe('ApiSessionClient tool tracing', () => {
 
     it('records Claude tool_use/tool_result blocks when tool tracing is enabled', async () => {
         await withToolTraceFile('happy-tool-trace-claude-', async (filePath) => {
-            const client = new ApiSessionClient('fake-token', mockSession);
+            const client = new ApiSessionClient('fake-token', createMockSession({
+                metadata: createRuntimeDescriptorMetadata('claude'),
+            }));
             client.sendProviderMessage({
-                provider: 'claude',
                 body: {
                     type: 'assistant',
                     uuid: 'uuid-1',
@@ -133,9 +153,13 @@ describe('ApiSessionClient tool tracing', () => {
                 } as any,
             });
 
+            await vi.waitFor(() => {
+                const raw = readFileSync(filePath, 'utf8');
+                const lines = raw.trim().split('\n');
+                expect(lines).toHaveLength(2);
+            }, { timeout: 5_000 });
             const raw = readFileSync(filePath, 'utf8');
             const lines = raw.trim().split('\n');
-            expect(lines).toHaveLength(2);
             expect(JSON.parse(lines[0] as string)).toMatchObject({
                 v: 1,
                 direction: 'outbound',
@@ -157,10 +181,12 @@ describe('ApiSessionClient tool tracing', () => {
 
     it('records Claude tool_result blocks sent as user messages when tool tracing is enabled', async () => {
         await withToolTraceFile('happy-tool-trace-claude-user-tool-result-', async (filePath) => {
-            const session = createMockSession({ id: 'test-session-id-user-tool-result' });
+            const session = createMockSession({
+                id: 'test-session-id-user-tool-result',
+                metadata: createRuntimeDescriptorMetadata('claude'),
+            });
             const client = new ApiSessionClient('fake-token', session);
             client.sendProviderMessage({
-                provider: 'claude',
                 body: {
                     type: 'user',
                     uuid: 'uuid-2',
@@ -170,8 +196,25 @@ describe('ApiSessionClient tool tracing', () => {
                 } as any,
             });
 
-            const raw = existsSync(filePath) ? readFileSync(filePath, 'utf8') : '';
-            const lines = raw.trim().length > 0 ? raw.trim().split('\n') : [];
+            await vi.waitFor(() => {
+                const raw = existsSync(filePath) ? readFileSync(filePath, 'utf8') : '';
+                const lines = raw.trim().length > 0 ? raw.trim().split('\n') : [];
+                const parsed = lines.map((line) => JSON.parse(line));
+                expect(parsed).toContainEqual(expect.objectContaining({
+                    v: 1,
+                    direction: 'outbound',
+                    sessionId: 'test-session-id-user-tool-result',
+                    protocol: 'claude',
+                    provider: 'claude',
+                    kind: 'tool-result',
+                    payload: expect.objectContaining({
+                        type: 'tool_result',
+                        tool_use_id: 'toolu_1',
+                    }),
+                }));
+            });
+            const raw = readFileSync(filePath, 'utf8');
+            const lines = raw.trim().split('\n');
             const parsed = lines.map((line) => JSON.parse(line));
             expect(parsed).toContainEqual(expect.objectContaining({
                 v: 1,
@@ -190,9 +233,10 @@ describe('ApiSessionClient tool tracing', () => {
 
     it('does not record Claude user text messages when tool tracing is enabled', async () => {
         await withToolTraceFile('happy-tool-trace-claude-', async (filePath) => {
-            const client = new ApiSessionClient('fake-token', mockSession);
+            const client = new ApiSessionClient('fake-token', createMockSession({
+                metadata: createRuntimeDescriptorMetadata('claude'),
+            }));
             client.sendProviderMessage({
-                provider: 'claude',
                 body: {
                     type: 'user',
                     uuid: 'uuid-2',
@@ -200,6 +244,7 @@ describe('ApiSessionClient tool tracing', () => {
                 } as any,
             });
 
+            await new Promise((resolve) => setTimeout(resolve, 0));
             expect(existsSync(filePath)).toBe(false);
         });
     });

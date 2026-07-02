@@ -6,15 +6,15 @@ import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
-const { getProviderCliSetupRecommendedIdsMock } = vi.hoisted(() => ({
-  getProviderCliSetupRecommendedIdsMock: vi.fn(() => ['alpha', 'beta']),
+const { getAgentCliSetupRecommendedIdsMock } = vi.hoisted(() => ({
+  getAgentCliSetupRecommendedIdsMock: vi.fn(() => ['alpha', 'beta']),
 }));
 
 vi.mock('@happier-dev/agents', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@happier-dev/agents')>();
   return {
     ...actual,
-    getProviderCliSetupRecommendedIds: getProviderCliSetupRecommendedIdsMock,
+    getAgentCliSetupRecommendedIds: getAgentCliSetupRecommendedIdsMock,
   };
 });
 

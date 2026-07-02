@@ -10,7 +10,7 @@ import type {
 } from '../../sessionMessageTypes';
 import {
     prepareAcpTranscriptDispatch,
-} from '../../outbound/providers/sessionTranscriptDispatch';
+} from '../../outbound/transcriptDispatch';
 import {
     resolveAcpSessionMessageRole,
     resolveSessionEventMessageRole,
@@ -23,6 +23,7 @@ import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSn
 
 type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
 type SessionMessageRole = 'user' | 'agent' | 'event' | 'unknown';
+type SessionEventType = 'ready';
 
 function buildSessionEventContent(event: SessionEventMessage, id?: string): {
     role: 'agent';
@@ -47,6 +48,7 @@ type CommitSessionMessageParams = Readonly<{
     localId: string;
     sidechainId: string | null;
     messageRole: SessionMessageRole;
+    sessionEventType?: SessionEventType;
     logErrorMessage: string;
     markAsUserMessage?: boolean;
 }>;
@@ -241,6 +243,7 @@ export function sendSessionEventViaPort(
         localId: randomUUID(),
         sidechainId: null,
         messageRole: resolveSessionEventMessageRole(),
+        sessionEventType: event.type === 'ready' ? 'ready' : undefined,
         logErrorMessage: '[SOCKET] Failed to commit session event (non-fatal)',
     });
 }

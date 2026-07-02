@@ -1,20 +1,26 @@
 import { isAuthenticationError } from '@/api/client/httpStatusError';
-import { getAcpForkContinuationHandler } from '@/backends/catalog';
 import {
     SPAWN_SESSION_ERROR_CODES,
     type SpawnSessionOptions,
 } from '@/rpc/handlers/registerSessionHandlers';
-import type { AcpForkContinuationResult } from '@/session/fork/acpForkContinuationHandler';
+import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
-import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
+import { normalizeCodexBackendMode, resolveVendorResumeIdFromSessionMetadata, type ForkResultV1 } from '@happier-dev/agents';
+import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import {
+    readCanonicalRuntimeDescriptorV1ForProvider,
+    readRuntimeDescriptorV1FromMetadata,
+} from '@happier-dev/protocol';
 
 import {
     archiveSessionBestEffort,
     cleanupForkChildBestEffort,
     fetchForkChildSessionOrThrow,
 } from './forkChildSessionRecovery';
+import { normalizeForkProviderSessionId } from './forkProviderSessionId';
 import type {
     ForkBackendResolution,
+    ForkBridgeSurface,
     ForkInheritedOverrides,
     ForkLifecycleCredentials,
     ForkLifecycleMetadata,
@@ -34,87 +40,48 @@ export async function attemptAcpLatestFork(params: Readonly<{
     forkProviderAgentId: ForkBackendResolution['providerAgentId'];
     forkBackendResolution: ForkBackendResolution;
     inheritedForkOverrides: ForkInheritedOverrides;
+    forkSurface: ForkBridgeSurface;
     spawnSession: ForkSpawnSession;
     stopSession: ForkStopSession;
 }>): Promise<ForkStrategyAttemptResult> {
     try {
         const forkProviderAgentId = params.forkProviderAgentId;
-        const vendorSessionIdRaw = params.forkIsConfiguredAcp
-            ? (params.forkBackendResolution.configuredAcp?.vendorSessionId ?? '')
+        const providerSessionIdRaw = params.forkIsConfiguredAcp
+            ? (params.forkBackendResolution.configuredAcp?.providerSessionId ?? '')
             : (forkProviderAgentId
                 ? (resolveVendorResumeIdFromSessionMetadata(forkProviderAgentId, params.parentMetadata) ?? '')
                 : '');
 
-        if (!vendorSessionIdRaw) return null;
+        if (!providerSessionIdRaw) return null;
 
-        const permissionHandler = {
-            handleToolCall: async () => ({ decision: 'denied' as const }),
-        };
-        let acpBackend: {
-            loadSession?: (sessionId: string) => Promise<unknown>;
-            forkSession?: (params: Readonly<{ sessionId: string; cwd?: string }>) => Promise<unknown>;
-            dispose: () => Promise<unknown>;
-        } | null = null;
-
-        if (params.forkBackendResolution.configuredAcp?.resolvedBackend && params.forkBackendResolution.configuredAcp.accountSettings) {
-            const { createConfiguredAcpBackend } = await import('@/agent/acp/catalog/configured/createConfiguredAcpBackend');
-            const { materializeConfiguredAcpEnvironment } = await import('@/agent/acp/catalog/configured/materializeEnvironment');
-            const launchEnv = materializeConfiguredAcpEnvironment({
-                backend: params.forkBackendResolution.configuredAcp.resolvedBackend,
-                accountSettings: params.forkBackendResolution.configuredAcp.accountSettings,
-                credentials: params.credentials,
-            });
-            acpBackend = createConfiguredAcpBackend({
-                cwd: params.directory,
-                backend: params.forkBackendResolution.configuredAcp.resolvedBackend,
-                launchEnv,
-                mcpServers: {},
-                permissionHandler,
-            }) as unknown as NonNullable<typeof acpBackend>;
-        } else if (!params.forkIsConfiguredAcp && forkProviderAgentId) {
-            const { createCatalogAcpBackend } = await import('@/agent/acp/createCatalogAcpBackend');
-            const created = await createCatalogAcpBackend(forkProviderAgentId, {
-                cwd: params.directory,
-                mcpServers: {},
-                permissionHandler,
-            });
-            acpBackend = created.backend;
-        }
-
-        try {
-            if (!acpBackend || typeof acpBackend.loadSession !== 'function' || typeof acpBackend.forkSession !== 'function') {
-                return null;
+        const spawnFinalForkResult = async (forked: ForkResultV1): Promise<ForkStrategyAttemptResult> => {
+            const forkedProviderSessionId = normalizeForkProviderSessionId(forked.providerSessionId);
+            if (!forkedProviderSessionId) {
+                return {
+                    ok: false,
+                    errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                    errorMessage: 'ACP fork returned an empty providerSessionId',
+                };
             }
-
-            await acpBackend.loadSession(vendorSessionIdRaw);
-            const forked = await acpBackend.forkSession({
-                sessionId: vendorSessionIdRaw,
-            });
-            const forkedRecord = (forked && typeof forked === 'object') ? forked as { sessionId?: unknown } : null;
-            const forkedSessionId = typeof forkedRecord?.sessionId === 'string'
-                ? String(forkedRecord.sessionId).trim()
-                : '';
-            if (!forkedSessionId) return null;
-
-            let continuationShape: AcpForkContinuationResult | null = null;
-            if (forkProviderAgentId) {
-                const acpForkContinuation = await getAcpForkContinuationHandler(forkProviderAgentId);
-                if (acpForkContinuation) {
-                    continuationShape = await acpForkContinuation({
-                        agentId: forkProviderAgentId,
-                        parentMetadata: params.parentMetadata,
-                        vendorSessionId: forkedSessionId,
-                    });
-                }
-            }
-
+            const launchMetadata = applySessionStateUpdatesToMetadata(
+                {},
+                forked.launch.sessionStateUpdates ?? [],
+            );
+            const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(launchMetadata) ?? undefined;
+            const codexRuntimeDescriptor = readCanonicalRuntimeDescriptorV1ForProvider(runtimeDescriptorV1, 'codex');
+            const codexBackendMode = normalizeCodexBackendMode(codexRuntimeDescriptor?.backendMode);
+            const inheritedForkOverrides = createConnectedServiceForkLaunchContext({
+                inherited: params.inheritedForkOverrides,
+            }).inherited;
             const result = await params.spawnSession({
-                directory: params.directory,
+                directory: forked.launch.directory ?? params.directory,
                 backendTarget: params.forkBackendResolution.backendTargetV2,
                 approvedNewDirectoryCreation: true,
-                resume: forkedSessionId,
-                ...(continuationShape?.spawn ?? {}),
-                ...params.inheritedForkOverrides.spawn,
+                resume: forkedProviderSessionId,
+                ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
+                ...(codexBackendMode ? { codexBackendMode } : {}),
+                ...(forked.launch.environmentVariables ? { environmentVariables: { ...forked.launch.environmentVariables } } : {}),
+                ...inheritedForkOverrides.spawn,
             } satisfies SpawnSessionOptions);
 
             if (params.requestedStrategy === 'acp_fork_latest' && result.type !== 'success') {
@@ -131,6 +98,7 @@ export async function attemptAcpLatestFork(params: Readonly<{
             if (childSessionId === params.parentSessionId) {
                 return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'Fork spawn returned parent session id' };
             }
+
             try {
                 const childRaw = await fetchForkChildSessionOrThrow({ token: params.credentials.token, sessionId: childSessionId });
                 await updateSessionMetadataWithRetry({
@@ -140,18 +108,19 @@ export async function attemptAcpLatestFork(params: Readonly<{
                     rawSession: childRaw,
                     updater: (metadata) => ({
                         ...metadata,
-                        ...params.inheritedForkOverrides.metadata,
+                        ...inheritedForkOverrides.metadata,
                         ...params.forkBackendResolution.metadataOverlay,
-                        ...(continuationShape?.metadata ?? {}),
+                        ...launchMetadata,
                         forkV1: {
                             v: 1,
                             parentSessionId: params.parentSessionId,
                             parentCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
                             createdAtMs: Date.now(),
                             strategy: 'acp_fork_latest',
-                            providerHint: continuationShape?.providerHint ?? {
+                            providerHint: {
                                 providerId: params.forkBackendResolution.providerHintProviderId,
-                                vendorSessionId: forkedSessionId,
+                                ...(codexBackendMode ? { backendMode: codexBackendMode } : {}),
+                                providerSessionId: forkedProviderSessionId,
                             },
                         },
                     }),
@@ -168,11 +137,18 @@ export async function attemptAcpLatestFork(params: Readonly<{
                 };
             }
             return { ok: true, childSessionId };
-        } finally {
-            if (acpBackend) {
-                await acpBackend.dispose().catch(() => {});
-            }
+        };
+
+        const forked = await params.forkSurface?.fork?.({
+            parentSessionId: params.parentSessionId,
+            parentMetadata: params.parentMetadata,
+            directory: params.directory,
+            forkPoint: { kind: 'latest' },
+        });
+        if (forked) {
+            return await spawnFinalForkResult(forked);
         }
+        return null;
     } catch (error) {
         if (isAuthenticationError(error)) throw error;
         return null;

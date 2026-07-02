@@ -84,15 +84,19 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
 
     resolveBackendExecutionSurfacesMock.mockResolvedValue({
       terminalRuntime: null,
-      externalSessions,
+      externalSession: externalSessions,
       attach: null,
-      sessionHandoff: null,
+      handoff: null,
+      fork: null,
+      checkpoint: null,
     } satisfies BackendExecutionSurfaces);
     resolveExecutionSurfacesMock.mockResolvedValue({
-      externalSessions,
+      externalSession: externalSessions,
       terminalRuntime: null,
       attach: null,
-      sessionHandoff: null,
+      handoff: null,
+      fork: null,
+      checkpoint: null,
     });
 
     const rpcHandlerManager = createRpcHandlerManager();
@@ -128,12 +132,14 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       Object.assign(new Error('Cannot find providerOps chunk'), { code: 'ERR_MODULE_NOT_FOUND' }),
     );
     resolveExecutionSurfacesMock.mockResolvedValue({
-      externalSessions: {
+      externalSession: {
         validateSource: vi.fn(async ({ source }) => ({ ok: true as const, source })),
       },
       terminalRuntime: null,
       attach: null,
-      sessionHandoff: null,
+      handoff: null,
+      fork: null,
+      checkpoint: null,
     });
 
     const rpcHandlerManager = createRpcHandlerManager();
@@ -279,17 +285,21 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
   it('returns a protocol-shaped candidates error when the backend exposes no direct-session surfaces', async () => {
     resolveBackendExecutionSurfacesMock.mockResolvedValue({
       terminalRuntime: null,
-      externalSessions: null,
+      externalSession: null,
       attach: null,
-      sessionHandoff: null,
+      handoff: null,
+      fork: null,
+      checkpoint: null,
     } satisfies BackendExecutionSurfaces);
     resolveExecutionSurfacesMock.mockResolvedValue({
-      externalSessions: {
+      externalSession: {
         validateSource: vi.fn(async ({ source }) => ({ ok: true as const, source })),
       },
       terminalRuntime: null,
       attach: null,
-      sessionHandoff: null,
+      handoff: null,
+      fork: null,
+      checkpoint: null,
     });
 
     const rpcHandlerManager = createRpcHandlerManager();

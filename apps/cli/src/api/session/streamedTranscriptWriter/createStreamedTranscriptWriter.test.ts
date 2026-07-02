@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { logger } from '@/ui/logger';
+
 import { createStreamedTranscriptWriter } from './createStreamedTranscriptWriter';
 
 type DurableCall = {
@@ -52,6 +54,136 @@ async function settleCommittedSnapshot() {
 }
 
 describe('createStreamedTranscriptWriter', () => {
+  it('defers durable checkpoints until durable commits are explicitly enabled', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const { session, durableCalls, liveCalls } = createSessionStub();
+
+    const writer = createStreamedTranscriptWriter({
+      provider: 'opencode' as any,
+      session: session as any,
+      makeLocalId: () => 'segment-1',
+      durableCommitsRequireExplicitEnable: true,
+      initialCheckpointDelayMs: 0,
+      checkpointIntervalMs: 1_000,
+      checkpointMinChars: 1,
+      liveSnapshotIntervalMs: 40,
+      liveSnapshotMinChars: 1,
+    });
+
+    writer.appendAssistantDelta('Internal until classified');
+    await settleCommittedSnapshot();
+
+    expect(liveCalls).toHaveLength(1);
+    expect(durableCalls).toHaveLength(0);
+
+    writer.enableDurableCommits();
+    await settleCommittedSnapshot();
+
+    expect(durableCalls).toHaveLength(1);
+    expect(durableCalls[0]).toMatchObject({
+      provider: 'opencode',
+      localId: 'segment-1',
+      body: { type: 'message', message: 'Internal until classified' },
+    });
+  });
+
+  it('discards unconfirmed streamed segments before final flush persists them', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const { session, durableCalls } = createSessionStub();
+
+    const writer = createStreamedTranscriptWriter({
+      provider: 'opencode' as any,
+      session: session as any,
+      makeLocalId: () => 'segment-1',
+      durableCommitsRequireExplicitEnable: true,
+      initialCheckpointDelayMs: 0,
+      checkpointIntervalMs: 1_000,
+      checkpointMinChars: 1,
+    });
+
+    writer.appendAssistantDelta('Compaction summary');
+    await settleCommittedSnapshot();
+
+    expect(durableCalls).toHaveLength(0);
+
+    writer.discard();
+    await writer.flushAll({ reason: 'turn-end' });
+    await settleCommittedSnapshot();
+
+    expect(durableCalls).toHaveLength(0);
+  });
+
+  it('uses the durable enqueue hook instead of direct committed sends when the hook exists', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const { session, durableCalls, bestEffortCalls } = createSessionStub();
+    const enqueueAgentMessageCommitted = vi.fn(async (provider: any, body: any, opts: any) => ({
+      persisted: true as const,
+      delivered: false,
+      provider,
+      body,
+      opts,
+    }));
+    (session as any).enqueueAgentMessageCommitted = enqueueAgentMessageCommitted;
+
+    const writer = createStreamedTranscriptWriter({
+      provider: 'opencode' as any,
+      session: session as any,
+      makeLocalId: () => 'segment-1',
+      initialCheckpointDelayMs: 10_000,
+      checkpointIntervalMs: 10_000,
+      checkpointMinChars: 999,
+    });
+
+    writer.appendAssistantDelta('Queued durable snapshot');
+    const summary = await writer.flushAll({ reason: 'turn-end' });
+    await settleCommittedSnapshot();
+
+    expect(enqueueAgentMessageCommitted).toHaveBeenCalledWith(
+      'opencode',
+      { type: 'message', message: 'Queued durable snapshot' },
+      expect.objectContaining({ localId: 'segment-1' }),
+    );
+    expect(durableCalls).toHaveLength(0);
+    expect(bestEffortCalls).toHaveLength(0);
+    expect(summary.assistant.didDurablyFlush).toBe(true);
+    expect(summary.assistantRoot.didDurablyFlush).toBe(true);
+  });
+
+  it('does not advance durable checkpoints when the durable enqueue hook drops persistence', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    const { session } = createSessionStub();
+    const enqueueAgentMessageCommitted = vi.fn(async () => ({
+      persisted: false as const,
+      delivered: false,
+    }));
+    (session as any).enqueueAgentMessageCommitted = enqueueAgentMessageCommitted;
+
+    const writer = createStreamedTranscriptWriter({
+      provider: 'opencode' as any,
+      session: session as any,
+      makeLocalId: () => 'segment-1',
+      initialCheckpointDelayMs: 10_000,
+      checkpointIntervalMs: 10_000,
+      checkpointMinChars: 999,
+    });
+
+    writer.appendAssistantDelta('Dropped durable snapshot');
+    const summary = await writer.flushAll({ reason: 'turn-end' });
+    await settleCommittedSnapshot();
+
+    expect(enqueueAgentMessageCommitted).toHaveBeenCalledOnce();
+    expect(summary.assistant.didDurablyFlush).toBe(false);
+    expect(summary.assistantRoot.didDurablyFlush).toBe(false);
+  });
+
   it('emits live snapshots ahead of durable checkpoints and flushes the latest text on the live cadence', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
@@ -533,7 +665,7 @@ describe('createStreamedTranscriptWriter', () => {
     });
   });
 
-  it('falls back to best-effort commits when sendAgentMessageCommitted fails', async () => {
+  it('does not route failed durable commits through best-effort commits', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
 
@@ -554,18 +686,10 @@ describe('createStreamedTranscriptWriter', () => {
     writer.appendAssistantDelta('Hello');
     await settleCommittedSnapshot();
 
-    expect(bestEffortCalls).toHaveLength(1);
-    expect(bestEffortCalls[0]).toMatchObject({
-      provider: 'codex',
-      localId: 'l1',
-      body: { type: 'message', message: 'Hello' },
-    });
-    expect(bestEffortCalls[0]!.meta).toMatchObject({
-      happierStreamSegmentV1: expect.objectContaining({ segmentKind: 'assistant', segmentState: 'streaming' }),
-    });
+    expect(bestEffortCalls).toHaveLength(0);
   });
 
-  it('reports an incomplete durable final turn flush when it had to fall back to best-effort commits', async () => {
+  it('reports an incomplete durable final turn flush when durable commit fails', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
 
@@ -587,7 +711,7 @@ describe('createStreamedTranscriptWriter', () => {
     const flushSummary = await writer.flushAll({ reason: 'turn-end' });
     await settleCommittedSnapshot();
 
-    expect(bestEffortCalls).toHaveLength(2);
+    expect(bestEffortCalls).toHaveLength(0);
     expect(flushSummary as any).toMatchObject({
       assistant: { sawText: true, didDurablyFlush: false },
       assistantRoot: { sawText: true, didDurablyFlush: false },
@@ -596,31 +720,16 @@ describe('createStreamedTranscriptWriter', () => {
     });
   });
 
-  it('does not resolve flushAll until the fallback best-effort commit finishes after a durable commit failure', async () => {
+  it('does not wait on best-effort commit plumbing after a durable commit failure', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));
 
-    const { session, bestEffortCalls } = createSessionStub();
-    const resolveFallbacks: Array<() => void> = [];
-    let fallbackPersisted = false;
+    const { session } = createSessionStub();
 
     session.sendAgentMessageCommitted = async () => {
       throw new Error('boom');
     };
-    session.sendAgentMessage = vi.fn(async (provider: any, body: any, opts: any) => {
-      bestEffortCalls.push({
-        provider: String(provider),
-        localId: typeof opts?.localId === 'string' ? opts.localId : '',
-        meta: opts?.meta,
-        body,
-      });
-      await new Promise<void>((resolve) => {
-        resolveFallbacks.push(() => {
-          fallbackPersisted = true;
-          resolve();
-        });
-      });
-    });
+    session.sendAgentMessage = vi.fn(() => new Promise<void>(() => {}));
 
     const writer = createStreamedTranscriptWriter({
       provider: 'codex' as any,
@@ -641,31 +750,12 @@ describe('createStreamedTranscriptWriter', () => {
 
     await Promise.resolve();
     await Promise.resolve();
-
-    expect(bestEffortCalls).toHaveLength(1);
-    expect(fallbackPersisted).toBe(false);
-    expect(didResolveFlush).toBe(false);
-
-    const releaseFirstFallback = resolveFallbacks.shift();
-    if (!releaseFirstFallback) {
-      throw new Error('expected first fallback resolver');
-    }
-    releaseFirstFallback();
     await settleCommittedSnapshot();
     await settleCommittedSnapshot();
 
-    expect(bestEffortCalls).toHaveLength(2);
-    expect(didResolveFlush).toBe(false);
-
-    const releaseSecondFallback = resolveFallbacks.shift();
-    if (!releaseSecondFallback) {
-      throw new Error('expected second fallback resolver');
-    }
-    releaseSecondFallback();
-    await flushPromise;
-
-    expect(fallbackPersisted).toBe(true);
+    expect(session.sendAgentMessage).not.toHaveBeenCalled();
     expect(didResolveFlush).toBe(true);
+    await flushPromise;
   });
 
   it('prevents duplicate durable commits when flushAll is called concurrently or repeatedly', async () => {
@@ -812,5 +902,55 @@ describe('createStreamedTranscriptWriter', () => {
     expect(durableCalls[1]!.meta).toMatchObject({
       happierStreamSegmentV1: expect.objectContaining({ segmentState: 'complete' }),
     });
+  });
+
+  it('redacts durable commit errors before logging', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const secretError = new Error(
+      'commit failed for https://alice:SUPER_SECRET_PASSWORD@api.example.test/v1/messages?token=secret Authorization: Bearer COMMIT_SECRET',
+    );
+    const session = {
+      sendAgentMessageCommitted: vi.fn(async () => {
+        throw secretError;
+      }),
+      sendAgentMessage: vi.fn(() => {
+        throw secretError;
+      }),
+    };
+
+    try {
+      const writer = createStreamedTranscriptWriter({
+        provider: 'codex' as any,
+        session: session as any,
+        makeLocalId: () => 'segment-secret',
+        initialCheckpointDelayMs: 0,
+        checkpointIntervalMs: 1_000,
+        checkpointMinChars: 1,
+      });
+
+      writer.appendAssistantDelta('Hello');
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const [, logged] = debugSpy.mock.calls.find(([message]) =>
+        message === '[StreamedTranscriptWriter] Durable snapshot commit failed (non-fatal)'
+      ) ?? [];
+      expect(logged).toEqual(expect.objectContaining({
+        error: expect.objectContaining({
+          name: 'Error',
+          message: 'commit failed for https://api.example.test/v1/messages Authorization: <redacted>',
+        }),
+      }));
+      expect(JSON.stringify(logged)).not.toContain('SUPER_SECRET_PASSWORD');
+      expect(JSON.stringify(logged)).not.toContain('token=secret');
+      expect(JSON.stringify(logged)).not.toContain('COMMIT_SECRET');
+      expect(JSON.stringify(logged)).not.toContain('stack');
+      expect(session.sendAgentMessage).not.toHaveBeenCalled();
+    } finally {
+      debugSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });

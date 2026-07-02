@@ -57,7 +57,7 @@ describe('resolveSessionForkBackendTarget', () => {
           v: 1,
           providerId: 'customAcp',
           provider: {
-            vendorSessionId: 'vendor-123',
+            providerSessionId: 'vendor-123',
           },
         },
       },
@@ -90,7 +90,7 @@ describe('resolveSessionForkBackendTarget', () => {
       configuredAcp: {
         backendId: 'review-bot',
         title: 'Review Bot',
-        vendorSessionId: 'vendor-123',
+        providerSessionId: 'vendor-123',
         resolvedBackend: null,
         accountSettings: null,
       },
@@ -112,7 +112,7 @@ describe('resolveSessionForkBackendTarget', () => {
           v: 1,
           providerId: 'acp:review-bot',
           provider: {
-            vendorSessionId: 'vendor-456',
+            providerSessionId: 'vendor-456',
           },
         },
       },
@@ -145,7 +145,7 @@ describe('resolveSessionForkBackendTarget', () => {
       configuredAcp: {
         backendId: 'review-bot',
         title: 'Review Bot',
-        vendorSessionId: 'vendor-456',
+        providerSessionId: 'vendor-456',
         resolvedBackend,
         accountSettings,
       },
@@ -166,7 +166,7 @@ describe('resolveSessionForkBackendTarget', () => {
           v: 1,
           providerId: 'acp:plugin-review-bot',
           provider: {
-            vendorSessionId: 'vendor-plugin-123',
+            providerSessionId: 'vendor-plugin-123',
           },
         },
       },
@@ -198,7 +198,7 @@ describe('resolveSessionForkBackendTarget', () => {
       configuredAcp: {
         backendId: 'plugin-review-bot',
         title: 'Plugin Review Bot',
-        vendorSessionId: 'vendor-plugin-123',
+        providerSessionId: 'vendor-plugin-123',
         resolvedBackend,
         accountSettings: null,
       },

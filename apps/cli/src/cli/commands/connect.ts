@@ -1,7 +1,14 @@
 import { randomBytes } from 'node:crypto';
 import { readCredentials } from '@/persistence';
 import { ApiClient } from '@/api/api';
-import type { CloudConnectTarget, CloudConnectTargetStatus } from '@/cloud/connectTypes';
+import {
+  isCloudConnectAuthenticateResultV1,
+  type CloudAuthCredentialWriteInputV1,
+  type CloudAuthCredentialWriteResultV1,
+  type CloudConnectAuthenticateResultV1,
+  type CloudConnectTarget,
+  type CloudConnectTargetStatus,
+} from '@/cloud/connectTypes';
 import { configuration } from '@/configuration';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import {
@@ -12,10 +19,12 @@ import { promptInput, promptSecretInput } from '@/terminal/prompts/promptInput';
 import {
   CONNECTED_ACCOUNT_DESCRIPTORS,
   ConnectedAccountDescriptorSchema,
+  ConnectedServiceCredentialRecordV1Schema,
   requireConnectedAccountDescriptor,
   sealConnectedServiceCredentialCiphertext,
   type ConnectedAccountDescriptor,
   type ConnectedAccountTokenKind,
+  type ConnectedServiceCredentialRecordV1,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
 import { banner, bullets, cmd, dim, errorFrame, gray, neutral, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
@@ -210,6 +219,54 @@ function resolveMissingTokenError(tokenKind: ConnectedAccountTokenKind, missingV
         : 'Missing API key');
 }
 
+async function registerConnectedServiceCredentialRecord(params: Readonly<{
+  api: ApiClient;
+  credentials: NonNullable<Awaited<ReturnType<typeof readCredentials>>>;
+  record: ConnectedServiceCredentialRecordV1;
+}>): Promise<void> {
+  if (await params.api.getAccountEncryptionMode() === 'plain') {
+    await params.api.registerConnectedServiceCredentialPlain({
+      serviceId: params.record.serviceId,
+      profileId: params.record.profileId,
+      content: { t: 'plain', v: params.record },
+    });
+    return;
+  }
+
+  const sealedCiphertext = sealConnectedServiceCredentialCiphertext({
+    material:
+      params.credentials.encryption.type === 'legacy'
+        ? { type: 'legacy', secret: params.credentials.encryption.secret }
+        : { type: 'dataKey', machineKey: params.credentials.encryption.machineKey },
+    payload: params.record,
+    randomBytes: (length) => randomBytes(length),
+  });
+  await params.api.registerConnectedServiceCredentialSealed({
+    serviceId: params.record.serviceId,
+    profileId: params.record.profileId,
+    sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
+    metadata: {
+      kind: params.record.kind,
+      providerEmail:
+        params.record.kind === 'oauth' ? params.record.oauth.providerEmail ?? null : params.record.token.providerEmail ?? null,
+      providerAccountId:
+        params.record.kind === 'oauth' ? params.record.oauth.providerAccountId ?? null : params.record.token.providerAccountId ?? null,
+      expiresAt: params.record.expiresAt,
+    },
+  });
+}
+
+function formatCloudAuthFailure(result: Extract<CloudConnectAuthenticateResultV1, { ok: false }>): string {
+  const diagnostic = result.diagnostics?.[0];
+  return diagnostic?.message
+    ? `Cloud authentication failed (${result.code}): ${diagnostic.message}`
+    : `Cloud authentication failed (${result.code})`;
+}
+
+function summarizeCloudAuthSuccess(result: Extract<CloudConnectAuthenticateResultV1, { ok: true }>): string {
+  return result.credentialRef ?? result.accountRef ?? 'custom authenticator completed';
+}
+
 async function handleConnectVendor(
   target: CloudConnectTarget,
   options: ConnectParsedOptions,
@@ -230,6 +287,29 @@ async function handleConnectVendor(
 
     const now = Date.now();
     let postConnectPayload: unknown | null = null;
+    let customAuthSuccess: Extract<CloudConnectAuthenticateResultV1, { ok: true }> | null = null;
+
+    const writeCredentialFromCustomAuth = async (
+      input: CloudAuthCredentialWriteInputV1,
+    ): Promise<CloudAuthCredentialWriteResultV1> => {
+      const parsed = ConnectedServiceCredentialRecordV1Schema.safeParse(input.record);
+      if (!parsed.success) {
+        return {
+          ok: false,
+          code: 'invalid_result',
+          diagnostics: [{ code: 'invalid_credential_record' }],
+        };
+      }
+      await registerConnectedServiceCredentialRecord({
+        api,
+        credentials,
+        record: parsed.data,
+      });
+      return {
+        ok: true,
+        credentialRef: `${parsed.data.serviceId}/${parsed.data.profileId}`,
+      };
+    };
 
     const record = await (async () => {
       const descriptors = resolveConnectDescriptorsFromRegistry(registry);
@@ -266,7 +346,19 @@ async function handleConnectVendor(
         device: options.device,
         noOpen: options.noOpen,
         timeoutSeconds: options.timeoutSeconds ?? undefined,
+        serviceId,
+        profileId: options.profileId,
+        hostServices: {
+          credentials: { write: writeCredentialFromCustomAuth },
+        },
       });
+      if (isCloudConnectAuthenticateResultV1(oauth)) {
+        if (!oauth.ok) {
+          throw new Error(formatCloudAuthFailure(oauth));
+        }
+        customAuthSuccess = oauth;
+        return null;
+      }
       postConnectPayload = oauth;
 
       return buildConnectedAccountCredentialRecordFromOauthPayload({
@@ -277,38 +369,18 @@ async function handleConnectVendor(
       });
     })();
 
-    console.log(`🚀 Registering ${target.displayName} credential with server (${record.serviceId}/${options.profileId})`);
-    if (await api.getAccountEncryptionMode() === 'plain') {
-      await api.registerConnectedServiceCredentialPlain({
-        serviceId: record.serviceId,
-        profileId: options.profileId,
-        content: { t: 'plain', v: record },
+    if (record) {
+      console.log(`🚀 Registering ${target.displayName} credential with server (${record.serviceId}/${options.profileId})`);
+      await registerConnectedServiceCredentialRecord({
+        api,
+        credentials,
+        record,
       });
-    } else {
-      const sealedCiphertext = sealConnectedServiceCredentialCiphertext({
-        material:
-          credentials.encryption.type === 'legacy'
-            ? { type: 'legacy', secret: credentials.encryption.secret }
-            : { type: 'dataKey', machineKey: credentials.encryption.machineKey },
-        payload: record,
-        randomBytes: (length) => randomBytes(length),
-      });
-      await api.registerConnectedServiceCredentialSealed({
-        serviceId: record.serviceId,
-        profileId: options.profileId,
-        sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
-        metadata: {
-          kind: record.kind,
-          providerEmail:
-            record.kind === 'oauth' ? record.oauth.providerEmail ?? null : record.token.providerEmail ?? null,
-          providerAccountId:
-            record.kind === 'oauth' ? record.oauth.providerAccountId ?? null : record.token.providerAccountId ?? null,
-          expiresAt: record.expiresAt,
-        },
-      });
+      console.log(`✅ ${target.displayName} credential registered with server`);
+    } else if (customAuthSuccess) {
+      console.log(`✅ ${target.displayName} credential handled by custom authenticator (${summarizeCloudAuthSuccess(customAuthSuccess)})`);
     }
 
-    console.log(`✅ ${target.displayName} credential registered with server`);
     if (postConnectPayload !== null) {
       target.postConnect?.(postConnectPayload);
     }

@@ -3,9 +3,41 @@ import { decodeBase64, decrypt } from '../encryption';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { isDeepStrictEqual } from 'node:util';
 import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
+import { readKnownPendingQueueState, type KnownPendingQueueState } from './pendingQueueState';
+import type { SessionSnapshotRefreshReason } from './sessionSnapshotRefreshReason';
+import {
+    readLatestTurnStatusSnapshot,
+    type LatestTurnStatusSnapshot,
+} from './sessionTurnStatusSnapshot';
 
 export function shouldSyncSessionSnapshotOnConnect(opts: { metadataVersion: number; agentStateVersion: number }): boolean {
     return opts.metadataVersion < 0 || opts.agentStateVersion < 0;
+}
+
+type RawSessionSnapshot = Awaited<ReturnType<typeof fetchSessionByIdCompat>>;
+
+const rawSessionSnapshotInFlight = new Map<string, Promise<RawSessionSnapshot>>();
+
+function rawSessionSnapshotInFlightKey(opts: { token: string; sessionId: string; reason?: SessionSnapshotRefreshReason }): string {
+    return `${opts.token}\u0000${opts.sessionId}\u0000${opts.reason ?? 'legacy-compat-proof'}`;
+}
+
+async function fetchRawSessionSnapshotOnce(opts: { token: string; sessionId: string; reason?: SessionSnapshotRefreshReason }): Promise<RawSessionSnapshot> {
+    const key = rawSessionSnapshotInFlightKey(opts);
+    const existing = rawSessionSnapshotInFlight.get(key);
+    if (existing) {
+        return await existing;
+    }
+
+    const promise = fetchSessionByIdCompat({ token: opts.token, sessionId: opts.sessionId, reason: opts.reason });
+    rawSessionSnapshotInFlight.set(key, promise);
+    try {
+        return await promise;
+    } finally {
+        if (rawSessionSnapshotInFlight.get(key) === promise) {
+            rawSessionSnapshotInFlight.delete(key);
+        }
+    }
 }
 
 export async function fetchSessionSnapshotUpdateFromServer(opts: {
@@ -17,11 +49,14 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
     currentAgentStateVersion: number;
     currentMetadata?: Metadata | null;
     currentAgentState?: AgentState | null;
+    reason?: SessionSnapshotRefreshReason;
 }): Promise<{
     metadata?: { metadata: Metadata; metadataVersion: number };
     agentState?: { agentState: AgentState | null; agentStateVersion: number };
+    pendingQueueState?: KnownPendingQueueState;
+    latestTurnStatus?: LatestTurnStatusSnapshot;
 }> {
-    const raw = await fetchSessionByIdCompat({ token: opts.token, sessionId: opts.sessionId });
+    const raw = await fetchRawSessionSnapshotOnce({ token: opts.token, sessionId: opts.sessionId, reason: opts.reason });
     if (!raw) return {};
 
     const sessionEncryptionMode: 'e2ee' | 'plain' =
@@ -30,7 +65,19 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
     const out: {
         metadata?: { metadata: Metadata; metadataVersion: number };
         agentState?: { agentState: AgentState | null; agentStateVersion: number };
+        pendingQueueState?: KnownPendingQueueState;
+        latestTurnStatus?: LatestTurnStatusSnapshot;
     } = {};
+
+    const pendingQueueState = readKnownPendingQueueState(raw);
+    if (pendingQueueState) {
+        out.pendingQueueState = pendingQueueState;
+    }
+
+    const latestTurnStatus = readLatestTurnStatusSnapshot((raw as { latestTurnStatus?: unknown } | null)?.latestTurnStatus);
+    if (latestTurnStatus !== undefined) {
+        out.latestTurnStatus = latestTurnStatus;
+    }
 
     // Sync metadata if it is newer than our local view.
     const nextMetadataVersion = typeof raw.metadataVersion === 'number' ? raw.metadataVersion : null;

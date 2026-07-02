@@ -131,7 +131,7 @@ describe('ApiSessionClient usage transport', () => {
         ).toBe(false);
     });
 
-    it('publishes Codex token_count usage with backend mode and stable external key', async () => {
+    it('redacts usage observation publication errors before logging', async () => {
         vi.resetModules();
         fetchServerFeaturesSnapshotMock.mockReset();
         readCredentialsMock.mockReset();
@@ -159,41 +159,59 @@ describe('ApiSessionClient usage transport', () => {
         userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
 
         const axiosMod = await import('axios');
-        const axios = axiosMod.default as any;
-        const postSpy = vi.spyOn(axios, 'post').mockResolvedValue({ data: { success: true, eventId: 'evt-codex', createdAt: 1 } });
-
-        const { ApiSessionClient } = await import('./sessionClient');
-        const client = new ApiSessionClient(
-            'fake-token',
-            createPlainSessionFixture({
-                id: 'session-1',
-                metadata: createTestMetadata({ codexBackendMode: 'appServer' }),
-            }),
+        vi.spyOn(axiosMod.default, 'post').mockRejectedValue(
+            new Error(
+                'usage failed for https://alice:SUPER_SECRET_PASSWORD@api.example.test/v1/usage?token=secret Authorization: Bearer USAGE_SECRET',
+            ),
         );
+        const { logger } = await import('@/ui/logger');
+        const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
 
-        client.sendProviderMessage({
-            provider: 'codex',
-            body: {
-                type: 'token_count',
-                id: 'codex-token-1',
-                tokens: { total: 9, input: 4, output: 5 },
-                source: 'codex-app-server-token-usage',
-                scope: 'session_cumulative',
-            },
-        } as any);
+        try {
+            const { createSessionClientUsageObservationPublisher } = await import(
+                './client/createSessionClientUsageObservationPublisher'
+            );
+            const publisher = createSessionClientUsageObservationPublisher({
+                token: 'fake-token',
+                getSocket: () => ({
+                    connected: true,
+                    emit: vi.fn(),
+                }),
+            });
 
-        await vi.waitFor(() => {
-            expect(postSpy).toHaveBeenCalled();
-        });
-
-        expect(postSpy.mock.calls[0]?.[1]).toEqual(
-            expect.objectContaining({
+            await publisher.publish({
                 sessionId: 'session-1',
-                providerId: 'codex',
-                backendMode: 'appServer',
-                externalKey: 'codex-token-1',
-            }),
-        );
+                observation: {
+                    provider: 'codex',
+                    source: 'codex-token-count',
+                    scope: 'turn_delta',
+                    key: 'usage-key',
+                    modelId: null,
+                    tokens: { total: 9, input: 4, output: 5 },
+                    cost: null,
+                    contextUsedTokens: null,
+                    contextWindowTokens: null,
+                },
+            });
+
+            expect(debugSpy.mock.calls.some(([message]) =>
+                message === '[SOCKET] Failed to publish usage observation (non-fatal)'
+            )).toBe(true);
+            const [, logged] = debugSpy.mock.calls.find(([message]) =>
+                message === '[SOCKET] Failed to publish usage observation (non-fatal)'
+            ) ?? [];
+            expect(logged).toEqual(expect.objectContaining({
+                name: 'Error',
+                message: 'usage failed for https://api.example.test/v1/usage Authorization: <redacted>',
+            }));
+            const serializedLog = JSON.stringify(logged);
+            expect(serializedLog).not.toContain('SUPER_SECRET_PASSWORD');
+            expect(serializedLog).not.toContain('token=secret');
+            expect(serializedLog).not.toContain('USAGE_SECRET');
+            expect(serializedLog).not.toContain('stack');
+        } finally {
+            debugSpy.mockRestore();
+        }
     });
 
     it('publishes OpenCode token_count usage with backend mode and stable external key', async () => {

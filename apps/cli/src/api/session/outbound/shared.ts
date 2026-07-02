@@ -1,6 +1,6 @@
 import {
-    readOpenCodeSessionAffinityFromMetadata,
-    resolvePersistedCodexRuntimeIdentity,
+    isSupportedRuntimeDescriptorProviderId,
+    readSessionMetadataRuntimeDescriptor,
 } from '@happier-dev/agents';
 
 import type {
@@ -51,13 +51,12 @@ export function resolveUsageObservationBackendMode(params: Readonly<{
     metadata: Metadata | null;
     provider: ACPProvider | 'codex';
 }>): string | null {
-    if (params.provider === 'codex') {
-        return resolvePersistedCodexRuntimeIdentity(params.metadata)?.backendMode ?? null;
-    }
-    if (params.provider === 'opencode') {
-        return readOpenCodeSessionAffinityFromMetadata(params.metadata).backendMode ?? null;
-    }
-    return null;
+    if (!isSupportedRuntimeDescriptorProviderId(params.provider)) return null;
+    const descriptor = readSessionMetadataRuntimeDescriptor(params.metadata, params.provider);
+    if (!descriptor || !('backendMode' in descriptor)) return null;
+    return typeof descriptor.backendMode === 'string' && descriptor.backendMode.trim().length > 0
+        ? descriptor.backendMode
+        : null;
 }
 
 export function buildUserTextMessageContent(text: string, meta?: Record<string, unknown>): MessageContent {

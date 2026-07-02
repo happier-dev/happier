@@ -27,6 +27,7 @@ import { createTurnAssistantTextSnapshotStore } from './turns/assistantTextSnaps
 import {
     registerSessionClientRuntimeHandlers,
 } from './client/executionRuns/registerSessionClientRuntimeHandlers';
+import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import {
     createSessionClientExecutionRunService,
 } from './client/executionRuns/createSessionClientExecutionRunService';
@@ -47,13 +48,66 @@ import { createSessionClientMaterializationRuntime } from './client/lifecycle/cr
 import { createSessionClientCommitQueueRuntime } from './client/transport/createSessionClientCommitQueueRuntime';
 import { createSessionClientUpdateRuntime } from './client/transport/createSessionClientUpdateRuntime';
 import {
+    createSessionClientDurableMutationOutbox,
+    type SessionClientDurableMutationOutbox,
+} from './client/transport/mutations/createSessionClientDurableMutationOutbox';
+import {
+    createSessionEndMutation,
+    createTranscriptMessageAppendMutation,
+    type RegisteredSessionStateFieldMutationV1,
+    type SessionClientDurableMutationSocket,
+    type SessionEndMutationV1,
+} from './client/transport/mutations/sessionClientDurableMutationTypes';
+import { applyRegisteredSessionStateFieldMutationToMetadata } from './client/transport/mutations/applyRegisteredSessionStateFieldMutation';
+import {
+    CommittedUserMessageSeqTracker,
+    type CommittedUserMessageSeqWaitOptions,
+} from './committedUserMessageSeqTracker';
+import {
     attachSessionUserMessageHandler,
     catchUpSessionMessagesViaPort,
     scheduleNextStartupCatchUpRetryViaPort,
 } from './client/lifecycle/startupCatchUpRuntime';
 import type { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
-import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
+import { readKnownPendingQueueState, UNKNOWN_PENDING_QUEUE_STATE, type PendingQueueState } from './pendingQueueState';
+import type { SessionSnapshotRefreshReason } from './sessionSnapshotRefreshReason';
+import type { MaterializeNextPendingResult } from './sessionClientPort';
+import { isSessionContinuationRecoveryBlockingPendingDrain } from '@happier-dev/protocol';
+import { serializeAxiosErrorForLog } from '../client/serializeAxiosErrorForLog';
+import { notifyDaemonConnectedServiceTurnLifecycle as notifyDaemonConnectedServiceTurnLifecycleViaControl } from '@/daemon/controlClient';
+import { readLatestTurnStatusSnapshot } from './sessionTurnStatusSnapshot';
+
+type DurableMutationSocketTransport = Readonly<{
+    connected: boolean;
+    emit(event: string, payload: unknown, callback?: (answer: unknown) => void): unknown;
+    emitWithAck?: (event: string, ...args: unknown[]) => Promise<unknown>;
+    timeout?: (ms: number) => DurableMutationSocketTransport;
+}>;
+
+function adaptDurableMutationSocket(
+    socket: Socket<ServerToClientEvents, ClientToServerEvents> | null | undefined,
+): SessionClientDurableMutationSocket | null {
+    if (!socket) return null;
+    const durableSocket = socket as unknown as DurableMutationSocketTransport;
+    return {
+        connected: durableSocket.connected,
+        emit: (event, payload, callback) => {
+            if (callback) {
+                durableSocket.emit(event, payload, callback);
+                return;
+            }
+            durableSocket.emit(event, payload);
+        },
+        emitWithAck: typeof durableSocket.emitWithAck === 'function'
+            ? (event, ...args) => durableSocket.emitWithAck!(event, ...args)
+            : undefined,
+        timeout: typeof durableSocket.timeout === 'function'
+            ? (ms) => adaptDurableMutationSocket(durableSocket.timeout!(ms) as unknown as Socket<ServerToClientEvents, ClientToServerEvents>)!
+            : undefined,
+    };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -106,7 +160,7 @@ export class ApiSessionClient extends EventEmitter {
     private disconnectedSendLogged = false;
     private userSocketDisconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private closed = false;
-    private snapshotSyncInFlight: Promise<void> | null = null;
+    private snapshotSyncInFlight: Promise<boolean> | null = null;
     private readonly toolCallCanonicalNameByProviderAndId = new Map<string, { rawToolName: string; canonicalToolName: string }>();
     private readonly permissionToolCallRawInputByProviderAndId = new Map<string, unknown>();
     private readonly toolCallInputByProviderAndId = new Map<string, unknown>();
@@ -116,6 +170,8 @@ export class ApiSessionClient extends EventEmitter {
     private startupMessageCatchUpStarted = false;
     private startupMessageCatchUpRetryIndex = 0;
     private startupMessageCatchUpInitialAfterSeq = 0;
+    private startupMessageCatchUpInitialAfterSeqIsExplicit = false;
+    private readonly startupMessageCatchUpExplicitAfterSeq: number | null;
     private readonly startedByDaemonProcess: boolean;
     private readonly transcriptStorage: 'persisted' | 'direct';
     private readonly usageObservationPublisher: ReturnType<typeof createSessionClientUsageObservationPublisher>;
@@ -126,6 +182,13 @@ export class ApiSessionClient extends EventEmitter {
     private readonly materializationRuntime: ReturnType<typeof createSessionClientMaterializationRuntime>;
     private readonly commitQueueRuntime: ReturnType<typeof createSessionClientCommitQueueRuntime>;
     private readonly updateRuntime: ReturnType<typeof createSessionClientUpdateRuntime>;
+    private readonly durableMutationOutbox: SessionClientDurableMutationOutbox;
+    private readonly committedUserMessageSeqTracker = new CommittedUserMessageSeqTracker();
+    private readonly pendingSessionTurnMutationUpdates = new Set<Promise<void>>();
+    private readonly pendingSessionEndMutationUpdates = new Set<Promise<void>>();
+    private readonly pendingTranscriptMessageUpdates = new Set<Promise<unknown>>();
+    private readonly pendingRegisteredSessionStateFieldUpdates = new Set<Promise<void>>();
+    private readonly sessionRuntimeControls: Partial<SessionRuntimeControls> = {};
     readonly executionRuns: HappyMcpExecutionRunService;
 
     /**
@@ -235,6 +298,12 @@ export class ApiSessionClient extends EventEmitter {
 	                : '';
 	            return raw === 'direct' ? 'direct' : 'persisted';
 	        })();
+            this.startupMessageCatchUpExplicitAfterSeq =
+                typeof session.initialTranscriptAfterSeq === 'number'
+                && Number.isFinite(session.initialTranscriptAfterSeq)
+                && session.initialTranscriptAfterSeq >= 0
+                    ? Math.trunc(session.initialTranscriptAfterSeq)
+                    : null;
 	        this.daemonInitialPrompt = consumeDaemonInitialPromptFromEnv();
         this.startedByDaemonProcess = (() => {
             const idx = process.argv.indexOf('--started-by');
@@ -245,6 +314,10 @@ export class ApiSessionClient extends EventEmitter {
         this.materializationRuntime = createSessionClientMaterializationRuntime({
             forgetMaterializationRecovery: (localId) => this.recoveryRuntime.forgetMaterializationRecovery(localId),
             onKeepAliveStateMayHaveChanged: () => this.maybeScheduleUserSocketDisconnect(),
+            initialPendingQueueState: readKnownPendingQueueState(session) ?? UNKNOWN_PENDING_QUEUE_STATE,
+            initialLatestTurnStatus: readLatestTurnStatusSnapshot((session as { latestTurnStatus?: unknown }).latestTurnStatus),
+            isPendingQueueMaterializationBlocked: () =>
+                isSessionContinuationRecoveryBlockingPendingDrain(this.metadata),
         });
         this.updateRuntime = createSessionClientUpdateRuntime({
             sessionId: this.sessionId,
@@ -267,9 +340,13 @@ export class ApiSessionClient extends EventEmitter {
             setAgentStateVersion: (version) => {
                 this.agentStateVersion = version;
             },
+            applyPendingQueueState: (state) => this.materializationRuntime.applyPendingQueueState(state),
             getPendingMessages: () => this.pendingMessages,
             getPendingMessageCallback: () => this.pendingMessageCallback,
             getUserMessageCallbackAttachedAtMs: () => this.userMessageCallbackAttachedAtMs,
+            onConnectedServiceTurnLifecycleEvent: (event) => {
+                void this.notifyDaemonConnectedServiceTurnLifecycle(event);
+            },
             emit: (event, payload) => this.emit(event, payload),
             hasSelfEchoSuppressedLocalId: (localId) => this.materializationRuntime.hasSelfEchoSuppressedLocalId(localId),
             hasAgentQueueEchoSuppressedLocalId: (localId) => this.materializationRuntime.hasAgentQueueEchoSuppressedLocalId(localId),
@@ -277,6 +354,9 @@ export class ApiSessionClient extends EventEmitter {
             hasPendingQueueMaterializedLocalId: (localId) => this.materializationRuntime.hasPendingQueueMaterializedLocalId(localId),
             deleteMaterializedLocalId: (localId) => this.materializationRuntime.deleteMaterializedLocalId(localId),
             turnAssistantTextSnapshotStore: this.turnAssistantTextSnapshotStore,
+            observeCommittedUserMessageSeq: ({ localId, seq }) => {
+                this.committedUserMessageSeqTracker.record(localId, seq);
+            },
             initialLastObservedMessageSeq:
                 typeof session.seq === 'number' && Number.isFinite(session.seq) && session.seq >= 0
                     ? Math.trunc(session.seq)
@@ -297,11 +377,19 @@ export class ApiSessionClient extends EventEmitter {
                 this.startupMessageCatchUpRetryIndex = value;
             },
             getStartupMessageCatchUpInitialAfterSeq: () => this.startupMessageCatchUpInitialAfterSeq,
+            getStartupMessageCatchUpInitialAfterSeqIsExplicit: () => this.startupMessageCatchUpInitialAfterSeqIsExplicit,
             getLastObservedMessageSeq: () => this.updateRuntime.getLastObservedMessageSeq(),
             getHasMaterializedLocalId: (localId) => this.materializationRuntime.hasMaterializedLocalId(localId),
             deleteMaterializedLocalId: (localId) => this.materializationRuntime.deleteMaterializedLocalId(localId),
             handleUpdate: (update, opts) => this.updateRuntime.handleUpdate(update, opts),
-            syncSessionSnapshotFromServer: (opts) => this.syncSessionSnapshotFromServer(opts),
+            syncSessionSnapshotFromServer: async (opts) => {
+                await this.syncSessionSnapshotFromServer(opts);
+            },
+            applyPendingQueueState: (state) => {
+                if (this.materializationRuntime.applyPendingQueueState(state)) {
+                    this.emit('metadata-updated');
+                }
+            },
         });
         this.commitQueueRuntime = createSessionClientCommitQueueRuntime({
             sessionId: this.sessionId,
@@ -327,7 +415,30 @@ export class ApiSessionClient extends EventEmitter {
                 void supervisor.start().catch((error) => {
                     logger.debug('[API] Failed to restart session socket for queued message', {
                         localId,
-                        error,
+                        error: serializeAxiosErrorForLog(error),
+                    });
+                });
+            },
+        });
+        this.durableMutationOutbox = createSessionClientDurableMutationOutbox({
+            token: this.token,
+            sessionId: this.sessionId,
+            getSocket: () => adaptDurableMutationSocket(this.socket),
+            deliverRegisteredSessionStateFieldMutation: async (mutation) => {
+                await this.updateMetadata((metadata) => applyRegisteredSessionStateFieldMutationToMetadata(
+                    metadata,
+                    mutation,
+                ));
+                this.emit('metadata-updated');
+                return true;
+            },
+            requestReconnect: (reason) => {
+                const supervisor = this.sessionConnectionSupervisor;
+                if (!supervisor) return;
+                void supervisor.start().catch((error) => {
+                    logger.debug('[API] Failed to restart session socket for queued durable mutation', {
+                        reason,
+                        error: serializeAxiosErrorForLog(error),
                     });
                 });
             },
@@ -354,6 +465,19 @@ export class ApiSessionClient extends EventEmitter {
             getMetadataSnapshot: () => this.getMetadataSnapshot(),
             updateAgentState: (handler) => this.updateAgentState(handler),
             updateMetadata: (handler) => this.updateMetadata(handler),
+            enqueueSessionEndMutation: (mutation) => this.enqueueSessionEndMutation(mutation),
+            createSessionEndMutation: (observedAt) => createSessionEndMutation({ sessionId: this.sessionId, observedAt }),
+            enqueueCommittedTranscriptMessage: (params) =>
+                this.durableMutationOutbox.enqueueTranscriptMessage(createTranscriptMessageAppendMutation({
+                    sessionId: this.sessionId,
+                    localId: params.localId,
+                    content: params.message,
+                    sidechainId: params.sidechainId,
+                    messageRole: params.messageRole,
+                    sessionEventType: params.sessionEventType,
+                    createdAt: params.createdAt,
+                    updatedAt: params.updatedAt,
+                })),
             usageObservationPublisher: this.usageObservationPublisher,
             buildOutboundSessionMessagePayload: (content) => this.commitQueueRuntime.buildOutboundSessionMessagePayload(content),
             commitSessionMessageBestEffort: (params) => this.commitQueueRuntime.commitSessionMessageBestEffort(params),
@@ -392,12 +516,17 @@ export class ApiSessionClient extends EventEmitter {
             metadata: this.metadata,
             sessionId: this.sessionId,
             getSessionMetadata: () => this.getMetadataSnapshot(),
+            sessionRuntimeControls: this.sessionRuntimeControls,
             enqueueSessionUserMessage: (request) => this.enqueueSessionUserMessage(request),
             sendUserTextMessage: (text, opts) => this.sendUserTextMessage(text, opts),
             sendAgentMessage: (provider, body, opts) => this.sendAgentMessage(provider, body, opts),
             sendUserTextMessageCommitted: (text, opts) => this.sendUserTextMessageCommitted(text, opts),
+            enqueueAgentMessageCommitted: (provider, body, opts) =>
+                this.enqueueAgentMessageCommitted(provider, body, opts),
             sendAgentMessageCommitted: (provider, body, opts) => this.sendAgentMessageCommitted(provider, body, opts),
             sendAgentMessageEphemeral: (provider, body, opts) => this.sendAgentMessageEphemeral(provider, body, opts),
+            enqueueRegisteredSessionStateFieldMutation: (mutation) =>
+                this.enqueueRegisteredSessionStateFieldMutation(mutation),
             getTranscriptQueryContext: () => ({
                 encryptionKey: this.encryptionKey,
                 encryptionVariant: this.encryptionVariant,
@@ -456,9 +585,10 @@ export class ApiSessionClient extends EventEmitter {
                 }
             },
             kickUserSocketConnect: () => this.kickUserSocketConnect(),
-            catchUpSessionMessages: (afterSeq) => this.recoveryRuntime.catchUpSessionMessages(afterSeq),
+            catchUpSessionMessages: (afterSeq, opts) => this.recoveryRuntime.catchUpSessionMessages(afterSeq, opts),
             scheduleNextStartupMessageCatchUpRetry: () => this.recoveryRuntime.scheduleNextStartupMessageCatchUpRetry(),
             getLastObservedMessageSeq: () => this.updateRuntime.getLastObservedMessageSeq(),
+            getStartupMessageCatchUpExplicitAfterSeq: () => this.startupMessageCatchUpExplicitAfterSeq,
             getStartedByDaemonProcess: () => this.startedByDaemonProcess,
             getMetadataStartedBy: () => this.metadata?.startedBy ?? null,
             getMetadataStartedFromDaemon: () => this.metadata?.startedFromDaemon ?? null,
@@ -471,6 +601,9 @@ export class ApiSessionClient extends EventEmitter {
             },
             setStartupMessageCatchUpInitialAfterSeq: (value) => {
                 this.startupMessageCatchUpInitialAfterSeq = value;
+                this.startupMessageCatchUpInitialAfterSeqIsExplicit =
+                    this.startupMessageCatchUpExplicitAfterSeq !== null
+                    && value === this.startupMessageCatchUpExplicitAfterSeq;
             },
             getDaemonInitialPrompt: () => this.daemonInitialPrompt,
             setDaemonInitialPrompt: (value) => {
@@ -481,10 +614,15 @@ export class ApiSessionClient extends EventEmitter {
                 this.daemonInitialPromptSeeded = value;
             },
             enqueueSessionUserMessage: (params) => this.enqueueSessionUserMessage(params),
-            syncSessionSnapshotFromServer: (opts) => this.syncSessionSnapshotFromServer(opts),
+            syncSessionSnapshotFromServer: async (opts) => {
+                await this.syncSessionSnapshotFromServer(opts);
+            },
+            reconcileTurnStatusBeforePendingMaterialization: () =>
+                this.reconcileTurnStatusBeforePendingMaterializationIfNeeded(),
             maybeScheduleUserSocketDisconnect: () => this.maybeScheduleUserSocketDisconnect(),
             handleSessionScopedUpdate: (data) => this.updateRuntime.handleUpdate(data, { source: 'session-scoped' }),
             clearStartupMessageCatchUpRetryTimer: () => this.recoveryRuntime.clearStartupMessageCatchUpRetryTimer(),
+            stopStaleSafety: () => this.recoveryRuntime.stopStaleSafety(),
             clearCommittedLocalIdCleanupTimers: () => this.materializationRuntime.clearCommittedLocalIdCleanupTimers(),
             clearAgentQueueEchoSuppressedLocalIdCleanupTimers: () =>
                 this.materializationRuntime.clearAgentQueueEchoSuppressedLocalIdCleanupTimers(),
@@ -493,6 +631,11 @@ export class ApiSessionClient extends EventEmitter {
                 this.commitQueueRuntime.clearState();
             },
             getPendingQueueMaterializedLocalIdsSize: () => this.materializationRuntime.getPendingQueueMaterializedLocalIdsSize(),
+            shouldAttemptPendingMaterialization: () => this.materializationRuntime.shouldAttemptPendingMaterialization(),
+            getPendingQueueState: () => this.materializationRuntime.getPendingQueueState(),
+            applyPendingQueueState: (state) => this.materializationRuntime.applyPendingQueueState(state),
+            observePendingMaterializeResult: (params) => this.materializationRuntime.observeMaterializeResult(params),
+            onPendingQueueStateChanged: () => this.emit('metadata-updated'),
             scheduleMaterializationRecovery: (localId) => {
                 this.materializationRuntime.markPendingQueueMaterializedLocalId(localId);
                 this.recoveryRuntime.scheduleMaterializationRecovery(localId);
@@ -526,8 +669,11 @@ export class ApiSessionClient extends EventEmitter {
             syncChangesOnConnect: (opts) => this.recoveryRuntime.syncChangesOnConnect(opts),
             shouldSyncSessionSnapshotOnConnect: () =>
                 shouldSyncSessionSnapshotOnConnect({ metadataVersion: this.metadataVersion, agentStateVersion: this.agentStateVersion }),
-            syncSessionSnapshotFromServer: (opts) => this.syncSessionSnapshotFromServer(opts),
+            syncSessionSnapshotFromServer: async (opts) => {
+                await this.syncSessionSnapshotFromServer(opts);
+            },
             flushQueuedSessionMessagesOnReconnect: () => this.commitQueueRuntime.flushQueuedSessionMessagesOnReconnect(),
+            flushDurableSessionMutationsOnReconnect: () => this.durableMutationOutbox.flush('connect'),
             markConnected: () => {
                 this.disconnectedSendLogged = false;
                 const reason = this.hasConnectedOnce ? 'reconnect' : 'connect';
@@ -540,13 +686,43 @@ export class ApiSessionClient extends EventEmitter {
         void this.sessionConnectionSupervisor.start();
     }
 
-    private syncSessionSnapshotFromServer(opts: { reason: 'connect' | 'waitForMetadataUpdate' | 'primaryTurnRuntimeState' }): Promise<void> {
-        if (this.closed) return Promise.resolve();
+    setSessionRuntimeControls(controls: SessionRuntimeControls | null): void {
+        delete this.sessionRuntimeControls.refreshGoal;
+        delete this.sessionRuntimeControls.setGoal;
+        delete this.sessionRuntimeControls.clearGoal;
+        delete this.sessionRuntimeControls.listVendorPlugins;
+        delete this.sessionRuntimeControls.listSkills;
+        delete this.sessionRuntimeControls.startInlineReview;
+        delete this.sessionRuntimeControls.invalidateConnectedServiceAuthTransports;
+        delete this.sessionRuntimeControls.enableUsageLimitWaitResume;
+        delete this.sessionRuntimeControls.cancelUsageLimitWaitResume;
+        delete this.sessionRuntimeControls.checkUsageLimitRecoveryNow;
+        delete this.sessionRuntimeControls.handleUserMessage;
+        if (!controls) return;
+        if (typeof controls.refreshGoal === 'function') this.sessionRuntimeControls.refreshGoal = controls.refreshGoal;
+        if (typeof controls.setGoal === 'function') this.sessionRuntimeControls.setGoal = controls.setGoal;
+        if (typeof controls.clearGoal === 'function') this.sessionRuntimeControls.clearGoal = controls.clearGoal;
+        if (typeof controls.listVendorPlugins === 'function') this.sessionRuntimeControls.listVendorPlugins = controls.listVendorPlugins;
+        if (typeof controls.listSkills === 'function') this.sessionRuntimeControls.listSkills = controls.listSkills;
+        if (typeof controls.startInlineReview === 'function') this.sessionRuntimeControls.startInlineReview = controls.startInlineReview;
+        if (typeof controls.invalidateConnectedServiceAuthTransports === 'function') {
+            this.sessionRuntimeControls.invalidateConnectedServiceAuthTransports =
+                controls.invalidateConnectedServiceAuthTransports;
+        }
+        if (typeof controls.enableUsageLimitWaitResume === 'function') this.sessionRuntimeControls.enableUsageLimitWaitResume = controls.enableUsageLimitWaitResume;
+        if (typeof controls.cancelUsageLimitWaitResume === 'function') this.sessionRuntimeControls.cancelUsageLimitWaitResume = controls.cancelUsageLimitWaitResume;
+        if (typeof controls.checkUsageLimitRecoveryNow === 'function') this.sessionRuntimeControls.checkUsageLimitRecoveryNow = controls.checkUsageLimitRecoveryNow;
+        if (typeof controls.handleUserMessage === 'function') this.sessionRuntimeControls.handleUserMessage = controls.handleUserMessage;
+    }
+
+    private syncSessionSnapshotFromServer(opts: { reason: SessionSnapshotRefreshReason }): Promise<boolean> {
+        if (this.closed) return Promise.resolve(false);
+        if (opts.reason === 'waitForMetadataUpdate') return Promise.resolve(true);
         if (this.snapshotSyncInFlight) return this.snapshotSyncInFlight;
 
-        const p = (async () => {
+        const p = (async (): Promise<boolean> => {
             try {
-                await syncSessionSnapshotFromServer({
+                return await syncSessionSnapshotFromServer({
                     token: this.token,
                     sessionId: this.sessionId,
                     encryptionKey: this.encryptionKey,
@@ -566,9 +742,22 @@ export class ApiSessionClient extends EventEmitter {
                         this.agentState = agentState;
                         this.agentStateVersion = version;
                     },
+                    applyPendingQueueState: (state) => {
+                        if (this.materializationRuntime.applyPendingQueueState(state)) {
+                            this.emit('metadata-updated');
+                        }
+                    },
+                    applyLatestTurnStatus: (status) => {
+                        this.materializationRuntime.applyLatestTurnStatus(status);
+                    },
+                    reason: opts.reason,
                 });
             } catch (error) {
-                logger.debug('[API] Failed to sync session snapshot from server', { reason: opts.reason, error });
+                logger.debug('[API] Failed to sync session snapshot from server', {
+                    reason: opts.reason,
+                    error: serializeAxiosErrorForLog(error),
+                });
+                return false;
             }
         })();
 
@@ -580,6 +769,18 @@ export class ApiSessionClient extends EventEmitter {
         this.snapshotSyncInFlight = inFlight;
 
         return this.snapshotSyncInFlight;
+    }
+
+    private async reconcileTurnStatusBeforePendingMaterializationIfNeeded(): Promise<boolean> {
+        if (!this.materializationRuntime.shouldRefreshTurnStatusBeforePendingMaterialization()) {
+            return true;
+        }
+        const refreshed = await this.syncSessionSnapshotFromServer({ reason: 'explicit-drain' });
+        if (!refreshed) {
+            return false;
+        }
+        this.materializationRuntime.markTurnStatusRefreshPendingVersion();
+        return true;
     }
 
     private kickUserSocketConnect(): void {
@@ -635,7 +836,7 @@ export class ApiSessionClient extends EventEmitter {
             || this.metadata?.startedFromDaemon === true;
     }
 
-    private async catchUpSessionMessages(afterSeq: number): Promise<void> {
+    private async catchUpSessionMessages(afterSeq: number, opts: { afterSeqIsExplicit?: boolean } = {}): Promise<void> {
         await catchUpSessionMessagesViaPort({
             closed: this.closed,
             token: this.token,
@@ -643,6 +844,7 @@ export class ApiSessionClient extends EventEmitter {
             sessionConnectionSupervisor: this.sessionConnectionSupervisor,
             recoveryRuntime: this.recoveryRuntime,
             startupMessageCatchUpInitialAfterSeq: this.startupMessageCatchUpInitialAfterSeq,
+            startupMessageCatchUpInitialAfterSeqIsExplicit: this.startupMessageCatchUpInitialAfterSeqIsExplicit,
             startupMessageCatchUpRetryIndex: this.startupMessageCatchUpRetryIndex,
             startupMessageCatchUpRetryTimer: null,
             pendingMessages: this.pendingMessages,
@@ -653,16 +855,20 @@ export class ApiSessionClient extends EventEmitter {
             daemonInitialPromptSeeded: this.daemonInitialPromptSeeded,
             lastObservedMessageSeq: this.lastObservedMessageSeq,
             enqueueSessionUserMessage: (params) => this.enqueueSessionUserMessage(params),
-            catchUpSessionMessages: (nextAfterSeq) => this.catchUpSessionMessages(nextAfterSeq),
+            catchUpSessionMessages: (nextAfterSeq, nextOpts) => this.catchUpSessionMessages(nextAfterSeq, nextOpts),
             scheduleNextStartupMessageCatchUpRetry: () => this.scheduleNextStartupMessageCatchUpRetry(),
             shouldRunStartupTranscriptCatchUp: () => this.shouldRunStartupTranscriptCatchUp(),
             kickUserSocketConnect: () => this.kickUserSocketConnect(),
             classifyTransportErrorToProbeResult: (error) => classifySessionTransportErrorToProbeResult(error),
-            handleCatchUpUpdate: (update) =>
+            handleCatchUpUpdate: (update, updateOpts) =>
                 (this as unknown as {
-                    handleUpdate: (data: unknown, opts: { source: 'session-scoped' | 'user-scoped' }) => void;
-                }).handleUpdate(update, { source: 'session-scoped' }),
-        }, afterSeq);
+                    handleUpdate: (data: unknown, opts: { source: 'session-scoped' | 'user-scoped'; catchUpAfterSeq?: number; catchUpAfterSeqIsExplicit?: boolean }) => void;
+                }).handleUpdate(update, {
+                    source: 'session-scoped',
+                    catchUpAfterSeq: updateOpts.catchUpAfterSeq,
+                    catchUpAfterSeqIsExplicit: updateOpts.catchUpAfterSeqIsExplicit,
+                }),
+        }, afterSeq, opts);
     }
 
     private scheduleNextStartupMessageCatchUpRetry(): void {
@@ -697,7 +903,7 @@ export class ApiSessionClient extends EventEmitter {
      * This is useful when metadata/agentState may have been updated by another client (e.g. daemon RPC)
      * and this runner needs the latest snapshot before making turn decisions (e.g. replaySeedV1).
      */
-    async refreshSessionSnapshotFromServerBestEffort(opts?: { reason?: 'connect' | 'waitForMetadataUpdate' | 'primaryTurnRuntimeState' }): Promise<void> {
+    async refreshSessionSnapshotFromServerBestEffort(opts?: { reason?: SessionSnapshotRefreshReason }): Promise<void> {
         await this.interactionApi.refreshSessionSnapshotFromServerBestEffort(opts);
     }
 
@@ -710,13 +916,13 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     // Compat-only wrapper for existing Claude-owned callers. New callers should use sendProviderMessage().
-    sendClaudeSessionMessage(body: import('@/backends/claude/contracts/rawJsonLines').RawJSONLines, meta?: Record<string, unknown>) {
-        this.sendProviderMessage({ provider: 'claude', body, meta });
+    sendClaudeSessionMessage(body: unknown, meta?: Record<string, unknown>) {
+        this.sendProviderMessage({ body, meta });
     }
 
     // Compat-only wrapper for existing Codex-owned callers. New callers should use sendProviderMessage().
-    sendCodexMessage(body: any) {
-        this.sendProviderMessage({ provider: 'codex', body });
+    sendCodexMessage(body: unknown) {
+        this.sendProviderMessage({ body });
     }
 
     /**
@@ -745,11 +951,37 @@ export class ApiSessionClient extends EventEmitter {
         await this.transcriptApi.sendUserTextMessageCommitted(text, opts);
     }
 
+    private async notifyDaemonConnectedServiceTurnLifecycle(
+        event: 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled',
+    ): Promise<void> {
+        if (!this.startedByDaemonProcess) return;
+        try {
+            const result = await notifyDaemonConnectedServiceTurnLifecycleViaControl({
+                sessionId: this.sessionId,
+                event,
+            });
+            if (result?.error) {
+                logger.debug('[SESSION CLIENT] Failed to notify daemon connected-service turn lifecycle (non-fatal)', {
+                    sessionId: this.sessionId,
+                    event,
+                    error: result.error,
+                });
+            }
+        } catch (error) {
+            logger.debug('[SESSION CLIENT] Connected-service turn lifecycle notify threw (non-fatal)', {
+                sessionId: this.sessionId,
+                event,
+                error: serializeAxiosErrorForLog(error),
+            });
+        }
+    }
+
     private enqueueSessionUserMessage(params: Readonly<{
         text: string;
         localId?: string;
         meta?: Record<string, unknown>;
     }>): void {
+        void this.notifyDaemonConnectedServiceTurnLifecycle('prompt_or_steer');
         this.transcriptApi.enqueueSessionUserMessage(params);
     }
 
@@ -759,6 +991,19 @@ export class ApiSessionClient extends EventEmitter {
         opts: { localId: string; meta?: Record<string, unknown> },
     ): Promise<void> {
         await this.transcriptApi.sendAgentMessageCommitted(provider, body, opts);
+    }
+
+    enqueueAgentMessageCommitted(
+        provider: ACPProvider,
+        body: ACPMessageData,
+        opts: { localId: string; meta?: Record<string, unknown> },
+    ): Promise<Readonly<{ persisted: boolean; delivered: boolean }>> {
+        const update = this.transcriptApi.enqueueAgentMessageCommitted(provider, body, opts);
+        this.pendingTranscriptMessageUpdates.add(update);
+        void update.finally(() => {
+            this.pendingTranscriptMessageUpdates.delete(update);
+        });
+        return update;
     }
 
     async sendAgentSessionMediaCommitted(
@@ -822,7 +1067,9 @@ export class ApiSessionClient extends EventEmitter {
                 setMetadataVersion: (version) => {
                     this.metadataVersion = version;
                 },
-                syncSessionSnapshotFromServer: () => this.syncSessionSnapshotFromServer({ reason: 'waitForMetadataUpdate' }),
+                syncSessionSnapshotFromServer: async () => {
+                    await this.syncSessionSnapshotFromServer({ reason: 'waitForMetadataUpdate' });
+                },
                 handler,
             });
         });
@@ -842,7 +1089,7 @@ export class ApiSessionClient extends EventEmitter {
         }).catch((error) => {
             logger.debug('[API] Failed to persist voiceAgentRunV1 metadata (non-fatal)', {
                 runId: typeof (run as any)?.runId === 'string' ? (run as any).runId : null,
-                error,
+                error: serializeAxiosErrorForLog(error),
             });
         });
     }
@@ -868,52 +1115,88 @@ export class ApiSessionClient extends EventEmitter {
                 setAgentStateVersion: (version) => {
                     this.agentStateVersion = version;
                 },
-                syncSessionSnapshotFromServer: () => this.syncSessionSnapshotFromServer({ reason: 'waitForMetadataUpdate' }),
+                syncSessionSnapshotFromServer: async () => {
+                    await this.syncSessionSnapshotFromServer({ reason: 'waitForMetadataUpdate' });
+                },
                 handler,
             });
         });
     }
 
-    updatePrimaryTurnRuntimeState(state: {
-        latestTurnStatus: PrimaryTurnStatusV1;
-        lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
-    }): Promise<void> {
-        return this.agentStateLock.inLock(async () => {
-            await updateSessionAgentStateWithAck({
-                socket: this.socket as any,
-                sessionId: this.sessionId,
-                sessionEncryptionMode: this.sessionEncryptionMode,
-                encryptionKey: this.encryptionKey,
-                encryptionVariant: this.encryptionVariant,
-                getAgentState: () => this.agentState,
-                setAgentState: (agentState) => {
-                    this.agentState = agentState;
-                },
-                getAgentStateVersion: () => this.agentStateVersion,
-                setAgentStateVersion: (version) => {
-                    this.agentStateVersion = version;
-                },
-                syncSessionSnapshotFromServer: () => this.syncSessionSnapshotFromServer({ reason: 'primaryTurnRuntimeState' }),
-                handler: (agentState) => agentState,
-                runtimeIssueSummaryV1: state,
-            });
+    enqueueSessionTurnMutation(mutation: SessionTurnMutationV1): Promise<void> {
+        const update = this.durableMutationOutbox.enqueueSessionTurnMutation(mutation);
+        this.pendingSessionTurnMutationUpdates.add(update);
+        void update.finally(() => {
+            this.pendingSessionTurnMutationUpdates.delete(update);
         });
+        return update;
+    }
+
+    enqueueRegisteredSessionStateFieldMutation(mutation: RegisteredSessionStateFieldMutationV1): Promise<void> {
+        const update = this.durableMutationOutbox.enqueueRegisteredSessionStateFieldMutation(mutation);
+        this.pendingRegisteredSessionStateFieldUpdates.add(update);
+        void update.finally(() => {
+            this.pendingRegisteredSessionStateFieldUpdates.delete(update);
+        });
+        return update;
+    }
+
+    private enqueueSessionEndMutation(mutation: SessionEndMutationV1): Promise<void> {
+        const update = this.durableMutationOutbox.enqueueSessionEnd(mutation);
+        this.pendingSessionEndMutationUpdates.add(update);
+        void update.finally(() => {
+            this.pendingSessionEndMutationUpdates.delete(update);
+        });
+        return update;
+    }
+
+    private async drainBestEffortSessionWrites(): Promise<void> {
+        await Promise.all([
+            this.messageCommitQueueTail.catch(() => undefined),
+            this.durableMutationOutbox.flush('flush').catch(() => undefined),
+            ...[...this.pendingSessionTurnMutationUpdates].map((update) => update.catch(() => undefined)),
+            ...[...this.pendingTranscriptMessageUpdates].map((update) => update.catch(() => undefined)),
+            ...[...this.pendingRegisteredSessionStateFieldUpdates].map((update) => update.catch(() => undefined)),
+        ]);
+    }
+
+    private async drainPendingLifecycleWritesBeforeClose(): Promise<void> {
+        await Promise.all([
+            ...[...this.pendingSessionTurnMutationUpdates].map((update) => update.catch(() => undefined)),
+            ...[...this.pendingSessionEndMutationUpdates].map((update) => update.catch(() => undefined)),
+            ...[...this.pendingTranscriptMessageUpdates].map((update) => update.catch(() => undefined)),
+            ...[...this.pendingRegisteredSessionStateFieldUpdates].map((update) => update.catch(() => undefined)),
+        ]);
     }
 
     /**
      * Wait for socket buffer to flush
      */
     async flush(): Promise<void> {
+        await this.drainBestEffortSessionWrites();
         if (!this.socket.connected) {
             return;
         }
         return new Promise((resolve) => {
+            let settled = false;
+            let timer: ReturnType<typeof setTimeout> | null = null;
+            const finish = () => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                if (timer) {
+                    clearTimeout(timer);
+                }
+                resolve();
+            };
             this.socket.emit('ping', () => {
-                resolve();
+                finish();
             });
-            setTimeout(() => {
-                resolve();
+            timer = setTimeout(() => {
+                finish();
             }, 10000);
+            timer.unref?.();
         });
     }
 
@@ -941,12 +1224,25 @@ export class ApiSessionClient extends EventEmitter {
         return this.lastObservedUserMessageSeq;
     }
 
+    getCommittedUserMessageSeq(localId: string): number | null {
+        return this.committedUserMessageSeqTracker.get(localId);
+    }
+
+    waitForCommittedUserMessageSeq(
+        localId: string,
+        options?: CommittedUserMessageSeqWaitOptions,
+    ): Promise<number | null> {
+        return this.committedUserMessageSeqTracker.wait(localId, options);
+    }
+
     getTurnAssistantTextSnapshotStore(): TurnAssistantTextSnapshotStore {
         return this.turnAssistantTextSnapshotStore;
     }
 
     async close() {
         await this.interactionApi.close();
+        await this.drainPendingLifecycleWritesBeforeClose();
+        await this.durableMutationOutbox.close();
     }
 
     async listPendingMessageQueueV2LocalIds(): Promise<string[]> {
@@ -955,6 +1251,24 @@ export class ApiSessionClient extends EventEmitter {
 
     async peekPendingMessageQueueV2Count(): Promise<number> {
         return await this.interactionApi.peekPendingMessageQueueV2Count();
+    }
+
+    shouldAttemptPendingMaterialization(): boolean {
+        return this.materializationRuntime.shouldAttemptPendingMaterialization();
+    }
+
+    getPendingQueueState(): PendingQueueState {
+        return this.materializationRuntime.getPendingQueueState();
+    }
+
+    async reconcilePendingQueueState(opts?: { force?: boolean }): Promise<boolean> {
+        return await this.interactionApi.reconcilePendingQueueState(opts);
+    }
+
+    async materializeNextPendingMessageSafely(opts: {
+        reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
+    } = {}): Promise<MaterializeNextPendingResult> {
+        return await this.interactionApi.materializeNextPendingMessageSafely(opts);
     }
 
     async discardPendingMessageQueueV2All(opts: { reason: 'switch_to_local' | 'manual' }): Promise<number> {

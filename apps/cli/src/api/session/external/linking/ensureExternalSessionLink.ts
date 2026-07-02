@@ -3,12 +3,15 @@ import os from 'node:os';
 
 import {
   getAgentResumeConfig,
+  normalizeCodexBackendMode,
   type CodexBackendMode,
 } from '@happier-dev/agents';
 import {
+  applySessionStateUpdatesToMetadata,
   applyDisplayTitleSessionMetadata,
   applyRuntimeDescriptorSessionMetadata,
-  buildVendorSessionIdSessionMetadata,
+  buildProviderSessionIdSessionMetadata,
+  type SessionStateMetadataUpdateV1,
 } from '@happier-dev/agents/session/state/metadataWriters';
 import {
   resolveExternalSessionsSourceKey,
@@ -190,6 +193,7 @@ function buildExternalSessionMetadata(params: Readonly<{
   source: ExternalSessionsSource;
   codexBackendMode?: CodexBackendMode | null;
   runtimeDescriptor?: RuntimeDescriptorV1 | null;
+  sessionStateUpdates?: readonly SessionStateMetadataUpdateV1[];
   vendorMetadata?: Record<string, unknown>;
   externalSessionMetadata?: Record<string, unknown>;
   titleHint?: string | null;
@@ -200,6 +204,10 @@ function buildExternalSessionMetadata(params: Readonly<{
   const directoryHint = normalizeNullableString(params.directoryHint) ?? '';
   const resume = getAgentResumeConfig(params.providerId);
   const vendorResumeIdField = 'vendorResumeIdField' in resume ? resume.vendorResumeIdField ?? null : null;
+  const sessionStateRuntimeDescriptor = params.sessionStateUpdates?.find((update) =>
+    update.fieldId === 'identity.runtimeDescriptor'
+  )?.value as RuntimeDescriptorV1 | null | undefined;
+  const runtimeDescriptor = sessionStateRuntimeDescriptor ?? params.runtimeDescriptor ?? null;
   const externalSessionMetadata = applyRuntimeDescriptorSessionMetadata(
     params.externalSessionMetadata ?? {},
     null,
@@ -224,28 +232,31 @@ function buildExternalSessionMetadata(params: Readonly<{
       ...(params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : {}),
       ...applyRuntimeDescriptorSessionMetadata(
         externalSessionMetadata as Record<string, unknown>,
-        params.runtimeDescriptor ?? null,
+        runtimeDescriptor,
       ),
     },
     ...(vendorResumeIdField
-      ? buildVendorSessionIdSessionMetadata({
+      ? buildProviderSessionIdSessionMetadata({
         metadataKey: vendorResumeIdField,
         value: params.remoteSessionId,
       })
       : {}),
     ...applyRuntimeDescriptorSessionMetadata(
       vendorMetadata as Record<string, unknown>,
-      params.runtimeDescriptor ?? null,
+      runtimeDescriptor,
     ),
   };
+  const metadataWithSessionState = params.sessionStateUpdates?.length
+    ? applySessionStateUpdatesToMetadata(base, params.sessionStateUpdates)
+    : base;
   if (titleHint) {
-    return applyDisplayTitleSessionMetadata(base, {
+    return applyDisplayTitleSessionMetadata(metadataWithSessionState, {
       title: titleHint,
       staleBehavior: 'bump-if-value-changed',
     });
   }
 
-  return base;
+  return metadataWithSessionState;
 }
 
 export async function ensureExternalSessionLink(params: Readonly<{
@@ -254,7 +265,7 @@ export async function ensureExternalSessionLink(params: Readonly<{
   providerId: ExternalSessionsProviderId;
   remoteSessionId: string;
   source: ExternalSessionsSource;
-  codexBackendMode?: CodexBackendMode | null;
+  codexBackendMode?: unknown;
   runtimeDescriptor?: RuntimeDescriptorV1 | null;
   titleHint?: string | null;
   directoryHint?: string | null;
@@ -270,9 +281,9 @@ export async function ensureExternalSessionLink(params: Readonly<{
   });
   const remoteSessionId = linkIdentity.remoteSessionId;
   const source = linkIdentity.source;
-  const codexBackendMode = typeof linkIdentity.vendorMetadata?.codexBackendMode === 'string'
-    ? linkIdentity.vendorMetadata.codexBackendMode as CodexBackendMode
-    : params.codexBackendMode ?? null;
+  const codexBackendMode =
+    normalizeCodexBackendMode(linkIdentity.vendorMetadata?.codexBackendMode)
+    ?? normalizeCodexBackendMode(params.codexBackendMode);
   const runtimeDescriptor = linkIdentity.runtimeDescriptor ?? params.runtimeDescriptor ?? null;
 
   const tag = computeExternalSessionTag({
@@ -300,6 +311,7 @@ export async function ensureExternalSessionLink(params: Readonly<{
     source,
     codexBackendMode,
     runtimeDescriptor,
+    sessionStateUpdates: linkIdentity.sessionStateUpdates,
     vendorMetadata: linkIdentity.vendorMetadata,
     externalSessionMetadata: linkIdentity.externalSessionMetadata,
     titleHint: params.titleHint,

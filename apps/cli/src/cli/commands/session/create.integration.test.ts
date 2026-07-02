@@ -205,11 +205,12 @@ describe('happier session create (integration)', () => {
       expect(parsed.data?.session?.title).toBe('My Title');
       expect(parsed.data?.session?.active).toBe(true);
       expect(parsed.data?.session?.encryption?.type).toBe('dataKey');
-      expect(observedSpawnBody).toEqual({
+      expect(observedSpawnBody).toEqual(expect.objectContaining({
         directory: process.cwd(),
         backendTarget: { kind: 'backend', backendId: DEFAULT_CATALOG_AGENT_ID, sourceKind: 'built_in' },
         initialPrompt: 'Plan the refactor',
-      });
+        spawnNonce: expect.any(String),
+      }));
       expect(observedInitialMessageRpc).toBe(false);
     } finally {
       output.restore();
@@ -264,11 +265,12 @@ describe('happier session create (integration)', () => {
       const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_create');
-      expect(observedSpawnBody).toEqual({
+      expect(observedSpawnBody).toEqual(expect.objectContaining({
         directory: process.cwd(),
         backendTarget: { kind: 'backend', backendId: DEFAULT_CATALOG_AGENT_ID, sourceKind: 'built_in' },
         initialPrompt: 'Plan the refactor',
-      });
+        spawnNonce: expect.any(String),
+      }));
       expect(observedInitialMessageRpc).toBe(false);
     } finally {
       output.restore();
@@ -295,11 +297,12 @@ describe('happier session create (integration)', () => {
       const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_create');
-      expect(observedSpawnBody).toEqual({
+      expect(observedSpawnBody).toEqual(expect.objectContaining({
         directory: process.cwd(),
         backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         initialPrompt: 'Plan the refactor',
-      });
+        spawnNonce: expect.any(String),
+      }));
     } finally {
       output.restore();
     }
@@ -324,10 +327,11 @@ describe('happier session create (integration)', () => {
       const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_create');
-      expect(observedSpawnBody).toEqual({
+      expect(observedSpawnBody).toEqual(expect.objectContaining({
         directory: process.cwd(),
         backendTarget: { kind: 'backend', backendId: DEFAULT_CATALOG_AGENT_ID, sourceKind: 'built_in' },
-      });
+        spawnNonce: expect.any(String),
+      }));
     } finally {
       output.restore();
     }

@@ -54,7 +54,7 @@ describe('buildCliSessionRowModel', () => {
             providerId: 'pluginProvider',
             provider: {
               backendMode: 'server',
-              vendorSessionId: 'canonical-plugin-session',
+              providerSessionId: 'canonical-plugin-session',
             },
           },
           agentRuntimeDescriptorV1: {
@@ -62,7 +62,7 @@ describe('buildCliSessionRowModel', () => {
             providerId: 'legacyPluginProvider',
             provider: {
               backendMode: 'server',
-              vendorSessionId: 'legacy-plugin-session',
+              providerSessionId: 'legacy-plugin-session',
             },
           },
         }),

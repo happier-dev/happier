@@ -13,7 +13,7 @@ import {
 const CLI_SESSION_STATE_METADATA_CAPABILITIES: SessionStateCapabilitiesV1 = {
   identity: {
     runtimeDescriptor: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
-    vendorSessionId: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
+    providerSessionId: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },
   },
   intent: {
     model: { supported: true, happierToProvider: { supported: false }, providerToHappier: { supported: false } },

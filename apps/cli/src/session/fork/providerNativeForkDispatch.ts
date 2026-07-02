@@ -1,21 +1,24 @@
-import type { Credentials } from '@/persistence';
-import type { CatalogAgentId } from '@/backends/types';
-import { getProviderNativeForkHandler } from '@/backends/catalog';
 import {
-  type ProviderNativeForkDispatchResult,
   type ProviderNativeForkPoint,
+  toForkPointV1,
 } from '@/session/fork/providerNativeForkHandler';
+import type { ForkResultV1, ForkSurfaceV1 } from '@happier-dev/agents';
 
 export async function dispatchProviderNativeFork(params: Readonly<{
-  credentials: Credentials;
-  agentId: string;
+  forkSurface: ForkSurfaceV1 | null;
   parentSessionId: string;
-  parentRawSession: Readonly<{ encryptionMode?: unknown; dataEncryptionKey?: unknown; metadata?: unknown }>;
   parentMetadata: Record<string, unknown>;
   directory: string;
   forkPoint: ProviderNativeForkPoint;
-  targetSeqInclusive: number;
-}>): Promise<ProviderNativeForkDispatchResult | null> {
-  const handler = await getProviderNativeForkHandler(params.agentId as CatalogAgentId);
-  return handler ? await handler(params) : null;
+}>): Promise<ForkResultV1 | null> {
+  if (!params.forkSurface?.fork) {
+    return null;
+  }
+  const result = await params.forkSurface.fork({
+    parentSessionId: params.parentSessionId,
+    parentMetadata: params.parentMetadata,
+    directory: params.directory,
+    forkPoint: toForkPointV1(params.forkPoint),
+  });
+  return result ?? null;
 }

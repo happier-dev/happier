@@ -1,7 +1,14 @@
+import { homedir } from 'node:os';
+
 import {
   getActionSpec,
+  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
+  SessionUsageLimitRecoveryV1Schema,
   readBackendTargetRefV2,
+  type ConnectedServiceBindingsV1,
   type SessionBridgeLifecycleHookEventIdV1,
+  type SessionUsageLimitRecoveryResumePromptModeV1,
+  type SessionUsageLimitRecoveryV1,
   type ActionExecutorDeps,
 } from '@happier-dev/protocol';
 import {
@@ -12,9 +19,15 @@ import {
   type AgentId,
   type PermissionIntent,
 } from '@happier-dev/agents';
+import { getPreferredHostName } from '@/daemon/machine/metadata';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
-import type { Credentials } from '@/persistence';
+import { readSettings, type Credentials } from '@/persistence';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createSpawnedSession } from '@/session/services/createSpawnedSession';
+import {
+  agentSupportsSpawnConnectedServicesDefaults,
+  resolveSpawnConnectedServicesDefaults,
+} from '@/session/services/spawnConnectedServicesDefaults';
 import { getSessionEvents } from '@/session/services/getSessionEvents';
 import { getSessionTranscript } from '@/session/services/getSessionTranscript';
 import { getSessionStatus } from '@/session/services/getSessionStatus';
@@ -45,22 +58,44 @@ import {
   stopExecutionRun,
   waitForExecutionRun,
 } from '@/session/services/executionRuns';
-import { normalizeExecutionRunWaitTimeoutMs } from '@/session/services/executionRunWaitTiming';
+import {
+  normalizeExecutionRunWaitPollIntervalMs,
+  normalizeExecutionRunWaitTimeoutMs,
+} from '@/session/services/executionRunWaitTiming';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import { fetchSessionById, fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { fetchSessionById, fetchSessionByIdCompat, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { routeSessionCatalogControl } from '@/session/catalogControls/sessionCatalogControlRouter';
+import { routeSessionGoalControl } from '@/session/goalControls/sessionGoalControlRouter';
+import {
+  routeSessionUsageLimitRecoveryCheckNow,
+  routeSessionUsageLimitRecoveryWaitResumeCancel,
+  routeSessionUsageLimitRecoveryWaitResumeEnable,
+} from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlRouter';
+import {
+  normalizeUsageLimitRecoveryOperationResult,
+} from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
+import { routeSessionUsageLimitRecoverySwitchAccountNow } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoverySwitchAccountNow';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import {
   isConcreteBackendTargetCompatId,
   isLegacyCustomAcpSessionAgentId,
 } from '@/session/backendTargets/compat/customAcp';
 import { createCliActionInventoryDeps } from './cliActionDeps/createCliActionInventoryDeps';
-import { readSessionMetadata } from './cliActionDeps/sessionStateReaders';
+import {
+  readSessionAgentState,
+  readSessionMetadata,
+} from './cliActionDeps/sessionStateReaders';
 import {
   HostSubagentStoreError,
   hostSubagentStore,
 } from '@/session/subagents/hostSubagentStore';
+import {
+  resolveUsageLimitRecoveryEnabled,
+  usageLimitRecoveryDisabledResult,
+} from '@/features/usageLimitRecoveryFeatureGate';
 
 function notSupported(): never {
   throw new Error('action_not_supported_in_cli');
@@ -73,6 +108,115 @@ function serializeHostSubagentStoreError(error: unknown): Readonly<{ ok: false; 
   throw error;
 }
 
+function normalizeStringValue(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readResumePromptMode(value: unknown): SessionUsageLimitRecoveryResumePromptModeV1 | undefined {
+  return value === 'standard' || value === 'off' || value === 'custom' ? value : undefined;
+}
+
+export type ResumeInactiveSessionWhenUsageLimitReady = (input: Readonly<{
+  sessionId: string;
+  rawSession: RawSessionRecord;
+  metadata: Record<string, unknown>;
+}>) => Promise<boolean>;
+
+export type ScheduleInactiveSessionUsageLimitRecoveryCheck = (input: Readonly<{
+  sessionId: string;
+  recovery: SessionUsageLimitRecoveryV1;
+  runCheckNow: () => Promise<unknown>;
+}>) => void;
+
+export type CancelInactiveSessionUsageLimitRecoveryCheck = (input: Readonly<{
+  sessionId: string;
+}>) => void;
+
+export type RetryTemporaryThrottleNow = (input: Readonly<{
+  sessionId: string;
+}>) => Promise<unknown> | unknown;
+
+type CurrentMachineControlIdentity = Readonly<{
+  machineId: string | null;
+  host: string | null;
+  homeDir: string | null;
+}>;
+
+async function resolveSpawnConnectedServicesDefaultPayload(params: Readonly<{
+  backendTarget: NonNullable<ReturnType<typeof readBackendTargetRefV2>>;
+  credentials: Credentials;
+}>): Promise<Readonly<{
+  connectedServices: ConnectedServiceBindingsV1;
+  connectedServicesUpdatedAt: number;
+}> | null> {
+  if (params.backendTarget.sourceKind !== 'built_in') return null;
+  const agentId = params.backendTarget.backendId;
+  if (!AGENT_IDS.includes(agentId as AgentId)) return null;
+  if (!agentSupportsSpawnConnectedServicesDefaults(agentId as AgentId)) return null;
+
+  try {
+    const accountSettingsContext = await bootstrapAccountSettingsContext({
+      credentials: params.credentials,
+      mode: 'blocking',
+      deps: { applySideEffects: () => undefined },
+    });
+    const connectedServices = resolveSpawnConnectedServicesDefaults({
+      accountSettings: accountSettingsContext.settings,
+      agentId: agentId as AgentId,
+    });
+    if (!connectedServices) return null;
+    return {
+      connectedServices,
+      connectedServicesUpdatedAt: Date.now(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readUsageLimitRecoveryFromControlResult(result: unknown): SessionUsageLimitRecoveryV1 | null {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+  const metadata = (result as Record<string, unknown>).metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const parsed = SessionUsageLimitRecoveryV1Schema.safeParse(
+    (metadata as Record<string, unknown>)[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY],
+  );
+  return parsed.success ? parsed.data : null;
+}
+
+type PendingAgentRequestKind = 'permission' | 'user_action';
+
+function permissionRequestNotFoundResult(sessionId: string) {
+  return {
+    ok: false,
+    errorCode: 'permission_request_not_found',
+    errorMessage: 'permission_request_not_found',
+    sessionId,
+  } as const;
+}
+
+function isKnownCompletedRequestId(params: Readonly<{
+  rawSession: Readonly<{ agentState?: unknown }>;
+  mode: SessionStoredContentEncryptionMode;
+  ctx: SessionEncryptionContext;
+  requestId: string;
+  kind: PendingAgentRequestKind;
+}>): boolean {
+  const agentState = readSessionAgentState(params);
+  const completedRequests = agentState?.completedRequests;
+  if (!completedRequests || typeof completedRequests !== 'object' || Array.isArray(completedRequests)) {
+    return false;
+  }
+
+  const completed = (completedRequests as Record<string, unknown>)[params.requestId];
+  if (!completed || typeof completed !== 'object' || Array.isArray(completed)) {
+    return false;
+  }
+
+  const requestKind = (completed as Record<string, unknown>).kind;
+  if (params.kind === 'user_action') return requestKind === 'user_action';
+  return requestKind === 'permission' || typeof requestKind === 'undefined';
+}
 
 export function createCliActionDeps(params: Readonly<{
   token: string;
@@ -87,6 +231,11 @@ export function createCliActionDeps(params: Readonly<{
     machineId?: unknown;
   }> | null;
   happyHomeDir?: string;
+  isUsageLimitRecoveryEnabled?: (() => Promise<boolean> | boolean) | null;
+  resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
+  scheduleInactiveSessionUsageLimitRecoveryCheck?: ScheduleInactiveSessionUsageLimitRecoveryCheck;
+  cancelInactiveSessionUsageLimitRecoveryCheck?: CancelInactiveSessionUsageLimitRecoveryCheck;
+  retryTemporaryThrottleNow?: RetryTemporaryThrottleNow;
 }>): ActionExecutorDeps {
   const inventoryDeps = createCliActionInventoryDeps(params);
   const approvalsStore = params.credentials ? createCliApprovalsArtifactStore({ credentials: params.credentials }) : null;
@@ -95,12 +244,14 @@ export function createCliActionDeps(params: Readonly<{
     mode: params.mode,
     ctx: params.ctx,
   });
-  const sessionTransportCache = new Map<string, Readonly<{
+  type ResolvedSessionTransport = Readonly<{
     sessionId: string;
-    rawSession: any;
+    rawSession: RawSessionRecord;
     ctx: SessionEncryptionContext;
     mode: SessionStoredContentEncryptionMode;
-  }>>();
+  }>;
+
+  const sessionTransportCache = new Map<string, ResolvedSessionTransport>();
 
   const readCurrentSessionMetadata = async (): Promise<Record<string, unknown> | null> => {
     if (currentSessionMetadata) return currentSessionMetadata;
@@ -132,6 +283,33 @@ export function createCliActionDeps(params: Readonly<{
       : null;
   };
 
+  let currentMachineControlIdentityPromise: Promise<CurrentMachineControlIdentity> | null = null;
+
+  const readCurrentMachineControlIdentity = async (): Promise<CurrentMachineControlIdentity> => {
+    currentMachineControlIdentityPromise ??= (async () => {
+      let machineId: string | null = null;
+      try {
+        machineId = normalizeStringValue((await readSettings()).machineId);
+      } catch {
+        machineId = null;
+      }
+
+      let host: string | null = null;
+      try {
+        host = normalizeStringValue(await getPreferredHostName());
+      } catch {
+        host = null;
+      }
+
+      return {
+        machineId,
+        host,
+        homeDir: normalizeStringValue(homedir()),
+      };
+    })();
+    return await currentMachineControlIdentityPromise;
+  };
+
   const resolveTransportForSession = async (idOrPrefix: string): Promise<Readonly<{
     ok: true;
     sessionId: string;
@@ -151,9 +329,8 @@ export function createCliActionDeps(params: Readonly<{
     if (!normalized) {
       return { ok: false, code: 'session_not_found' };
     }
-    if (sessionTransportCache.has(normalized)) {
-      return { ok: true, ...(sessionTransportCache.get(normalized) as any) };
-    }
+    const cachedTransport = sessionTransportCache.get(normalized);
+    if (cachedTransport) return { ok: true, ...cachedTransport };
 
     const resolved = await resolveSessionTransportContext({ credentials: params.credentials, idOrPrefix: normalized });
     if (!resolved.ok) {
@@ -174,6 +351,36 @@ export function createCliActionDeps(params: Readonly<{
     // If the input is already a full id, also cache by that literal.
     sessionTransportCache.set(normalized, cached);
     return { ok: true, ...cached };
+  };
+
+  const callSessionRpcForTransport = async (
+    transport: ResolvedSessionTransport,
+    methodSuffix: string,
+    request: unknown,
+  ): Promise<unknown> => {
+    if (!params.credentials) {
+      return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+    }
+
+    try {
+      return await callSessionRpc({
+        token: params.credentials.token,
+        sessionId: transport.sessionId,
+        ctx: transport.ctx,
+        mode: transport.mode,
+        method: `${transport.sessionId}:${methodSuffix}`,
+        request,
+      });
+    } catch (error) {
+      const errorCode = readRpcErrorCode(error) ?? 'session_rpc_failed';
+      return {
+        ok: false,
+        errorCode,
+        error: errorCode,
+        errorMessage: error instanceof Error ? error.message : errorCode,
+        sessionId: transport.sessionId,
+      };
+    }
   };
 
   const dispatchSessionLifecycleHookEvent = async (event: Readonly<{
@@ -205,6 +412,258 @@ export function createCliActionDeps(params: Readonly<{
       ...(event.backendTarget ? { backendTarget: event.backendTarget } : {}),
       payload: event.payload,
     });
+  };
+
+  const callResolvedSessionRpc = async (
+    sessionId: string,
+    method: string,
+    request: unknown,
+  ): Promise<unknown> => {
+    if (!params.credentials) {
+      return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+    }
+    const transport = await resolveTransportForSession(sessionId);
+    if (!transport.ok) {
+      return { ok: false, errorCode: transport.code, error: transport.code, ...(transport.candidates ? { candidates: transport.candidates } : {}) };
+    }
+    return await callSessionRpcForTransport(transport, method, request);
+  };
+
+  const isUsageLimitRecoveryEnabled = async (): Promise<boolean> => {
+    if (typeof params.isUsageLimitRecoveryEnabled === 'function') {
+      return await params.isUsageLimitRecoveryEnabled();
+    }
+    return await resolveUsageLimitRecoveryEnabled();
+  };
+
+  const callRoutedSessionGoalControl = async (
+    sessionId: string,
+    operation: 'get' | 'set' | 'clear',
+    request: Record<string, unknown>,
+  ): Promise<unknown> => {
+    if (!params.credentials) {
+      return normalizeUsageLimitRecoveryOperationResult(
+        { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' },
+        { sessionId },
+      );
+    }
+
+    const transport = await resolveTransportForSession(sessionId);
+    if (!transport.ok) {
+      return normalizeUsageLimitRecoveryOperationResult(
+        {
+          ok: false,
+          errorCode: transport.code,
+          error: transport.code,
+        },
+        { sessionId },
+      );
+    }
+
+    const metadata = readSessionMetadata({
+      rawSession: transport.rawSession,
+      mode: transport.mode,
+      ctx: transport.ctx,
+    });
+    const currentMachineIdentity = await readCurrentMachineControlIdentity();
+    return await routeSessionGoalControl({
+      token: params.credentials.token,
+      credentials: params.credentials,
+      sessionId: transport.sessionId,
+      rawSession: transport.rawSession,
+      metadata,
+      currentMachineId: currentMachineIdentity.machineId,
+      currentMachineHost: currentMachineIdentity.host,
+      currentMachineHomeDir: currentMachineIdentity.homeDir,
+      ctx: transport.ctx,
+      mode: transport.mode,
+      operation,
+      ...(operation === 'set' ? { request } : {}),
+      callLiveSessionRpc: async () => await callSessionRpcForTransport(
+        transport,
+        operation === 'get'
+          ? SESSION_RPC_METHODS.SESSION_GOAL_GET
+          : operation === 'clear'
+            ? SESSION_RPC_METHODS.SESSION_GOAL_CLEAR
+            : SESSION_RPC_METHODS.SESSION_GOAL_SET,
+        request,
+      ),
+    });
+  };
+
+  const callRoutedSessionCatalogControl = async (
+    sessionId: string,
+    operation: 'vendorPlugins' | 'skills',
+    request: Readonly<{ cwd?: string }>,
+  ): Promise<unknown> => {
+    if (!params.credentials) {
+      return operation === 'vendorPlugins'
+        ? { unsupported: true, vendorPlugins: [], diagnostic: 'not_authenticated' }
+        : { unsupported: true, skills: [], diagnostic: 'not_authenticated' };
+    }
+
+    const transport = await resolveTransportForSession(sessionId);
+    if (!transport.ok) {
+      return operation === 'vendorPlugins'
+        ? { unsupported: true, vendorPlugins: [], diagnostic: transport.code }
+        : { unsupported: true, skills: [], diagnostic: transport.code };
+    }
+
+    const metadata = readSessionMetadata({
+      rawSession: transport.rawSession,
+      mode: transport.mode,
+      ctx: transport.ctx,
+    });
+    const currentMachineIdentity = await readCurrentMachineControlIdentity();
+    const method = operation === 'vendorPlugins'
+      ? SESSION_RPC_METHODS.SESSION_VENDOR_PLUGIN_CATALOG_LIST
+      : SESSION_RPC_METHODS.SESSION_SKILL_CATALOG_LIST;
+    const rpcRequest = {
+      ...(typeof request.cwd === 'string' && request.cwd.trim().length > 0 ? { cwd: request.cwd.trim() } : {}),
+    };
+    return await routeSessionCatalogControl({
+      token: params.credentials.token,
+      credentials: params.credentials,
+      sessionId: transport.sessionId,
+      rawSession: transport.rawSession,
+      metadata,
+      currentMachineId: currentMachineIdentity.machineId,
+      currentMachineHost: currentMachineIdentity.host,
+      currentMachineHomeDir: currentMachineIdentity.homeDir,
+      ctx: transport.ctx,
+      mode: transport.mode,
+      operation,
+      ...('cwd' in rpcRequest ? { cwd: rpcRequest.cwd } : {}),
+      callLiveSessionRpc: async () => await callSessionRpcForTransport(
+        transport,
+        method,
+        rpcRequest,
+      ),
+    });
+  };
+
+  const scheduleUsageLimitRecoveryCheckFromResult = (
+    sessionId: string,
+    result: unknown,
+  ): void => {
+    const recovery = readUsageLimitRecoveryFromControlResult(result);
+    if (!recovery || recovery.status !== 'waiting') return;
+    params.scheduleInactiveSessionUsageLimitRecoveryCheck?.({
+      sessionId,
+      recovery,
+      runCheckNow: async () => await callRoutedUsageLimitRecoveryControl(
+        sessionId,
+        'checkNow',
+        {
+          sessionId,
+          ...(readResumePromptMode(recovery.resumePromptMode)
+            ? { resumePromptMode: recovery.resumePromptMode }
+            : {}),
+        },
+      ),
+    });
+  };
+
+  const callRoutedUsageLimitRecoveryControl = async (
+    sessionId: string,
+    operation: 'enable' | 'cancel' | 'checkNow' | 'switchAccountNow',
+    request: Record<string, unknown>,
+  ): Promise<unknown> => {
+    if (!params.credentials) {
+      return normalizeUsageLimitRecoveryOperationResult(
+        { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' },
+        { sessionId },
+      );
+    }
+
+    const transport = await resolveTransportForSession(sessionId);
+    if (!transport.ok) {
+      return normalizeUsageLimitRecoveryOperationResult(
+        {
+          ok: false,
+          errorCode: transport.code,
+          error: transport.code,
+        },
+        { sessionId },
+      );
+    }
+
+    const metadata = readSessionMetadata({
+      rawSession: transport.rawSession,
+      mode: transport.mode,
+      ctx: transport.ctx,
+    });
+    const currentMachineIdentity = await readCurrentMachineControlIdentity();
+    const routeParams = {
+      token: params.credentials.token,
+      credentials: params.credentials,
+      sessionId: transport.sessionId,
+      rawSession: transport.rawSession,
+      metadata,
+      currentMachineId: currentMachineIdentity.machineId,
+      currentMachineHost: currentMachineIdentity.host,
+      currentMachineHomeDir: currentMachineIdentity.homeDir,
+      ctx: transport.ctx,
+      mode: transport.mode,
+      ...(params.retryTemporaryThrottleNow
+        ? { retryTemporaryThrottleNow: params.retryTemporaryThrottleNow }
+        : {}),
+      callLiveSessionRpc: async () => await callSessionRpcForTransport(
+        transport,
+        operation === 'enable'
+          ? SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE
+          : operation === 'cancel'
+            ? SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL
+            : SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW,
+        request,
+      ),
+    } as const;
+
+    if (operation === 'enable') {
+      const result = await routeSessionUsageLimitRecoveryWaitResumeEnable({
+        ...routeParams,
+        request: request as {
+          sessionId: string;
+          issueFingerprint?: string;
+          remember?: boolean;
+          rememberPreference?: boolean;
+          resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
+        },
+      });
+      scheduleUsageLimitRecoveryCheckFromResult(transport.sessionId, result);
+      return normalizeUsageLimitRecoveryOperationResult(result, { sessionId: transport.sessionId });
+    }
+    if (operation === 'cancel') {
+      const result = await routeSessionUsageLimitRecoveryWaitResumeCancel({
+        ...routeParams,
+        request: request as { sessionId: string; issueFingerprint?: string | null },
+      });
+      params.cancelInactiveSessionUsageLimitRecoveryCheck?.({ sessionId: transport.sessionId });
+      return normalizeUsageLimitRecoveryOperationResult(result, { sessionId: transport.sessionId });
+    }
+    if (operation === 'switchAccountNow') {
+      return normalizeUsageLimitRecoveryOperationResult(await routeSessionUsageLimitRecoverySwitchAccountNow({
+        ...routeParams,
+        request: request as {
+          sessionId: string;
+          provider?: string;
+          resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
+        },
+      }), { sessionId: transport.sessionId });
+    }
+    const result = await routeSessionUsageLimitRecoveryCheckNow({
+      ...routeParams,
+      request: request as {
+        sessionId: string;
+        provider?: string;
+        resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
+      },
+      ...(params.resumeInactiveSessionWhenUsageLimitReady
+        ? { resumeInactiveSessionWhenReady: params.resumeInactiveSessionWhenUsageLimitReady }
+        : {}),
+    });
+    scheduleUsageLimitRecoveryCheckFromResult(transport.sessionId, result);
+    return normalizeUsageLimitRecoveryOperationResult(result, { sessionId: transport.sessionId });
   };
 
   return {
@@ -292,15 +751,10 @@ export function createCliActionDeps(params: Readonly<{
         return { ok: false, code: transport.code, ...(transport.candidates ? { candidates: transport.candidates } : {}) };
       }
 
-      const pollIntervalMsRaw =
-        typeof (request as any)?.pollIntervalMs === 'number' && Number.isFinite((request as any).pollIntervalMs) && (request as any).pollIntervalMs > 0
-          ? Math.min(60_000, (request as any).pollIntervalMs)
-          : null;
-      const pollIntervalEnvRaw = (process.env.HAPPIER_SESSION_RUN_WAIT_POLL_INTERVAL_MS ?? '').trim();
-      const pollIntervalEnvParsed = pollIntervalEnvRaw ? Number.parseInt(pollIntervalEnvRaw, 10) : NaN;
-      const pollIntervalEnvMs =
-        Number.isFinite(pollIntervalEnvParsed) && pollIntervalEnvParsed > 0 ? Math.min(60_000, pollIntervalEnvParsed) : 1_000;
-      const pollIntervalMs = pollIntervalMsRaw ?? pollIntervalEnvMs;
+      const pollIntervalMs = normalizeExecutionRunWaitPollIntervalMs(
+        (request as any)?.pollIntervalMs,
+        normalizeExecutionRunWaitPollIntervalMs(process.env.HAPPIER_SESSION_RUN_WAIT_POLL_INTERVAL_MS),
+      );
 
       return await waitForExecutionRun({
         token: params.token,
@@ -311,6 +765,9 @@ export function createCliActionDeps(params: Readonly<{
         timeoutMs: normalizeExecutionRunWaitTimeoutMs((request as any)?.timeoutSeconds),
         pollIntervalMs,
       });
+    },
+    reviewStartInline: async ({ sessionId, input }) => {
+      return await callResolvedSessionRpc(sessionId, SESSION_RPC_METHODS.SESSION_REVIEW_START_INLINE, input);
     },
 
     daemonMemorySearch: async () => notSupported(),
@@ -396,12 +853,17 @@ export function createCliActionDeps(params: Readonly<{
       if (backendTarget.sourceKind === 'built_in' && normalizedAgentId && !AGENT_IDS.includes(normalizedAgentId as AgentId)) {
         return { type: 'error', errorCode: 'agent_not_found', errorMessage: 'agent_not_found' };
       }
+      const connectedServicesDefaults = await resolveSpawnConnectedServicesDefaultPayload({
+        credentials: params.credentials,
+        backendTarget,
+      });
 
       const created = await createSpawnedSession({
         credentials: params.credentials,
         directory,
         ...(currentMachineId ? { machineId: currentMachineId } : {}),
         backendTarget,
+        ...(connectedServicesDefaults ?? {}),
         ...(normalizedTag ? { tag: normalizedTag } : {}),
         ...(normalizedTitle ? { title: normalizedTitle } : {}),
         ...(normalizedInitialMessage ? { initialMessage: normalizedInitialMessage } : {}),
@@ -585,6 +1047,85 @@ export function createCliActionDeps(params: Readonly<{
       return await getSessionStatus({ credentials: params.credentials, idOrPrefix: sessionId, live: live === true });
     },
 
+    sessionWorkStateGet: async ({ sessionId }) => {
+      return await callResolvedSessionRpc(sessionId, SESSION_RPC_METHODS.SESSION_WORK_STATE_GET, {});
+    },
+
+    sessionGoalGet: async ({ sessionId }) => {
+      return await callRoutedSessionGoalControl(sessionId, 'get', {});
+    },
+
+    sessionGoalSet: async ({ sessionId, objective, status, tokenBudget }) => {
+      return await callRoutedSessionGoalControl(sessionId, 'set', {
+        ...(typeof objective === 'string' ? { objective } : {}),
+        ...(typeof status === 'string' && status.trim().length > 0 ? { status: status.trim() } : {}),
+        ...(typeof tokenBudget !== 'undefined' ? { tokenBudget: tokenBudget ?? null } : {}),
+      });
+    },
+
+    sessionGoalClear: async ({ sessionId }) => {
+      return await callRoutedSessionGoalControl(sessionId, 'clear', {});
+    },
+
+    sessionUsageLimitWaitResumeEnable: async ({ sessionId, issueFingerprint, remember, resumePromptMode }) => {
+      if (!await isUsageLimitRecoveryEnabled()) {
+        return normalizeUsageLimitRecoveryOperationResult(usageLimitRecoveryDisabledResult(), { sessionId });
+      }
+      const normalizedResumePromptMode = readResumePromptMode(resumePromptMode);
+      const request = {
+        sessionId,
+        ...(typeof issueFingerprint === 'string' ? { issueFingerprint } : {}),
+        ...(remember === true ? { rememberPreference: true } : {}),
+        ...(normalizedResumePromptMode ? { resumePromptMode: normalizedResumePromptMode } : {}),
+      };
+      return await callRoutedUsageLimitRecoveryControl(sessionId, 'enable', request);
+    },
+
+    sessionUsageLimitWaitResumeCancel: async ({ sessionId, issueFingerprint }) => {
+      if (!await isUsageLimitRecoveryEnabled()) {
+        return normalizeUsageLimitRecoveryOperationResult(usageLimitRecoveryDisabledResult(), { sessionId });
+      }
+      const request = {
+        sessionId,
+        ...(issueFingerprint !== undefined ? { issueFingerprint } : {}),
+      };
+      return await callRoutedUsageLimitRecoveryControl(sessionId, 'cancel', request);
+    },
+
+    sessionUsageLimitCheckNow: async ({ sessionId, provider, resumePromptMode }) => {
+      if (!await isUsageLimitRecoveryEnabled()) {
+        return normalizeUsageLimitRecoveryOperationResult(usageLimitRecoveryDisabledResult(), { sessionId });
+      }
+      const normalizedProvider = typeof provider === 'string' ? provider.trim() : '';
+      const normalizedResumePromptMode = readResumePromptMode(resumePromptMode);
+      return await callRoutedUsageLimitRecoveryControl(sessionId, 'checkNow', {
+        sessionId,
+        ...(normalizedProvider.length > 0 ? { provider: normalizedProvider } : {}),
+        ...(normalizedResumePromptMode ? { resumePromptMode: normalizedResumePromptMode } : {}),
+      });
+    },
+
+    sessionUsageLimitSwitchAccountNow: async ({ sessionId, provider, resumePromptMode }) => {
+      if (!await isUsageLimitRecoveryEnabled()) {
+        return normalizeUsageLimitRecoveryOperationResult(usageLimitRecoveryDisabledResult(), { sessionId });
+      }
+      const normalizedProvider = typeof provider === 'string' ? provider.trim() : '';
+      const normalizedResumePromptMode = readResumePromptMode(resumePromptMode);
+      return await callRoutedUsageLimitRecoveryControl(sessionId, 'switchAccountNow', {
+        sessionId,
+        ...(normalizedProvider.length > 0 ? { provider: normalizedProvider } : {}),
+        ...(normalizedResumePromptMode ? { resumePromptMode: normalizedResumePromptMode } : {}),
+      });
+    },
+
+    sessionVendorPluginCatalogList: async ({ sessionId, cwd }) => {
+      return await callRoutedSessionCatalogControl(sessionId, 'vendorPlugins', { cwd });
+    },
+
+    sessionSkillCatalogList: async ({ sessionId, cwd }) => {
+      return await callRoutedSessionCatalogControl(sessionId, 'skills', { cwd });
+    },
+
     sessionHistoryGet: async ({ sessionId, limit, format, includeMeta, includeStructuredPayload }) => {
 	      if (!params.credentials) {
 	        return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
@@ -723,6 +1264,15 @@ export function createCliActionDeps(params: Readonly<{
           ...(transport.candidates ? { candidates: transport.candidates } : {}),
         };
       }
+      if (isKnownCompletedRequestId({
+        rawSession: transport.rawSession,
+        mode: transport.mode,
+        ctx: transport.ctx,
+        requestId: reqId,
+        kind: 'permission',
+      })) {
+        return permissionRequestNotFoundResult(transport.sessionId);
+      }
 
       const approved = decision === 'allow';
       const legacyDecision =
@@ -783,6 +1333,15 @@ export function createCliActionDeps(params: Readonly<{
           errorMessage: transport.code,
           ...(transport.candidates ? { candidates: transport.candidates } : {}),
         };
+      }
+      if (isKnownCompletedRequestId({
+        rawSession: transport.rawSession,
+        mode: transport.mode,
+        ctx: transport.ctx,
+        requestId: reqId,
+        kind: 'user_action',
+      })) {
+        return permissionRequestNotFoundResult(transport.sessionId);
       }
 
       const normalizedAnswers = Object.fromEntries(

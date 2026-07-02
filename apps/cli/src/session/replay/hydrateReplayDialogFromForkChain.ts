@@ -6,6 +6,7 @@ import { findTranscriptEncryptedMessageByLocalId } from '@/api/session/transcrip
 import { configuration } from '@/configuration';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { fetchLatestMemorySynopsisSystemRecord } from '@/session/systemRecords/memory/fetchMemorySystemRecords';
 import { readMemorySynopsisPointerV1FromSessionMetadata } from '@/session/memoryArtifacts/memorySynopsisPointerV1';
 
 import type { HappierReplayDialogItem } from './types';
@@ -55,6 +56,28 @@ async function tryHydrateSynopsisFromMetadataPointer(params: Readonly<{
     maxDialogItems: 1,
   });
   return slice.latestSynopsisText;
+}
+
+async function tryHydrateSynopsisFromSystemRecord(params: Readonly<{
+  credentials: Credentials;
+  sessionId: string;
+  encryptionMode: 'plain' | 'e2ee';
+  encryptionKey?: Uint8Array;
+  encryptionVariant?: 'dataKey';
+}>): Promise<string | null> {
+  const synopsis = await fetchLatestMemorySynopsisSystemRecord({
+    token: params.credentials.token,
+    sessionId: params.sessionId,
+    mode: params.encryptionMode === 'plain' ? 'plain' : 'e2ee',
+    ...(params.encryptionKey && params.encryptionVariant
+      ? { ctx: { encryptionKey: params.encryptionKey, encryptionVariant: params.encryptionVariant } }
+      : {}),
+  }).catch((error) => {
+    if (isAuthenticationError(error)) throw error;
+    return null;
+  });
+  const text = typeof synopsis?.synopsis === 'string' ? synopsis.synopsis.trim() : '';
+  return text.length > 0 ? text : null;
 }
 
 function readForkV1FromMetadata(metadata: Record<string, unknown>): ForkV1 | null {
@@ -217,7 +240,16 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       }
       if (segment.sessionId === params.startingSessionId) {
         sourceCutoffSeqInclusive = cutoff;
-        synopsisText = slice.latestSynopsisText;
+        synopsisText = wantSynopsisText
+          ? await tryHydrateSynopsisFromSystemRecord({
+              credentials: params.credentials,
+              sessionId: segment.sessionId,
+              encryptionMode,
+            })
+          : slice.latestSynopsisText;
+        if (wantSynopsisText && !synopsisText) {
+          synopsisText = slice.latestSynopsisText;
+        }
       }
 
       if (wantSynopsisText && segment.sessionId === params.startingSessionId && !synopsisText) {
@@ -273,7 +305,18 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
     }
     if (segment.sessionId === params.startingSessionId) {
       sourceCutoffSeqInclusive = cutoff;
-      synopsisText = slice.latestSynopsisText;
+      synopsisText = wantSynopsisText
+        ? await tryHydrateSynopsisFromSystemRecord({
+            credentials: params.credentials,
+            sessionId: segment.sessionId,
+            encryptionMode,
+            encryptionKey: dek,
+            encryptionVariant: 'dataKey',
+          })
+        : slice.latestSynopsisText;
+      if (wantSynopsisText && !synopsisText) {
+        synopsisText = slice.latestSynopsisText;
+      }
     }
 
     if (wantSynopsisText && segment.sessionId === params.startingSessionId && !synopsisText) {

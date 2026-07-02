@@ -48,6 +48,58 @@ describe('sessionMessageCatchUp (plaintext envelopes)', () => {
     expect(updates[0]?.body?.message?.updatedAt).toBe(123);
   });
 
+  it('preserves missing transcript timestamps as unavailable in catch-up updates', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      data: {
+        messages: [
+          {
+            id: 'm1',
+            seq: 12,
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
+          },
+        ],
+      },
+    } as any);
+
+    const updates: any[] = [];
+    await catchUpSessionMessagesAfterSeq({
+      token: 't',
+      sessionId: 's1',
+      afterSeq: 10,
+      onUpdate: (u) => updates.push(u),
+    });
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0]?.createdAt).toBeNull();
+    expect(updates[0]?.body?.message?.createdAt).toBeNull();
+    expect(updates[0]?.body?.message?.updatedAt).toBeNull();
+  });
+
+  it('ignores transcript messages with malformed seq values', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      data: {
+        messages: [
+          {
+            id: 'm1',
+            seq: '12',
+            createdAt: 123,
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
+          },
+        ],
+      },
+    } as any);
+
+    const updates: any[] = [];
+    await catchUpSessionMessagesAfterSeq({
+      token: 't',
+      sessionId: 's1',
+      afterSeq: 10,
+      onUpdate: (u) => updates.push(u),
+    });
+
+    expect(updates).toHaveLength(0);
+  });
+
   it('throws terminal auth responses instead of treating them as empty catch-up', async () => {
     const authResponse: AxiosResponse = {
       status: 401,

@@ -1,6 +1,7 @@
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { executePluginActionIfAvailable } from '@/plugins/projection/actions/execute';
 import {
+  DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
   createSessionTranscriptFollowLeaseRegistry,
 } from '@/api/session/transcriptQueries';
 import {
@@ -15,7 +16,10 @@ export function createCliActionExecutor(
 ): ReturnType<typeof createCliActionExecutorHarness>['executor'] {
   const base = createCliActionExecutorHarness(params).executor;
   const transcriptFollowLeaseRegistry = params.transcriptFollowLeaseRegistry
-    ?? createSessionTranscriptFollowLeaseRegistry({ maxLeases: 16, idleTtlMs: 60_000 });
+    ?? createSessionTranscriptFollowLeaseRegistry({
+      maxLeases: 16,
+      idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
+    });
 
   return {
     execute: async (actionId, input, context) => {

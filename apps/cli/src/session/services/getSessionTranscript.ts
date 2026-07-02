@@ -90,7 +90,9 @@ export async function getSessionTranscript(params: Readonly<{
   const limit = clampInt(params.limit, { min: 1, max: 100, fallback: 20 });
   const maxCharsPerMessage = params.maxCharsPerMessage === null
     ? null
-    : clampInt(params.maxCharsPerMessage, { min: 0, max: 4000, fallback: 1500 });
+    : params.maxCharsPerMessage === undefined
+      ? null
+      : clampInt(params.maxCharsPerMessage, { min: 0, max: 50_000, fallback: 50_000 });
   const maxRawPayloadChars = params.maxRawPayloadChars === null
     ? 8192
     : clampInt(params.maxRawPayloadChars, { min: 1, max: 32768, fallback: 8192 });

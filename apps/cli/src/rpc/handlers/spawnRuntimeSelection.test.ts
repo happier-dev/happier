@@ -10,14 +10,14 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'mcp',
-          vendorSessionId: 'canonical-thread',
+          providerSessionId: 'canonical-thread',
           providerExtra: {
             owner: 'codex',
             schemaId: 'codex.agentRuntimeDescriptorExtra',
             v: 1,
             runtimeAffinity: {
               backendMode: 'appServer',
-              vendorSessionId: 'canonical-affinity',
+              providerSessionId: 'canonical-affinity',
             },
           },
         },
@@ -27,24 +27,27 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'acp',
-          vendorSessionId: 'legacy-thread',
+          providerSessionId: 'legacy-thread',
         },
       },
     })).toEqual({
       codexBackendMode: 'appServer',
+      providerRuntimeSelection: {
+        codexBackendMode: 'appServer',
+      },
       runtimeDescriptorV1: {
         v: 1,
         providerId: 'codex',
         provider: {
           backendMode: 'mcp',
-          vendorSessionId: 'canonical-thread',
+          providerSessionId: 'canonical-thread',
           providerExtra: {
             owner: 'codex',
             schemaId: 'codex.agentRuntimeDescriptorExtra',
             v: 1,
             runtimeAffinity: {
               backendMode: 'appServer',
-              vendorSessionId: 'canonical-affinity',
+              providerSessionId: 'canonical-affinity',
             },
           },
         },
@@ -66,17 +69,20 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'acp',
-          vendorSessionId: 'legacy-thread',
+          providerSessionId: 'legacy-thread',
         },
       },
     })).toEqual({
       codexBackendMode: 'acp',
+      providerRuntimeSelection: {
+        codexBackendMode: 'acp',
+      },
       runtimeDescriptorV1: {
         v: 1,
         providerId: 'codex',
         provider: {
           backendMode: 'acp',
-          vendorSessionId: 'legacy-thread',
+          providerSessionId: 'legacy-thread',
         },
       },
     });

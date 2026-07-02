@@ -230,7 +230,9 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
     const parsedMeta = z.object({
       tag: z.string().min(1),
       path: z.string(),
-      name: z.string(),
+      summary: z.object({
+        text: z.string(),
+      }).passthrough(),
       externalSessionV1: z.object({
         providerId: z.string().min(1),
         remoteSessionId: z.string().min(1),
@@ -242,7 +244,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
     }
 
     expect(parsedMeta.data.tag).toMatch(/^direct:v1:/);
-    expect(parsedMeta.data.name).toBe('Linked Claude Session');
+    expect(parsedMeta.data.summary.text).toBe('Linked Claude Session');
     expect(parsedMeta.data.path).toBe('/tmp/project-a');
     expect(parsedMeta.data.externalSessionV1.providerId).toBe('claude');
     expect(parsedMeta.data.externalSessionV1.remoteSessionId).toBe('remote_123');
@@ -374,13 +376,15 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
     const meta = tryDecryptSessionMetadata({ credentials: creds!, rawSession: updatedSession });
     const parsedMeta = z.object({
       path: z.string(),
-      name: z.string(),
+      summary: z.object({
+        text: z.string(),
+      }).passthrough(),
     }).passthrough().safeParse(meta);
     if (!parsedMeta.success) {
       throw new Error('Expected updated direct session metadata payload');
     }
 
-    expect(parsedMeta.data.name).toBe('Recovered Claude Session');
+    expect(parsedMeta.data.summary.text).toBe('Recovered Claude Session');
     expect(parsedMeta.data.path).toBe('/tmp/project-a');
   });
 
@@ -425,13 +429,15 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
     const meta = tryDecryptSessionMetadata({ credentials: creds!, rawSession: updatedSession });
     const parsedMeta = z.object({
       path: z.string(),
-      name: z.string(),
+      summary: z.object({
+        text: z.string(),
+      }).passthrough(),
     }).passthrough().safeParse(meta);
     if (!parsedMeta.success) {
       throw new Error('Expected preserved direct session metadata payload');
     }
 
-    expect(parsedMeta.data.name).toBe('Original Claude Session');
+    expect(parsedMeta.data.summary.text).toBe('Original Claude Session');
     expect(parsedMeta.data.path).toBe('/tmp/project-b');
   });
 
@@ -464,11 +470,15 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
     const firstSession = sessionsById.get(first.sessionId);
     const creds = await readCredentialsMock();
     const firstMeta = tryDecryptSessionMetadata({ credentials: creds!, rawSession: firstSession });
-    const firstParsedMeta = z.object({ name: z.string() }).safeParse(firstMeta);
+    const firstParsedMeta = z.object({
+      summary: z.object({
+        text: z.string(),
+      }).passthrough(),
+    }).passthrough().safeParse(firstMeta);
     if (!firstParsedMeta.success) {
       throw new Error('Expected initial direct session metadata payload');
     }
-    expect(firstParsedMeta.data.name).toBe('remote_789');
+    expect(firstParsedMeta.data.summary.text).toBe('remote_789');
 
     const second = await handler!({
       machineId: 'machine_1',
@@ -484,11 +494,15 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
 
     const updatedSession = sessionsById.get(first.sessionId);
     const updatedMeta = tryDecryptSessionMetadata({ credentials: creds!, rawSession: updatedSession });
-    const updatedParsedMeta = z.object({ name: z.string() }).safeParse(updatedMeta);
+    const updatedParsedMeta = z.object({
+      summary: z.object({
+        text: z.string(),
+      }).passthrough(),
+    }).passthrough().safeParse(updatedMeta);
     if (!updatedParsedMeta.success) {
       throw new Error('Expected refreshed direct session metadata payload');
     }
 
-    expect(updatedParsedMeta.data.name).toBe('Recovered Claude Session');
+    expect(updatedParsedMeta.data.summary.text).toBe('Recovered Claude Session');
   });
 });

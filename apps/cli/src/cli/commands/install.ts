@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 
-import { AGENT_IDS, getProviderCliRuntimeSpec, type AgentId } from '@happier-dev/agents';
+import { AGENT_IDS, getAgentCliRuntimeSpec, type AgentId } from '@happier-dev/agents';
 import type { ProviderCliRuntimeDescriptor } from '@happier-dev/cli-common/providers';
 
 import type { CommandContext } from '@/cli/commandRegistry';
@@ -48,6 +48,9 @@ type InstallCliDeps = Readonly<{
   exit: (code: number) => never | void;
   runDoctorCommand: typeof runDoctorCommandDefault;
   invokeProviderCliInstall: typeof invokeProviderCliInstallDefault;
+  publishInstalledManifestProjections?: (params: Readonly<{
+    pluginIds: readonly string[];
+  }>) => Promise<unknown>;
 }>;
 
 async function runDoctorCommandLazy(): Promise<void> {
@@ -62,15 +65,30 @@ async function invokeProviderCliInstallLazy(
   return await invokeProviderCliInstall(...args);
 }
 
-function readProviderCliRuntimeDescriptor(
+async function publishInstalledManifestProjectionsLazy(params: Readonly<{
+  pluginIds: readonly string[];
+}>): Promise<unknown> {
+  const { publishInstalledPluginManifestProjectionsToServer } = await import('@/plugins/projection/server/installedManifests');
+  return await publishInstalledPluginManifestProjectionsToServer(params);
+}
+
+async function publishPluginManifestProjectionBestEffort(
+  deps: InstallCliDeps,
+  pluginId: string,
+): Promise<void> {
+  try {
+    await (deps.publishInstalledManifestProjections ?? publishInstalledManifestProjectionsLazy)({
+      pluginIds: [pluginId],
+    });
+  } catch {
+    // Server projection sync is best-effort; the local plugin mutation remains authoritative on this machine.
+  }
+}
+
+function readAgentCliRuntimeDescriptor(
   contribution: ResolvedContributionRegistry['providers'][number],
 ): ProviderCliRuntimeDescriptor | null {
-  if (contribution.runtimeSpec) return contribution.runtimeSpec;
-  const runtime = (contribution.definition as { providerCliRuntime?: ProviderCliRuntimeDescriptor | null }).providerCliRuntime;
-  if (!runtime || typeof runtime !== 'object') return null;
-  if (typeof runtime.id !== 'string' || runtime.id.trim().length === 0) return null;
-  if (runtime.id !== contribution.id) return null;
-  return runtime;
+  return contribution.runtimeSpec ?? null;
 }
 
 function parseProviderInstallFlags(args: readonly string[]): Readonly<{ dryRun: boolean; skipIfInstalled: boolean }> {
@@ -114,7 +132,7 @@ function readInstallableBuiltInProviderRows(registry: Pick<ResolvedContributionR
   return registry.providers
     .filter((contribution) => contribution.provenance === 'first_party')
     .map((contribution) => {
-      const runtimeSpec = readProviderCliRuntimeDescriptor(contribution);
+      const runtimeSpec = readAgentCliRuntimeDescriptor(contribution);
       if (!runtimeSpec) return null;
       if (runtimeSpec.manualInstallKind === 'none') return null;
       return {
@@ -133,7 +151,7 @@ function printProviderInstallResult(
   log: InstallCliDeps['log'],
 ): void {
   if (!result.ok) return;
-  const runtimeSpec = getProviderCliRuntimeSpec(providerId);
+  const runtimeSpec = getAgentCliRuntimeSpec(providerId);
   if (result.alreadyInstalled) {
     log(`${runtimeSpec.title} is already installed.`);
   } else if (result.plan.installMode === 'vendor_recipe') {
@@ -194,6 +212,7 @@ async function runPluginInstallCommand(
         deps.exit(1);
         return;
       }
+      await publishPluginManifestProjectionBestEffort(deps, pluginId);
       deps.log(`Removed plugin ${pluginId}.`);
       return;
     }
@@ -216,10 +235,12 @@ async function runPluginInstallCommand(
     }
 
     if (result.alreadyInstalled) {
+      await publishPluginManifestProjectionBestEffort(deps, result.pluginId);
       deps.log(`Plugin ${pluginId} is already installed.`);
       return;
     }
 
+    await publishPluginManifestProjectionBestEffort(deps, result.pluginId);
     deps.log(`Updated plugin ${result.pluginId} from ${result.sourceKind}.`);
     return;
   }
@@ -244,10 +265,12 @@ async function runPluginInstallCommand(
   }
 
   if (result.alreadyInstalled) {
+    await publishPluginManifestProjectionBestEffort(deps, result.pluginId);
     deps.log(`Plugin ${result.pluginId} is already installed.`);
     return;
   }
 
+  await publishPluginManifestProjectionBestEffort(deps, result.pluginId);
   if (result.sourceKind === 'archive') {
     deps.log(`Installed plugin ${result.pluginId} from archive.`);
     return;
@@ -266,6 +289,7 @@ export async function runInstallCliCommand(
     },
     runDoctorCommand: runDoctorCommandLazy,
     invokeProviderCliInstall: invokeProviderCliInstallLazy,
+    publishInstalledManifestProjections: publishInstalledManifestProjectionsLazy,
   },
 ): Promise<void> {
   try {

@@ -4,15 +4,24 @@ import {
     type SpawnSessionOptions,
 } from '@/rpc/handlers/registerSessionHandlers';
 import { dispatchProviderNativeFork } from '@/session/fork/providerNativeForkDispatch';
+import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
+import { normalizeCodexBackendMode } from '@happier-dev/agents';
+import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import {
+    readCanonicalRuntimeDescriptorV1ForProvider,
+    readRuntimeDescriptorV1FromMetadata,
+} from '@happier-dev/protocol';
 
 import {
     archiveSessionBestEffort,
     cleanupForkChildBestEffort,
     fetchForkChildSessionOrThrow,
 } from './forkChildSessionRecovery';
+import { normalizeForkProviderSessionId } from './forkProviderSessionId';
 import type {
     ForkBackendResolution,
+    ForkBridgeSurface,
     ForkInheritedOverrides,
     ForkLifecycleCredentials,
     ForkLifecycleMetadata,
@@ -36,6 +45,7 @@ export async function attemptProviderNativeFork(params: Readonly<{
     spawnNonce: string;
     forkBackendResolution: ForkBackendResolution;
     inheritedForkOverrides: ForkInheritedOverrides;
+    forkSurface: ForkBridgeSurface;
     spawnSession: ForkSpawnSession;
     stopSession: ForkStopSession;
 }>): Promise<ForkStrategyAttemptResult> {
@@ -52,27 +62,50 @@ export async function attemptProviderNativeFork(params: Readonly<{
 
     try {
         const nativeFork = await dispatchProviderNativeFork({
-            credentials: params.credentials,
-            agentId: params.forkBackendResolution.providerAgentId,
+            forkSurface: params.forkSurface,
             parentSessionId: params.parentSessionId,
-            parentRawSession: params.parentSession,
             parentMetadata: params.parentMetadata,
             directory: params.directory,
             forkPoint: params.forkPoint.type === 'seq'
                 ? { type: 'seq', upToSeqInclusive: params.targetSeqInclusive }
                 : { type: 'latest' },
-            targetSeqInclusive: params.targetSeqInclusive,
         });
 
         if (!nativeFork) return null;
+        const nativeForkProviderSessionId = normalizeForkProviderSessionId(nativeFork.providerSessionId);
+        if (!nativeForkProviderSessionId) {
+            return {
+                ok: false,
+                errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                errorMessage: 'Provider-native fork returned an empty providerSessionId',
+            };
+        }
+        const launchMetadata = applySessionStateUpdatesToMetadata(
+            {},
+            nativeFork.launch.sessionStateUpdates ?? [],
+        );
+        const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(launchMetadata) ?? undefined;
+        const codexRuntimeDescriptor = readCanonicalRuntimeDescriptorV1ForProvider(runtimeDescriptorV1, 'codex');
+        const codexBackendMode = normalizeCodexBackendMode(codexRuntimeDescriptor?.backendMode);
+        const providerHint = {
+            providerId: params.forkBackendResolution.providerHintProviderId,
+            ...(codexBackendMode ? { backendMode: codexBackendMode } : {}),
+            providerSessionId: nativeForkProviderSessionId,
+        };
+        const inheritedForkOverrides = createConnectedServiceForkLaunchContext({
+            inherited: params.inheritedForkOverrides,
+        }).inherited;
 
         const result = await params.spawnSession({
-            directory: params.directory,
+            directory: nativeFork.launch.directory ?? params.directory,
             backendTarget: params.forkBackendResolution.backendTargetV2,
             approvedNewDirectoryCreation: true,
             spawnNonce: params.spawnNonce,
-            ...nativeFork.spawn,
-            ...params.inheritedForkOverrides.spawn,
+            resume: nativeForkProviderSessionId,
+            ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
+            ...(codexBackendMode ? { codexBackendMode } : {}),
+            ...(nativeFork.launch.environmentVariables ? { environmentVariables: { ...nativeFork.launch.environmentVariables } } : {}),
+            ...inheritedForkOverrides.spawn,
         } satisfies SpawnSessionOptions);
 
         if (params.requestedStrategy === 'provider_native' && result.type !== 'success') {
@@ -98,16 +131,16 @@ export async function attemptProviderNativeFork(params: Readonly<{
                 rawSession: childRaw,
                 updater: (metadata) => ({
                     ...metadata,
-                    ...params.inheritedForkOverrides.metadata,
+                    ...inheritedForkOverrides.metadata,
                     ...params.forkBackendResolution.metadataOverlay,
-                    ...nativeFork.metadata,
+                    ...launchMetadata,
                     forkV1: {
                         v: 1,
                         parentSessionId: params.parentSessionId,
                         parentCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
                         createdAtMs: Date.now(),
                         strategy: 'provider_native',
-                        providerHint: nativeFork.providerHint,
+                        providerHint,
                     },
                 }),
                 maxAttempts: 6,

@@ -207,6 +207,31 @@ export function createExternalSessionFollowLeaseManager(params?: ExternalSession
             return { enabled: true, leaseAcquired: true, followLease } as const;
         },
 
+        async releaseSession(input: Readonly<{ sessionId: string }>) {
+            backgroundFollowEnabledBySessionId.delete(input.sessionId);
+            backgroundFollowAcquireBySessionId.delete(input.sessionId);
+
+            let releasedAttachedLeases = 0;
+            const attachedLeaseIds = [...followLeasesById.entries()]
+                .filter(([, record]) => record.sessionId === input.sessionId)
+                .map(([leaseId]) => leaseId);
+            for (const leaseId of attachedLeaseIds) {
+                viewerLeaseRegistry.detach({
+                    sessionId: input.sessionId,
+                    leaseId,
+                });
+                if (await releaseFollowLease(leaseId, input.sessionId)) {
+                    releasedAttachedLeases += 1;
+                }
+            }
+
+            const releasedBackgroundLease = await releaseBackgroundFollowLease(input.sessionId);
+            return {
+                releasedAttachedLeases,
+                releasedBackgroundLease,
+            } as const;
+        },
+
         countActiveLeases(sessionId: string): number {
             return viewerLeaseRegistry.countActiveLeases(sessionId);
         },

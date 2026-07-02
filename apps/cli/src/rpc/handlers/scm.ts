@@ -104,6 +104,35 @@ export function registerScmHandlers(
         workingDirectory,
         accessPolicy: deps?.accessPolicy,
     } as const;
+    const statusSnapshotInFlight = new Map<string, Promise<ScmStatusSnapshotResponse>>();
+    const statusSnapshotKey = (request: ScmStatusSnapshotRequest): string => JSON.stringify({
+        cwd: request.cwd ?? null,
+        backendPreference: request.backendPreference ?? null,
+        includeWorktreeStatus: request.includeWorktreeStatus === true,
+    });
+    const runStatusSnapshot = (request: ScmStatusSnapshotRequest): Promise<ScmStatusSnapshotResponse> => {
+        const key = statusSnapshotKey(request);
+        const existing = statusSnapshotInFlight.get(key);
+        if (existing) return existing;
+        const promise = runScmRoute<ScmStatusSnapshotRequest, ScmStatusSnapshotResponse>({
+            request,
+            ...routeBase,
+            onNonRepository: async ({ cwd }) =>
+                createNonRepositoryScmSnapshotResponse({
+                    workingDirectory,
+                    cwd,
+                }),
+            runWithBackend: ({ context, selection }) =>
+                selection.backend.statusSnapshot({ context, request }),
+        });
+        statusSnapshotInFlight.set(key, promise);
+        void promise.finally(() => {
+            if (statusSnapshotInFlight.get(key) === promise) {
+                statusSnapshotInFlight.delete(key);
+            }
+        });
+        return promise;
+    };
 
     rpcHandlerManager.registerHandler<ScmBackendDescribeRequest, ScmBackendDescribeResponse>(
         RPC_METHODS.SCM_BACKEND_DESCRIBE,
@@ -119,18 +148,7 @@ export function registerScmHandlers(
 
     rpcHandlerManager.registerHandler<ScmStatusSnapshotRequest, ScmStatusSnapshotResponse>(
         RPC_METHODS.SCM_STATUS_SNAPSHOT,
-        async (request) =>
-            runScmRoute<ScmStatusSnapshotRequest, ScmStatusSnapshotResponse>({
-                request,
-                ...routeBase,
-                onNonRepository: async ({ cwd }) =>
-                    createNonRepositoryScmSnapshotResponse({
-                        workingDirectory,
-                        cwd,
-                    }),
-                runWithBackend: ({ context, selection }) =>
-                    selection.backend.statusSnapshot({ context, request }),
-            })
+        async (request) => runStatusSnapshot(request)
     );
 
     rpcHandlerManager.registerHandler<ScmWorktreesEnrichmentRequest, ScmWorktreesEnrichmentResponse>(

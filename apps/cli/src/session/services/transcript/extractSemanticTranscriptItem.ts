@@ -226,9 +226,25 @@ export function extractSemanticTranscriptItem(params: Readonly<{
   options: ExtractionOptions;
 }>): SemanticTranscriptExtraction {
   const decrypted = tryResolveDecryptedTranscriptPayload({ content: params.row.content, ctx: params.ctx });
-  if (!decrypted || isMemoryArtifactDecryptedRow(decrypted)) return { item: null, payloadBytes: 0, payloadTruncated: false };
+  return extractSemanticTranscriptItemFromDecryptedPayload({
+    decrypted,
+    row: params.row,
+    index: params.index,
+    options: params.options,
+  });
+}
 
-  const classified = classifyDecryptedPayload(decrypted);
+export function extractSemanticTranscriptItemFromDecryptedPayload(params: Readonly<{
+  decrypted: unknown;
+  row: Omit<TranscriptRawRow, 'content'>;
+  index: number;
+  options: ExtractionOptions;
+}>): SemanticTranscriptExtraction {
+  if (!params.decrypted || isMemoryArtifactDecryptedRow(params.decrypted)) {
+    return { item: null, payloadBytes: 0, payloadTruncated: false };
+  }
+
+  const classified = classifyDecryptedPayload(params.decrypted);
   if (!classified || !shouldIncludeClassifiedPayload(classified, params.options)) {
     return { item: null, payloadBytes: 0, payloadTruncated: false };
   }
@@ -240,7 +256,7 @@ export function extractSemanticTranscriptItem(params: Readonly<{
   const text = classified.text ? truncateText(classified.text, params.options.maxTextChars) : null;
   const summary = classified.summary ? truncateText(classified.summary, params.options.maxTextChars) : null;
   const includeRaw = params.options.includeRaw === true || params.options.includeStructuredPayload === true;
-  const rawPayload = includeRaw ? shapeRawPayload(decrypted, params.options.maxPayloadChars) : null;
+  const rawPayload = includeRaw ? shapeRawPayload(params.decrypted, params.options.maxPayloadChars) : null;
 
   return {
     item: {

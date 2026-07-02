@@ -4,20 +4,35 @@ import { logger } from '@/ui/logger';
 import type { ManagedConnectionState, ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 import type { Update } from '../../../types';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
+import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { waitForTranscriptEncryptedMessageByLocalId } from '../../transcriptMessageLookup';
 import { catchUpSessionMessagesAfterSeq } from '../../sessionMessageCatchUp';
-import { createKeyedSingleFlightScheduler } from '../../transcriptRecoveryScheduler';
+import { createKeyedSingleFlightScheduler } from '../../../connection/scheduling/createKeyedSingleFlightScheduler';
 import { isV2ChangesSyncEnabled, runSessionChangesSyncOnConnect } from '../../sessionChangesSyncOnConnect';
 import { fetchChangesAccountId } from '../../../changes';
+import type { KnownPendingQueueState } from '../../pendingQueueState';
+import type { SessionSnapshotRefreshReason } from '../../sessionSnapshotRefreshReason';
+import { createSessionSocketStaleSafetyScheduler } from '../../sessionSocketStaleSafety';
+
+export class UnsupportedTranscriptLookupError extends Error {
+    readonly cause: unknown;
+
+    constructor(cause: unknown) {
+        super('Transcript lookup route is unavailable on the server');
+        this.name = 'UnsupportedTranscriptLookupError';
+        this.cause = cause;
+    }
+}
 
 export type SessionClientRecoveryRuntime = Readonly<{
-    catchUpSessionMessages: (afterSeq: number) => Promise<void>;
+    catchUpSessionMessages: (afterSeq: number, opts?: { afterSeqIsExplicit?: boolean }) => Promise<void>;
     scheduleNextStartupMessageCatchUpRetry: () => void;
     clearStartupMessageCatchUpRetryTimer: () => void;
-    syncChangesOnConnect: (opts: { reason: 'connect' | 'reconnect' }) => Promise<void>;
+    syncChangesOnConnect: (opts: { reason: 'connect' | 'reconnect' | 'stale-safety' }) => Promise<void>;
     recoverMaterializedLocalId: (localId: string, opts?: { maxWaitMs?: number }) => Promise<boolean>;
     scheduleMaterializationRecovery: (localId: string) => void;
     forgetMaterializationRecovery: (localId: string) => void;
+    stopStaleSafety: () => void;
 }>;
 
 export function createSessionClientRecoveryRuntime(
@@ -34,11 +49,13 @@ export function createSessionClientRecoveryRuntime(
         getStartupMessageCatchUpRetryIndex: () => number;
         setStartupMessageCatchUpRetryIndex: (value: number) => void;
         getStartupMessageCatchUpInitialAfterSeq: () => number;
+        getStartupMessageCatchUpInitialAfterSeqIsExplicit: () => boolean;
         getLastObservedMessageSeq: () => number;
         getHasMaterializedLocalId: (localId: string) => boolean;
         deleteMaterializedLocalId: (localId: string) => void;
-        handleUpdate: (update: Update, opts: { source: 'session-scoped' | 'user-scoped' }) => void;
-        syncSessionSnapshotFromServer: (opts: { reason: 'connect' | 'waitForMetadataUpdate' | 'primaryTurnRuntimeState' }) => Promise<void>;
+        handleUpdate: (update: Update, opts: { source: 'session-scoped' | 'user-scoped'; catchUpAfterSeq?: number; catchUpAfterSeqIsExplicit?: boolean }) => void;
+        syncSessionSnapshotFromServer: (opts: { reason: SessionSnapshotRefreshReason }) => Promise<void>;
+        applyPendingQueueState: (state: KnownPendingQueueState) => void;
     }>,
 ): SessionClientRecoveryRuntime {
     let accountIdPromise: Promise<string> | null = null;
@@ -47,6 +64,16 @@ export function createSessionClientRecoveryRuntime(
     const materializationRecoveryScheduler = createKeyedSingleFlightScheduler({
         delayMs: configuration.transcriptRecoveryDelayMs,
         maxConcurrent: configuration.transcriptRecoveryMaxConcurrent,
+    });
+    const staleSafetyScheduler = createSessionSocketStaleSafetyScheduler({
+        intervalMs: configuration.sessionSocketStaleSafetyIntervalMs,
+        isOnline: () => {
+            const phase = params.getCurrentConnectionState()?.phase;
+            return phase === 'online';
+        },
+        runSafetyTick: async () => {
+            await syncChangesOnConnect({ reason: 'stale-safety' });
+        },
     });
     const transcriptRecoveryErrorStateByLocalId = new Map<string, { lastLoggedAt: number; suppressed: number }>();
 
@@ -63,7 +90,7 @@ export function createSessionClientRecoveryRuntime(
             logger.debug('[API] Failed to fetch transcript messages for pending-queue recovery', {
                 localId,
                 suppressedSinceLastLog: suppressed,
-                error,
+                error: serializeAxiosErrorForLog(error),
             });
             return;
         }
@@ -72,12 +99,16 @@ export function createSessionClientRecoveryRuntime(
         transcriptRecoveryErrorStateByLocalId.set(localId, state);
     };
 
-    const catchUpSessionMessages = async (afterSeq: number): Promise<void> => {
+    const catchUpSessionMessages = async (afterSeq: number, opts: { afterSeqIsExplicit?: boolean } = {}): Promise<void> => {
         const request = () => catchUpSessionMessagesAfterSeq({
             token: params.token,
             sessionId: params.sessionId,
             afterSeq,
-            onUpdate: (update) => params.handleUpdate(update, { source: 'session-scoped' }),
+            onUpdate: (update) => params.handleUpdate(update, {
+                source: 'session-scoped',
+                catchUpAfterSeq: afterSeq,
+                catchUpAfterSeqIsExplicit: opts.afterSeqIsExplicit,
+            }),
         });
         const supervisor = params.getSessionConnectionSupervisor();
         if (!supervisor) {
@@ -117,6 +148,7 @@ export function createSessionClientRecoveryRuntime(
             delayMs,
             retryIndex,
             startupMessageCatchUpInitialAfterSeq: params.getStartupMessageCatchUpInitialAfterSeq(),
+            startupMessageCatchUpInitialAfterSeqIsExplicit: params.getStartupMessageCatchUpInitialAfterSeqIsExplicit(),
             lastObservedMessageSeq: params.getLastObservedMessageSeq(),
         });
         startupMessageCatchUpRetryTimer = setTimeout(() => {
@@ -127,18 +159,25 @@ export function createSessionClientRecoveryRuntime(
             logger.debug('[API] Running startup transcript catch-up retry', {
                 retryIndex: retryIndex + 1,
                 afterSeq: params.getStartupMessageCatchUpInitialAfterSeq(),
+                afterSeqIsExplicit: params.getStartupMessageCatchUpInitialAfterSeqIsExplicit(),
             });
-            void catchUpSessionMessages(params.getStartupMessageCatchUpInitialAfterSeq())
+            void catchUpSessionMessages(params.getStartupMessageCatchUpInitialAfterSeq(), {
+                afterSeqIsExplicit: params.getStartupMessageCatchUpInitialAfterSeqIsExplicit(),
+            })
                 .catch((error) => {
                     if (isAuthenticationError(error)) {
-                        logger.debug('[API] Startup transcript catch-up retry failed with terminal auth', { error });
+                        logger.debug('[API] Startup transcript catch-up retry failed with terminal auth', {
+                            error: serializeAxiosErrorForLog(error),
+                        });
                         return false;
                     }
-                    logger.debug('[API] Startup transcript catch-up retry failed (non-fatal)', { error });
+                    logger.debug('[API] Startup transcript catch-up retry failed (non-fatal)', {
+                        error: serializeAxiosErrorForLog(error),
+                    });
                     return true;
                 })
                 .then((shouldContinue) => {
-                    if (shouldContinue !== false) {
+                    if (shouldContinue === true) {
                         scheduleNextStartupMessageCatchUpRetry();
                     }
                 });
@@ -188,7 +227,7 @@ export function createSessionClientRecoveryRuntime(
         }
     };
 
-    const syncChangesOnConnect = async (opts: { reason: 'connect' | 'reconnect' }): Promise<void> => {
+    const syncChangesOnConnect = async (opts: { reason: 'connect' | 'reconnect' | 'stale-safety' }): Promise<void> => {
         if (!isV2ChangesSyncEnabled(process.env.HAPPY_ENABLE_V2_CHANGES)) {
             return;
         }
@@ -206,6 +245,7 @@ export function createSessionClientRecoveryRuntime(
             getAccountId,
             catchUpSessionMessages: (afterSeq) => catchUpSessionMessages(afterSeq),
             syncSessionSnapshotFromServer: (syncOpts) => params.syncSessionSnapshotFromServer(syncOpts),
+            applyPendingQueueState: (state) => params.applyPendingQueueState(state),
             connectionSupervisor: params.getSessionConnectionSupervisor(),
             onDebug: (message, data) => logger.debug(message, data),
         });
@@ -218,18 +258,29 @@ export function createSessionClientRecoveryRuntime(
                 changesSyncInFlight = null;
             }
         }
+        if (opts.reason === 'connect' || opts.reason === 'reconnect') {
+            staleSafetyScheduler.start();
+        }
     };
 
     const recoverMaterializedLocalId = async (localId: string, opts?: { maxWaitMs?: number }): Promise<boolean> => {
+        let unsupportedLookupError: unknown = null;
         const found = await waitForTranscriptEncryptedMessageByLocalId({
             token: params.token,
             sessionId: params.sessionId,
             localId,
+            supervisor: params.getSessionConnectionSupervisor() ?? undefined,
             maxWaitMs: opts?.maxWaitMs,
             onError: (error) => {
                 debugTranscriptRecoveryFetchError(localId, error);
             },
+            onUnsupported: (error) => {
+                unsupportedLookupError = error;
+            },
         });
+        if (unsupportedLookupError !== null) {
+            throw new UnsupportedTranscriptLookupError(unsupportedLookupError);
+        }
         if (!found) return false;
 
         params.deleteMaterializedLocalId(localId);
@@ -257,7 +308,14 @@ export function createSessionClientRecoveryRuntime(
     const scheduleMaterializationRecovery = (localId: string): void => {
         materializationRecoveryScheduler.schedule(localId, async () => {
             if (!params.getHasMaterializedLocalId(localId)) return;
-            await recoverMaterializedLocalId(localId, { maxWaitMs: configuration.transcriptRecoveryMaxWaitMs });
+            try {
+                await recoverMaterializedLocalId(localId, { maxWaitMs: configuration.transcriptRecoveryMaxWaitMs });
+            } catch (error) {
+                if (error instanceof UnsupportedTranscriptLookupError) {
+                    return;
+                }
+                throw error;
+            }
         });
     };
 
@@ -274,5 +332,6 @@ export function createSessionClientRecoveryRuntime(
         recoverMaterializedLocalId,
         scheduleMaterializationRecovery,
         forgetMaterializationRecovery,
+        stopStaleSafety: () => staleSafetyScheduler.stop(),
     };
 }

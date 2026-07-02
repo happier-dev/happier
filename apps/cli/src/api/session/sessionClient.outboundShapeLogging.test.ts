@@ -1,10 +1,27 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AxiosError, AxiosHeaders, type InternalAxiosRequestConfig } from 'axios';
 
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import { createApiSessionSocketStub, type ApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
+let ApiSessionClient: typeof import('./sessionClient').ApiSessionClient;
+let logger: typeof import('@/ui/logger').logger;
+
+function createAxiosConfig(params: Readonly<{
+  method: string;
+  url: string;
+  headers?: AxiosHeaders;
+  data?: unknown;
+}>): InternalAxiosRequestConfig {
+  return {
+    method: params.method,
+    url: params.url,
+    headers: params.headers ?? new AxiosHeaders(),
+    ...(params.data === undefined ? {} : { data: params.data }),
+  };
+}
 
 vi.mock('./sockets', () => ({
   createUserScopedSocket: () => {
@@ -43,9 +60,17 @@ vi.mock('@happier-dev/connection-supervisor', () => ({
 }));
 
 describe('ApiSessionClient outbound diagnostics logging', () => {
-  it('logs outbound ACP message shapes without leaking message content', async () => {
-    vi.resetModules();
+  beforeAll(async () => {
+    ({ ApiSessionClient } = await import('./sessionClient'));
+    ({ logger } = await import('@/ui/logger'));
+  });
 
+  beforeEach(() => {
+    sessionSocketStub = null;
+    userSocketStub = null;
+  });
+
+  it('logs outbound ACP message shapes without leaking message content', () => {
     sessionSocketStub = createApiSessionSocketStub({
       connected: true,
       emitWithAck: async (event: string) => {
@@ -60,8 +85,6 @@ describe('ApiSessionClient outbound diagnostics logging', () => {
       emitWithAck: async () => ({ ok: true }),
     });
 
-    const { ApiSessionClient } = await import('./sessionClient');
-    const { logger } = await import('@/ui/logger');
     const debugSpy = vi.spyOn(logger, 'debug');
     debugSpy.mockClear();
 
@@ -72,5 +95,38 @@ describe('ApiSessionClient outbound diagnostics logging', () => {
     const calls = JSON.stringify(debugSpy.mock.calls);
     expect(calls).not.toContain('SUPER_SECRET_VALUE');
     expect(debugSpy.mock.calls.some((c) => String(c[0]).includes('[shape:session-out]'))).toBe(true);
+  });
+
+  it('serializes socket connection errors without leaking raw network error fields', () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({
+      connected: true,
+      emitWithAck: async () => ({ ok: true }),
+    });
+
+    const debugSpy = vi.spyOn(logger, 'debug');
+    debugSpy.mockClear();
+
+    new ApiSessionClient('tok', createPlainSessionFixture({ id: 's-socket-log' }));
+
+    const socketError = new AxiosError('socket failed', 'ECONNRESET', createAxiosConfig({
+      method: 'get',
+      url: 'https://relay:SUPER_SECRET_PASSWORD@api.example.test/socket.io/?token=SECRET',
+      headers: new AxiosHeaders({ Authorization: 'Bearer SECRET' }),
+      data: { secret: 'SECRET_BODY' },
+    }));
+    sessionSocketStub.trigger('connect_error', socketError);
+    sessionSocketStub.trigger('error', socketError);
+
+    const calls = JSON.stringify(debugSpy.mock.calls);
+    expect(calls).toContain('[API] Socket connection error');
+    expect(calls).toContain('[API] Socket error');
+    expect(calls).toContain('https://api.example.test/socket.io/');
+    expect(calls).not.toContain('Authorization');
+    expect(calls).not.toContain('Bearer SECRET');
+    expect(calls).not.toContain('SECRET_BODY');
+    expect(calls).not.toContain('SUPER_SECRET_PASSWORD');
+    expect(calls).not.toContain('"headers"');
+    expect(calls).not.toContain('"data"');
   });
 });

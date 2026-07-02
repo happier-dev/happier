@@ -19,16 +19,22 @@ import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import type { RpcHandlerInvoker } from './rpc/types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import {
+    MACHINE_LIVE_STREAM_SOCKET_EVENT,
+    PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
     TRANSFER_RELAY_V2_SOCKET_EVENT,
     type ExternalSessionTranscriptDeltaEphemeral,
+    type MachineLiveStreamRelayEnvelopeV1,
     type MachineTransferReceiveEnvelope,
     type MachineTransferSendEnvelope,
+    type PeerTcpTunnelRelayEnvelope,
+    type SessionTurnMutationV1,
     type TransferRelayV2SendEnvelope,
 } from '@happier-dev/protocol';
 import { fetchChanges, fetchChangesAccountId } from './changes';
 import { readLastChangesCursor, writeLastChangesCursor } from '@/persistence';
 import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
 import { createAuthenticationHttpStatusError, isAuthenticationError, isAuthenticationStatus } from './client/httpStatusError';
+import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog';
 import { handleRequestAuthenticationFailure } from '@/api/connection/requestSupervision/reportRequestOutcomeToSupervisor';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
 import { createTransientSessionMediaReadAllowance } from '@/session/media/readAllowance';
@@ -56,6 +62,14 @@ import { readAccountSettingsVersionFromHint } from '@/settings/accountSettings/a
 import { buildInstallationProofForMachine } from '@/daemon/identity/proof';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
+import {
+    createSessionClientDurableMutationOutbox,
+    type SessionClientDurableMutationOutbox,
+} from './session/client/transport/mutations/createSessionClientDurableMutationOutbox';
+import {
+    createSessionEndMutation,
+    type SessionClientDurableMutationSocket,
+} from './session/client/transport/mutations/sessionClientDurableMutationTypes';
 
 export type AccountSettingsVersionHintSource = 'changes' | 'cursor-gone' | 'page-limit';
 
@@ -63,6 +77,54 @@ export type AccountSettingsVersionHintNotification = Readonly<{
     settingsVersion: number | null;
     source: AccountSettingsVersionHintSource;
 }>;
+
+type MachineSessionEndPayload = Readonly<{
+    sid: string;
+    time: number;
+    exit?: unknown;
+}>;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function readSocketConnectErrorDiagnostic(error: unknown): Readonly<{
+    message?: string;
+    name?: string;
+    code?: string;
+    statusCode?: number;
+}> {
+    const record = asRecord(error);
+    const data = asRecord(record?.data);
+    const statusRaw = data?.statusCode ?? data?.status;
+    const statusCode = typeof statusRaw === 'number' && Number.isFinite(statusRaw)
+        ? statusRaw
+        : null;
+    return {
+        ...(typeof record?.message === 'string' && record.message.trim() ? { message: record.message.trim() } : {}),
+        ...(typeof record?.name === 'string' && record.name.trim() ? { name: record.name.trim() } : {}),
+        ...(typeof record?.code === 'string' && record.code.trim() ? { code: record.code.trim() } : {}),
+        ...(statusCode !== null ? { statusCode } : {}),
+    };
+}
+
+function isMachineReplacedSocketError(error: unknown): boolean {
+    const record = asRecord(error);
+    const data = asRecord(record?.data);
+    const errorCode = typeof data?.error === 'string' ? data.error.trim() : '';
+    const message = typeof record?.message === 'string' ? record.message.trim() : '';
+    const statusRaw = data?.statusCode ?? data?.status;
+    const statusCode = typeof statusRaw === 'number' && Number.isFinite(statusRaw) ? statusRaw : null;
+    return statusCode === 410 && (errorCode === 'machine-replaced' || errorCode === 'machine_replaced' || message === 'machine-replaced');
+}
+
+function isMachineSessionEndPayload(value: unknown): value is MachineSessionEndPayload {
+    if (!value || typeof value !== 'object') return false;
+    const candidate = value as { sid?: unknown; time?: unknown };
+    return typeof candidate.sid === 'string' && typeof candidate.time === 'number';
+}
 
 export class ApiMachineClient {
     private socket: Socket<ServerToDaemonEvents, DaemonToServerEvents> | null = null;
@@ -75,8 +137,11 @@ export class ApiMachineClient {
     private accountSettingsVersionHintListeners = new Set<(hint: AccountSettingsVersionHintNotification) => void | Promise<void>>();
     private machineTransferListeners = new Set<(payload: MachineTransferReceiveEnvelope) => void>();
     private transferRelayV2Listeners = new Set<(payload: TransferRelayV2SendEnvelope) => void>();
+    private peerTcpTunnelRelayListeners = new Set<(payload: PeerTcpTunnelRelayEnvelope) => void>();
+    private machineLiveStreamRelayListeners = new Set<(payload: MachineLiveStreamRelayEnvelopeV1) => void>();
     private connectionStateListeners = new Set<(state: ManagedConnectionState) => void>();
     private connectionSupervisor: ManagedConnectionSupervisor | null = null;
+    private sessionEndMutationOutboxes = new Map<string, SessionClientDurableMutationOutbox>();
     private readonly machineRpcWorkingDirectory: string;
     private readonly filesystemAccessPolicy: FilesystemAccessPolicy;
     private additionalAllowedReadDirs: string[] = [];
@@ -194,12 +259,14 @@ export class ApiMachineClient {
 
     setRPCHandlers({
         spawnSession,
+        resolveSpawnSessionByNonce,
         stopSession,
         isSessionActive,
         loadLocalSessionMetadata,
         savePreparedTargetLocalMetadata,
         requestShutdown,
         memory,
+        daemonServerWorkScheduler,
         voiceInference,
         machineTransferChannel,
         transferRelayV2Channel,
@@ -211,12 +278,14 @@ export class ApiMachineClient {
             rpcHandlerManager: this.rpcHandlerManager,
             handlers: {
                 spawnSession,
+                ...(resolveSpawnSessionByNonce ? { resolveSpawnSessionByNonce } : {}),
                 stopSession,
                 ...(isSessionActive ? { isSessionActive } : {}),
                 ...(loadLocalSessionMetadata ? { loadLocalSessionMetadata } : {}),
                 ...(savePreparedTargetLocalMetadata ? { savePreparedTargetLocalMetadata } : {}),
                 requestShutdown,
                 ...(memory ? { memory } : {}),
+                ...(daemonServerWorkScheduler ? { daemonServerWorkScheduler } : {}),
                 ...(voiceInference ? { voiceInference } : {}),
                 ...(machineTransferChannel ? { machineTransferChannel } : {}),
                 ...(transferRelayV2Channel ? { transferRelayV2Channel } : {}),
@@ -286,6 +355,20 @@ export class ApiMachineClient {
         };
     }
 
+    onPeerTcpTunnelRelayEnvelope(listener: (payload: PeerTcpTunnelRelayEnvelope) => void): () => void {
+        this.peerTcpTunnelRelayListeners.add(listener);
+        return () => {
+            this.peerTcpTunnelRelayListeners.delete(listener);
+        };
+    }
+
+    onMachineLiveStreamRelayEnvelope(listener: (payload: MachineLiveStreamRelayEnvelopeV1) => void): () => void {
+        this.machineLiveStreamRelayListeners.add(listener);
+        return () => {
+            this.machineLiveStreamRelayListeners.delete(listener);
+        };
+    }
+
     onConnectionStateChange(listener: (state: ManagedConnectionState) => void): () => void {
         this.connectionStateListeners.add(listener);
         listener(this.currentConnectionState);
@@ -302,6 +385,16 @@ export class ApiMachineClient {
     sendTransferRelayV2Envelope(payload: TransferRelayV2SendEnvelope): void {
         if (!this.socket) return;
         this.socket.emit(TRANSFER_RELAY_V2_SOCKET_EVENT, payload);
+    }
+
+    sendPeerTcpTunnelRelayEnvelope(payload: PeerTcpTunnelRelayEnvelope): void {
+        if (!this.socket) return;
+        this.socket.emit(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, payload);
+    }
+
+    sendMachineLiveStreamRelayEnvelope(payload: MachineLiveStreamRelayEnvelopeV1): void {
+        if (!this.socket) return;
+        this.socket.emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, payload);
     }
 
     emitExternalSessionTranscriptUpdate(payload: ExternalSessionTranscriptDeltaEphemeral): void {
@@ -401,18 +494,135 @@ export class ApiMachineClient {
         });
     }
 
-    emitSessionEnd(payload: { sid: string; time: number; exit?: any }) {
-        // May be called before connect() finishes; best-effort only.
-        if (!this.socket) {
-            return;
+    private async confirmSessionEndOverHttp(payload: { sid: string; time: number; exit?: any }): Promise<'confirmed' | 'unsupported'> {
+        const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+        const response = await axios.post(
+            `${serverUrl}/v1/sessions/${encodeURIComponent(payload.sid)}/end`,
+            { time: payload.time },
+            {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json',
+                },
+                timeout: 15_000,
+                validateStatus: () => true,
+            },
+        );
+        if (isAuthenticationStatus(response.status)) {
+            throw createAuthenticationHttpStatusError(
+                response.status,
+                `Authentication failed while confirming session end (${response.status})`,
+            );
         }
-        this.socket.emit('session-end', payload);
+        if (response.status === 404 || response.status === 405 || response.status === 501) {
+            return 'unsupported';
+        }
+        if (response.status < 200 || response.status >= 300) {
+            throw new Error(`Session-end HTTP confirmation failed with status ${response.status}`);
+        }
+        return 'confirmed';
+    }
+
+    emitSessionEnd(payload: MachineSessionEndPayload) {
+        // Socket fanout is kept for compatibility; HTTP is the durable confirmation path.
+        const emittedLegacySessionEnd = Boolean(this.socket);
+        if (this.socket) {
+            this.socket.emit('session-end', payload);
+        }
+        void this.confirmSessionEndOverHttp(payload).then((result) => {
+            if (result === 'unsupported' && emittedLegacySessionEnd) return;
+            if (result === 'unsupported') {
+                logger.warn('[API MACHINE] Failed to confirm session-end over HTTP', {
+                    error: { message: 'Session-end HTTP confirmation route unsupported' },
+                });
+            }
+        }).catch((error) => {
+            logger.warn('[API MACHINE] Failed to confirm session-end over HTTP', {
+                error: serializeAxiosErrorForLog(error),
+            });
+        });
+    }
+
+    private createSessionEndMutationSocket(): SessionClientDurableMutationSocket {
+        return {
+            connected: this.socket?.connected === true,
+            emit: (event: 'session-end', payload: unknown) => {
+                if (event !== 'session-end' || !this.socket || !isMachineSessionEndPayload(payload)) {
+                    return;
+                }
+                this.socket.emit('session-end', payload);
+            },
+            emitWithAck: async (event: string, payload: unknown) => {
+                if (event !== 'session-end' || !this.socket || !isMachineSessionEndPayload(payload)) {
+                    throw new Error('Invalid machine session-end ack payload');
+                }
+                const socket = this.socket as unknown as { emitWithAck?: (event: string, payload: unknown) => Promise<unknown> };
+                if (typeof socket.emitWithAck !== 'function') {
+                    throw new Error('Machine socket does not support ack-based events');
+                }
+                return await socket.emitWithAck(event, payload);
+            },
+        };
+    }
+
+    private getSessionEndMutationOutbox(sessionId: string): SessionClientDurableMutationOutbox {
+        const existing = this.sessionEndMutationOutboxes.get(sessionId);
+        if (existing) return existing;
+
+        const outbox = createSessionClientDurableMutationOutbox({
+            token: this.token,
+            sessionId,
+            getSocket: () => this.createSessionEndMutationSocket(),
+            requestReconnect: () => {},
+        });
+        this.sessionEndMutationOutboxes.set(sessionId, outbox);
+        return outbox;
+    }
+
+    enqueueSessionEndMutation(payload: MachineSessionEndPayload): void {
+        const sessionId = payload.sid.trim();
+        if (!sessionId) return;
+
+        void this.getSessionEndMutationOutbox(sessionId).enqueueSessionEnd(createSessionEndMutation({
+            sessionId,
+            observedAt: payload.time,
+            ...(payload.exit !== undefined ? { exit: payload.exit } : {}),
+        })).catch((error) => {
+            logger.warn('[API MACHINE] Failed to enqueue durable session-end mutation', {
+                error: serializeAxiosErrorForLog(error),
+            });
+        });
+    }
+
+    /**
+     * Durable daemon-side settlement of a dead runner's open canonical turn. Delivered as an
+     * `end_session` turn mutation through the per-session mutation outbox; the machine socket
+     * has no turn-mutation ack event, so delivery falls back to the HTTP turn route. The server
+     * no-ops when no turn is open or the open turn began after `time` (a replacement runner's
+     * newer turn must not be cancelled by a stale settlement).
+     */
+    enqueueSessionTurnSettlementMutation(payload: Readonly<{ sid: string; time: number }>): void {
+        const sessionId = payload.sid.trim();
+        if (!sessionId) return;
+
+        void this.getSessionEndMutationOutbox(sessionId).enqueueSessionTurnMutation({
+            v: 1,
+            sessionId,
+            mutationId: `daemon-exit-turn-settlement:${sessionId}:${payload.time}`,
+            observedAt: payload.time,
+            action: 'end_session',
+        } satisfies SessionTurnMutationV1).catch((error) => {
+            logger.warn('[API MACHINE] Failed to enqueue durable session turn settlement mutation', {
+                error: serializeAxiosErrorForLog(error),
+            });
+        });
     }
 
     connect(params?: {
         takeover?: boolean;
         onConnect?: () => void | Promise<void>;
         onOwnershipConflict?: (conflict: { owner: MachineOwnerConflictDetails }) => void;
+        onMachineReplaced?: (event: { machineId: string }) => void;
     }) {
         const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
         logger.debug(`[API MACHINE] Connecting to ${serverUrl}`);
@@ -529,6 +739,7 @@ export class ApiMachineClient {
             takeover?: boolean;
             onConnect?: () => void | Promise<void>;
             onOwnershipConflict?: (conflict: { owner: MachineOwnerConflictDetails }) => void;
+            onMachineReplaced?: (event: { machineId: string }) => void;
         },
     ) {
         socket.on('connect_error', (error: unknown) => {
@@ -537,6 +748,12 @@ export class ApiMachineClient {
             }
             const ownershipConflict = readMachineOwnerConflictFromSocketError(error);
             if (!ownershipConflict) {
+                const diagnostic = readSocketConnectErrorDiagnostic(error);
+                logger.warn('[API MACHINE] Machine socket connect error', diagnostic);
+                if (isMachineReplacedSocketError(error)) {
+                    void this.connectionSupervisor?.stop().catch(() => {});
+                    params?.onMachineReplaced?.({ machineId: this.machine.id });
+                }
                 return;
             }
             void this.connectionSupervisor?.stop().catch(() => {});
@@ -566,6 +783,30 @@ export class ApiMachineClient {
                     listener(data);
                 } catch (error) {
                     logger.warn('[API MACHINE] Transfer relay v2 listener threw (ignored)', {
+                        message: error instanceof Error ? error.message : String(error),
+                    });
+                }
+            }
+        });
+
+        socket.on(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, (data: PeerTcpTunnelRelayEnvelope) => {
+            for (const listener of this.peerTcpTunnelRelayListeners) {
+                try {
+                    listener(data);
+                } catch (error) {
+                    logger.warn('[API MACHINE] Peer TCP tunnel relay listener threw (ignored)', {
+                        message: error instanceof Error ? error.message : String(error),
+                    });
+                }
+            }
+        });
+
+        socket.on(MACHINE_LIVE_STREAM_SOCKET_EVENT, (data: MachineLiveStreamRelayEnvelopeV1) => {
+            for (const listener of this.machineLiveStreamRelayListeners) {
+                try {
+                    listener(data);
+                } catch (error) {
+                    logger.warn('[API MACHINE] Machine live-stream relay listener threw (ignored)', {
                         message: error instanceof Error ? error.message : String(error),
                     });
                 }
@@ -630,6 +871,17 @@ export class ApiMachineClient {
         if (this.connectionSupervisor) {
             await this.connectionSupervisor.stop();
         }
+        const outboxes = Array.from(this.sessionEndMutationOutboxes.values());
+        this.sessionEndMutationOutboxes.clear();
+        await Promise.all(outboxes.map(async (outbox) => {
+            try {
+                await outbox.close();
+            } catch (error) {
+                logger.debug('[API MACHINE] Failed to close session-end mutation outbox', {
+                    error: serializeAxiosErrorForLog(error),
+                });
+            }
+        }));
     }
 
     async awaitPendingRpcRequests(): Promise<void> {
@@ -735,7 +987,9 @@ export class ApiMachineClient {
                 this.machine.daemonStateVersion = nextDaemonStateVersion;
             }
         } catch (error) {
-            logger.debug('[API MACHINE] Failed to refresh machine snapshot', { error });
+            logger.debug('[API MACHINE] Failed to refresh machine snapshot', {
+                error: serializeAxiosErrorForLog(error),
+            });
         }
     }
 

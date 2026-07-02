@@ -4,8 +4,29 @@ import type {
     UserMessage,
 } from '../types';
 import { SessionMessageContentSchema, UserMessageSchema } from '../types';
-import { coerceSessionUserPromptV1 } from '@happier-dev/protocol';
+import { coerceSessionUserPromptV1, RuntimeEventV1Schema } from '@happier-dev/protocol';
 import { summarizeValueShapeForLog } from '@/diagnostics/eventShapeForLog';
+import { detectSessionTurnLifecycleEvent } from '@/session/shared/sessionTurnLifecycle';
+
+type ConnectedServiceTurnLifecycleEvent = 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled';
+
+function mapSessionTurnLifecycleToConnectedServiceEvent(value: unknown): ConnectedServiceTurnLifecycleEvent | null {
+    const event = detectSessionTurnLifecycleEvent(value);
+    if (event === 'task_started') return 'task_started';
+    if (event === 'turn_cancelled') return 'turn_cancelled';
+    if (event === 'task_complete' || event === 'turn_aborted' || event === 'turn_failed' || event === 'ready') {
+        return 'assistant_message_end';
+    }
+    const runtimeEvent = RuntimeEventV1Schema.safeParse(value);
+    if (runtimeEvent.success) {
+        if (runtimeEvent.data.kind === 'turn-start') return 'prompt_or_steer';
+        if (runtimeEvent.data.kind === 'turn-cancelled') return 'turn_cancelled';
+        if (runtimeEvent.data.kind === 'turn-complete' || runtimeEvent.data.kind === 'turn-failed' || runtimeEvent.data.kind === 'session-ended') {
+            return 'assistant_message_end';
+        }
+    }
+    return null;
+}
 
 export function handleSessionNewMessageUpdate(params: {
     update: Update;
@@ -23,6 +44,7 @@ export function handleSessionNewMessageUpdate(params: {
     pendingMessageCallback: ((message: UserMessage) => void) | null;
     pendingMessages: UserMessage[];
     shouldDeliverUserMessageToAgentQueue?: (message: UserMessage, update: Update) => boolean;
+    onConnectedServiceTurnLifecycleEvent?: (event: ConnectedServiceTurnLifecycleEvent) => void;
     emit: (event: 'user-message' | 'message', payload: unknown) => void;
     observeMessage?: (message: unknown, seq: number | null) => void;
     debug: (message: string, data?: unknown) => void;
@@ -125,15 +147,23 @@ export function handleSessionNewMessageUpdate(params: {
                 ...(body as any),
                 localId: params.update.body.message.localId,
             };
+    const transportCreatedAt =
+        typeof params.update.createdAt === 'number' && Number.isFinite(params.update.createdAt)
+            ? params.update.createdAt
+            : undefined;
     const bodyWithTransportFields = {
         ...(bodyWithLocalId as any),
         // Attach server timestamps so downstream consumers can make clock-safe decisions.
-        createdAt: typeof params.update.createdAt === 'number' ? params.update.createdAt : undefined,
+        ...(transportCreatedAt === undefined ? {} : { createdAt: transportCreatedAt }),
     };
     params.observeMessage?.(
         bodyWithTransportFields,
         typeof msgSeq === 'number' && Number.isFinite(msgSeq) ? msgSeq : null,
     );
+    const connectedServiceTurnLifecycleEvent = mapSessionTurnLifecycleToConnectedServiceEvent(bodyWithTransportFields);
+    if (connectedServiceTurnLifecycleEvent) {
+        params.onConnectedServiceTurnLifecycleEvent?.(connectedServiceTurnLifecycleEvent);
+    }
 
     params.debugLargeJson('[SOCKET] [UPDATE] Received update:', bodyWithTransportFields);
     let shouldMarkReceivedMessageId = !hasMessageId;
@@ -193,15 +223,26 @@ export function handleSessionNewMessageUpdate(params: {
             };
             const parsedCandidate = UserMessageSchema.safeParse(candidate);
             if (parsedCandidate.success) {
-                markMessageIdAsReceived();
-                shouldMarkReceivedMessageId = false;
-                if (params.pendingMessageCallback) {
-                    params.pendingMessageCallback(parsedCandidate.data);
+                const shouldDeliverToAgentQueue =
+                    params.shouldDeliverUserMessageToAgentQueue?.(parsedCandidate.data, params.update) ?? true;
+                if (shouldDeliverToAgentQueue) {
+                    markMessageIdAsReceived();
+                    shouldMarkReceivedMessageId = false;
+                    if (params.pendingMessageCallback) {
+                        params.pendingMessageCallback(parsedCandidate.data);
+                    } else {
+                        params.pendingMessages.push(parsedCandidate.data);
+                    }
+                    if (localId) {
+                        params.markAgentQueueEchoSuppressedLocalId(localId);
+                    }
                 } else {
-                    params.pendingMessages.push(parsedCandidate.data);
-                }
-                if (localId) {
-                    params.markAgentQueueEchoSuppressedLocalId(localId);
+                    shouldMarkReceivedMessageId = false;
+                    params.debug('[SOCKET] [UPDATE] Skipped coerced user-message delivery to agent queue', {
+                        localId,
+                        source: parsedCandidate.data.meta?.source ?? null,
+                        sentFrom: parsedCandidate.data.meta?.sentFrom ?? null,
+                    });
                 }
                 if (typeof msgSeq === 'number' && Number.isFinite(msgSeq)) {
                     nextLastObservedUserMessageSeq = Math.max(nextLastObservedUserMessageSeq, msgSeq);

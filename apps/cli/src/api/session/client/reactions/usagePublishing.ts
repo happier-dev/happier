@@ -1,3 +1,4 @@
+import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { logger } from '@/ui/logger';
 import {
     extractUsageObservationFromTokenCountMessage,
@@ -36,6 +37,6 @@ export async function publishTokenCountUsageObservation(params: Readonly<{
             externalKey: params.externalKey ?? null,
         });
     } catch (error) {
-        logger.debug('[SOCKET] Failed to publish token_count usage observation (non-fatal)', error);
+        logger.debug('[SOCKET] Failed to publish token_count usage observation (non-fatal)', serializeAxiosErrorForLog(error));
     }
 }

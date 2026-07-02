@@ -8,6 +8,7 @@ import type {
 import type { UserMessage } from '../../../types';
 
 import { catchUpSessionMessagesAfterSeq } from '../../sessionMessageCatchUp';
+import { configuration } from '@/configuration';
 
 type NonReadyProbeResult = Exclude<ReadinessProbeResult, Readonly<{ status: 'ready' }>>;
 
@@ -17,11 +18,12 @@ type StartupCatchUpPort = {
     sessionId: string;
     sessionConnectionSupervisor: ManagedConnectionSupervisor | null;
     recoveryRuntime?: {
-        catchUpSessionMessages: (afterSeq: number) => Promise<void>;
+        catchUpSessionMessages: (afterSeq: number, opts?: { afterSeqIsExplicit?: boolean }) => Promise<void>;
         scheduleNextStartupMessageCatchUpRetry: () => void;
     };
     currentConnectionState?: { phase?: string | null };
     startupMessageCatchUpInitialAfterSeq: number;
+    startupMessageCatchUpInitialAfterSeqIsExplicit: boolean;
     startupMessageCatchUpRetryIndex: number;
     startupMessageCatchUpRetryTimer: ReturnType<typeof setTimeout> | null;
     pendingMessages: UserMessage[];
@@ -36,27 +38,31 @@ type StartupCatchUpPort = {
         localId?: string;
         meta?: Record<string, unknown>;
     }>) => void;
-    catchUpSessionMessages: (afterSeq: number) => Promise<void>;
+    catchUpSessionMessages: (afterSeq: number, opts?: { afterSeqIsExplicit?: boolean }) => Promise<void>;
     scheduleNextStartupMessageCatchUpRetry: () => void;
     shouldRunStartupTranscriptCatchUp: () => boolean;
     kickUserSocketConnect: () => void;
     classifyTransportErrorToProbeResult: (error: unknown) => NonReadyProbeResult | null;
-    handleCatchUpUpdate: (update: unknown) => void;
+    handleCatchUpUpdate: (update: unknown, opts: { catchUpAfterSeq: number; catchUpAfterSeqIsExplicit?: boolean }) => void;
 };
 
 export function catchUpSessionMessagesViaPort(
     port: StartupCatchUpPort,
     afterSeq: number,
+    opts: { afterSeqIsExplicit?: boolean } = {},
 ): Promise<void> {
     if (port.recoveryRuntime) {
-        return port.recoveryRuntime.catchUpSessionMessages(afterSeq);
+        return port.recoveryRuntime.catchUpSessionMessages(afterSeq, opts);
     }
 
     const request = () => catchUpSessionMessagesAfterSeq({
         token: port.token,
         sessionId: port.sessionId,
         afterSeq,
-        onUpdate: (update) => port.handleCatchUpUpdate(update),
+        onUpdate: (update) => port.handleCatchUpUpdate(update, {
+            catchUpAfterSeq: afterSeq,
+            catchUpAfterSeqIsExplicit: opts.afterSeqIsExplicit,
+        }),
     });
     const supervisor = port.sessionConnectionSupervisor;
     if (!supervisor) {
@@ -102,7 +108,9 @@ export function scheduleNextStartupCatchUpRetryViaPort(
         if (port.closed) return;
 
         port.startupMessageCatchUpRetryIndex = retryIndex + 1;
-        void port.catchUpSessionMessages(port.startupMessageCatchUpInitialAfterSeq)
+        void port.catchUpSessionMessages(port.startupMessageCatchUpInitialAfterSeq, {
+            afterSeqIsExplicit: port.startupMessageCatchUpInitialAfterSeqIsExplicit,
+        })
             .catch((error) => {
                 if (isAuthenticationError(error)) {
                     return false;
@@ -110,7 +118,7 @@ export function scheduleNextStartupCatchUpRetryViaPort(
                 return true;
             })
             .then((shouldContinue) => {
-                if (shouldContinue !== false) {
+                if (shouldContinue === true) {
                     port.scheduleNextStartupMessageCatchUpRetry();
                 }
             });
@@ -127,7 +135,7 @@ export function attachSessionUserMessageHandler(
         port.userMessageCallbackAttachedAtMs = Date.now();
     }
     port.kickUserSocketConnect();
-    const startupCatchUpInitialAfterSeq = port.lastObservedMessageSeq;
+    const startupCatchUpInitialAfterSeq = resolveStartupTranscriptCatchUpInitialAfterSeq(port);
     while (port.pendingMessages.length > 0) {
         callback(port.pendingMessages.shift()!);
     }
@@ -143,7 +151,7 @@ export function attachSessionUserMessageHandler(
                 return true;
             })
             .then((shouldContinue) => {
-                if (shouldContinue !== false) {
+                if (shouldContinue === true) {
                     port.scheduleNextStartupMessageCatchUpRetry();
                 }
             });
@@ -162,4 +170,16 @@ export function attachSessionUserMessageHandler(
             },
         });
     }
+}
+
+function resolveStartupTranscriptCatchUpInitialAfterSeq(port: StartupCatchUpPort): number {
+    const base = Math.max(0, Math.trunc(port.lastObservedMessageSeq));
+    if (!port.shouldRunStartupTranscriptCatchUp()) {
+        return base;
+    }
+    const rewind = Math.max(0, Math.trunc(configuration.startupTranscriptCatchUpSeqRewind));
+    if (rewind <= 0) {
+        return base;
+    }
+    return Math.max(0, base - rewind);
 }

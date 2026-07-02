@@ -44,6 +44,39 @@ describe('sessionControl.sessionsHttp.fetchSessionByIdCompat', () => {
     expect(String(getSpy.mock.calls[0]?.[0])).toContain('/v2/sessions/s1');
   });
 
+  it('sends structured request-purpose telemetry for session-detail reads', async () => {
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: createSessionRecordFixture({ id: 's1', metadataVersion: 0, agentStateVersion: 0, dataEncryptionKey: 'dek' }),
+      },
+    } as any);
+
+    const res = await fetchSessionByIdCompat({ token: 't', sessionId: 's1', reason: 'connect' });
+
+    expect(res).toMatchObject({ id: 's1' });
+    expect(getSpy.mock.calls[0]?.[1]?.headers).toMatchObject({
+      'X-Happier-Request-Purpose': 'session-detail:socket-connect-catchup',
+    });
+  });
+
+  it('labels unclassified compat session-detail reads with a legacy proof purpose', async () => {
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: createSessionRecordFixture({ id: 's1', metadataVersion: 0, agentStateVersion: 0, dataEncryptionKey: 'dek' }),
+      },
+    } as any);
+
+    await fetchSessionByIdCompat({ token: 't', sessionId: 's1' });
+
+    expect(getSpy.mock.calls[0]?.[1]?.headers).toMatchObject({
+      'X-Happier-Request-Purpose': 'session-detail:legacy-compat-proof',
+    });
+  });
+
   it('throws on malformed /v2/sessions payload when scanning fallback route', async () => {
     const getSpy = vi.spyOn(axios, 'get');
     getSpy

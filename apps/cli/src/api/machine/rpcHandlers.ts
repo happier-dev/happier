@@ -37,6 +37,15 @@ import {
 } from './rpcHandlers.directTransferExports';
 import { registerMachineDiagnosticsRpcHandlers } from './rpcHandlers.diagnostics';
 import { registerMachineSessionRpcHandlers } from './rpcHandlers.sessions';
+import { registerMachineSessionGoalRpcHandlers } from './rpcHandlers.sessionGoals';
+import { registerMachineServerWorkRpcHandlers } from './rpcHandlers.serverWork';
+import type { DaemonServerWorkScheduler } from '@/daemon/serverWork';
+import type {
+  CancelInactiveSessionUsageLimitRecoveryCheck,
+  ResumeInactiveSessionWhenUsageLimitReady,
+  RetryTemporaryThrottleNow,
+  ScheduleInactiveSessionUsageLimitRecoveryCheck,
+} from '@/session/actions/createCliActionDeps';
 import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
 import { registerSessionPermissionRpcHandlers } from '@/rpc/handlers/sessionPermissions';
 import { registerSessionLifecycleRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
@@ -51,23 +60,36 @@ import type { TransientSessionMediaReadAllowance } from '@/session/media/readAll
 import type {
   AccountPetCreateRequestV1,
   AccountPetCreateResponseV1,
+  ConnectedServiceBindingsV1,
   ExternalSessionTranscriptDeltaEphemeral,
   MachineTransferReceiveEnvelope,
   MachineTransferSendEnvelope,
   TransferEndpointCandidate,
   TransferRelayV2SendEnvelope,
 } from '@happier-dev/protocol';
+import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from '@happier-dev/protocol';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 import { createPromptRegistryAdapterRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
 import type { DirectTransferImportOpenRequest } from '@/machines/transfer/directTransferImportSession';
 import { createTransferSessionLifecycle } from '@/transfers/core/transferSessionLifecycle';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import { requestDaemonSessionConnectedServiceAuthSwitch } from '@/daemon/controlClient';
 
 const transferRelayV2DownloadResponderCleanupByManager = new WeakMap<RpcHandlerManager, () => void>();
 const machineDirectTransferRpcMethodsToReset = [
   RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE,
   RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
 ] as const;
+
+function parseSessionConnectedServiceAuthSwitchRpcParams(raw: unknown): Readonly<{
+  sessionId: string;
+  agentId: string;
+  bindings: ConnectedServiceBindingsV1;
+  expectedGroupGenerationByServiceId?: Readonly<Record<string, number>>;
+}> | null {
+  const parsed = SessionConnectedServiceAuthSwitchRpcParamsSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
 
 function removeRegisteredMachineRpcMethods(
   rpcHandlerManager: RpcHandlerManager,
@@ -94,6 +116,12 @@ function removeRegisteredMachineRpcMethods(
 
 export type MachineRpcHandlers = {
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
+  resolveSpawnSessionByNonce?: (spawnNonce: string) => Promise<
+    | { status: 'success'; sessionId: string }
+    | { status: 'pending' }
+    | { status: 'not_found' }
+    | { status: 'unsupported' }
+  >;
   stopSession: (sessionId: string) => Promise<boolean>;
   isSessionActive?: (sessionId: string) => Promise<boolean>;
   loadLocalSessionMetadata?: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
@@ -103,6 +131,7 @@ export type MachineRpcHandlers = {
   }>) => Promise<void> | void;
   requestShutdown: () => void;
   memory?: MemoryWorkerHandle;
+  daemonServerWorkScheduler?: Pick<DaemonServerWorkScheduler, 'getSnapshot'>;
   voiceInference?: VoiceInferenceWorkerHandle;
   machineTransferChannel?: Readonly<{
     onEnvelope: (listener: (payload: MachineTransferReceiveEnvelope) => void) => () => void;
@@ -145,6 +174,10 @@ export type MachineRpcHandlerDeps = Readonly<{
   extraTransferRelayV2DownloadOwners?: readonly TransferRelayV2DownloadSessionOwner[];
   emitExternalSessionTranscriptUpdate?: (payload: ExternalSessionTranscriptDeltaEphemeral) => void;
   createAccountPet?: (request: AccountPetCreateRequestV1) => Promise<AccountPetCreateResponseV1>;
+  resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
+  scheduleInactiveSessionUsageLimitRecoveryCheck?: ScheduleInactiveSessionUsageLimitRecoveryCheck;
+  cancelInactiveSessionUsageLimitRecoveryCheck?: CancelInactiveSessionUsageLimitRecoveryCheck;
+  retryTemporaryThrottleNow?: RetryTemporaryThrottleNow;
 }>;
 
 export function registerMachineRpcHandlers(params: Readonly<{
@@ -167,6 +200,15 @@ export function registerMachineRpcHandlers(params: Readonly<{
     handlers,
     deps: params.deps,
   });
+  registerMachineSessionGoalRpcHandlers({
+    rpcHandlerManager,
+    deps: {
+      resumeInactiveSessionWhenUsageLimitReady: params.deps?.resumeInactiveSessionWhenUsageLimitReady,
+      scheduleInactiveSessionUsageLimitRecoveryCheck: params.deps?.scheduleInactiveSessionUsageLimitRecoveryCheck,
+      cancelInactiveSessionUsageLimitRecoveryCheck: params.deps?.cancelInactiveSessionUsageLimitRecoveryCheck,
+      retryTemporaryThrottleNow: params.deps?.retryTemporaryThrottleNow,
+    },
+  });
   registerApprovalRpcHandlers({ rpcHandlerManager });
   registerSessionPermissionRpcHandlers({ rpcHandlerManager });
   registerSubagentRpcHandlers({ rpcHandlerManager });
@@ -175,6 +217,13 @@ export function registerMachineRpcHandlers(params: Readonly<{
     registerMachineMemoryRpcHandlers({
       rpcHandlerManager,
       memoryWorker,
+    });
+  }
+
+  if (handlers.daemonServerWorkScheduler) {
+    registerMachineServerWorkRpcHandlers({
+      rpcHandlerManager,
+      daemonServerWorkScheduler: handlers.daemonServerWorkScheduler,
     });
   }
 
@@ -266,6 +315,19 @@ export function registerMachineRpcHandlers(params: Readonly<{
     stopSession,
     emitExternalSessionTranscriptUpdate: params.deps?.emitExternalSessionTranscriptUpdate,
     transientMediaReadAllowance: params.deps?.transientMediaReadAllowance,
+  });
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH, async (raw: unknown) => {
+    const parsed = parseSessionConnectedServiceAuthSwitchRpcParams(raw);
+    if (!parsed) {
+      return { ok: false, errorCode: 'unsupported_service' };
+    }
+    return await requestDaemonSessionConnectedServiceAuthSwitch(parsed);
+  });
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE, async (input: { spawnNonce?: unknown }) => {
+    const spawnNonce = typeof input?.spawnNonce === 'string' ? input.spawnNonce.trim() : '';
+    if (!spawnNonce) return { status: 'not_found' };
+    if (!handlers.resolveSpawnSessionByNonce) return { status: 'unsupported' };
+    return await handlers.resolveSpawnSessionByNonce(spawnNonce);
   });
   if (handlers.directTransferImport) {
     registerMachineDirectTransferImportRpcHandlers({

@@ -154,7 +154,9 @@ export async function loadLinkedExternalSession(params: Readonly<{
         remoteSessionId: direct.remoteSessionId,
         source: direct.source,
       });
-  const persistedCodexBackendMode = resolvePersistedCodexRuntimeIdentity(normalizedMetadata)?.backendMode ?? null;
+  const persistedCodexBackendMode = normalizeCodexBackendMode(
+    resolvePersistedCodexRuntimeIdentity(normalizedMetadata)?.backendMode,
+  );
   return {
     ok: true,
     session: {

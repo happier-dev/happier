@@ -13,6 +13,59 @@ export type SessionTurnActivity = Readonly<{
     turnInFlight: boolean;
 }>;
 
+type ProjectedTurnStatus = 'in_progress' | 'completed' | 'cancelled' | 'failed';
+
+const PROJECTED_TURN_STATUSES = new Set<string>(['in_progress', 'completed', 'cancelled', 'failed']);
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function readNonnegativeInteger(value: unknown): number | null {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+        return null;
+    }
+    return value;
+}
+
+export function readSessionProjectedTurnStatus(value: unknown): ProjectedTurnStatus | null {
+    if (typeof value !== 'string' || !PROJECTED_TURN_STATUSES.has(value)) {
+        return null;
+    }
+    return value as ProjectedTurnStatus;
+}
+
+export function readSessionProjectedPendingRequestCount(value: unknown): number | null {
+    const record = asRecord(value);
+    if (!record) return null;
+
+    const pendingPermissionRequestCount = readNonnegativeInteger(record.pendingPermissionRequestCount);
+    const pendingUserActionRequestCount = readNonnegativeInteger(record.pendingUserActionRequestCount);
+    if (pendingPermissionRequestCount === null || pendingUserActionRequestCount === null) {
+        return null;
+    }
+
+    return pendingPermissionRequestCount + pendingUserActionRequestCount;
+}
+
+export function detectSessionTurnActivityFromProjection(value: unknown): SessionTurnActivity | null {
+    const record = asRecord(value);
+    if (!record) return null;
+
+    const latestTurnStatus = readSessionProjectedTurnStatus(record.latestTurnStatus);
+    const projectedPendingRequestCount = readSessionProjectedPendingRequestCount(record);
+    if (!latestTurnStatus || projectedPendingRequestCount === null) {
+        return null;
+    }
+
+    const activeTaskInFlight = latestTurnStatus === 'in_progress';
+    return {
+        pendingUserTurns: 0,
+        activeTaskInFlight,
+        turnInFlight: activeTaskInFlight || projectedPendingRequestCount > 0,
+    };
+}
+
 function isMemoryArtifactDecryptedRow(value: unknown): boolean {
     const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
     if (!obj) return false;
@@ -54,7 +107,13 @@ export async function detectSessionTurnActivity(params: Readonly<{
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
     afterSeqExclusive?: number;
+    sessionProjection?: unknown;
 }>): Promise<SessionTurnActivity> {
+    const projectedActivity = detectSessionTurnActivityFromProjection(params.sessionProjection);
+    if (projectedActivity) {
+        return projectedActivity;
+    }
+
     try {
         const rows =
             typeof params.afterSeqExclusive === 'number' && Number.isFinite(params.afterSeqExclusive)
@@ -124,6 +183,7 @@ export async function detectSessionTurnInFlight(params: Readonly<{
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
     afterSeqExclusive?: number;
+    sessionProjection?: unknown;
 }>): Promise<boolean> {
     const activity = await detectSessionTurnActivity(params);
     return activity.turnInFlight;

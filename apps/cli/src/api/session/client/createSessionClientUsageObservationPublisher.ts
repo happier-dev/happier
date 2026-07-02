@@ -1,3 +1,4 @@
+import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
 import { configuration } from '@/configuration';
 import { readCredentials } from '@/persistence';
@@ -22,7 +23,7 @@ export function createSessionClientUsageObservationPublisher(
             socket.emit('usage-report', report);
         },
         onPublishError: (error) => {
-            logger.debug('[SOCKET] Failed to publish usage observation (non-fatal)', error);
+            logger.debug('[SOCKET] Failed to publish usage observation (non-fatal)', serializeAxiosErrorForLog(error));
         },
     });
 }

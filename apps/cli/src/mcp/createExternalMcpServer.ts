@@ -6,7 +6,7 @@ import type { Credentials } from '@/persistence';
 import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createChangeTitleToolHandler } from '@/agent/tools/happierTools/createChangeTitleToolHandler';
-import { isActionEnabledByEnv } from '@/settings/actionsSettings';
+import { isActionEnabledByEnv, readActionsSettingsFromEnv } from '@/settings/actionsSettings';
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -62,6 +62,7 @@ export function createExternalMcpServer(params: Readonly<{
     isActionEnabled: (id) => isActionEnabledByEnv(id as any, { surface: toolSurface }),
   });
 
+  const actionsSettings = readActionsSettingsFromEnv();
   const actionToolBridge = createActionToolExecutorBridge({
     executor,
     isActionEnabled: (id) => {
@@ -69,11 +70,13 @@ export function createExternalMcpServer(params: Readonly<{
       return isActionSpecSurfacedOn(spec, toolSurface) && isActionEnabledByEnv(id as any, { surface: toolSurface });
     },
     surface: toolSurface,
+    actionsSettings,
   });
 
   const { toolNames } = registerHappierMcpBuiltInTools(mcp as any, {
     sessionId: 'cli-global',
     surface: toolSurface,
+    actionsSettings,
     resolveSessionId: (toolArgs) => readSessionIdFromToolArgs(toolArgs) ?? defaultSessionId ?? 'cli-global',
     deps: {
       changeTitle: createChangeTitleToolHandler({

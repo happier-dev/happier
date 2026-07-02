@@ -126,6 +126,26 @@ describe('FileBackedTranscriptSessionRegistry', () => {
         await lease.release();
     });
 
+    it('supports warm leases that do not hot-attach until a later active acquire', async () => {
+        const registry = new FileBackedTranscriptSessionRegistry({
+            detachedGraceMs: 100,
+            coldIdleMs: 200,
+            createStore: async () => new TestStore(),
+        });
+
+        const warmLease = await registry.acquire(buildKey(), { hotAttach: false });
+        const store = warmLease.store as TestStore;
+        expect(store.lifecycleStates).toEqual([]);
+
+        await warmLease.release();
+
+        const activeLease = await registry.acquire(buildKey());
+        expect(activeLease.store).toBe(store);
+        expect(store.lifecycleStates).toEqual(['hot_attached']);
+
+        await activeLease.release();
+    });
+
     it('transitions detached stores through warm_detached and cold_idle after the configured timers', async () => {
         const registry = new FileBackedTranscriptSessionRegistry({
             detachedGraceMs: 100,

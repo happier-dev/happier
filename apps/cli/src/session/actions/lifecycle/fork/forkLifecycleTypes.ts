@@ -4,6 +4,7 @@ import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers
 import type { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
 import type { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import type { ForkSurfaceV1 } from '@happier-dev/agents';
 
 import type { SessionLifecycleMachineHandlers } from '../sessionLifecycleTypes';
 
@@ -15,6 +16,7 @@ export type ForkBackendResolution = Extract<
     { ok: true }
 >;
 export type ForkInheritedOverrides = ReturnType<typeof resolveForkInheritedOverridesFromMetadata>;
+export type ForkBridgeSurface = ForkSurfaceV1 | null;
 export type ForkPoint = Readonly<
     | { type: 'seq'; upToSeqInclusive: number }
     | { type: 'latest' }

@@ -24,6 +24,10 @@ export type InternalOnlyRpcMethodValidationResult = Readonly<{
 
 const PROMPT_TRANSFER_CONTROL_RATIONALE =
     'Prompt transfer control-plane transport uses session/chunk envelopes and remains internal transport, not an ActionSpec action surface.';
+const VOICE_INFERENCE_MODEL_ADMIN_RATIONALE =
+    'A.12 voice cleanup keeps daemon voice inference model install/remove/warm calls as bounded daemon-local admin RPC, not an ActionSpec action surface.';
+const VOICE_INFERENCE_TRANSPORT_RATIONALE =
+    'A.12 voice cleanup keeps daemon voice inference TTS/STT request, transfer, and cancellation calls as bounded internal transport, not an ActionSpec action surface.';
 
 // A.12.0 seeds only clearly internal lifecycle transport methods.
 // Downstream A.12 domain packets append their own rows when a method is proven
@@ -63,6 +67,76 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_STATUS,
         rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
         ownerPacket: 'PMS-5',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL,
+        rationale: VOICE_INFERENCE_MODEL_ADMIN_RATIONALE,
+        ownerPacket: 'A.12-voice-cleanup',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_REMOVE,
+        rationale: VOICE_INFERENCE_MODEL_ADMIN_RATIONALE,
+        ownerPacket: 'A.12-voice-cleanup',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM,
+        rationale: VOICE_INFERENCE_MODEL_ADMIN_RATIONALE,
+        ownerPacket: 'A.12-voice-cleanup',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE,
+        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
+        ownerPacket: 'A.12-voice-cleanup',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CHUNK,
+        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
+        ownerPacket: 'A.12-voice-cleanup',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_FINALIZE,
+        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
+        ownerPacket: 'A.12-voice-cleanup',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_ABORT,
+        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
+        ownerPacket: 'A.12-voice-cleanup',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CANCEL,
+        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
+        ownerPacket: 'A.12-voice-cleanup',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_INIT,
+        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
+        ownerPacket: 'A.12-voice-cleanup',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_CHUNK,
+        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
+        ownerPacket: 'A.12-voice-cleanup',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_FINALIZE,
+        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
+        ownerPacket: 'A.12-voice-cleanup',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_ABORT,
+        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
+        ownerPacket: 'A.12-voice-cleanup',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_TRANSCRIBE,
+        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
+        ownerPacket: 'A.12-voice-cleanup',
+    },
+    {
+        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_CANCEL,
+        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
+        ownerPacket: 'A.12-voice-cleanup',
     },
     {
         method: RPC_METHODS.DAEMON_EXTENSIONS_RELOAD_STATUS,

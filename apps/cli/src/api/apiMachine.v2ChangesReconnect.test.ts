@@ -4,12 +4,16 @@ import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 import type { Machine } from '@/api/types';
 import { encodeBase64, encrypt } from '@/api/encryption';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { logger } from '@/ui/logger';
 import { ApiMachineClient } from './apiMachine';
 
-const { mockIo, axiosGet, readLastChangesCursor, writeLastChangesCursor } = vi.hoisted(() => {
+const { mockIo, axiosGet, axiosIsAxiosError, readLastChangesCursor, writeLastChangesCursor } = vi.hoisted(() => {
     return {
         mockIo: vi.fn(),
         axiosGet: vi.fn(),
+        axiosIsAxiosError: vi.fn((error: unknown) => (
+            typeof error === 'object' && error !== null && (error as { isAxiosError?: unknown }).isAxiosError === true
+        )),
         readLastChangesCursor: vi.fn(async () => 0),
         writeLastChangesCursor: vi.fn(async () => {}),
     };
@@ -22,7 +26,9 @@ vi.mock('socket.io-client', () => ({
 vi.mock('axios', () => ({
     default: {
         get: axiosGet,
+        isAxiosError: axiosIsAxiosError,
     },
+    isAxiosError: axiosIsAxiosError,
 }));
 
 vi.mock('@/persistence', () => ({
@@ -704,6 +710,43 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             statusCode: status,
             errorMessage: expect.any(String),
         } satisfies ReadinessProbeResult);
+    });
+
+    it('redacts axios machine snapshot refresh failures before logging', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        axiosGet.mockRejectedValueOnce({
+            isAxiosError: true,
+            name: 'AxiosError',
+            message: 'socket hang up',
+            code: 'ECONNRESET',
+            config: {
+                method: 'get',
+                url: 'http://localhost:3005/v1/machines/machine-1?token=secret#hash',
+                headers: { Authorization: 'Bearer fake-token' },
+                data: { encryptionKeyBase64: 'super-secret-key' },
+            },
+        });
+        axiosGet.mockClear();
+        const debug = vi.mocked(logger.debug);
+        debug.mockClear();
+
+        const client = new ApiMachineClient('fake-token', machine);
+        await (client as any).refreshMachineFromServer();
+
+        const logged = JSON.stringify(debug.mock.calls);
+        expect(logged).not.toContain('fake-token');
+        expect(logged).not.toContain('Authorization');
+        expect(logged).not.toContain('token=secret');
+        expect(logged).not.toContain('super-secret-key');
     });
 
     it('reports retryable machine snapshot refresh failures to the machine supervisor', async () => {

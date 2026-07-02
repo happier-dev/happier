@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   AcpConfigOptionOverridesV1Schema,
   RuntimeDescriptorV1Schema,
+  ConnectedServiceMaterializationIdentityV1Schema,
   SessionAttachMetadataIdentityPolicySchema,
   SessionMcpSelectionV1Schema,
   type BackendTargetRefV2,
@@ -147,6 +148,8 @@ const SpawnDaemonSessionRequestCompatSchema = z.preprocess(canonicalizeSpawnDaem
   profileId: z.string().optional(),
   environmentVariables: z.record(z.string(), z.string()).optional(),
   connectedServices: z.unknown().optional(),
+  connectedServicesUpdatedAt: z.number().int().optional(),
+  connectedServiceMaterializationIdentityV1: ConnectedServiceMaterializationIdentityV1Schema.optional(),
   mcpSelection: SessionMcpSelectionV1Schema.optional(),
   transcriptStorage: z.enum(['persisted', 'direct']).optional(),
 }));
@@ -222,6 +225,8 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'profileId',
   'environmentVariables',
   'connectedServices',
+  'connectedServicesUpdatedAt',
+  'connectedServiceMaterializationIdentityV1',
   'mcpSelection',
   'transcriptStorage',
 ] as const satisfies readonly (keyof SpawnSessionOptions)[];

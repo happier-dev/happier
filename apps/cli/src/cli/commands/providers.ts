@@ -1,5 +1,5 @@
 import {
-    getProviderCliSetupRecommendedIds,
+    getAgentCliSetupRecommendedIds,
 } from '@happier-dev/agents';
 import {
     installProviderCliForRuntime,
@@ -86,13 +86,8 @@ type ProviderStatusRow = Readonly<{
     resolution: ProviderCliCommandResolution | null;
 }>;
 
-function readProviderCliRuntimeDescriptor(contribution: ResolvedProviderContribution): ProviderCliRuntimeDescriptor | null {
-    if (contribution.runtimeSpec) return contribution.runtimeSpec;
-    const runtime = (contribution.definition as { providerCliRuntime?: ProviderCliRuntimeDescriptor | null }).providerCliRuntime;
-    if (!runtime || typeof runtime !== 'object') return null;
-    if (typeof runtime.id !== 'string' || runtime.id.trim().length === 0) return null;
-    if (runtime.id !== contribution.id) return null;
-    return runtime;
+function readAgentCliRuntimeDescriptor(contribution: ResolvedProviderContribution): ProviderCliRuntimeDescriptor | null {
+    return contribution.runtimeSpec ?? null;
 }
 
 function listProviderStatus(
@@ -101,7 +96,7 @@ function listProviderStatus(
 ): ProviderStatusRow[] {
     return registry.providers
         .map((contribution) => {
-            const runtimeSpec = readProviderCliRuntimeDescriptor(contribution);
+            const runtimeSpec = readAgentCliRuntimeDescriptor(contribution);
             if (!runtimeSpec) return null;
             const resolution = resolveProviderCliCommandForRuntime(runtimeSpec, { processEnv });
             return {
@@ -187,10 +182,10 @@ async function resolveProvidersSetupSelection(args: readonly string[], rows: rea
         if (!args.includes('--yes')) {
             throw new Error('Non-interactive mode: pass one or more --provider <id> flags (or --yes to install the recommended defaults).');
         }
-        return getProviderCliSetupRecommendedIds().filter((id) => supportedById.has(id));
+        return getAgentCliSetupRecommendedIds().filter((id) => supportedById.has(id));
     }
 
-    const recommended = getProviderCliSetupRecommendedIds().filter(
+    const recommended = getAgentCliSetupRecommendedIds().filter(
         (id) => supportedById.has(id) && !supportedById.get(id)?.installed,
     );
     const hint = recommended.length > 0 ? ` (suggested: ${recommended.join(', ')})` : '';

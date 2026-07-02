@@ -7,6 +7,7 @@ const {
   fetchSessionByIdCompatMock,
   requestSessionStopMock,
   delayMock,
+  releaseExternalSessionFollowLeasesForArchivedSessionMock,
 } = vi.hoisted(() => ({
   resolveSessionIdOrPrefixMock: vi.fn(),
   archiveSessionMock: vi.fn(),
@@ -14,6 +15,7 @@ const {
   fetchSessionByIdCompatMock: vi.fn(),
   requestSessionStopMock: vi.fn(),
   delayMock: vi.fn(),
+  releaseExternalSessionFollowLeasesForArchivedSessionMock: vi.fn(),
 }));
 
 vi.mock('@/session/query/resolveSessionId', () => ({
@@ -34,6 +36,11 @@ vi.mock('./requestSessionStop', () => ({
   requestSessionStop: (params: unknown) => requestSessionStopMock(params),
 }));
 
+vi.mock('@/api/session/external/leases/externalSessionFollowLeaseArchiveRegistry', () => ({
+  releaseExternalSessionFollowLeasesForArchivedSession: (sessionId: string) =>
+    releaseExternalSessionFollowLeasesForArchivedSessionMock(sessionId),
+}));
+
 describe('setSessionArchivedState', () => {
   const credentials = {
     token: 'token-1',
@@ -47,7 +54,9 @@ describe('setSessionArchivedState', () => {
     fetchSessionByIdCompatMock.mockReset();
     requestSessionStopMock.mockReset();
     delayMock.mockReset();
+    releaseExternalSessionFollowLeasesForArchivedSessionMock.mockReset();
     delayMock.mockResolvedValue(undefined);
+    releaseExternalSessionFollowLeasesForArchivedSessionMock.mockResolvedValue(undefined);
 
     resolveSessionIdOrPrefixMock.mockResolvedValue({
       ok: true,
@@ -71,6 +80,40 @@ describe('setSessionArchivedState', () => {
 
     expect(archiveSessionMock).toHaveBeenCalledTimes(1);
     expect(requestSessionStopMock).not.toHaveBeenCalled();
+  });
+
+  it('releases external-session follow leases after a successful archive', async () => {
+    archiveSessionMock.mockResolvedValue({ archivedAt: 123 });
+
+    const { setSessionArchivedState } = await import('./setSessionArchivedState');
+    await expect(setSessionArchivedState({
+      credentials,
+      idOrPrefix: 'sess-1',
+      archived: true,
+    })).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess-1',
+      archivedAt: 123,
+    });
+
+    expect(releaseExternalSessionFollowLeasesForArchivedSessionMock).toHaveBeenCalledExactlyOnceWith('sess-1');
+  });
+
+  it('does not release external-session follow leases after unarchive', async () => {
+    unarchiveSessionMock.mockResolvedValue({ archivedAt: null });
+
+    const { setSessionArchivedState } = await import('./setSessionArchivedState');
+    await expect(setSessionArchivedState({
+      credentials,
+      idOrPrefix: 'sess-1',
+      archived: false,
+    })).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess-1',
+      archivedAt: null,
+    });
+
+    expect(releaseExternalSessionFollowLeasesForArchivedSessionMock).not.toHaveBeenCalled();
   });
 
   it('stops an active session and retries the archive request', async () => {

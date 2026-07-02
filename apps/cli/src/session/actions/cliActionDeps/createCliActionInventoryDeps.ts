@@ -2,6 +2,7 @@ import { readBackendTargetRefV2, type ActionExecutorDeps } from '@happier-dev/pr
 
 import type { Credentials } from '@/persistence';
 import { buildAgentBackendInventoryItems } from '@/session/actions/inventory/buildAgentBackendInventoryItems';
+import { buildReviewEngineInventoryItems } from '@/session/actions/inventory/buildReviewEngineInventoryItems';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import {
@@ -75,9 +76,12 @@ export function createCliActionInventoryDeps(params: Readonly<{
   };
 
   return {
-    reviewEnginesList: async ({ sessionId }) => ({
+    reviewEnginesList: async ({ sessionId, includeDisabled }) => ({
       sessionId,
-      items: [],
+      items: buildReviewEngineInventoryItems({
+        includeDisabled,
+        accountSettings: await readAccountSettings(),
+      }),
     }),
     agentsBackendsList: async (args) => ({
       items: await buildAgentBackendInventoryItems({

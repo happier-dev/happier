@@ -114,9 +114,11 @@ describe('external session transcript media read allowance', () => {
 
     resolveBackendExecutionSurfacesMock.mockResolvedValue({
       terminalRuntime: null,
-      externalSessions,
+      externalSession: externalSessions,
       attach: null,
-      sessionHandoff: null,
+      handoff: null,
+      fork: null,
+      checkpoint: null,
     } satisfies BackendExecutionSurfaces);
 
     try {

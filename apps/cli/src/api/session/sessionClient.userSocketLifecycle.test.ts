@@ -8,6 +8,7 @@ import {
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
+const fetchSessionByIdCompatMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./sockets', () => ({
   createUserScopedSocket: () => {
@@ -49,6 +50,14 @@ vi.mock('./sessionMessageCatchUp', () => ({
   catchUpSessionMessagesAfterSeq: vi.fn(async () => {}),
 }));
 
+vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>();
+  return {
+    ...actual,
+    fetchSessionByIdCompat: fetchSessionByIdCompatMock,
+  };
+});
+
 describe('ApiSessionClient user socket lifecycle', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -56,6 +65,7 @@ describe('ApiSessionClient user socket lifecycle', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    fetchSessionByIdCompatMock.mockReset();
   });
 
   it('connects the user-scoped socket when agent user-message callback attaches', async () => {
@@ -91,6 +101,24 @@ describe('ApiSessionClient user socket lifecycle', () => {
     await vi.advanceTimersByTimeAsync(2_100);
 
     expect(userSocketStub.disconnect).toHaveBeenCalledTimes(0);
+
+    await client.close();
+  });
+
+  it('does not fetch session detail for passive metadata-wait best-effort refreshes', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ id: 'session-socket', connected: true });
+    userSocketStub = createApiSessionSocketStub({ id: 'user-socket', connected: false });
+    fetchSessionByIdCompatMock.mockResolvedValue(null);
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    (client as unknown as { metadata: unknown; metadataVersion: number }).metadata = null;
+    (client as unknown as { metadata: unknown; metadataVersion: number }).metadataVersion = -1;
+
+    await client.refreshSessionSnapshotFromServerBestEffort({ reason: 'waitForMetadataUpdate' });
+
+    expect(fetchSessionByIdCompatMock).not.toHaveBeenCalled();
 
     await client.close();
   });

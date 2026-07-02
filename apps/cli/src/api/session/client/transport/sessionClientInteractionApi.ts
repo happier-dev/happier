@@ -1,5 +1,6 @@
 import { logger } from '@/ui/logger';
 import { Socket } from 'socket.io-client';
+import { configuration } from '@/configuration';
 
 import type {
     ClientToServerEvents,
@@ -14,6 +15,8 @@ import {
     discardPendingQueueV2Messages,
     listPendingQueueV2LocalIdsFromServer,
     materializeNextPendingQueueV2Message,
+    type PendingQueueMaterializedMessage,
+    type PendingQueueMaterializeNextResult,
 } from '../../pendingQueueV2Transport';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
 import { backoff } from '@/utils/time';
@@ -21,18 +24,60 @@ import { addDiscardedCommittedMessageLocalIds } from '../../../queue/discardedCo
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '../../../encryption';
 import { buildDaemonInitialPromptLocalId } from '@/agent/runtime/daemonInitialPrompt';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
+import type { KnownPendingQueueState, PendingQueueState } from '../../pendingQueueState';
+import type { MaterializeNextPendingResult } from '../../sessionClientPort';
+import { serializeAxiosErrorForLog } from '../../../client/serializeAxiosErrorForLog';
+import type { SessionSnapshotRefreshReason } from '../../sessionSnapshotRefreshReason';
+
+function arePendingQueueStatesEqual(left: PendingQueueState, right: PendingQueueState): boolean {
+    if (left.known !== right.known) return false;
+    if (!left.known || !right.known) return true;
+    return left.pendingCount === right.pendingCount && left.pendingVersion === right.pendingVersion;
+}
+
+function createMaterializedPendingQueueUpdate(params: {
+    sessionId: string;
+    message: PendingQueueMaterializedMessage | null | undefined;
+}): Update | null {
+    const { message, sessionId } = params;
+    if (!message?.id || !message.content) return null;
+    const createdAt = message.createdAt ?? Date.now();
+    const updatedAt = message.updatedAt ?? createdAt;
+    return {
+        id: `pending-materialized-${message.id}`,
+        seq: 0,
+        createdAt,
+        body: {
+            t: 'new-message',
+            sid: sessionId,
+            message: {
+                id: message.id,
+                seq: message.seq,
+                content: message.content,
+                localId: message.localId,
+                createdAt,
+                updatedAt,
+                ...(typeof message.messageRole === 'string' ? { messageRole: message.messageRole } : {}),
+            },
+        },
+    } as Update;
+}
 
 export type SessionClientInteractionApi = Readonly<{
     onUserMessage: (callback: (data: UserMessage) => void) => void;
     waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
     ensureMetadataSnapshot: (opts?: { timeoutMs?: number; abortSignal?: AbortSignal }) => Promise<Metadata | null>;
-    refreshSessionSnapshotFromServerBestEffort: (opts?: { reason?: 'connect' | 'waitForMetadataUpdate' | 'primaryTurnRuntimeState' }) => Promise<void>;
+    refreshSessionSnapshotFromServerBestEffort: (opts?: { reason?: SessionSnapshotRefreshReason }) => Promise<void>;
     close: () => Promise<void>;
     installSessionSocketEventHandlers: (socket: Socket<ServerToClientEvents, ClientToServerEvents>) => void;
     listPendingMessageQueueV2LocalIds: () => Promise<string[]>;
     peekPendingMessageQueueV2Count: () => Promise<number>;
+    reconcilePendingQueueState: (opts?: { force?: boolean }) => Promise<boolean>;
     discardPendingMessageQueueV2All: (opts: { reason: 'switch_to_local' | 'manual' }) => Promise<number>;
     discardCommittedMessageLocalIds: (opts: { localIds: string[]; reason: 'switch_to_local' | 'manual' }) => Promise<number>;
+    materializeNextPendingMessageSafely: (opts?: {
+        reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
+    }) => Promise<MaterializeNextPendingResult>;
     popPendingMessage: () => Promise<boolean>;
 }>;
 
@@ -61,9 +106,10 @@ export function createSessionClientInteractionApi(
         setUserMessageCallbackAttachedAtMs: (value: number | null) => void;
         clearUserSocketDisconnectTimer: () => void;
         kickUserSocketConnect: () => void;
-        catchUpSessionMessages: (afterSeq: number) => Promise<void>;
+        catchUpSessionMessages: (afterSeq: number, opts?: { afterSeqIsExplicit?: boolean }) => Promise<void>;
         scheduleNextStartupMessageCatchUpRetry: () => void;
         getLastObservedMessageSeq: () => number;
+        getStartupMessageCatchUpExplicitAfterSeq: () => number | null;
         getStartedByDaemonProcess: () => boolean;
         getMetadataStartedBy: () => string | null;
         getMetadataStartedFromDaemon: () => boolean | null;
@@ -76,14 +122,21 @@ export function createSessionClientInteractionApi(
         getDaemonInitialPromptSeeded: () => boolean;
         setDaemonInitialPromptSeeded: (value: boolean) => void;
         enqueueSessionUserMessage: (params: Readonly<{ text: string; localId?: string; meta?: Record<string, unknown> }>) => void;
-        syncSessionSnapshotFromServer: (opts: { reason: 'connect' | 'waitForMetadataUpdate' | 'primaryTurnRuntimeState' }) => Promise<void>;
+        syncSessionSnapshotFromServer: (opts: { reason: SessionSnapshotRefreshReason }) => Promise<void>;
+        reconcileTurnStatusBeforePendingMaterialization: () => Promise<boolean>;
         maybeScheduleUserSocketDisconnect: () => void;
         handleSessionScopedUpdate: (data: Update) => void;
         clearStartupMessageCatchUpRetryTimer: () => void;
+        stopStaleSafety: () => void;
         clearCommittedLocalIdCleanupTimers: () => void;
         clearAgentQueueEchoSuppressedLocalIdCleanupTimers: () => void;
         clearPendingMaterializedState: () => void;
         getPendingQueueMaterializedLocalIdsSize: () => number;
+        shouldAttemptPendingMaterialization: () => boolean;
+        getPendingQueueState: () => PendingQueueState;
+        applyPendingQueueState: (state: KnownPendingQueueState) => boolean;
+        observePendingMaterializeResult: (params: Readonly<{ didMaterialize: boolean; pendingQueueState?: KnownPendingQueueState | null }>) => boolean;
+        onPendingQueueStateChanged: () => void;
         scheduleMaterializationRecovery: (localId: string) => void;
         getMetadataLock: () => { inLock: <T>(fn: () => Promise<T>) => Promise<T> };
         getSessionEncryptionMode: () => 'e2ee' | 'plain';
@@ -91,6 +144,108 @@ export function createSessionClientInteractionApi(
         getEncryptionVariant: () => 'legacy' | 'dataKey';
     }>,
 ): SessionClientInteractionApi {
+    let pendingQueueStateReconcileInFlight: Promise<boolean> | null = null;
+    let lastPendingQueueStateReconcileAt = 0;
+
+    const runMaterializeNextPendingMessageInner = async (): Promise<{
+        didMaterialize: boolean;
+        result: MaterializeNextPendingResult;
+    }> => {
+        const supervisor = deps.getSessionConnectionSupervisor();
+        if (!supervisor) {
+            return { didMaterialize: false, result: { type: 'no_pending' } };
+        }
+        let materializeResult: PendingQueueMaterializeNextResult;
+        try {
+            materializeResult = await runSupervisedRequest({
+                supervisor,
+                requireAuth: true,
+                requireOnline: false,
+                request: async () => {
+                    const pendingQueueState = deps.getPendingQueueState();
+                    return await materializeNextPendingQueueV2Message({
+                        token: deps.token,
+                        sessionId: deps.sessionId,
+                        socket: deps.getSocket(),
+                        knownPendingVersion: pendingQueueState.known ? pendingQueueState.pendingVersion : undefined,
+                    });
+                },
+            });
+        } catch (error) {
+            if (isAuthenticationError(error)) {
+                throw error;
+            }
+            logger.debug('[pendingQueue] materialize request failed', {
+                sessionId: deps.sessionId,
+                errorName: error instanceof Error ? error.name : typeof error,
+            });
+            return { didMaterialize: false, result: { type: 'no_pending' } };
+        }
+        const pendingStateChanged = deps.observePendingMaterializeResult({
+            didMaterialize: materializeResult.didMaterialize,
+            pendingQueueState: materializeResult.pendingQueueState,
+        });
+        if (pendingStateChanged) {
+            deps.onPendingQueueStateChanged();
+        }
+        if (!materializeResult.didMaterialize) {
+            const state = deps.getPendingQueueState();
+            logger.debug('[pendingQueue] materialize result', {
+                sessionId: deps.sessionId,
+                didMaterialize: false,
+                pendingCount: state.known ? state.pendingCount : undefined,
+                pendingVersion: state.known ? state.pendingVersion : undefined,
+            });
+            return { didMaterialize: false, result: { type: 'no_pending' } };
+        }
+        const materializedUpdate = createMaterializedPendingQueueUpdate({
+            sessionId: deps.sessionId,
+            message: materializeResult.message,
+        });
+        if (materializedUpdate) {
+            deps.handleSessionScopedUpdate(materializedUpdate);
+        }
+        const state = deps.getPendingQueueState();
+        logger.debug('[pendingQueue] materialize result', {
+            sessionId: deps.sessionId,
+            didMaterialize: true,
+            localId: materializeResult.localId ?? materializeResult.message?.localId ?? null,
+            didWrite: materializeResult.didWrite,
+            messageSeq: materializeResult.message?.seq ?? null,
+            messageRole: materializeResult.message?.messageRole ?? null,
+            deliveredMaterializedMessage: materializedUpdate !== null,
+            pendingCount: state.known ? state.pendingCount : undefined,
+            pendingVersion: state.known ? state.pendingVersion : undefined,
+        });
+        if (materializeResult.localId && !materializedUpdate) {
+            deps.scheduleMaterializationRecovery(materializeResult.localId);
+        }
+
+        const message = materializeResult.message;
+        if (
+            message
+            && typeof message.localId === 'string'
+            && message.localId.length > 0
+            && typeof message.seq === 'number'
+            && Number.isSafeInteger(message.seq)
+            && message.seq >= 0
+        ) {
+            return {
+                didMaterialize: true,
+                result: {
+                    type: 'materialized',
+                    localId: message.localId,
+                    seq: message.seq,
+                    content: message.content ?? null,
+                    ...(typeof message.createdAt === 'number' ? { createdAt: message.createdAt } : {}),
+                    ...(typeof message.updatedAt === 'number' ? { updatedAt: message.updatedAt } : {}),
+                },
+            };
+        }
+
+        return { didMaterialize: true, result: { type: 'no_pending' } };
+    };
+
     return {
         onUserMessage(callback) {
             logger.debug('[API] onUserMessage callback attached', {
@@ -105,7 +260,12 @@ export function createSessionClientInteractionApi(
             }
             deps.clearUserSocketDisconnectTimer();
             deps.kickUserSocketConnect();
-            const startupCatchUpInitialAfterSeq = deps.getLastObservedMessageSeq();
+            const explicitStartupAfterSeq = deps.getStartupMessageCatchUpExplicitAfterSeq();
+            const startupCatchUpInitialAfterSeq =
+                explicitStartupAfterSeq !== null
+                    ? explicitStartupAfterSeq
+                    : deps.getLastObservedMessageSeq();
+            const startupCatchUpInitialAfterSeqIsExplicit = explicitStartupAfterSeq !== null;
             const pendingMessages = deps.getPendingMessages();
             while (pendingMessages.length > 0) {
                 callback(pendingMessages.shift()!);
@@ -114,17 +274,23 @@ export function createSessionClientInteractionApi(
                 deps.setStartupMessageCatchUpStarted(true);
                 deps.setStartupMessageCatchUpRetryIndex(0);
                 deps.setStartupMessageCatchUpInitialAfterSeq(startupCatchUpInitialAfterSeq);
-                void deps.catchUpSessionMessages(startupCatchUpInitialAfterSeq)
+                void deps.catchUpSessionMessages(startupCatchUpInitialAfterSeq, {
+                    afterSeqIsExplicit: startupCatchUpInitialAfterSeqIsExplicit,
+                })
                     .catch((error) => {
                         if (isAuthenticationError(error)) {
-                            logger.debug('[API] Initial transcript catch-up failed with terminal auth', { error });
+                            logger.debug('[API] Initial transcript catch-up failed with terminal auth', {
+                                error: serializeAxiosErrorForLog(error),
+                            });
                             return false;
                         }
-                        logger.debug('[API] Initial transcript catch-up failed (non-fatal)', { error });
+                        logger.debug('[API] Initial transcript catch-up failed (non-fatal)', {
+                            error: serializeAxiosErrorForLog(error),
+                        });
                         return true;
                     })
                     .then((shouldContinue) => {
-                        if (shouldContinue !== false) {
+                        if (shouldContinue === true) {
                             deps.scheduleNextStartupMessageCatchUpRetry();
                         }
                     });
@@ -153,23 +319,11 @@ export function createSessionClientInteractionApi(
             const startMetadataVersion = deps.getMetadataVersion();
             const startAgentStateVersion = deps.getAgentStateVersion();
             const startPendingWakeSeq = deps.getPendingWakeSeq();
-            if (startMetadataVersion < 0 || startAgentStateVersion < 0) {
-                void deps.syncSessionSnapshotFromServer({ reason: 'waitForMetadataUpdate' });
-            }
             return new Promise((resolve) => {
                 let cleanedUp = false;
-                const userSocket = deps.getUserSocket();
-                const shouldWatchConnect = !userSocket.connected;
                 const onUpdate = () => {
                     cleanup();
                     resolve(true);
-                };
-                const onConnect = () => {
-                    void (async () => {
-                        await deps.syncSessionSnapshotFromServer({ reason: 'connect' });
-                        cleanup();
-                        resolve(true);
-                    })();
                 };
                 const onAbort = () => {
                     cleanup();
@@ -183,7 +337,6 @@ export function createSessionClientInteractionApi(
                     if (cleanedUp) return;
                     cleanedUp = true;
                     deps.offMetadataUpdated(onUpdate);
-                    deps.getUserSocket().off('connect', onConnect);
                     abortSignal?.removeEventListener('abort', onAbort);
                     deps.getUserSocket().off('disconnect', onDisconnect);
                     deps.maybeScheduleUserSocketDisconnect();
@@ -191,9 +344,6 @@ export function createSessionClientInteractionApi(
 
                 deps.onMetadataUpdated(onUpdate);
                 deps.getUserSocket().on('disconnect', onDisconnect);
-                if (shouldWatchConnect) {
-                    deps.getUserSocket().on('connect', onConnect);
-                }
                 abortSignal?.addEventListener('abort', onAbort, { once: true });
                 deps.kickUserSocketConnect();
 
@@ -208,9 +358,6 @@ export function createSessionClientInteractionApi(
                 ) {
                     onUpdate();
                     return;
-                }
-                if (shouldWatchConnect && deps.getUserSocket().connected) {
-                    onConnect();
                 }
             });
         },
@@ -269,6 +416,12 @@ export function createSessionClientInteractionApi(
 
         async refreshSessionSnapshotFromServerBestEffort(opts) {
             const reason = opts?.reason ?? 'waitForMetadataUpdate';
+            if (
+                reason === 'waitForMetadataUpdate'
+                && deps.getMetadataVersion() >= 0
+            ) {
+                return;
+            }
             await deps.syncSessionSnapshotFromServer({ reason });
         },
 
@@ -276,6 +429,7 @@ export function createSessionClientInteractionApi(
             logger.debug('[API] socket.close() called');
             deps.setClosed(true);
             deps.clearStartupMessageCatchUpRetryTimer();
+            deps.stopStaleSafety();
             deps.clearUserSocketDisconnectTimer();
             deps.clearPendingMaterializedState();
             deps.clearCommittedLocalIdCleanupTimers();
@@ -293,12 +447,16 @@ export function createSessionClientInteractionApi(
                 callback(await deps.getRpcHandlerManager().handleRequest(data));
             });
             socket.on('connect_error', (error) => {
-                logger.debug('[API] Socket connection error:', error);
+                logger.debug('[API] Socket connection error:', {
+                    error: serializeAxiosErrorForLog(error),
+                });
             });
             socket.on('update', (data: Update) => deps.handleSessionScopedUpdate(data));
             socket.on('session', () => {});
             socket.on('error', (error) => {
-                logger.debug('[API] Socket error:', error);
+                logger.debug('[API] Socket error:', {
+                    error: serializeAxiosErrorForLog(error),
+                });
             });
         },
 
@@ -322,16 +480,68 @@ export function createSessionClientInteractionApi(
                 if (isAuthenticationError(error)) {
                     throw error;
                 }
-                return [];
+                throw error;
             }
         },
 
         async peekPendingMessageQueueV2Count() {
+            const materializedCount = deps.getPendingQueueMaterializedLocalIdsSize();
+            if (!deps.shouldAttemptPendingMaterialization()) {
+                if (!deps.getPendingQueueState().known) {
+                    await this.reconcilePendingQueueState({ force: true });
+                }
+                const pendingQueueState = deps.getPendingQueueState();
+                if (pendingQueueState.known) {
+                    return pendingQueueState.pendingCount + materializedCount;
+                }
+                if (!deps.shouldAttemptPendingMaterialization()) {
+                    return materializedCount;
+                }
+            }
             const localIds = await this.listPendingMessageQueueV2LocalIds();
-            return localIds.length + deps.getPendingQueueMaterializedLocalIdsSize();
+            return localIds.length + materializedCount;
+        },
+
+        async reconcilePendingQueueState(opts) {
+            if (deps.getClosed()) return false;
+            if (!opts?.force && deps.shouldAttemptPendingMaterialization()) {
+                return false;
+            }
+
+            const now = Date.now();
+            if (
+                !opts?.force
+                && lastPendingQueueStateReconcileAt > 0
+                && now - lastPendingQueueStateReconcileAt < configuration.pendingQueueStateReconcileThrottleMs
+            ) {
+                return false;
+            }
+
+            if (pendingQueueStateReconcileInFlight) {
+                return await pendingQueueStateReconcileInFlight;
+            }
+
+            const run = async (): Promise<boolean> => {
+                lastPendingQueueStateReconcileAt = Date.now();
+                const before = deps.getPendingQueueState();
+                await deps.syncSessionSnapshotFromServer({
+                    reason: opts?.force ? 'startup-drain' : 'waitForMetadataUpdate',
+                });
+                return !arePendingQueueStatesEqual(before, deps.getPendingQueueState());
+            };
+
+            const reconcile = run().finally(() => {
+                if (pendingQueueStateReconcileInFlight === reconcile) {
+                    pendingQueueStateReconcileInFlight = null;
+                }
+            });
+            pendingQueueStateReconcileInFlight = reconcile;
+            return await reconcile;
         },
 
         async discardPendingMessageQueueV2All(opts) {
+            const pendingQueueState = deps.getPendingQueueState();
+            if (pendingQueueState.known && pendingQueueState.pendingCount <= 0) return 0;
             const localIds = await this.listPendingMessageQueueV2LocalIds();
             if (localIds.length === 0) return 0;
             const request = () => discardPendingQueueV2Messages({
@@ -355,7 +565,7 @@ export function createSessionClientInteractionApi(
                 if (isAuthenticationError(error)) {
                     throw error;
                 }
-                return 0;
+                throw error;
             }
         },
 
@@ -427,36 +637,56 @@ export function createSessionClientInteractionApi(
             return addedCount;
         },
 
-        async popPendingMessage() {
-            const supervisor = deps.getSessionConnectionSupervisor();
-            if (!supervisor) {
-                return false;
+        async materializeNextPendingMessageSafely(opts: {
+            reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
+        } = {}) {
+            const supervisorState = deps.getSessionConnectionSupervisor()?.getState();
+            if (supervisorState?.phase === 'auth_failed') {
+                return { type: 'deferred', reason: 'supervisor_auth_failed' };
             }
-            let materializeResult;
-            try {
-                materializeResult = await runSupervisedRequest({
-                    supervisor,
-                    requireAuth: true,
-                    requireOnline: false,
-                    request: async () => materializeNextPendingQueueV2Message({
-                        token: deps.token,
-                        sessionId: deps.sessionId,
-                        socket: deps.getSocket(),
-                    }),
-                });
-            } catch (error) {
-                if (isAuthenticationError(error)) {
-                    throw error;
+            if (supervisorState && supervisorState.phase !== 'online') {
+                return { type: 'deferred', reason: 'supervisor_offline' };
+            }
+
+            const policy = opts.reconcileWhenEmpty ?? 'force';
+            const pendingQueueState = deps.getPendingQueueState();
+            if (!pendingQueueState.known) {
+                await this.reconcilePendingQueueState({ force: true });
+            } else if (pendingQueueState.pendingCount <= 0) {
+                if (policy === 'force') {
+                    await this.reconcilePendingQueueState({ force: true });
+                } else if (policy === 'throttled') {
+                    await this.reconcilePendingQueueState({ force: false });
                 }
+            }
+            if (!deps.shouldAttemptPendingMaterialization()) {
+                return { type: 'no_pending' };
+            }
+            const refreshedTurnStatus = await deps.reconcileTurnStatusBeforePendingMaterialization();
+            if (!refreshedTurnStatus) {
+                return { type: 'no_pending' };
+            }
+            if (!deps.shouldAttemptPendingMaterialization()) {
+                return { type: 'no_pending' };
+            }
+
+            const inner = await runMaterializeNextPendingMessageInner();
+            return inner.result;
+        },
+
+        async popPendingMessage() {
+            if (!deps.shouldAttemptPendingMaterialization()) {
+                await this.reconcilePendingQueueState({ force: !deps.getPendingQueueState().known });
+            }
+            const refreshedTurnStatus = await deps.reconcileTurnStatusBeforePendingMaterialization();
+            if (!refreshedTurnStatus) {
                 return false;
             }
-            if (!materializeResult.didMaterialize) {
+            if (!deps.shouldAttemptPendingMaterialization()) {
                 return false;
             }
-            if (materializeResult.localId) {
-                deps.scheduleMaterializationRecovery(materializeResult.localId);
-            }
-            return true;
+            const inner = await runMaterializeNextPendingMessageInner();
+            return inner.didMaterialize;
         },
     };
 }

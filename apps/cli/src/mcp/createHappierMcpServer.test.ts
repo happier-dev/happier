@@ -28,7 +28,8 @@ describe('createHappierMcpServer', () => {
 
     const { toolNames } = createHappierMcpServer(fakeClient);
     expect(toolNames).not.toContain('review_start');
-    expect(toolNames).toContain('subagents_plan_start');
+    expect(toolNames).not.toContain('subagents_plan_start');
+    expect(toolNames).toContain('action_spec_search');
   });
 
   it('uses account action settings for the in-session MCP tool registry when provided', async () => {
@@ -53,7 +54,12 @@ describe('createHappierMcpServer', () => {
         actionsSettingsV1: {
           v: 1,
           actions: {
-            'session.list': { disabledSurfaces: [] },
+            'session.list': {
+              disabledSurfaces: [],
+              toolExposureModes: {
+                session_agent: 'direct',
+              },
+            },
           },
         },
       },
@@ -418,7 +424,7 @@ describe('createHappierMcpServer', () => {
     expect(updateMetadata).not.toHaveBeenCalled();
   });
 
-  it('routes execution_run_start through the shared action executor path', async () => {
+  it('routes direct-exposed execution_run_start through the shared action executor path', async () => {
     const invokeLocal = vi.fn(async (method: string, params: unknown) => {
       if (method === 'execution.run.start' || method === 'execution.run.send') {
         return {
@@ -462,7 +468,21 @@ describe('createHappierMcpServer', () => {
         sendClaudeSessionMessage: () => {},
         updateMetadata: () => {},
       } as any,
-      { credentials: null },
+      {
+        credentials: null,
+        accountSettings: {
+          actionsSettingsV1: {
+            v: 1,
+            actions: {
+              'execution.run.start': {
+                toolExposureModes: {
+                  session_agent: 'direct',
+                },
+              },
+            },
+          },
+        },
+      } as any,
     );
 
     expect(captured.deps).toBeDefined();

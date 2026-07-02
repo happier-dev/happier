@@ -1,6 +1,7 @@
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol';
 import { SessionMessageContentSchema } from '@/api/types';
 import {
+    DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
     createSessionTranscriptFollowLeaseRegistry,
     followSessionTranscript,
     importSessionTranscript,
@@ -159,7 +160,10 @@ export async function executeCliTranscriptAction(
     }
     if (params.actionId === 'transcript.follow') {
         const registry = params.options.transcriptFollowLeaseRegistry
-            ?? createSessionTranscriptFollowLeaseRegistry({ maxLeases: 16, idleTtlMs: 60_000 });
+            ?? createSessionTranscriptFollowLeaseRegistry({
+                maxLeases: 16,
+                idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
+            });
         return { ok: true, result: await followSessionTranscript({ store, registry, input }) };
     }
     if (params.actionId === 'transcript.search') {

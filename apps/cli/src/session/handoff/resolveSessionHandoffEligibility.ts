@@ -88,13 +88,13 @@ export function resolveSessionHandoffEligibility(input: Readonly<{
     accountSettings: input.accountSettings,
   });
 
-  if (!vendor.eligible && vendor.reasonCode === 'vendor_handoff_id_missing' && runtimeIdentity.vendorSessionId) {
+  if (!vendor.eligible && vendor.reasonCode === 'vendor_handoff_id_missing' && runtimeIdentity.providerSessionId) {
     return {
       eligible: true,
       agentId,
       storageMode,
       sourceMachineId,
-      vendorHandoffId: runtimeIdentity.vendorSessionId,
+      vendorHandoffId: runtimeIdentity.providerSessionId,
     };
   }
 

@@ -7,7 +7,7 @@ import type {
   ExecutionRunPublicState,
   MachineReplacementReason,
   PrimaryTurnStatusV1,
-  SessionRuntimeIssueV1,
+  SessionTurnMutationV1,
 } from '@happier-dev/protocol'
 import {
   ContentPublicKeyFingerprintSchema,
@@ -22,11 +22,14 @@ import {
 import type {
   AcpConfigOptionOverridesV1,
   AcpSessionModeOverrideV1,
+  ConnectedServiceBindingsV1,
   ExternalSessionsSource,
   ModelOverrideV1,
   RuntimeDescriptorMetadataCarrier,
+  SessionContinuationRecoveryV1,
   SessionRollbackRangesV1,
   SessionTerminalMetadata,
+  SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol'
 import { SESSION_PERMISSION_MODES, createSessionPermissionModeSchema } from '@happier-dev/protocol'
 import { SessionStoredMessageContentSchema, type SessionStoredMessageContent } from '@happier-dev/protocol'
@@ -34,6 +37,7 @@ import { SessionStoredMessageContentSchema, type SessionStoredMessageContent } f
 export {
   EphemeralUpdateSchema,
   MessageAckResponseSchema,
+  SessionEndAckResponseSchema,
   UpdateMetadataAckResponseSchema,
   UpdateStateAckResponseSchema,
 } from '@happier-dev/protocol/updates'
@@ -47,6 +51,7 @@ import { PeerLoopbackEndpointCandidateV1Schema } from '@happier-dev/protocol'
 import type {
   EphemeralUpdate,
   MessageAckResponse,
+  SessionEndAckResponse,
   SessionBroadcastContainer,
   UpdateBody as ProtocolUpdateBody,
   UpdateContainer as ProtocolUpdateContainer,
@@ -169,7 +174,28 @@ export interface ClientToServerEvents {
     thinking: boolean;
     mode?: 'local' | 'remote';
   }) => void
-  'session-end': (data: { sid: string, time: number }) => void,
+  'session-end': (data: { sid: string, time: number }, cb?: (answer: SessionEndAckResponse) => void) => void,
+  'pending-materialize-next': (data: { sid: string; pendingVersion?: number }, cb?: (answer: {
+    ok: boolean;
+    didMaterialize?: boolean;
+    didWrite?: boolean;
+    pendingCount?: number;
+    pendingVersion?: number;
+    message?: {
+      id?: string;
+      seq?: number;
+      localId?: string;
+      messageRole?: 'user' | 'agent' | 'event' | 'unknown';
+      content?: SessionMessageContent;
+      createdAt?: number;
+      updatedAt?: number;
+    };
+    error?: string;
+  }) => void) => void,
+  'session-turn-mutation': (
+    data: SessionTurnMutationV1,
+    cb?: (answer: { ok?: boolean; result?: string; status?: string; error?: string; errorCode?: string; code?: string; message?: string }) => void
+  ) => void,
   'execution-run-updated': (data: {
     sid: string;
     run: ExecutionRunPublicState;
@@ -193,10 +219,6 @@ export interface ClientToServerEvents {
     activitySummaryV1?: {
       pendingPermissionRequestCount: number,
       pendingUserActionRequestCount: number,
-    },
-    runtimeIssueSummaryV1?: {
-      latestTurnStatus: PrimaryTurnStatusV1,
-      lastRuntimeIssue?: SessionRuntimeIssueV1 | null,
     },
   }, cb: (answer: UpdateStateAckResponse) => void) => void,
   'update-read-cursor': (data: {
@@ -233,10 +255,15 @@ export interface ClientToServerEvents {
 type SessionSharedFields = Readonly<{
   id: string;
   seq: number;
+  initialTranscriptAfterSeq?: number;
   metadata: Metadata;
   metadataVersion: number;
   agentState: AgentState | null;
   agentStateVersion: number;
+  pendingCount?: number;
+  pendingVersion?: number;
+  latestTurnStatus?: PrimaryTurnStatusV1 | null;
+  latestTurnStatusObservedAt?: number | null;
 }>;
 
 export type Session =
@@ -585,6 +612,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
       description?: string,
     }>,
   },
+  sessionUsageLimitRecoveryV1?: SessionUsageLimitRecoveryV1,
   /**
    * ACP session models (if supported by the provider's ACP agent).
    *
@@ -713,6 +741,15 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   /** Timestamp (ms) for permissionMode, used for "latest wins" arbitration across devices. */
   permissionModeUpdatedAt?: number,
   sessionRollbackRangesV1?: SessionRollbackRangesV1,
+  sessionContinuationRecoveryV1?: SessionContinuationRecoveryV1,
+  /**
+   * Session-scoped connected-service auth binding selected for this agent.
+   *
+   * Non-secret; spawn paths use this to rematerialize the correct account/group across
+   * forks, resumes, and runtime-auth recovery.
+   */
+  connectedServices?: ConnectedServiceBindingsV1,
+  connectedServicesUpdatedAt?: number,
   /**
    * Desired model override selected by the user (UI/CLI), if supported by the agent.
    *
@@ -721,6 +758,17 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
    */
   modelOverrideV1?: ModelOverrideV1,
 };
+
+/**
+ * Reason class for "cannot steer the in-flight turn right now" (Seam A):
+ * - `backend_unsupported`: the runtime/backend never supports in-flight steering.
+ * - `unsafe_window`: steering is supported but the current window cannot accept a steer
+ *   (Codex steer-context mismatch, Claude screen veto / composer-not-ready, ACP between turns).
+ * - `turn_settling`: the turn is ending / in a stale-recovery window (canonical turn inactive).
+ * - `user_terminal_draft`: steering is starved by a draft sitting in the terminal composer —
+ *   published after the bounded starvation escalation (X1).
+ */
+export type InFlightSteerUnavailableReason = 'backend_unsupported' | 'unsafe_window' | 'turn_settling' | 'user_terminal_draft';
 
 export type AgentState = {
   controlledByUser?: boolean | null | undefined
@@ -753,6 +801,13 @@ export type AgentState = {
     inFlightSteer?: boolean | null | undefined
     inFlightSteerSupported?: boolean | null | undefined
     inFlightSteerAvailable?: boolean | null | undefined
+    /**
+     * Why in-flight steering is currently unavailable (Seam A). Present only when
+     * `inFlightSteerAvailable === false`; absence means an older CLI (back-compat by optionality).
+     */
+    inFlightSteerUnavailableReason?: InFlightSteerUnavailableReason | null | undefined
+    /** Timestamp (ms) of the last steerability evaluation — staleness guard for the UI. */
+    inFlightSteerStateAt?: number | null | undefined
     localPermissionBridgeInLocalMode?: boolean | null | undefined
   } | null | undefined
       requests?: {

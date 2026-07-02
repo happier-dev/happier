@@ -326,7 +326,7 @@ export async function handleAttachCommand(
   const runProviderAttachFn = deps.runProviderAttachFn ?? (async ({ backendId, sessionId, metadata }) => {
     const providerAttachOps = (await getSessionHostBridge().resolveExecutionSurfaces(backendId)).attach;
     if (!providerAttachOps) return 1;
-    return await providerAttachOps.runAttach({ sessionId, metadata });
+    return await providerAttachOps.attach({ sessionId, metadata });
   });
   const createProviderAttachStatePublisherFn =
     deps.createProviderAttachStatePublisherFn ?? createAgentAttachStatePublisher;

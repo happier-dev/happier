@@ -21,6 +21,75 @@ describe('getSessionTranscript', () => {
     resolveSessionTransportContext.mockReset();
   });
 
+  it('does not truncate semantic transcript message text by default', async () => {
+    const { getSessionTranscript } = await import('./getSessionTranscript');
+    const longText = 'x'.repeat(5001);
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: { id: 'sess-1' },
+      mode: 'plain',
+      ctx: { encryptionKey: new Uint8Array([1]), encryptionVariant: 'legacy' },
+    });
+    fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
+      messages: [
+        {
+          seq: 1,
+          createdAt: 10,
+          messageRole: 'user',
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: longText } } },
+        },
+      ],
+      hasMore: false,
+      nextBeforeSeq: null,
+      nextAfterSeq: null,
+    });
+
+    const result = await getSessionTranscript({ credentials, idOrPrefix: 'sess-1' });
+
+    expect(result).toMatchObject({
+      ok: true,
+      items: [
+        { id: '1', role: 'user', kind: 'user_message', text: longText },
+      ],
+    });
+    if (!result.ok) throw new Error('expected transcript result');
+    expect(result.items[0]?.truncated).toBeUndefined();
+  });
+
+  it('truncates semantic transcript message text when a numeric truncation budget is supplied', async () => {
+    const { getSessionTranscript } = await import('./getSessionTranscript');
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: { id: 'sess-1' },
+      mode: 'plain',
+      ctx: { encryptionKey: new Uint8Array([1]), encryptionVariant: 'legacy' },
+    });
+    fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
+      messages: [
+        {
+          seq: 1,
+          createdAt: 10,
+          messageRole: 'user',
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'abcdef' } } },
+        },
+      ],
+      hasMore: false,
+      nextBeforeSeq: null,
+      nextAfterSeq: null,
+    });
+
+    const result = await getSessionTranscript({ credentials, idOrPrefix: 'sess-1', maxCharsPerMessage: 3 });
+
+    expect(result).toMatchObject({
+      ok: true,
+      items: [
+        { id: '1', role: 'user', kind: 'user_message', text: 'abc', truncated: true },
+      ],
+    });
+  });
+
   it('does not stored-role prefilter when optional event-like transcript items are requested', async () => {
     const { getSessionTranscript } = await import('./getSessionTranscript');
     resolveSessionTransportContext.mockResolvedValue({

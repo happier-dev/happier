@@ -78,7 +78,7 @@ describe('loadLinkedExternalSession', () => {
           providerId: 'opencode',
           provider: {
             backendMode: 'server',
-            vendorSessionId: 'runtime-session',
+            providerSessionId: 'runtime-session',
             serverBaseUrl: 'http://127.0.0.1:4096/',
             serverBaseUrlExplicit: true,
             providerExtra: {
@@ -87,7 +87,7 @@ describe('loadLinkedExternalSession', () => {
               v: 1,
               runtimeHandle: {
                 backendMode: 'server',
-                vendorSessionId: 'runtime-session',
+                providerSessionId: 'runtime-session',
                 serverBaseUrl: 'http://127.0.0.1:4096/',
                 serverBaseUrlExplicit: true,
               },
@@ -128,7 +128,7 @@ describe('loadLinkedExternalSession', () => {
           providerId: 'opencode',
           provider: {
             backendMode: 'server',
-            vendorSessionId: 'runtime-session',
+            providerSessionId: 'runtime-session',
           },
         },
       },
@@ -171,7 +171,7 @@ describe('loadLinkedExternalSession', () => {
           providerId: 'codex',
           provider: {
             backendMode: 'appServer',
-            vendorSessionId: 'runtime-thread',
+            providerSessionId: 'runtime-thread',
             home: 'connectedService',
             connectedServiceId: 'openai-codex',
             connectedServiceProfileId: 'work',
@@ -182,7 +182,7 @@ describe('loadLinkedExternalSession', () => {
               v: 1,
               runtimeAffinity: {
                 backendMode: 'appServer',
-                vendorSessionId: 'runtime-thread',
+                providerSessionId: 'runtime-thread',
                 home: 'connectedService',
                 connectedServiceId: 'openai-codex',
                 connectedServiceProfileId: 'work',
@@ -240,7 +240,7 @@ describe('loadLinkedExternalSession', () => {
           providerId: 'codex',
           provider: {
             backendMode: 'appServer',
-            vendorSessionId: 'runtime-thread',
+            providerSessionId: 'runtime-thread',
             home: 'connectedService',
           },
         },

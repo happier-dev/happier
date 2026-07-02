@@ -1,16 +1,16 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
     AgentState,
     Metadata,
-    Usage,
 } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { logger } from '@/ui/logger';
 
 import {
     applyAcpPostSendReactions,
-    applyClaudePostSendReactions,
-    applyCodexPostSendReactions,
 } from './postSendReactions';
 
 function createReactionPort(overrides?: Partial<Metadata>) {
@@ -36,34 +36,61 @@ function createReactionPort(overrides?: Partial<Metadata>) {
     };
 }
 
+function readOutboundSharedSource(): string {
+    return readFileSync(new URL('../../outbound/shared.ts', import.meta.url), 'utf8');
+}
+
 describe('postSendReactions', () => {
-    it('publishes Claude assistant usage and mirrors summary metadata', () => {
-        const { port, getMetadata, publish } = createReactionPort();
-        const usage: Usage = {
-            input_tokens: 10,
-            output_tokens: 4,
-            cache_creation_input_tokens: 1,
-            cache_read_input_tokens: 2,
-        };
+    it('keeps usage backend-mode compatibility behind the generic runtime descriptor seam', () => {
+        const source = readOutboundSharedSource();
 
-        applyClaudePostSendReactions(port, {
-            usage: { usage, model: 'claude-sonnet' },
-            summary: { text: 'fresh summary', updatedAt: 123 },
-        });
+        expect(source).toMatch(/isSupportedRuntimeDescriptorProviderId/);
+        expect(source).toMatch(/readSessionMetadataRuntimeDescriptor/);
+        expect(source).toMatch(/readSessionMetadataRuntimeDescriptor\(params\.metadata,\s*params\.provider\)/);
+        expect(source).not.toMatch(/@happier-dev\/plugins-opencode/);
+        expect(source).not.toMatch(/provider\s*={2,3}\s*['"]opencode['"]/);
+        expect(source).not.toMatch(/switch\s*\(\s*params\.provider\s*\)/);
+        expect(source).not.toMatch(/case\s+['"](codex|opencode|pi)['"]/);
+    });
 
-        expect(publish).toHaveBeenCalledWith(
-            expect.objectContaining({
-                sessionId: 'session-1',
-                observation: expect.objectContaining({
-                    provider: 'claude',
-                    modelId: 'claude-sonnet',
-                }),
-            }),
-        );
-        expect(getMetadata().summary).toEqual({
-            text: 'fresh summary',
-            updatedAt: 123,
+    it('redacts token_count usage publication errors before logging', async () => {
+        const { port } = createReactionPort();
+        port.usageObservationPublisher.publish = vi.fn(async () => {
+            throw new Error(
+                'token_count failed for https://alice:SUPER_SECRET_PASSWORD@api.example.test/v1/usage?token=secret Authorization: Bearer USAGE_SECRET',
+            );
         });
+        const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+
+        try {
+            applyAcpPostSendReactions(port, {
+                provider: 'opencode',
+                normalizedBody: {
+                    type: 'token_count',
+                    tokens: { total: 9, input: 4, output: 5 },
+                },
+                localId: 'local-1',
+            });
+
+            await vi.waitFor(() => {
+                expect(debugSpy.mock.calls.some(([message]) =>
+                    message === '[SOCKET] Failed to publish token_count usage observation (non-fatal)'
+                )).toBe(true);
+            });
+            const [, logged] = debugSpy.mock.calls.find(([message]) =>
+                message === '[SOCKET] Failed to publish token_count usage observation (non-fatal)'
+            ) ?? [];
+            expect(logged).toEqual(expect.objectContaining({
+                name: 'Error',
+                message: 'token_count failed for https://api.example.test/v1/usage Authorization: <redacted>',
+            }));
+            expect(JSON.stringify(logged)).not.toContain('SUPER_SECRET_PASSWORD');
+            expect(JSON.stringify(logged)).not.toContain('token=secret');
+            expect(JSON.stringify(logged)).not.toContain('USAGE_SECRET');
+            expect(JSON.stringify(logged)).not.toContain('stack');
+        } finally {
+            debugSpy.mockRestore();
+        }
     });
 
     it('mirrors ACP permission requests into agent state', () => {
@@ -97,6 +124,22 @@ describe('postSendReactions', () => {
         expect(publish).not.toHaveBeenCalled();
     });
 
+    it('ignores normal ACP lifecycle markers in post-send reactions', () => {
+        const { port, getAgentState, getMetadata } = createReactionPort();
+
+        applyAcpPostSendReactions(port, {
+            provider: 'codex',
+            normalizedBody: {
+                type: 'task_complete',
+                id: 'turn-1',
+            },
+            localId: 'local-1',
+        });
+
+        expect(getAgentState()).toEqual({});
+        expect(getMetadata()).toEqual(createTestMetadata());
+    });
+
     it('publishes ACP token_count usage with backend mode and derived external key', async () => {
         const { port, publish } = createReactionPort({ opencodeBackendMode: 'server' });
 
@@ -126,32 +169,4 @@ describe('postSendReactions', () => {
         });
     });
 
-    it('publishes Codex token_count usage with forwarded backend mode and external key', async () => {
-        const { port, publish } = createReactionPort();
-
-        applyCodexPostSendReactions(port, {
-            normalizedBody: {
-                type: 'token_count',
-                id: 'codex-token-1',
-                tokens: { total: 9, input: 4, output: 5 },
-                source: 'codex-app-server-token-usage',
-                scope: 'session_cumulative',
-            },
-            backendMode: 'appServer',
-            externalKey: 'codex-token-1',
-        });
-
-        await vi.waitFor(() => {
-            expect(publish).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    sessionId: 'session-1',
-                    backendMode: 'appServer',
-                    externalKey: 'codex-token-1',
-                    observation: expect.objectContaining({
-                        provider: 'codex',
-                    }),
-                }),
-            );
-        });
-    });
 });

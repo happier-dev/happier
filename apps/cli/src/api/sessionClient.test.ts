@@ -3,8 +3,9 @@ import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { ApiSessionClient } from './session/sessionClient';
-import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
+import type { RawJSONLines } from '@happier-dev/plugins-claude/agent';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from './encryption';
+import { logger } from '@/ui/logger';
 import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
 import {
     bindApiSessionSocketPairMock,
@@ -246,11 +247,13 @@ function buildEncryptedTranscriptMessage(params: {
     plaintext: unknown;
     createdAt: number;
     id?: string;
+    localId?: string;
     seq?: number;
 }): any {
     return {
         id: params.id,
         seq: params.seq,
+        ...(params.localId ? { localId: params.localId } : {}),
         content: buildEncryptedSessionContent(params.session, params.plaintext),
         createdAt: params.createdAt,
     };
@@ -562,7 +565,6 @@ describe('ApiSessionClient connection handling', () => {
     it('filters historical catch-up user messages from delivery for terminal-started sessions', async () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;
-        const { configuration } = await import('@/configuration');
 
         const plaintext = {
             role: 'user',
@@ -576,8 +578,7 @@ describe('ApiSessionClient connection handling', () => {
                     plaintext,
                     id: 'm-old-1',
                     seq: 1,
-                    createdAt:
-                        Date.now() - configuration.startupTranscriptCatchUpLookbackMs - 1_000,
+                    createdAt: Date.now() - 120_000,
                 }),
             ]),
         );
@@ -598,7 +599,6 @@ describe('ApiSessionClient connection handling', () => {
     it('filters historical catch-up user messages from delivery for daemon-started sessions', async () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;
-        const { configuration } = await import('@/configuration');
 
         const plaintext = {
             role: 'user',
@@ -612,8 +612,7 @@ describe('ApiSessionClient connection handling', () => {
                     plaintext,
                     id: 'm-daemon-old-1',
                     seq: 1,
-                    createdAt:
-                        Date.now() - configuration.startupTranscriptCatchUpLookbackMs - 1_000,
+                    createdAt: Date.now() - 120_000,
                 }),
             ]),
         );
@@ -629,10 +628,164 @@ describe('ApiSessionClient connection handling', () => {
         expect(onUserMessage).not.toHaveBeenCalled();
     });
 
-    it('delivers historical daemon-initial-prompt catch-up messages for daemon-started respawns', async () => {
+    it('delivers first wake catch-up user messages when an explicit startup cursor is zero', async () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;
-        const { configuration } = await import('@/configuration');
+
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'wake prompt committed before runner attach' },
+            meta: { source: 'ui', sentFrom: 'web' },
+        };
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
+            buildMessagesListResponse([
+                buildEncryptedTranscriptMessage({
+                    session: mockSession,
+                    plaintext,
+                    id: 'm-first-wake-prompt',
+                    seq: 1,
+                    createdAt: Date.now() - 120_000,
+                }),
+            ]),
+        );
+
+        mockSession.seq = 0;
+        mockSession.initialTranscriptAfterSeq = 0;
+        mockSession.metadata.startedBy = 'daemon';
+
+        const client = createClient('token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        await waitForNextTick();
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
+        expect(onUserMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                role: 'user',
+                content: { type: 'text', text: 'wake prompt committed before runner attach' },
+            }),
+        );
+    });
+
+    it('does not let stale catch-up rows authorize later stale rows for provider delivery', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+        const createdAt = Date.now() - 120_000;
+
+        const firstStalePrompt = {
+            role: 'user',
+            content: { type: 'text', text: 'stale prompt one' },
+            meta: { source: 'ui', sentFrom: 'web' },
+        };
+        const secondStalePrompt = {
+            role: 'user',
+            content: { type: 'text', text: 'stale prompt two' },
+            meta: { source: 'ui', sentFrom: 'web' },
+        };
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
+            buildMessagesListResponse([
+                buildEncryptedTranscriptMessage({
+                    session: mockSession,
+                    plaintext: firstStalePrompt,
+                    id: 'm-stale-1',
+                    seq: 1,
+                    createdAt,
+                }),
+                buildEncryptedTranscriptMessage({
+                    session: mockSession,
+                    plaintext: secondStalePrompt,
+                    id: 'm-stale-2',
+                    seq: 2,
+                    createdAt,
+                }),
+            ]),
+        );
+
+        mockSession.metadata.startedBy = 'daemon';
+
+        const client = createClient('token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        await waitForNextTick();
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
+        expect(onUserMessage).not.toHaveBeenCalled();
+    });
+
+    it('filters zero-boundary catch-up user messages with missing or invalid timestamps', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'malformed timestamp prompt' },
+            meta: { source: 'ui', sentFrom: 'web' },
+        };
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
+            buildMessagesListResponse([
+                {
+                    id: 'm-missing-created-at',
+                    seq: 1,
+                    content: buildEncryptedSessionContent(mockSession, plaintext),
+                },
+                {
+                    id: 'm-invalid-created-at',
+                    seq: 2,
+                    content: buildEncryptedSessionContent(mockSession, plaintext),
+                    createdAt: 'not-a-timestamp',
+                },
+            ]),
+        );
+
+        mockSession.metadata.startedBy = 'daemon';
+
+        const client = createClient('token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        await waitForNextTick();
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
+        expect(onUserMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not deliver implicit zero-boundary catch-up user messages even when they are recent', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'recent historical prompt' },
+            meta: { source: 'ui', sentFrom: 'web' },
+        };
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
+            buildMessagesListResponse([
+                buildEncryptedTranscriptMessage({
+                    session: mockSession,
+                    plaintext,
+                    id: 'm-recent-historical',
+                    seq: 1,
+                    createdAt: Date.now(),
+                }),
+            ]),
+        );
+
+        mockSession.seq = 0;
+        delete mockSession.initialTranscriptAfterSeq;
+        mockSession.metadata.startedBy = 'daemon';
+
+        const client = createClient('token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        await waitForNextTick();
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
+        expect(onUserMessage).not.toHaveBeenCalled();
+    });
+
+    it('delivers exact daemon-initial-prompt catch-up messages for daemon-started respawns', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+        const localId = `daemon-initial-prompt:${mockSession.id}`;
 
         const plaintext = {
             role: 'user',
@@ -646,8 +799,8 @@ describe('ApiSessionClient connection handling', () => {
                     plaintext,
                     id: 'm-daemon-initial-prompt-old-1',
                     seq: 1,
-                    createdAt:
-                        Date.now() - configuration.startupTranscriptCatchUpLookbackMs - 1_000,
+                    localId,
+                    createdAt: Date.now() - 120_000,
                 }),
             ]),
         );
@@ -664,12 +817,53 @@ describe('ApiSessionClient connection handling', () => {
             expect.objectContaining({
                 role: 'user',
                 content: { type: 'text', text: 'recover daemon prompt after respawn' },
+                localId,
                 meta: expect.objectContaining({
                     source: 'daemon-initial-prompt',
                     sentFrom: 'cli',
                 }),
             }),
         );
+    });
+
+    it('rejects daemon-initial-prompt catch-up messages without the deterministic localId', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'spoofed daemon prompt' },
+            meta: { source: 'daemon-initial-prompt', sentFrom: 'cli' },
+        };
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
+            buildMessagesListResponse([
+                buildEncryptedTranscriptMessage({
+                    session: mockSession,
+                    plaintext,
+                    id: 'm-daemon-initial-prompt-wrong-local-id',
+                    seq: 1,
+                    localId: 'daemon-initial-prompt:another-session',
+                    createdAt: Date.now(),
+                }),
+                buildEncryptedTranscriptMessage({
+                    session: mockSession,
+                    plaintext,
+                    id: 'm-daemon-initial-prompt-missing-local-id',
+                    seq: 2,
+                    createdAt: Date.now(),
+                }),
+            ]),
+        );
+
+        mockSession.metadata.startedBy = 'daemon';
+
+        const client = createClient('token', mockSession);
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        await waitForNextTick();
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
+        expect(onUserMessage).not.toHaveBeenCalled();
     });
 
     it('uses a deterministic localId for daemon initial prompt commits so respawn replays stay idempotent', async () => {
@@ -707,7 +901,7 @@ describe('ApiSessionClient connection handling', () => {
         );
     });
 
-    it('delivers recent catch-up user messages for terminal-started sessions', async () => {
+    it('suppresses recent zero-boundary catch-up user messages for terminal-started sessions without an explicit cursor', async () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;
 
@@ -738,15 +932,10 @@ describe('ApiSessionClient connection handling', () => {
 
         await waitForNextTick();
         expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
-        expect(onUserMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                role: 'user',
-                content: { type: 'text', text: 'recent prompt' },
-            }),
-        );
+        expect(onUserMessage).not.toHaveBeenCalled();
     });
 
-    it('delivers recent catch-up user messages for daemon-started sessions', async () => {
+    it('suppresses recent zero-boundary catch-up user messages for daemon-started sessions without an explicit cursor', async () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;
 
@@ -775,15 +964,10 @@ describe('ApiSessionClient connection handling', () => {
 
         await waitForNextTick();
         expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
-        expect(onUserMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                role: 'user',
-                content: { type: 'text', text: 'recent daemon prompt' },
-            }),
-        );
+        expect(onUserMessage).not.toHaveBeenCalled();
     });
 
-    it('starts daemon startup transcript catch-up from the existing session seq', async () => {
+    it('observes rewound daemon startup transcript catch-up without delivering non-explicit rows', async () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;
 
@@ -797,8 +981,19 @@ describe('ApiSessionClient connection handling', () => {
         const getSpy = vi.spyOn(axios, 'get').mockImplementation(async (...args: unknown[]) => {
             const [url, config] = args as [string, { params?: { afterSeq?: number } } | undefined];
             if (url.includes(`/v1/sessions/${mockSession.id}/messages`)) {
-                expect(config?.params?.afterSeq).toBe(existingSeq);
+                expect(config?.params?.afterSeq).toBe(existingSeq - 1);
                 return buildMessagesListResponse([
+                    buildEncryptedTranscriptMessage({
+                        session: mockSession,
+                        plaintext: {
+                            role: 'user',
+                            content: { type: 'text', text: 'already observed prompt' },
+                            meta: { source: 'ui', sentFrom: 'web' },
+                        },
+                        id: 'm-daemon-existing-seq',
+                        seq: existingSeq,
+                        createdAt: Date.now(),
+                    }),
                     buildEncryptedTranscriptMessage({
                         session: mockSession,
                         plaintext,
@@ -820,12 +1015,7 @@ describe('ApiSessionClient connection handling', () => {
 
         await waitForNextTick();
         expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
-        expect(onUserMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                role: 'user',
-                content: { type: 'text', text: 'queued prompt after resume' },
-            }),
-        );
+        expect(onUserMessage).not.toHaveBeenCalled();
     });
 
     it('runs startup transcript catch-up for daemon-started sessions', async () => {
@@ -843,6 +1033,42 @@ describe('ApiSessionClient connection handling', () => {
 
         await waitForNextTick();
         expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('uses the same zero-boundary catch-up delivery rules for plaintext sessions', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
+            buildMessagesListResponse([
+                {
+                    id: 'm-plain-old-1',
+                    seq: 1,
+                    content: {
+                        t: 'plain',
+                        v: {
+                            role: 'user',
+                            content: { type: 'text', text: 'old plaintext prompt' },
+                            meta: { source: 'ui', sentFrom: 'web' },
+                        },
+                    },
+                    createdAt: Date.now() - 120_000,
+                },
+            ]),
+        );
+
+        mockSession.metadata.startedBy = 'daemon';
+
+        const client = createClient('token', {
+            ...mockSession,
+            encryptionMode: 'plain' as const,
+        });
+        const onUserMessage = vi.fn();
+        client.onUserMessage(onUserMessage);
+
+        await waitForNextTick();
+        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
+        expect(onUserMessage).not.toHaveBeenCalled();
     });
 
     it('sends plaintext session messages when session.encryptionMode is plain', async () => {
@@ -943,6 +1169,42 @@ describe('ApiSessionClient connection handling', () => {
                 statusCode: status,
                 errorMessage: 'expired token',
             } satisfies ReadinessProbeResult);
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
+    it('redacts axios session snapshot refresh failures before logging', async () => {
+        const snapshotSync = await import('./session/snapshotSync');
+        const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+        const axiosError = {
+            isAxiosError: true,
+            name: 'AxiosError',
+            message: 'socket hang up',
+            code: 'ECONNRESET',
+            config: {
+                method: 'get',
+                url: 'http://localhost:3005/v1/sessions/session-1?token=secret#hash',
+                headers: { Authorization: 'Bearer fake-token' },
+                data: { encryptionKeyBase64: 'super-secret-key' },
+            },
+        };
+        const fetchSpy = vi
+            .spyOn(snapshotSync, 'fetchSessionSnapshotUpdateFromServer')
+            .mockRejectedValueOnce(axiosError);
+
+        try {
+            const client = createClient('fake-token', mockSession);
+            const clientInternals = client as unknown as {
+                syncSessionSnapshotFromServer: (opts: { reason: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
+            };
+            await clientInternals.syncSessionSnapshotFromServer({ reason: 'connect' });
+
+            const logged = JSON.stringify(debugSpy.mock.calls);
+            expect(logged).not.toContain('fake-token');
+            expect(logged).not.toContain('Authorization');
+            expect(logged).not.toContain('token=secret');
+            expect(logged).not.toContain('super-secret-key');
         } finally {
             fetchSpy.mockRestore();
         }
@@ -1297,7 +1559,7 @@ describe('ApiSessionClient connection handling', () => {
         );
     });
 
-    it('runs one transcript catch-up on first callback attach to recover missed CLI startup user messages', async () => {
+    it('runs one transcript catch-up on first callback attach but does not deliver without an explicit cursor', async () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;
         const createdAt = Date.now();
@@ -1332,19 +1594,12 @@ describe('ApiSessionClient connection handling', () => {
         await waitForNextTick();
 
         expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
-        expect(onUserMessage).toHaveBeenCalledTimes(1);
-        expect(onUserMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                role: 'user',
-                content: { type: 'text', text: 'missed startup prompt' },
-                createdAt,
-            }),
-        );
+        expect(onUserMessage).not.toHaveBeenCalled();
 
         getSpy.mockRestore();
     });
 
-    it('delivers daemon-started startup catch-up plain user prompts that are still within the startup recovery window', async () => {
+    it('keeps daemon-started startup catch-up plain user prompts observe-only without an explicit cursor', async () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;
         const createdAt = Date.now() - 30_000;
@@ -1378,18 +1633,12 @@ describe('ApiSessionClient connection handling', () => {
         await waitForNextTick();
 
         expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
-        expect(onUserMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                role: 'user',
-                content: { type: 'text', text: 'plain startup prompt' },
-                createdAt,
-            }),
-        );
+        expect(onUserMessage).not.toHaveBeenCalled();
 
         getSpy.mockRestore();
     });
 
-    it('retries startup transcript catch-up when the first poll races before the first CLI user prompt commit', async () => {
+    it('retries startup transcript catch-up after a race but keeps non-explicit rows observe-only', async () => {
         vi.useFakeTimers();
         try {
             const axiosMod = await import('axios');
@@ -1428,13 +1677,7 @@ describe('ApiSessionClient connection handling', () => {
             await vi.advanceTimersByTimeAsync(5_000);
 
             expect(getSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
-            expect(onUserMessage).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    role: 'user',
-                    content: { type: 'text', text: 'missed by first poll, recovered by retry' },
-                    createdAt,
-                }),
-            );
+            expect(onUserMessage).not.toHaveBeenCalled();
 
             getSpy.mockRestore();
         } finally {
@@ -1479,7 +1722,7 @@ describe('ApiSessionClient connection handling', () => {
         const res = await client.fetchLatestUserPermissionIntentFromTranscript({ take: 25 });
         expect(res).toEqual({ intent: 'safe-yolo', updatedAt: 200 });
         expect(getSpy.mock.calls[0]?.[0]).toContain(`/v1/sessions/${mockSession.id}/messages`);
-        expect(getSpy.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ params: { limit: 25 } }));
+        expect(getSpy.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ params: { limit: 25, role: 'user' } }));
 
         getSpy.mockRestore();
     });
@@ -2166,7 +2409,7 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('updateMetadata syncs a snapshot first when metadataVersion is unknown', async () => {
-                const sessionSocket = createConfiguredSocket({ connected: false });
+                const sessionSocket = createConfiguredSocket({ connected: true });
                 const userSocket = createConfiguredSocket({ connected: false });
 
                 const serverMetadata = {

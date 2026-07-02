@@ -8,6 +8,36 @@ import { createMarketplaceSourceRegistryStore } from '@/plugins/store/marketplac
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import type { MarketplaceSourceRegistryV1, MarketplaceSourceV1 } from '@happier-dev/protocol';
 
+type PublishInstalledManifestProjections = (params: Readonly<{
+  pluginIds: readonly string[];
+}>) => Promise<unknown>;
+
+type PluginsCommandDeps = Readonly<{
+  publishInstalledManifestProjections: PublishInstalledManifestProjections;
+}>;
+
+async function publishInstalledManifestProjectionsLazy(
+  ...args: Parameters<PublishInstalledManifestProjections>
+): Promise<unknown> {
+  const { publishInstalledPluginManifestProjectionsToServer } = await import('@/plugins/projection/server/installedManifests');
+  return await publishInstalledPluginManifestProjectionsToServer(...args);
+}
+
+const defaultPluginsCommandDeps: PluginsCommandDeps = {
+  publishInstalledManifestProjections: publishInstalledManifestProjectionsLazy,
+};
+
+async function publishInstalledManifestProjectionBestEffort(
+  deps: PluginsCommandDeps,
+  pluginId: string,
+): Promise<void> {
+  try {
+    await deps.publishInstalledManifestProjections({ pluginIds: [pluginId] });
+  } catch {
+    // Server projection sync is best-effort; the local plugin mutation remains authoritative on this machine.
+  }
+}
+
 function usage(): string {
   return renderHelpPage({
     title: 'happier plugins',
@@ -367,7 +397,7 @@ async function runPluginsShowCommand(args: readonly string[]): Promise<void> {
   printHumanShow(entry);
 }
 
-async function runPluginsInstallCommand(args: readonly string[]): Promise<void> {
+async function runPluginsInstallCommand(args: readonly string[], deps: PluginsCommandDeps): Promise<void> {
   const locator = String(args[1] ?? '').trim();
   if (!locator || locator === 'help' || locator === '--help' || locator === '-h') {
     console.log(usage());
@@ -395,6 +425,10 @@ async function runPluginsInstallCommand(args: readonly string[]): Promise<void> 
         { exitCode: 1 },
       );
       return;
+    }
+
+    if (!flags.dryRun) {
+      await publishInstalledManifestProjectionBestEffort(deps, result.entry.pluginId);
     }
 
     printJsonEnvelope(
@@ -427,6 +461,10 @@ async function runPluginsInstallCommand(args: readonly string[]): Promise<void> 
     console.error(errorFrame('Error:', result.diagnostics.map((diagnostic) => diagnostic.message)));
     process.exitCode = 1;
     return;
+  }
+
+  if (!flags.dryRun) {
+    await publishInstalledManifestProjectionBestEffort(deps, result.entry.pluginId);
   }
 
   const out = createOutputBuilder();
@@ -717,7 +755,7 @@ async function runPluginsMarketplaceShowCommand(args: readonly string[]): Promis
   });
 }
 
-async function runPluginsMarketplaceInstallCommand(args: readonly string[]): Promise<void> {
+async function runPluginsMarketplaceInstallCommand(args: readonly string[], deps: PluginsCommandDeps): Promise<void> {
   const { sourceRef, pluginId } = readMarketplaceSelection(args, 2);
   if (!pluginId || pluginId === 'help' || pluginId === '--help' || pluginId === '-h') {
     console.log(usage());
@@ -776,6 +814,10 @@ async function runPluginsMarketplaceInstallCommand(args: readonly string[]): Pro
       return;
     }
 
+    if (!flags.dryRun) {
+      await publishInstalledManifestProjectionBestEffort(deps, (resolvedEntry ?? result.entry).pluginId);
+    }
+
     printJsonEnvelope(
       {
         ok: true,
@@ -801,6 +843,10 @@ async function runPluginsMarketplaceInstallCommand(args: readonly string[]): Pro
     console.error(errorFrame('Error:', result.diagnostics.map((diagnostic) => diagnostic.message)));
     process.exitCode = 1;
     return;
+  }
+
+  if (!flags.dryRun) {
+    await publishInstalledManifestProjectionBestEffort(deps, (resolvedEntry ?? result.entry).pluginId);
   }
 
   const out = createOutputBuilder();
@@ -1014,7 +1060,10 @@ async function runPluginsMarketplaceSourcesRemoveCommand(args: readonly string[]
   process.exitCode = 1;
 }
 
-export async function handlePluginsCommand(args: string[]): Promise<void> {
+export async function handlePluginsCommand(
+  args: string[],
+  deps: PluginsCommandDeps = defaultPluginsCommandDeps,
+): Promise<void> {
   const subcommand = String(args[0] ?? '').trim();
   if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
     console.log(usage());
@@ -1032,7 +1081,7 @@ export async function handlePluginsCommand(args: string[]): Promise<void> {
   }
 
   if (subcommand === 'install') {
-    await runPluginsInstallCommand(args);
+    await runPluginsInstallCommand(args, deps);
     return;
   }
 
@@ -1102,7 +1151,7 @@ export async function handlePluginsCommand(args: string[]): Promise<void> {
     }
 
     if (marketplaceSubcommand === 'install') {
-      await runPluginsMarketplaceInstallCommand(args);
+      await runPluginsMarketplaceInstallCommand(args, deps);
       return;
     }
 

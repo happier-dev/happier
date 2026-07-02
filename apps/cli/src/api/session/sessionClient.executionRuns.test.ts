@@ -69,7 +69,7 @@ vi.mock('@/rpc/handlers/executionRuns', () => ({
   },
 }));
 
-vi.mock('@/agent/executionRuns/runtime/createExecutionRunRuntime', () => ({
+vi.mock('@/agent/runtime/bridges/executionRun/runtime/create', () => ({
   createExecutionRunRuntime: (...args: unknown[]) => sessionSocketStubState.createExecutionRunRuntimeMock(...args),
 }));
 
@@ -328,9 +328,9 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       startedAtMs: 100,
       transcript: { persistenceMode: 'persistent', epoch: 11 },
       resumeHandle: {
-        kind: 'vendor_session.v1',
+        kind: 'provider_session.v1',
         backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-        vendorSessionId: 'vs_1',
+        providerSessionId: 'vs_1',
       },
     });
 
@@ -342,9 +342,9 @@ describe('ApiSessionClient execution-run backend wiring', () => {
           backendId: 'claude',
           transcriptContractVersion: VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION,
           resumeHandle: {
-            kind: 'vendor_session.v1',
+            kind: 'provider_session.v1',
             backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-            vendorSessionId: 'vs_1',
+            providerSessionId: 'vs_1',
           },
         },
       });

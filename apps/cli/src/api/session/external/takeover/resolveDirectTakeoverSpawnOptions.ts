@@ -6,7 +6,7 @@ export async function resolveDirectTakeoverSpawnOptions(params: Readonly<{
   linked: LoadedLinkedExternalSession;
   sessionId: string;
 }>): Promise<SpawnSessionOptions | null> {
-  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(params.linked.providerId)).externalSessions;
-  if (!providerOps) return null;
+  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(params.linked.providerId)).externalSession;
+  if (!providerOps?.resolveTakeoverSpawnOptions) return null;
   return await providerOps.resolveTakeoverSpawnOptions(params);
 }

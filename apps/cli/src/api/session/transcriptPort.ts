@@ -14,6 +14,11 @@ export type TranscriptSessionPort = Readonly<{
     body: ACPMessageData,
     opts: { localId: string; meta?: Record<string, unknown>; createdAt: number; updatedAt: number },
   ) => void | Promise<void>;
+  enqueueAgentMessageCommitted?: (
+    provider: ACPProvider,
+    body: ACPMessageData,
+    opts: { localId: string; meta?: Record<string, unknown> },
+  ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
   sendAgentMessageCommitted: (
     provider: ACPProvider,
     body: ACPMessageData,

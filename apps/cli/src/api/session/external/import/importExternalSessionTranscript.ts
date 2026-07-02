@@ -14,7 +14,7 @@ import type { LoadedLinkedExternalSession } from '@/api/session/external/takeove
 import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { adoptSessionMediaMetadataForManagedSession } from '@/session/media/adoption';
-import type { ExternalSessionProviderOps } from '@/session/external/providerOps';
+import type { ExternalSessionExecutionSurface } from '@/session/external/providerOps';
 
 function sha256(input: string): string {
   return createHash('sha256').update(input, 'utf8').digest('hex');
@@ -50,7 +50,9 @@ type ExternalSessionTranscriptPage = Readonly<{
 
 async function loadExternalSessionTranscriptPage(params: Readonly<{
   linked: LoadedLinkedExternalSession;
-  providerOps: ExternalSessionProviderOps;
+  providerOps: Pick<ExternalSessionExecutionSurface, 'pageTranscript'> & Readonly<{
+    pageTranscript: NonNullable<ExternalSessionExecutionSurface['pageTranscript']>;
+  }>;
   cursor?: string;
   maxBytes: number;
   maxItems: number;
@@ -65,8 +67,8 @@ async function loadExternalSessionTranscriptPage(params: Readonly<{
   });
 }
 
-async function resolveExternalSessionProviderOps(linked: LoadedLinkedExternalSession): Promise<ExternalSessionProviderOps> {
-  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(linked.providerId)).externalSessions;
+async function resolveExternalSessionProviderOps(linked: LoadedLinkedExternalSession): Promise<ExternalSessionExecutionSurface> {
+  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(linked.providerId)).externalSession;
   if (!providerOps) {
     throw new Error(`Unsupported direct-session provider: ${linked.providerId}`);
   }
@@ -75,7 +77,9 @@ async function resolveExternalSessionProviderOps(linked: LoadedLinkedExternalSes
 
 async function loadAllDirectTranscriptItems(params: Readonly<{
   linked: LoadedLinkedExternalSession;
-  providerOps: ExternalSessionProviderOps;
+  providerOps: Pick<ExternalSessionExecutionSurface, 'pageTranscript'> & Readonly<{
+    pageTranscript: NonNullable<ExternalSessionExecutionSurface['pageTranscript']>;
+  }>;
 }>): Promise<ExternalSessionTranscriptRawMessageV1[]> {
   const pageMaxBytes = resolvePageMaxBytes();
   const pageMaxItems = resolvePageMaxItems();
@@ -132,8 +136,11 @@ export async function importExternalSessionTranscript(params: Readonly<{
   sessionId: string;
 }>): Promise<Readonly<{ importedCount: number }>> {
   const providerOps = await resolveExternalSessionProviderOps(params.linked);
+  if (!providerOps.pageTranscript) {
+    throw new Error(`Direct-session provider '${params.linked.providerId}' does not support transcript paging`);
+  }
   const [items, sourceReadRoots] = await Promise.all([
-    loadAllDirectTranscriptItems({ linked: params.linked, providerOps }),
+    loadAllDirectTranscriptItems({ linked: params.linked, providerOps: { pageTranscript: providerOps.pageTranscript } }),
     providerOps.resolveTranscriptMediaReadRoots?.({
       source: params.linked.source,
       remoteSessionId: params.linked.remoteSessionId,

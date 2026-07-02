@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/executionRuns/runtime/backend.testkit';
+import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/runtime/bridges/executionRun/testkit';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import {
   FeaturesResponseSchema,
@@ -44,7 +44,7 @@ const runtimeFactoryState = vi.hoisted(() => ({
   current: null as TestExecutionRunRuntimeFactory | null,
 }));
 
-vi.mock('@/agent/executionRuns/runtime/createExecutionRunRuntime', () => ({
+vi.mock('@/agent/runtime/bridges/executionRun/runtime/create', () => ({
   createExecutionRunRuntime: vi.fn((opts: Parameters<TestExecutionRunRuntimeFactory>[0]) => {
     const factory = runtimeFactoryState.current;
     if (!factory) {
@@ -3523,8 +3523,8 @@ describe('executionRuns session RPC handlers', () => {
 
     await new Promise((r) => setTimeout(r, 10));
     const completionToolResult = sent.find((m: any) => (m.body as any)?.type === 'tool-result' && m.meta);
-    expect((completionToolResult?.meta as any)?.happierExecutionRun?.resumeHandle?.kind).toBe('vendor_session.v1');
-    expect((completionToolResult?.meta as any)?.happierExecutionRun?.resumeHandle?.vendorSessionId).toBeTruthy();
+    expect((completionToolResult?.meta as any)?.happierExecutionRun?.resumeHandle?.kind).toBe('provider_session.v1');
+    expect((completionToolResult?.meta as any)?.happierExecutionRun?.resumeHandle?.providerSessionId).toBeTruthy();
 
     const resumed = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_SEND, {
       runId: started.runId,
@@ -3640,9 +3640,9 @@ describe('executionRuns session RPC handlers', () => {
               calls.startSession += 1;
               return { sessionId: 'child_session_new' as SessionId };
             },
-            async loadSession(vendorSessionId: SessionId) {
-              calls.loadSession.push(String(vendorSessionId));
-              return { sessionId: vendorSessionId };
+            async loadSession(providerSessionId: SessionId) {
+              calls.loadSession.push(String(providerSessionId));
+              return { sessionId: providerSessionId };
             },
             async sendPrompt() {},
             async cancel() {},
@@ -3661,7 +3661,7 @@ describe('executionRuns session RPC handlers', () => {
       retentionPolicy: 'resumable',
       runClass: 'long_lived',
       ioMode: 'request_response',
-      resumeHandle: { kind: 'vendor_session.v1', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, vendorSessionId: 'vendor_1' },
+      resumeHandle: { kind: 'provider_session.v1', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, providerSessionId: 'vendor_1' },
     });
     expect(started.runId).toMatch(/^run_/);
     expect(calls.loadSession).toEqual(['vendor_1']);

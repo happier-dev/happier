@@ -35,21 +35,21 @@ describe('happier providers plugin-provider parity', () => {
       source: 'plugin' as const,
       definition: {
         id: 'acme.plugin',
-        providerCliRuntime: {
-          kindVersion: 1,
-          id: 'acme.plugin',
-          title: 'Acme Plugin CLI',
+      },
+      runtimeSpec: {
+        kindVersion: 1,
+        id: 'acme.plugin',
+        title: 'Acme Plugin CLI',
+        binaryName: 'acme-plugin',
+        sourcePreferenceDefault: 'system-first',
+        managedInstall: {
+          kind: 'managed_package',
+          packageName: '@acme/plugin-cli',
           binaryName: 'acme-plugin',
-          sourcePreferenceDefault: 'system-first',
-          managedInstall: {
-            kind: 'managed_package',
-            packageName: '@acme/plugin-cli',
-            binaryName: 'acme-plugin',
-          },
-          manualInstallKind: 'command',
-          manualInstallRecipes: null,
-          acceptsJavaScriptFileOverride: false,
         },
+        manualInstallKind: 'command',
+        manualInstallRecipes: null,
+        acceptsJavaScriptFileOverride: false,
       },
     };
 

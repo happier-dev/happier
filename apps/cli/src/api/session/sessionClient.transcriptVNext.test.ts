@@ -4,9 +4,6 @@ import { join, resolve } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { RawJSONLines } from '@/backends/claude/contracts/rawJsonLines';
-import { sendCodexSessionClientMessage } from '@/backends/codex/session/sendMessage';
-import { sendClaudeSessionClientMessage } from '@/backends/claude/session/sendMessage';
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import {
@@ -14,7 +11,10 @@ import {
   createApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
 import { createSessionClientCommitQueueRuntime } from './client/transport/createSessionClientCommitQueueRuntime';
-import type { SessionClientTranscriptSendPort } from './client/transcript/sendMessages';
+import {
+  sendSessionEventViaPort,
+  type SessionClientTranscriptSendPort,
+} from './client/transcript/sendMessages';
 import { ApiSessionClient as StaticApiSessionClient } from './sessionClient';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
@@ -181,56 +181,16 @@ describe('ApiSessionClient transcript vNext transport', () => {
     await expect.poll(() => requestReconnect.mock.calls.length).toBe(1);
   });
 
-  it('forwards Claude sidechainId on durable commits for imported sidechain messages', () => {
-    const port = createTranscriptSendPort();
-    const body = {
-      type: 'assistant',
-      uuid: 'sidechain-uuid',
-      sidechainId: 'tool_agent_1',
-      isSidechain: true,
-      message: {
-        role: 'assistant',
-        content: [{ type: 'text', text: 'hello from teammate' }],
-      },
-    } satisfies RawJSONLines;
-
-    sendClaudeSessionClientMessage(port, body, { importedFrom: 'claude-team-inbox' });
-
-    expect(port.commitSessionMessageBestEffort).toHaveBeenCalledWith(
-      expect.objectContaining({ sidechainId: 'tool_agent_1' }),
-    );
-  });
-
-  it('stamps Codex tool rows as event messages', () => {
+  it('stamps ready session events with the ready event type', () => {
     const port = createTranscriptSendPort();
 
-    sendCodexSessionClientMessage(port, {
-      type: 'tool-call',
-      callId: 'call-1',
-      name: 'Bash',
-      input: { command: 'pwd' },
-    });
+    sendSessionEventViaPort(port, { type: 'ready' });
 
     expect(port.commitSessionMessageBestEffort).toHaveBeenCalledWith(
-      expect.objectContaining({ messageRole: 'event' }),
-    );
-  });
-
-  it('stamps Claude tool result rows as event messages', () => {
-    const port = createTranscriptSendPort();
-    const body = {
-      type: 'user',
-      uuid: 'claude-tool-result-1',
-      message: {
-        role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'done' }],
-      },
-    } satisfies RawJSONLines;
-
-    sendClaudeSessionClientMessage(port, body);
-
-    expect(port.commitSessionMessageBestEffort).toHaveBeenCalledWith(
-      expect.objectContaining({ messageRole: 'event' }),
+      expect.objectContaining({
+        messageRole: 'event',
+        sessionEventType: 'ready',
+      }),
     );
   });
 

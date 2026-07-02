@@ -1,4 +1,4 @@
-import type { AgentId, CodexBackendMode, OpenCodeBackendMode } from '@happier-dev/agents';
+import type { AgentId } from '@happier-dev/agents';
 import { errorFrame, warn } from '@happier-dev/cli-common/output';
 
 import type { Credentials } from '@/persistence';
@@ -29,13 +29,10 @@ import {
   type ProviderSessionArgPartitionResult,
 } from '@/cli/providerSessionArgPartition';
 import { buildRootHelpText } from '@/cli/buildRootHelpText';
-import {
-  resolveCodexSessionRuntimePreferences,
-  resolveOpenCodeSessionRuntimePreferences,
-} from '@happier-dev/agents';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup } from '@/daemon/platform/linux/daemonSpawnedSessionCgroupSelfMigration';
 import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
+import { resolveProviderSessionRuntimePreferences } from '@/backends/catalog';
 
 type CommonBackendRunOptions = ParsedSessionStartArgs & {
   credentials: Credentials;
@@ -46,44 +43,40 @@ type CommonBackendRunOptions = ParsedSessionStartArgs & {
   resume: string | undefined;
   startedBy: ParsedSessionStartArgs['startedBy'];
   accountSettingsContext: AccountSettingsContext | null;
-  codexBackendMode?: CodexBackendMode;
-  opencodeBackendMode?: OpenCodeBackendMode;
-  opencodeServerBaseUrl?: string;
-  opencodeServerBaseUrlExplicit?: boolean;
+  environmentVariables?: Record<string, string>;
 };
 
-function pickProviderRunOptions(extras: Readonly<Record<string, unknown>>): Pick<CommonBackendRunOptions, 'codexBackendMode'> {
-  if (
-    extras.codexBackendMode === 'mcp'
-    || extras.codexBackendMode === 'acp'
-    || extras.codexBackendMode === 'appServer'
-  ) {
-    return { codexBackendMode: extras.codexBackendMode };
+function readProviderEnvironmentVariables(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
   }
 
-  return {};
+  const environmentVariables: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof key !== 'string' || key.length === 0 || typeof entry !== 'string') {
+      continue;
+    }
+    environmentVariables[key] = entry;
+  }
+  return Object.keys(environmentVariables).length > 0 ? environmentVariables : undefined;
 }
 
-function resolveProviderRunOptions(params: Readonly<{
+async function resolveProviderRunOptions(params: Readonly<{
   agentId: AgentId;
   settings: Readonly<Record<string, unknown>>;
   processEnv: NodeJS.ProcessEnv;
-}>): Partial<CommonBackendRunOptions> {
-  if (params.agentId === 'codex') {
-    return pickProviderRunOptions(resolveCodexSessionRuntimePreferences({
-      settings: params.settings,
-      processEnv: params.processEnv,
-    }));
-  }
-
-  if (params.agentId === 'opencode') {
-    return resolveOpenCodeSessionRuntimePreferences({
-      settings: params.settings,
-      processEnv: params.processEnv,
-    });
-  }
-
-  return {};
+  startedBy: CommonBackendRunOptions['startedBy'];
+}>): Promise<Readonly<Record<string, unknown>>> {
+  const extras = await resolveProviderSessionRuntimePreferences(params.agentId, {
+    settings: params.settings,
+    processEnv: params.processEnv,
+    startedBy: params.startedBy,
+  });
+  const environmentVariables = readProviderEnvironmentVariables(extras.environmentVariables);
+  return {
+    ...extras,
+    ...(environmentVariables ? { environmentVariables } : {}),
+  };
 }
 
 export async function runBackendSessionCliCommand<Extra extends Record<string, unknown>>(params: {
@@ -238,10 +231,11 @@ Provider CLI Options:
     const permissionModeUpdatedAt = resolved.permissionModeUpdatedAt ?? (permissionModeSeed ? Date.now() : undefined);
     const providerSpawnExtras =
       params.agentIdForAccountSettings && accountSettingsContext
-        ? resolveProviderRunOptions({
+        ? await resolveProviderRunOptions({
           agentId: params.agentIdForAccountSettings,
           settings: accountSettingsContext.settings as Readonly<Record<string, unknown>>,
           processEnv: process.env,
+          startedBy,
         })
         : {};
 

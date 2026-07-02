@@ -85,21 +85,6 @@ describe('runInstallCliCommand', () => {
           source: 'built-in',
           definition: {
             id: 'claude',
-            providerCliRuntime: {
-              kindVersion: 1,
-              id: 'claude',
-              title: 'Claude Code CLI',
-              binaryName: 'claude',
-              sourcePreferenceDefault: 'system-first',
-              managedInstall: {
-                kind: 'managed_package',
-                packageName: '@happier-dev/claude',
-                binaryName: 'claude',
-              },
-              manualInstallKind: 'command',
-              manualInstallRecipes: null,
-              acceptsJavaScriptFileOverride: false,
-            },
           },
           runtimeSpec: {
             kindVersion: 1,
@@ -477,7 +462,17 @@ describe('runInstallCliCommand', () => {
       const installedPath = stateBefore.plugins['acme.sample']?.install.installedPath;
       expect(typeof installedPath).toBe('string');
 
-      await runInstallCliCommand(makeContext(['install', 'plugin', 'remove', 'acme.sample']));
+      const publishInstalledManifestProjections = vi.fn(async () => undefined);
+      await runInstallCliCommand(makeContext(['install', 'plugin', 'remove', 'acme.sample']), {
+        log: console.log,
+        error: console.error,
+        exit: (code: number) => {
+          process.exitCode = code;
+        },
+        runDoctorCommand: vi.fn(),
+        invokeProviderCliInstall: vi.fn(),
+        publishInstalledManifestProjections,
+      });
 
       const storeAfter = createPluginStateStore({ happyHomeDir: home });
       const stateAfter = await storeAfter.read();
@@ -485,6 +480,9 @@ describe('runInstallCliCommand', () => {
 
       const loaded = await loadInstalledPlugins({ happyHomeDir: home });
       expect(loaded.loadedPlugins).toEqual([]);
+      expect(publishInstalledManifestProjections).toHaveBeenCalledWith({
+        pluginIds: ['acme.sample'],
+      });
       if (installedPath) {
         await expect(access(installedPath)).rejects.toMatchObject({
           code: 'ENOENT',

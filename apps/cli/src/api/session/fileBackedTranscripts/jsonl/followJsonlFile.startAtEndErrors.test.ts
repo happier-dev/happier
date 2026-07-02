@@ -39,8 +39,8 @@ describe('JsonlFollower startAtEnd error handling', () => {
         const follower = new JsonlFollower({
             filePath,
             pollIntervalMs: 5,
-            onJson: (value: unknown) => {
-                received.push(value);
+            onLine: (line) => {
+                received.push(JSON.parse(line) as unknown);
             },
             onError: (error: unknown) => errors.push(error),
         });

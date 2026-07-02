@@ -1,4 +1,5 @@
 import { logger } from '@/ui/logger';
+import { UnsupportedTranscriptLookupError } from '../lifecycle/createSessionClientRecoveryRuntime';
 
 import { encodeBase64, encrypt } from '../../../encryption';
 import { MessageAckResponseSchema, type ClientToServerEvents, type ServerToClientEvents } from '../../../types';
@@ -7,12 +8,14 @@ import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 
 type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
 type SessionMessageRole = 'user' | 'agent' | 'event' | 'unknown';
+type SessionEventType = 'ready';
 
 type QueuedDisconnectedSessionMessage = Readonly<{
     message: PlainOrEncryptedPayload;
     localId: string;
     sidechainId: string | null;
     messageRole: SessionMessageRole;
+    sessionEventType?: SessionEventType;
 }>;
 
 type CommitSessionMessageParams = Readonly<{
@@ -20,9 +23,31 @@ type CommitSessionMessageParams = Readonly<{
     localId: string;
     sidechainId: string | null;
     messageRole: SessionMessageRole;
+    sessionEventType?: SessionEventType;
     requireCommit: boolean;
     markAsUserMessage?: boolean;
 }>;
+
+export class DefinitiveSessionMessageCommitError extends Error {
+    readonly definitiveSessionMessageCommitFailure = true;
+
+    constructor(message: string) {
+        super(message);
+        this.name = 'DefinitiveSessionMessageCommitError';
+    }
+}
+
+export function isDefinitiveSessionMessageCommitError(
+    error: unknown,
+): error is DefinitiveSessionMessageCommitError {
+    return error instanceof DefinitiveSessionMessageCommitError
+        || (
+            typeof error === 'object'
+            && error !== null
+            && 'definitiveSessionMessageCommitFailure' in error
+            && (error as { definitiveSessionMessageCommitFailure?: unknown }).definitiveSessionMessageCommitFailure === true
+        );
+}
 
 export type SessionClientCommitQueueRuntime = Readonly<{
     readonly queuedDisconnectedSessionMessages: ReadonlyMap<string, QueuedDisconnectedSessionMessage>;
@@ -38,6 +63,7 @@ export type SessionClientCommitQueueRuntime = Readonly<{
         sidechainId: string | null;
         logErrorMessage: string;
         messageRole: SessionMessageRole;
+        sessionEventType?: SessionEventType;
         markAsUserMessage?: boolean;
     }>) => void;
     clearState: () => void;
@@ -58,7 +84,7 @@ export function createSessionClientCommitQueueRuntime(
         deleteMaterializedLocalId: (localId: string) => void;
         scheduleMaterializationRecovery: (localId: string) => void;
         recoverMaterializedLocalId: (localId: string, opts?: { maxWaitMs?: number }) => Promise<boolean>;
-        observeCommittedAck: (params: { seq: number; markAsUserMessage?: boolean }) => void;
+        observeCommittedAck: (params: { seq: number; localId?: string | null; markAsUserMessage?: boolean }) => void;
         requestReconnect?: (localId: string) => void;
     }>,
 ): SessionClientCommitQueueRuntime {
@@ -72,6 +98,7 @@ export function createSessionClientCommitQueueRuntime(
             localId: string;
             sidechainId: string | null;
             messageRole: SessionMessageRole;
+            sessionEventType?: SessionEventType;
         }>,
     ) => {
         try {
@@ -85,6 +112,7 @@ export function createSessionClientCommitQueueRuntime(
                     echoToSender: true,
                     sidechainId: params.sidechainId,
                     messageRole: params.messageRole,
+                    ...(params.sessionEventType ? { sessionEventType: params.sessionEventType } : {}),
                 },
             });
 
@@ -134,6 +162,7 @@ export function createSessionClientCommitQueueRuntime(
                     localId,
                     sidechainId: params.sidechainId,
                     messageRole: params.messageRole,
+                    sessionEventType: params.sessionEventType,
                     requireCommit: false,
                 }),
             ).catch(() => {
@@ -154,6 +183,7 @@ export function createSessionClientCommitQueueRuntime(
                 localId,
                 sidechainId: params.sidechainId,
                 messageRole: params.messageRole,
+                sessionEventType: params.sessionEventType,
             });
             return;
         }
@@ -167,12 +197,13 @@ export function createSessionClientCommitQueueRuntime(
             localId,
             sidechainId: params.sidechainId,
             messageRole: params.messageRole,
+            sessionEventType: params.sessionEventType,
         });
 
         if (ack && ack.ok === true) {
             pendingCommitRetryAttemptsByLocalId.delete(localId);
             deps.markCommittedLocalIdAwaitingEcho(localId);
-            deps.observeCommittedAck({ seq: ack.seq, markAsUserMessage: params.markAsUserMessage });
+            deps.observeCommittedAck({ seq: ack.seq, localId, markAsUserMessage: params.markAsUserMessage });
             return;
         }
 
@@ -181,11 +212,17 @@ export function createSessionClientCommitQueueRuntime(
             if (!params.requireCommit) {
                 deps.deleteMaterializedLocalId(localId);
             }
-            throw new Error(ack.error);
+            throw new DefinitiveSessionMessageCommitError(ack.error);
         }
 
         if (!params.requireCommit) {
-            scheduleCommitRetry({ message: params.message, localId, sidechainId: params.sidechainId, messageRole: params.messageRole });
+            scheduleCommitRetry({
+                message: params.message,
+                localId,
+                sidechainId: params.sidechainId,
+                messageRole: params.messageRole,
+                sessionEventType: params.sessionEventType,
+            });
             return;
         }
 
@@ -203,6 +240,7 @@ export function createSessionClientCommitQueueRuntime(
                 localId,
                 sidechainId: params.sidechainId,
                 messageRole: params.messageRole,
+                sessionEventType: params.sessionEventType,
             });
             return;
         }
@@ -213,12 +251,13 @@ export function createSessionClientCommitQueueRuntime(
             localId,
             sidechainId: params.sidechainId,
             messageRole: params.messageRole,
+            sessionEventType: params.sessionEventType,
         });
 
         if (ack && ack.ok === true) {
             pendingCommitRetryAttemptsByLocalId.delete(localId);
             deps.markCommittedLocalIdAwaitingEcho(localId);
-            deps.observeCommittedAck({ seq: ack.seq, markAsUserMessage: params.markAsUserMessage });
+            deps.observeCommittedAck({ seq: ack.seq, localId, markAsUserMessage: params.markAsUserMessage });
             return;
         }
 
@@ -226,13 +265,30 @@ export function createSessionClientCommitQueueRuntime(
             pendingCommitRetryAttemptsByLocalId.delete(localId);
             deps.deleteMaterializedLocalId(localId);
             if (params.requireCommit) {
-                throw new Error(ack.error);
+                throw new DefinitiveSessionMessageCommitError(ack.error);
             }
             return;
         }
 
         if (params.requireCommit) {
-            const recovered = await deps.recoverMaterializedLocalId(localId, { maxWaitMs: 12_000 });
+            let recovered = false;
+            try {
+                recovered = await deps.recoverMaterializedLocalId(localId, { maxWaitMs: 12_000 });
+            } catch (error) {
+                if (error instanceof UnsupportedTranscriptLookupError) {
+                    scheduleCommitRetry({
+                        message: params.message,
+                        localId,
+                        sidechainId: params.sidechainId,
+                        messageRole: params.messageRole,
+                        sessionEventType: params.sessionEventType,
+                    });
+                    throw new Error(
+                        'Message commit confirmation unsupported by server (ACK timed out and transcript lookup route is unavailable)',
+                    );
+                }
+                throw error;
+            }
             if (!recovered) {
                 throw new Error('Message commit not confirmed (ACK timed out and transcript recovery failed)');
             }
@@ -240,7 +296,13 @@ export function createSessionClientCommitQueueRuntime(
         }
 
         deps.scheduleMaterializationRecovery(localId);
-        scheduleCommitRetry({ message: params.message, localId, sidechainId: params.sidechainId, messageRole: params.messageRole });
+        scheduleCommitRetry({
+            message: params.message,
+            localId,
+            sidechainId: params.sidechainId,
+            messageRole: params.messageRole,
+            sessionEventType: params.sessionEventType,
+        });
     };
 
     const commitSessionMessage = async (params: CommitSessionMessageParams): Promise<void> => {
@@ -274,6 +336,7 @@ export function createSessionClientCommitQueueRuntime(
                     localId: params.localId,
                     sidechainId: params.sidechainId,
                     messageRole: params.messageRole,
+                    sessionEventType: params.sessionEventType,
                     requireCommit: false,
                 }),
             );
@@ -309,6 +372,7 @@ export function createSessionClientCommitQueueRuntime(
                     localId: params.localId,
                     sidechainId: params.sidechainId,
                     messageRole: params.messageRole,
+                    sessionEventType: params.sessionEventType,
                     requireCommit: false,
                     markAsUserMessage: params.markAsUserMessage,
                 }),

@@ -102,6 +102,60 @@ describe('handleSessionNewMessageUpdate', () => {
     expect(emitted.some((e: any) => e.event === 'user-message')).toBe(true);
   });
 
+  it('applies the agent-queue delivery gate to legacy string user prompts', () => {
+    const pendingMessages: any[] = [];
+    const emitted: any[] = [];
+    const shouldDeliverUserMessageToAgentQueue = vi.fn(() => false);
+
+    const update = {
+      id: 'catchup-1',
+      createdAt: Date.now(),
+      body: {
+        t: 'new-message',
+        sid: 'sess_1',
+        message: {
+          id: 'm1',
+          seq: 1,
+          content: { t: 'plain', v: { role: 'user', content: 'stale legacy prompt' } },
+          localId: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      },
+    } as unknown as Update;
+
+    handleSessionNewMessageUpdate({
+      update,
+      sessionId: 'sess_1',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      receivedMessageIds: new Set<string>(),
+      lastObservedMessageSeq: 0,
+      lastObservedUserMessageSeq: 0,
+      hasSelfEchoSuppressedLocalId: () => false,
+      hasAgentQueueEchoSuppressedLocalId: () => false,
+      markAgentQueueEchoSuppressedLocalId: () => void 0,
+      hasPendingQueueMaterializedLocalId: () => false,
+      deleteMaterializedLocalId: () => void 0,
+      pendingMessageCallback: null,
+      pendingMessages,
+      shouldDeliverUserMessageToAgentQueue,
+      emit: (event, payload) => emitted.push({ event, payload }),
+      debug: () => void 0,
+      debugLargeJson: () => void 0,
+    });
+
+    expect(shouldDeliverUserMessageToAgentQueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: 'user',
+        content: { type: 'text', text: 'stale legacy prompt' },
+      }),
+      update,
+    );
+    expect(pendingMessages).toHaveLength(0);
+    expect(emitted.some((e: any) => e.event === 'user-message')).toBe(true);
+  });
+
   it('delivers legacy ciphertext string content envelopes to the agent queue', () => {
     const pendingMessages: any[] = [];
     const emitted: any[] = [];
@@ -352,5 +406,204 @@ describe('handleSessionNewMessageUpdate', () => {
     expect(pendingMessages).toHaveLength(1);
     expect(pendingMessages[0]?.content?.text).toBe('startup catch-up prompt');
     expect(receivedMessageIds.has('m1')).toBe(true);
+  });
+
+  it('publishes mapped connected-service turn lifecycle completion events from agent lifecycle messages', () => {
+    const lifecycleEvents: Array<'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled'> = [];
+    const update = {
+      id: 'u-task-complete',
+      createdAt: Date.now(),
+      body: {
+        t: 'new-message',
+        sid: 'sess_1',
+        message: {
+          id: 'm-task-complete',
+          seq: 5,
+          content: {
+            t: 'plain',
+            v: {
+              role: 'agent',
+              content: { type: 'acp', data: { type: 'task_complete', id: 'run_1' } },
+            },
+          },
+          localId: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      },
+    } as unknown as Update;
+
+    handleSessionNewMessageUpdate({
+      update,
+      sessionId: 'sess_1',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      receivedMessageIds: new Set<string>(),
+      lastObservedMessageSeq: 0,
+      lastObservedUserMessageSeq: 0,
+      hasSelfEchoSuppressedLocalId: () => false,
+      hasAgentQueueEchoSuppressedLocalId: () => false,
+      markAgentQueueEchoSuppressedLocalId: () => void 0,
+      hasPendingQueueMaterializedLocalId: () => false,
+      deleteMaterializedLocalId: () => void 0,
+      pendingMessageCallback: null,
+      pendingMessages: [],
+      onConnectedServiceTurnLifecycleEvent: (event) => lifecycleEvents.push(event),
+      emit: () => void 0,
+      debug: () => void 0,
+      debugLargeJson: () => void 0,
+    });
+
+    expect(lifecycleEvents).toEqual(['assistant_message_end']);
+  });
+
+  it('publishes task-started connected-service lifecycle events from agent lifecycle messages', () => {
+    const lifecycleEvents: Array<'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled'> = [];
+    const update = {
+      id: 'u-task-started',
+      createdAt: Date.now(),
+      body: {
+        t: 'new-message',
+        sid: 'sess_1',
+        message: {
+          id: 'm-task-started',
+          seq: 6,
+          content: {
+            t: 'plain',
+            v: {
+              role: 'agent',
+              content: { type: 'acp', data: { type: 'task_started', id: 'run_1' } },
+            },
+          },
+          localId: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      },
+    } as unknown as Update;
+
+    handleSessionNewMessageUpdate({
+      update,
+      sessionId: 'sess_1',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      receivedMessageIds: new Set<string>(),
+      lastObservedMessageSeq: 0,
+      lastObservedUserMessageSeq: 0,
+      hasSelfEchoSuppressedLocalId: () => false,
+      hasAgentQueueEchoSuppressedLocalId: () => false,
+      markAgentQueueEchoSuppressedLocalId: () => void 0,
+      hasPendingQueueMaterializedLocalId: () => false,
+      deleteMaterializedLocalId: () => void 0,
+      pendingMessageCallback: null,
+      pendingMessages: [],
+      onConnectedServiceTurnLifecycleEvent: (event) => lifecycleEvents.push(event),
+      emit: () => void 0,
+      debug: () => void 0,
+      debugLargeJson: () => void 0,
+    });
+
+    expect(lifecycleEvents).toEqual(['task_started']);
+  });
+
+  it('publishes mapped connected-service turn lifecycle events from runtime turn events', () => {
+    const lifecycleEvents: Array<'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled'> = [];
+    const update = {
+      id: 'u-runtime-turn-start',
+      createdAt: Date.now(),
+      body: {
+        t: 'new-message',
+        sid: 'sess_1',
+        message: {
+          id: 'm-runtime-turn-start',
+          seq: 6,
+          content: {
+            t: 'plain',
+            v: {
+              v: 1,
+              sessionId: 'sess_1',
+              emittedAtMs: 1_000,
+              kind: 'turn-start',
+              turnId: 'session-turn-1',
+            },
+          },
+          localId: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      },
+    } as unknown as Update;
+
+    handleSessionNewMessageUpdate({
+      update,
+      sessionId: 'sess_1',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      receivedMessageIds: new Set<string>(),
+      lastObservedMessageSeq: 0,
+      lastObservedUserMessageSeq: 0,
+      hasSelfEchoSuppressedLocalId: () => false,
+      hasAgentQueueEchoSuppressedLocalId: () => false,
+      markAgentQueueEchoSuppressedLocalId: () => void 0,
+      hasPendingQueueMaterializedLocalId: () => false,
+      deleteMaterializedLocalId: () => void 0,
+      pendingMessageCallback: null,
+      pendingMessages: [],
+      onConnectedServiceTurnLifecycleEvent: (event) => lifecycleEvents.push(event),
+      emit: () => void 0,
+      debug: () => void 0,
+      debugLargeJson: () => void 0,
+    });
+
+    expect(lifecycleEvents).toEqual(['prompt_or_steer']);
+  });
+
+  it('publishes mapped connected-service turn lifecycle cancel events from agent lifecycle messages', () => {
+    const lifecycleEvents: Array<'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled'> = [];
+    const update = {
+      id: 'u-turn-cancelled',
+      createdAt: Date.now(),
+      body: {
+        t: 'new-message',
+        sid: 'sess_1',
+        message: {
+          id: 'm-turn-cancelled',
+          seq: 6,
+          content: {
+            t: 'plain',
+            v: {
+              role: 'agent',
+              content: { type: 'acp', data: { type: 'turn_cancelled', id: 'run_2' } },
+            },
+          },
+          localId: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      },
+    } as unknown as Update;
+
+    handleSessionNewMessageUpdate({
+      update,
+      sessionId: 'sess_1',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      receivedMessageIds: new Set<string>(),
+      lastObservedMessageSeq: 0,
+      lastObservedUserMessageSeq: 0,
+      hasSelfEchoSuppressedLocalId: () => false,
+      hasAgentQueueEchoSuppressedLocalId: () => false,
+      markAgentQueueEchoSuppressedLocalId: () => void 0,
+      hasPendingQueueMaterializedLocalId: () => false,
+      deleteMaterializedLocalId: () => void 0,
+      pendingMessageCallback: null,
+      pendingMessages: [],
+      onConnectedServiceTurnLifecycleEvent: (event) => lifecycleEvents.push(event),
+      emit: () => void 0,
+      debug: () => void 0,
+      debugLargeJson: () => void 0,
+    });
+
+    expect(lifecycleEvents).toEqual(['turn_cancelled']);
   });
 });

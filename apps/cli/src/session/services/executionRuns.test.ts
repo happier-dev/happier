@@ -1006,4 +1006,30 @@ describe('waitForExecutionRun', () => {
         });
         expect(callSessionRpc).toHaveBeenCalledTimes(2);
     });
+
+    it('clamps tiny poll intervals to avoid near-zero-delay server loops', async () => {
+        const succeededRun = createRun({ runId: 'run_1', status: 'succeeded', startedAtMs: 1 });
+        callSessionRpc
+            .mockResolvedValueOnce({
+                run: createRun({ runId: 'run_1', status: 'running', startedAtMs: 1 }),
+            })
+            .mockResolvedValueOnce({
+                run: succeededRun,
+            });
+
+        const waitPromise = waitForExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            runId: 'run_1',
+            timeoutMs: 100,
+            pollIntervalMs: 1,
+        });
+
+        await expect(waitPromise).resolves.toEqual({
+            ok: false,
+            code: 'timeout',
+        });
+        expect(callSessionRpc).toHaveBeenCalledTimes(1);
+    });
 });

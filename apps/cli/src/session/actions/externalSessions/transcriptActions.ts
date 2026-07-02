@@ -10,11 +10,11 @@ import { collectTransientSessionMediaReadFiles } from '@/session/media/reference
 
 import { resolveDefaultMaxBytes, resolveDefaultMaxItems } from './actionConfiguration';
 import type { ExternalSessionActionContext } from './externalSessionActionContext';
-import { getExternalSessionProviderOps } from './providerOpsResolution';
+import { resolveExternalSessionSurfaceOps } from './providerOpsResolution';
 import { externalSessionsError, internalErrorResponse } from './responseErrors';
 
 async function resolveTransientMediaAllowedRoots(input: Readonly<{
-    providerOps: Awaited<ReturnType<typeof getExternalSessionProviderOps>>;
+    providerOps: Awaited<ReturnType<typeof resolveExternalSessionSurfaceOps>>;
     source: unknown;
     remoteSessionId: string;
 }>): Promise<readonly string[]> {
@@ -54,7 +54,10 @@ export async function executeExternalSessionTranscriptPageAction(
     const maxItems = parsed.data.maxItems ?? resolveDefaultMaxItems();
 
     try {
-        const providerOps = await getExternalSessionProviderOps(providerId);
+        const providerOps = await resolveExternalSessionSurfaceOps(providerId);
+        if (!providerOps.pageTranscript) {
+            return externalSessionsError('provider_unavailable', 'transcript_page_not_supported') satisfies ExternalSessionTranscriptPageResponse;
+        }
         const res = await providerOps.pageTranscript({
             source,
             remoteSessionId,
@@ -116,7 +119,10 @@ export async function executeExternalSessionTranscriptReadAfterAction(
     const maxItems = parsed.data.maxItems ?? resolveDefaultMaxItems();
 
     try {
-        const providerOps = await getExternalSessionProviderOps(providerId);
+        const providerOps = await resolveExternalSessionSurfaceOps(providerId);
+        if (!providerOps.readAfterTranscript) {
+            return externalSessionsError('provider_unavailable', 'transcript_read_after_not_supported') satisfies ExternalSessionTranscriptReadAfterResponse;
+        }
         const res = await providerOps.readAfterTranscript({
             source,
             remoteSessionId,

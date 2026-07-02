@@ -9,6 +9,10 @@ import {
     readAuthenticationStatus,
 } from '../client/httpStatusError';
 
+function readCatchUpTimestamp(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : null;
+}
+
 export async function catchUpSessionMessagesAfterSeq(params: {
     token: string;
     sessionId: string;
@@ -70,10 +74,8 @@ export async function catchUpSessionMessagesAfterSeq(params: {
             const sidechainIdRaw = (msg as any).sidechainId;
             const sidechainId =
                 typeof sidechainIdRaw === 'string' ? (sidechainIdRaw.trim() || null) : null;
-            const createdAtRaw = (msg as any).createdAt;
-            const createdAt = typeof createdAtRaw === 'number' && Number.isFinite(createdAtRaw) ? Math.trunc(createdAtRaw) : Date.now();
-            const updatedAtRaw = (msg as any).updatedAt;
-            const updatedAt = typeof updatedAtRaw === 'number' && Number.isFinite(updatedAtRaw) ? Math.trunc(updatedAtRaw) : createdAt;
+            const createdAt = readCatchUpTimestamp((msg as any).createdAt);
+            const updatedAt = readCatchUpTimestamp((msg as any).updatedAt) ?? createdAt;
 
             const update: Update = {
                 id: `catchup-${id}`,

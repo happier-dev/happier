@@ -42,6 +42,24 @@ const SESSION_LIFECYCLE_RPC_CASES = [
         expectedStartRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-start/turn-1',
         expectedFinalRef: 'refs/happier/checkpoints/c2Vzc2lvbi0x/turn-final/turn-1',
     }],
+    [SESSION_RPC_METHODS.SESSION_CHECKPOINT, 'session.checkpoint', {
+        v: 1,
+        sessionId: 'session-1',
+        scopes: ['workspace'],
+        candidate: {
+            source: 'happier_scm',
+        },
+    }],
+    [SESSION_RPC_METHODS.SESSION_RESTORE, 'session.restore', {
+        v: 1,
+        sessionId: 'session-1',
+        scopes: ['workspace'],
+        candidate: {
+            source: 'happier_scm',
+            checkpointRef: 'refs/happier/checkpoints/scope/turn-final/turn-1',
+        },
+        confirmation: { sourceChoiceConfirmed: true },
+    }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_START, 'session.handoff', { sessionId: 'session-1', sourceMachineId: 'machine-1', targetMachineId: 'machine-2', preferredTransportStrategies: ['server_routed_stream'] }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET, 'session.handoff.prepare_target', { handoffId: 'handoff-1', sessionId: 'session-1', sourceMachineId: 'machine-1', targetMachineId: 'machine-2' }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET, 'session.handoff.prepare_target_result.get', { handoffId: 'handoff-1' }],

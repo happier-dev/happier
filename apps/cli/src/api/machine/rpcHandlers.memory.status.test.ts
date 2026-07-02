@@ -9,6 +9,64 @@ import { MemoryStatusV1Schema } from '@happier-dev/protocol';
 import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 
 describe('rpcHandlers.memory (status)', () => {
+  it('does not mark an empty schema database as searchable', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-rpc-memory-status-empty-'));
+    try {
+      const tier1Path = join(dir, 'memory.sqlite');
+      const { openSummaryShardIndexDb } = await import('@/daemon/memory/summaryShardIndexDb');
+      const tier1 = openSummaryShardIndexDb({ dbPath: tier1Path });
+      tier1.init();
+      tier1.close();
+
+      const handlers = new Map<string, (raw: unknown) => Promise<unknown>>();
+      const rpcHandlerManager = {
+        registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+          handlers.set(method, handler);
+        },
+      } as any;
+
+      registerMachineMemoryRpcHandlers({
+        rpcHandlerManager,
+        memoryWorker: {
+          stop: () => {},
+          reloadSettings: async () => {},
+          ensureUpToDate: async () => {},
+          getEmbeddingsDiagnostics: () => ({
+            mode: 'disabled',
+            presetId: null,
+            providerKind: null,
+            modelId: null,
+            runtimeState: 'unavailable',
+            usingFallback: false,
+          }),
+          getWorkerStatus: () => ({
+            state: 'idle',
+            lastTickAtMs: null,
+            lastInventoryAtMs: null,
+            currentSessionId: null,
+            currentPhase: null,
+          }),
+          getSettings: () => ({
+            v: 1,
+            enabled: true,
+            indexMode: 'hints' as const,
+            embeddings: { mode: 'disabled', presetId: 'balanced', custom: null, blend: { ftsWeight: 0.7, embeddingWeight: 0.3 } },
+          }),
+          getTier1DbPath: () => tier1Path,
+          getDeepDbPath: () => null,
+        } as any,
+      });
+
+      const handler = handlers.get(RPC_METHODS.DAEMON_MEMORY_STATUS);
+      const out = MemoryStatusV1Schema.parse(await handler!(null));
+      expect(out.activeIndexReady).toBe(true);
+      expect((out as unknown as { activeIndexSearchable?: boolean }).activeIndexSearchable).toBe(false);
+      expect((out as unknown as { hintsIndexHasContent?: boolean }).hintsIndexHasContent).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('returns db paths and sizes when available', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-rpc-memory-status-'));
     try {
@@ -35,6 +93,13 @@ describe('rpcHandlers.memory (status)', () => {
           modelId: 'Xenova/all-MiniLM-L6-v2',
           runtimeState: 'ready',
           usingFallback: false,
+        }),
+        getWorkerStatus: () => ({
+          state: 'idle',
+          lastTickAtMs: null,
+          lastInventoryAtMs: null,
+          currentSessionId: null,
+          currentPhase: null,
         }),
         getSettings: () => ({
           v: 1,

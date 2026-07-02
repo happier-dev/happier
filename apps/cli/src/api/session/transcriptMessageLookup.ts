@@ -1,11 +1,14 @@
 import axios from 'axios';
+import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 import { Agent as HttpAgent } from 'node:http';
 import { Agent as HttpsAgent } from 'node:https';
 
+import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
 import { configuration } from '@/configuration';
 import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
 import { SessionMessageContentSchema, type SessionMessageContent } from '../types';
-import { isAuthenticationError } from '@/api/client/httpStatusError';
+import { readAuthenticationStatus, readHttpStatus } from '@/api/client/httpStatusError';
+import { TranscriptRecoveryCoordinator, type TranscriptRecoveryResult } from './recovery/TranscriptRecoveryCoordinator';
 
 const KEEP_ALIVE_HTTP_AGENT = new HttpAgent({ keepAlive: true, maxSockets: 16 });
 const KEEP_ALIVE_HTTPS_AGENT = new HttpsAgent({ keepAlive: true, maxSockets: 16 });
@@ -20,6 +23,13 @@ export type TranscriptMessageLookupResult = {
     content: SessionMessageContent;
 };
 
+export type TranscriptLookupOutcome =
+    | { type: 'found'; message: TranscriptMessageLookupResult }
+    | { type: 'not_found' }
+    | { type: 'auth_failed'; statusCode: 401 | 403; error: unknown }
+    | { type: 'unhealthy'; reason: 'timeout' | 'network' | 'server_5xx'; error: unknown }
+    | { type: 'protocol_error'; error: unknown };
+
 function createAxiosGetConfig(params: { token: string; timeoutMs?: number }) {
     return {
         headers: {
@@ -33,59 +43,141 @@ function createAxiosGetConfig(params: { token: string; timeoutMs?: number }) {
     } as const;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+}
+
 function isV2MessageNotFoundError(error: unknown): boolean {
     if (!axios.isAxiosError(error)) return false;
     if (error.response?.status !== 404) return false;
-    const data = error.response?.data as unknown;
-    if (!data || typeof data !== 'object') return false;
-    const record = data as Record<string, unknown>;
+    const record = asRecord(error.response?.data);
+    if (!record) return false;
     return record.error === 'Message not found';
 }
 
-function parseTranscriptLookupMessageFromUnknown(found: any): TranscriptMessageLookupResult | null {
-    if (!found || typeof found !== 'object') return null;
-    const content = SessionMessageContentSchema.safeParse(found.content);
-    if (!content.success) return null;
-    if (typeof found.id !== 'string') return null;
-    if (typeof found.seq !== 'number') return null;
-    const foundLocalId = typeof found.localId === 'string' ? found.localId : null;
-    const sidechainIdRaw = found.sidechainId;
-    const sidechainId = typeof sidechainIdRaw === 'string' ? (sidechainIdRaw.trim() || null) : null;
-    const createdAtRaw = found.createdAt;
-    if (!(typeof createdAtRaw === 'number' && Number.isFinite(createdAtRaw) && createdAtRaw >= 0)) return null;
-    const createdAt = Math.trunc(createdAtRaw);
-    const updatedAtRaw = found.updatedAt;
-    if (!(typeof updatedAtRaw === 'number' && Number.isFinite(updatedAtRaw) && updatedAtRaw >= 0)) return null;
-    const updatedAt = Math.trunc(updatedAtRaw);
-    return { id: found.id, seq: found.seq, localId: foundLocalId, sidechainId, createdAt, updatedAt, content: content.data };
+function isLegacyV2RouteMissingError(error: unknown): boolean {
+    if (!axios.isAxiosError(error)) return false;
+    if (error.response?.status !== 404) return false;
+    const record = asRecord(error.response?.data);
+    if (!record) return false;
+    if (record.error !== 'Not found') return false;
+    const method = record.method;
+    if (typeof method === 'string' && method.toUpperCase() !== 'GET') return false;
+    const path = typeof record.path === 'string' ? record.path : '';
+    if (path) {
+        return path.includes('/v2/sessions/') && path.includes('/messages/by-local-id/');
+    }
+    return !isV2MessageNotFoundError(error);
 }
 
-async function findTranscriptEncryptedMessageByLocalIdV2(params: {
+function readErrorCode(error: unknown): string | null {
+    const code = asRecord(error)?.code;
+    return typeof code === 'string' ? code : null;
+}
+
+function readErrorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    const message = asRecord(error)?.message;
+    return typeof message === 'string' ? message : '';
+}
+
+function isTimeoutError(error: unknown): boolean {
+    const code = readErrorCode(error);
+    if (code === 'ECONNABORTED' || code === 'ETIMEDOUT') return true;
+    const message = readErrorMessage(error).toLowerCase();
+    return message.includes('timeout') || message.includes('timed out');
+}
+
+function isNetworkError(error: unknown): boolean {
+    const code = readErrorCode(error);
+    if (
+        code === 'ECONNREFUSED'
+        || code === 'ECONNRESET'
+        || code === 'ENOTFOUND'
+        || code === 'EAI_AGAIN'
+        || code === 'ENETUNREACH'
+        || code === 'EHOSTUNREACH'
+        || code === 'ERR_NETWORK'
+    ) {
+        return true;
+    }
+    return axios.isAxiosError(error) && !error.response;
+}
+
+function createUnexpectedTranscriptLookupStatusError(status: number): Error {
+    return new Error(`Unexpected transcript lookup status: ${status}`);
+}
+
+function createMalformedTranscriptLookupResponseError(): Error {
+    return new Error('Malformed transcript lookup response');
+}
+
+function classifyUnhealthyTranscriptLookup(error: unknown): TranscriptLookupOutcome | null {
+    if (isTimeoutError(error)) return { type: 'unhealthy', reason: 'timeout', error };
+    const status = readHttpStatus(error);
+    if (typeof status === 'number' && status >= 500) return { type: 'unhealthy', reason: 'server_5xx', error };
+    if (isNetworkError(error)) return { type: 'unhealthy', reason: 'network', error };
+    return null;
+}
+
+function parseTranscriptLookupMessageFromUnknown(found: unknown): TranscriptMessageLookupResult | null {
+    const record = asRecord(found);
+    if (!record) return null;
+    const content = SessionMessageContentSchema.safeParse(record.content);
+    if (!content.success) return null;
+    if (typeof record.id !== 'string') return null;
+    if (typeof record.seq !== 'number') return null;
+    const foundLocalId = typeof record.localId === 'string' ? record.localId : null;
+    const sidechainIdRaw = record.sidechainId;
+    const sidechainId = typeof sidechainIdRaw === 'string' ? (sidechainIdRaw.trim() || null) : null;
+    const createdAtRaw = record.createdAt;
+    if (!(typeof createdAtRaw === 'number' && Number.isFinite(createdAtRaw) && createdAtRaw >= 0)) return null;
+    const createdAt = Math.trunc(createdAtRaw);
+    const updatedAtRaw = record.updatedAt;
+    if (!(typeof updatedAtRaw === 'number' && Number.isFinite(updatedAtRaw) && updatedAtRaw >= 0)) return null;
+    const updatedAt = Math.trunc(updatedAtRaw);
+    return { id: record.id, seq: record.seq, localId: foundLocalId, sidechainId, createdAt, updatedAt, content: content.data };
+}
+
+export async function findTranscriptEncryptedMessageByLocalIdV2(params: {
     token: string;
     serverUrl: string;
     sessionId: string;
     localId: string;
-    onError?: (error: unknown) => void;
     timeoutMs?: number;
-}): Promise<TranscriptMessageLookupResult | null> {
+}): Promise<TranscriptLookupOutcome> {
     try {
         const response = await axios.get(
             `${params.serverUrl}/v2/sessions/${params.sessionId}/messages/by-local-id/${encodeURIComponent(params.localId)}`,
             createAxiosGetConfig({ token: params.token, timeoutMs: params.timeoutMs })
         );
-        const data = response?.data as unknown;
-        const message = data && typeof data === 'object' ? (data as Record<string, unknown>).message : null;
-        const parsed = parseTranscriptLookupMessageFromUnknown(message as any);
-        if (!parsed) return null;
-        return parsed;
-    } catch (error) {
-        if (isV2MessageNotFoundError(error)) return null;
-        if (isAuthenticationError(error)) {
-            throw error;
+        const status = typeof response?.status === 'number' ? response.status : null;
+        if (typeof status === 'number' && status >= 500) {
+            return { type: 'unhealthy', reason: 'server_5xx', error: createUnexpectedTranscriptLookupStatusError(status) };
         }
-        params.onError?.(error);
-        return null;
+        if (status !== 200) {
+            return { type: 'protocol_error', error: createUnexpectedTranscriptLookupStatusError(status ?? 0) };
+        }
+        const message = asRecord(response?.data)?.message;
+        const parsed = parseTranscriptLookupMessageFromUnknown(message);
+        if (!parsed) return { type: 'protocol_error', error: createMalformedTranscriptLookupResponseError() };
+        return { type: 'found', message: parsed };
+    } catch (error) {
+        if (isV2MessageNotFoundError(error)) return { type: 'not_found' };
+        const authStatus = readAuthenticationStatus(error);
+        if (authStatus !== null) return { type: 'auth_failed', statusCode: authStatus, error };
+        const unhealthy = classifyUnhealthyTranscriptLookup(error);
+        if (unhealthy) return unhealthy;
+        return { type: 'protocol_error', error };
     }
+}
+
+function normalizeTranscriptLookupOutcomeForWait(outcome: TranscriptLookupOutcome): TranscriptLookupOutcome {
+    if (outcome.type === 'protocol_error' && isLegacyV2RouteMissingError(outcome.error)) {
+        return { type: 'not_found' };
+    }
+    return outcome;
 }
 
 export async function findTranscriptEncryptedMessageByLocalId(params: {
@@ -96,32 +188,58 @@ export async function findTranscriptEncryptedMessageByLocalId(params: {
     timeoutMs?: number;
 }): Promise<TranscriptMessageLookupResult | null> {
     const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
-    return await findTranscriptEncryptedMessageByLocalIdV2({
+    const outcome = await findTranscriptEncryptedMessageByLocalIdV2({
         token: params.token,
         serverUrl,
         sessionId: params.sessionId,
         localId: params.localId,
         timeoutMs: params.timeoutMs,
-        onError: params.onError,
     });
+    switch (outcome.type) {
+        case 'found':
+            return outcome.message;
+        case 'not_found':
+            return null;
+        case 'auth_failed':
+            throw outcome.error;
+        case 'unhealthy':
+        case 'protocol_error':
+            params.onError?.(outcome.error);
+            return null;
+    }
 }
 
 export async function waitForTranscriptEncryptedMessageByLocalId(params: {
     token: string;
     sessionId: string;
     localId: string;
+    supervisor?: ManagedConnectionSupervisor;
     maxWaitMs?: number;
     onError?: (error: unknown) => void;
     pollIntervalMs?: number;
     errorBackoffBaseMs?: number;
     errorBackoffMaxMs?: number;
     requestTimeoutMs?: number;
+    onUnsupported?: (error: unknown) => void;
 }): Promise<TranscriptMessageLookupResult | null> {
     const maxWaitMs = params.maxWaitMs ?? 5_000;
     const pollIntervalMs = params.pollIntervalMs ?? configuration.transcriptLookupPollIntervalMs;
     const errorBackoffBaseMs = params.errorBackoffBaseMs ?? configuration.transcriptLookupErrorBackoffBaseMs;
     const errorBackoffMaxMs = params.errorBackoffMaxMs ?? configuration.transcriptLookupErrorBackoffMaxMs;
     const requestTimeoutMs = params.requestTimeoutMs ?? configuration.transcriptLookupRequestTimeoutMs;
+    const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+    if (params.supervisor) {
+        return await waitForTranscriptEncryptedMessageByLocalIdWithSupervisor({
+            ...params,
+            supervisor: params.supervisor,
+            serverUrl,
+            maxWaitMs,
+            pollIntervalMs,
+            errorBackoffBaseMs,
+            requestTimeoutMs,
+        });
+    }
+
     const startedAt = Date.now();
     let currentErrorBackoffMs = errorBackoffBaseMs;
     while (Date.now() - startedAt < maxWaitMs) {
@@ -130,17 +248,33 @@ export async function waitForTranscriptEncryptedMessageByLocalId(params: {
         if (remainingMs <= 0) break;
 
         let hadError = false;
-        const found = await findTranscriptEncryptedMessageByLocalId({
+        const outcome = await findTranscriptEncryptedMessageByLocalIdV2({
             token: params.token,
+            serverUrl,
             sessionId: params.sessionId,
             localId: params.localId,
             timeoutMs: Math.max(1, Math.min(requestTimeoutMs, remainingMs)),
-            onError: (error) => {
-                hadError = true;
-                params.onError?.(error);
-            },
         });
-        if (found) return found;
+        switch (outcome.type) {
+            case 'found':
+                return outcome.message;
+            case 'not_found':
+                break;
+            case 'auth_failed':
+                throw outcome.error;
+            case 'unhealthy':
+                hadError = true;
+                params.onError?.(outcome.error);
+                break;
+            case 'protocol_error':
+                if (isLegacyV2RouteMissingError(outcome.error)) {
+                    params.onUnsupported?.(outcome.error);
+                    return null;
+                }
+                hadError = true;
+                params.onError?.(outcome.error);
+                break;
+        }
 
         const delayMs = hadError ? currentErrorBackoffMs : pollIntervalMs;
         if (hadError) {
@@ -155,4 +289,80 @@ export async function waitForTranscriptEncryptedMessageByLocalId(params: {
         await new Promise((r) => setTimeout(r, Math.min(delayMs, remainingAfterAttemptMs)));
     }
     return null;
+}
+
+async function waitForTranscriptEncryptedMessageByLocalIdWithSupervisor(params: {
+    token: string;
+    serverUrl: string;
+    sessionId: string;
+    localId: string;
+    supervisor: ManagedConnectionSupervisor;
+    maxWaitMs: number;
+    pollIntervalMs: number;
+    errorBackoffBaseMs: number;
+    requestTimeoutMs: number;
+    onError?: (error: unknown) => void;
+    onUnsupported?: (error: unknown) => void;
+}): Promise<TranscriptMessageLookupResult | null> {
+    const coordinator = TranscriptRecoveryCoordinator.forServer(params.serverUrl);
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < params.maxWaitMs) {
+        const elapsedMs = Date.now() - startedAt;
+        const remainingMs = params.maxWaitMs - elapsedMs;
+        if (remainingMs <= 0) break;
+
+        const result = await coordinator.scheduleByLocalId({
+            sessionId: params.sessionId,
+            localId: params.localId,
+            supervisor: params.supervisor,
+            runRequest: () => runSupervisedRequest({
+                supervisor: params.supervisor,
+                purpose: 'recovery_read',
+                request: async () => await findTranscriptEncryptedMessageByLocalIdV2({
+                    token: params.token,
+                    serverUrl: params.serverUrl,
+                    sessionId: params.sessionId,
+                    localId: params.localId,
+                    timeoutMs: Math.max(1, Math.min(params.requestTimeoutMs, remainingMs)),
+                }),
+            }),
+        });
+
+        if (result.type === 'success') return result.value;
+        if (result.type === 'error' && result.reason === 'auth_failed') throw result.error;
+        if (result.type === 'error') {
+            if (result.reason === 'protocol_error' && isLegacyV2RouteMissingError(result.error)) {
+                params.onUnsupported?.(result.error);
+                return null;
+            }
+            params.onError?.(result.error);
+        }
+
+        const remainingAfterAttemptMs = params.maxWaitMs - (Date.now() - startedAt);
+        if (remainingAfterAttemptMs <= 0) break;
+
+        await new Promise((resolve) => setTimeout(
+            resolve,
+            Math.min(resolveRecoveryResultDelayMs(result, params), remainingAfterAttemptMs),
+        ));
+    }
+
+    return null;
+}
+
+function resolveRecoveryResultDelayMs(
+    result: TranscriptRecoveryResult<TranscriptMessageLookupResult>,
+    params: { pollIntervalMs: number; errorBackoffBaseMs: number },
+): number {
+    switch (result.type) {
+        case 'success':
+            return 0;
+        case 'not_found':
+            return params.pollIntervalMs;
+        case 'error':
+            return params.errorBackoffBaseMs;
+        case 'deferred':
+            return Math.max(params.pollIntervalMs, params.errorBackoffBaseMs);
+    }
 }

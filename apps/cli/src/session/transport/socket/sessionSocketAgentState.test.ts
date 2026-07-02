@@ -161,4 +161,121 @@ describe('waitForIdleViaSocket', () => {
 
     await expect(promise).resolves.toEqual(expect.objectContaining({ idle: true, observedAt: expect.any(Number) }));
   });
+
+  it('resolves idle from update-session projection without message decrypt', async () => {
+    vi.useFakeTimers();
+
+    const socket = createSocketStub();
+    const decrypt = vi.fn(() => null);
+    vi.doMock('@/api/session/sockets', () => ({
+      createSessionScopedSocket: () => socket,
+    }));
+    vi.doMock('@/api/encryption', () => ({
+      decodeBase64: vi.fn(() => new Uint8Array()),
+      decrypt,
+    }));
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+      fetchSessionById: vi.fn().mockResolvedValue({
+        agentState: null,
+      }),
+    }));
+
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+
+    const promise = waitForIdleViaSocket({
+      token: 'token',
+      sessionId: 'sess-1',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+      sessionEncryptionMode: 'plain',
+      timeoutMs: 1_000,
+      initialTurnActivity: { pendingUserTurns: 0, activeTaskInFlight: true, turnInFlight: true },
+      initialAgentStateCiphertextBase64: null,
+      preferProjectionUpdates: true,
+    });
+
+    socket.emit('update', {
+      id: 'u_message_with_encrypted_content',
+      seq: 1,
+      createdAt: Date.now(),
+      body: {
+        t: 'new-message',
+        sid: 'sess-1',
+        message: {
+          id: 'msg-1',
+          seq: 1,
+          localId: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          content: { t: 'encrypted', c: 'ciphertext' },
+        },
+      },
+    });
+    socket.emit('update', {
+      id: 'u_task_complete_projection',
+      seq: 2,
+      createdAt: Date.now(),
+      body: {
+        t: 'update-session',
+        id: 'sess-1',
+        latestTurnStatus: 'completed',
+        pendingPermissionRequestCount: 0,
+        pendingUserActionRequestCount: 0,
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    await expect(promise).resolves.toEqual(expect.objectContaining({ idle: true, observedAt: expect.any(Number) }));
+    expect(decrypt).not.toHaveBeenCalled();
+  });
+
+  it('resolves idle from terminal projection updates that omit pending counts', async () => {
+    vi.useFakeTimers();
+
+    const socket = createSocketStub();
+    const decrypt = vi.fn(() => null);
+    vi.doMock('@/api/session/sockets', () => ({
+      createSessionScopedSocket: () => socket,
+    }));
+    vi.doMock('@/api/encryption', () => ({
+      decodeBase64: vi.fn(() => new Uint8Array()),
+      decrypt,
+    }));
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+      fetchSessionById: vi.fn().mockResolvedValue({
+        agentState: null,
+      }),
+    }));
+
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+
+    const promise = waitForIdleViaSocket({
+      token: 'token',
+      sessionId: 'sess-1',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+      sessionEncryptionMode: 'plain',
+      timeoutMs: 1_000,
+      initialTurnActivity: { pendingUserTurns: 0, activeTaskInFlight: true, turnInFlight: true },
+      initialAgentStateSummary: { pendingRequestsCount: 0 },
+      initialAgentStateCiphertextBase64: null,
+      preferProjectionUpdates: true,
+    });
+
+    socket.emit('update', {
+      id: 'u_terminal_projection',
+      seq: 2,
+      createdAt: Date.now(),
+      body: {
+        t: 'update-session',
+        id: 'sess-1',
+        latestTurnStatus: 'completed',
+        latestTurnStatusObservedAt: Date.now(),
+      },
+    });
+
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    await expect(promise).resolves.toEqual(expect.objectContaining({ idle: true, observedAt: expect.any(Number) }));
+    expect(decrypt).not.toHaveBeenCalled();
+  });
 });

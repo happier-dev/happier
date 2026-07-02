@@ -5,6 +5,29 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { reloadConfiguration } from '@/configuration';
 import { HttpStatusError } from '@/api/client/httpStatusError';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import type { ManagedConnectionState, ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
+
+function createState(overrides: Partial<ManagedConnectionState> = {}): ManagedConnectionState {
+  return {
+    phase: 'online',
+    reason: null,
+    attempt: 0,
+    nextRetryAt: null,
+    lastConnectedAt: 1,
+    lastDisconnectedAt: null,
+    lastErrorMessage: null,
+    ...overrides,
+  };
+}
+
+function createSupervisor(state: ManagedConnectionState = createState()): ManagedConnectionSupervisor {
+  return {
+    start: vi.fn(async () => {}),
+    stop: vi.fn(async () => {}),
+    getState: vi.fn(() => state),
+    reportProbeResult: vi.fn(),
+  };
+}
 
 describe('waitForTranscriptEncryptedMessageByLocalId', () => {
   let app: FastifyInstance | null = null;
@@ -69,6 +92,7 @@ describe('waitForTranscriptEncryptedMessageByLocalId', () => {
     vi.setSystemTime(new Date(0));
 
     process.env.HAPPIER_SERVER_URL = 'http://adapter.test';
+    process.env.HAPPIER_TRANSCRIPT_RECOVERY_DELAY_MS = '0';
     reloadConfiguration();
 
     const { waitForTranscriptEncryptedMessageByLocalId } = await import('./transcriptMessageLookup');
@@ -101,6 +125,33 @@ describe('waitForTranscriptEncryptedMessageByLocalId', () => {
     } finally {
       getSpy.mockRestore();
     }
+  });
+
+  it('does not poll by-local-id recovery while the supplied supervisor is offline', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    process.env.HAPPIER_SERVER_URL = 'http://adapter.test';
+    reloadConfiguration();
+
+    const { waitForTranscriptEncryptedMessageByLocalId } = await import('./transcriptMessageLookup');
+    const getSpy = vi.spyOn(axios, 'get');
+
+    const p = waitForTranscriptEncryptedMessageByLocalId({
+      token: 'token',
+      sessionId: 'sid',
+      localId: 'lid',
+      supervisor: createSupervisor(createState({ phase: 'offline', reason: 'server_unreachable' })),
+      maxWaitMs: 50,
+      pollIntervalMs: 10,
+      errorBackoffBaseMs: 10,
+      errorBackoffMaxMs: 10,
+      onError: () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(p).resolves.toBeNull();
+    expect(getSpy).not.toHaveBeenCalled();
   });
 
   it('does not fall back to v1 transcript scanning when the v2 localId route is missing', async () => {
@@ -143,6 +194,87 @@ describe('waitForTranscriptEncryptedMessageByLocalId', () => {
     expect(result).toBeNull();
     expect(calls.some((v) => v.startsWith('v1:'))).toBe(false);
     expect(calls.filter((v) => v.startsWith('v2:')).length).toBeGreaterThan(0);
+  });
+
+  it('treats legacy route-missing responses as supervisor-backed misses and reports unsupported lookup capability', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    process.env.HAPPIER_SERVER_URL = 'http://adapter.test';
+    process.env.HAPPIER_TRANSCRIPT_RECOVERY_DELAY_MS = '0';
+    reloadConfiguration();
+
+    const { waitForTranscriptEncryptedMessageByLocalId } = await import('./transcriptMessageLookup');
+
+    app = fastify({ logger: false });
+    app.get('/v2/sessions/:sid/messages/by-local-id/:localId', async (req: any, reply) => {
+      return reply.code(404).send({ error: 'Not found', path: `/v2/sessions/${req.params.sid}/messages/by-local-id/${req.params.localId}` });
+    });
+    await app.ready();
+    restoreAdapter = installAxiosFastifyAdapter({ app, origin: 'http://adapter.test' });
+
+    const onError = vi.fn();
+    const onUnsupported = vi.fn();
+    const supervisor = createSupervisor();
+    const p = waitForTranscriptEncryptedMessageByLocalId({
+      token: 'token',
+      sessionId: 'sid',
+      localId: 'lid',
+      supervisor,
+      maxWaitMs: 25,
+      pollIntervalMs: 10,
+      errorBackoffBaseMs: 10,
+      errorBackoffMaxMs: 10,
+      onError,
+      onUnsupported,
+    });
+
+    await vi.advanceTimersByTimeAsync(50);
+    const result = await p;
+
+    expect(result).toBeNull();
+    expect(onError).not.toHaveBeenCalled();
+    expect(onUnsupported).toHaveBeenCalledOnce();
+    expect(supervisor.reportProbeResult).not.toHaveBeenCalled();
+  });
+
+  it('does not hide session-not-found 404s as legacy route-missing misses', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+
+    process.env.HAPPIER_SERVER_URL = 'http://adapter.test';
+    process.env.HAPPIER_TRANSCRIPT_RECOVERY_DELAY_MS = '0';
+    reloadConfiguration();
+
+    const { waitForTranscriptEncryptedMessageByLocalId } = await import('./transcriptMessageLookup');
+
+    app = fastify({ logger: false });
+    app.get('/v2/sessions/:sid/messages/by-local-id/:localId', async (_req, reply) => {
+      return reply.code(404).send({ error: 'Session not found' });
+    });
+    await app.ready();
+    restoreAdapter = installAxiosFastifyAdapter({ app, origin: 'http://adapter.test' });
+
+    const onError = vi.fn();
+    const supervisor = createSupervisor();
+    const p = waitForTranscriptEncryptedMessageByLocalId({
+      token: 'token',
+      sessionId: 'sid',
+      localId: 'lid',
+      supervisor,
+      maxWaitMs: 25,
+      pollIntervalMs: 10,
+      errorBackoffBaseMs: 10,
+      errorBackoffMaxMs: 10,
+      onError,
+    });
+
+    await vi.advanceTimersByTimeAsync(50);
+    const result = await p;
+
+    expect(result).toBeNull();
+    expect(onError).toHaveBeenCalledOnce();
+    expect(supervisor.reportProbeResult).not.toHaveBeenCalled();
   });
 
   it('returns parsed message details (sidechainId + timestamps) when the v2 localId route succeeds', async () => {
@@ -188,6 +320,86 @@ describe('waitForTranscriptEncryptedMessageByLocalId', () => {
       createdAt: 111,
       updatedAt: 222,
       content: { t: 'plain' },
+    });
+  });
+
+  it('exposes structured v2 lookup outcomes for found and not-found responses', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://adapter.test';
+    reloadConfiguration();
+
+    const { findTranscriptEncryptedMessageByLocalIdV2 } = await import('./transcriptMessageLookup');
+
+    app = fastify({ logger: false });
+    app.get('/v2/sessions/:sid/messages/by-local-id/found-local', async (_req, reply) => {
+      return reply.code(200).send({
+        message: {
+          id: 'm1',
+          seq: 1,
+          localId: 'found-local',
+          sidechainId: null,
+          createdAt: 111,
+          updatedAt: 222,
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hi' } } },
+        },
+      });
+    });
+    app.get('/v2/sessions/:sid/messages/by-local-id/missing-local', async (_req, reply) => {
+      return reply.code(404).send({ error: 'Message not found' });
+    });
+    await app.ready();
+    restoreAdapter = installAxiosFastifyAdapter({ app, origin: 'http://adapter.test' });
+
+    await expect(findTranscriptEncryptedMessageByLocalIdV2({
+      token: 'token',
+      serverUrl: 'http://adapter.test',
+      sessionId: 'sid',
+      localId: 'found-local',
+    })).resolves.toMatchObject({
+      type: 'found',
+      message: { id: 'm1', localId: 'found-local', createdAt: 111, updatedAt: 222 },
+    });
+
+    await expect(findTranscriptEncryptedMessageByLocalIdV2({
+      token: 'token',
+      serverUrl: 'http://adapter.test',
+      sessionId: 'sid',
+      localId: 'missing-local',
+    })).resolves.toEqual({ type: 'not_found' });
+  });
+
+  it('classifies v2 lookup server and malformed-response failures instead of collapsing them to null', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://adapter.test';
+    reloadConfiguration();
+
+    const { findTranscriptEncryptedMessageByLocalIdV2 } = await import('./transcriptMessageLookup');
+
+    app = fastify({ logger: false });
+    app.get('/v2/sessions/:sid/messages/by-local-id/server-error', async (_req, reply) => {
+      return reply.code(503).send({ error: 'busy' });
+    });
+    app.get('/v2/sessions/:sid/messages/by-local-id/malformed', async (_req, reply) => {
+      return reply.code(200).send({ message: { id: 'm1', seq: 1 } });
+    });
+    await app.ready();
+    restoreAdapter = installAxiosFastifyAdapter({ app, origin: 'http://adapter.test' });
+
+    await expect(findTranscriptEncryptedMessageByLocalIdV2({
+      token: 'token',
+      serverUrl: 'http://adapter.test',
+      sessionId: 'sid',
+      localId: 'server-error',
+    })).resolves.toMatchObject({
+      type: 'unhealthy',
+      reason: 'server_5xx',
+    });
+
+    await expect(findTranscriptEncryptedMessageByLocalIdV2({
+      token: 'token',
+      serverUrl: 'http://adapter.test',
+      sessionId: 'sid',
+      localId: 'malformed',
+    })).resolves.toMatchObject({
+      type: 'protocol_error',
     });
   });
 

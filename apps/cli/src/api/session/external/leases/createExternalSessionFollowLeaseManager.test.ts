@@ -213,4 +213,43 @@ describe('createExternalSessionFollowLeaseManager', () => {
         expect(backgroundRelease).toHaveBeenCalledTimes(1);
         expect(viewerRelease).not.toHaveBeenCalled();
     });
+
+    it('releases all follow leases for a session idempotently during archive teardown', async () => {
+        const viewerRelease = vi.fn(async () => {});
+        const backgroundRelease = vi.fn(async () => {});
+        const manager = createExternalSessionFollowLeaseManager({
+            randomId: () => 'lease-archive',
+        });
+
+        await manager.attach({
+            sessionId: 'session-archive',
+            ttlMs: 30_000,
+            acquireFollowLease: async () => ({ release: viewerRelease }),
+        });
+        await manager.setBackgroundFollowEnabled({
+            sessionId: 'session-archive',
+            enabled: true,
+            acquireFollowLease: async () => ({ release: backgroundRelease }),
+        });
+
+        const managerWithRelease = manager as typeof manager & Readonly<{
+            releaseSession?: (input: Readonly<{ sessionId: string }>) => Promise<unknown>;
+        }>;
+        expect(managerWithRelease.releaseSession).toBeTypeOf('function');
+
+        await expect(managerWithRelease.releaseSession?.({ sessionId: 'session-archive' })).resolves.toEqual({
+            releasedAttachedLeases: 1,
+            releasedBackgroundLease: false,
+        });
+        await expect(managerWithRelease.releaseSession?.({ sessionId: 'session-archive' })).resolves.toEqual({
+            releasedAttachedLeases: 0,
+            releasedBackgroundLease: false,
+        });
+
+        expect(viewerRelease).toHaveBeenCalledTimes(1);
+        expect(backgroundRelease).not.toHaveBeenCalled();
+        expect(manager.countActiveLeases('session-archive')).toBe(0);
+        expect(manager.isBackgroundFollowEnabled('session-archive')).toBe(false);
+        expect(manager.hasBackgroundFollowLease('session-archive')).toBe(false);
+    });
 });

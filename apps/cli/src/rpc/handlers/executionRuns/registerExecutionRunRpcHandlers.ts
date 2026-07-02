@@ -5,6 +5,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
+import type { ExecutionRunSessionStateTarget } from '@/agent/runtime/bridges/executionRun/sessionStateDelivery';
 import { buildExecutionRunProfileCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
 import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
 import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
@@ -30,6 +31,11 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
       body: ACPMessageData,
       opts: { localId: string; meta?: Record<string, unknown>; createdAt: number; updatedAt: number },
     ) => void | Promise<void>;
+    enqueueAgentMessageCommitted?: (
+      provider: ACPProvider,
+      body: ACPMessageData,
+      opts: { localId: string; meta?: Record<string, unknown> },
+    ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
     sendAgentMessageCommitted: (
       provider: ACPProvider,
       body: ACPMessageData,
@@ -52,6 +58,7 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   }>;
   budgetRegistry?: ExecutionBudgetRegistry;
   getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider | null;
+  parentSessionStateTarget?: ExecutionRunSessionStateTarget | null;
   onExecutionRunPublicStateUpdated?: (run: ExecutionRunPublicState) => void;
   onExecutionRunVoiceAgentWelcomed?: (run: ExecutionRunPublicState, welcomedEpoch: number) => void | Promise<void>;
   resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
@@ -113,6 +120,7 @@ export function registerExecutionRunRpcHandlers(
     maxTurns: policy.maxTurns ?? undefined,
     budgetRegistry: ctx.budgetRegistry,
     getPermissionRequestStore: ctx.getPermissionRequestStore,
+    parentSessionStateTarget: ctx.parentSessionStateTarget ?? null,
     resolveAccountSettings: ctx.resolveAccountSettings,
     resolveExecutionRunProfileCatalog: async () => {
       const registry = await resolveCliEngineRegistry();

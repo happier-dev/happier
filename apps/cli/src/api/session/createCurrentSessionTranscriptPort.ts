@@ -9,6 +9,13 @@ export function createCurrentSessionTranscriptPort(
     },
     sendAgentMessage: (provider, body, opts) => getSession().sendAgentMessage?.(provider, body, opts),
     sendAgentMessageEphemeral: (provider, body, opts) => getSession().sendAgentMessageEphemeral?.(provider, body, opts),
+    enqueueAgentMessageCommitted: (provider, body, opts) => {
+      const enqueueAgentMessageCommitted = getSession().enqueueAgentMessageCommitted;
+      if (!enqueueAgentMessageCommitted) {
+        throw new Error('Current session does not support durable committed transcript enqueue');
+      }
+      return enqueueAgentMessageCommitted(provider, body, opts);
+    },
     sendAgentMessageCommitted: (provider, body, opts) => getSession().sendAgentMessageCommitted(provider, body, opts),
     sendAgentSessionMediaCommitted: async (provider, request) => {
       const sendAgentSessionMediaCommitted = getSession().sendAgentSessionMediaCommitted;

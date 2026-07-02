@@ -180,6 +180,57 @@ describe('stateUpdates (plaintext sessions)', () => {
     expect(version).toBe(2);
   });
 
+  it('does not send stale runtime issue summaries with update-state payloads', async () => {
+    const runtimeIssueSummaryV1 = {
+      latestTurnStatus: 'failed',
+      lastRuntimeIssue: {
+        v: 1,
+        scope: 'primary_session',
+        status: 'failed',
+        code: 'usage_limit',
+        source: 'usage_limit',
+        occurredAt: 1_778_089_800_000,
+        provider: 'codex',
+        sanitizedPreview: 'Usage limit reached',
+      },
+    } as const;
+    const emitWithAck = vi.fn(async (_event: string, payload: any) => {
+      expect(payload).not.toHaveProperty('runtimeIssueSummaryV1');
+      return {
+        result: 'success',
+        agentState: payload.agentState,
+        version: payload.expectedVersion + 1,
+      };
+    });
+
+    let agentState: any = { requests: {}, completedRequests: {} };
+    let version = 1;
+    const updateWithStaleRuntimeIssueSummary = {
+      socket: { emitWithAck },
+      sessionId: 's1',
+      sessionEncryptionMode: 'plain',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      getAgentState: () => agentState,
+      setAgentState: (next) => {
+        agentState = next;
+      },
+      getAgentStateVersion: () => version,
+      setAgentStateVersion: (next) => {
+        version = next;
+      },
+      syncSessionSnapshotFromServer: async () => {},
+      handler: (current) => current,
+      runtimeIssueSummaryV1,
+    } satisfies Parameters<typeof updateSessionAgentStateWithAck>[0] & {
+      runtimeIssueSummaryV1: typeof runtimeIssueSummaryV1;
+    };
+
+    await updateSessionAgentStateWithAck(updateWithStaleRuntimeIssueSummary);
+
+    expect(version).toBe(2);
+  });
+
   it('rejects metadata writes when the version remains unknown after snapshot sync', async () => {
     const socket = { emitWithAck: vi.fn() };
     let version = -1;

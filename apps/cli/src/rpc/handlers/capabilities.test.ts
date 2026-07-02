@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
 import * as tar from 'tar';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { CapabilitiesDescribeResponse, CapabilitiesInvokeResponse } from '@/capabilities/types';
 import { reloadConfiguration } from '@/configuration';
@@ -13,6 +13,55 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 import { createCliCapabilitiesService } from './capabilities';
+
+describe('createCliCapabilitiesService installable dependencies', () => {
+    afterEach(() => {
+        vi.doUnmock('@/backends/catalog');
+        vi.resetModules();
+    });
+
+    it('describes Codex ACP from installable contributions when the backend has no local capability hook', async () => {
+        vi.resetModules();
+        vi.doMock('@/backends/catalog', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/backends/catalog')>();
+            return {
+                ...actual,
+                AGENTS: {
+                    ...actual.AGENTS,
+                    codex: {
+                        ...actual.AGENTS.codex,
+                        getCapabilities: undefined,
+                    },
+                },
+            };
+        });
+
+        const home = await createTempDir('happier-cli-capabilities-installables-');
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
+        envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
+        reloadConfiguration();
+
+        try {
+            const { createCliCapabilitiesService: createService } = await import('./capabilities');
+            const service = await createService();
+            const described = service.describe() as CapabilitiesDescribeResponse;
+
+            expect(described.capabilities.find((capability) => capability.id === 'dep.codex-acp')).toMatchObject({
+                id: 'dep.codex-acp',
+                kind: 'dep',
+                title: 'Codex ACP',
+                methods: expect.objectContaining({
+                    install: expect.any(Object),
+                    upgrade: expect.any(Object),
+                }),
+            });
+        } finally {
+            await removeTempDir(home);
+            envScope.restore();
+            reloadConfiguration();
+        }
+    });
+});
 
 describe('createCliCapabilitiesService dep.gh', () => {
     it('describes gh as a generic installable dependency capability', async () => {

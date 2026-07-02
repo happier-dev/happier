@@ -38,6 +38,8 @@ type FollowSessionTranscriptParams<TItem> = Readonly<{
 
 let generatedFollowLeaseCounter = 0;
 
+export const DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS = 600_000;
+
 export function createSessionTranscriptFollowLeaseRegistry(
     params: SessionTranscriptFollowLeaseRegistryParams,
 ): SessionTranscriptFollowLeaseRegistry {

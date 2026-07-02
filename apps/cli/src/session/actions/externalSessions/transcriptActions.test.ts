@@ -5,14 +5,14 @@ import { join } from 'node:path';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
 const validateDirectMachineSourceMock = vi.fn();
-const getExternalSessionProviderOpsMock = vi.fn();
+const resolveExternalSessionSurfaceOpsMock = vi.fn();
 
 vi.mock('@/api/session/external/security/validateDirectMachineSource', () => ({
   validateDirectMachineSource: (...args: unknown[]) => validateDirectMachineSourceMock(...args),
 }));
 
 vi.mock('./providerOpsResolution', () => ({
-  getExternalSessionProviderOps: (...args: unknown[]) => getExternalSessionProviderOpsMock(...args),
+  resolveExternalSessionSurfaceOps: (...args: unknown[]) => resolveExternalSessionSurfaceOpsMock(...args),
 }));
 
 describe('external session transcript actions', () => {
@@ -36,7 +36,7 @@ describe('external session transcript actions', () => {
       ok: true,
       source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096', directory: sourceDirectory },
     });
-    getExternalSessionProviderOpsMock.mockResolvedValue({
+    resolveExternalSessionSurfaceOpsMock.mockResolvedValue({
       resolveTranscriptMediaReadRoots: async () => [verifiedDirectory],
       pageTranscript: async () => ({
         items: [

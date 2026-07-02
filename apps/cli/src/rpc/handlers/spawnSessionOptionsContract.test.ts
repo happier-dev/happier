@@ -210,7 +210,7 @@ describe('SpawnDaemonSessionRequestSchema', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'runtime-thread',
+          providerSessionId: 'runtime-thread',
         },
       },
     });
@@ -220,7 +220,7 @@ describe('SpawnDaemonSessionRequestSchema', () => {
       providerId: 'codex',
       provider: {
         backendMode: 'appServer',
-        vendorSessionId: 'runtime-thread',
+        providerSessionId: 'runtime-thread',
       },
     });
     expect(parsed).not.toHaveProperty('agentRuntimeDescriptorV1');
@@ -234,7 +234,7 @@ describe('SpawnDaemonSessionRequestSchema', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'canonical-thread',
+          providerSessionId: 'canonical-thread',
         },
       },
       agentRuntimeDescriptorV1: {
@@ -242,7 +242,7 @@ describe('SpawnDaemonSessionRequestSchema', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'acp',
-          vendorSessionId: 'legacy-thread',
+          providerSessionId: 'legacy-thread',
         },
       },
     });
@@ -252,7 +252,7 @@ describe('SpawnDaemonSessionRequestSchema', () => {
       providerId: 'codex',
       provider: {
         backendMode: 'appServer',
-        vendorSessionId: 'canonical-thread',
+        providerSessionId: 'canonical-thread',
       },
     });
     expect(parsed).not.toHaveProperty('agentRuntimeDescriptorV1');
@@ -266,7 +266,7 @@ describe('SpawnDaemonSessionRequestSchema', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'runtime-thread',
+          providerSessionId: 'runtime-thread',
         },
       },
     })).toEqual({
@@ -276,7 +276,7 @@ describe('SpawnDaemonSessionRequestSchema', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'runtime-thread',
+          providerSessionId: 'runtime-thread',
         },
       },
     });

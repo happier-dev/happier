@@ -13,6 +13,7 @@ import {
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 import { createCliActionExecutor } from './createCliActionExecutor';
+import { executeCliTranscriptAction } from './executeCliTranscriptAction';
 
 type TranscriptItem = Readonly<{
   id: string;
@@ -208,5 +209,56 @@ describe('createCliActionExecutor transcript actions', () => {
         truncated: true,
       },
     });
+  });
+
+  it('defaults transcript follow leases to the accepted 10 minute floor', async () => {
+    vi.useFakeTimers();
+    const executorUnsubscribe = vi.fn();
+    const directUnsubscribe = vi.fn();
+    const store = createTranscriptStore({
+      readAfter: async () => ({ items: [], nextCursor: 'tail-2', truncated: false }),
+      subscribe: () => executorUnsubscribe,
+    });
+    const executor = createTranscriptExecutor({ transcriptStore: store });
+    const directStore = createTranscriptStore({
+      readAfter: async () => ({ items: [], nextCursor: 'tail-3', truncated: false }),
+      subscribe: () => directUnsubscribe,
+    });
+
+    try {
+      await expect(executor.execute('transcript.follow', {
+        sessionId: 'session-1',
+        cursor: 'tail',
+        leaseId: 'lease-default-floor',
+      }, { surface: 'rpc', defaultSessionId: 'session-1' })).resolves.toMatchObject({
+        ok: true,
+        result: { ok: true, leaseId: 'lease-default-floor' },
+      });
+
+      await expect(executeCliTranscriptAction({
+        actionId: 'transcript.follow',
+        input: {
+          sessionId: 'session-1',
+          cursor: 'tail',
+          leaseId: 'lease-direct-default-floor',
+        },
+        context: { surface: 'rpc', defaultSessionId: 'session-1' },
+        defaultSessionId: 'session-1',
+        options: { transcriptStore: directStore },
+      })).resolves.toMatchObject({
+        ok: true,
+        result: { ok: true, leaseId: 'lease-direct-default-floor' },
+      });
+
+      await vi.advanceTimersByTimeAsync(60_001);
+      expect(executorUnsubscribe).not.toHaveBeenCalled();
+      expect(directUnsubscribe).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(540_000);
+      expect(executorUnsubscribe).toHaveBeenCalledTimes(1);
+      expect(directUnsubscribe).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

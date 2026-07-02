@@ -14,9 +14,9 @@ const { installProviderCliForRuntime } = vi.hoisted(() => ({
   })),
 }));
 
-const { resolveMergedContributionRegistryMock, getProviderCliSetupRecommendedIdsMock } = vi.hoisted(() => ({
+const { resolveMergedContributionRegistryMock, getAgentCliSetupRecommendedIdsMock } = vi.hoisted(() => ({
   resolveMergedContributionRegistryMock: vi.fn(),
-  getProviderCliSetupRecommendedIdsMock: vi.fn(() => ['claude', 'codex']),
+  getAgentCliSetupRecommendedIdsMock: vi.fn(() => ['claude', 'codex']),
 }));
 
 vi.mock('@happier-dev/cli-common/providers', async (importOriginal) => {
@@ -31,7 +31,7 @@ vi.mock('@happier-dev/agents', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@happier-dev/agents')>();
   return {
     ...actual,
-    getProviderCliSetupRecommendedIds: getProviderCliSetupRecommendedIdsMock,
+    getAgentCliSetupRecommendedIds: getAgentCliSetupRecommendedIdsMock,
   };
 });
 
@@ -52,7 +52,7 @@ describe('happier providers setup --yes --json', () => {
   beforeEach(async () => {
     installProviderCliForRuntime.mockReset();
     resolveMergedContributionRegistryMock.mockReset();
-    getProviderCliSetupRecommendedIdsMock.mockClear();
+    getAgentCliSetupRecommendedIdsMock.mockClear();
     envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
     home = await createTempDir('happier-providers-setup-');
     envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
@@ -64,21 +64,21 @@ describe('happier providers setup --yes --json', () => {
         source: 'built-in' as const,
         definition: {
           id: 'claude',
-          providerCliRuntime: {
-            kindVersion: 1,
-            id: 'claude',
-            title: 'Claude CLI',
+        },
+        runtimeSpec: {
+          kindVersion: 1,
+          id: 'claude',
+          title: 'Claude CLI',
+          binaryName: 'claude',
+          sourcePreferenceDefault: 'system-first',
+          managedInstall: {
+            kind: 'managed_package',
+            packageName: '@happier-dev/claude',
             binaryName: 'claude',
-            sourcePreferenceDefault: 'system-first',
-            managedInstall: {
-              kind: 'managed_package',
-              packageName: '@happier-dev/claude',
-              binaryName: 'claude',
-            },
-            manualInstallKind: 'command',
-            manualInstallRecipes: null,
-            acceptsJavaScriptFileOverride: false,
           },
+          manualInstallKind: 'command',
+          manualInstallRecipes: null,
+          acceptsJavaScriptFileOverride: false,
         },
       },
       {
@@ -86,21 +86,21 @@ describe('happier providers setup --yes --json', () => {
         source: 'built-in' as const,
         definition: {
           id: 'codex',
-          providerCliRuntime: {
-            kindVersion: 1,
-            id: 'codex',
-            title: 'Codex CLI',
+        },
+        runtimeSpec: {
+          kindVersion: 1,
+          id: 'codex',
+          title: 'Codex CLI',
+          binaryName: 'codex',
+          sourcePreferenceDefault: 'system-first',
+          managedInstall: {
+            kind: 'managed_package',
+            packageName: '@happier-dev/codex',
             binaryName: 'codex',
-            sourcePreferenceDefault: 'system-first',
-            managedInstall: {
-              kind: 'managed_package',
-              packageName: '@happier-dev/codex',
-              binaryName: 'codex',
-            },
-            manualInstallKind: 'command',
-            manualInstallRecipes: null,
-            acceptsJavaScriptFileOverride: false,
           },
+          manualInstallKind: 'command',
+          manualInstallRecipes: null,
+          acceptsJavaScriptFileOverride: false,
         },
       },
     ];
@@ -134,7 +134,7 @@ describe('happier providers setup --yes --json', () => {
       expect(parsed.data.providers.length).toBeGreaterThan(0);
 
       const installedIds = installProviderCliForRuntime.mock.calls.map((call) => call[0].runtimeSpec.id);
-      expect(installedIds).toEqual([...getProviderCliSetupRecommendedIdsMock()]);
+      expect(installedIds).toEqual([...getAgentCliSetupRecommendedIdsMock()]);
     } finally {
       output.restore();
     }

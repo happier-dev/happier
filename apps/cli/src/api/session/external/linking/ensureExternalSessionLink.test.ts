@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CodexBackendMode } from '@happier-dev/agents';
-import { buildCodexAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
-import { buildOpenCodeAgentRuntimeDescriptorV1 } from '@happier-dev/protocol';
+import { buildCodexAgentRuntimeDescriptorV1 } from '@happier-dev/protocol/providers/runtimeDescriptorContributionsV1';
+import { buildOpenCodeAgentRuntimeDescriptorV1 } from '@happier-dev/plugins-opencode/agent/identity/runtimeDescriptor';
 
 const fetchSessionsPageMock = vi.fn();
 const fetchSessionByIdMock = vi.fn();
@@ -52,7 +52,7 @@ describe('ensureExternalSessionLink', () => {
       codexBackendMode: 'mcp',
       runtimeDescriptor: buildCodexAgentRuntimeDescriptorV1({
         backendMode: 'appServer',
-        vendorSessionId: 'thread_runtime',
+        providerSessionId: 'thread_runtime',
         home: 'connectedService',
         connectedServiceId: 'openai-codex',
         connectedServiceProfileId: 'work',
@@ -77,7 +77,7 @@ describe('ensureExternalSessionLink', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'thread_runtime',
+          providerSessionId: 'thread_runtime',
           home: 'connectedService',
           connectedServiceId: 'openai-codex',
           connectedServiceProfileId: 'work',
@@ -92,7 +92,7 @@ describe('ensureExternalSessionLink', () => {
           providerId: 'codex',
           provider: {
             backendMode: 'appServer',
-            vendorSessionId: 'thread_runtime',
+            providerSessionId: 'thread_runtime',
             home: 'connectedService',
             connectedServiceId: 'openai-codex',
             connectedServiceProfileId: 'work',
@@ -125,7 +125,7 @@ describe('ensureExternalSessionLink', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'mcp',
-          vendorSessionId: 'thread_top_level',
+          providerSessionId: 'thread_top_level',
           home: 'user',
           providerExtra: {
             owner: 'codex',
@@ -133,7 +133,7 @@ describe('ensureExternalSessionLink', () => {
             v: 1,
             runtimeAffinity: {
               backendMode: 'appServer',
-              vendorSessionId: 'thread_runtime',
+              providerSessionId: 'thread_runtime',
               home: 'connectedService',
               connectedServiceId: 'openai-codex',
             },
@@ -153,7 +153,7 @@ describe('ensureExternalSessionLink', () => {
       runtimeDescriptorV1: {
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'thread_runtime',
+          providerSessionId: 'thread_runtime',
           home: 'connectedService',
           connectedServiceId: 'openai-codex',
         },
@@ -183,7 +183,7 @@ describe('ensureExternalSessionLink', () => {
       remoteSessionId: 'thread_legacy',
       runtimeDescriptor: buildCodexAgentRuntimeDescriptorV1({
         backendMode: 'appServer',
-        vendorSessionId: 'thread_runtime',
+        providerSessionId: 'thread_runtime',
         home: 'connectedService',
       }),
       source: {
@@ -236,7 +236,7 @@ describe('ensureExternalSessionLink', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'acp',
-          vendorSessionId: 'thread_alias',
+          providerSessionId: 'thread_alias',
         },
       },
     });
@@ -257,7 +257,7 @@ describe('ensureExternalSessionLink', () => {
       remoteSessionId: 'oc_legacy',
       runtimeDescriptor: buildOpenCodeAgentRuntimeDescriptorV1({
         backendMode: 'server',
-        vendorSessionId: 'oc_runtime',
+        providerSessionId: 'oc_runtime',
         serverBaseUrl: 'http://127.0.0.1:4096/',
         serverBaseUrlExplicit: true,
       }),
@@ -278,7 +278,7 @@ describe('ensureExternalSessionLink', () => {
         providerId: 'opencode',
         provider: {
           backendMode: 'server',
-          vendorSessionId: 'oc_runtime',
+          providerSessionId: 'oc_runtime',
           serverBaseUrl: 'http://127.0.0.1:4096/',
           serverBaseUrlExplicit: true,
         },
@@ -290,7 +290,7 @@ describe('ensureExternalSessionLink', () => {
           providerId: 'opencode',
           provider: {
             backendMode: 'server',
-            vendorSessionId: 'oc_runtime',
+            providerSessionId: 'oc_runtime',
             serverBaseUrl: 'http://127.0.0.1:4096/',
             serverBaseUrlExplicit: true,
           },
@@ -319,7 +319,7 @@ describe('ensureExternalSessionLink', () => {
         providerId: 'opencode',
         provider: {
           backendMode: 'acp',
-          vendorSessionId: 'oc_runtime',
+          providerSessionId: 'oc_runtime',
           serverBaseUrl: 'http://127.0.0.1:4096/',
           serverBaseUrlExplicit: true,
         },
@@ -341,7 +341,7 @@ describe('ensureExternalSessionLink', () => {
         providerId: 'opencode',
         provider: {
           backendMode: 'server',
-          vendorSessionId: 'oc_runtime',
+          providerSessionId: 'oc_runtime',
         },
       },
     });
@@ -365,7 +365,7 @@ describe('ensureExternalSessionLink', () => {
         providerId: 'opencode',
         provider: {
           backendMode: 'acp',
-          vendorSessionId: 'oc_top_level',
+          providerSessionId: 'oc_top_level',
           serverBaseUrl: 'http://legacy.example/',
           providerExtra: {
             owner: 'opencode',
@@ -373,7 +373,7 @@ describe('ensureExternalSessionLink', () => {
             v: 1,
             runtimeHandle: {
               backendMode: 'server',
-              vendorSessionId: 'oc_runtime',
+              providerSessionId: 'oc_runtime',
               serverBaseUrl: 'http://127.0.0.1:4096/',
               serverBaseUrlExplicit: true,
             },

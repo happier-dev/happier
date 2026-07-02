@@ -37,6 +37,19 @@ describe('resolveDetectedMcpPreviewEntries', () => {
     });
   });
 
+  it('accepts any protocol-declared detected provider without a host switch branch', () => {
+    const entries = resolveDetectedMcpPreviewEntries({
+      agentId: 'pi',
+      servers: [createDetected({ provider: 'pi' })],
+    });
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      provider: 'pi',
+      key: 'detected:pi:context7',
+    });
+  });
+
   it('uses the higher-precedence project config when multiple detected entries share a name', () => {
     const entries = resolveDetectedMcpPreviewEntries({
       agentId: 'claude',

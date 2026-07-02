@@ -4,10 +4,10 @@ import {
   type RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 
-import { resolveCanonicalCodexBackendModeFromCompatInput } from '@/backends/codex/daemon/backendMode';
+import { resolveCanonicalCodexBackendModeFromCompatInput } from '@happier-dev/plugins-codex/agent/lifecycle/backendMode';
 
 type CanonicalSpawnRuntimeSelectionInput = Readonly<{
-  codexBackendMode?: CodexBackendMode;
+  codexBackendMode?: unknown;
   experimentalCodexAcp?: boolean;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
 }>;
@@ -21,6 +21,7 @@ type SpawnRuntimeSelectionCompatIngress = Readonly<{
 
 export type CanonicalSpawnRuntimeSelection = Readonly<{
   codexBackendMode?: CodexBackendMode;
+  providerRuntimeSelection?: Readonly<Record<string, unknown>>;
   runtimeDescriptorV1?: RuntimeDescriptorV1;
 }>;
 
@@ -42,6 +43,7 @@ export function readCanonicalSpawnRuntimeSelection(
 
   return {
     ...(codexBackendMode ? { codexBackendMode } : {}),
+    ...(codexBackendMode ? { providerRuntimeSelection: { codexBackendMode } } : {}),
     ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
   };
 }
@@ -54,10 +56,7 @@ export function readCanonicalSpawnRuntimeSelectionFromCompatIngress(
     ?? readRuntimeDescriptorV1(options.legacyAgentRuntimeDescriptorV1);
 
   return readCanonicalSpawnRuntimeSelection({
-    codexBackendMode:
-      options.codexBackendMode === 'mcp' || options.codexBackendMode === 'acp' || options.codexBackendMode === 'appServer'
-        ? options.codexBackendMode
-        : undefined,
+    codexBackendMode: options.codexBackendMode,
     experimentalCodexAcp: options.experimentalCodexAcp === true,
     ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
   });

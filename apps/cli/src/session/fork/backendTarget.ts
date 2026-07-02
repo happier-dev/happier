@@ -36,15 +36,15 @@ function readConfiguredAcpBackendIdFromFlavor(metadata: Record<string, unknown>)
   return backendId || null;
 }
 
-function readConfiguredAcpVendorSessionId(metadata: Record<string, unknown>, backendId: string): string | null {
+function readConfiguredAcpProviderSessionId(metadata: Record<string, unknown>, backendId: string): string | null {
   const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
   const providerId = typeof descriptor?.providerId === 'string' ? descriptor.providerId.trim() : '';
   if (!isLegacyConfiguredBackendVendorSessionCarrier({ providerId, backendId })) {
     return null;
   }
   const provider = asRecord(descriptor?.provider);
-  const vendorSessionId = typeof provider?.vendorSessionId === 'string' ? provider.vendorSessionId.trim() : '';
-  return vendorSessionId || null;
+  const providerSessionId = typeof provider?.providerSessionId === 'string' ? provider.providerSessionId.trim() : '';
+  return providerSessionId || null;
 }
 
 function buildConfiguredAcpMetadataOverlay(params: Readonly<{
@@ -76,7 +76,7 @@ export type SessionForkBackendTargetResolution =
       configuredAcp: Readonly<{
         backendId: string;
         title: string;
-        vendorSessionId: string | null;
+        providerSessionId: string | null;
         resolvedBackend: ResolvedConfiguredAcpBackend | null;
         accountSettings: AccountSettings | null;
       }>;
@@ -132,7 +132,7 @@ export async function resolveSessionForkBackendTarget(params: Readonly<{
         configuredAcp: {
           backendId: candidateConfiguredBackendId,
           title,
-          vendorSessionId: readConfiguredAcpVendorSessionId(params.parentMetadata, candidateConfiguredBackendId),
+          providerSessionId: readConfiguredAcpProviderSessionId(params.parentMetadata, candidateConfiguredBackendId),
           resolvedBackend: resolvedConfiguredBackend,
           accountSettings,
         },

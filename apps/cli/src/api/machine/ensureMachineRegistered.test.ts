@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
-import { MachineIdConflictError, MachineRevokedError } from './machineRegistrationErrors';
+import { MachineIdConflictError, MachineReplacedError, MachineRevokedError } from './machineRegistrationErrors';
 
 vi.mock('@/ui/logger', () => ({
   logger: {
@@ -356,6 +356,110 @@ describe('ensureMachineRegistered', () => {
       const settings = await readSettings();
       expect(settings.machineId).toBe(calls[1]);
       expect(settings.machineIdConfirmedByServer).toBeUndefined();
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it('adopts the server replacement machine id instead of rotating again', async () => {
+    vi.useRealTimers();
+
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-machine-replaced-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_ACTIVE_SERVER_ID = 'cloud';
+
+    try {
+      const replacedMachineId = 'machine-replaced';
+      const replacementMachineId = 'machine-replacement';
+      writeFileSync(
+        join(homeDir, 'settings.json'),
+        JSON.stringify(
+          {
+            schemaVersion: 6,
+            onboardingCompleted: true,
+            activeServerId: 'cloud',
+            servers: {
+              cloud: {
+                id: 'cloud',
+                name: 'cloud',
+                serverUrl: 'https://api.happier.dev',
+                webappUrl: 'https://app.happier.dev',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+              },
+            },
+            machineIdByServerId: {
+              cloud: replacedMachineId,
+            },
+            machineIdByServerIdByAccountId: {
+              cloud: {
+                'acct-a': replacedMachineId,
+              },
+            },
+            machineReplacementCandidatesByServerIdByAccountId: {
+              cloud: {
+                'acct-a': {
+                  machineId: replacedMachineId,
+                  replacementReason: 'rotation',
+                  createdAt: 1,
+                },
+              },
+            },
+            lastTokenSubByServerId: {
+              cloud: 'acct-a',
+            },
+            machineIdConfirmedByServerByServerId: {
+              cloud: true,
+            },
+            lastChangesCursorByServerIdByAccountId: {},
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      vi.resetModules();
+      const { readSettings } = await import('@/persistence');
+      const { ensureMachineRegistered } = await import('./ensureMachineRegistered');
+
+      const calls: string[] = [];
+      const api = {
+        getOrCreateMachine: async (opts: { machineId: string; metadata: MachineMetadata; daemonState?: DaemonState }): Promise<Machine> => {
+          calls.push(opts.machineId);
+          if (calls.length === 1) {
+            throw new MachineReplacedError(opts.machineId, replacementMachineId);
+          }
+          return {
+            id: opts.machineId,
+            encryptionKey: new Uint8Array(),
+            encryptionVariant: 'legacy',
+            metadata: opts.metadata,
+            metadataVersion: 0,
+            daemonState: opts.daemonState ?? null,
+            daemonStateVersion: 0,
+          };
+        },
+      };
+
+      const { machineId, didRotateMachineId } = await ensureMachineRegistered({
+        api: api as any,
+        machineId: replacedMachineId,
+        metadata: { host: 'host1' } as any,
+      });
+
+      expect(calls).toEqual([replacedMachineId, replacementMachineId]);
+      expect(machineId).toBe(replacementMachineId);
+      expect(didRotateMachineId).toBe(true);
+
+      const settings = await readSettings();
+      expect(settings.machineId).toBe(replacementMachineId);
+      const raw = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8'));
+      expect(raw.machineIdByServerId.cloud).toBe(replacementMachineId);
+      expect(raw.machineIdByServerIdByAccountId.cloud['acct-a']).toBe(replacementMachineId);
+      expect(raw.machineIdConfirmedByServerByServerId?.cloud).toBeUndefined();
+      expect(raw.machineReplacementCandidatesByServerIdByAccountId?.cloud?.['acct-a']).toBeUndefined();
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }

@@ -7,7 +7,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { writeFakeCodexAppServerThreadListScript } from '@/backends/codex/appServer/testkit/fakeCodexAppServer';
-import { clearClaudeJsonlSessionStoreRegistriesForTests } from '@/backends/claude/transcripts/sessionStore';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
 const {
@@ -109,7 +108,6 @@ describe('registerMachineExternalSessionsRpcHandlers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
-    clearClaudeJsonlSessionStoreRegistriesForTests();
     createManagedExternalSessionFollowLeaseMock.mockReset();
     getActiveAccountSettingsSnapshotMock.mockReturnValue({
       source: 'active',

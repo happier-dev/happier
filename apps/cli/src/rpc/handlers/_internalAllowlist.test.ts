@@ -83,6 +83,33 @@ describe('INTERNAL_ONLY_RPC_METHODS', () => {
         }
     });
 
+    it('classifies A.12 voice cleanup model admin and transfer methods as internal-only', () => {
+        const expected = [
+            RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL,
+            RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_REMOVE,
+            RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM,
+            RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE,
+            RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CHUNK,
+            RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_FINALIZE,
+            RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_ABORT,
+            RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CANCEL,
+            RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_INIT,
+            RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_CHUNK,
+            RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_FINALIZE,
+            RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_ABORT,
+            RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_TRANSCRIBE,
+            RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_CANCEL,
+        ];
+
+        for (const method of expected) {
+            const entry = INTERNAL_ONLY_RPC_METHODS.find((candidate) => candidate.method === method);
+            expect(entry).toEqual(expect.objectContaining({
+                ownerPacket: 'A.12-voice-cleanup',
+            }));
+            expect(isInternalOnlyRpcMethod(method)).toBe(true);
+        }
+    });
+
     it('keeps RAU-6 SSH tunnel lifecycle out of machine RPC internal allowlist', () => {
         expect(INTERNAL_ONLY_RPC_METHODS.filter((entry) => entry.method.startsWith('daemon.sshTunnels.'))).toEqual([]);
     });

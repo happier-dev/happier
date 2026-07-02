@@ -6,6 +6,8 @@ import {
     type PersistSessionMediaResult,
     type SessionMediaProviderFileDownloadResult,
 } from '@/session/media/persistSessionMedia';
+import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCollect';
+import type { GarbageCollectSessionMediaResult } from '@/session/media/budget';
 import {
     inferSessionMediaMimeTypeFromName,
     normalizeSessionMediaMimeType,
@@ -40,20 +42,42 @@ export type SendAgentSessionMediaCommittedRequest = Readonly<{
     messageText?: string;
 }>;
 
+type LoggerLike = Readonly<{
+    debug: (message: string, details?: unknown) => void;
+}>;
+
 export type SessionMediaBridgePersistDeps = Readonly<{
     sessionId: string;
     workingDirectory?: string | null;
     request: SendAgentSessionMediaCommittedRequest;
     providerFileDownloader?: (source: Extract<SessionMediaIngestionSource, { kind: 'provider-file' }>) => Promise<SessionMediaProviderFileDownloadResult>;
+    logger?: LoggerLike;
 }>;
 
 export type SessionMediaBridgePersistResult =
     Readonly<{
         success: boolean;
         items: readonly SessionMediaItemV1[];
+        createdWorkspaceRelativePaths: readonly string[];
         failures: readonly SessionMediaFailureV1[];
         meta: Record<string, unknown>;
     }>;
+
+export async function garbageCollectFailedSessionMediaCommit(params: Readonly<{
+    workingDirectory: string;
+    persisted: SessionMediaBridgePersistResult;
+    logger?: LoggerLike;
+}>): Promise<GarbageCollectSessionMediaResult | null> {
+    if (params.persisted.createdWorkspaceRelativePaths.length === 0) {
+        return { deletedFiles: 0, deletedBytes: 0 };
+    }
+    return await garbageCollectUncommittedSessionMedia({
+        workingDirectory: params.workingDirectory,
+        candidateWorkspaceRelativePaths: params.persisted.createdWorkspaceRelativePaths,
+        reason: 'failed_durable_write',
+        logger: params.logger,
+    });
+}
 
 const pathAllowanceRegistry = createTransferPathAllowanceRegistry();
 const MAX_SAFE_FAILURE_NAME_LENGTH = 120;
@@ -272,43 +296,59 @@ export async function persistSessionMediaForTranscript(
     deps: SessionMediaBridgePersistDeps,
 ): Promise<SessionMediaBridgePersistResult> {
     const items: SessionMediaItemV1[] = [];
+    const createdWorkspaceRelativePaths: string[] = [];
     const failures: SessionMediaFailureV1[] = [];
     const workingDirectory = typeof deps.workingDirectory === 'string' && deps.workingDirectory.trim().length > 0
         ? deps.workingDirectory
         : null;
 
-    for (let index = 0; index < deps.request.media.length; index += 1) {
-        const entry = deps.request.media[index]!;
-        if (!workingDirectory) {
-            failures.push(buildFailure(deps.request, entry, index, { code: 'missing_working_directory' }));
-            continue;
+    try {
+        for (let index = 0; index < deps.request.media.length; index += 1) {
+            const entry = deps.request.media[index]!;
+            if (!workingDirectory) {
+                failures.push(buildFailure(deps.request, entry, index, { code: 'missing_working_directory' }));
+                continue;
+            }
+            if (requiresScopedSourceAccessPolicy(entry.source) && !hasRestrictedRootsAccessPolicy(entry.sourceAccessPolicy)) {
+                failures.push(buildFailure(deps.request, entry, index, { code: 'scoped_media_access_policy_required' }));
+                continue;
+            }
+            const result = await persistSessionMedia({
+                workingDirectory,
+                pathAllowanceRegistry,
+                providerFileDownloader: deps.providerFileDownloader,
+                ...(entry.accessPolicy ? { accessPolicy: entry.accessPolicy } : {}),
+                ...(entry.sourceAccessPolicy ? { sourceAccessPolicy: entry.sourceAccessPolicy } : {}),
+                input: {
+                    sessionId: deps.sessionId,
+                    messageLocalId: deps.request.localId,
+                    role: deps.request.role,
+                    category: deps.request.category,
+                    source: entry.source,
+                    origin: entry.origin,
+                    ...(entry.suggestedName ? { suggestedName: entry.suggestedName } : {}),
+                    ...(typeof entry.createdAtMs === 'number' ? { createdAtMs: entry.createdAtMs } : {}),
+                },
+            });
+            if (result.success) {
+                items.push(sanitizeMediaItem(result.item));
+                if (result.created) {
+                    createdWorkspaceRelativePaths.push(result.item.path);
+                }
+            } else {
+                failures.push(buildFailure(deps.request, entry, index, result));
+            }
         }
-        if (requiresScopedSourceAccessPolicy(entry.source) && !hasRestrictedRootsAccessPolicy(entry.sourceAccessPolicy)) {
-            failures.push(buildFailure(deps.request, entry, index, { code: 'scoped_media_access_policy_required' }));
-            continue;
+    } catch (error) {
+        if (workingDirectory && createdWorkspaceRelativePaths.length > 0) {
+            await garbageCollectUncommittedSessionMedia({
+                workingDirectory,
+                candidateWorkspaceRelativePaths: createdWorkspaceRelativePaths,
+                reason: 'interrupted_ingestion',
+                logger: deps.logger,
+            });
         }
-        const result = await persistSessionMedia({
-            workingDirectory,
-            pathAllowanceRegistry,
-            providerFileDownloader: deps.providerFileDownloader,
-            ...(entry.accessPolicy ? { accessPolicy: entry.accessPolicy } : {}),
-            ...(entry.sourceAccessPolicy ? { sourceAccessPolicy: entry.sourceAccessPolicy } : {}),
-            input: {
-                sessionId: deps.sessionId,
-                messageLocalId: deps.request.localId,
-                role: deps.request.role,
-                category: deps.request.category,
-                source: entry.source,
-                origin: entry.origin,
-                ...(entry.suggestedName ? { suggestedName: entry.suggestedName } : {}),
-                ...(typeof entry.createdAtMs === 'number' ? { createdAtMs: entry.createdAtMs } : {}),
-            },
-        });
-        if (result.success) {
-            items.push(sanitizeMediaItem(result.item));
-        } else {
-            failures.push(buildFailure(deps.request, entry, index, result));
-        }
+        throw error;
     }
 
     const meta = attachSessionMediaMeta(sanitizeBridgeMeta(deps.request.meta), items, failures);
@@ -316,6 +356,7 @@ export async function persistSessionMediaForTranscript(
     return {
         success: failures.length === 0,
         items,
+        createdWorkspaceRelativePaths,
         failures,
         meta,
     };

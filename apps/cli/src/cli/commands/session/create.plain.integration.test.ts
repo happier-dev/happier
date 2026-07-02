@@ -107,10 +107,11 @@ describe('happier session create plaintext sessions (integration)', () => {
         const decrypted = JSON.parse(String(data?.metadata ?? '{}'));
         expect(decrypted?.summary?.text).toBe('My Title');
         expect(decrypted?.tag).toBe('MyTag');
-        expect(observedSpawnBody).toEqual({
+        expect(observedSpawnBody).toEqual(expect.objectContaining({
           directory: process.cwd(),
           backendTarget: { kind: 'backend', backendId: DEFAULT_CATALOG_AGENT_ID, sourceKind: 'built_in' },
-        });
+          spawnNonce: expect.any(String),
+        }));
         metadataJson = String(data.metadata);
         metadataVersion = 1;
         callback?.({ result: 'success', version: metadataVersion, metadata: metadataJson });

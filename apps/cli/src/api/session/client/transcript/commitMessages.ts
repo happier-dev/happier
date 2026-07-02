@@ -2,7 +2,7 @@ import type {
   ACPMessageData,
   ACPProvider,
 } from '../../sessionMessageTypes';
-import { prepareAcpTranscriptDispatch } from '../../outbound/providers/sessionTranscriptDispatch';
+import { prepareAcpTranscriptDispatch } from '../../outbound/transcriptDispatch';
 import { buildUserTextMessageContent } from '../../outbound/shared';
 import { resolveAcpSessionMessageRole } from '../../messageRole';
 

@@ -14,7 +14,7 @@ function createEmptyResolvedContributionRegistry(): ResolvedContributionRegistry
     uiDescriptors: [],
     activationTargets: [],
     hookRegistrations: [],
-    runtimeCoreHooksByBackendId: new Map(),
+    surfaceHandlersByBackendId: new Map(),
     catalogEntriesById: {},
     providerDefinitionsById: new Map(),
     backendDefinitionsById: new Map(),
@@ -40,6 +40,14 @@ function mockProviderCliResolution(): void {
   }));
 }
 
+function mockPrimeResolvedContributionRegistry(
+  primeResolvedContributionRegistry: () => Promise<ResolvedContributionRegistry>,
+): void {
+  vi.doMock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
+    primeResolvedContributionRegistry,
+  }));
+}
+
 describe('registerCapabilitiesHandlers prewarm', () => {
   it('waits for merged registry priming before loading capability overrides', async () => {
     vi.resetModules();
@@ -62,13 +70,7 @@ describe('registerCapabilitiesHandlers prewarm', () => {
 
     mockProviderCliResolution();
 
-    vi.doMock('@/plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>();
-      return {
-        ...actual,
-        primeResolvedContributionRegistry: primeResolvedContributionRegistrySpy,
-      };
-    });
+    mockPrimeResolvedContributionRegistry(primeResolvedContributionRegistrySpy);
 
     vi.doMock('@/backends/catalog', () => {
       return {
@@ -119,13 +121,7 @@ describe('registerCapabilitiesHandlers prewarm', () => {
 
     mockProviderCliResolution();
 
-    vi.doMock('@/plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>();
-      return {
-        ...actual,
-        primeResolvedContributionRegistry: primeResolvedContributionRegistrySpy,
-      };
-    });
+    mockPrimeResolvedContributionRegistry(primeResolvedContributionRegistrySpy);
 
     vi.doMock('@/backends/catalog', () => {
       return {
@@ -177,13 +173,7 @@ describe('registerCapabilitiesHandlers prewarm', () => {
 
     mockProviderCliResolution();
 
-    vi.doMock('@/plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => {
-      const actual = await importOriginal<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>();
-      return {
-        ...actual,
-        primeResolvedContributionRegistry: primeResolvedContributionRegistrySpy,
-      };
-    });
+    mockPrimeResolvedContributionRegistry(primeResolvedContributionRegistrySpy);
 
     vi.doMock('@/backends/catalog', () => {
       return {

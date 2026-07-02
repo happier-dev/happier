@@ -61,6 +61,11 @@ function resolveArchivedAt(rawSession: RawSessionListRow | RawSessionRecord): nu
   return typeof archivedAt === 'number' && Number.isFinite(archivedAt) ? archivedAt : null;
 }
 
+function resolveSessionId(rawSession: RawSessionListRow | RawSessionRecord): string | null {
+  const id = (rawSession as { id?: unknown }).id;
+  return typeof id === 'string' && id.trim().length > 0 ? id.trim() : null;
+}
+
 function readMachineId(metadata: Record<string, unknown> | null): string | null {
   if (!metadata) return null;
   const value = metadata.machineId;
@@ -195,13 +200,14 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
   const sessionHost = readHost(metadata);
   const hasLocalTerminalEvidence = params.localAttachmentInfo !== null;
   const hasSyncedTerminalMetadata = asRecord(metadata?.terminal) !== null;
+  const sessionId = resolveSessionId(params.rawSession);
   const backendId = resolveCliSessionAttachBackendId(metadata);
   const backendExecutionSurfaces = backendId ? await resolveBackendExecutionSurfaces(backendId) : null;
   const providerAttachOps = backendExecutionSurfaces?.attach ?? null;
   if (providerAttachOps) {
     const providerBackendId = backendId;
     const providerAgentId = agentId;
-    if (!providerBackendId || !providerAgentId) {
+    if (!providerBackendId || !providerAgentId || !sessionId) {
       return {
         eligible: false,
         agentId: providerAgentId,
@@ -211,7 +217,8 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
       };
     }
 
-    const evaluation = await providerAttachOps.evaluateEligibility({
+    const evaluation = await providerAttachOps.evaluateAvailability({
+      sessionId,
       metadata,
       currentMachineId: params.currentMachineId,
       sessionMachineId,

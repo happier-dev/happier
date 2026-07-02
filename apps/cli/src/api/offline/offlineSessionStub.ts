@@ -15,6 +15,7 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { AgentState, Metadata, UserMessage } from '@/api/types';
+import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 
 type ApiSessionClientStubContract = Pick<
     ApiSessionClient,
@@ -22,10 +23,26 @@ type ApiSessionClientStubContract = Pick<
     | 'rpcHandlerManager'
     | 'sendCodexMessage'
     | 'sendAgentMessage'
+    | 'sendAgentMessageCommitted'
     | 'sendClaudeSessionMessage'
     | 'sendSessionEvent'
     | 'keepAlive'
+    | 'getMetadataSnapshot'
+    | 'ensureMetadataSnapshot'
+    | 'refreshSessionSnapshotFromServerBestEffort'
+    | 'waitForMetadataUpdate'
+    | 'shouldAttemptPendingMaterialization'
+    | 'reconcilePendingQueueState'
+    | 'materializeNextPendingMessageSafely'
+    | 'popPendingMessage'
+    | 'listPendingMessageQueueV2LocalIds'
+    | 'peekPendingMessageQueueV2Count'
+    | 'discardPendingMessageQueueV2All'
+    | 'discardCommittedMessageLocalIds'
+    | 'getCommittedUserMessageSeq'
+    | 'waitForCommittedUserMessageSeq'
     | 'sendSessionDeath'
+    | 'setSessionRuntimeControls'
     | 'updateMetadata'
     | 'updateAgentState'
     | 'onUserMessage'
@@ -49,7 +66,12 @@ class OfflineSessionStub extends EventEmitter implements ApiSessionClientStubCon
     }
 
     sendCodexMessage(_body: unknown): void {}
-    sendAgentMessage(_provider: ACPProvider, _body: ACPMessageData): void {}
+    sendAgentMessage(_provider: ACPProvider, _body: ACPMessageData, _opts?: { localId?: string; meta?: Record<string, unknown> }): void {}
+    async sendAgentMessageCommitted(
+        _provider: ACPProvider,
+        _body: ACPMessageData,
+        _opts: { localId: string; meta?: Record<string, unknown> },
+    ): Promise<void> {}
     sendClaudeSessionMessage(_body: unknown, _meta?: Record<string, unknown>): void {}
     sendSessionEvent(
         _event:
@@ -60,7 +82,24 @@ class OfflineSessionStub extends EventEmitter implements ApiSessionClientStubCon
         _id?: string
     ): void {}
     keepAlive(_thinking: boolean, _mode: 'local' | 'remote'): void {}
+    getMetadataSnapshot(): Metadata | null { return null; }
+    async ensureMetadataSnapshot(): Promise<Metadata | null> { return null; }
+    async refreshSessionSnapshotFromServerBestEffort(): Promise<void> {}
+    async waitForMetadataUpdate(): Promise<boolean> { return false; }
+    shouldAttemptPendingMaterialization(): boolean { return false; }
+    async reconcilePendingQueueState(): Promise<boolean> { return false; }
+    async materializeNextPendingMessageSafely(): Promise<{ type: 'deferred'; reason: 'supervisor_offline' }> {
+        return { type: 'deferred', reason: 'supervisor_offline' };
+    }
+    async popPendingMessage(): Promise<boolean> { return false; }
+    async listPendingMessageQueueV2LocalIds(): Promise<string[]> { return []; }
+    async peekPendingMessageQueueV2Count(): Promise<number> { return 0; }
+    async discardPendingMessageQueueV2All(_opts: { reason: 'switch_to_local' | 'manual' }): Promise<number> { return 0; }
+    async discardCommittedMessageLocalIds(_opts: { localIds: string[]; reason: 'switch_to_local' | 'manual' }): Promise<number> { return 0; }
+    getCommittedUserMessageSeq(_localId: string): number | null { return null; }
+    async waitForCommittedUserMessageSeq(_localId: string): Promise<number | null> { return null; }
     sendSessionDeath(): void {}
+    setSessionRuntimeControls(_controls: SessionRuntimeControls | null): void {}
     async updateMetadata(_handler: (metadata: Metadata) => Metadata): Promise<void> {}
     async updateAgentState(_handler: (metadata: AgentState) => AgentState): Promise<void> {}
     onUserMessage(_callback: (data: UserMessage) => void): void {}

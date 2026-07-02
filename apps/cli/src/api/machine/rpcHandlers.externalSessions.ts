@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { createExternalSessionFollowLeaseManager } from '@/api/session/external/leases/createExternalSessionFollowLeaseManager';
+import { registerExternalSessionFollowLeaseArchiveHandler } from '@/api/session/external/leases/externalSessionFollowLeaseArchiveRegistry';
 import { dispatchActionFromRpc, type RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { EXTERNAL_SESSION_REQUIRED_GENERIC_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
@@ -45,9 +46,9 @@ function createExternalSessionRpcActionExecutor(
   return {
     execute: async (actionId, input) => {
       switch (actionId) {
-        case 'sessions.external.attach':
+        case 'sessions.external.follow':
           return { ok: true, result: await executeExternalSessionAttachAction(input, context) };
-        case 'sessions.external.detach':
+        case 'sessions.external.unfollow':
           return { ok: true, result: await executeExternalSessionDetachAction(input, context) };
         case 'sessions.external.followPolicy.set':
           return { ok: true, result: await executeExternalSessionFollowPolicySetAction(input, context) };
@@ -76,9 +77,9 @@ function readExternalSessionGenericFailure(actionId: ActionId): string {
       return 'external_sessions_candidates_list_failed';
     case 'sessions.external.link.ensure':
       return 'external_session_link_ensure_failed';
-    case 'sessions.external.attach':
+    case 'sessions.external.follow':
       return 'external_session_attach_failed';
-    case 'sessions.external.detach':
+    case 'sessions.external.unfollow':
       return 'external_session_detach_failed';
     case 'sessions.external.followPolicy.set':
       return 'follow_policy_set_failed';
@@ -133,6 +134,9 @@ export function registerMachineExternalSessionsRpcHandlers(params: Readonly<{
   const takeoverReadinessCacheMs = resolveTakeoverReadinessCacheMs();
   const takeoverReadinessBySessionId = new Map<string, Readonly<{ value: boolean; expiresAtMs: number }>>();
   const followLeaseManager = createExternalSessionFollowLeaseManager();
+  registerExternalSessionFollowLeaseArchiveHandler(async (sessionId) => {
+    await followLeaseManager.releaseSession({ sessionId });
+  });
 
   const readCachedTakeoverReadiness = (sessionId: string): boolean | null => {
     if (takeoverReadinessCacheMs <= 0) return null;

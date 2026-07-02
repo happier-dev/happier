@@ -81,6 +81,7 @@ export function createHappierMcpServer(
     accountSettings: opts?.accountSettings ?? null,
     surface: toolSurface,
   });
+  const actionsSettings = opts?.accountSettings?.actionsSettingsV1 ?? null;
   const ctx = credentials
     ? resolveSessionEncryptionContextFromCredentials(credentials)
     : { encryptionKey: new Uint8Array(0), encryptionVariant: 'legacy' as const };
@@ -226,11 +227,13 @@ export function createHappierMcpServer(
       return isActionSpecSurfacedOn(spec, toolSurface) && isActionEnabled(id as any);
     },
     surface: toolSurface,
+    actionsSettings,
   });
 
   const { toolNames } = registerHappierMcpBuiltInTools(mcp as any, {
     sessionId: client.sessionId,
     surface: toolSurface,
+    actionsSettings,
     deps: {
       changeTitle: createChangeTitleToolHandler({
         executor,

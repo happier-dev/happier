@@ -18,6 +18,18 @@ export class MachineRevokedError extends Error {
     }
 }
 
+export class MachineReplacedError extends Error {
+    readonly machineId: string;
+    readonly replacementMachineId: string;
+
+    constructor(machineId: string, replacementMachineId: string) {
+        super(`Machine replaced: ${machineId} was replaced by ${replacementMachineId}`);
+        this.name = 'MachineReplacedError';
+        this.machineId = machineId;
+        this.replacementMachineId = replacementMachineId;
+    }
+}
+
 export class MachineContentPublicKeyMismatchError extends Error {
     readonly machineId: string;
     readonly reason: string;
@@ -51,6 +63,13 @@ export function isMachineRevokedError(error: unknown): error is MachineRevokedEr
     const maybe = error as Record<string, unknown>;
     if (maybe.name !== 'MachineRevokedError' || !hasMachineId(error)) return false;
     return error.machineId.length > 0;
+}
+
+export function isMachineReplacedError(error: unknown): error is MachineReplacedError {
+    if (!error || typeof error !== 'object') return false;
+    const maybe = error as Record<string, unknown>;
+    if (maybe.name !== 'MachineReplacedError' || !hasMachineId(error)) return false;
+    return error.machineId.length > 0 && typeof maybe.replacementMachineId === 'string' && maybe.replacementMachineId.length > 0;
 }
 
 export function isMachineContentPublicKeyMismatchError(error: unknown): error is MachineContentPublicKeyMismatchError {

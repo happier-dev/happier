@@ -1,4 +1,5 @@
-import { JsonlFollower } from './followJsonlFile';
+import { createJsonlFollowController } from './createJsonlFollowController';
+import type { JsonlFollowController } from './createJsonlFollowController';
 import type {
   FileBackedTranscriptPageResult,
   FileBackedTranscriptReadAfterResult,
@@ -39,9 +40,9 @@ class ProjectedJsonlSessionStore<TItem, TActivity, TPageParams, TReadAfterParams
   private previewPromise: Promise<TPreview> | null = null;
   private tailCursor: string | null = null;
   private readonly subscriptionListeners = new Set<FileBackedTranscriptSubscriptionListener<TItem>>();
-  private subscriptionFollower: JsonlFollower | null = null;
-  private subscriptionFollowerStartupPromise: Promise<void> | null = null;
-  private subscriptionFollowerStartupGeneration = 0;
+  private subscriptionController: JsonlFollowController | null = null;
+  private subscriptionControllerStartupPromise: Promise<void> | null = null;
+  private subscriptionControllerStartupGeneration = 0;
   private subscriptionCursor: string | null = null;
   private subscriptionDrainPromise: Promise<void> | null = null;
   private subscriptionDrainQueued = false;
@@ -165,62 +166,73 @@ class ProjectedJsonlSessionStore<TItem, TActivity, TPageParams, TReadAfterParams
   }
 
   private async ensureSubscriptionFollower(): Promise<void> {
-    if (this.subscriptionFollower || this.lifecycleState === 'disposed' || !this.shouldKeepSubscriptionFollower()) return;
-    if (this.subscriptionFollowerStartupPromise) {
-      await this.subscriptionFollowerStartupPromise;
+    if (this.subscriptionController || this.lifecycleState === 'disposed' || !this.shouldKeepSubscriptionFollower()) return;
+    if (this.subscriptionControllerStartupPromise) {
+      await this.subscriptionControllerStartupPromise;
       return;
     }
 
-    const startupGeneration = ++this.subscriptionFollowerStartupGeneration;
+    const startupGeneration = ++this.subscriptionControllerStartupGeneration;
     const startupPromise = (async () => {
       const resolved = await this.resolveFile();
       if (this.isSubscriptionFollowerStartupStale(startupGeneration) || !resolved?.filePath) return;
 
-      const follower = new JsonlFollower({
-        filePath: resolved.filePath,
-        pollIntervalMs: this.operations.followPollIntervalMs ?? 250,
-        startAtEnd: false,
-        onJson: async () => {
-          await this.queueSubscriptionDrain();
-        },
-      });
-      this.subscriptionFollower = follower;
-      const currentTailCursor = this.tailCursor;
-      if (currentTailCursor) {
-        this.subscriptionCursor = currentTailCursor;
-      } else {
-        const initial = await this.readAfter(undefined);
-        if (this.isSubscriptionFollowerStartupStale(startupGeneration)) {
-          this.subscriptionFollower = null;
-          return;
+      let controller: JsonlFollowController | null = null;
+      try {
+        controller = createJsonlFollowController({
+          filePath: resolved.filePath,
+          policy: this.operations.followPollIntervalMs
+            ? { activeBurstPollIntervalMs: this.operations.followPollIntervalMs }
+            : undefined,
+          startAtEnd: false,
+          onLine: async () => {
+            await this.queueSubscriptionDrain();
+          },
+        });
+        this.subscriptionController = controller;
+        const currentTailCursor = this.tailCursor;
+        if (currentTailCursor) {
+          this.subscriptionCursor = currentTailCursor;
+        } else {
+          const initial = await this.readAfter(undefined);
+          if (this.isSubscriptionFollowerStartupStale(startupGeneration)) {
+            this.subscriptionController = null;
+            return;
+          }
+          this.subscriptionCursor = initial.nextCursor ?? 'tail';
         }
-        this.subscriptionCursor = initial.nextCursor ?? 'tail';
-      }
-      await follower.start();
-      if (this.subscriptionFollower !== follower || this.isSubscriptionFollowerStartupStale(startupGeneration)) {
-        if (this.subscriptionFollower === follower) {
-          this.subscriptionFollower = null;
+        await controller.attach({ keepAlive: true });
+        if (this.subscriptionController !== controller || this.isSubscriptionFollowerStartupStale(startupGeneration)) {
+          if (this.subscriptionController === controller) {
+            this.subscriptionController = null;
+          }
+          await controller.dispose();
         }
-        await follower.stop();
+      } catch (error) {
+        if (this.subscriptionController === controller) {
+          this.subscriptionController = null;
+        }
+        await controller?.dispose().catch(() => undefined);
+        throw error;
       }
     })().finally(() => {
-      if (this.subscriptionFollowerStartupPromise === startupPromise) {
-        this.subscriptionFollowerStartupPromise = null;
+      if (this.subscriptionControllerStartupPromise === startupPromise) {
+        this.subscriptionControllerStartupPromise = null;
       }
     });
-    this.subscriptionFollowerStartupPromise = startupPromise;
+    this.subscriptionControllerStartupPromise = startupPromise;
     await startupPromise;
   }
 
   private async stopSubscriptionFollower(): Promise<void> {
-    this.subscriptionFollowerStartupGeneration += 1;
-    this.subscriptionFollowerStartupPromise = null;
-    const follower = this.subscriptionFollower;
-    this.subscriptionFollower = null;
+    this.subscriptionControllerStartupGeneration += 1;
+    this.subscriptionControllerStartupPromise = null;
+    const controller = this.subscriptionController;
+    this.subscriptionController = null;
     this.subscriptionCursor = null;
     this.subscriptionDrainPromise = null;
     this.subscriptionDrainQueued = false;
-    await follower?.stop();
+    await controller?.dispose();
   }
 
   private shouldKeepSubscriptionFollower(): boolean {
@@ -231,7 +243,7 @@ class ProjectedJsonlSessionStore<TItem, TActivity, TPageParams, TReadAfterParams
     return (
       this.lifecycleState === 'disposed'
       || !this.shouldKeepSubscriptionFollower()
-      || this.subscriptionFollowerStartupGeneration !== startupGeneration
+      || this.subscriptionControllerStartupGeneration !== startupGeneration
     );
   }
 

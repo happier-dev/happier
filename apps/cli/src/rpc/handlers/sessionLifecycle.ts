@@ -17,6 +17,8 @@ type SessionLifecycleActionId =
     | 'session.continue_with_replay'
     | 'session.rollback'
     | 'session.checkpoint_code_rollback'
+    | 'session.checkpoint'
+    | 'session.restore'
     | 'session.handoff'
     | 'session.handoff.prepare_target'
     | 'session.handoff.prepare_target_result.get'

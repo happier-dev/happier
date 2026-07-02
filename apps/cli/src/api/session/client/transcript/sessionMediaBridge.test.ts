@@ -1,15 +1,18 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 import {
+    garbageCollectFailedSessionMediaCommit,
     persistSessionMediaForTranscript,
     type SessionMediaBridgeInput,
+    type SessionMediaBridgePersistResult,
 } from './sessionMediaBridge';
 
 const pngBytes = Buffer.from(
@@ -261,6 +264,172 @@ describe('session media bridge', () => {
         } finally {
             await rm(workingDirectory, { recursive: true, force: true });
             await rm(providerDirectory, { recursive: true, force: true });
+        }
+    });
+
+    it('garbage-collects newly created paths after a failed durable media commit', async () => {
+        const workingDirectory = await createWorkspace();
+        const existingReferencedPath = '.happier/uploads/generated/session-1/existing-row/referenced.png';
+
+        try {
+            await mkdir(dirname(resolve(workingDirectory, existingReferencedPath)), { recursive: true });
+            await writeFile(resolve(workingDirectory, existingReferencedPath), pngBytes);
+
+            const persisted = await persistSessionMediaForTranscript({
+                sessionId: 'session-1',
+                workingDirectory,
+                request: {
+                    localId: 'rejected-row',
+                    role: 'output',
+                    category: 'generated',
+                    media: [{
+                        source: {
+                            kind: 'base64',
+                            data: pngBytes.toString('base64'),
+                            mimeType: 'image/png',
+                            fileNameHint: 'generated.png',
+                        },
+                        origin: { source: 'provider-generated' },
+                    }],
+                },
+            });
+
+            expect(persisted.createdWorkspaceRelativePaths).toHaveLength(1);
+            const createdPath = persisted.createdWorkspaceRelativePaths[0]!;
+
+            await garbageCollectFailedSessionMediaCommit({ workingDirectory, persisted });
+
+            await expect(stat(resolve(workingDirectory, createdPath))).rejects.toMatchObject({ code: 'ENOENT' });
+            await expect(readFile(resolve(workingDirectory, existingReferencedPath))).resolves.toEqual(pngBytes);
+        } finally {
+            await rm(workingDirectory, { recursive: true, force: true });
+        }
+    });
+
+    it('does not propagate failed durable media commit cleanup errors', async () => {
+        const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-gc-unreadable-'));
+        const nonDirectory = join(workingDirectory, 'not-a-directory');
+        const logger = { debug: vi.fn() };
+        const persisted: SessionMediaBridgePersistResult = {
+            success: true,
+            items: [],
+            createdWorkspaceRelativePaths: ['.happier/uploads/generated/session-1/rejected-row/generated.png'],
+            failures: [],
+            meta: {},
+        };
+
+        try {
+            await writeFile(nonDirectory, 'not a directory');
+
+            await expect(garbageCollectFailedSessionMediaCommit({
+                workingDirectory: nonDirectory,
+                persisted,
+                logger,
+            })).resolves.toBeNull();
+            expect(logger.debug).toHaveBeenCalledOnce();
+        } finally {
+            await rm(workingDirectory, { recursive: true, force: true });
+        }
+    });
+
+    it('garbage-collects newly created paths when ingestion is interrupted after a partial write', async () => {
+        const workingDirectory = await createWorkspace();
+        const existingReferencedPath = '.happier/uploads/generated/session-1/existing-row/referenced.png';
+        const writtenHashPrefix = createHash('sha256').update(pngBytes).digest('hex').slice(0, 12);
+        const interruptedCreatedPath = `.happier/uploads/generated/session-1/interrupted-row/${writtenHashPrefix}-generated.png`;
+        const abortError = new Error('ingestion aborted');
+
+        try {
+            await mkdir(dirname(resolve(workingDirectory, existingReferencedPath)), { recursive: true });
+            await writeFile(resolve(workingDirectory, existingReferencedPath), pngBytes);
+
+            await expect(persistSessionMediaForTranscript({
+                sessionId: 'session-1',
+                workingDirectory,
+                providerFileDownloader: async () => {
+                    throw abortError;
+                },
+                request: {
+                    localId: 'interrupted-row',
+                    role: 'output',
+                    category: 'generated',
+                    media: [
+                        {
+                            source: {
+                                kind: 'base64',
+                                data: pngBytes.toString('base64'),
+                                mimeType: 'image/png',
+                                fileNameHint: 'generated.png',
+                            },
+                            origin: { source: 'provider-generated' },
+                        },
+                        {
+                            source: {
+                                kind: 'provider-file',
+                                providerFileId: 'provider-file-after-partial-write',
+                                mimeType: 'image/png',
+                                fileNameHint: 'provider.png',
+                            },
+                            origin: { source: 'provider-generated' },
+                        },
+                    ],
+                },
+            })).rejects.toBe(abortError);
+
+            await expect(stat(resolve(workingDirectory, interruptedCreatedPath))).rejects.toMatchObject({ code: 'ENOENT' });
+            await expect(readFile(resolve(workingDirectory, existingReferencedPath))).resolves.toEqual(pngBytes);
+        } finally {
+            await rm(workingDirectory, { recursive: true, force: true });
+        }
+    });
+
+    it('rethrows the interrupted ingestion error when cleanup logging fails', async () => {
+        const workingDirectory = await createWorkspace();
+        const abortError = new Error('ingestion aborted');
+        const logger = {
+            debug: () => {
+                throw new Error('logger failed');
+            },
+        };
+
+        try {
+            await expect(persistSessionMediaForTranscript({
+                sessionId: 'session-1',
+                workingDirectory,
+                logger,
+                providerFileDownloader: async () => {
+                    await rm(workingDirectory, { recursive: true, force: true });
+                    await writeFile(workingDirectory, 'not a directory');
+                    throw abortError;
+                },
+                request: {
+                    localId: 'interrupted-row',
+                    role: 'output',
+                    category: 'generated',
+                    media: [
+                        {
+                            source: {
+                                kind: 'base64',
+                                data: pngBytes.toString('base64'),
+                                mimeType: 'image/png',
+                                fileNameHint: 'generated.png',
+                            },
+                            origin: { source: 'provider-generated' },
+                        },
+                        {
+                            source: {
+                                kind: 'provider-file',
+                                providerFileId: 'provider-file-after-partial-write',
+                                mimeType: 'image/png',
+                                fileNameHint: 'provider.png',
+                            },
+                            origin: { source: 'provider-generated' },
+                        },
+                    ],
+                },
+            })).rejects.toBe(abortError);
+        } finally {
+            await rm(workingDirectory, { recursive: true, force: true });
         }
     });
 

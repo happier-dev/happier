@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TransportDisconnectEvent } from '@happier-dev/connection-supervisor';
 import axios from 'axios';
 import { HttpStatusError } from '@/api/client/httpStatusError';
-import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import {
+    bindApiSessionSocketMock,
+    bindApiSessionSocketSequenceMock,
+    createApiSessionSocketStub,
+} from '@/testkit/backends/apiSessionSocketHarness';
 
 const { mockIo } = vi.hoisted(() => ({
     mockIo: vi.fn(),
@@ -102,12 +106,84 @@ describe('createSessionSocketTransport', () => {
         const { createSessionSocketTransport } = await import('./createSessionSocketTransport');
         const { transport } = createSessionSocketTransport({
             token: 'token-1',
-            sessionId: 'session-1',
-            machineId: 'machine-1',
+            sessionId: 'session-auth-failure',
+            machineId: 'machine-auth-failure',
             serverUrl: 'http://127.0.0.1:4321',
         });
 
         await expect(transport.connect()).rejects.toBeInstanceOf(HttpStatusError);
         expect(socket.connect).not.toHaveBeenCalled();
+    });
+
+    it('coalesces concurrent access-key bootstrap requests for the same machine-bound session', async () => {
+        const socket1 = createApiSessionSocketStub({ id: 'socket-concurrent-1' });
+        const socket2 = createApiSessionSocketStub({ id: 'socket-concurrent-2' });
+        bindApiSessionSocketSequenceMock(mockIo, [socket1, socket2]);
+        vi.mocked(axios.get).mockReset();
+        vi.mocked(axios.post).mockReset();
+
+        let resolveAccessKey: (value: unknown) => void = () => {};
+        vi.mocked(axios.get).mockImplementation(
+            () => new Promise((resolve) => {
+                resolveAccessKey = resolve;
+            }) as never,
+        );
+
+        const { createSessionSocketTransport } = await import('./createSessionSocketTransport');
+        const first = createSessionSocketTransport({
+            token: 'token-1',
+            sessionId: 'session-concurrent-bootstrap',
+            machineId: 'machine-concurrent-bootstrap',
+            serverUrl: 'http://127.0.0.1:4321',
+        });
+        const second = createSessionSocketTransport({
+            token: 'token-1',
+            sessionId: 'session-concurrent-bootstrap',
+            machineId: 'machine-concurrent-bootstrap',
+            serverUrl: 'http://127.0.0.1:4321',
+        });
+
+        const firstConnect = first.transport.connect();
+        const secondConnect = second.transport.connect();
+        await Promise.resolve();
+
+        expect(axios.get).toHaveBeenCalledTimes(1);
+        resolveAccessKey({ status: 200, data: { accessKey: { id: 'existing-key' } } });
+        await Promise.all([firstConnect, secondConnect]);
+
+        expect(axios.post).not.toHaveBeenCalled();
+        expect(socket1.connect).toHaveBeenCalledTimes(1);
+        expect(socket2.connect).toHaveBeenCalledTimes(1);
+    });
+
+    it('reuses a recent successful access-key bootstrap for the same machine-bound session', async () => {
+        const socket1 = createApiSessionSocketStub({ id: 'socket-recent-1' });
+        const socket2 = createApiSessionSocketStub({ id: 'socket-recent-2' });
+        bindApiSessionSocketSequenceMock(mockIo, [socket1, socket2]);
+        vi.mocked(axios.get).mockReset();
+        vi.mocked(axios.post).mockReset();
+        vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { accessKey: { id: 'existing-key' } } } as never);
+
+        const { createSessionSocketTransport } = await import('./createSessionSocketTransport');
+        const first = createSessionSocketTransport({
+            token: 'token-1',
+            sessionId: 'session-recent-bootstrap',
+            machineId: 'machine-recent-bootstrap',
+            serverUrl: 'http://127.0.0.1:4321',
+        });
+        const second = createSessionSocketTransport({
+            token: 'token-1',
+            sessionId: 'session-recent-bootstrap',
+            machineId: 'machine-recent-bootstrap',
+            serverUrl: 'http://127.0.0.1:4321',
+        });
+
+        await first.transport.connect();
+        await second.transport.connect();
+
+        expect(axios.get).toHaveBeenCalledTimes(1);
+        expect(axios.post).not.toHaveBeenCalled();
+        expect(socket1.connect).toHaveBeenCalledTimes(1);
+        expect(socket2.connect).toHaveBeenCalledTimes(1);
     });
 });

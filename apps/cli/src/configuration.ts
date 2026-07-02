@@ -26,6 +26,14 @@ export const DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS = 100_000_000;
 export const DEFAULT_EXECUTION_RUN_WAIT_MCP_TIMEOUT_GRACE_MS = 60_000;
 const MAX_SAFE_NODE_TIMEOUT_MS = 2_147_000_000;
 
+export type ShellBridgeContextEnvMode = 'off' | 'home' | 'full';
+
+function resolveShellBridgeContextEnvMode(env: NodeJS.ProcessEnv): ShellBridgeContextEnvMode {
+  const raw = String(env.HAPPIER_SHELL_BRIDGE_CONTEXT_ENV ?? '').trim().toLowerCase();
+  if (raw === 'home' || raw === 'full') return raw;
+  return 'off';
+}
+
 /**
  * Workspace replication job status heartbeat interval.
  *
@@ -120,6 +128,10 @@ class Configuration {
 
   // Pending queue V2: idle wake polling (ensures queued prompts are materialized even if socket wakeups are missed).
   public readonly pendingQueueIdleWakePollIntervalMs: number
+  public readonly pendingQueueStateReconcileThrottleMs: number
+  public readonly sessionSocketStaleSafetyIntervalMs: number
+  public readonly promptLoopUserMessageSeqWaitTimeoutMs: number
+  public readonly promptLoopUserMessageSeqWaitPollMs: number
 
   // Codex app-server terminal notification settle time (allows slightly late item notifications to land before flushing).
   public readonly codexAppServerTurnCompletionSettleMs: number
@@ -143,7 +155,7 @@ class Configuration {
   public readonly transcriptRecoveryErrorLogThrottleMs: number
 
   // Startup transcript catch-up (avoids missing early prompts; prevents replaying entire history into the agent queue).
-  public readonly startupTranscriptCatchUpLookbackMs: number
+  public readonly startupTranscriptCatchUpSeqRewind: number
 
   // Claude remote TaskOutput sidechain import limits (defense-in-depth against huge transcripts).
   public readonly claudeTaskOutputMaxPendingPerAgent: number
@@ -222,6 +234,8 @@ class Configuration {
   public readonly startupDeferredSessionBufferMaxBytes: number
   public readonly startupPermissionSeedTranscriptTake: number
   public readonly startupOverridesCacheMaxAgeMs: number
+  // Shell-bridge command context env policy (default: off).
+  public readonly shellBridgeContextEnvMode: ShellBridgeContextEnvMode
 
   constructor() {
     // Check if we're running as daemon based on process args
@@ -262,6 +276,7 @@ class Configuration {
     this.activeServerId = sanitizeServerIdForFilesystem(resolved.activeServerId, 'cloud')
 
     this.activeServerDir = join(this.serversDir, this.activeServerId)
+    this.shellBridgeContextEnvMode = resolveShellBridgeContextEnvMode(process.env)
     this.legacyPrivateKeyFile = join(this.happyHomeDir, 'access.key')
     this.privateKeyFile = join(this.activeServerDir, 'access.key')
     this.installationIdentityFile = join(this.happyHomeDir, 'installation-identity.json')
@@ -452,13 +467,33 @@ class Configuration {
 
     const pendingWakeRaw = String(process.env.HAPPIER_PENDING_QUEUE_IDLE_WAKE_POLL_INTERVAL_MS ?? '').trim();
     const pendingWakeMs = Number.parseInt(pendingWakeRaw, 10);
-    // Default: 1s. Set to 0 to disable.
+    // Default: slow defensive wake only. Real pending queue wakeups should arrive
+    // via server pending-changed updates and reconnect catch-up.
     this.pendingQueueIdleWakePollIntervalMs =
       pendingWakeRaw === '0'
         ? 0
         : (Number.isFinite(pendingWakeMs) && pendingWakeMs >= 50
             ? Math.min(pendingWakeMs, 60_000)
-            : 1_000);
+            : 30_000);
+
+    this.pendingQueueStateReconcileThrottleMs = resolveIntEnvWithBounds(
+      'HAPPIER_PENDING_QUEUE_STATE_RECONCILE_THROTTLE_MS',
+      { min: 1_000, max: 60_000, default: 15_000 },
+    );
+
+    this.sessionSocketStaleSafetyIntervalMs = resolveIntEnvWithBounds(
+      'HAPPIER_SESSION_SOCKET_STALE_SAFETY_INTERVAL_MS',
+      { min: 1_000, max: 10 * 60_000, default: 30_000 },
+    );
+
+    this.promptLoopUserMessageSeqWaitTimeoutMs = resolveIntEnvWithBounds(
+      'HAPPIER_PROMPT_LOOP_USER_MESSAGE_SEQ_WAIT_TIMEOUT_MS',
+      { min: 0, max: 10_000, default: 1_000 },
+    );
+    this.promptLoopUserMessageSeqWaitPollMs = resolveIntEnvWithBounds(
+      'HAPPIER_PROMPT_LOOP_USER_MESSAGE_SEQ_WAIT_POLL_MS',
+      { min: 1, max: 1_000, default: 20 },
+    );
 
     this.codexAppServerTurnCompletionSettleMs = resolveIntEnvWithBounds(
       'HAPPIER_CODEX_APP_SERVER_TURN_COMPLETION_SETTLE_MS',
@@ -568,9 +603,9 @@ class Configuration {
       { min: 0, default: 5_000 },
     );
 
-    this.startupTranscriptCatchUpLookbackMs = resolveIntEnvWithBounds(
-      'HAPPIER_STARTUP_TRANSCRIPT_CATCH_UP_LOOKBACK_MS',
-      { min: 0, default: 60_000 },
+    this.startupTranscriptCatchUpSeqRewind = resolveIntEnvWithBounds(
+      'HAPPIER_STARTUP_TRANSCRIPT_CATCH_UP_SEQ_REWIND',
+      { min: 0, default: 1, max: 1000 },
     );
 
     this.claudeTaskOutputMaxPendingPerAgent = resolveIntEnvWithBounds(
