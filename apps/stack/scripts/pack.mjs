@@ -10,6 +10,9 @@ import { runCapture } from './utils/proc/proc.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
 
 const VALID_TARGETS = ['cli', 'server', 'ui'];
+const INTERNAL_PACKAGE_PREFIX = '@happier-dev/';
+const EXTENSIONS_PACKAGE_PREFIX = '@happier-dev/extensions-';
+const PLUGINS_PACKAGE_PREFIX = '@happier-dev/plugins-';
 
 function targetFromLegacyComponent(component) {
   const c = String(component ?? '').trim();
@@ -44,6 +47,107 @@ async function readJson(path) {
   return JSON.parse(await readFile(path, 'utf8'));
 }
 
+function readBundledDependencyNames(rawPackageJson) {
+  const bundledDependencies = Array.isArray(rawPackageJson?.bundledDependencies)
+    ? rawPackageJson.bundledDependencies
+    : Array.isArray(rawPackageJson?.bundleDependencies)
+      ? rawPackageJson.bundleDependencies
+      : [];
+
+  return bundledDependencies
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter((value) => value.length > 0);
+}
+
+function readBundledInternalWorkspacePackageNames(rawPackageJson) {
+  return readBundledDependencyNames(rawPackageJson)
+    .filter((packageName) => packageName.startsWith(INTERNAL_PACKAGE_PREFIX));
+}
+
+function collectInternalRuntimeWorkspaceDepNames(rawPackageJson) {
+  const result = new Set();
+  for (const deps of [rawPackageJson?.dependencies, rawPackageJson?.optionalDependencies]) {
+    if (!deps || typeof deps !== 'object' || Array.isArray(deps)) continue;
+    for (const packageName of Object.keys(deps)) {
+      if (packageName.startsWith(INTERNAL_PACKAGE_PREFIX)) {
+        result.add(packageName);
+      }
+    }
+  }
+  return [...result].sort((left, right) => left.localeCompare(right));
+}
+
+export function resolveInternalWorkspaceRelDir(packageName) {
+  const normalizedPackageName = String(packageName ?? '').trim();
+  if (!normalizedPackageName.startsWith(INTERNAL_PACKAGE_PREFIX)) {
+    return null;
+  }
+  if (normalizedPackageName.startsWith(EXTENSIONS_PACKAGE_PREFIX)) {
+    return `packages/extensions/${normalizedPackageName.slice(EXTENSIONS_PACKAGE_PREFIX.length)}`;
+  }
+  if (normalizedPackageName.startsWith(PLUGINS_PACKAGE_PREFIX)) {
+    return `packages/plugins/${normalizedPackageName.slice(PLUGINS_PACKAGE_PREFIX.length)}`;
+  }
+
+  const workspaceName = normalizedPackageName.split('/').at(-1);
+  return workspaceName ? `packages/${workspaceName}` : null;
+}
+
+async function resolveBundledInternalWorkspacePackageNameClosure({ monorepoRoot, packageNames }) {
+  const visited = new Set();
+
+  async function visit(packageName) {
+    const normalizedPackageName = String(packageName ?? '').trim();
+    if (!normalizedPackageName.startsWith(INTERNAL_PACKAGE_PREFIX) || visited.has(normalizedPackageName)) {
+      return;
+    }
+    visited.add(normalizedPackageName);
+
+    const workspaceRelDir = resolveInternalWorkspaceRelDir(normalizedPackageName);
+    if (!workspaceRelDir) return;
+    const packageJsonPath = join(monorepoRoot, workspaceRelDir, 'package.json');
+    if (!(await pathExists(packageJsonPath))) return;
+
+    const workspacePackageJson = await readJson(packageJsonPath);
+    for (const dependencyName of collectInternalRuntimeWorkspaceDepNames(workspacePackageJson)) {
+      await visit(dependencyName);
+    }
+  }
+
+  for (const packageName of packageNames) {
+    await visit(packageName);
+  }
+
+  return [...visited].sort((left, right) => left.localeCompare(right));
+}
+
+export async function resolvePackSandboxWorkspaceRelDirs({ monorepoRoot, packageRelDir }) {
+  const packageJson = await readJson(join(monorepoRoot, packageRelDir, 'package.json'));
+  const workspaceRelDirs = new Set([packageRelDir]);
+  const bundledPackageNames = readBundledInternalWorkspacePackageNames(packageJson);
+  const bundledPackageNameSet = new Set(bundledPackageNames);
+  const bundledPackageNameClosure = await resolveBundledInternalWorkspacePackageNameClosure({
+    monorepoRoot,
+    packageNames: bundledPackageNames,
+  });
+  const missingClosureNames = bundledPackageNameClosure.filter((packageName) => !bundledPackageNameSet.has(packageName));
+  if (missingClosureNames.length > 0) {
+    throw new Error(
+      [
+        `[pack] Missing bundled internal workspace dependencies in ${join(monorepoRoot, packageRelDir, 'package.json')}:`,
+        ...missingClosureNames.map((packageName) => `- ${packageName}`),
+      ].join('\n'),
+    );
+  }
+
+  for (const packageName of bundledPackageNameClosure) {
+    const workspaceRelDir = resolveInternalWorkspaceRelDir(packageName);
+    if (workspaceRelDir) workspaceRelDirs.add(workspaceRelDir);
+  }
+
+  return [...workspaceRelDirs].sort((left, right) => left.localeCompare(right));
+}
+
 export async function resolvePackDirForComponent({ component, componentDir, explicitDir }) {
   if (explicitDir) return explicitDir;
 
@@ -74,7 +178,7 @@ async function copyDir(src, dest) {
   await runCapture('cp', ['-R', src, dest], { cwd: '/', env: process.env });
 }
 
-async function createPackSandbox({ monorepoRoot, packageRelDir }) {
+export async function createPackSandbox({ monorepoRoot, packageRelDir }) {
   const sandboxRoot = await mkdtemp(join(tmpdir(), 'hstack-pack-'));
 
   // Minimal monorepo layout needed for pack steps that reference workspace deps:
@@ -89,12 +193,7 @@ async function createPackSandbox({ monorepoRoot, packageRelDir }) {
     await copyDir(join(monorepoRoot, f), join(sandboxRoot, f));
   }
 
-  const dirsToCopy = [
-    packageRelDir,
-    'packages/agents',
-    'packages/cli-common',
-    'packages/protocol',
-  ];
+  const dirsToCopy = await resolvePackSandboxWorkspaceRelDirs({ monorepoRoot, packageRelDir });
   for (const d of dirsToCopy) {
     const src = join(monorepoRoot, d);
     if (!(await pathExists(src))) {
@@ -113,6 +212,31 @@ export function analyzeTarList(paths) {
   const hasCliCommon = paths.some((p) => p.startsWith('package/node_modules/@happier-dev/cli-common/'));
   const hasProtocol = paths.some((p) => p.startsWith('package/node_modules/@happier-dev/protocol/'));
   return { hasAgents, hasCliCommon, hasProtocol };
+}
+
+export function analyzeBundledWorkspaceTarList(paths, bundledDependencyNames) {
+  const internalNames = readBundledDependencyNames({ bundledDependencies: bundledDependencyNames })
+    .filter((packageName) => packageName.startsWith(INTERNAL_PACKAGE_PREFIX));
+  const present = {};
+  const missing = [];
+
+  for (const packageName of internalNames) {
+    const packagePathPrefix = `package/node_modules/${packageName}/`;
+    const isPresent = paths.some((p) => p.startsWith(packagePathPrefix));
+    present[packageName] = isPresent;
+    if (!isPresent) missing.push(packageName);
+  }
+
+  return {
+    ok: missing.length === 0,
+    present,
+    missing,
+  };
+}
+
+export function assertBundledWorkspaceTarballComplete({ enforce, analysis }) {
+  if (!enforce || analysis.ok) return;
+  throw new Error(`[pack] missing bundled deps in tarball: ${analysis.missing.join(', ')}`);
 }
 
 async function main() {
@@ -202,16 +326,25 @@ async function main() {
     const tarListRaw = await runCapture('tar', ['-tf', tarballPath], { cwd: sandboxPackDir, env: process.env });
     const tarPaths = tarListRaw.split('\n').map((l) => l.trim()).filter(Boolean);
     const { hasAgents, hasCliCommon, hasProtocol } = analyzeTarList(tarPaths);
+    const packPackageJson = await readJson(join(sandboxPackDir, 'package.json'));
+    const bundledWorkspaceAnalysis = analyzeBundledWorkspaceTarList(
+      tarPaths,
+      readBundledDependencyNames(packPackageJson),
+    );
 
-    // Only enforce bundled deps for CLI by default; other packages may intentionally not bundle.
-    const shouldEnforceBundledDeps = target === 'cli';
-    const ok = shouldEnforceBundledDeps ? hasAgents && hasCliCommon && hasProtocol : true;
+    const shouldEnforceBundledDeps = readBundledInternalWorkspacePackageNames(packPackageJson).length > 0;
+    const ok = shouldEnforceBundledDeps ? bundledWorkspaceAnalysis.ok : true;
+    assertBundledWorkspaceTarballComplete({
+      enforce: shouldEnforceBundledDeps,
+      analysis: bundledWorkspaceAnalysis,
+    });
     const data = {
       ok,
       packDir,
       sandboxRoot,
       tarball: { name: basename(tarballPath) },
       bundled: { agents: hasAgents, cliCommon: hasCliCommon, protocol: hasProtocol },
+      bundledWorkspaces: bundledWorkspaceAnalysis,
       enforcement: { bundledDeps: shouldEnforceBundledDeps },
       dryRun: { ok: true, output: json ? undefined : dryRunOut },
     };
@@ -225,12 +358,19 @@ async function main() {
       `[pack] dir: ${packDir}`,
       `[pack] tarball: ${basename(tarballPath)} (generated in a temp sandbox)`,
       `[pack] bundledDependencies (best-effort):`,
-      `- @happier-dev/agents:   ${hasAgents ? '✅ present' : shouldEnforceBundledDeps ? '❌ missing' : '↪ not required'}`,
-      `- @happier-dev/cli-common: ${hasCliCommon ? '✅ present' : shouldEnforceBundledDeps ? '❌ missing' : '↪ not required'}`,
-      `- @happier-dev/protocol: ${hasProtocol ? '✅ present' : shouldEnforceBundledDeps ? '❌ missing' : '↪ not required'}`,
     ];
+    for (const [packageName, isPresent] of Object.entries(bundledWorkspaceAnalysis.present)) {
+      lines.push(`- ${packageName}: ${isPresent ? 'present' : 'missing'}`);
+    }
+    if (!Object.keys(bundledWorkspaceAnalysis.present).length) {
+      lines.push('- no internal bundled workspaces required');
+    }
     if (!ok) {
-      lines.push('', '[pack] NOTE: missing bundled deps in tarball; publish would likely break for npm consumers.');
+      lines.push(
+        '',
+        `[pack] NOTE: missing bundled deps in tarball: ${bundledWorkspaceAnalysis.missing.join(', ')}`,
+        '[pack] publish would likely break for npm consumers.',
+      );
     }
     // eslint-disable-next-line no-console
     console.log(lines.join('\n'));

@@ -174,6 +174,7 @@ export async function syncStackRuntimeDaemonPidFromDaemonState(
     recordStackRuntimeUpdateImpl = recordStackRuntimeUpdate,
   } = {},
 ) {
+  const shouldUpdateFingerprint = Object.prototype.hasOwnProperty.call(arguments[0] ?? {}, 'daemonDistFingerprint');
   const observed = getObservedStackDaemon(
     {
       cliHomeDir,
@@ -187,14 +188,22 @@ export async function syncStackRuntimeDaemonPidFromDaemonState(
     },
   );
 
+  const recordOptions = {
+    readStackRuntimeStateFileImpl,
+    recordStackRuntimeUpdateImpl,
+  };
+  if (observed.running) {
+    if (shouldUpdateFingerprint) {
+      recordOptions.daemonDistFingerprint = daemonDistFingerprint;
+    }
+  } else {
+    recordOptions.daemonDistFingerprint = null;
+  }
+
   const recorded = await recordStackRuntimeDaemonPid(
     runtimeStatePath,
     observed.running ? observed.pid : null,
-    {
-      daemonDistFingerprint: observed.running ? daemonDistFingerprint : null,
-      readStackRuntimeStateFileImpl,
-      recordStackRuntimeUpdateImpl,
-    },
+    recordOptions,
   );
 
   return {

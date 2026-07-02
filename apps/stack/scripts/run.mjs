@@ -220,7 +220,9 @@ async function main() {
 
   if (!runtimeSnapshot) {
     await requireDir(serverComponentName, serverDir);
-    await requireDir('happier-cli', cliDir);
+    if (startDaemon) {
+      await requireDir('happier-cli', cliDir);
+    }
   }
   if (startMobile) {
     await requireDir('happier-ui', uiDir);
@@ -274,7 +276,7 @@ async function main() {
 
   // Ensure happier-cli is install+build ready before starting the daemon.
   const buildCli = (baseEnv.HAPPIER_STACK_CLI_BUILD ?? '1').toString().trim() !== '0';
-  if (!runtimeSnapshot) {
+  if (!runtimeSnapshot && startDaemon) {
     await ensureCliBuilt(cliDir, { buildCli });
   }
 

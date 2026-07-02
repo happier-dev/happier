@@ -150,6 +150,7 @@ export async function expoExec({
   const effectiveEnv = applyExpoNodeHeapEnv(env, {
     envKey: 'HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB',
   });
+  effectiveEnv.EXPO_UNSTABLE_WEB_MODAL = '1';
   const effectiveArgs = applyExpoExportMaxWorkersArgs(args, effectiveEnv);
   await run(expoBin, effectiveArgs, { cwd, env: effectiveEnv, stdio: quiet ? 'ignore' : 'inherit' });
 }
@@ -187,6 +188,7 @@ export async function expoSpawn({
   const effectiveEnv = applyExpoNodeHeapEnv(env, {
     envKey: 'HAPPIER_STACK_EXPO_MAX_OLD_SPACE_SIZE_MB',
   });
+  effectiveEnv.EXPO_UNSTABLE_WEB_MODAL = '1';
   const effectiveArgs = applyExpoExportMaxWorkersArgs(args, effectiveEnv);
   return spawnProc(label, expoBin, effectiveArgs, effectiveEnv, { cwd, ...(options ?? {}) });
 }

@@ -1,4 +1,8 @@
 import { join } from 'node:path';
+import {
+  renderPrismaCompatibleSqliteDatabaseUrl,
+  resolvePrismaSqliteDatabaseUrlOptionsFromEnv,
+} from '@happier-dev/cli-common/firstPartyRuntime';
 
 function firstNonEmpty(...values) {
   for (const value of values) {
@@ -12,7 +16,14 @@ export function applyRuntimeServerLightSqliteEnv({ env, serverDir }) {
   const dataDir = firstNonEmpty(env.HAPPIER_SERVER_LIGHT_DATA_DIR, env.HAPPY_SERVER_LIGHT_DATA_DIR);
   if (!dataDir) return;
 
-  const databaseUrl = firstNonEmpty(env.DATABASE_URL, `file:${join(dataDir, 'happier-server-light.sqlite')}`);
+  const databaseUrl = firstNonEmpty(
+    env.DATABASE_URL,
+    renderPrismaCompatibleSqliteDatabaseUrl({
+      dbPath: join(dataDir, 'happier-server-light.sqlite'),
+      platform: process.platform,
+      sqlite: resolvePrismaSqliteDatabaseUrlOptionsFromEnv(env),
+    }),
+  );
   const migrationsDir = join(serverDir, 'prisma', 'sqlite', 'migrations');
 
   env.DATABASE_URL = databaseUrl;

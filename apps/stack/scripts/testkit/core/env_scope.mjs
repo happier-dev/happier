@@ -25,6 +25,7 @@ export function buildStackFixtureEnv({
     ...(sandboxDir ? { HAPPIER_STACK_SANDBOX_DIR: sandboxDir } : {}),
     ...(stackName ? { HAPPIER_STACK_STACK: stackName } : {}),
     ...(envPath ? { HAPPIER_STACK_ENV_FILE: envPath } : {}),
+    ...(stripStackEnv ? { HAPPIER_STACK_CLI_ROOT_DISABLE: '1' } : {}),
     ...extraEnv,
   });
 }

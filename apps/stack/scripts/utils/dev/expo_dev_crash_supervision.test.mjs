@@ -46,6 +46,7 @@ test('ensureDevExpoServer restarts Expo after a Node heap OOM abort', async () =
     await writeFile(join(uiDir, 'package.json'), JSON.stringify({ name: 'fake-ui', private: true }) + '\n', 'utf-8');
 
     const runCountPath = join(tmp, 'expo-runs.txt');
+    const argsPath = join(tmp, 'expo-args.txt');
     const expoBin = join(uiDir, 'node_modules', '.bin', 'expo');
     await writeFile(
       expoBin,
@@ -53,8 +54,10 @@ test('ensureDevExpoServer restarts Expo after a Node heap OOM abort', async () =
         '#!/usr/bin/env node',
         "const fs = require('fs');",
         "const runCountPath = process.env.FAKE_EXPO_RUN_COUNT_PATH;",
+        "const argsPath = process.env.FAKE_EXPO_ARGS_PATH;",
         "const current = Number(fs.existsSync(runCountPath) ? fs.readFileSync(runCountPath, 'utf8').trim() : '0') + 1;",
         "fs.writeFileSync(runCountPath, String(current));",
+        "fs.appendFileSync(argsPath, JSON.stringify(process.argv.slice(2)) + '\\n');",
         "if (current === 1) {",
         "  console.error('FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory');",
         "  process.kill(process.pid, 'SIGABRT');",
@@ -75,6 +78,8 @@ test('ensureDevExpoServer restarts Expo after a Node heap OOM abort', async () =
       baseEnv: {
         ...process.env,
         FAKE_EXPO_RUN_COUNT_PATH: runCountPath,
+        FAKE_EXPO_ARGS_PATH: argsPath,
+        HAPPIER_STACK_EXPO_CLEAR_CACHE: '0',
         HAPPIER_STACK_EXPO_DEV_PORT: '45678',
         HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'stable',
         HAPPIER_STACK_EXPO_RESTART_BASE_DELAY_MS: '10',
@@ -98,6 +103,13 @@ test('ensureDevExpoServer restarts Expo after a Node heap OOM abort', async () =
     assert.equal(result.port, 45678);
 
     await waitForCondition(async () => (await readRunCount(runCountPath)) >= 2);
+    const spawnedArgs = (await readFile(argsPath, 'utf-8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.equal(spawnedArgs.length, 2);
+    assert.equal(spawnedArgs[0].includes('--clear'), false);
+    assert.equal(spawnedArgs[1].includes('--clear'), true);
     assert.equal(children.length, 2);
     assert.equal(children[0].signalCode, 'SIGABRT');
     assert.equal(children[1].exitCode, null);

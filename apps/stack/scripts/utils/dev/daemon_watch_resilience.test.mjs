@@ -101,6 +101,52 @@ test('watch retries restart when a pending change arrives during a failed restar
   assert.equal(restartCalls, 2);
 });
 
+test('watch rebuilds and restarts again when a source change arrives during a successful build', async () => {
+  let capturedOnChange = null;
+  let restartCalls = 0;
+  let buildCalls = 0;
+
+  const watcher = watchHappyCliAndRestartDaemon(
+    {
+      enabled: true,
+      startDaemon: true,
+      buildCli: true,
+      cliDir: '/tmp/happy-cli',
+      cliBin: '/tmp/happy-cli/bin/happier.mjs',
+      cliHomeDir: '/tmp/happy-cli-home',
+      internalServerUrl: 'http://127.0.0.1:3009',
+      publicServerUrl: 'http://localhost:3009',
+      isShuttingDown: () => false,
+    },
+    {
+      watchDebouncedImpl: ({ onChange }) => {
+        capturedOnChange = onChange;
+        return { close() {} };
+      },
+      ensureCliBuiltImpl: async () => {
+        buildCalls += 1;
+        if (buildCalls === 1) {
+          await capturedOnChange({ eventType: 'change', filename: 'second-change.ts' });
+        }
+        return { built: true, reason: 'test' };
+      },
+      startLocalDaemonWithAuthImpl: async () => {
+        restartCalls += 1;
+      },
+      existsSyncImpl: () => true,
+      logger: { log() {}, warn() {}, error() {} },
+    }
+  );
+
+  assert.ok(watcher);
+  assert.equal(typeof capturedOnChange, 'function');
+
+  await capturedOnChange({ eventType: 'change', filename: 'first-change.ts' });
+
+  assert.equal(buildCalls, 2);
+  assert.equal(restartCalls, 2);
+});
+
 test('startDevDaemon forwards stack context to daemon startup', async () => {
   let capturedArgs = null;
 
@@ -168,9 +214,69 @@ test('watch forwards stack context to daemon restart', async () => {
   await capturedOnChange({ eventType: 'change', filename: 'foo.ts' });
 
   assert.ok(restartArgs);
+  assert.equal(restartArgs.forceRestart, false);
   assert.equal(restartArgs.stackName, 'dev');
   assert.equal(restartArgs.cliIdentity, 'reviewer');
   assert.equal(restartArgs.env?.TEST_ENV, '1');
+});
+
+test('watch ignores no-op manifest events without missing real source edits', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-daemon-watch-noop-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const cliDir = join(root, 'apps', 'cli');
+  const cliSrcDir = join(cliDir, 'src');
+  const cliDistIndex = join(cliDir, 'dist', 'index.mjs');
+  await mkdir(cliSrcDir, { recursive: true });
+  await mkdir(dirname(cliDistIndex), { recursive: true });
+  await writeFile(join(cliDir, 'package.json'), '{ "name": "@happier-dev/cli" }\n', 'utf-8');
+  await writeFile(join(cliSrcDir, 'index.ts'), 'export const value = 1;\n', 'utf-8');
+  await writeFile(cliDistIndex, 'export const daemon = true;\n', 'utf-8');
+
+  let capturedOnChange = null;
+  let buildCalls = 0;
+  let restartCalls = 0;
+
+  watchHappyCliAndRestartDaemon(
+    {
+      enabled: true,
+      startDaemon: true,
+      buildCli: true,
+      cliDir,
+      cliBin: join(cliDir, 'bin', 'happier.mjs'),
+      cliHomeDir: join(root, 'home'),
+      internalServerUrl: 'http://127.0.0.1:3009',
+      publicServerUrl: 'http://localhost:3009',
+      isShuttingDown: () => false,
+    },
+    {
+      watchDebouncedImpl: ({ onChange }) => {
+        capturedOnChange = onChange;
+        return { close() {} };
+      },
+      ensureCliBuiltImpl: async () => {
+        buildCalls += 1;
+        return { built: true, reason: 'test' };
+      },
+      startLocalDaemonWithAuthImpl: async () => {
+        restartCalls += 1;
+      },
+      logger: { log() {}, warn() {}, error() {} },
+    },
+  );
+
+  assert.equal(typeof capturedOnChange, 'function');
+
+  await capturedOnChange({ eventType: 'change', filename: 'package.json' });
+  assert.equal(buildCalls, 0);
+  assert.equal(restartCalls, 0);
+
+  await writeFile(join(cliSrcDir, 'index.ts'), 'export const value = 200;\n', 'utf-8');
+  await capturedOnChange({ eventType: 'change', filename: 'index.ts' });
+  assert.equal(buildCalls, 1);
+  assert.equal(restartCalls, 1);
 });
 
 test('watch does not include cliDir/yarn.lock in watched paths (prevents rebuild loops)', async () => {

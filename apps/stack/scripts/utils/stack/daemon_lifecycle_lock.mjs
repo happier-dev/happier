@@ -1,16 +1,16 @@
+import { createHash } from 'node:crypto';
 import { closeSync, mkdirSync, openSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { isPidAlive } from './pids.mjs';
+import { isPidAlive } from '../proc/pids.mjs';
 
 function parseLockOwner(lockPath) {
   try {
     const raw = readFileSync(lockPath, 'utf8').trim();
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return null;
-    return parsed;
+    return parsed && typeof parsed === 'object' ? parsed : null;
   } catch {
     return null;
   }
@@ -47,8 +47,25 @@ function shouldReclaimLock(lockPath, staleAfterMs, nowMs) {
   return updatedAtMs > 0 && nowMs - updatedAtMs > staleAfterMs;
 }
 
-export function isCliDistBuildLockActive(lockPath, options = {}) {
-  const staleAfterMs = options.staleAfterMs ?? 240_000;
+function lockScopeHash({ internalServerUrl = '', stackName = '' } = {}) {
+  return createHash('sha256')
+    .update(String(stackName ?? '').trim())
+    .update('\n')
+    .update(String(internalServerUrl ?? '').trim())
+    .digest('hex')
+    .slice(0, 16);
+}
+
+export function resolveStackDaemonLifecycleLockPath({ cliHomeDir, internalServerUrl = '', stackName = '' } = {}) {
+  const home = String(cliHomeDir ?? '').trim();
+  if (!home) {
+    throw new Error('resolveStackDaemonLifecycleLockPath requires cliHomeDir');
+  }
+  return join(home, 'locks', `daemon-lifecycle-${lockScopeHash({ internalServerUrl, stackName })}.lock`);
+}
+
+export function isStackDaemonLifecycleLockActive(lockPath, options = {}) {
+  const staleAfterMs = options.staleAfterMs ?? 60_000;
   const nowMs = options.nowMs ?? Date.now();
   try {
     statSync(lockPath);
@@ -58,23 +75,18 @@ export function isCliDistBuildLockActive(lockPath, options = {}) {
   return !shouldReclaimLock(lockPath, staleAfterMs, nowMs);
 }
 
-export async function withCliDistBuildLock(fn, options = {}) {
-  const lockPath = options.lockPath;
-  if (!lockPath) {
-    throw new Error('withCliDistBuildLock requires options.lockPath');
-  }
-  const onWait = typeof options.onWait === 'function' ? options.onWait : null;
-
+export async function withStackDaemonLifecycleLock(scope, fn, options = {}) {
+  const lockPath = options.lockPath ?? resolveStackDaemonLifecycleLockPath(scope);
   mkdirSync(dirname(lockPath), { recursive: true });
 
-  const timeoutMs = options.timeoutMs ?? 240_000;
-  const pollIntervalMs = options.pollIntervalMs ?? 250;
-  const staleAfterMs = options.staleAfterMs ?? timeoutMs;
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  const pollIntervalMs = options.pollIntervalMs ?? 125;
+  const staleAfterMs = options.staleAfterMs ?? Math.max(60_000, timeoutMs);
   const startedAt = Date.now();
-
   let fd = null;
   let heartbeat = null;
   let waited = false;
+
   while (true) {
     try {
       fd = openSync(lockPath, 'wx');
@@ -89,20 +101,9 @@ export async function withCliDistBuildLock(fn, options = {}) {
         continue;
       }
       if (Date.now() - startedAt > timeoutMs) {
-        throw new Error(`Timed out waiting for CLI dist build lock: ${lockPath} (${describeLockOwner(lockPath, Date.now())})`);
+        throw new Error(`Timed out waiting for daemon lifecycle lock: ${lockPath} (${describeLockOwner(lockPath, Date.now())})`);
       }
       waited = true;
-      if (onWait) {
-        try {
-          onWait({
-            lockPath,
-            owner: parseLockOwner(lockPath),
-            staleAfterMs,
-            timeoutMs,
-            waitedMs: Date.now() - startedAt,
-          });
-        } catch {}
-      }
       await delay(pollIntervalMs);
     }
   }
@@ -113,7 +114,7 @@ export async function withCliDistBuildLock(fn, options = {}) {
         writeFileSync(lockPath, serializeLockOwner(Date.now()), 'utf8');
       } catch {}
     }, Math.max(500, Math.min(5_000, Math.floor(staleAfterMs / 4))));
-    return await fn({ waited });
+    return await fn({ waited, lockPath });
   } finally {
     if (heartbeat) clearInterval(heartbeat);
     if (fd !== null) {

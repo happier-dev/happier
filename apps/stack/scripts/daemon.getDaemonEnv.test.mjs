@@ -52,6 +52,55 @@ test('getDaemonEnv prefers the matching cli settings server id over the stable s
   assert.equal(env.HAPPIER_DAEMON_STARTUP_SOURCE, 'manual');
 });
 
+test('getDaemonEnv preserves explicit active server id when its saved profile matches', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stack-daemon-env-explicit-server-'));
+  const serverUrl = 'http://127.0.0.1:3009';
+
+  await writeFile(
+    join(dir, 'settings.json'),
+    JSON.stringify(
+      {
+        schemaVersion: 6,
+        activeServerId: 'manual-profile',
+        servers: {
+          'manual-profile': {
+            id: 'manual-profile',
+            name: 'manual-profile',
+            serverUrl,
+            webappUrl: 'http://localhost:3009',
+            createdAt: 1,
+            updatedAt: 1,
+            lastUsedAt: 1,
+          },
+          'stack_main__id_default': {
+            id: 'stack_main__id_default',
+            name: 'stack_main__id_default',
+            serverUrl,
+            webappUrl: 'http://localhost:3009',
+            createdAt: 2,
+            updatedAt: 2,
+            lastUsedAt: 2,
+          },
+        },
+      },
+      null,
+      2,
+    ) + '\n',
+    'utf-8',
+  );
+
+  const env = getDaemonEnv({
+    baseEnv: {},
+    cliHomeDir: dir,
+    internalServerUrl: serverUrl,
+    publicServerUrl: serverUrl,
+    stackName: 'main',
+    cliIdentity: 'default',
+  });
+
+  assert.equal(env.HAPPIER_ACTIVE_SERVER_ID, 'stack_main__id_default');
+});
+
 test('getDaemonEnv marks service-mode starts as background-service', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stack-daemon-env-service-'));
 

@@ -132,6 +132,7 @@ export function buildExpoDevEnv({
     env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
   }
   env.EXPO_PUBLIC_DEBUG = env.EXPO_PUBLIC_DEBUG ?? '1';
+  env.EXPO_UNSTABLE_WEB_MODAL = '1';
 
   // Optional: allow per-stack storage isolation inside a single dev-client build by
   // scoping app persistence (MMKV / SecureStore) to a stack-specific namespace.
@@ -428,14 +429,16 @@ export async function ensureDevExpoServer({
   env.RCT_METRO_PORT = String(metroPort);
   env.HAPPIER_STACK_EXPO_DEV_PORT = String(metroPort);
   const host = resolveExpoDevHost({ env });
-  const args = buildExpoStartArgs({
+  const baseClearCache = wantsExpoClearCache({ env: baseEnv || process.env });
+  const buildStartArgs = ({ forceClearCache = false } = {}) => buildExpoStartArgs({
     port: metroPort,
     host,
     wantWeb,
     wantDevClient,
     scheme,
-    clearCache: wantsExpoClearCache({ env: baseEnv || process.env }),
+    clearCache: baseClearCache || forceClearCache,
   });
+  const args = buildStartArgs();
 
   if (!quiet) {
     // eslint-disable-next-line no-console
@@ -523,13 +526,13 @@ export async function ensureDevExpoServer({
     }).catch(() => {});
   };
 
-  const spawnTrackedExpo = async ({ restartAttempt = 0 } = {}) => {
+  const spawnTrackedExpo = async ({ restartAttempt = 0, forceClearCache = false } = {}) => {
     const outputTracker = createExpoCrashOutputTracker();
     const proc = await expoSpawn({
       label: 'expo',
       dir: uiDir,
       projectDir,
-      args,
+      args: forceClearCache ? buildStartArgs({ forceClearCache: true }) : args,
       env,
       options: {
         ...normalizedSpawnOptions,
@@ -561,11 +564,12 @@ export async function ensureDevExpoServer({
         }
 
         const delayMs = computeExpoRestartDelayMs({ attempt: nextAttempt, policy: restartPolicy });
+        const forceClearCacheOnRestart = outputTracker.sawHeapOutOfMemory?.() === true;
         writeSupervisorLine(
-          `Expo exited unexpectedly (${describeExpoTermination({ code, signal, outputTracker })}); restarting in ${Math.ceil(delayMs / 1000)}s (attempt ${nextAttempt}/${restartPolicy.maxAttempts}).`
+          `Expo exited unexpectedly (${describeExpoTermination({ code, signal, outputTracker })}); restarting in ${Math.ceil(delayMs / 1000)}s (attempt ${nextAttempt}/${restartPolicy.maxAttempts})${forceClearCacheOnRestart && !baseClearCache ? ' with cleared Metro cache' : ''}.`
         );
         const timer = setTimeout(() => {
-          void spawnTrackedExpo({ restartAttempt: nextAttempt }).catch((error) => {
+          void spawnTrackedExpo({ restartAttempt: nextAttempt, forceClearCache: forceClearCacheOnRestart }).catch((error) => {
             writeSupervisorLine(`Expo restart failed: ${error instanceof Error ? error.message : String(error)}`);
           });
         }, delayMs);

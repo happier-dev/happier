@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 
 import {
@@ -94,7 +94,7 @@ test('hstack stack start --runtime --background launches the active runtime snap
     );
     assert.equal(
       serverRuntimeEnv.DATABASE_URL,
-      `file:${join(fixture.stackDir, 'server-light', 'happier-server-light.sqlite')}`,
+      `${pathToFileURL(join(fixture.stackDir, 'server-light', 'happier-server-light.sqlite')).href}?socket_timeout=30`,
     );
     assert.equal(serverRuntimeEnv.HAPPIER_SERVER_LIGHT_DATA_DIR, join(fixture.stackDir, 'server-light'));
 

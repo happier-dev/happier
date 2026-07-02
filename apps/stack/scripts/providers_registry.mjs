@@ -1,4 +1,4 @@
-import { AGENT_IDS, getProviderCliRuntimeSpec } from '@happier-dev/agents';
+import { AGENT_IDS, getAgentCliRuntimeSpec } from '@happier-dev/agents';
 import { planProviderCliInstall } from '@happier-dev/cli-common/providers';
 
 const PROVIDER_ID_SET = new Set(AGENT_IDS);
@@ -23,7 +23,7 @@ function resolveProviderInstallPlan(providerId, platform) {
 export function resolveStackProviderRows() {
   const platform = resolvePlatform();
   return AGENT_IDS.map((id) => {
-    const spec = getProviderCliRuntimeSpec(id);
+    const spec = getAgentCliRuntimeSpec(id);
     const planned = resolveProviderInstallPlan(id, platform);
     return {
       id: spec.id,
@@ -55,7 +55,7 @@ export function assertKnownStackProviderIds(providerIds) {
 }
 
 export function resolveStackProviderInstallLabel(providerId) {
-  const spec = getProviderCliRuntimeSpec(providerId);
+  const spec = getAgentCliRuntimeSpec(providerId);
   return `Installing ${spec.title || `${providerId} CLI`}`;
 }
 

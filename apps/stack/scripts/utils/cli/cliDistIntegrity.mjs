@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 
 export function isCliScriptEntrypoint(pathLike) {
@@ -19,8 +19,9 @@ export function resolveCliDistEntrypointFromBin(cliBin) {
   if (!isCliScriptEntrypoint(bin)) return null;
   try {
     const binDir = dirname(bin);
+    const fallbackBuildEntrypoint = join(binDir, '..', 'dist', 'index.mjs');
     const candidates = [
-      join(binDir, '..', 'dist', 'index.mjs'),
+      fallbackBuildEntrypoint,
       join(binDir, '..', 'package-dist', 'index.mjs'),
     ];
     let firstExistingCandidate = null;
@@ -29,7 +30,7 @@ export function resolveCliDistEntrypointFromBin(cliBin) {
       firstExistingCandidate ??= candidate;
       if (readCliDistIntegrity(candidate).ok) return candidate;
     }
-    return firstExistingCandidate ?? candidates[0];
+    return firstExistingCandidate ?? fallbackBuildEntrypoint;
   } catch {
     return null;
   }
@@ -53,60 +54,19 @@ function extractRelativeMjsImportSpecifiers(source) {
   return [...specs];
 }
 
-function listCliDistModuleFiles(rootDir, maxFiles) {
-  const files = [];
-  const queue = [rootDir];
-  const seenDirs = new Set();
-
-  while (queue.length > 0 && files.length < maxFiles) {
-    const currentDir = queue.shift();
-    if (!currentDir || seenDirs.has(currentDir)) continue;
-    seenDirs.add(currentDir);
-
-    let entries = [];
-    try {
-      entries = readdirSync(currentDir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-
-    for (const entry of entries) {
-      const candidate = join(currentDir, entry.name);
-      if (entry.isDirectory()) {
-        queue.push(candidate);
-        continue;
-      }
-      if (entry.isFile() && candidate.toLowerCase().endsWith('.mjs')) {
-        files.push(candidate);
-        if (files.length >= maxFiles) {
-          break;
-        }
-      }
-    }
-  }
-
-  return files;
-}
-
-function listCliDistClosureFiles(entrypoint, maxFiles = 400) {
+function readCliDistClosure(entrypoint, maxFiles = 400) {
   const normalizedEntrypoint = String(entrypoint ?? '').trim();
-  const rootDir = dirname(normalizedEntrypoint);
-  const files = listCliDistModuleFiles(rootDir, maxFiles);
-  if (normalizedEntrypoint && !files.includes(normalizedEntrypoint)) {
-    files.unshift(normalizedEntrypoint);
-  }
-  return [...new Set(files)].sort();
-}
-
-export function findMissingCliDistModules(entrypoint, maxFiles = 400) {
   const missing = [];
-  const rootDir = dirname(String(entrypoint ?? '').trim());
-  const moduleFiles = listCliDistModuleFiles(rootDir, maxFiles);
-  if (!moduleFiles.includes(entrypoint)) {
-    moduleFiles.unshift(entrypoint);
-  }
+  const reachableFiles = [];
+  const seenFiles = new Set();
+  const queue = normalizedEntrypoint ? [normalizedEntrypoint] : [];
 
-  for (const filePath of moduleFiles) {
+  while (queue.length > 0 && reachableFiles.length < maxFiles) {
+    const filePath = queue.shift();
+    if (!filePath || seenFiles.has(filePath)) continue;
+    seenFiles.add(filePath);
+    reachableFiles.push(filePath);
+
     let source = '';
     try {
       source = readFileSync(filePath, 'utf-8');
@@ -120,11 +80,22 @@ export function findMissingCliDistModules(entrypoint, maxFiles = 400) {
       const target = join(dirname(filePath), spec);
       if (!existsSync(target)) {
         missing.push(target);
+        continue;
+      }
+      if (!seenFiles.has(target)) {
+        queue.push(target);
       }
     }
   }
 
-  return [...new Set(missing)];
+  return {
+    files: [...new Set(reachableFiles)].sort(),
+    missing: [...new Set(missing)].sort(),
+  };
+}
+
+export function findMissingCliDistModules(entrypoint, maxFiles = 400) {
+  return readCliDistClosure(entrypoint, maxFiles).missing;
 }
 
 export function readCliDistIntegrity(entrypoint) {
@@ -141,18 +112,20 @@ export function readCliDistClosureFingerprint(entrypoint, maxFiles = 400) {
       fileCount: 0,
     };
   }
-  const missing = findMissingCliDistModules(entrypoint, maxFiles);
+  const closure = readCliDistClosure(entrypoint, maxFiles);
+  const missing = closure.missing;
   if (missing.length === 0) {
-    const files = listCliDistClosureFiles(entrypoint, maxFiles);
+    const files = closure.files;
     const hash = createHash('sha256');
     let maxMtimeMs = 0;
+    const rootDir = dirname(String(entrypoint ?? '').trim());
 
     for (const filePath of files) {
       const stats = statSync(filePath);
       const source = readFileSync(filePath);
       maxMtimeMs = Math.max(maxMtimeMs, Number(stats.mtimeMs) || 0);
       hash.update([
-        relative(dirname(String(entrypoint ?? '').trim()), filePath),
+        relative(rootDir, filePath),
         String(Math.trunc(Number(stats.mtimeMs) || 0)),
         String(Number(stats.size) || 0),
       ].join(':'));

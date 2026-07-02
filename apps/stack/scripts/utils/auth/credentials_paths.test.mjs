@@ -155,6 +155,52 @@ test('resolveStackCredentialPaths prefers the matching cli settings server id ov
   assert.ok(out.paths.includes(join(dir, 'servers', 'stack_dev__id_default', 'access.key')));
 });
 
+test('resolveStackCredentialPaths prefers explicit active server id when its saved profile matches', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-explicit-settings-'));
+  const serverUrl = 'http://127.0.0.1:3009';
+  await writeFile(
+    join(dir, 'settings.json'),
+    JSON.stringify(
+      {
+        schemaVersion: 6,
+        activeServerId: 'manual-profile',
+        servers: {
+          'manual-profile': {
+            id: 'manual-profile',
+            name: 'manual-profile',
+            serverUrl,
+            webappUrl: 'http://localhost:3009',
+            createdAt: 1,
+            updatedAt: 1,
+            lastUsedAt: 1,
+          },
+          'stack_dev__id_default': {
+            id: 'stack_dev__id_default',
+            name: 'stack_dev__id_default',
+            serverUrl,
+            webappUrl: 'http://localhost:3009',
+            createdAt: 2,
+            updatedAt: 2,
+            lastUsedAt: 2,
+          },
+        },
+      },
+      null,
+      2,
+    ) + '\n',
+    'utf-8',
+  );
+
+  const out = resolveStackCredentialPaths({
+    cliHomeDir: dir,
+    serverUrl,
+    env: { HAPPIER_ACTIVE_SERVER_ID: 'stack_dev__id_default' },
+  });
+
+  assert.equal(out.activeServerId, 'stack_dev__id_default');
+  assert.equal(out.serverScopedPath, join(dir, 'servers', 'stack_dev__id_default', 'access.key'));
+});
+
 test('resolveStackDaemonStatePaths prefers the matching cli settings server id over a leaked stable scope alias', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-paths-settings-'));
   const serverUrl = 'http://127.0.0.1:3012';

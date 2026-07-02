@@ -202,7 +202,7 @@ export async function isStateProcessRunning(statePath) {
     if (!Number.isFinite(p) || p <= 0) return false;
     if (!raw) return false;
     const needle = resolve(raw);
-    const pids = await listListenPids(p, { host: '127.0.0.1' }).catch(() => []);
+    const pids = await listListenPids(p, { timeoutMs: 4000 }).catch(() => []);
     for (const listenPid of pids) {
       // eslint-disable-next-line no-await-in-loop
       const line = await runCapture('ps', ['-o', 'command=', '-p', String(listenPid)]).catch(() => '');

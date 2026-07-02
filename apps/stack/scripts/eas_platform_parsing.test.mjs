@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +16,14 @@ function runNode(args, { cwd, env } = {}) {
     proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal: signal ?? null, stdout, stderr }));
   });
 }
+
+test('hstack eas wrapper enables Expo Router web modal support', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+  const script = await readFile(join(rootDir, 'scripts', 'eas.mjs'), 'utf8');
+
+  assert.match(script, /EXPO_UNSTABLE_WEB_MODAL:\s*'1'/);
+});
 
 test('hstack eas build honors space-separated --platform android', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));

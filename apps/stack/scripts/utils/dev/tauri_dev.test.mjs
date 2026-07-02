@@ -24,6 +24,27 @@ function splitPathEntries(pathValue) {
     .filter(Boolean);
 }
 
+function cargoNeutralEnv(overrides = {}) {
+  const {
+    CARGO,
+    CARGO_HOME,
+    RUSTUP_HOME,
+    HAPPIER_ACTIVE_SERVER_ID,
+    HAPPIER_HOME_DIR,
+    HAPPIER_SERVER_URL,
+    HAPPIER_STACK_CLI_HOME_DIR,
+    HAPPIER_STACK_ENV_FILE,
+    HAPPIER_STACK_REPO_DIR,
+    HAPPIER_STACK_SERVER_PORT,
+    HAPPIER_STACK_STACK,
+    HAPPIER_STACK_WEBAPP_PORT,
+    HAPPIER_WEBAPP_URL,
+    EXPO_PUBLIC_HAPPY_STORAGE_SCOPE,
+    ...baseEnv
+  } = process.env;
+  return { ...baseEnv, ...overrides };
+}
+
 test('resolveTauriDevUrl points at the existing Expo dev server port', () => {
   assert.equal(resolveTauriDevUrl({ expoPort: 8081 }), 'http://localhost:8081');
 });
@@ -57,7 +78,7 @@ test('buildStackTauriDevProcessInvocation launches tauri from apps/ui/src-tauri 
 
   const invocation = buildStackTauriDevProcessInvocation({
     rootDir: stackRootDir,
-    env: process.env,
+    env: cargoNeutralEnv(),
     configPath: 'src-tauri/tauri.publicdev.conf.json',
     configOverride: {
       build: {
@@ -145,11 +166,10 @@ test('buildStackTauriDevProcessInvocation prepends the cargo bin directory when 
 
   const invocation = buildStackTauriDevProcessInvocation({
     rootDir: stackRootDir,
-    env: {
-      ...process.env,
+    env: cargoNeutralEnv({
       PATH: '/usr/bin:/bin',
       CARGO_HOME: cargoHome,
-    },
+    }),
     configPath: 'src-tauri/tauri.publicdev.conf.json',
     configOverride: {
       build: {
@@ -177,12 +197,11 @@ test('buildStackTauriDevProcessInvocation detects cargo under the real user home
 
   const invocation = buildStackTauriDevProcessInvocation({
     rootDir: stackRootDir,
-    env: {
-      ...process.env,
+    env: cargoNeutralEnv({
       PATH: '/usr/bin:/bin',
       HOME: isolatedHome,
       USERPROFILE: isolatedHome,
-    },
+    }),
     configPath: 'src-tauri/tauri.publicdev.conf.json',
     configOverride: {
       build: {
@@ -220,12 +239,11 @@ test('buildStackTauriDevProcessInvocation prefers cargo under the resolved user 
 
   const invocation = buildStackTauriDevProcessInvocation({
     rootDir: stackRootDir,
-    env: {
-      ...process.env,
+    env: cargoNeutralEnv({
       PATH: `${isolatedCargoBinDir}:/usr/bin:/bin`,
       HOME: isolatedHome,
       USERPROFILE: isolatedHome,
-    },
+    }),
     configPath: 'src-tauri/tauri.publicdev.conf.json',
     configOverride: {
       build: {
@@ -251,12 +269,11 @@ test('buildStackTauriDevProcessInvocation exports rustup homes for the detected 
 
   const invocation = buildStackTauriDevProcessInvocation({
     rootDir: stackRootDir,
-    env: {
-      ...process.env,
+    env: cargoNeutralEnv({
       PATH: '/usr/bin:/bin',
       HOME: isolatedHome,
       USERPROFILE: isolatedHome,
-    },
+    }),
     configPath: 'src-tauri/tauri.publicdev.conf.json',
     configOverride: {
       build: {
@@ -507,13 +524,12 @@ test('buildTauriRuntimeEnv infers rustup home when cargo comes from an explicit 
   await chmod(cargoBinary, 0o755);
 
   const env = buildTauriRuntimeEnv({
-    env: {
-      ...process.env,
+    env: cargoNeutralEnv({
       HOME: isolatedHome,
       USERPROFILE: isolatedHome,
       PATH: '/usr/bin:/bin',
       CARGO_HOME: `${realHome}/.cargo`,
-    },
+    }),
     resolveUserHomeDir: () => isolatedHome,
   });
 
@@ -535,12 +551,11 @@ test('buildStackTauriDevProcessInvocation preserves the host PATH while keeping 
   try {
     const invocation = buildStackTauriDevProcessInvocation({
       rootDir: stackRootDir,
-      env: {
-        ...process.env,
+      env: cargoNeutralEnv({
         PATH: '/stack/bin',
         HOME: isolatedHome,
         USERPROFILE: isolatedHome,
-      },
+      }),
       configPath: 'src-tauri/tauri.publicdev.conf.json',
       configOverride: {
         build: {
@@ -576,13 +591,12 @@ test('buildTauriRuntimeEnv prepends the current Node binary directory for GUI-la
   process.env.PATH = '/host/bin:/usr/bin';
   try {
     const env = buildTauriRuntimeEnv({
-      env: {
-        ...process.env,
+      env: cargoNeutralEnv({
         PATH: '/stack/bin',
         HOME: isolatedHome,
         USERPROFILE: isolatedHome,
         CARGO_HOME: `${realHome}/.cargo`,
-      },
+      }),
       resolveUserHomeDir: () => realHome,
     });
 
@@ -610,12 +624,11 @@ test('buildTauriRuntimeEnv replaces an invalid CARGO env var with the resolved c
   await chmod(cargoBinary, 0o755);
 
   const env = buildTauriRuntimeEnv({
-    env: {
-      ...process.env,
+    env: cargoNeutralEnv({
       PATH: '/usr/bin:/bin',
       CARGO_HOME: cargoHome,
       CARGO: '/no/such/cargo',
-    },
+    }),
   });
 
   assert.equal(env.CARGO, cargoBinary);
@@ -635,12 +648,11 @@ test('buildTauriRuntimeEnv overrides a non-path CARGO env var with the resolved 
   await chmod(cargoBinary, 0o755);
 
   const env = buildTauriRuntimeEnv({
-    env: {
-      ...process.env,
+    env: cargoNeutralEnv({
       PATH: '/usr/bin:/bin',
       CARGO_HOME: cargoHome,
       CARGO: 'cargo',
-    },
+    }),
   });
 
   assert.equal(env.CARGO, cargoBinary);
@@ -868,15 +880,14 @@ test('buildTauriRuntimeEnv preserves explicit remote server selection when only 
   await chmod(cargoBinary, 0o755);
 
   const env = buildTauriRuntimeEnv({
-    env: {
-      ...process.env,
+    env: cargoNeutralEnv({
       PATH: '/usr/bin:/bin',
       HAPPIER_STACK_STACK: 'activity-surfaces-qa',
       HAPPIER_SERVER_URL: 'https://api.happier.dev',
       HAPPIER_WEBAPP_URL: 'https://app.happier.dev',
       HAPPIER_ACTIVE_SERVER_ID: 'cloud',
       HAPPIER_HOME_DIR: '',
-    },
+    }),
     resolveUserHomeDir: () => realHome,
   });
 
@@ -944,15 +955,14 @@ test('buildTauriRuntimeEnv preserves explicit server selection instead of overwr
   await chmod(cargoBinary, 0o755);
 
   const env = buildTauriRuntimeEnv({
-    env: {
-      ...process.env,
+    env: cargoNeutralEnv({
       PATH: '/usr/bin:/bin',
       HAPPIER_STACK_STACK: 'activity-surfaces-qa',
       HAPPIER_STACK_CLI_HOME_DIR: stackCliHome,
       HAPPIER_STACK_SERVER_PORT: '3009',
       HAPPIER_SERVER_URL: 'http://remote.example.test:4010',
       HAPPIER_ACTIVE_SERVER_ID: 'env_deadbeef',
-    },
+    }),
     resolveUserHomeDir: () => realHome,
   });
 
@@ -970,13 +980,12 @@ test('buildStackTauriDevProcessInvocation fails fast with a friendly error when 
       () =>
         buildStackTauriDevProcessInvocation({
           rootDir: stackRootDir,
-          env: {
-            ...process.env,
+          env: cargoNeutralEnv({
             PATH: '/usr/bin:/bin',
             HOME: isolatedHome,
             USERPROFILE: isolatedHome,
             CARGO_HOME: `${isolatedHome}/.cargo-missing`,
-          },
+          }),
           configPath: 'src-tauri/tauri.publicdev.conf.json',
           configOverride: {
             build: {

@@ -313,6 +313,7 @@ function applyStackScopedServerDefaults(env, { preferStackDefaults = false } = {
         ? resolvePreferredStackServerIdFromCliSettings({
             cliHomeDir: stackCliHomeDir,
             serverUrl: resolvedServerUrl,
+            env: scopedEnv,
           })
         : '';
     nextEnv.HAPPIER_ACTIVE_SERVER_ID =

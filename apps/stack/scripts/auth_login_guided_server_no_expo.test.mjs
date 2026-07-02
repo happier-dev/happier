@@ -252,6 +252,11 @@ async function buildGuidedNoExpoFixture({
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       HAPPIER_STACK_STACK: stackName,
       HAPPIER_STACK_ENV_FILE: envPath,
+      HAPPIER_STACK_REPO_DIR: monoRoot,
+      HAPPIER_STACK_SERVER_PORT: String(port),
+      HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+      HAPPIER_STACK_RUNTIME_STATE_PATH: join(storageDir, stackName, 'stack.runtime.json'),
+      HAPPIER_STACK_RUNTIME_MODE: runtimeSnapshot ? 'prefer' : 'source',
       HAPPIER_STACK_TEST_TTY: '1',
       HAPPIER_STACK_AUTH_FLOW: '0',
       HAPPIER_STACK_AUTH_UI_READY_TIMEOUT_MS: '1',
@@ -341,7 +346,7 @@ export async function startDaemonPostAuth() {
 async function writeProcRunStubLoader({ dir, markerPath }) {
   const loaderPath = join(dir, 'proc-run-loader.mjs');
   const registerPath = join(dir, 'register-proc-run-loader.mjs');
-  const stubUrl = `data:text/javascript,${encodeURIComponent(`
+  const procStubUrl = `data:text/javascript,${encodeURIComponent(`
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -349,6 +354,7 @@ export async function run(command, args = [], options = {}) {
   appendFileSync(
     ${JSON.stringify(markerPath)},
     JSON.stringify({
+      kind: 'proc.run',
       command,
       args: Array.isArray(args) ? args.map((value) => String(value)) : [],
       env: {
@@ -387,16 +393,48 @@ export async function runCapture() {
   return '';
 }
 `)}`;
+  const daemonStubUrl = `data:text/javascript,${encodeURIComponent(`
+import { appendFileSync } from 'node:fs';
+
+export function checkDaemonState() {
+  return { status: 'running', pid: 12345 };
+}
+
+export async function stopLocalDaemon(options = {}) {
+  appendFileSync(
+    ${JSON.stringify(markerPath)},
+    JSON.stringify({
+      kind: 'daemon.stop',
+      cliHomeDir: String(options?.cliHomeDir ?? ''),
+      internalServerUrl: String(options?.internalServerUrl ?? ''),
+      publicServerUrl: String(options?.publicServerUrl ?? ''),
+      runtimeStatePath: String(options?.runtimeStatePath ?? ''),
+      stackName: String(options?.stackName ?? ''),
+      cliIdentity: String(options?.cliIdentity ?? ''),
+      env: {
+        HAPPIER_STACK_AUTH_FLOW: String(options?.env?.HAPPIER_STACK_AUTH_FLOW ?? ''),
+        HAPPIER_STACK_SKIP_REFRESH_DEPS: String(options?.env?.HAPPIER_STACK_SKIP_REFRESH_DEPS ?? ''),
+      },
+    }) + '\\n',
+    'utf-8',
+  );
+}
+`)}`;
 
   await writeFile(
     loaderPath,
     [
       `const targetSpecifier = './utils/proc/proc.mjs';`,
-      `const stubUrl = ${JSON.stringify(stubUrl)};`,
+      `const daemonSpecifier = './daemon.mjs';`,
+      `const procStubUrl = ${JSON.stringify(procStubUrl)};`,
+      `const daemonStubUrl = ${JSON.stringify(daemonStubUrl)};`,
       '',
       'export async function resolve(specifier, context, defaultResolve) {',
       '  if (specifier === targetSpecifier) {',
-      '    return { url: stubUrl, shortCircuit: true };',
+      '    return { url: procStubUrl, shortCircuit: true };',
+      '  }',
+      '  if (specifier === daemonSpecifier) {',
+      '    return { url: daemonStubUrl, shortCircuit: true };',
       '  }',
       '  return defaultResolve(specifier, context, defaultResolve);',
       '}',
@@ -724,7 +762,7 @@ test('hstack auth login --force fails closed when guided login exits without usa
   }
 });
 
-test('hstack auth login --force restarts a running runtime-backed stack in auth-safe no-daemon mode before login', async (t) => {
+test('hstack auth login --force stops only the daemon when the running stack server is healthy', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
 
@@ -732,7 +770,7 @@ test('hstack auth login --force restarts a running runtime-backed stack in auth-
   try {
     try {
       fixture = await buildGuidedNoExpoFixture({
-        stackName: 'force-auth-runtime-restart',
+        stackName: 'force-auth-runtime-daemon-stop',
         runtimeSnapshot: true,
         runtimeOwnerAlive: true,
         startServer: true,
@@ -787,19 +825,22 @@ test('hstack auth login --force restarts a running runtime-backed stack in auth-
       .filter(Boolean)
       .map((line) => JSON.parse(line));
 
-    const stackStopCall = calls.find((entry) => Array.isArray(entry.args) && entry.args.includes('stop') && entry.args.includes('force-auth-runtime-restart'));
-    assert.ok(stackStopCall, `expected force login to stop the running stack before clearing auth\n${JSON.stringify(calls, null, 2)}`);
+    const stackStopCall = calls.find((entry) => Array.isArray(entry.args) && entry.args.includes('stop') && entry.args.includes('force-auth-runtime-daemon-stop'));
+    assert.equal(stackStopCall, undefined, `expected force login not to stop a healthy stack\n${JSON.stringify(calls, null, 2)}`);
 
-    const stackStartCall = calls.find((entry) => Array.isArray(entry.args) && entry.args.includes('start') && entry.args.includes('force-auth-runtime-restart'));
-    assert.ok(stackStartCall, `expected force login to restart the stack in auth-safe mode\n${JSON.stringify(calls, null, 2)}`);
-    assert.ok(stackStartCall.args.includes('--background'), `expected auth-safe restart to run in background\n${JSON.stringify(stackStartCall, null, 2)}`);
-    assert.ok(stackStartCall.args.includes('--no-daemon'), `expected auth-safe restart to skip daemon start\n${JSON.stringify(stackStartCall, null, 2)}`);
-    assert.ok(stackStartCall.args.includes('--runtime'), `expected auth-safe restart to preserve runtime snapshot mode\n${JSON.stringify(stackStartCall, null, 2)}`);
-    assert.equal(
-      stackStartCall.env?.HAPPIER_STACK_SKIP_REFRESH_DEPS,
-      '1',
-      `expected auth-safe restart to skip dependency refresh\n${JSON.stringify(stackStartCall, null, 2)}`,
+    const stackStartCall = calls.find(
+      (entry) =>
+        Array.isArray(entry.args) &&
+        (entry.args.includes('dev') || entry.args.includes('start')) &&
+        entry.args.includes('force-auth-runtime-daemon-stop'),
     );
+    assert.equal(stackStartCall, undefined, `expected force login not to cold-start a healthy stack\n${JSON.stringify(calls, null, 2)}`);
+
+    const daemonStopCall = calls.find((entry) => entry.kind === 'daemon.stop');
+    assert.ok(daemonStopCall, `expected force login to stop only the daemon before clearing auth\n${JSON.stringify(calls, null, 2)}`);
+    assert.equal(daemonStopCall.stackName, 'force-auth-runtime-daemon-stop', JSON.stringify(daemonStopCall, null, 2));
+    assert.equal(daemonStopCall.env?.HAPPIER_STACK_AUTH_FLOW, '1', JSON.stringify(daemonStopCall, null, 2));
+    assert.equal(daemonStopCall.env?.HAPPIER_STACK_SKIP_REFRESH_DEPS, '1', JSON.stringify(daemonStopCall, null, 2));
 
     const coreLoginCall = calls.find((entry) => Array.isArray(entry.args) && entry.args.includes('auth') && entry.args.includes('login'));
     assert.ok(coreLoginCall, `expected core auth login invocation\n${JSON.stringify(calls, null, 2)}`);

@@ -233,16 +233,20 @@ async function main() {
     await requireDir(serverComponentName, serverDir);
   }
   await requireDir('happier-ui', uiDir);
-  await requireDir('happier-cli', cliDir);
+  if (startDaemon) {
+    await requireDir('happier-cli', cliDir);
+  }
 
   const children = [];
   let shuttingDown = false;
   installExitCleanup({ label: 'local', children });
 
-  // Ensure happier-cli is install+build ready before starting the daemon.
-  // Worktrees often don't have dist/ built yet, which causes MODULE_NOT_FOUND on dist/index.mjs.
   const buildCli = (baseEnv.HAPPIER_STACK_CLI_BUILD ?? '1').toString().trim() !== '0';
-  await ensureDevCliReady({ cliDir, buildCli });
+  if (startDaemon) {
+    // Ensure happier-cli is install+build ready before starting the daemon.
+    // Worktrees often don't have dist/ built yet, which causes MODULE_NOT_FOUND on dist/index.mjs.
+    await ensureDevCliReady({ cliDir, buildCli });
+  }
 
   // Watch mode (interactive only by default): rebuild happier-cli and restart daemon when code changes.
   const watchEnabled =

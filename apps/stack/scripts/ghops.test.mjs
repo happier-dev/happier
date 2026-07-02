@@ -30,8 +30,20 @@ test('prints help without requiring a token', () => {
 });
 
 test('fails closed when token is missing', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ghops-missing-token-test-'));
+  const fakeSecurity = join(dir, 'fake-security');
+  writeFileSync(
+    fakeSecurity,
+    `#!/usr/bin/env node
+process.exit(1);
+`,
+    'utf8',
+  );
+  chmodSync(fakeSecurity, 0o755);
+
   const res = runGhop(['api', 'user'], {
     HAPPIER_GITHUB_BOT_TOKEN: '',
+    HAPPIER_GHOPS_SECURITY_PATH: fakeSecurity,
     GH_TOKEN: '',
     GITHUB_TOKEN: '',
   });

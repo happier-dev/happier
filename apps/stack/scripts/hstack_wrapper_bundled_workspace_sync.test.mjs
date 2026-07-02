@@ -71,6 +71,7 @@ test('hstack wrapper refreshes bundled workspace packages in preflight mode with
       cwd: rootDir,
       env: {
         ...process.env,
+        HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
         NODE_OPTIONS: `--experimental-loader=${loaderPath}`,
       },
     });
@@ -94,6 +95,7 @@ test('hstack wrapper skips bundled workspace preflight for stack dev background 
       cwd: rootDir,
       env: {
         ...process.env,
+        HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
         NODE_OPTIONS: `--experimental-loader=${loaderPath}`,
       },
     });
@@ -116,6 +118,7 @@ test('hstack wrapper still runs bundled workspace preflight for nearby non-probe
       cwd: rootDir,
       env: {
         ...process.env,
+        HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
         NODE_OPTIONS: `--experimental-loader=${loaderPath}`,
       },
     });

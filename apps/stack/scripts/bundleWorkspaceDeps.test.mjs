@@ -553,15 +553,15 @@ test('bundleWorkspaceDeps refreshes the bundle when the existing bundled dist is
 test('bundleWorkspaceDeps refreshes the bundle when a bundled workspace is missing a non-exported dist runtime file', async () => {
   const { repoRoot, stackDir, agentsDir } = createBundleFixture('happy-stack-bundle-workspace-deps-refresh-internal-runtime-file-');
   try {
-    mkdirSync(resolve(agentsDir, 'dist', 'providers'), { recursive: true });
+    mkdirSync(resolve(agentsDir, 'dist', 'cli'), { recursive: true });
     writeFileSync(
       resolve(agentsDir, 'dist', 'manifest.js'),
-      "import './providers/providerCliRuntime.js';\nexport const manifest = true;\n",
+      "import './cli/runtime.js';\nexport const manifest = true;\n",
       'utf8',
     );
     writeFileSync(
-      resolve(agentsDir, 'dist', 'providers', 'providerCliRuntime.js'),
-      'export const providerCliRuntime = true;\n',
+      resolve(agentsDir, 'dist', 'cli', 'runtime.js'),
+      'export const agentCliRuntime = true;\n',
       'utf8',
     );
 
@@ -574,8 +574,8 @@ test('bundleWorkspaceDeps refreshes the bundle when a bundled workspace is missi
       '@happier-dev',
       'agents',
       'dist',
-      'providers',
-      'providerCliRuntime.js',
+      'cli',
+      'runtime.js',
     );
     const firstMtimeMs = statSync(manifestPath).mtimeMs;
 

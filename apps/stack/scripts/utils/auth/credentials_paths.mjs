@@ -100,12 +100,18 @@ function profileMatchesServerUrl(profile, serverUrl) {
   });
 }
 
-export function resolvePreferredStackServerIdFromCliSettings({ cliHomeDir, serverUrl = '' } = {}) {
+export function resolvePreferredStackServerIdFromCliSettings({ cliHomeDir, serverUrl = '', env = process.env } = {}) {
   const settings = readStackCliSettingsSnapshot({ cliHomeDir });
   if (!settings) return '';
 
   const entries = Object.entries(settings.servers ?? {});
   if (!entries.length) return '';
+
+  const explicitServerId = resolveActiveServerIdOverride(env);
+  const explicitProfile = explicitServerId ? settings.servers?.[explicitServerId] : null;
+  if (explicitServerId && profileMatchesServerUrl(explicitProfile, serverUrl)) {
+    return explicitServerId;
+  }
 
   const activeServerId = sanitizeServerIdForFilesystem(settings.activeServerId, '');
   const activeProfile = activeServerId ? settings.servers?.[activeServerId] : null;
@@ -187,7 +193,7 @@ export function resolveStackCredentialPaths({ cliHomeDir, serverUrl = '', env = 
   );
   const hostPortServerId = deriveLoopbackHostPortServerId(normalizedServerUrl);
   const stableScopeServerId = resolveActiveServerIdOverride(env);
-  const settingsServerId = resolvePreferredStackServerIdFromCliSettings({ cliHomeDir: home, serverUrl: normalizedServerUrl });
+  const settingsServerId = resolvePreferredStackServerIdFromCliSettings({ cliHomeDir: home, serverUrl: normalizedServerUrl, env });
   const activeServerId = settingsServerId || stableScopeServerId || urlHashServerId;
   const serverScopedPath = join(home, 'servers', activeServerId, 'access.key');
   const aliasServerIds = [
@@ -226,7 +232,7 @@ export function resolveStackDaemonStatePaths({ cliHomeDir, serverUrl = '', env =
   );
   const hostPortServerId = deriveLoopbackHostPortServerId(normalizedServerUrl);
   const stableScopeServerId = resolveActiveServerIdOverride(env);
-  const settingsServerId = resolvePreferredStackServerIdFromCliSettings({ cliHomeDir: home, serverUrl: normalizedServerUrl });
+  const settingsServerId = resolvePreferredStackServerIdFromCliSettings({ cliHomeDir: home, serverUrl: normalizedServerUrl, env });
   const activeServerId = settingsServerId || stableScopeServerId || urlHashServerId;
 
   const legacyStatePath = join(home, 'daemon.state.json');

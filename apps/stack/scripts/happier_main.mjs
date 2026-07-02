@@ -444,6 +444,7 @@ async function main() {
     const settingsServerId = resolvePreferredStackServerIdFromCliSettings({
       cliHomeDir,
       serverUrl: internalServerUrl,
+      env,
     });
     if (settingsServerId) {
       env.HAPPIER_ACTIVE_SERVER_ID = settingsServerId;

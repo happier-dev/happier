@@ -44,7 +44,7 @@ async function runAuditFixPaths({ env }) {
   return await runNodeCapture([join(rootDir, 'scripts', 'stack.mjs'), 'audit', '--fix-paths', '--json'], { cwd: rootDir, env });
 }
 
-test('hstack stack audit --fix-paths prunes legacy DATABASE_URL for light stacks and sets HAPPIER_SERVER_LIGHT_DB_DIR', async (t) => {
+test('hstack stack audit --fix-paths prunes legacy DATABASE_URL for default sqlite light stacks', async (t) => {
   const stackName = 'exp1';
   const fixture = await createLightAuditFixture(t, {
     stackName,
@@ -67,7 +67,7 @@ test('hstack stack audit --fix-paths prunes legacy DATABASE_URL for light stacks
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 
   const raw = await readFile(fixture.envPath, 'utf-8');
-  assert.ok(raw.includes('HAPPIER_SERVER_LIGHT_DB_DIR='), `expected HAPPIER_SERVER_LIGHT_DB_DIR to be set\n${raw}`);
+  assert.ok(!raw.includes('HAPPIER_SERVER_LIGHT_DB_DIR='), `expected default sqlite light stack to omit PGlite db dir\n${raw}`);
   assert.ok(!raw.includes('\nDATABASE_URL='), `expected legacy DATABASE_URL to be pruned for light stacks\n${raw}`);
 });
 
@@ -89,7 +89,6 @@ test('hstack stack audit --fix-paths normalizes mixed legacy light paths and rem
 
   const expectedDataDir = join(fixture.baseDir, 'server-light');
   const expectedFilesDir = join(expectedDataDir, 'files');
-  const expectedDbDir = join(expectedDataDir, 'pglite');
 
   const res = await runAuditFixPaths({ env: fixture.env });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
@@ -97,8 +96,31 @@ test('hstack stack audit --fix-paths normalizes mixed legacy light paths and rem
   const raw = await readFile(fixture.envPath, 'utf-8');
   assert.ok(raw.includes(`HAPPIER_SERVER_LIGHT_DATA_DIR=${expectedDataDir}`), `expected normalized data dir\n${raw}`);
   assert.ok(raw.includes(`HAPPIER_SERVER_LIGHT_FILES_DIR=${expectedFilesDir}`), `expected normalized files dir\n${raw}`);
-  assert.ok(raw.includes(`HAPPIER_SERVER_LIGHT_DB_DIR=${expectedDbDir}`), `expected normalized db dir\n${raw}`);
+  assert.ok(!raw.includes('HAPPIER_SERVER_LIGHT_DB_DIR='), `expected default sqlite light stack to omit PGlite db dir\n${raw}`);
   assert.ok(!raw.includes('\nDATABASE_URL='), `expected legacy DATABASE_URL to be removed\n${raw}`);
+});
+
+test('hstack stack audit --fix-paths preserves explicit pglite light db dir', async (t) => {
+  const stackName = 'exp-pglite';
+  const fixture = await createLightAuditFixture(t, {
+    stackName,
+    envLines: [
+      `HAPPIER_STACK_STACK=${stackName}`,
+      `HAPPIER_STACK_SERVER_COMPONENT=happier-server-light`,
+      `HAPPIER_DB_PROVIDER=pglite`,
+      `HAPPIER_STACK_REPO_DIR=${join(fixturePathPlaceholder(), 'repo')}`,
+    ],
+  });
+
+  const expectedDataDir = join(fixture.baseDir, 'server-light');
+  const expectedDbDir = join(expectedDataDir, 'pglite');
+
+  const res = await runAuditFixPaths({ env: fixture.env });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const raw = await readFile(fixture.envPath, 'utf-8');
+  assert.ok(raw.includes('HAPPIER_DB_PROVIDER=pglite'), `expected explicit pglite provider to remain\n${raw}`);
+  assert.ok(raw.includes(`HAPPIER_SERVER_LIGHT_DB_DIR=${expectedDbDir}`), `expected pglite db dir\n${raw}`);
 });
 
 test('hstack stack audit --fix-paths is idempotent for migrated light env files', async (t) => {

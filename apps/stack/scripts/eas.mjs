@@ -208,19 +208,20 @@ async function main() {
   await ensureDepsInstalled(happyRepoDir, 'happier-ui');
 
   const { cmd: npxCmd, prefixArgs: npxPrefixArgs } = getNpxRunner();
+  const easEnv = { ...process.env, EXPO_UNSTABLE_WEB_MODAL: '1' };
 
   async function easCapture(args, { cwd } = {}) {
     return await runCaptureResult(
       npxCmd,
       [...npxPrefixArgs, '--yes', 'eas-cli@latest', ...args],
-      { cwd: cwd ?? happyAppDir, env: process.env }
+      { cwd: cwd ?? happyAppDir, env: easEnv }
     );
   }
 
   async function easRun(args, { cwd } = {}) {
     await run(npxCmd, [...npxPrefixArgs, '--yes', 'eas-cli@latest', ...args], {
       cwd: cwd ?? happyAppDir,
-      env: process.env,
+      env: easEnv,
       stdio: 'inherit',
     });
   }

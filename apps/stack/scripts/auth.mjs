@@ -26,7 +26,7 @@ import { clearStackForceLoginCredentialPaths } from './utils/auth/clearStackForc
 import { resolveHandyMasterSecretFromStack } from './utils/auth/handy_master_secret.mjs';
 import { ensureDir, readTextIfExists } from './utils/fs/ops.mjs';
 import { stackExistsSync } from './utils/stack/stacks.mjs';
-import { checkDaemonState } from './daemon.mjs';
+import { checkDaemonState, stopLocalDaemon } from './daemon.mjs';
 import { isTty, prompt, promptSelect, withRl } from './utils/cli/wizard.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from './utils/stack/cli_identities.mjs';
 import {
@@ -1937,14 +1937,45 @@ async function cmdLogin({ argv, json }) {
     await waitForGuidedServerReadyOrThrow('restarting in auth-safe mode');
   };
 
+  const stopRunningStackDaemonForForceLoginOrThrow = async () => {
+    const daemonStopEnv = {
+      ...loginEnv,
+      HAPPIER_STACK_AUTH_FLOW: '1',
+      HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+    };
+    await stopLocalDaemon({
+      cliBin: cliExecutable,
+      internalServerUrl,
+      cliHomeDir,
+      publicServerUrl: publicServerUrlForAuth || internalServerUrl,
+      runtimeStatePath: getStackRuntimeStatePath(stackName),
+      env: daemonStopEnv,
+      stackName,
+      cliIdentity: identity,
+    }).catch((err) => {
+      const msg =
+        `[auth] ${stackName}: failed to stop the daemon before force login.\n` +
+        `[auth] Try stopping it manually:\n` +
+        `  hstack stack daemon ${stackName} stop\n\n` +
+        `${String(err?.stack ?? err)}`;
+      throw new Error(msg);
+    });
+  };
+
+  let health = await fetchHappierHealth(internalServerUrl);
   if (force && (await isStackRuntimeOwnerAlive(stackName))) {
     // Force login clears credentials before invoking the underlying auth flow. If a live stack owner
     // stays up while creds are cleared, it can immediately try to restart the daemon in non-interactive
-    // mode and destabilize the runtime. Restart the stack first in auth-safe no-daemon mode.
-    await restartRunningStackInAuthSafeModeOrThrow();
+    // mode and destabilize the runtime. When the stack server is already healthy, stop only the
+    // daemon; a full stack restart is reserved for already-unhealthy stacks.
+    if (health.ok) {
+      await stopRunningStackDaemonForForceLoginOrThrow();
+    } else {
+      await restartRunningStackInAuthSafeModeOrThrow();
+      health = await fetchHappierHealth(internalServerUrl);
+    }
   }
 
-  const health = await fetchHappierHealth(internalServerUrl);
   if (!health.ok) {
     const runtimeOwnerAlive = await isStackRuntimeOwnerAlive(stackName);
     const action = resolveGuidedStartAction({

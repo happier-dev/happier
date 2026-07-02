@@ -1,5 +1,5 @@
 import { join, resolve } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync } from 'node:fs';
 
 import { ensureCliBuilt, ensureDepsInstalled } from '../proc/pm.mjs';
 import { watchDebounced } from '../proc/watch.mjs';
@@ -25,6 +25,49 @@ function resolveHappyCliWatchPaths({ cliDir, existsSyncImpl = existsSync }) {
   ]));
 
   return [...cliPaths, ...sharedPaths].filter((p) => existsSyncImpl(p));
+}
+
+function appendWatchSignatureEntries(path, entries) {
+  let stats;
+  try {
+    stats = lstatSync(path);
+  } catch {
+    entries.push(`${path}\0missing`);
+    return false;
+  }
+
+  if (stats.isDirectory()) {
+    entries.push(`${path}\0dir`);
+    let names = [];
+    try {
+      names = readdirSync(path, { withFileTypes: true })
+        .map((entry) => entry.name)
+        .sort();
+    } catch {
+      return true;
+    }
+    for (const name of names) {
+      appendWatchSignatureEntries(join(path, name), entries);
+    }
+    return true;
+  }
+
+  if (stats.isFile() || stats.isSymbolicLink()) {
+    entries.push(`${path}\0file\0${stats.size}\0${Math.trunc(stats.mtimeMs)}`);
+    return true;
+  }
+
+  entries.push(`${path}\0other\0${Math.trunc(stats.mtimeMs)}`);
+  return true;
+}
+
+function readHappyCliWatchChangeSignature(paths) {
+  const entries = [];
+  let observed = false;
+  for (const path of paths) {
+    observed = appendWatchSignatureEntries(path, entries) || observed;
+  }
+  return observed ? entries.join('\n') : null;
 }
 
 export async function ensureDevCliReady(
@@ -162,6 +205,7 @@ export function watchHappyCliAndRestartDaemon({
   watchDebouncedImpl = watchDebounced,
   ensureCliBuiltImpl = ensureCliBuilt,
   startLocalDaemonWithAuthImpl = startLocalDaemonWithAuth,
+  readWatchChangeSignatureImpl = readHappyCliWatchChangeSignature,
   existsSyncImpl = existsSync,
   logger = console,
 } = {}) {
@@ -175,12 +219,25 @@ export function watchHappyCliAndRestartDaemon({
   // trigger rebuild loops because `yarn build` writes to `dist/` (and may touch other
   // generated files), which then retriggers the watcher.
   const watchPaths = resolveHappyCliWatchPaths({ cliDir, existsSyncImpl });
+  let lastWatchSignature = readWatchChangeSignatureImpl(watchPaths);
+
+  const hasRealWatchedChange = () => {
+    const nextWatchSignature = readWatchChangeSignatureImpl(watchPaths);
+    if (lastWatchSignature && nextWatchSignature && nextWatchSignature === lastWatchSignature) {
+      return false;
+    }
+    if (nextWatchSignature) {
+      lastWatchSignature = nextWatchSignature;
+    }
+    return true;
+  };
 
   return watchDebouncedImpl({
     paths: (watchPaths.length ? watchPaths : [cliDir]).map((p) => resolve(p)),
     debounceMs: 500,
     onChange: async () => {
       if (isShuttingDown?.()) return;
+      if (!hasRealWatchedChange()) return;
       if (inFlight) {
         pending = true;
         return;
@@ -223,7 +280,7 @@ export function watchHappyCliAndRestartDaemon({
               publicServerUrl,
               runtimeStatePath,
               isShuttingDown,
-              forceRestart: true,
+              forceRestart: false,
               env,
               stackName,
               cliIdentity,

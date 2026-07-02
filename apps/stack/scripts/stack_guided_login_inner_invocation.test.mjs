@@ -8,13 +8,22 @@ import { assertGuidedAuthWebappReadyOrThrow, buildStackAuthLoginInvocation } fro
 import { createAuthStackFixture, getStackRootFromMeta } from './testkit/auth_testkit.mjs';
 import { writeRuntimeSnapshotLayout } from './testkit/core/runtime_snapshot_layout.mjs';
 
+function sourceRuntimeEnv() {
+  return {
+    ...process.env,
+    HAPPIER_STACK_ENV_FILE: '',
+    HAPPIER_STACK_RUNTIME_MODE: 'source',
+    HAPPIER_STACK_RUNTIME_STATE_PATH: '',
+  };
+}
+
 test('guided stack auth login invokes core happier auth login directly', async () => {
   const rootDir = getStackRootFromMeta(import.meta.url);
   const webappUrl = 'http://localhost:1234';
-  const inv = await buildStackAuthLoginInvocation({ rootDir, stackName: 'main', webappUrl });
+  const inv = await buildStackAuthLoginInvocation({ rootDir, stackName: 'main', webappUrl, env: sourceRuntimeEnv() });
   assert.ok(Array.isArray(inv?.args));
   assert.equal(inv.command, process.execPath);
-  assert.match(String(inv.args[0] ?? ''), /apps\/cli\/(package-dist\/index\.mjs|bin\/happier\.mjs)$/);
+  assert.match(String(inv.args[0] ?? ''), /apps\/cli\/(package-dist\/index\.mjs|dist\/index\.mjs|bin\/happier\.mjs)$/);
   assert.equal(inv.args[1], 'auth');
   assert.equal(inv.args[2], 'login');
   assert.equal(inv?.env?.HAPPIER_WEBAPP_URL, webappUrl);
@@ -24,7 +33,7 @@ test('guided stack auth login invokes core happier auth login directly', async (
 test('guided stack auth login defaults stack name to main and preserves invocation ordering', async () => {
   const rootDir = getStackRootFromMeta(import.meta.url);
   const webappUrl = 'http://localhost:4321';
-  const inv = await buildStackAuthLoginInvocation({ rootDir, stackName: '   ', webappUrl });
+  const inv = await buildStackAuthLoginInvocation({ rootDir, stackName: '   ', webappUrl, env: sourceRuntimeEnv() });
   assert.equal(inv.args[1], 'auth');
   assert.equal(inv.args[2], 'login');
   assert.equal(inv.env.HAPPIER_WEBAPP_URL, webappUrl);

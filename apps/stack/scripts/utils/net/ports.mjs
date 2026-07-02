@@ -34,20 +34,20 @@ export async function isTcpPortListening(port, { host = '127.0.0.1', timeoutMs =
   });
 }
 
-export async function listListenPids(port) {
+export async function listListenPids(port, { timeoutMs = 1000 } = {}) {
   if (!Number.isFinite(port) || port <= 0) return [];
   if (process.platform === 'win32') return [];
 
   let raw = '';
   try {
     // `lsof` exits non-zero if no matches; normalize to empty output.
-    raw = await runCaptureIfCommandExists('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t']);
+    raw = await runCaptureIfCommandExists('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { timeoutMs });
     if (!raw && process.platform === 'darwin') {
       // Some non-interactive shells (launchd/GUI apps) have a PATH that omits /usr/sbin,
       // which makes `command -v lsof` fail even though lsof exists. Fall back to absolute paths.
       raw =
-        (await runCaptureIfCommandExists('/usr/sbin/lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'])) ||
-        (await runCaptureIfCommandExists('/usr/bin/lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'])) ||
+        (await runCaptureIfCommandExists('/usr/sbin/lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { timeoutMs })) ||
+        (await runCaptureIfCommandExists('/usr/bin/lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { timeoutMs })) ||
         '';
     }
   } catch {
@@ -78,7 +78,7 @@ export async function killPortListeners(port, { label = 'port' } = {}) {
     return [];
   }
 
-  const pids = await listListenPids(port);
+  const pids = await listListenPids(port, { timeoutMs: 1000 });
 
   if (!pids.length) {
     return [];
@@ -114,7 +114,7 @@ export async function isTcpPortFree(port, { host = '127.0.0.1', timeoutMs = 250 
 
   // Prefer lsof-based detection to catch IPv6 listeners (e.g. TCP *:8081 (LISTEN))
   // which can make a "bind 127.0.0.1" probe incorrectly report "free" on macOS.
-  const pids = await listListenPids(port);
+  const pids = await listListenPids(port, { timeoutMs });
   if (pids.length) return false;
 
   // Fallback: attempt to bind.

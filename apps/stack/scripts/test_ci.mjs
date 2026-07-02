@@ -1,9 +1,14 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { collectTestFiles } from './utils/test/collect_test_files.mjs';
 import { collectStackUnitTestFiles } from './utils/test/test_collection.mjs';
 import { runNodeTestFilesSync } from './utils/test/test_process.mjs';
 import { ensureWorkspacePackagesBuiltForComponent } from './utils/proc/pm.mjs';
 import { coerceHappyMonorepoRootFromPath } from './utils/paths/paths.mjs';
 import { bundleWorkspaceDeps } from './bundleWorkspaceDeps.mjs';
+import { sanitizeStackTestRunnerEnv } from './utils/test/test_env.mjs';
 
 async function main() {
   const { packageRoot, scriptsDir, testsDir, testFiles } = await collectStackUnitTestFiles(import.meta.url, {
@@ -30,7 +35,15 @@ async function main() {
   // Node 20 does not expand globs for `--test`, so we enumerate files.
   // Run serially: stack tests spawn real `node` subprocesses and mutate local fixture dirs; running
   // them concurrently makes failures non-deterministic (and can race bundled-deps preparation).
-  const res = runNodeTestFilesSync(testFiles, { cwd: packageRoot, env: process.env, serial: true });
+  const isolatedStackRoot = mkdtempSync(join(tmpdir(), 'happier-stack-unit-'));
+  const res = runNodeTestFilesSync(testFiles, {
+    cwd: packageRoot,
+    env: sanitizeStackTestRunnerEnv(process.env, {
+      isolatedStackRoot,
+      repoDir: monorepoRoot || packageRoot,
+    }),
+    serial: true,
+  });
   process.exit(res.status ?? 1);
 }
 
