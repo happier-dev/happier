@@ -16,8 +16,14 @@ export type CliProviderScenarioRegistryV1 = E2eCliProviderScenarioRegistryV1;
 
 type ProviderSpecRecord = {
   entryName: string;
+  e2eDir: string;
   specPath: string;
   spec: CliProviderSpecV1;
+};
+
+type ProviderSpecSearchRoot = {
+  baseDir: string;
+  e2eDirForEntry: (entryName: string) => string;
 };
 
 function resolveCoverageExpectation(
@@ -34,10 +40,20 @@ function resolveCoverageExpectation(
   };
 }
 
-function providerSpecSearchDirs(): string[] {
+function providerSpecSearchRoots(): ProviderSpecSearchRoot[] {
   return [
-    join(repoRootDir(), 'apps', 'cli', 'src', 'backends'),
-    join(repoRootDir(), 'packages', 'tests', 'fixtures', 'cli-backends'),
+    {
+      baseDir: join(repoRootDir(), 'apps', 'cli', 'src', 'backends'),
+      e2eDirForEntry: (entryName) => join(repoRootDir(), 'apps', 'cli', 'src', 'backends', entryName, 'e2e'),
+    },
+    {
+      baseDir: join(repoRootDir(), 'packages', 'plugins'),
+      e2eDirForEntry: (entryName) => join(repoRootDir(), 'packages', 'plugins', entryName, 'src', 'agent', 'e2e'),
+    },
+    {
+      baseDir: join(repoRootDir(), 'packages', 'tests', 'fixtures', 'cli-backends'),
+      e2eDirForEntry: (entryName) => join(repoRootDir(), 'packages', 'tests', 'fixtures', 'cli-backends', entryName, 'e2e'),
+    },
   ];
 }
 
@@ -74,13 +90,14 @@ function parseScenarioRegistryJson(params: {
   return parsed.data;
 }
 
-async function loadProviderSpecRecords(backendsDir: string): Promise<ProviderSpecRecord[]> {
-  const entries = await readdir(backendsDir, { withFileTypes: true });
+async function loadProviderSpecRecords(root: ProviderSpecSearchRoot): Promise<ProviderSpecRecord[]> {
+  const entries = await readdir(root.baseDir, { withFileTypes: true });
   const records: ProviderSpecRecord[] = [];
 
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-    const specPath = join(backendsDir, entry.name, 'e2e', 'providerSpec.json');
+    const e2eDir = root.e2eDirForEntry(entry.name);
+    const specPath = join(e2eDir, 'providerSpec.json');
     if (!existsSync(specPath)) continue;
 
     const specJson = await readJsonFile(specPath, `Failed to parse providerSpec.json (${entry.name})`);
@@ -90,7 +107,7 @@ async function loadProviderSpecRecords(backendsDir: string): Promise<ProviderSpe
       json: specJson,
     });
 
-    records.push({ entryName: entry.name, specPath, spec });
+    records.push({ entryName: entry.name, e2eDir, specPath, spec });
   }
 
   return records;
@@ -98,8 +115,8 @@ async function loadProviderSpecRecords(backendsDir: string): Promise<ProviderSpe
 
 export async function loadCliProviderSpecs(): Promise<CliProviderSpecV1[]> {
   const records: ProviderSpecRecord[] = [];
-  for (const dir of providerSpecSearchDirs()) {
-    records.push(...(await loadProviderSpecRecords(dir)));
+  for (const root of providerSpecSearchRoots()) {
+    records.push(...(await loadProviderSpecRecords(root)));
   }
 
   const seen = new Set<string>();
@@ -113,11 +130,9 @@ export async function loadCliProviderSpecs(): Promise<CliProviderSpecV1[]> {
 }
 
 export async function loadProvidersFromCliSpecs(): Promise<ProviderUnderTest[]> {
-  const records: Array<ProviderSpecRecord & { baseDir: string }> = [];
-  for (const dir of providerSpecSearchDirs()) {
-    for (const record of await loadProviderSpecRecords(dir)) {
-      records.push({ ...record, baseDir: dir });
-    }
+  const records: ProviderSpecRecord[] = [];
+  for (const root of providerSpecSearchRoots()) {
+    records.push(...(await loadProviderSpecRecords(root)));
   }
 
   const providers: ProviderUnderTest[] = [];
@@ -126,7 +141,7 @@ export async function loadProvidersFromCliSpecs(): Promise<ProviderUnderTest[]> 
     if (seen.has(record.spec.id)) continue;
     seen.add(record.spec.id);
 
-    const scenariosPath = join(record.baseDir, record.entryName, 'e2e', 'providerScenarios.json');
+    const scenariosPath = join(record.e2eDir, 'providerScenarios.json');
     if (!existsSync(scenariosPath)) {
       throw new Error(`Missing providerScenarios.json (${record.entryName}): ${scenariosPath}`);
     }

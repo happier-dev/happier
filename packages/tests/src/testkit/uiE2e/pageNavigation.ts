@@ -13,6 +13,8 @@ export {
 
 type GotoPage = Pick<Page, 'goto' | 'url' | 'waitForTimeout'>;
 
+const AUTHENTICATED_ROUTE_REVISIT_INTERVAL_MS = 1_000;
+
 export async function gotoDomContentLoadedWithRetries(page: GotoPage, url: string, timeoutMs = 90_000): Promise<void> {
   await gotoWithRetries(page, url, timeoutMs, 'domcontentloaded');
 }
@@ -173,6 +175,7 @@ export async function waitForAuthenticatedRouteUi(params: Readonly<{
   expectedPathname: string;
   requiredTestIds: readonly string[];
   blockedTestIds?: readonly string[] | undefined;
+  targetUrl?: string | undefined;
   timeoutMs?: number;
   browserDiagnostics?: (() => string) | undefined;
   reloadOnFailure?: boolean | undefined;
@@ -190,11 +193,13 @@ export async function waitForAuthenticatedRouteUi(params: Readonly<{
     throw new Error('waitForAuthenticatedRouteUi requires at least one required test id.');
   }
 
-  const initialTargetUrl = params.page.url();
+  const initialTargetUrl = params.targetUrl ?? params.page.url();
 
   const waitForRouteUiOnce = async (): Promise<void> => {
     const startedAt = Date.now();
+    let lastTargetNavigationAt = 0;
     while (Date.now() - startedAt < timeoutMs) {
+      const now = Date.now();
       let pathname: string;
       try {
         pathname = normalizePathname(new URL(params.page.url()).pathname);
@@ -203,6 +208,21 @@ export async function waitForAuthenticatedRouteUi(params: Readonly<{
       }
 
       if (pathname !== expectedPathname) {
+        if (
+          params.targetUrl
+          && hasPathname(params.targetUrl, expectedPathname)
+          && now - lastTargetNavigationAt >= AUTHENTICATED_ROUTE_REVISIT_INTERVAL_MS
+        ) {
+          lastTargetNavigationAt = now;
+          const remainingTimeoutMs = Math.max(1, timeoutMs - (now - startedAt));
+          await gotoDomContentLoadedWithPathFallback(
+            params.page,
+            params.targetUrl,
+            expectedPathname,
+            remainingTimeoutMs,
+          );
+          continue;
+        }
         await params.page.waitForTimeout(250);
         continue;
       }

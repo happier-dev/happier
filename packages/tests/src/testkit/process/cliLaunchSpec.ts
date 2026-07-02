@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 import { repoRootDir } from '../paths';
@@ -67,26 +67,65 @@ function ensureCliSourceSnapshot(
         : 'auto';
 
   const snapshotNodeModulesDir = resolve(snapshotDir, 'node_modules');
+  let snapshotNodeModulesUsesSymlinkOverlay = false;
+
+  const symlinkNodeModule = (source: string, dest: string): void => {
+    if (existsSync(dest)) return;
+    try {
+      const stat = lstatSync(source);
+      const type = stat.isDirectory()
+        ? process.platform === 'win32'
+          ? 'junction'
+          : 'dir'
+        : 'file';
+      symlinkSync(source, dest, type);
+    } catch {
+      // Best-effort only.
+    }
+  };
+
+  const linkNodeModulesOverlayEntries = (sourceDir: string): void => {
+    if (!existsSync(sourceDir)) return;
+    for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
+      const source = resolve(sourceDir, entry.name);
+      const dest = resolve(snapshotNodeModulesDir, entry.name);
+      if (entry.name.startsWith('@') && entry.isDirectory()) {
+        mkdirSync(dest, { recursive: true });
+        for (const scopedEntry of readdirSync(source, { withFileTypes: true })) {
+          symlinkNodeModule(resolve(source, scopedEntry.name), resolve(dest, scopedEntry.name));
+        }
+        continue;
+      }
+      symlinkNodeModule(source, dest);
+    }
+  };
+
   const ensureSymlinkNodeModules = (): void => {
     if (existsSync(snapshotNodeModulesDir)) {
       try {
         const stat = lstatSync(snapshotNodeModulesDir);
-        if (snapshotNodeModulesMode !== 'symlink' || stat.isSymbolicLink()) {
+        if (snapshotNodeModulesMode !== 'symlink') {
           return;
         }
-        rmSync(snapshotNodeModulesDir, { recursive: true, force: true });
+        if (stat.isSymbolicLink() || stat.isDirectory()) {
+          rmSync(snapshotNodeModulesDir, { recursive: true, force: true });
+        }
       } catch {
         return;
       }
     }
-    const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules');
     const rootNodeModulesDir = resolve(rootDir, 'node_modules');
-    const source = existsSync(cliNodeModulesDir) ? cliNodeModulesDir : rootNodeModulesDir;
-    if (!existsSync(source)) return;
+    const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules');
+    const sourceDirs = [cliNodeModulesDir, rootNodeModulesDir].filter((sourceDir) => existsSync(sourceDir));
+    if (sourceDirs.length === 0) return;
 
     mkdirSync(dirname(snapshotNodeModulesDir), { recursive: true });
     try {
-      symlinkSync(source, snapshotNodeModulesDir, process.platform === 'win32' ? 'junction' : 'dir');
+      mkdirSync(snapshotNodeModulesDir, { recursive: true });
+      for (const sourceDir of sourceDirs) {
+        linkNodeModulesOverlayEntries(sourceDir);
+      }
+      snapshotNodeModulesUsesSymlinkOverlay = true;
     } catch {
       // Best-effort only.
     }
@@ -105,7 +144,7 @@ function ensureCliSourceSnapshot(
     }
   })();
 
-  if (!snapshotNodeModulesIsSymlink && snapshotNodeModulesMode !== 'symlink') {
+  if (!snapshotNodeModulesUsesSymlinkOverlay && !snapshotNodeModulesIsSymlink && snapshotNodeModulesMode !== 'symlink') {
     ensureCliDistSnapshotNodeModules({
       snapshotDir,
       snapshotDistDir: resolve(snapshotDir, 'dist'),

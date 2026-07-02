@@ -30,6 +30,7 @@ export type GovernanceCommandId =
   | 'test:inventory'
   | 'test:migration:inventory'
   | 'test:migration:v2-zero:enforce'
+  | 'test:migration:bundled-plugin-projections'
   | 'test:migration:governance';
 
 const CANONICAL_LANE_PARITY: readonly ParityDefinition[] = Object.freeze([
@@ -175,7 +176,10 @@ const GOVERNANCE_COMMAND_PARITY: readonly ParityDefinition[] = Object.freeze([
     workflowCommands: [],
     workflowMode: 'any',
     triggerMode: 'local-only',
-    requiredScriptBodyPatterns: [/scripts\/testing\/migrations\/lib\/\*\.test\.ts/],
+    requiredScriptBodyPatterns: [
+      /scripts\/testing\/migrations\/lib\/\*\.test\.ts/,
+      /scripts\/testing\/migrations\/runtimeUnification\/validators\/\*\.test\.ts/,
+    ],
   },
   {
     id: 'test:policy',
@@ -212,13 +216,29 @@ const GOVERNANCE_COMMAND_PARITY: readonly ParityDefinition[] = Object.freeze([
     requiredScriptBodyPatterns: [/scripts\/testing\/migrations\/validateV2ZeroInventory\.ts/, /--enforce/],
   },
   {
+    id: 'test:migration:bundled-plugin-projections',
+    rootScriptName: 'test:migration:bundled-plugin-projections',
+    docsCommands: [],
+    workflowCommands: ['yarn test:migration:governance'],
+    workflowMode: 'any',
+    triggerMode: 'local-only',
+    requiredScriptBodyPatterns: [
+      /scripts\/migrations\/extensions\/generateBundledPluginEntries\.ts/,
+      /--mode check/,
+    ],
+  },
+  {
     id: 'test:migration:governance',
     rootScriptName: 'test:migration:governance',
     docsCommands: ['yarn test:migration:governance'],
     workflowCommands: ['yarn test:migration:governance'],
     workflowMode: 'any',
     triggerMode: 'required',
-    requiredScriptBodyPatterns: [/test:migration:v2-zero:enforce/, /test:migration:wire-compat/],
+    requiredScriptBodyPatterns: [
+      /test:migration:v2-zero:enforce/,
+      /test:migration:wire-compat/,
+      /test:migration:bundled-plugin-projections/,
+    ],
   },
 ]);
 

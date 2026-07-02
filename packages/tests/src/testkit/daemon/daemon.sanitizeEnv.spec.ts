@@ -3,11 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { sanitizeDaemonEnvForSpawn } from './daemon';
 
 describe('sanitizeDaemonEnvForSpawn', () => {
-  it('defaults daemon test spawns to disabled caffeinate while stripping session-only env', () => {
+  it('defaults daemon test spawns to disabled caffeinate while stripping session-only and host daemon-selection env', () => {
     const env = sanitizeDaemonEnvForSpawn({
       PATH: '/usr/bin',
       HAPPIER_SESSION_ATTACH_FILE: '/tmp/attach.json',
       HAPPIER_STACK_TOOL_TRACE_FILE: '/tmp/trace.json',
+      HAPPIER_ACTIVE_SERVER_ID: 'srv_remote',
+      HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'daemon-123',
+      HAPPIER_DAEMON_SERVICE_SERVER_URL: 'https://remote.example.test',
       TMUX: 'tmux-123',
     });
 
@@ -15,6 +18,9 @@ describe('sanitizeDaemonEnvForSpawn', () => {
     expect(env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED).toBe('0');
     expect(env.HAPPIER_SESSION_ATTACH_FILE).toBeUndefined();
     expect(env.HAPPIER_STACK_TOOL_TRACE_FILE).toBeUndefined();
+    expect(env.HAPPIER_ACTIVE_SERVER_ID).toBeUndefined();
+    expect(env.HAPPIER_DAEMON_SERVICE_INSTANCE_ID).toBeUndefined();
+    expect(env.HAPPIER_DAEMON_SERVICE_SERVER_URL).toBeUndefined();
     expect(env.TMUX).toBeUndefined();
     expect(env.PATH).toBe('/usr/bin');
   });

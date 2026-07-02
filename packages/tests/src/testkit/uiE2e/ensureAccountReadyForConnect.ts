@@ -11,6 +11,8 @@ const READY_TEST_IDS = [
   'session-composer-input',
   'new-session-composer-input',
   'settings-button',
+  'setupWizard.surface',
+  'setup.postAuth',
 ] as const;
 
 const READY_PRESENCE_ONLY_TEST_IDS = [
@@ -46,6 +48,20 @@ const STORY_DECK_PRIMARY_ROLE_BUTTON_NAMES = [
   'Continue',
   'Get Started',
   'Get started',
+] as const;
+
+const PRE_AUTH_PROGRESS_CTA_TEST_IDS = [
+    'brand-hero-get-started',
+] as const;
+
+const CREATE_ACCOUNT_CTA_TEST_IDS = [
+    'welcome-primary-start',
+    'welcome-create-account',
+] as const;
+
+const CREATE_ACCOUNT_ROLE_BUTTON_NAMES: readonly (string | RegExp)[] = [
+    'Create account',
+    /First time here/,
 ] as const;
 
 async function countReadySignals(page: EnsureAccountReadyForConnectPage): Promise<number> {
@@ -115,10 +131,10 @@ async function clickLocatorWithFallback(params: Readonly<{
 }
 
 async function clickRoleButtonWithFallback(params: Readonly<{
-  page: EnsureAccountReadyForConnectPage;
-  name: string;
+    page: EnsureAccountReadyForConnectPage;
+    name: string | RegExp;
 }>): Promise<boolean> {
-  const byRole = await firstVisible(params.page.getByRole('button', { name: params.name }));
+    const byRole = await firstVisible(params.page.getByRole('button', { name: params.name }));
   if (!byRole) return false;
   try {
     await byRole.click({ timeout: 1_500 });
@@ -134,16 +150,29 @@ async function clickRoleButtonWithFallback(params: Readonly<{
 }
 
 async function clickCreateAccountIfPresent(page: EnsureAccountReadyForConnectPage): Promise<boolean> {
-  if (await clickLocatorWithFallback({ page, testId: 'welcome-primary-start' })) return true;
-  if (await clickLocatorWithFallback({ page, testId: 'welcome-create-account' })) return true;
-  if (await clickRoleButtonWithFallback({ page, name: 'Create account' })) return true;
-  return false;
+    for (const testId of CREATE_ACCOUNT_CTA_TEST_IDS) {
+        if (await clickLocatorWithFallback({ page, testId })) return true;
+    }
+    for (const name of CREATE_ACCOUNT_ROLE_BUTTON_NAMES) {
+        if (await clickRoleButtonWithFallback({ page, name })) return true;
+    }
+    return false;
 }
 
 async function hasCreateAccountCta(page: EnsureAccountReadyForConnectPage): Promise<boolean> {
-  if (await firstVisible(page.getByTestId('welcome-primary-start'))) return true;
-  if (await firstVisible(page.getByTestId('welcome-create-account'))) return true;
-  if (await firstVisible(page.getByRole('button', { name: 'Create account' }))) return true;
+    for (const testId of CREATE_ACCOUNT_CTA_TEST_IDS) {
+        if (await firstVisible(page.getByTestId(testId))) return true;
+    }
+    for (const name of CREATE_ACCOUNT_ROLE_BUTTON_NAMES) {
+        if (await firstVisible(page.getByRole('button', { name }))) return true;
+    }
+    return false;
+}
+
+async function advancePreAuthProgressIfPresent(page: EnsureAccountReadyForConnectPage): Promise<boolean> {
+  for (const testId of PRE_AUTH_PROGRESS_CTA_TEST_IDS) {
+    if (await clickLocatorWithFallback({ page, testId })) return true;
+  }
   return false;
 }
 
@@ -161,6 +190,8 @@ async function ensureReadyOrProgress(params: Readonly<{
   page: EnsureAccountReadyForConnectPage;
   clickCreateAccount: boolean;
 }>): Promise<boolean> {
+  if (await advancePreAuthProgressIfPresent(params.page)) return false;
+
   if (params.clickCreateAccount) {
     if (await clickCreateAccountIfPresent(params.page)) {
       return (await countAuthenticatedReadySignals(params.page)) > 0;

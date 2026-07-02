@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
+import {
+  SessionRuntimeIssueV1Schema,
+  type PrimaryTurnStatusV1,
+  type SessionRuntimeIssueV1,
+} from '@happier-dev/protocol';
+
 import { fetchJson } from './http';
 
 export async function createSession(
@@ -161,6 +167,19 @@ function parseSessionMessageRole(value: unknown, context: string): SessionMessag
   throw new Error(`Invalid message row messageRole (${context})`);
 }
 
+function parseLatestTurnStatus(value: unknown, context: string): PrimaryTurnStatusV1 | null {
+  if (value === undefined || value === null) return null;
+  if (value === 'in_progress' || value === 'completed' || value === 'cancelled' || value === 'failed') return value;
+  throw new Error(`Invalid v2 session latestTurnStatus (${context})`);
+}
+
+function parseLastRuntimeIssue(value: unknown, context: string): SessionRuntimeIssueV1 | null {
+  if (value === undefined || value === null) return null;
+  const parsed = SessionRuntimeIssueV1Schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  throw new Error(`Invalid v2 session lastRuntimeIssue (${context})`);
+}
+
 function parseSessionMessageRow(value: unknown, context: string): SessionMessageRow {
   if (!isRecord(value)) throw new Error(`Invalid message row shape (${context})`);
 
@@ -220,6 +239,7 @@ export async function fetchMessagesPage(params: {
   scope?: 'main' | 'sidechain' | 'all';
   sidechainId?: string;
   role?: 'user' | 'agent' | 'event' | 'unknown';
+  roles?: ReadonlyArray<'user' | 'agent' | 'event' | 'unknown'>;
 }): Promise<{ messages: SessionMessageRow[]; nextAfterSeq: number | null }> {
   const limit = typeof params.limit === 'number' && Number.isFinite(params.limit) ? params.limit : 500;
   const endpoint = `${params.baseUrl}/v1/sessions/${params.sessionId}/messages`;
@@ -234,6 +254,9 @@ export async function fetchMessagesPage(params: {
   }
   if (params.role) {
     url.searchParams.set('role', params.role);
+  }
+  if (params.roles && params.roles.length > 0) {
+    url.searchParams.set('roles', params.roles.join(','));
   }
 
   const res = await fetchJson<SessionMessagesPageResponse>(url.toString(), {
@@ -324,8 +347,13 @@ export type SessionV2 = {
   agentStateVersion: number;
   createdAt: number;
   updatedAt: number;
+  meaningfulActivityAt: number;
   active: boolean;
   activeAt: number;
+  pendingCount?: number;
+  pendingVersion?: number;
+  latestTurnStatus: PrimaryTurnStatusV1 | null;
+  lastRuntimeIssue: SessionRuntimeIssueV1 | null;
 };
 
 export type SessionV2ListRow = SessionV2 & {
@@ -333,7 +361,9 @@ export type SessionV2ListRow = SessionV2 & {
   share: { accessLevel: string; canApprovePermissions: boolean } | null;
 };
 
-function parseSessionV2ListRow(value: unknown, context: string): SessionV2ListRow {
+export type SessionV2ById = SessionV2 & Record<string, unknown>;
+
+function parseSessionV2Common(value: unknown, context: string): SessionV2 {
   if (!isRecord(value)) throw new Error(`Invalid v2 session row shape (${context})`);
   const id = value.id;
   const seq = value.seq;
@@ -343,10 +373,13 @@ function parseSessionV2ListRow(value: unknown, context: string): SessionV2ListRo
   const agentStateVersion = value.agentStateVersion;
   const createdAt = value.createdAt;
   const updatedAt = value.updatedAt;
+  const meaningfulActivityAt = value.meaningfulActivityAt;
   const active = value.active;
   const activeAt = value.activeAt;
-  const dataEncryptionKey = value.dataEncryptionKey;
-  const share = value.share;
+  const pendingCount = value.pendingCount;
+  const pendingVersion = value.pendingVersion;
+  const latestTurnStatus = parseLatestTurnStatus(value.latestTurnStatus, context);
+  const lastRuntimeIssue = parseLastRuntimeIssue(value.lastRuntimeIssue, context);
 
   if (typeof id !== 'string' || id.length === 0) throw new Error(`Invalid v2 session id (${context})`);
   if (typeof seq !== 'number' || !Number.isFinite(seq)) throw new Error(`Invalid v2 session seq (${context})`);
@@ -360,8 +393,49 @@ function parseSessionV2ListRow(value: unknown, context: string): SessionV2ListRo
   }
   if (typeof createdAt !== 'number' || !Number.isFinite(createdAt)) throw new Error(`Invalid v2 session createdAt (${context})`);
   if (typeof updatedAt !== 'number' || !Number.isFinite(updatedAt)) throw new Error(`Invalid v2 session updatedAt (${context})`);
+  if (typeof meaningfulActivityAt !== 'number' || !Number.isFinite(meaningfulActivityAt)) {
+    throw new Error(`Invalid v2 session meaningfulActivityAt (${context})`);
+  }
   if (typeof active !== 'boolean') throw new Error(`Invalid v2 session active (${context})`);
   if (typeof activeAt !== 'number' || !Number.isFinite(activeAt)) throw new Error(`Invalid v2 session activeAt (${context})`);
+  if (
+    pendingCount !== undefined &&
+    (typeof pendingCount !== 'number' || !Number.isInteger(pendingCount) || pendingCount < 0)
+  ) {
+    throw new Error(`Invalid v2 session pendingCount (${context})`);
+  }
+  if (
+    pendingVersion !== undefined &&
+    (typeof pendingVersion !== 'number' || !Number.isInteger(pendingVersion) || pendingVersion < 0)
+  ) {
+    throw new Error(`Invalid v2 session pendingVersion (${context})`);
+  }
+
+  return {
+    id,
+    seq,
+    metadata,
+    metadataVersion,
+    agentState,
+    agentStateVersion,
+    createdAt,
+    updatedAt,
+    meaningfulActivityAt,
+    active,
+    activeAt,
+    ...(typeof pendingCount === 'number' ? { pendingCount } : {}),
+    ...(typeof pendingVersion === 'number' ? { pendingVersion } : {}),
+    latestTurnStatus,
+    lastRuntimeIssue,
+  };
+}
+
+function parseSessionV2ListRow(value: unknown, context: string): SessionV2ListRow {
+  const session = parseSessionV2Common(value, context);
+  const row = value as Record<string, unknown>;
+  const dataEncryptionKey = row.dataEncryptionKey;
+  const share = row.share;
+
   if (!(dataEncryptionKey === null || typeof dataEncryptionKey === 'string')) {
     throw new Error(`Invalid v2 session dataEncryptionKey (${context})`);
   }
@@ -375,16 +449,7 @@ function parseSessionV2ListRow(value: unknown, context: string): SessionV2ListRo
   }
 
   return {
-    id,
-    seq,
-    metadata,
-    metadataVersion,
-    agentState,
-    agentStateVersion,
-    createdAt,
-    updatedAt,
-    active,
-    activeAt,
+    ...session,
     dataEncryptionKey,
     share: share as { accessLevel: string; canApprovePermissions: boolean } | null,
   };
@@ -416,16 +481,21 @@ export async function fetchSessionsV2(baseUrl: string, token: string, opts?: { c
   };
 }
 
-export async function fetchSessionV2(baseUrl: string, token: string, sessionId: string): Promise<SessionV2> {
-  const res = await fetchJson<{ session?: SessionV2 }>(`${baseUrl}/v2/sessions/${sessionId}`, {
+export async function fetchSessionV2(baseUrl: string, token: string, sessionId: string): Promise<SessionV2ById> {
+  const endpoint = `${baseUrl}/v2/sessions/${sessionId}`;
+  const res = await fetchJson<{ session?: unknown }>(endpoint, {
     headers: { Authorization: `Bearer ${token}` },
     timeoutMs: 15_000,
   });
   const s = res.data?.session;
-  if (res.status !== 200 || !s || typeof s.id !== 'string') {
+  if (res.status !== 200 || s === undefined) {
     throw new Error(`Failed to fetch session (status=${res.status})`);
   }
-  return s;
+  if (!isRecord(s)) throw new Error(`Invalid v2 session row shape (${endpoint})`);
+  return {
+    ...s,
+    ...parseSessionV2Common(s, endpoint),
+  };
 }
 
 export async function patchSessionAgentState(params: {

@@ -140,7 +140,7 @@ describe('buildPatchedSessionHandoffMetadata', () => {
             providerId: 'codex',
             provider: {
               backendMode: 'appServer',
-              vendorSessionId: 'thread_old',
+              providerSessionId: 'thread_old',
             },
           },
         },
@@ -160,7 +160,7 @@ describe('buildPatchedSessionHandoffMetadata', () => {
         providerId: 'codex',
         provider: {
           backendMode: 'appServer',
-          vendorSessionId: 'thread_old',
+          providerSessionId: 'thread_old',
         },
       },
     }));

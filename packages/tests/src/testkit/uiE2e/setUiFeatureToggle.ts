@@ -18,6 +18,8 @@ export async function setUiFeatureToggle(params: Readonly<{
   featureId: string;
   enabled: boolean;
   settingsScope?: UiE2eAccountSettingsScope;
+  applyToAllScopes?: boolean;
+  reloadUrl?: string;
 }>): Promise<void> {
   const scopedSettingsSuffix = params.settingsScope ? accountSettingsScopeKeySuffix(params.settingsScope) : null;
 
@@ -25,6 +27,7 @@ export async function setUiFeatureToggle(params: Readonly<{
     ({
       featureId,
       enabled,
+      applyToAllScopes,
       scopedSettingsSuffix,
     }) => {
       const mergeFeatureToggleMap = (raw: unknown): Record<string, boolean> => {
@@ -72,48 +75,60 @@ export async function setUiFeatureToggle(params: Readonly<{
         ? `${accountSettingsLogicalKeyPrefix}${scopedSettingsSuffix}`
         : null;
 
-      const settingsKey = requestedLogicalKey
-        ? scopedSettingsKeys.find((key) => key.logicalKey === requestedLogicalKey)
-        : scopedSettingsKeys.length === 1
-          ? scopedSettingsKeys[0]!
-          : null;
-      if (!settingsKey) {
+      const settingsKeys = (() => {
+        if (requestedLogicalKey) {
+          const requested = scopedSettingsKeys.find((key) => key.logicalKey === requestedLogicalKey);
+          return requested ? [requested] : null;
+        }
+        if (applyToAllScopes === true) return scopedSettingsKeys;
+        return scopedSettingsKeys.length === 1 ? [scopedSettingsKeys[0]!] : null;
+      })();
+      if (!settingsKeys) {
         throw new Error(
           requestedLogicalKey
             ? 'missing scoped persisted settings for requested account scope'
             : `settingsScope is required when multiple scoped persisted settings records exist (${scopedSettingsKeys.length})`,
         );
       }
-      const pendingSettingsKey = `${settingsKey.storageNamespace}\\${pendingAccountSettingsLogicalKeyPrefix}${settingsKey.logicalKey.slice(accountSettingsLogicalKeyPrefix.length)}`;
-      const rawSettings = window.localStorage.getItem(settingsKey.fullKey);
-      if (!rawSettings) throw new Error('missing persisted settings');
 
-      const parsed = JSON.parse(rawSettings) as PersistedSettingsEnvelope;
-      const settings = typeof parsed.settings === 'object' && parsed.settings ? parsed.settings : {};
-      const rawPending = window.localStorage.getItem(pendingSettingsKey);
-      const pending = rawPending ? (JSON.parse(rawPending) as PendingSettingsEnvelope) : {};
+      for (const settingsKey of settingsKeys) {
+        const pendingSettingsKey = `${settingsKey.storageNamespace}\\${pendingAccountSettingsLogicalKeyPrefix}${settingsKey.logicalKey.slice(accountSettingsLogicalKeyPrefix.length)}`;
+        const rawSettings = window.localStorage.getItem(settingsKey.fullKey);
+        if (!rawSettings) throw new Error('missing persisted settings');
 
-      const featureToggles = mergeFeatureToggleMap(settings.featureToggles);
-      const pendingFeatureToggles = mergeFeatureToggleMap((pending as any).featureToggles);
+        const parsed = JSON.parse(rawSettings) as PersistedSettingsEnvelope;
+        const settings = typeof parsed.settings === 'object' && parsed.settings ? parsed.settings : {};
+        const rawPending = window.localStorage.getItem(pendingSettingsKey);
+        const pending = rawPending ? (JSON.parse(rawPending) as PendingSettingsEnvelope) : {};
 
-      parsed.settings = {
-        ...settings,
-        experiments: true,
-        featureToggles,
-      };
+        const featureToggles = mergeFeatureToggleMap(settings.featureToggles);
+        const pendingFeatureToggles = mergeFeatureToggleMap(pending.featureToggles);
 
-      window.localStorage.setItem(settingsKey.fullKey, JSON.stringify(parsed));
-      window.localStorage.setItem(
-        pendingSettingsKey,
-        JSON.stringify({
-          ...pending,
+        parsed.settings = {
+          ...settings,
           experiments: true,
-          featureToggles: pendingFeatureToggles,
-        }),
-      );
+          featureToggles,
+        };
+
+        window.localStorage.setItem(settingsKey.fullKey, JSON.stringify(parsed));
+        window.localStorage.setItem(
+          pendingSettingsKey,
+          JSON.stringify({
+            ...pending,
+            experiments: true,
+            featureToggles: pendingFeatureToggles,
+          }),
+        );
+      }
     },
-    { featureId: params.featureId, enabled: params.enabled, scopedSettingsSuffix },
+    {
+      featureId: params.featureId,
+      enabled: params.enabled,
+      applyToAllScopes: params.applyToAllScopes === true,
+      scopedSettingsSuffix,
+    },
   );
 
-  await gotoDomContentLoadedWithRetries(params.page, `${params.baseUrl}/`);
+  const reloadUrl = String(params.reloadUrl ?? '').trim() || `${params.baseUrl}/`;
+  await gotoDomContentLoadedWithRetries(params.page, reloadUrl);
 }

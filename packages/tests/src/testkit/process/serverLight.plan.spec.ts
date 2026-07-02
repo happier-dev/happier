@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   hasServerSharedDepsOutputs,
   hasServerGeneratedProviderOutputs,
+  renderServerLightSqliteDatabaseUrl,
   resolveServerLightDatabaseUrlEnv,
   resolveServerStartLaunchSpec,
   shouldRetryServerStartFromFailureContext,
@@ -61,6 +62,12 @@ describe("startServerLight planning helpers", () => {
     ).toEqual({
       DATABASE_URL: "file:/generated.sqlite?connection_limit=1",
     });
+  });
+
+  it("renders generated server-light sqlite DATABASE_URL with a single Prisma connection", () => {
+    expect(renderServerLightSqliteDatabaseUrl({ dbPath: "/tmp/happier-e2e/happier-server-light.sqlite", platform: "linux" })).toBe(
+      "file:///tmp/happier-e2e/happier-server-light.sqlite?socket_timeout=30&connection_limit=1",
+    );
   });
 
   it.each<[TestDbProvider, string]>([
@@ -203,6 +210,7 @@ describe("startServerLight planning helpers", () => {
     );
     writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "schema.prisma"), "datasource db { provider = \"postgresql\" }\n", "utf8");
 
+    expect(hasServerGeneratedProviderOutputs(rootDir, "pglite")).toBe(true);
     expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(true);
     expect(hasServerGeneratedProviderOutputs(rootDir, "mysql")).toBe(true);
 
@@ -211,7 +219,50 @@ describe("startServerLight planning helpers", () => {
     expect(hasServerGeneratedProviderOutputs(rootDir, "mysql")).toBe(false);
 
     writeFileSync(resolve(rootDir, "apps", "server", "prisma", "sqlite", "schema.prisma"), "changed\n", "utf8");
+    expect(hasServerGeneratedProviderOutputs(rootDir, "pglite")).toBe(true);
     expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(false);
+  });
+
+  it("accepts generated provider schemas with reordered Prisma model attributes", () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "happier-server-generated-reordered-model-attributes-"));
+    const sourceSchema = [
+      "datasource db { provider = \"postgresql\" }",
+      "model PluginPermissionGrant {",
+      "  id String @id",
+      "  accountId String",
+      "  activeIdentityKey String",
+      "  pluginId String",
+      "  @@index([accountId, pluginId], map: \"plugin_permission_grants_scope_idx\")",
+      "  @@unique([accountId, activeIdentityKey], map: \"plugin_permission_grants_active_identity_key\")",
+      "}",
+      "",
+    ].join("\n");
+    const generatedSchema = [
+      "datasource db { provider = \"postgresql\" }",
+      "model PluginPermissionGrant {",
+      "  id String @id",
+      "  accountId String",
+      "  activeIdentityKey String",
+      "  pluginId String",
+      "  @@unique([accountId, activeIdentityKey], map: \"plugin_permission_grants_active_identity_key\")",
+      "  @@index([accountId, pluginId], map: \"plugin_permission_grants_scope_idx\")",
+      "}",
+      "",
+    ].join("\n");
+
+    mkdirSync(resolve(rootDir, "apps", "server", "prisma", "sqlite"), { recursive: true });
+    mkdirSync(resolve(rootDir, "apps", "server", "prisma", "mysql"), { recursive: true });
+    mkdirSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client"), { recursive: true });
+    mkdirSync(resolve(rootDir, "node_modules", ".prisma", "client"), { recursive: true });
+
+    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "schema.prisma"), sourceSchema, "utf8");
+    writeFileSync(resolve(rootDir, "apps", "server", "prisma", "sqlite", "schema.prisma"), sourceSchema, "utf8");
+    writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "index.js"), "export {};\n", "utf8");
+    writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "default.js"), "module.exports={};\n", "utf8");
+    writeFileSync(resolve(rootDir, "node_modules", ".prisma", "client", "schema.prisma"), generatedSchema, "utf8");
+    writeFileSync(resolve(rootDir, "apps", "server", "generated", "sqlite-client", "schema.prisma"), generatedSchema, "utf8");
+
+    expect(hasServerGeneratedProviderOutputs(rootDir, "sqlite")).toBe(true);
   });
 
   it("retries server start when startup failure tail contains EADDRINUSE", () => {
@@ -234,6 +285,21 @@ describe("startServerLight planning helpers", () => {
       error: new Error("Timed out waiting for /health at http://127.0.0.1:50133 | lastStatus=none | lastBodyStatus=none | lastError=fetch failed"),
       stderrTail: "",
       stdoutTail: "[16:04:06.479] INFO: Initializing auth module...",
+    });
+    expect(retry).toBe(true);
+  });
+
+  it("retries server start when health never becomes reachable and the process only emitted Node warnings", () => {
+    const retry = shouldRetryServerStartFromFailureContext({
+      attempt: 1,
+      maxAttempts: 5,
+      preflightPortAvailable: true,
+      error: new Error("Timed out waiting for /health at http://127.0.0.1:57300 | lastStatus=none | lastBodyStatus=none | lastError=fetch failed"),
+      stderrTail: [
+        "(node:79199) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.",
+        "(Use `node --trace-warnings ...` to show where the warning was created)",
+      ].join("\n"),
+      stdoutTail: "",
     });
     expect(retry).toBe(true);
   });

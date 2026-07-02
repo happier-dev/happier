@@ -4,8 +4,11 @@ import { startTestDaemon, type StartedDaemon } from '../daemon/daemon';
 import { approveTerminalConnect } from './approveTerminalConnect';
 import { startCliAuthLoginForTerminalConnect } from './cliTerminalConnect';
 import { acknowledgeTerminalConnectSuccessIfPresent } from './acknowledgeTerminalConnectSuccessIfPresent';
-import { gotoDomContentLoadedWithPathFallback, gotoDomContentLoadedWithRetries } from './pageNavigation';
+import { gotoCommittedWithRetries, gotoDomContentLoadedWithPathFallback } from './pageNavigation';
 import { ensureAccountReadyForConnect } from './ensureAccountReadyForConnect';
+import { ensurePendingTerminalConnectReadyForApproval } from './terminalConnectApprovalFlow';
+import { waitForInitialAppUi } from './waitForInitialAppUi';
+import { createAccountAndReachConnectMachineState } from './createAccountAndReachConnectMachineState';
 
 export async function authenticateAndStartDaemon(params: Readonly<{
   page: Page;
@@ -14,16 +17,30 @@ export async function authenticateAndStartDaemon(params: Readonly<{
   serverUrl: string;
   uiBaseUrl: string;
   createAccount?: boolean;
+  initialUiGotoTimeoutMs?: number;
+  initialUiReadyTimeoutMs?: number;
   terminalConnectUrlTimeoutMs?: number;
   daemonStartupTimeoutMs?: number;
   extraEnv?: NodeJS.ProcessEnv;
 }>): Promise<StartedDaemon> {
-  await gotoDomContentLoadedWithRetries(params.page, params.uiBaseUrl);
-  await ensureAccountReadyForConnect({
+  await gotoCommittedWithRetries(params.page, params.uiBaseUrl, params.initialUiGotoTimeoutMs);
+  await waitForInitialAppUi({
     page: params.page,
-    timeoutMs: 120_000,
-    clickCreateAccount: params.createAccount !== false,
+    timeoutMs: params.initialUiReadyTimeoutMs,
+    reloadOnFailure: false,
   });
+  if (params.createAccount === false) {
+    await ensureAccountReadyForConnect({
+      page: params.page,
+      timeoutMs: 120_000,
+      clickCreateAccount: false,
+    });
+  } else {
+    await createAccountAndReachConnectMachineState({
+      page: params.page,
+      requirePersistedAuthCredentials: false,
+    });
+  }
 
   const cliLogin = await startCliAuthLoginForTerminalConnect({
     testDir: params.testDir,
@@ -42,7 +59,23 @@ export async function authenticateAndStartDaemon(params: Readonly<{
   });
 
   try {
-    await gotoDomContentLoadedWithPathFallback(params.page, cliLogin.connectUrl, '/terminal/connect', 90_000);
+    const gotoConnectUrl = async (url: string, timeoutMs: number): Promise<void> => {
+      await gotoDomContentLoadedWithPathFallback(params.page, url, '/terminal/connect', timeoutMs);
+    };
+    await gotoConnectUrl(cliLogin.connectUrl, params.terminalConnectUrlTimeoutMs ?? 120_000);
+    await ensurePendingTerminalConnectReadyForApproval({
+      page: params.page,
+      connectUrlForBrowser: cliLogin.connectUrl,
+      gotoConnectUrl,
+      restoreAccount: async () => {
+        await ensureAccountReadyForConnect({
+          page: params.page,
+          timeoutMs: 120_000,
+          clickCreateAccount: false,
+        });
+      },
+      timeoutMs: params.terminalConnectUrlTimeoutMs,
+    });
     await approveTerminalConnect({ page: params.page });
     await cliLogin.waitForSuccess();
     await acknowledgeTerminalConnectSuccessIfPresent(params.page);

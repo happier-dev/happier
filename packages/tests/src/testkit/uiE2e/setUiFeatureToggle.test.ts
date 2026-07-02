@@ -161,4 +161,86 @@ describe('setUiFeatureToggle', () => {
     });
     expect(values.has(`mmkv.default\\pending-account-settings:v2:${suffixA}`)).toBe(false);
   });
+
+  it('can update every scoped settings record and reload a requested URL', async () => {
+    const values = new Map<string, string>();
+    const suffixA = '8:server-a9:account-a';
+    const suffixB = '8:server-b9:account-b';
+    const settingsKeyA = `mmkv.default\\account-settings:v2:${suffixA}`;
+    const settingsKeyB = `mmkv.default\\account-settings:v2:${suffixB}`;
+    values.set(settingsKeyA, JSON.stringify({
+      settings: {
+        featureToggles: {
+          existingFeature: false,
+        },
+      },
+      version: 1,
+    }));
+    values.set(settingsKeyB, JSON.stringify({
+      settings: {
+        experiments: false,
+        featureToggles: {
+          otherFeature: true,
+        },
+      },
+      version: 2,
+    }));
+
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        localStorage: createLocalStorage(values),
+      },
+    });
+
+    const page = {
+      evaluate: async (fn: (args: unknown) => unknown, args: unknown) => fn(args),
+    };
+
+    await setUiFeatureToggle({
+      page: page as never,
+      baseUrl: 'http://127.0.0.1:8081',
+      featureId: 'connectedServices',
+      enabled: true,
+      applyToAllScopes: true,
+      reloadUrl: 'http://127.0.0.1:8081/new?happier_hmr=0',
+    });
+
+    expect(JSON.parse(values.get(settingsKeyA) ?? '{}')).toEqual({
+      settings: {
+        experiments: true,
+        featureToggles: {
+          existingFeature: false,
+          connectedServices: true,
+        },
+      },
+      version: 1,
+    });
+    expect(JSON.parse(values.get(settingsKeyB) ?? '{}')).toEqual({
+      settings: {
+        experiments: true,
+        featureToggles: {
+          otherFeature: true,
+          connectedServices: true,
+        },
+      },
+      version: 2,
+    });
+    expect(JSON.parse(values.get(`mmkv.default\\pending-account-settings:v2:${suffixA}`) ?? '{}')).toEqual({
+      experiments: true,
+      featureToggles: {
+        connectedServices: true,
+      },
+    });
+    expect(JSON.parse(values.get(`mmkv.default\\pending-account-settings:v2:${suffixB}`) ?? '{}')).toEqual({
+      experiments: true,
+      featureToggles: {
+        connectedServices: true,
+      },
+    });
+    expect(gotoDomContentLoadedWithRetries).toHaveBeenCalledWith(
+      page,
+      'http://127.0.0.1:8081/new?happier_hmr=0',
+    );
+  });
 });

@@ -1,5 +1,5 @@
 import { Dirent, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { basename, dirname, resolve } from 'node:path';
+import { basename, dirname, resolve, sep } from 'node:path';
 
 type CopyMissingEntryOptions = {
   mergeExistingDirectoryContents?: boolean;
@@ -37,10 +37,46 @@ function isDirectoryEntry(path: string): boolean {
   }
 }
 
+function isSymbolicLinkEntry(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when writing to destPath would traverse a symlinked component INSIDE a node_modules
+ * subtree (overlay symlinks pointing at the live source tree). Per-entry lstat guards only see
+ * the final component; when an ANCESTOR (e.g. a scoped @scope directory, or any deeper entry)
+ * is the symlink, the textual destination resolves through it and the write lands in the LIVE
+ * tree (observed live 2026-06-12: real workspace node_modules gained vendored nested copies
+ * through scope-level overlay symlinks with the entry-level guard already in place).
+ * Components ABOVE the first node_modules segment (snapshot tmp dirs, /var on macOS, ...) are
+ * legitimately symlinked and deliberately not policed.
+ */
+function writesThroughSymlinkedNodeModulesPath(destPath: string): boolean {
+  const segments = destPath.split(sep);
+  const firstNodeModulesIndex = segments.indexOf('node_modules');
+  if (firstNodeModulesIndex === -1) return false;
+  let current = segments.slice(0, firstNodeModulesIndex + 1).join(sep) || sep;
+  for (let i = firstNodeModulesIndex + 1; i < segments.length - 1; i += 1) {
+    current = `${current}${sep}${segments[i]}`;
+    try {
+      if (lstatSync(current).isSymbolicLink()) return true;
+    } catch {
+      // Ancestor does not exist yet: everything below will be created as real directories.
+      return false;
+    }
+  }
+  return false;
+}
+
 function copyMissingEntry(destPath: string, sourcePath: string, options: CopyMissingEntryOptions = {}): void {
   const mergeExistingDirectoryContents = options.mergeExistingDirectoryContents ?? true;
   const pruneNestedNodeModules = options.pruneNestedNodeModules ?? false;
   if (isTransientSyncDirName(basename(sourcePath))) return;
+  if (writesThroughSymlinkedNodeModulesPath(destPath)) return;
 
   if (existsSync(destPath)) {
     if (!isDirectoryEntry(sourcePath) || !isDirectoryEntry(destPath)) return;
@@ -100,6 +136,7 @@ function ensureCopiedNodeModulesEntries(sourceNodeModulesDir: string, destNodeMo
 
 function ensureCopiedTextFile(destPath: string, sourcePath: string, options: { overwriteExisting?: boolean } = {}): void {
   if (existsSync(destPath) && !options.overwriteExisting) return;
+  if (writesThroughSymlinkedNodeModulesPath(destPath)) return;
   mkdirSync(dirname(destPath), { recursive: true });
   try {
     writeFileSync(destPath, readFileSync(sourcePath));
@@ -168,6 +205,43 @@ function readPackageNameFromPackageJson(packageJsonPath: string): string | null 
   }
 }
 
+type WorkspacePackageInfo = {
+  packageDir: string;
+  packageJsonPath: string;
+  scopePackageName: string;
+};
+
+function collectWorkspacePackageInfos(rootDir: string): WorkspacePackageInfo[] {
+  const candidateParentDirs = [
+    resolve(rootDir, 'packages'),
+    resolve(rootDir, 'packages', 'plugins'),
+    resolve(rootDir, 'packages', 'extensions'),
+  ];
+  const seenPackageJsonPaths = new Set<string>();
+  const packages: WorkspacePackageInfo[] = [];
+
+  for (const parentDir of candidateParentDirs) {
+    for (const entry of listNodeModulesEntries(parentDir)) {
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+
+      const packageDir = resolve(parentDir, entry.name);
+      const packageJsonPath = resolve(packageDir, 'package.json');
+      if (seenPackageJsonPaths.has(packageJsonPath)) continue;
+      seenPackageJsonPaths.add(packageJsonPath);
+
+      const packageName = readPackageNameFromPackageJson(packageJsonPath);
+      if (!packageName?.startsWith('@happier-dev/')) continue;
+
+      const scopePackageName = packageName.slice('@happier-dev/'.length).trim();
+      if (!scopePackageName) continue;
+
+      packages.push({ packageDir, packageJsonPath, scopePackageName });
+    }
+  }
+
+  return packages;
+}
+
 function ensureWorkspacePackageRuntimeDependencyFallbacks(
   snapshotPackageNodeModulesDir: string,
   rootDir: string,
@@ -234,65 +308,15 @@ function ensureRootNodeModulesFallback(snapshotDistDir: string, rootDir: string)
 }
 
 function ensureWorkspacePackageManifests(snapshotNodeModulesDir: string, rootDir: string): void {
-  const packagesDir = resolve(rootDir, 'packages');
-  let entries: Dirent[] = [];
-  try {
-    entries = readdirSync(packagesDir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-
-    const packageJsonPath = resolve(packagesDir, entry.name, 'package.json');
-    let packageName = '';
-    try {
-      const raw = readFileSync(packageJsonPath, 'utf8');
-      const parsed = JSON.parse(raw) as { name?: unknown };
-      packageName = typeof parsed.name === 'string' ? parsed.name.trim() : '';
-    } catch {
-      continue;
-    }
-
-    if (!packageName.startsWith('@happier-dev/')) continue;
-
-    const scopePackageName = packageName.slice('@happier-dev/'.length).trim();
-    if (!scopePackageName) continue;
-
+  for (const { packageJsonPath, scopePackageName } of collectWorkspacePackageInfos(rootDir)) {
     const snapshotPackageJsonPath = resolve(snapshotNodeModulesDir, '@happier-dev', scopePackageName, 'package.json');
     ensureCopiedTextFile(snapshotPackageJsonPath, packageJsonPath, { overwriteExisting: true });
   }
 }
 
 function ensureWorkspacePackageDistTrees(snapshotNodeModulesDir: string, rootDir: string): void {
-  const packagesDir = resolve(rootDir, 'packages');
-  let entries: Dirent[] = [];
-  try {
-    entries = readdirSync(packagesDir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-
-    const packageJsonPath = resolve(packagesDir, entry.name, 'package.json');
-    let packageName = '';
-    try {
-      const raw = readFileSync(packageJsonPath, 'utf8');
-      const parsed = JSON.parse(raw) as { name?: unknown };
-      packageName = typeof parsed.name === 'string' ? parsed.name.trim() : '';
-    } catch {
-      continue;
-    }
-
-    if (!packageName.startsWith('@happier-dev/')) continue;
-
-    const scopePackageName = packageName.slice('@happier-dev/'.length).trim();
-    if (!scopePackageName) continue;
-
-    const sourceDistDir = resolve(packagesDir, entry.name, 'dist');
+  for (const { packageDir, scopePackageName } of collectWorkspacePackageInfos(rootDir)) {
+    const sourceDistDir = resolve(packageDir, 'dist');
     const snapshotPackageDir = resolve(snapshotNodeModulesDir, '@happier-dev', scopePackageName);
     const snapshotDistDir = resolve(snapshotPackageDir, 'dist');
     if (!existsSync(sourceDistDir)) continue;
@@ -312,32 +336,7 @@ function ensureWorkspacePackageDistTrees(snapshotNodeModulesDir: string, rootDir
 }
 
 function ensureWorkspacePackageRuntimeDependencyTrees(snapshotNodeModulesDir: string, rootDir: string): void {
-  const packagesDir = resolve(rootDir, 'packages');
-  let entries: Dirent[] = [];
-  try {
-    entries = readdirSync(packagesDir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-
-    const packageJsonPath = resolve(packagesDir, entry.name, 'package.json');
-    let packageName = '';
-    try {
-      const raw = readFileSync(packageJsonPath, 'utf8');
-      const parsed = JSON.parse(raw) as { name?: unknown };
-      packageName = typeof parsed.name === 'string' ? parsed.name.trim() : '';
-    } catch {
-      continue;
-    }
-
-    if (!packageName.startsWith('@happier-dev/')) continue;
-
-    const scopePackageName = packageName.slice('@happier-dev/'.length).trim();
-    if (!scopePackageName) continue;
-
+  for (const { packageJsonPath, scopePackageName } of collectWorkspacePackageInfos(rootDir)) {
     const sourceNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', scopePackageName, 'node_modules');
     const snapshotPackageNodeModulesDir = resolve(snapshotNodeModulesDir, '@happier-dev', scopePackageName, 'node_modules');
     if (existsSync(sourceNodeModulesDir)) {
@@ -352,15 +351,32 @@ function ensureExternalPackageRuntimeDependencyTree(
   rootDir: string,
   visited: Set<string>,
   options: CopyMissingEntryOptions & RuntimeDependencyCollectionOptions = {},
+  dependencyPathNames: readonly string[] = [],
 ): void {
+  // Symlinked entries (source-entrypoint overlay snapshots) resolve their dependencies at their
+  // REAL location; vendoring "into the snapshot" through such an entry would write into the live
+  // source tree instead (observed live 2026-06-12: workspace node_modules gained nested vendor
+  // copies through overlay symlinks during the daemon launch-spec phase). The chain check also
+  // refuses paths whose ANCESTOR (e.g. a symlinked @scope directory) is the overlay symlink —
+  // the write chokepoints are guarded too, but skipping here avoids traversing live trees.
+  if (isSymbolicLinkEntry(packageDir)) return;
+  if (writesThroughSymlinkedNodeModulesPath(resolve(packageDir, 'node_modules', 'x'))) return;
   const packageJsonPath = resolve(packageDir, 'package.json');
   if (!existsSync(packageJsonPath) || visited.has(packageJsonPath)) return;
   visited.add(packageJsonPath);
 
   const rootNodeModulesDir = resolve(rootDir, 'node_modules');
   const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules');
+  const packageName = readPackageNameFromPackageJson(packageJsonPath);
+  const traversalPathNames = packageName ? [...dependencyPathNames, packageName] : dependencyPathNames;
 
   for (const dep of collectExternalRuntimeDepNamesFromPackageJson(packageJsonPath, options)) {
+    // Dependency cycles (e.g. browserslist <-> update-browserslist-db peer deps) must terminate:
+    // every name on the traversal path is physically present at an ancestor node_modules level of
+    // this materializer's nesting, so node resolution already satisfies the dependency. Without
+    // this guard the cycle materializes fresh nested copies (each with a new package.json path
+    // that defeats the visited set) until the filesystem path-length limit.
+    if (traversalPathNames.includes(dep.name)) continue;
     const destDepPath = resolve(packageDir, 'node_modules', ...dep.name.split('/'));
     const sourceCandidates = [
       resolve(cliNodeModulesDir, ...dep.name.split('/')),
@@ -372,7 +388,7 @@ function ensureExternalPackageRuntimeDependencyTree(
     }
 
     if (isDirectoryEntry(destDepPath)) {
-      ensureExternalPackageRuntimeDependencyTree(destDepPath, rootDir, visited, options);
+      ensureExternalPackageRuntimeDependencyTree(destDepPath, rootDir, visited, options, traversalPathNames);
     }
   }
 }
@@ -411,6 +427,7 @@ function ensurePackageRuntimeDependenciesFromPackageJson(params: {
   includeOptionalDependencies?: boolean;
   includePeerDependencies?: boolean;
   remainingTraversalDepth?: number;
+  dependencyPathNames?: readonly string[];
 }): void {
   const packageName = readPackageNameFromPackageJson(params.packageJsonPath);
   const mergeExistingDirectoryContents = params.mergeExistingDirectoryContents ?? true;
@@ -422,11 +439,15 @@ function ensurePackageRuntimeDependenciesFromPackageJson(params: {
     return;
   }
   params.visited.add(params.packageJsonPath);
+  const dependencyPathNames = params.dependencyPathNames ?? [];
+  const traversalPathNames = packageName ? [...dependencyPathNames, packageName] : dependencyPathNames;
 
   for (const dep of collectExternalRuntimeDepNamesFromPackageJson(params.packageJsonPath, {
     includeOptionalDependencies,
     includePeerDependencies,
   })) {
+    // Cycle guard — see ensureExternalPackageRuntimeDependencyTree.
+    if (traversalPathNames.includes(dep.name)) continue;
     const destDepPath = resolve(params.destNodeModulesDir, ...dep.name.split('/'));
     const existedBefore = existsSync(destDepPath);
     const packageLocalSourceCandidate = packageName
@@ -445,7 +466,13 @@ function ensurePackageRuntimeDependenciesFromPackageJson(params: {
 
     if (isDirectoryEntry(destDepPath)) {
       if (traverseExistingDependencyTrees) {
-        ensureExternalPackageRuntimeDependencyTree(destDepPath, params.rootDir, params.visited, { mergeExistingDirectoryContents });
+        ensureExternalPackageRuntimeDependencyTree(
+          destDepPath,
+          params.rootDir,
+          params.visited,
+          { mergeExistingDirectoryContents },
+          traversalPathNames,
+        );
         continue;
       }
 
@@ -468,6 +495,7 @@ function ensurePackageRuntimeDependenciesFromPackageJson(params: {
         includePeerDependencies,
         remainingTraversalDepth:
           typeof remainingTraversalDepth === 'number' ? remainingTraversalDepth - 1 : remainingTraversalDepth,
+        dependencyPathNames: traversalPathNames,
       });
     }
   }

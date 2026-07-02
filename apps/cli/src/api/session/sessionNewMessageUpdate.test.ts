@@ -606,4 +606,102 @@ describe('handleSessionNewMessageUpdate', () => {
 
     expect(lifecycleEvents).toEqual(['turn_cancelled']);
   });
+
+  describe('owed-delivery watermark (deliveredUserMessageSeqV1)', () => {
+    function buildUserMessageUpdate(opts: { seq: number; localId?: string | null; source?: string }): Update {
+      return {
+        id: `u-seq-${opts.seq}`,
+        createdAt: Date.now(),
+        body: {
+          t: 'new-message',
+          sid: 'sess_1',
+          message: {
+            id: `m-seq-${opts.seq}`,
+            seq: opts.seq,
+            content: {
+              t: 'plain',
+              v: {
+                role: 'user',
+                content: { type: 'text', text: `prompt-${opts.seq}` },
+                ...(opts.source ? { meta: { source: opts.source } } : {}),
+              },
+            },
+            localId: opts.localId ?? null,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          },
+        },
+      } as unknown as Update;
+    }
+
+    function baseParams() {
+      return {
+        sessionId: 'sess_1',
+        encryptionKey: new Uint8Array(32),
+        encryptionVariant: 'legacy' as const,
+        receivedMessageIds: new Set<string>(),
+        lastObservedMessageSeq: 0,
+        lastObservedUserMessageSeq: 0,
+        hasSelfEchoSuppressedLocalId: () => false,
+        hasAgentQueueEchoSuppressedLocalId: () => false,
+        markAgentQueueEchoSuppressedLocalId: () => void 0,
+        hasPendingQueueMaterializedLocalId: () => false,
+        deleteMaterializedLocalId: () => void 0,
+        emit: () => void 0,
+        debug: () => void 0,
+        debugLargeJson: () => void 0,
+      };
+    }
+
+    it('fires the delivery hook with the message seq when a user message is handed to the agent queue', () => {
+      const deliveredSeqs: number[] = [];
+      const delivered: unknown[] = [];
+
+      handleSessionNewMessageUpdate({
+        ...baseParams(),
+        update: buildUserMessageUpdate({ seq: 6 }),
+        pendingMessageCallback: (message) => delivered.push(message),
+        pendingMessages: [],
+        onUserMessageDeliveredToAgentQueue: (seq) => deliveredSeqs.push(seq),
+      });
+
+      expect(delivered).toHaveLength(1);
+      expect(deliveredSeqs).toEqual([6]);
+    });
+
+    it('fires the delivery hook for an agent-queue echo of a locally delivered prompt without re-delivering it', () => {
+      const deliveredSeqs: number[] = [];
+      const delivered: unknown[] = [];
+
+      handleSessionNewMessageUpdate({
+        ...baseParams(),
+        update: buildUserMessageUpdate({ seq: 9, localId: 'local-echo-1' }),
+        hasAgentQueueEchoSuppressedLocalId: (localId) => localId === 'local-echo-1',
+        pendingMessageCallback: (message) => delivered.push(message),
+        pendingMessages: [],
+        onUserMessageDeliveredToAgentQueue: (seq) => deliveredSeqs.push(seq),
+      });
+
+      // Echo of a prompt already handed to the loop locally proves delivery and carries the seq.
+      expect(delivered).toHaveLength(0);
+      expect(deliveredSeqs).toEqual([9]);
+    });
+
+    it('does not advance the watermark for a self-echo CLI transcript write', () => {
+      const deliveredSeqs: number[] = [];
+      const delivered: unknown[] = [];
+
+      handleSessionNewMessageUpdate({
+        ...baseParams(),
+        update: buildUserMessageUpdate({ seq: 11, localId: 'local-cli-1', source: 'cli' }),
+        hasSelfEchoSuppressedLocalId: (localId) => localId === 'local-cli-1',
+        pendingMessageCallback: (message) => delivered.push(message),
+        pendingMessages: [],
+        onUserMessageDeliveredToAgentQueue: (seq) => deliveredSeqs.push(seq),
+      });
+
+      expect(delivered).toHaveLength(0);
+      expect(deliveredSeqs).toEqual([]);
+    });
+  });
 });

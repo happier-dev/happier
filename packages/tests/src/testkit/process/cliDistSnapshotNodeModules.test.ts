@@ -650,6 +650,108 @@ describe('ensureCliDistSnapshotNodeModules', () => {
     expect(snapshotPackageJson.exports?.['.']?.default).toBe('./dist/index.js');
   });
 
+  it('overwrites stale bundled plugin workspace manifests with canonical package manifests', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-plugin-manifest-'));
+    createdDirs.push(rootDir);
+    mkdirSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'plugins-codex', 'dist', 'agent', 'runtime', 'appServer'),
+      { recursive: true },
+    );
+    mkdirSync(join(rootDir, 'packages', 'plugins', 'codex', 'dist', 'agent', 'runtime', 'appServer'), {
+      recursive: true,
+    });
+    mkdirSync(join(rootDir, 'packages', 'plugins', 'codex', 'dist', 'agent', 'runtime', 'appServer', 'catalog'), {
+      recursive: true,
+    });
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'plugins-codex', 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/plugins-codex',
+        version: '0.0.0',
+        type: 'module',
+        main: './dist/index.js',
+        exports: { '.': { default: './dist/index.js' } },
+      }, null, 2),
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'plugins-codex', 'dist', 'index.js'),
+      'export const bundled = true;\n',
+      'utf8',
+    );
+    writeFileSync(
+      join(
+        rootDir,
+        'apps',
+        'cli',
+        'node_modules',
+        '@happier-dev',
+        'plugins-codex',
+        'dist',
+        'agent',
+        'runtime',
+        'appServer',
+        'turnInput.js',
+      ),
+      'export const bundledTurnInput = true;\n',
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'packages', 'plugins', 'codex', 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/plugins-codex',
+        version: '0.0.0',
+        type: 'module',
+        main: './dist/index.js',
+        exports: {
+          '.': { default: './dist/index.js' },
+          './agent/runtime/appServer/catalog': {
+            default: './dist/agent/runtime/appServer/catalog/index.js',
+          },
+          './agent/runtime/appServer/turnInput': {
+            default: './dist/agent/runtime/appServer/turnInput.js',
+          },
+        },
+      }, null, 2),
+      'utf8',
+    );
+    writeFileSync(join(rootDir, 'packages', 'plugins', 'codex', 'dist', 'index.js'), 'export const workspace = true;\n', 'utf8');
+    writeFileSync(
+      join(rootDir, 'packages', 'plugins', 'codex', 'dist', 'agent', 'runtime', 'appServer', 'turnInput.js'),
+      'export const workspaceTurnInput = true;\n',
+      'utf8',
+    );
+    writeFileSync(
+      join(rootDir, 'packages', 'plugins', 'codex', 'dist', 'agent', 'runtime', 'appServer', 'catalog', 'index.js'),
+      'export const workspaceCatalog = true;\n',
+      'utf8',
+    );
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-plugin-manifest-out-'));
+    createdDirs.push(snapshotDir);
+    const snapshotDistDir = resolve(snapshotDir, 'dist');
+    mkdirSync(snapshotDistDir, { recursive: true });
+
+    ensureCliDistSnapshotNodeModules({ snapshotDir, snapshotDistDir, rootDir });
+
+    const snapshotPackageJson = JSON.parse(
+      readFileSync(join(snapshotDir, 'node_modules', '@happier-dev', 'plugins-codex', 'package.json'), 'utf8'),
+    ) as {
+      exports?: {
+        './agent/runtime/appServer/catalog'?: { default?: unknown };
+        './agent/runtime/appServer/turnInput'?: { default?: unknown };
+      };
+    };
+    expect(snapshotPackageJson.exports?.['./agent/runtime/appServer/catalog']?.default).toBe(
+      './dist/agent/runtime/appServer/catalog/index.js',
+    );
+    expect(snapshotPackageJson.exports?.['./agent/runtime/appServer/turnInput']?.default).toBe(
+      './dist/agent/runtime/appServer/turnInput.js',
+    );
+  });
+
   it('repairs missing workspace dist files from the source package tree', () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-dist-'));
     createdDirs.push(rootDir);
@@ -970,5 +1072,131 @@ describe('ensureCliDistSnapshotNodeModules', () => {
 
     expect(existsSync(join(snapshotDir, 'node_modules', 'dep-a', 'node_modules', 'dep-b', 'index.js'))).toBe(true);
     expect(existsSync(join(snapshotDir, 'node_modules', 'dep-c', 'node_modules', 'dep-d', 'index.js'))).toBe(false);
+  });
+
+  it('terminates cyclic peer-dependency vendoring instead of materializing unbounded nested copies (browserslist/update-browserslist-db shape)', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-cycle-'));
+    createdDirs.push(rootDir);
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules', 'browserslist'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules', 'update-browserslist-db'), { recursive: true });
+    writeFileSync(
+      join(rootDir, 'apps', 'cli', 'node_modules', 'browserslist', 'package.json'),
+      JSON.stringify({
+        name: 'browserslist',
+        version: '4.28.1',
+        dependencies: { 'update-browserslist-db': '^1.1.0' },
+      }, null, 2),
+      'utf8',
+    );
+    writeFileSync(join(rootDir, 'apps', 'cli', 'node_modules', 'browserslist', 'index.js'), 'module.exports = "browserslist";\n', 'utf8');
+    writeFileSync(
+      join(rootDir, 'node_modules', 'update-browserslist-db', 'package.json'),
+      JSON.stringify({
+        name: 'update-browserslist-db',
+        version: '1.1.0',
+        peerDependencies: { browserslist: '>= 4.21.0' },
+      }, null, 2),
+      'utf8',
+    );
+    writeFileSync(join(rootDir, 'node_modules', 'update-browserslist-db', 'index.js'), 'module.exports = "update-browserslist-db";\n', 'utf8');
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-cycle-out-'));
+    createdDirs.push(snapshotDir);
+    const snapshotDistDir = resolve(snapshotDir, 'dist');
+    mkdirSync(snapshotDistDir, { recursive: true });
+
+    ensureCliDistSnapshotNodeModules({ snapshotDir, snapshotDistDir, rootDir });
+
+    // The runtime dependency is vendored once under its consumer…
+    expect(
+      existsSync(join(snapshotDir, 'node_modules', 'browserslist', 'node_modules', 'update-browserslist-db', 'index.js')),
+    ).toBe(true);
+    // …but the peer-dependency cycle must terminate there: node resolution finds the ancestor
+    // browserslist two levels up, so the nested copy must never vendor its peer again. Without a
+    // traversal-path guard this materializes browserslist/update-browserslist-db copies until the
+    // filesystem path-length limit (observed live as ENAMETOOLONG in the daemon cli-dist copy).
+    expect(
+      existsSync(join(
+        snapshotDir,
+        'node_modules', 'browserslist',
+        'node_modules', 'update-browserslist-db',
+        'node_modules', 'browserslist',
+      )),
+    ).toBe(false);
+  });
+
+  it('never vendors dependencies through symlinked snapshot entries into the live source tree', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-symlink-entry-'));
+    createdDirs.push(rootDir);
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules', 'linked-pkg'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules', 'linked-dep'), { recursive: true });
+    writeFileSync(
+      join(rootDir, 'node_modules', 'linked-pkg', 'package.json'),
+      JSON.stringify({ name: 'linked-pkg', version: '1.0.0', dependencies: { 'linked-dep': '1.0.0' } }, null, 2),
+      'utf8',
+    );
+    writeFileSync(join(rootDir, 'node_modules', 'linked-pkg', 'index.js'), 'module.exports = "linked-pkg";\n', 'utf8');
+    writeFileSync(
+      join(rootDir, 'node_modules', 'linked-dep', 'package.json'),
+      JSON.stringify({ name: 'linked-dep', version: '1.0.0' }, null, 2),
+      'utf8',
+    );
+    writeFileSync(join(rootDir, 'node_modules', 'linked-dep', 'index.js'), 'module.exports = "linked-dep";\n', 'utf8');
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-symlink-entry-out-'));
+    createdDirs.push(snapshotDir);
+    const snapshotDistDir = resolve(snapshotDir, 'dist');
+    mkdirSync(snapshotDistDir, { recursive: true });
+    // Simulate a snapshot whose node_modules was populated as a SYMLINK OVERLAY into the live
+    // tree (source-entrypoint mode) and is later re-processed by the dist hydrator: vendoring
+    // a dependency "into the snapshot" through such an entry would write into the LIVE tree
+    // (observed live 2026-06-12: the daemon launch-spec phase vendored nested dependency copies
+    // into the workspace's real node_modules through overlay symlinks).
+    mkdirSync(join(snapshotDir, 'node_modules'), { recursive: true });
+    symlinkSync(join(rootDir, 'node_modules', 'linked-pkg'), join(snapshotDir, 'node_modules', 'linked-pkg'));
+
+    ensureCliDistSnapshotNodeModules({ snapshotDir, snapshotDistDir, rootDir });
+
+    // The live package directory must stay pristine — no nested node_modules materialized
+    // through the symlinked snapshot entry.
+    expect(existsSync(join(rootDir, 'node_modules', 'linked-pkg', 'node_modules'))).toBe(false);
+  });
+
+  it('never vendors dependencies through a symlinked SCOPE directory into the live source tree', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-symlink-scope-'));
+    createdDirs.push(rootDir);
+    mkdirSync(join(rootDir, 'apps', 'cli', 'node_modules'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules', '@linked-scope', 'scoped-pkg'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules', 'scoped-dep'), { recursive: true });
+    writeFileSync(
+      join(rootDir, 'node_modules', '@linked-scope', 'scoped-pkg', 'package.json'),
+      JSON.stringify({ name: '@linked-scope/scoped-pkg', version: '1.0.0', dependencies: { 'scoped-dep': '1.0.0' } }, null, 2),
+      'utf8',
+    );
+    writeFileSync(join(rootDir, 'node_modules', '@linked-scope', 'scoped-pkg', 'index.js'), 'module.exports = "scoped-pkg";\n', 'utf8');
+    writeFileSync(
+      join(rootDir, 'node_modules', 'scoped-dep', 'package.json'),
+      JSON.stringify({ name: 'scoped-dep', version: '1.0.0' }, null, 2),
+      'utf8',
+    );
+    writeFileSync(join(rootDir, 'node_modules', 'scoped-dep', 'index.js'), 'module.exports = "scoped-dep";\n', 'utf8');
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-symlink-scope-out-'));
+    createdDirs.push(snapshotDir);
+    const snapshotDistDir = resolve(snapshotDir, 'dist');
+    mkdirSync(snapshotDistDir, { recursive: true });
+    // The per-entry symlink guard lstats only the FINAL path component. When the SCOPE
+    // directory itself is the overlay symlink, the textual path snapshot/node_modules/@scope/pkg
+    // resolves THROUGH the symlink to a real directory, passes that guard, and the hydrator
+    // vendors dependencies into the LIVE tree (observed live 2026-06-12: real workspace
+    // node_modules/@scope/pkg/node_modules gained vendored copies during the launch-spec phase
+    // with the entry-level guard already in place).
+    mkdirSync(join(snapshotDir, 'node_modules'), { recursive: true });
+    symlinkSync(join(rootDir, 'node_modules', '@linked-scope'), join(snapshotDir, 'node_modules', '@linked-scope'));
+
+    ensureCliDistSnapshotNodeModules({ snapshotDir, snapshotDistDir, rootDir });
+
+    expect(existsSync(join(rootDir, 'node_modules', '@linked-scope', 'scoped-pkg', 'node_modules'))).toBe(false);
   });
 });

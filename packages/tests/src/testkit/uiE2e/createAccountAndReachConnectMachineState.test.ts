@@ -101,6 +101,61 @@ function createFakePage(params: Readonly<{
   };
 }
 
+function createBrandHeroThenWelcomePage(
+  afterWelcome: 'connect-machine' | 'setup-wizard',
+): CreateAccountAndReachConnectMachineStatePage {
+  const visibleByTestId = new Map<string, boolean>([
+    ['brand-hero-get-started', true],
+  ]);
+  const clickCounts = new Map<string, number>();
+  let welcomeVisibleReads = 0;
+
+  const makeLocator = (key: string): FakeLocator => ({
+    count: async () => (visibleByTestId.get(key) === true ? 1 : 0),
+    isVisible: async () => {
+      const isVisible = visibleByTestId.get(key) === true;
+      if (key === 'welcome-primary-start' && isVisible) {
+        welcomeVisibleReads += 1;
+        if (welcomeVisibleReads > 1) {
+          visibleByTestId.set('welcome-primary-start', false);
+          return false;
+        }
+      }
+      return isVisible;
+    },
+    click: async () => {
+      clickCounts.set(key, (clickCounts.get(key) ?? 0) + 1);
+      if (key === 'brand-hero-get-started') {
+        visibleByTestId.set('brand-hero-get-started', false);
+        visibleByTestId.set('welcome-primary-start', true);
+        visibleByTestId.set(
+          afterWelcome === 'connect-machine' ? 'session-getting-started-kind-connect_machine' : 'setupWizard.surface',
+          true,
+        );
+        return;
+      }
+      if (key === 'welcome-primary-start') {
+        visibleByTestId.set('welcome-primary-start', false);
+      }
+    },
+    first: () => makeLocator(key),
+    get countCalls() {
+      return 0;
+    },
+    get clickCalls() {
+      return clickCounts.get(key) ?? 0;
+    },
+    get visibleCalls() {
+      return 0;
+    },
+  } as unknown as FakeLocator);
+
+  return {
+    getByTestId: ((testId) => makeLocator(String(testId))) as Page['getByTestId'],
+    evaluate: vi.fn(async () => true) as unknown as Page['evaluate'],
+  };
+}
+
 describe('createAccountAndReachConnectMachineState', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -116,6 +171,28 @@ describe('createAccountAndReachConnectMachineState', () => {
     });
 
     await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+  });
+
+  it('accepts the current unauth shell primary start CTA as create-account entry', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'welcome-create-account': [0, 0, 0, 0],
+        'welcome-primary-start': [1, 0, 0, 0],
+        'session-getting-started-kind-connect_machine': [0, 1, 1],
+        'setupWizard.surface': [0, 0],
+      },
+    });
+
+    await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+    expect((page.getByTestId('welcome-primary-start') as FakeLocator).clickCalls).toBe(1);
+  });
+
+  it('dismisses the mobile brand hero before clicking the real welcome CTA', async () => {
+    const page = createBrandHeroThenWelcomePage('connect-machine');
+
+    await expect(createAccountAndReachConnectMachineState({ page })).resolves.toBeUndefined();
+    expect((page.getByTestId('brand-hero-get-started') as FakeLocator).clickCalls).toBe(1);
+    expect((page.getByTestId('welcome-primary-start') as FakeLocator).clickCalls).toBe(1);
   });
 
   it('dismisses the setup wizard before requiring connect-machine', async () => {
@@ -342,6 +419,14 @@ describe('createAccountAndReachSetupWizardState', () => {
     });
 
     await expect(createAccountAndReachSetupWizardState({ page })).resolves.toBeUndefined();
+  });
+
+  it('dismisses the mobile brand hero before clicking the real welcome CTA', async () => {
+    const page = createBrandHeroThenWelcomePage('setup-wizard');
+
+    await expect(createAccountAndReachSetupWizardState({ page })).resolves.toBeUndefined();
+    expect((page.getByTestId('brand-hero-get-started') as FakeLocator).clickCalls).toBe(1);
+    expect((page.getByTestId('welcome-primary-start') as FakeLocator).clickCalls).toBe(1);
   });
 
   it('accepts an already-visible setup wizard without requiring create-account first', async () => {

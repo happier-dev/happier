@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { existsSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
 
-import { ensureCliDistBuilt, ensureCliDistSnapshotEntrypoint, ensureCliSharedDepsBuilt, withCliDistBuildLock } from './cliDist';
+import {
+  __cliDistTestHooks,
+  ensureCliDistBuilt,
+  ensureCliDistSnapshotEntrypoint,
+  ensureCliSharedDepsBuilt,
+  withCliDistBuildLock,
+} from './cliDist';
 import { CLI_SHARED_DEP_PACKAGE_NAMES } from './workspacePackageResolution';
 import { sleep } from '../timing';
 
@@ -133,7 +139,13 @@ describe('ensureCliDistBuilt', () => {
 
     let rebuildCalls = 0;
     const entrypoint = await ensureCliDistSnapshotEntrypoint(
-      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        testDir: join(repoRoot, '.project'),
+        env: {
+          ...process.env,
+          HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'symlink',
+        },
+      },
       {
         repoRoot,
         snapshotDir,
@@ -421,6 +433,105 @@ describe('ensureCliDistBuilt', () => {
     expect(entrypoint).not.toBe(snapshotEntrypoint);
     expect(entrypoint).toContain('cli-dist-snapshot-');
     expect(readFileSync(entrypoint, 'utf8')).toContain('canonical = "ready"');
+  });
+
+  it('does not treat property-chain protocol identifiers as protocol namespace exports', async () => {
+    const repoRoot = await createRepoRoot();
+    const distDir = join(repoRoot, 'dist');
+    const protocolDistIndexPath = join(repoRoot, 'protocol-dist', 'index.js');
+    await mkdir(distDir, { recursive: true });
+    await mkdir(dirname(protocolDistIndexPath), { recursive: true });
+    await writeFile(
+      join(distDir, 'catalog.cjs'),
+      [
+        "var protocol = require('@happier-dev/protocol');",
+        'const cache = protocol.AsyncTtlCache;',
+        'function requireJsonRpcClientSpec(spec) {',
+        '  return spec.protocol.kind;',
+        '}',
+        'exports.cache = cache;',
+        'exports.requireJsonRpcClientSpec = requireJsonRpcClientSpec;',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(protocolDistIndexPath, 'export const AsyncTtlCache = {};\n', 'utf8');
+
+    expect(__cliDistTestHooks.hasCliDistProtocolRootImportCompatibility({
+      distDir,
+      protocolDistIndexPath,
+    })).toBe(true);
+  });
+
+  it('materializes a replacement snapshot with property-chain protocol identifiers', async () => {
+    const repoRoot = await createRepoRoot();
+    const snapshotDir = join(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    const snapshotDistDir = join(snapshotDir, 'dist');
+    const snapshotEntrypoint = join(snapshotDistDir, 'index.mjs');
+    const canonicalDistDir = join(repoRoot, 'apps', 'cli', 'dist');
+    const canonicalEntrypoint = join(canonicalDistDir, 'index.mjs');
+    const bundledProtocolIndexPath = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'protocol',
+      'dist',
+      'index.js',
+    );
+
+    await mkdir(snapshotDistDir, { recursive: true });
+    await writeFile(
+      snapshotEntrypoint,
+      [
+        "import { RemovedProtocolExport } from '@happier-dev/protocol';",
+        'export const snapshot = RemovedProtocolExport;',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(canonicalEntrypoint, 'export const canonical = "ready";\n', 'utf8');
+    await writeFile(
+      join(canonicalDistDir, 'catalog.cjs'),
+      [
+        "var protocol = require('@happier-dev/protocol');",
+        'const cache = protocol.AsyncTtlCache;',
+        'function requireJsonRpcClientSpec(spec) {',
+        '  return spec.protocol.kind;',
+        '}',
+        'exports.cache = cache;',
+        'exports.requireJsonRpcClientSpec = requireJsonRpcClientSpec;',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(bundledProtocolIndexPath, 'export const AsyncTtlCache = {};\n', 'utf8');
+    await cp(join(repoRoot, 'apps', 'cli', 'node_modules'), join(snapshotDir, 'node_modules'), { recursive: true });
+    await writeFile(join(snapshotDir, '.cli-dist-snapshot.ready.json'), JSON.stringify({ v: 1 }), 'utf8');
+
+    const canonicalTime = new Date('2030-03-09T01:15:00.000Z');
+    const freshSnapshotTime = new Date('2031-03-09T01:15:00.000Z');
+    utimesSync(snapshotDistDir, freshSnapshotTime, freshSnapshotTime);
+    utimesSync(snapshotEntrypoint, freshSnapshotTime, freshSnapshotTime);
+    utimesSync(canonicalDistDir, canonicalTime, canonicalTime);
+    utimesSync(canonicalEntrypoint, canonicalTime, canonicalTime);
+    utimesSync(join(canonicalDistDir, 'catalog.cjs'), canonicalTime, canonicalTime);
+    touchTree(join(snapshotDir, 'node_modules'), freshSnapshotTime);
+
+    const entrypoint = await ensureCliDistSnapshotEntrypoint(
+      { testDir: join(repoRoot, '.project'), env: process.env },
+      {
+        repoRoot,
+        snapshotDir,
+        runCommand: async () => {
+          throw new Error('property-chain namespace compatibility repair should not need a live CLI rebuild');
+        },
+      },
+    );
+
+    expect(entrypoint).not.toBe(snapshotEntrypoint);
+    expect(readFileSync(join(dirname(entrypoint), 'catalog.cjs'), 'utf8')).toContain('spec.protocol.kind');
   });
 
   it('prefers the newest ready replacement snapshot over the canonical shared snapshot when freshness checks are skipped', async () => {
@@ -1102,6 +1213,39 @@ describe('ensureCliDistBuilt', () => {
         repoRoot,
         skipSourceFreshnessCheck: true,
         skipDistIntegrityCheck: true,
+        runCommand: async () => {
+          rebuildCalls += 1;
+        },
+      },
+    );
+
+    expect(rebuildCalls).toBe(0);
+  });
+
+  it('skips direct shared dependency builds when the E2E skip-build env flag is enabled', async () => {
+    const repoRoot = await createRepoRoot();
+    const bundledConnectionSupervisorDir = join(
+      repoRoot,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'connection-supervisor',
+    );
+    rmSync(bundledConnectionSupervisorDir, { recursive: true, force: true });
+
+    let rebuildCalls = 0;
+    await ensureCliSharedDepsBuilt(
+      {
+        testDir: join(repoRoot, '.project'),
+        env: {
+          ...process.env,
+          HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',
+        },
+      },
+      {
+        repoRoot,
+        skipSourceFreshnessCheck: true,
         runCommand: async () => {
           rebuildCalls += 1;
         },

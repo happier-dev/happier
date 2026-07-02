@@ -50,4 +50,49 @@ describe('applyInitialTranscriptAfterSeqToAttachPayload', () => {
 
     expect(applyInitialTranscriptAfterSeqToAttachPayload(payload, -1)).toBe(payload);
   });
+
+  it('clamps the explicit wake cursor to the delivered watermark so owed rows are redelivered', () => {
+    expect(
+      applyInitialTranscriptAfterSeqToAttachPayload(
+        { v: 2, encryptionMode: 'plain' },
+        36,
+        { deliveredUserMessageSeq: 5 },
+      ),
+    ).toEqual({
+      v: 2,
+      encryptionMode: 'plain',
+      lastObservedMessageSeq: 5,
+      initialTranscriptAfterSeq: 5,
+    });
+  });
+
+  it('keeps the explicit cursor when it is already at or below the delivered watermark', () => {
+    expect(
+      applyInitialTranscriptAfterSeqToAttachPayload(
+        { v: 2, encryptionMode: 'plain' },
+        3,
+        { deliveredUserMessageSeq: 5 },
+      ),
+    ).toEqual({
+      v: 2,
+      encryptionMode: 'plain',
+      lastObservedMessageSeq: 3,
+      initialTranscriptAfterSeq: 3,
+    });
+  });
+
+  it('keeps legacy behavior when no delivered watermark exists', () => {
+    expect(
+      applyInitialTranscriptAfterSeqToAttachPayload(
+        { v: 2, encryptionMode: 'plain' },
+        36,
+        { deliveredUserMessageSeq: null },
+      ),
+    ).toEqual({
+      v: 2,
+      encryptionMode: 'plain',
+      lastObservedMessageSeq: 36,
+      initialTranscriptAfterSeq: 36,
+    });
+  });
 });

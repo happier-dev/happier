@@ -1,17 +1,17 @@
 import { mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
 
 import { ensureCliDistSnapshotEntrypoint } from '../process/cliDist';
 import { repoRootDir } from '../paths';
+import { resolveVitestGlobalSetupPaths } from './globalSetupPaths';
 
 export default async function globalSetupCoreFast(): Promise<void> {
   const rootDir = repoRootDir();
-  const setupDir = resolve(rootDir, '.project', 'tmp', 'vitest-global-setup', 'core-fast');
-  await mkdir(setupDir, { recursive: true });
+  const paths = resolveVitestGlobalSetupPaths({ rootDir, lane: 'core-fast', env: process.env });
+  await mkdir(paths.setupDir, { recursive: true });
 
   await ensureCliDistSnapshotEntrypoint(
     {
-      testDir: setupDir,
+      testDir: paths.setupDir,
       env: {
         ...process.env,
         CI: process.env.CI ?? '1',
@@ -19,7 +19,8 @@ export default async function globalSetupCoreFast(): Promise<void> {
       },
     },
     {
-      snapshotDir: resolve(rootDir, '.project', 'tmp', 'cli-dist-snapshot'),
+      snapshotDir: paths.snapshotDir,
+      lockPath: paths.lockPath,
       repoRoot: rootDir,
       skipDistIntegrityCheck: true,
       skipSourceFreshnessCheck: true,

@@ -682,6 +682,62 @@ describe('waitForAuthenticatedRouteUi', () => {
     );
     expect(page.reload).not.toHaveBeenCalled();
   });
+
+  it('uses an explicit target url when the page has already fallen back home before route waiting starts', async () => {
+    let restoredRoute = false;
+    let nowMs = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    const page = {
+      getByTestId: (testId: string) => ({
+        count: async () => {
+          if (testId === 'welcome-create-account') return restoredRoute ? 0 : 1;
+          if (testId === 'new-session-composer-input') return restoredRoute ? 1 : 0;
+          return 0;
+        },
+      }),
+      goto: vi.fn(async () => {
+        restoredRoute = true;
+      }),
+      waitForTimeout: vi.fn(async (delayMs: number) => {
+        nowMs += delayMs;
+      }),
+      reload: vi.fn(async () => {}),
+      url: () => (
+        restoredRoute
+          ? 'http://127.0.0.1:3000/new'
+          : 'http://127.0.0.1:3000/'
+      ),
+    };
+
+    const helper = (pageNavigation as Record<string, unknown>).waitForAuthenticatedRouteUi;
+    expect(helper).toBeTypeOf('function');
+
+    await expect(
+      (helper as (
+        params: Readonly<{
+          page: WaitForAuthenticatedHomeUiPage;
+          expectedPathname: string;
+          requiredTestIds: readonly string[];
+          targetUrl?: string;
+          timeoutMs?: number;
+          reloadOnFailure?: boolean;
+        }>,
+      ) => Promise<void>)({
+        page,
+        expectedPathname: '/new',
+        requiredTestIds: ['new-session-composer-input'],
+        targetUrl: 'http://127.0.0.1:3000/new?happier_hmr=0',
+        timeoutMs: 2_000,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(page.goto).toHaveBeenCalledWith(
+      'http://127.0.0.1:3000/new?happier_hmr=0',
+      expect.objectContaining({ waitUntil: 'domcontentloaded' }),
+    );
+    expect(page.reload).not.toHaveBeenCalled();
+  });
 });
 
 describe('waitForSessionActionsHomeUi', () => {

@@ -97,6 +97,24 @@ function isHealthTimeoutDuringAuthInit(params: { error: unknown; stdoutTail: str
   return stdoutTail.includes('Initializing auth module...') && !stdoutTail.includes('Auth module initialized');
 }
 
+function isSilentHealthTimeoutDuringStartup(params: { error: unknown; stderrTail: string; stdoutTail: string }): boolean {
+  const message = params.error instanceof Error ? params.error.message : String(params.error ?? '');
+  if (!message.includes('Timed out waiting for /health')) return false;
+  if (!message.includes('lastStatus=none')) return false;
+  if (!message.includes('lastError=fetch failed')) return false;
+  if (params.stdoutTail.trim().length > 0) return false;
+
+  const substantiveStderr = params.stderrTail
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter((line) => !line.includes("Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set."))
+    .filter((line) => !line.includes('Use `node --trace-warnings ...` to show where the warning was created'))
+    .filter((line) => !line.includes('[DEP0205] DeprecationWarning: `module.register()` is deprecated'));
+
+  return substantiveStderr.length === 0;
+}
+
 function composeServerStartTail(stderrTail: string, stdoutTail: string): string {
   return `${stderrTail}\n${stdoutTail}`.trim();
 }
@@ -195,6 +213,16 @@ export function shouldRetryServerStartFromFailureContext(params: {
   ) {
     return true;
   }
+  if (
+    params.attempt < params.maxAttempts
+    && isSilentHealthTimeoutDuringStartup({
+      error: contextualError,
+      stderrTail: params.stderrTail,
+      stdoutTail: params.stdoutTail,
+    })
+  ) {
+    return true;
+  }
   return shouldRetryServerStart({
     attempt: params.attempt,
     maxAttempts: params.maxAttempts,
@@ -254,6 +282,17 @@ export function resolveServerLightDatabaseUrlEnv(params: {
     };
   }
   return {};
+}
+
+export function renderServerLightSqliteDatabaseUrl(params: Readonly<{
+  dbPath: string;
+  platform?: string;
+}>): string {
+  return renderPrismaCompatibleSqliteDatabaseUrl({
+    dbPath: params.dbPath,
+    platform: params.platform ?? process.platform,
+    sqlite: { connectionLimit: 1 },
+  });
 }
 
 export function resolveStartCommandArgs(provider: TestDbProvider): string[] {
@@ -502,11 +541,34 @@ function normalizePrismaFieldAttributeOrder(line: string): string {
   return [...tokens.slice(0, 2), ...[...attributes].sort()].join(" ");
 }
 
+function normalizePrismaModelAttributeOrder(lines: string[]): string[] {
+  const result: string[] = [];
+  let pendingModelAttributes: string[] = [];
+  const flush = () => {
+    if (pendingModelAttributes.length === 0) return;
+    result.push(...pendingModelAttributes.sort());
+    pendingModelAttributes = [];
+  };
+
+  for (const line of lines) {
+    if (line.startsWith("@@")) {
+      pendingModelAttributes.push(line);
+      continue;
+    }
+    flush();
+    result.push(line);
+  }
+  flush();
+  return result;
+}
+
 function normalizeGeneratedSchemaForFreshnessCheck(input: string): string {
-  return input
+  const normalizedLines = input
     .replace(/\r\n/g, '\n')
     .split('\n')
-    .map((line) => normalizePrismaFieldAttributeOrder(line.trim().replace(/\s+/g, ' ')))
+    .map((line) => normalizePrismaFieldAttributeOrder(line.trim().replace(/\s+/g, ' ')));
+
+  return normalizePrismaModelAttributeOrder(normalizedLines)
     .join('\n')
     .trim();
 }
@@ -519,7 +581,7 @@ export function hasServerGeneratedProviderOutputs(rootDir: string, provider: Tes
   ) {
     return false;
   }
-  if ((provider === 'sqlite' || provider === 'pglite') && !existsSync(outputPaths.sqliteIndex)) {
+  if (provider === 'sqlite' && !existsSync(outputPaths.sqliteIndex)) {
     return false;
   }
   if (provider === 'mysql' && !existsSync(outputPaths.mysqlIndex)) {
@@ -531,7 +593,7 @@ export function hasServerGeneratedProviderOutputs(rootDir: string, provider: Tes
   if (!postgresSource || !postgresGenerated) {
     return false;
   }
-  const sqliteRequired = provider === 'sqlite' || provider === 'pglite';
+  const sqliteRequired = provider === 'sqlite';
   const mysqlRequired = provider === 'mysql';
   const sqliteSource = sqliteRequired ? readFileIfExists(sourcePaths.sqliteSchema) : null;
   const mysqlSource = mysqlRequired ? readFileIfExists(sourcePaths.mysqlSchema) : null;
@@ -713,9 +775,8 @@ async function prepareServerLightDataDir(params: {
     templateKey,
     targetDir: params.dataDir,
     buildTemplateInto: async (templateDataDir) => {
-      const templateSqliteUrl = renderPrismaCompatibleSqliteDatabaseUrl({
+      const templateSqliteUrl = renderServerLightSqliteDatabaseUrl({
         dbPath: join(templateDataDir, 'happier-server-light.sqlite'),
-        platform: process.platform,
       });
       await runServerMigrationCommand({
         provider: params.dbProvider,
@@ -885,9 +946,8 @@ export async function startServerLight(params: {
   // Keep workspace package ESM exports current before booting server processes.
   await ensureServerSharedDepsBuilt({ testDir: params.testDir, env: baseEnv });
 
-  const sqliteUrl = renderPrismaCompatibleSqliteDatabaseUrl({
+  const sqliteUrl = renderServerLightSqliteDatabaseUrl({
     dbPath: join(dataDir, 'happier-server-light.sqlite'),
-    platform: process.platform,
   });
   const explicitSqliteDatabaseUrl = params.extraEnv?.DATABASE_URL?.toString().trim();
   const databaseUrlForExternalProvider = mergedEnv.DATABASE_URL?.toString().trim();

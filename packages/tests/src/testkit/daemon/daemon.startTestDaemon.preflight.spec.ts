@@ -157,6 +157,52 @@ describe('startTestDaemon', () => {
     }
   });
 
+  it('uses the configured daemon startup phase timeout while waiting for daemon state', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-state-phase-timeout-'));
+    const homeDir = resolve(testDir, 'home');
+
+    try {
+      const fakeScriptDir = resolve(testDir, 'fake-daemon', 'dist');
+      await mkdir(fakeScriptDir, { recursive: true });
+      await mkdir(resolve(homeDir, 'logs'), { recursive: true });
+      await mkdir(homeDir, { recursive: true });
+      await writeFile(resolve(homeDir, 'logs', 'daemon.log'), 'daemon boot line\nlast internal line\n', 'utf8');
+      await writeHoldingDaemonScript(resolve(fakeScriptDir, 'index.mjs'), { writesState: false });
+
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: [resolve(fakeScriptDir, 'index.mjs')],
+        cwd: testDir,
+        env: {},
+      });
+
+      const result = await Promise.race([
+        startTestDaemon({
+          testDir,
+          happyHomeDir: homeDir,
+          env: {
+            HAPPIER_E2E_DAEMON_STARTUP_PHASE_TIMEOUT_MS: '25',
+          },
+        }).then(
+          () => 'started',
+          (error: unknown) => error,
+        ),
+        new Promise<'still-pending'>((resolvePending) => setTimeout(() => resolvePending('still-pending'), 5_000)),
+      ]);
+
+      expect(result).toBeInstanceOf(Error);
+      expect(String((result as Error).message)).toContain('phase=waitForDaemonState');
+      expect(String((result as Error).message)).toContain('timeoutMs=25');
+      expect(String((result as Error).message)).toContain('daemonStateExists=no');
+      expect(String((result as Error).message)).toContain('daemonStateEverWritten=no');
+      expect(String((result as Error).message)).toContain('daemonStateEverRemoved=no');
+      expect(String((result as Error).message)).toContain('internalDaemonLogTail=');
+      expect(String((result as Error).message)).toContain('last internal line');
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
   it('assigns an isolated direct-peer bind port when one is not explicitly configured', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-direct-peer-port-'));
     const homeDir = resolve(testDir, 'home');
@@ -543,6 +589,45 @@ describe('startTestDaemon', () => {
         | Readonly<{ snapshotDir?: string }>
         | undefined;
       expect(launchOptions?.snapshotDir).toBe(sharedSnapshotDir);
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps source-entrypoint testdir mode on the per-test snapshot when e2e logs dir is provided', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-writable-snapshot-preflight-'));
+    const homeDir = resolve(testDir, 'home');
+    const repoRoot = resolve(testDir, 'repo-root');
+
+    try {
+      repoRootDirMock.mockReturnValue(repoRoot);
+
+      const sharedSnapshotDir = resolve(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+      await mkdir(homeDir, { recursive: true });
+      await mkdir(resolve(sharedSnapshotDir, 'dist'), { recursive: true });
+      await mkdir(resolve(sharedSnapshotDir, 'node_modules'), { recursive: true });
+      await writeFile(resolve(sharedSnapshotDir, '.cli-dist-snapshot.ready.json'), '{}', 'utf8');
+      await writeFile(resolve(sharedSnapshotDir, 'dist', 'index.mjs'), '// shared ready marker', 'utf8');
+
+      vi.stubEnv('HAPPIER_E2E_DAEMON_CLI_SNAPSHOT_MODE', 'testdir');
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockRejectedValueOnce(new Error('stop after launch-spec capture'));
+
+      await expect(
+        startTestDaemon({
+          testDir,
+          happyHomeDir: homeDir,
+          env: {
+            HAPPIER_E2E_LOGS_DIR: resolve(testDir, 'logs'),
+            HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+          },
+          startupTimeoutMs: 15_000,
+        }),
+      ).rejects.toThrow('stop after launch-spec capture');
+
+      const launchOptions = cliLaunchSpecMock.resolveCliTestLaunchSpec.mock.calls[0]?.[1] as
+        | Readonly<{ snapshotDir?: string }>
+        | undefined;
+      expect(launchOptions?.snapshotDir).toBe(resolve(testDir, 'cli-dist'));
     } finally {
       await rm(testDir, { recursive: true, force: true });
     }

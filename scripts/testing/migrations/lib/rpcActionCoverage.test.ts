@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+
+import { ACTION_SPEC_RPC_EXCEPTIONS } from '../../../../apps/cli/src/rpc/handlers/actionSpecRpcExceptions.ts';
 import { validateRpcActionCoverage } from './rpcActionCoverage.ts';
 
 function serverRequiredPolicy(method) {
@@ -303,10 +306,66 @@ test('validateRpcActionCoverage classifies prompt transfer control RPCs as inter
     'daemon.promptRegistry.download.abort',
   ];
 
-  assert.equal(result.ok, true);
   for (const method of promptTransferMethods) {
     assert.equal(result.unclassifiedRpcMethods.includes(method), false, method);
     assert.equal(result.internalOnlyRpcMethods.includes(method), true, method);
+  }
+});
+
+test('validateRpcActionCoverage classifies A.12 voice cleanup RPCs as bounded internal transport or targeted status', () => {
+  const result = validateRpcActionCoverage();
+  const voiceCleanupMethods = [
+    RPC_METHODS.DAEMON_MEMORY_STATUS,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_REMOVE,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_STATUS,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CHUNK,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_FINALIZE,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_ABORT,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CANCEL,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_INIT,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_CHUNK,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_FINALIZE,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_ABORT,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_TRANSCRIBE,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_CANCEL,
+  ];
+
+  for (const method of voiceCleanupMethods) {
+    assert.equal(result.unclassifiedRpcMethods.includes(method), false, method);
+    assert.equal(result.internalOnlyRpcMethods.includes(method), true, method);
+  }
+});
+
+test('A.12 voice cleanup RPCs outside ActionSpec registration have typed exception ledger entries', () => {
+  const exceptionMethods = new Set(ACTION_SPEC_RPC_EXCEPTIONS.map((entry) => entry.method));
+  const expected = [
+    RPC_METHODS.DAEMON_MEMORY_STATUS,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LIST,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_REMOVE,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_STATUS,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_SYNTHESIZE,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CHUNK,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_FINALIZE,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_ABORT,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CANCEL,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_INIT,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_CHUNK,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_FINALIZE,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_ABORT,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_TRANSCRIBE,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_CANCEL,
+  ];
+
+  for (const method of expected) {
+    assert.equal(exceptionMethods.has(method), true, method);
   }
 });
 

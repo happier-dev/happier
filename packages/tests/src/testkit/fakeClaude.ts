@@ -91,3 +91,26 @@ export async function waitForFakeClaudeInvocation(
     ].join(' | '),
   );
 }
+
+export async function waitForFakeClaudeUserText(
+  logPath: string,
+  predicate: (text: string) => boolean,
+  opts?: { timeoutMs?: number; pollMs?: number },
+): Promise<string> {
+  const timeoutMs = opts?.timeoutMs ?? 60_000;
+  const pollMs = opts?.pollMs ?? 100;
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const events = await readJsonlFile(logPath);
+    for (const event of events) {
+      if (event?.type !== 'sdk_stdin') continue;
+      if (event?.hasUserText !== true) continue;
+      if (typeof event.userTextPreview !== 'string') continue;
+      if (predicate(event.userTextPreview)) return event.userTextPreview;
+    }
+    await sleep(pollMs);
+  }
+
+  throw new Error(`Timed out waiting for fake Claude user text in ${logPath}`);
+}

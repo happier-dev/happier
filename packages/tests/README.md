@@ -371,10 +371,10 @@ Scenario IDs are source-of-truth in provider registries:
 - `apps/cli/src/backends/opencode/e2e/providerScenarios.json`
 - `apps/cli/src/backends/claude/e2e/providerScenarios.json`
 - `apps/cli/src/backends/codex/e2e/providerScenarios.json`
-- `apps/cli/src/backends/kilo/e2e/providerScenarios.json`
+- `packages/plugins/kilo/src/agent/e2e/providerScenarios.json`
 - `apps/cli/src/backends/qwen/e2e/providerScenarios.json`
-- `apps/cli/src/backends/kimi/e2e/providerScenarios.json`
-- `apps/cli/src/backends/auggie/e2e/providerScenarios.json`
+- `packages/plugins/kimi/src/agent/e2e/providerScenarios.json`
+- `packages/plugins/auggie/src/agent/e2e/providerScenarios.json`
 
 Two quick examples (current at time of writing):
 - OpenCode smoke: `execute_trace_ok`, `execute_error_exit_2`
@@ -470,6 +470,7 @@ Providers are CLI-backend-owned. The test harness discovers providers by reading
 1) In the CLI backend folder, add:
    - `apps/cli/src/backends/<providerId>/e2e/providerSpec.json`
    - `apps/cli/src/backends/<providerId>/e2e/providerScenarios.json`
+   - or `packages/plugins/<providerId>/src/agent/e2e/providerScenarios.json` for plugin-owned providers
 2) In the tests package, add a scenario module:
    - `packages/tests/src/testkit/providers/scenarios.<providerId>.ts`
    - Register IDs in `src/testkit/providers/scenarios/scenarioCatalog.ts` so each id maps to a scenario factory.

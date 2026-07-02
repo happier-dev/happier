@@ -2,25 +2,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { approveTerminalConnect, type TerminalConnectApprovePage } from './approveTerminalConnect';
 
-type FakeLocator = Readonly<{
-  count: () => Promise<number>;
-  click: (options?: unknown) => Promise<void>;
-  evaluate?: (callback: (element: HTMLElement) => void) => Promise<void>;
-}>;
+type FakeLocator = ReturnType<TerminalConnectApprovePage['locator']>;
 
 function createLocator(params: Readonly<{
   count: () => number;
   onClick?: () => void;
   onEvaluateClick?: () => void;
 }>): FakeLocator {
+  const evaluate: NonNullable<FakeLocator['evaluate']> = async <T,>(callback: (element: HTMLElement) => T | Promise<T>): Promise<T> =>
+    await callback({ click: () => params.onEvaluateClick?.() } as HTMLElement);
+
   return {
     count: async () => params.count(),
     click: vi.fn(async () => {
       params.onClick?.();
     }),
-    evaluate: vi.fn(async (callback: (element: HTMLElement) => void) => {
-      callback({ click: () => params.onEvaluateClick?.() } as HTMLElement);
-    }),
+    evaluate,
   };
 }
 

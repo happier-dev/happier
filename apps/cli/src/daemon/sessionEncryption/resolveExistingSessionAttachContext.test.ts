@@ -312,4 +312,48 @@ describe('resolveExistingSessionAttachContext', () => {
 
     expect(out).toEqual({ ok: false, reason: 'fetchFailed' });
   });
+
+  it('clamps the synthesized attach cursor to the delivered watermark and exposes it on the context', async () => {
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
+      createSessionRecordFixture({
+        id: 'sess_owed',
+        seq: 42,
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({
+          flavor: 'codex',
+          path: '/tmp',
+          codexSessionId: 'vendor-owed-1',
+          deliveredUserMessageSeqV1: 5,
+        }),
+        dataEncryptionKey: null,
+      }),
+    );
+
+    const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_owed', credentials: null });
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    // session.seq=42 but only seq<=5 was ever delivered to the runner: rows 6..42 are owed.
+    expect(out.attachPayload.lastObservedMessageSeq).toBe(5);
+    expect(out.deliveredUserMessageSeq).toBe(5);
+  });
+
+  it('keeps the raw session seq cursor and a null watermark for legacy sessions', async () => {
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
+      createSessionRecordFixture({
+        id: 'sess_legacy',
+        seq: 42,
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({ flavor: 'codex', path: '/tmp', codexSessionId: 'vendor-legacy-1' }),
+        dataEncryptionKey: null,
+      }),
+    );
+
+    const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_legacy', credentials: null });
+
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.attachPayload.lastObservedMessageSeq).toBe(42);
+    expect(out.deliveredUserMessageSeq).toBeNull();
+  });
 });

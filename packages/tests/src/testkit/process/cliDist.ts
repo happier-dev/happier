@@ -854,9 +854,9 @@ function listCliDistProtocolRootReferences(sourceText: string): string[] {
   }
 
   for (const namespaceName of namespaceNames) {
-    const propertyPattern = new RegExp(`\\b${namespaceName}\\.([A-Za-z_$][\\w$]*)`, 'gu');
+    const propertyPattern = new RegExp(`(^|[^.$\\w])${namespaceName}\\.([A-Za-z_$][\\w$]*)`, 'gu');
     for (const match of sourceText.matchAll(propertyPattern)) {
-      const propertyName = match[1];
+      const propertyName = match[2];
       if (propertyName && propertyName !== 'default') references.push(propertyName);
     }
   }
@@ -940,6 +940,10 @@ function hasCliDistProtocolRootImportCompatibility(params: {
 
   return true;
 }
+
+export const __cliDistTestHooks = {
+  hasCliDistProtocolRootImportCompatibility,
+};
 
 function hasValidCliSharedDepsProtocolExports(rootDir: string): boolean {
   const workspaceProtocolDistIndexPath = resolve(rootDir, 'packages', 'protocol', 'dist', 'index.js');
@@ -1046,6 +1050,9 @@ export async function ensureCliSharedDepsBuilt(
   // Many provider/E2E harnesses pass a fresh temporary directory; make sure we can always
   // write build logs without requiring callers to pre-create the folder.
   mkdirSync(params.testDir, { recursive: true });
+  if (shouldSkipCliSharedDepsBuildForE2e(params.env)) {
+    return;
+  }
 
   const rootDir = options.repoRoot ?? repoRootDir();
   const skipSourceFreshnessCheck = options.skipSourceFreshnessCheck ?? false;

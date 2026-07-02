@@ -100,8 +100,9 @@ describe('openNewSessionPathSelection', () => {
         if (testId === 'path-selector-input') return pathInput;
         throw new Error(`unexpected test id: ${testId}`);
       }),
-      locator: vi.fn(() => {
-        throw new Error('unexpected locator lookup');
+      locator: vi.fn((selector: string) => {
+        if (selector === '[data-testid="path-selection-list:header:input"]') return pathInput;
+        throw new Error(`unexpected locator lookup: ${selector}`);
       }),
       goto: gotoSpy,
       waitForTimeout: waitForTimeoutSpy,
@@ -164,6 +165,12 @@ describe('createSessionFromNewSessionComposer', () => {
           };
         }
         if (testId === 'new-session-machine:machine-1') {
+          return {
+            count: async (): Promise<number> => 0,
+            click: vi.fn(async () => {}),
+          };
+        }
+        if (testId === 'new-session-machine-option:machine-1') {
           return {
             count: async (): Promise<number> => 0,
             click: vi.fn(async () => {}),
@@ -262,6 +269,12 @@ describe('createSessionFromNewSessionComposer', () => {
           };
         }
         if (testId === 'new-session-machine:machine-1') {
+          return {
+            count: async (): Promise<number> => 0,
+            click: vi.fn(async () => {}),
+          };
+        }
+        if (testId === 'new-session-machine-option:machine-1') {
           return {
             count: async (): Promise<number> => 0,
             click: vi.fn(async () => {}),
@@ -508,7 +521,7 @@ describe('createSessionFromNewSessionComposer', () => {
       prompt: 'wait for enabled machine',
     })).resolves.toBe('session-789');
 
-    expect(machineClickSpy).toHaveBeenCalledTimes(3);
+    expect(machineClickSpy).toHaveBeenCalledTimes(5);
     expect(sendClickSpy).toHaveBeenCalledTimes(1);
     expect(inputFillSpy).toHaveBeenCalledWith('wait for enabled machine');
   });

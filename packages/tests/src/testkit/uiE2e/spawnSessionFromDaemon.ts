@@ -2,12 +2,17 @@ import { randomUUID } from 'node:crypto';
 
 import type { StartedDaemon } from '../daemon/daemon';
 import { normalizeSpawnSessionRequestBody } from '../daemon/normalizeSpawnSessionRequestBody';
+import { assertBrowserCanAccessSession, type BrowserSessionAccessPage } from './assertBrowserCanAccessSession';
 
 export async function spawnSessionFromDaemon(params: Readonly<{
   daemon: StartedDaemon;
   directory: string;
   agent?: string;
   request?: Readonly<Record<string, unknown>>;
+  browserAccess?: Readonly<{
+    page: BrowserSessionAccessPage;
+    serverUrl: string;
+  }>;
 }>): Promise<string> {
   const token = params.daemon.state.controlToken;
   if (!token) throw new Error('daemon control token missing');
@@ -33,5 +38,13 @@ export async function spawnSessionFromDaemon(params: Readonly<{
   if (!res.ok || !json || json.success !== true || typeof json.sessionId !== 'string') {
     throw new Error(`Failed to spawn session (status=${res.status}): ${JSON.stringify(json)}`);
   }
-  return json.sessionId as string;
+  const sessionId = json.sessionId as string;
+  if (params.browserAccess) {
+    await assertBrowserCanAccessSession({
+      page: params.browserAccess.page,
+      serverUrl: params.browserAccess.serverUrl,
+      sessionId,
+    });
+  }
+  return sessionId;
 }

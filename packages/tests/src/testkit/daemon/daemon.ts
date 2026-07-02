@@ -106,6 +106,9 @@ function resolveDaemonLaunchSnapshotDir(params: {
   const perTestSnapshotMode = raw === 'testdir' || raw === 'per-test' || raw === 'per_test' || raw === 'pertest';
   if (perTestSnapshotMode && shouldUseCliSourceEntrypoint(params.env)) {
     const perTestSnapshotDir = resolve(params.testDir, 'cli-dist');
+    if (params.env.HAPPIER_E2E_LOGS_DIR?.trim()) {
+      return perTestSnapshotDir;
+    }
     const sharedSnapshotDir = resolve(repoRootDir(), '.project', 'tmp', 'cli-dist-snapshot');
     if (!isPreparedPerTestCliSnapshot(perTestSnapshotDir) && isPreparedPerTestCliSnapshot(sharedSnapshotDir)) {
       return sharedSnapshotDir;
@@ -208,10 +211,71 @@ export async function readDaemonState(happyHomeDir: string): Promise<DaemonState
   return parsedCandidates[0]?.state ?? null;
 }
 
-export async function waitForDaemonState(happyHomeDir: string, opts?: { timeoutMs?: number }): Promise<DaemonState> {
+type DaemonStatePresenceObservation = Readonly<{
+  exists: boolean;
+  candidateCount: number;
+  firstCandidatePath: string | null;
+}>;
+
+type DaemonStatePresenceTracker = {
+  everWritten: boolean;
+  everRemoved: boolean;
+  lastExists: boolean | null;
+  lastCandidateCount: number;
+  lastCandidatePath: string | null;
+};
+
+function createDaemonStatePresenceTracker(): DaemonStatePresenceTracker {
+  return {
+    everWritten: false,
+    everRemoved: false,
+    lastExists: null,
+    lastCandidateCount: 0,
+    lastCandidatePath: null,
+  };
+}
+
+async function listObservableDaemonStateCandidates(happyHomeDir: string): Promise<Array<{ path: string; mtimeMs: number }>> {
+  const activeServerId = await resolveActiveServerIdFromSettings(happyHomeDir);
+  const preferredCandidates = await listPreferredDaemonStateCandidates(happyHomeDir, activeServerId);
+  const seen = new Set(preferredCandidates.map((candidate) => candidate.path));
+  const serverCandidates = (await listServerDaemonStateCandidates(happyHomeDir))
+    .filter((candidate) => !seen.has(candidate.path));
+  return [...preferredCandidates, ...serverCandidates];
+}
+
+async function observeDaemonStatePresence(happyHomeDir: string): Promise<DaemonStatePresenceObservation> {
+  const candidates = await listObservableDaemonStateCandidates(happyHomeDir);
+  return {
+    exists: candidates.length > 0,
+    candidateCount: candidates.length,
+    firstCandidatePath: candidates[0]?.path ?? null,
+  };
+}
+
+function recordDaemonStatePresence(
+  tracker: DaemonStatePresenceTracker | undefined,
+  observation: DaemonStatePresenceObservation,
+): void {
+  if (!tracker) return;
+  if (observation.exists) {
+    tracker.everWritten = true;
+    tracker.lastCandidatePath = observation.firstCandidatePath;
+  } else if (tracker.lastExists === true) {
+    tracker.everRemoved = true;
+  }
+  tracker.lastExists = observation.exists;
+  tracker.lastCandidateCount = observation.candidateCount;
+}
+
+export async function waitForDaemonState(
+  happyHomeDir: string,
+  opts?: { timeoutMs?: number; statePresence?: DaemonStatePresenceTracker },
+): Promise<DaemonState> {
   const timeoutMs = opts?.timeoutMs ?? 30_000;
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
+    recordDaemonStatePresence(opts?.statePresence, await observeDaemonStatePresence(happyHomeDir));
     const state = await readDaemonState(happyHomeDir);
     if (state && state.httpPort > 0 && state.pid > 0) return state;
     await new Promise((r) => setTimeout(r, 100));
@@ -416,6 +480,7 @@ type DaemonStartupDiagnostics = Readonly<{
   stdoutPath: string;
   stderrPath: string;
   processPid?: number | null;
+  statePresence?: DaemonStatePresenceTracker;
 }>;
 
 function parsePositiveInteger(raw: string | undefined): number | null {
@@ -426,6 +491,39 @@ function parsePositiveInteger(raw: string | undefined): number | null {
 
 function resolveDaemonStartupPhaseTimeoutMs(env: NodeJS.ProcessEnv, startupTimeoutMs: number | undefined): number {
   return parsePositiveInteger(env.HAPPIER_E2E_DAEMON_STARTUP_PHASE_TIMEOUT_MS) ?? startupTimeoutMs ?? 300_000;
+}
+
+function sanitizeDiagnosticText(text: string): string {
+  return text
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer <redacted>')
+    .replace(/("?(?:token|secret|controlToken)"?\s*[:=]\s*")([^"]+)(")/gi, '$1<redacted>$3');
+}
+
+async function readInternalDaemonLogTail(happyHomeDir: string): Promise<string | null> {
+  const logsDir = join(happyHomeDir, 'logs');
+  try {
+    const entries = await readdir(logsDir, { withFileTypes: true });
+    const candidates: Array<{ path: string; mtimeMs: number }> = [];
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      if (!entry.name.endsWith('.log')) continue;
+      const path = join(logsDir, entry.name);
+      try {
+        const s = await stat(path);
+        candidates.push({ path, mtimeMs: s.mtimeMs });
+      } catch {
+        // ignore files that disappear while collecting diagnostics
+      }
+    }
+    candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    const latest = candidates[0];
+    if (!latest) return null;
+    const text = await readFile(latest.path, 'utf8');
+    const tail = sanitizeDiagnosticText(text.slice(Math.max(0, text.length - 4_000)));
+    return `${latest.path}:${tail}`;
+  } catch {
+    return null;
+  }
 }
 
 function isPidAlive(pid: number): boolean {
@@ -446,6 +544,8 @@ async function formatDaemonStartupDiagnostics(params: DaemonStartupDiagnostics):
     : isPidAlive(processPid)
       ? 'alive'
       : 'not-alive';
+  const statePresence = params.statePresence;
+  const internalDaemonLogTail = await readInternalDaemonLogTail(params.happyHomeDir);
 
   return [
     `phase=${params.phase}`,
@@ -456,10 +556,15 @@ async function formatDaemonStartupDiagnostics(params: DaemonStartupDiagnostics):
     `daemonStateExists=${state ? 'yes' : 'no'}`,
     state ? `daemonStatePid=${state.pid}` : null,
     state ? `daemonStateHttpPort=${state.httpPort}` : null,
+    statePresence ? `daemonStateEverWritten=${statePresence.everWritten ? 'yes' : 'no'}` : null,
+    statePresence ? `daemonStateEverRemoved=${statePresence.everRemoved ? 'yes' : 'no'}` : null,
+    statePresence ? `daemonStateLastCandidateCount=${statePresence.lastCandidateCount}` : null,
+    statePresence?.lastCandidatePath ? `daemonStateLastCandidatePath=${statePresence.lastCandidatePath}` : null,
     `processPid=${processPid == null ? 'not-spawned' : processPid}`,
     `processStatus=${processStatus}`,
     `stdoutPath=${params.stdoutPath}`,
     `stderrPath=${params.stderrPath}`,
+    `internalDaemonLogTail=${JSON.stringify(internalDaemonLogTail ?? 'none')}`,
   ]
     .filter((part): part is string => Boolean(part))
     .join(' ');
@@ -654,6 +759,9 @@ export function sanitizeDaemonEnvForSpawn(env: NodeJS.ProcessEnv): NodeJS.Proces
   delete sanitized.HAPPY_SESSION_ATTACH_FILE;
   delete sanitized.HAPPIER_STACK_TOOL_TRACE_FILE;
   delete sanitized.HAPPY_STACK_TOOL_TRACE_FILE;
+  delete sanitized.HAPPIER_ACTIVE_SERVER_ID;
+  delete sanitized.HAPPIER_DAEMON_SERVICE_INSTANCE_ID;
+  delete sanitized.HAPPIER_DAEMON_SERVICE_SERVER_URL;
   if (sanitized.HAPPIER_DISABLE_CAFFEINATE === undefined || sanitized.HAPPIER_DISABLE_CAFFEINATE === '') {
     sanitized.HAPPIER_DISABLE_CAFFEINATE = '1';
   }
@@ -859,17 +967,21 @@ export async function startTestDaemon(params: {
 
   let state: DaemonState;
   try {
-    const startupTimeoutMs = params.startupTimeoutMs ?? 45_000;
+    const startupTimeoutMs = phaseTimeoutMs;
     const exitStateGraceTimeoutMs = Math.min(startupTimeoutMs, 10_000);
+    const statePresence = createDaemonStatePresenceTracker();
     state = await runDaemonStartupPhase(
       'waitForDaemonState',
       Promise.race([
-        waitForDaemonState(params.happyHomeDir, { timeoutMs: startupTimeoutMs }),
+        waitForDaemonState(params.happyHomeDir, { timeoutMs: startupTimeoutMs, statePresence }),
         new Promise<DaemonState>((resolveState, rejectState) => {
           proc.child.once('exit', (code, signal) => {
             void (async () => {
               try {
-                const exitedState = await waitForDaemonState(params.happyHomeDir, { timeoutMs: exitStateGraceTimeoutMs });
+                const exitedState = await waitForDaemonState(params.happyHomeDir, {
+                  timeoutMs: exitStateGraceTimeoutMs,
+                  statePresence,
+                });
                 resolveState(exitedState);
               } catch {
                 const detail = signal ? `signal=${String(signal)}` : `code=${String(code)}`;
@@ -887,6 +999,7 @@ export async function startTestDaemon(params: {
         ...baseDiagnostics,
         timeoutMs: startupTimeoutMs,
         processPid: proc.child.pid ?? null,
+        statePresence,
       },
     );
   } catch (e) {

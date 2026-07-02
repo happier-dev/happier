@@ -1,13 +1,30 @@
 import { expect, type Page } from '@playwright/test';
 
 export type CreateAccountAndReachConnectMachineStatePage = Pick<Page, 'getByTestId'> & Partial<Pick<Page, 'evaluate'>>;
+type TestIdLocator = ReturnType<Page['getByTestId']>;
 
-async function isVisible(locator: ReturnType<Page['getByTestId']>): Promise<boolean> {
+const PRE_AUTH_PROGRESS_CTA_TEST_IDS = [
+  'brand-hero-get-started',
+] as const;
+
+const CREATE_ACCOUNT_CTA_TEST_IDS = [
+  'welcome-primary-start',
+  'welcome-create-account',
+] as const;
+
+async function isVisible(locator: TestIdLocator): Promise<boolean> {
   try {
     return await locator.first().isVisible();
   } catch {
     return false;
   }
+}
+
+async function clickCreateAccountButton(createButton: TestIdLocator | null): Promise<void> {
+  if (!createButton) {
+    throw new Error('Expected a visible create-account button before account creation');
+  }
+  await createButton.click();
 }
 
 async function trySwitchToSessionsTab(params: Readonly<{
@@ -152,6 +169,30 @@ async function hasDurableAuthenticatedSessionHomeVisible(
   return false;
 }
 
+async function findVisibleCreateAccountButton(params: Readonly<{
+  page: CreateAccountAndReachConnectMachineStatePage;
+  useFirstCreateButton?: boolean | undefined;
+}>): Promise<ReturnType<Page['getByTestId']> | null> {
+  for (const testId of CREATE_ACCOUNT_CTA_TEST_IDS) {
+    const locator = params.page.getByTestId(testId);
+    const candidate = params.useFirstCreateButton === true ? locator.first() : locator;
+    if (await isVisible(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function clickPreAuthProgressButtonIfPresent(
+  page: CreateAccountAndReachConnectMachineStatePage,
+): Promise<boolean> {
+  for (const testId of PRE_AUTH_PROGRESS_CTA_TEST_IDS) {
+    const locator = page.getByTestId(testId);
+    if (!(await isVisible(locator))) continue;
+    await locator.click();
+    return true;
+  }
+  return false;
+}
+
 async function navigateToSetupWizard(page: CreateAccountAndReachConnectMachineStatePage): Promise<void> {
   if (!page.evaluate) {
     throw new Error('createAccountAndReachSetupWizardState requires page.evaluate to navigate to /setup/wizard');
@@ -181,16 +222,20 @@ export async function createAccountAndReachConnectMachineState(params: Readonly<
   useFirstCreateButton?: boolean | undefined;
   requirePersistedAuthCredentials?: boolean | undefined;
 }>): Promise<void> {
-  const createAccount = params.page.getByTestId('welcome-create-account');
-  const createButton = params.useFirstCreateButton === true ? createAccount.first() : createAccount;
   const setupWizard = params.page.getByTestId('setupWizard.surface');
   const switchedToSessionsTabRef = { current: false };
+  let initialCreateButton: TestIdLocator | null = null;
 
   let initialState: 'create-account' | 'authenticated-home' | 'setup-wizard' | null = null;
   await expect
     .poll(async () => {
-      const createAccountVisible = await isVisible(createButton);
-      if (createAccountVisible) {
+      if (await clickPreAuthProgressButtonIfPresent(params.page)) {
+        initialState = null;
+        return false;
+      }
+      const createButton = await findVisibleCreateAccountButton(params);
+      if (createButton) {
+        initialCreateButton = createButton;
         initialState = 'create-account';
         return true;
       }
@@ -212,12 +257,13 @@ export async function createAccountAndReachConnectMachineState(params: Readonly<
     .toBe(true);
 
   if (initialState === 'create-account') {
-    await createButton.click();
+    await clickCreateAccountButton(initialCreateButton);
   }
 
   await expect
     .poll(async () => {
-      const createAccountVisible = await isVisible(createButton);
+      if (await clickPreAuthProgressButtonIfPresent(params.page)) return false;
+      const createAccountVisible = (await findVisibleCreateAccountButton(params)) !== null;
       if (await isVisible(setupWizard)) return true;
       if (createAccountVisible) return false;
       if (await trySwitchToSessionsTab({ page: params.page, switchedRef: switchedToSessionsTabRef })) {
@@ -231,7 +277,7 @@ export async function createAccountAndReachConnectMachineState(params: Readonly<
   const requirePersistedAuthCredentials = params.requirePersistedAuthCredentials !== false;
 
   await expect.poll(async () => {
-    if (await isVisible(createButton)) return 0;
+    if ((await findVisibleCreateAccountButton(params)) !== null) return 0;
     if (!(await isAuthenticatedSessionHomeVisible(params.page))) return 0;
     if (!requirePersistedAuthCredentials) return 1;
     if (await hasDurableAuthenticatedSessionHomeVisible(params.page)) return 1;
@@ -243,14 +289,19 @@ export async function createAccountAndReachSetupWizardState(params: Readonly<{
   page: CreateAccountAndReachConnectMachineStatePage;
   useFirstCreateButton?: boolean | undefined;
 }>): Promise<void> {
-  const createAccount = params.page.getByTestId('welcome-create-account');
-  const createButton = params.useFirstCreateButton === true ? createAccount.first() : createAccount;
   const setupWizard = params.page.getByTestId('setupWizard.surface');
+  let initialCreateButton: TestIdLocator | null = null;
 
   let initialState: 'create-account' | 'setup-wizard' | null = null;
   await expect
     .poll(async () => {
-      if (await isVisible(createButton)) {
+      if (await clickPreAuthProgressButtonIfPresent(params.page)) {
+        initialState = null;
+        return false;
+      }
+      const createButton = await findVisibleCreateAccountButton(params);
+      if (createButton) {
+        initialCreateButton = createButton;
         initialState = 'create-account';
         return true;
       }
@@ -268,7 +319,7 @@ export async function createAccountAndReachSetupWizardState(params: Readonly<{
     .toBe(true);
 
   if (initialState === 'create-account') {
-    await createButton.click();
+    await clickCreateAccountButton(initialCreateButton);
   }
 
   await expect

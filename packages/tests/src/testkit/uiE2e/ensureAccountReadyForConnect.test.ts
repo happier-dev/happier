@@ -72,6 +72,50 @@ function createFakePage(params: Readonly<{
   return page;
 }
 
+function createBrandHeroTransitionPage(): EnsureAccountReadyForConnectPage & {
+  clickCalls: Record<string, number>;
+  waitCalls: number;
+} {
+  const clickCalls: Record<string, number> = {};
+  const visibleByKey = new Map<string, number>([
+    ['brand-hero-get-started', 1],
+    ['welcome-primary-start', 0],
+    ['session-getting-started-kind-connect_machine', 0],
+    ['Get Started', 1],
+  ]);
+
+  const makeLocator = (key: string): Locator => ({
+    count: async () => visibleByKey.get(key) ?? 0,
+    isVisible: async () => (visibleByKey.get(key) ?? 0) > 0,
+    click: async () => {
+      clickCalls[key] = (clickCalls[key] ?? 0) + 1;
+      if (key === 'brand-hero-get-started') {
+        visibleByKey.set('brand-hero-get-started', 0);
+        visibleByKey.set('welcome-primary-start', 1);
+        return;
+      }
+      if (key === 'welcome-primary-start') {
+        visibleByKey.set('welcome-primary-start', 0);
+        visibleByKey.set('session-getting-started-kind-connect_machine', 1);
+      }
+    },
+    first: () => makeLocator(key),
+    nth: () => makeLocator(key),
+  } as unknown as Locator);
+
+  const page = {
+    clickCalls,
+    waitCalls: 0,
+    getByTestId: ((testId) => makeLocator(String(testId))) as Page['getByTestId'],
+    getByRole: ((_role, options) => makeLocator(String(options?.name ?? ''))) as Page['getByRole'],
+    waitForTimeout: async () => {
+      page.waitCalls += 1;
+    },
+  };
+
+  return page;
+}
+
 describe('ensureAccountReadyForConnect', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -93,6 +137,16 @@ describe('ensureAccountReadyForConnect', () => {
     const page = createFakePage({
       roleCounts: {
         Settings: [1],
+      },
+    });
+
+    await expect(ensureAccountReadyForConnect({ page, timeoutMs: 50 })).resolves.toBeUndefined();
+  });
+
+  it('passes when the authenticated setup surface is visible', async () => {
+    const page = createFakePage({
+      testIdCounts: {
+        'setupWizard.surface': [1],
       },
     });
 
@@ -201,9 +255,34 @@ describe('ensureAccountReadyForConnect', () => {
     expect(page.clickCalls['welcome-primary-start'] ?? 0).toBe(1);
   });
 
-  it('falls back to the role-based create-account CTA when testID is absent', async () => {
-    const page = createFakePage({
-      roleCounts: {
+  it('prefers the brand-hero get-started testID before copy-based onboarding fallback', async () => {
+    const page = createBrandHeroTransitionPage();
+
+    await expect(ensureAccountReadyForConnect({ page, timeoutMs: 250 })).resolves.toBeUndefined();
+    expect(page.clickCalls['brand-hero-get-started'] ?? 0).toBe(1);
+    expect(page.clickCalls['Get Started'] ?? 0).toBe(0);
+  });
+
+  it('dismisses the brand hero as pre-auth progression without treating it as account creation', async () => {
+    const nowSpy = vi.spyOn(Date, 'now');
+    nowSpy
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(300);
+    const page = createBrandHeroTransitionPage();
+
+    await expect(
+      ensureAccountReadyForConnect({ page, timeoutMs: 250, clickCreateAccount: false }),
+    ).rejects.toThrow('Account did not reach a ready UI state within 250ms.');
+
+    expect(page.clickCalls['brand-hero-get-started'] ?? 0).toBe(1);
+    expect(page.clickCalls['welcome-primary-start'] ?? 0).toBe(0);
+  });
+
+    it('falls back to the role-based create-account CTA when testID is absent', async () => {
+        const page = createFakePage({
+            roleCounts: {
         'Create account': [1, 0],
       },
       testIdCounts: {
@@ -211,9 +290,23 @@ describe('ensureAccountReadyForConnect', () => {
       },
     });
 
-    await expect(ensureAccountReadyForConnect({ page, timeoutMs: 250 })).resolves.toBeUndefined();
-    expect(page.clickCalls['Create account'] ?? 0).toBe(1);
-  });
+        await expect(ensureAccountReadyForConnect({ page, timeoutMs: 250 })).resolves.toBeUndefined();
+        expect(page.clickCalls['Create account'] ?? 0).toBe(1);
+    });
+
+    it('falls back to the role-based first-time CTA when testID is absent', async () => {
+        const page = createFakePage({
+            roleCounts: {
+                '/First time here/': [1, 0],
+            },
+            testIdCounts: {
+                'session-getting-started-kind-connect_machine': [0, 1],
+            },
+        });
+
+        await expect(ensureAccountReadyForConnect({ page, timeoutMs: 250 })).resolves.toBeUndefined();
+        expect(page.clickCalls['/First time here/'] ?? 0).toBe(1);
+    });
 
   it('continues when the create-account CTA is temporarily blocked by an overlay', async () => {
     const page = createFakePage({

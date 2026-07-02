@@ -27,12 +27,13 @@ function createPackageJsonText(): string {
         'test:db-contract:docker': 'yarn -s test:db-contract:postgres:docker && yarn -s test:db-contract:mysql:docker',
         'test:wiring:self': 'node --experimental-strip-types --test scripts/testing/lib/*.test.ts scripts/testing/validateTestWiring.test.ts',
         'test:wiring': 'node --import tsx ./scripts/testing/validateTestWiring.ts',
-        'test:policy:self': 'node --import tsx --test scripts/testing/lib/*.test.ts scripts/testing/*.test.ts scripts/testing/migrations/lib/*.test.ts',
+        'test:policy:self': 'node --import tsx --test scripts/testing/lib/*.test.ts scripts/testing/*.test.ts scripts/testing/migrations/lib/*.test.ts scripts/testing/migrations/runtimeUnification/validators/*.test.ts',
         'test:policy': 'node --import tsx ./scripts/testing/validateTestPolicy.ts',
         'test:inventory': 'node --import tsx ./scripts/testing/validateTestInventory.ts',
         'test:migration:inventory': 'node --import tsx ./scripts/testing/migrations/validateMigrationInventory.ts',
         'test:migration:v2-zero:enforce': 'node --experimental-strip-types ./scripts/testing/migrations/validateV2ZeroInventory.ts --enforce',
-        'test:migration:governance': 'yarn -s test:migration:v2-zero:enforce && yarn -s test:migration:wire-compat',
+        'test:migration:bundled-plugin-projections': 'node apps/cli/scripts/withNodeHeapLimit.mjs node --experimental-strip-types scripts/migrations/extensions/generateBundledPluginEntries.ts --mode check',
+        'test:migration:governance': 'yarn -s test:migration:v2-zero:enforce && yarn -s test:migration:wire-compat && yarn -s test:migration:bundled-plugin-projections',
       },
     },
     null,
@@ -188,6 +189,7 @@ test('flags governed root script body drift when migration governance no longer 
   const messages = report.issues.map((issue) => issue.message).join('\n');
   assert.match(messages, /Root script test:migration:governance is missing required command body/);
   assert.match(messages, /test:migration:v2-zero:enforce/);
+  assert.match(messages, /test:migration:bundled-plugin-projections/);
 });
 
 test('flags root self-lane drift when migration lib self-tests fall out of test:policy:self', () => {
@@ -204,6 +206,7 @@ test('flags root self-lane drift when migration lib self-tests fall out of test:
   const messages = report.issues.map((issue) => issue.message).join('\n');
   assert.match(messages, /Root script test:policy:self is missing required command body/);
   assert.ok(messages.includes('scripts\\/testing\\/migrations\\/lib\\/\\*\\.test\\.ts'));
+  assert.ok(messages.includes('scripts\\/testing\\/migrations\\/runtimeUnification\\/validators\\/\\*\\.test\\.ts'));
 });
 
 test('flags unknown root commands mentioned in docs or workflow', () => {

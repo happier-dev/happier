@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchMessagesPage } from './sessions';
+import { fetchMessagesPage, fetchSessionV2 } from './sessions';
 
 function createFakeResponse(body: unknown, opts?: { status?: number }) {
   const status = opts?.status ?? 200;
@@ -65,6 +65,28 @@ describe('fetchMessagesPage', () => {
     expect(url).toContain('role=user');
   });
 
+  it('includes CSV roles query param when provided', async () => {
+    const fetchSpy = vi.fn(async (_url: string) => {
+      return createFakeResponse({ messages: [], hasMore: false, nextAfterSeq: null }, { status: 200 });
+    });
+    globalThis.fetch = fetchSpy as any;
+
+    await fetchMessagesPage({
+      baseUrl: 'http://localhost:1234',
+      token: 'token',
+      sessionId: 'ses_1',
+      afterSeq: 0,
+      limit: 25,
+      roles: ['user', 'agent'],
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const firstCall = fetchSpy.mock.calls[0] as [string] | undefined;
+    expect(firstCall).toBeDefined();
+    const url = String(firstCall?.[0] ?? '');
+    expect(url).toContain('roles=user%2Cagent');
+  });
+
   it('normalizes JSON-string message content envelopes returned by SQLite-backed servers', async () => {
     globalThis.fetch = vi.fn(async () => createFakeResponse({
       messages: [
@@ -97,5 +119,74 @@ describe('fetchMessagesPage', () => {
         content: { t: 'encrypted', c: 'ciphertext' },
       }),
     ]);
+  });
+});
+
+describe('fetchSessionV2', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('normalizes omitted primary-turn projection fields to null', async () => {
+    globalThis.fetch = vi.fn(async () => createFakeResponse({
+      session: {
+        id: 'ses_1',
+        seq: 3,
+        metadata: 'ciphertext',
+        metadataVersion: 2,
+        agentState: null,
+        agentStateVersion: 1,
+        createdAt: 10,
+        updatedAt: 20,
+        meaningfulActivityAt: 15,
+        active: true,
+        activeAt: 20,
+        encryptionMode: 'e2ee',
+        dataEncryptionKey: 'sealed-key',
+        share: null,
+        lastViewedSessionSeq: 2,
+        pendingCount: 1,
+        pendingVersion: 4,
+      },
+    })) as any;
+
+    const session = await fetchSessionV2('http://localhost:1234', 'token', 'ses_1');
+
+    expect(session).toEqual(expect.objectContaining({
+      id: 'ses_1',
+      meaningfulActivityAt: 15,
+      latestTurnStatus: null,
+      lastRuntimeIssue: null,
+      encryptionMode: 'e2ee',
+      dataEncryptionKey: 'sealed-key',
+      share: null,
+      lastViewedSessionSeq: 2,
+      pendingCount: 1,
+      pendingVersion: 4,
+    }));
+  });
+
+  it('rejects invalid primary-turn projection fields with endpoint-aware diagnostics', async () => {
+    globalThis.fetch = vi.fn(async () => createFakeResponse({
+      session: {
+        id: 'ses_1',
+        seq: 3,
+        metadata: 'ciphertext',
+        metadataVersion: 2,
+        agentState: null,
+        agentStateVersion: 1,
+        createdAt: 10,
+        updatedAt: 20,
+        meaningfulActivityAt: 10,
+        active: true,
+        activeAt: 20,
+        latestTurnStatus: 'broken-status',
+        lastRuntimeIssue: null,
+      },
+    })) as any;
+
+    await expect(fetchSessionV2('http://localhost:1234', 'token', 'ses_1')).rejects.toThrow('/v2/sessions/ses_1');
   });
 });
