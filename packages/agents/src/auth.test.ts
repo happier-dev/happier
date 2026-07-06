@@ -64,6 +64,16 @@ describe('AGENT_AUTH_PROBE_CONFIG', () => {
     ]);
   });
 
+  it('probes grok auth via XAI_API_KEY only (the CLI does not read GROK_API_KEY)', () => {
+    expect(getAgentAuthProbeConfig('grok')).toMatchObject({
+      agentId: 'grok',
+      statusCommand: null,
+      parser: 'unknown',
+      backgroundChecks: 'safe',
+      envVars: ['XAI_API_KEY'],
+    });
+  });
+
   it('derives auth probe binary names from the provider runtime catalog', () => {
     for (const agentId of AGENT_IDS) {
       const runtimeSpec = getProviderCliRuntimeSpec(agentId);

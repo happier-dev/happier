@@ -131,6 +131,22 @@ describe('agent model config', () => {
     expect(codexModels.map((model) => model.id)).toContain('gpt-5.4');
   });
 
+  it('exposes grok’s real coding model id and keeps allowedModes aligned with its static models', () => {
+    const grok = getAgentModelConfig('grok');
+    const grokModels = getAgentStaticModels('grok');
+
+    // The shipping Grok Build CLI reports `grok-build` (and default `grok-composer-2.5-fast`);
+    // there is no `grok-build-0.1`, and 'default' is auto-injected by consumers so it is not listed here.
+    expect(grokModels.map((model) => model.id)).toEqual(['grok-build']);
+    expect(grok.allowedModes).toEqual(['grok-build']);
+    expect(grok.staticModels?.map((model) => model.id)).toEqual(grok.allowedModes);
+    expect(grokModels[0]).toMatchObject({
+      id: 'grok-build',
+      name: 'Grok Build',
+      description: expect.any(String),
+    });
+  });
+
   it('treats Cursor models as dynamic ACP/CLI controls without freeform fallback', () => {
     expect(getAgentModelConfig(cursorAgentId)).toMatchObject({
       supportsSelection: true,

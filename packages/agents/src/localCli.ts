@@ -140,16 +140,19 @@ export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<AgentId, AgentLocalCliConfi
   agy: createAgentLocalCliConfig('agy', {
     machineLoginKey: 'agy',
     authSupport: 'login_terminal',
+    // Antigravity CLI has no `auth` subcommand: running `agy` triggers the Google
+    // Sign-In flow automatically (cached in the system keyring) when no session exists.
     loginLaunch: {
-      args: ['auth', 'login'],
+      args: [],
     },
   }),
   grok: createAgentLocalCliConfig('grok', {
     machineLoginKey: 'grok',
     authSupport: 'login_terminal',
+    // Grok Build CLI authenticates via the `grok login` subcommand (browser OIDC), not a
+    // `/login` TUI slash command. `--device-auth` is the headless variant it falls back to.
     loginLaunch: {
-      args: [],
-      initialInput: '/login\r',
+      args: ['login'],
     },
   }),
 });

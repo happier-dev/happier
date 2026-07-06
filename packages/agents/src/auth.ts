@@ -146,7 +146,7 @@ export const AGENT_AUTH_PROBE_CONFIG: Readonly<Record<AgentId, AgentAuthProbeCon
     statusCommand: null,
     parser: 'unknown',
     backgroundChecks: 'safe',
-    envVars: ['XAI_API_KEY', 'GROK_API_KEY'],
+    envVars: ['XAI_API_KEY'],
   },
 });
 

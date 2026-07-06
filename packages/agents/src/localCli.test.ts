@@ -45,6 +45,32 @@ describe('AGENT_LOCAL_CLI_CONFIG', () => {
     });
   });
 
+  it('logs in agy via the automatic Google sign-in on bare launch (agy has no auth subcommand)', () => {
+    const config = getAgentLocalCliConfig('agy');
+    expect(config).toMatchObject({
+      agentId: 'agy',
+      authSupport: 'login_terminal',
+      loginLaunch: {
+        command: 'agy',
+        args: [],
+      },
+    });
+    expect(config.loginLaunch).not.toHaveProperty('initialInput');
+  });
+
+  it('logs in grok via the `grok login` subcommand rather than an interactive /login slash', () => {
+    const config = getAgentLocalCliConfig('grok');
+    expect(config).toMatchObject({
+      agentId: 'grok',
+      authSupport: 'login_terminal',
+      loginLaunch: {
+        command: 'grok',
+        args: ['login'],
+      },
+    });
+    expect(config.loginLaunch).not.toHaveProperty('initialInput');
+  });
+
   it('uses Cursor CLI login as a terminal-auth flow while keeping cursor-agent as the launch command', () => {
     expect(getAgentLocalCliConfig(cursorAgentId)).toMatchObject({
       agentId: 'cursor',
