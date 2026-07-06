@@ -137,6 +137,21 @@ export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<AgentId, AgentLocalCliConfi
       args: ['login'],
     },
   }),
+  agy: createAgentLocalCliConfig('agy', {
+    machineLoginKey: 'agy',
+    authSupport: 'login_terminal',
+    loginLaunch: {
+      args: ['auth', 'login'],
+    },
+  }),
+  grok: createAgentLocalCliConfig('grok', {
+    machineLoginKey: 'grok',
+    authSupport: 'login_terminal',
+    loginLaunch: {
+      args: [],
+      initialInput: '/login\r',
+    },
+  }),
 });
 
 export function getAgentLocalCliConfig(agentId: AgentId): AgentLocalCliConfig {

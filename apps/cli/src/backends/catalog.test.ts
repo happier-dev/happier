@@ -106,6 +106,8 @@ describe('AGENTS', () => {
   it('registers runnable CLI command handlers for built-in generic ACP agents', () => {
     expect(requireCatalogEntry('customAcp').getCliCommandHandler).toBeTypeOf('function');
     expect(requireCatalogEntry('kiro').getCliCommandHandler).toBeTypeOf('function');
+    expect(requireCatalogEntry('agy').getCliCommandHandler).toBeTypeOf('function');
+    expect(requireCatalogEntry('grok').getCliCommandHandler).toBeTypeOf('function');
   });
 
   it('registers Cursor through provider-owned ACP, auth, detect, and preflight hooks', async () => {
@@ -203,7 +205,7 @@ describe('AGENTS', () => {
       providerId: 'claude',
       serviceIds: expect.arrayContaining(['claude-subscription']),
       spawnPreflightOauthRefresh: { mode: 'force' },
-      refreshedCredentialApplication: { mode: 'restart_required' },
+      refreshedCredentialApplication: { mode: 'no_restart_required' },
     });
     await expect(resolveDescriptor('pi')).resolves.toMatchObject({
       providerId: 'pi',

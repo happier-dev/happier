@@ -5,7 +5,31 @@ import { getProviderCliRuntimeSpec } from './providers/providerCliRuntime.js';
 
 describe('built-in ACP config', () => {
   it('keeps the built-in ACP allowlist explicit and drift-free', () => {
-    expect(Object.keys(BUILT_IN_ACP_CONFIG).sort()).toEqual(['customAcp', 'kiro']);
+    expect(Object.keys(BUILT_IN_ACP_CONFIG).sort()).toEqual(['agy', 'customAcp', 'grok', 'kiro']);
+  });
+
+  it('exposes agy as a built-in generic ACP agent', () => {
+    expect(hasBuiltInAcpConfig('agy')).toBe(true);
+    expect(getBuiltInAcpConfig('agy')).toMatchObject({
+      agentId: 'agy',
+      launcher: {
+        command: getProviderCliRuntimeSpec('agy').binaryName,
+        args: ['--acp'],
+      },
+      transportProfile: 'generic',
+    });
+  });
+
+  it('exposes grok as a built-in generic ACP agent', () => {
+    expect(hasBuiltInAcpConfig('grok')).toBe(true);
+    expect(getBuiltInAcpConfig('grok')).toMatchObject({
+      agentId: 'grok',
+      launcher: {
+        command: getProviderCliRuntimeSpec('grok').binaryName,
+        args: ['agent', 'stdio'],
+      },
+      transportProfile: 'generic',
+    });
   });
 
   it('exposes Custom ACP as a built-in generic ACP agent family', () => {

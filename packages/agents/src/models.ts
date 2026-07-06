@@ -369,6 +369,33 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     defaultMode: 'default',
     allowedModes: ['default'],
   },
+  agy: {
+    supportsSelection: true,
+    supportsFreeform: true,
+    nonAcpApplyScope: 'next_prompt',
+    acpApplyBehavior: 'set_model',
+    acpModelConfigOptionId: 'model',
+    dynamicProbe: 'auto',
+    defaultMode: 'default',
+    allowedModes: ['default'],
+  },
+  grok: {
+    supportsSelection: true,
+    supportsFreeform: true,
+    nonAcpApplyScope: 'next_prompt',
+    acpApplyBehavior: 'set_model',
+    acpModelConfigOptionId: 'model',
+    dynamicProbe: 'auto',
+    defaultMode: 'default',
+    allowedModes: ['default', 'grok-build-0.1'],
+    staticModels: [
+      {
+        id: 'grok-build-0.1',
+        name: 'Grok Build 0.1',
+        description: 'xAI frontier agentic coding model.',
+      },
+    ],
+  },
 });
 
 export function getAgentModelConfig(agentId: AgentId): AgentModelConfig {
