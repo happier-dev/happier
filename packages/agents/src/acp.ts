@@ -46,18 +46,6 @@ export const BUILT_IN_ACP_CONFIG: Readonly<Partial<Record<AgentId, BuiltInAcpCon
     supportsModels: 'yes',
     promptImageSupport: 'yes',
   },
-  agy: {
-    agentId: 'agy',
-    launcher: {
-      command: providerLauncherCommand('agy'),
-      args: ['--acp'],
-    },
-    transportProfile: 'generic',
-    supportsLoadSession: true,
-    supportsModes: 'auto',
-    supportsModels: 'auto',
-    promptImageSupport: 'auto',
-  },
   grok: {
     agentId: 'grok',
     launcher: {

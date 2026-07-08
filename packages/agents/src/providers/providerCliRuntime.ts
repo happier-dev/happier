@@ -317,27 +317,6 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     installGuideUrl: 'https://cursor.com/docs/cli/installation',
     docsUrl: 'https://cursor.com/docs/cli',
   },
-  agy: {
-    id: 'agy',
-    title: 'Antigravity CLI',
-    binaryName: 'agy',
-    knownCommandCandidates: [
-      { kind: 'homeBinDir', relativeDir: '.local/bin' },
-      { kind: 'absolutePath', path: '/opt/homebrew/bin/agy' },
-      { kind: 'absolutePath', path: '/usr/local/bin/agy' },
-    ],
-    sourcePreferenceDefault: 'system-first',
-    managedInstall: null,
-    manualInstallKind: 'vendor_recipe',
-    manualInstallRecipes: {
-      darwin: [bashCurlPipe('https://antigravity.google/cli/install.sh')],
-      linux: [bashCurlPipe('https://antigravity.google/cli/install.sh')],
-      win32: [powershellInstall('irm https://antigravity.google/cli/install.ps1 | iex')],
-    },
-    acceptsJavaScriptFileOverride: false,
-    installGuideUrl: 'https://antigravity.google/docs/cli/reference',
-    docsUrl: 'https://antigravity.google/docs',
-  },
   grok: {
     id: 'grok',
     title: 'Grok Build CLI',

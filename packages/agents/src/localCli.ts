@@ -137,15 +137,6 @@ export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<AgentId, AgentLocalCliConfi
       args: ['login'],
     },
   }),
-  agy: createAgentLocalCliConfig('agy', {
-    machineLoginKey: 'agy',
-    authSupport: 'login_terminal',
-    // Antigravity CLI has no `auth` subcommand: running `agy` triggers the Google
-    // Sign-In flow automatically (cached in the system keyring) when no session exists.
-    loginLaunch: {
-      args: [],
-    },
-  }),
   grok: createAgentLocalCliConfig('grok', {
     machineLoginKey: 'grok',
     authSupport: 'login_terminal',

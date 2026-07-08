@@ -44,11 +44,6 @@ export const AGENT_SESSION_MODE_DESCRIPTORS: Readonly<Record<AgentId, AgentSessi
     acpModeConfigOptionId: 'mode',
     acpModeSetMethod: 'config_option',
   },
-  agy: {
-    source: 'acp',
-    semantics: 'agent-modes',
-    runtimeSwitch: 'acp-setSessionMode',
-  },
   grok: {
     source: 'acp',
     semantics: 'agent-modes',
@@ -83,7 +78,6 @@ export const AGENT_SESSION_MODES: Readonly<Record<AgentId, AgentSessionModesKind
   pi: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.pi),
   copilot: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.copilot),
   cursor: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.cursor),
-  agy: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.agy),
   grok: descriptorToSessionModesKind(AGENT_SESSION_MODE_DESCRIPTORS.grok),
 });
 
