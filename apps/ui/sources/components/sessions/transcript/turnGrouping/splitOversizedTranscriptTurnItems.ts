@@ -1,4 +1,4 @@
-import type { ChatListItem } from '@/components/sessions/chatListItems';
+import { resolveChatListMessageRowType, type ChatListItem, type ChatListRowType } from '@/components/sessions/chatListItems';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 
 import type { TranscriptTurn } from './buildTranscriptTurns';
@@ -13,6 +13,7 @@ export type SplittableTranscriptTurnItem =
     | {
         kind: 'turn';
         id: string;
+        rowType?: ChatListRowType;
         turn: TranscriptTurn;
     };
 
@@ -50,6 +51,7 @@ function buildMessageItem(params: Readonly<{
         kind: 'message',
         id: `msg:${params.messageId}`,
         messageId: params.messageId,
+        rowType: resolveChatListMessageRowType(message ?? null),
         createdAt: typeof message?.createdAt === 'number' && Number.isFinite(message.createdAt) ? message.createdAt : 0,
         seq,
     }, readMessageMetadata(params.metadataByMessageId, params.messageId));
@@ -66,6 +68,7 @@ function buildToolCallsGroupItem(params: Readonly<{
     return withOrigin({
         kind: 'tool-calls-group',
         id: params.id,
+        rowType: 'tool-group',
         toolMessageIds: [...params.toolMessageIds],
         createdAt: typeof firstMessage?.createdAt === 'number' && Number.isFinite(firstMessage.createdAt)
             ? firstMessage.createdAt

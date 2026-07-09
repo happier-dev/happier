@@ -197,4 +197,42 @@ describe('MessageView (copy button hitSlop)', () => {
             });
         },
     );
+
+    it('copies user message options on long press without submitting them', async () => {
+        platformState.os = 'ios';
+        vi.resetModules();
+        const Clipboard = await import('expo-clipboard');
+        const { sync } = await import('@/sync/sync');
+        const { MessageView } = await import('./MessageView');
+        const { TranscriptMessageSelectionProvider } = await import('./messageSelection/TranscriptMessageSelectionContext');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            id: 'm1',
+            text: [
+                '<options>',
+                '<option>Run command</option>',
+                '</options>',
+            ].join('\n'),
+        };
+
+        const screen = await renderScreen(
+            <TranscriptMessageSelectionProvider sessionId="s1" eligibleMessageIdsInOrder={['m1']}>
+                <MessageView message={message} metadata={null} sessionId="s1" />
+            </TranscriptMessageSelectionProvider>,
+        );
+
+        const markdownView = screen.findByType('MarkdownView' as any);
+        expect(typeof markdownView.props.onOptionLongPress).toBe('function');
+
+        let copied = false;
+        await act(async () => {
+            copied = await markdownView.props.onOptionLongPress({ title: 'Run command' });
+        });
+
+        expect(copied).toBe(true);
+        expect(Clipboard.setStringAsync).toHaveBeenCalledWith('Run command');
+        expect(sync.submitMessage).not.toHaveBeenCalled();
+    });
 });

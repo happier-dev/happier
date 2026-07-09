@@ -84,4 +84,21 @@ describe('resolveTranscriptBottomFollowIntent', () => {
             wantsPinned: true,
         });
     });
+
+    it('does not rearm on a stale bottom frame while bottom rearm is disabled', () => {
+        expect(resolveTranscriptBottomFollowIntent({
+            canRearmBottom: false,
+            canRelease: false,
+            direction: 'toward-max',
+            distanceFromBottom: 0,
+            pinThresholdPx: 72,
+            previousScrollOffset: 1000,
+            scrollOffset: 1500,
+            wantsPinned: false,
+        })).toMatchObject({
+            isPinned: false,
+            rearmed: false,
+            wantsPinned: false,
+        });
+    });
 });

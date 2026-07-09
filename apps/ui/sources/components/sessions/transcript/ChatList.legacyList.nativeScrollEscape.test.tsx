@@ -2,30 +2,29 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, standardCleanup } from '@/dev/testkit';
 import {
-  flushLegacyChatListEffects,
-  legacyChatListHarnessState,
-  renderLegacyChatList,
-  requireCapturedFlatListProps,
-  resetLegacyChatListHarness,
-  triggerLegacyChatListInitialFill,
-  triggerLegacyChatListScroll,
-} from './ChatList.legacyListTestHarness';
-import { installLegacyChatListHarnessCommonModuleMocks } from './chatListLegacyHarnessTestHelpers';
+  flashListChatListHarnessState,
+  renderFlashListChatListSession,
+  requireCapturedFlashListProps,
+  resetFlashListChatListHarness,
+  triggerFlashListChatListInitialFill,
+  triggerFlashListChatListScroll,
+} from '@/dev/testkit/harness/chatListHarness';
+import { installFlashListChatListCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
 import { transcriptViewportTelemetry } from './scroll/transcriptViewportTelemetry';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-installLegacyChatListHarnessCommonModuleMocks({
+installFlashListChatListCommonModuleMocks({
   reactNative: async () =>
-    (await import('@/dev/testkit/harness/chatListHarness')).createLegacyChatListReactNativeMock({
+    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListReactNativeMock({
       platformOs: 'ios',
     }),
 });
 
 vi.mock('@/components/sessions/chatListItems', async () =>
-  (await import('./ChatList.legacyListTestHarness')).createLegacyChatListItemsModuleMock()
+  (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListItemsModuleMock()
 );
 
 vi.mock('./ChatFooter', () => ({
@@ -78,9 +77,9 @@ vi.mock('@/sync/sync', () => ({
 
 describe('ChatList (legacy native FlatList scroll escape)', () => {
   beforeEach(() => {
-    resetLegacyChatListHarness({ platformOs: 'ios' });
+    resetFlashListChatListHarness({ platformOs: 'ios' });
     transcriptViewportTelemetry.configure({ enabled: false, sink: null });
-    legacyChatListHarnessState.sessionMessagesState = {
+    flashListChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [{ kind: 'assistant-text', id: 'a1', localId: null, createdAt: 1, seq: 1, text: 'streaming...' }],
     };
@@ -92,34 +91,34 @@ describe('ChatList (legacy native FlatList scroll escape)', () => {
   });
 
   it('disables native MVCP bottom maintenance when list drag begins', async () => {
-    const screen = await renderLegacyChatList({ flushOptions: { cycles: 0 } });
+    const screen = await renderFlashListChatListSession({ flushOptions: { cycles: 0 } });
 
-    expect(requireCapturedFlatListProps().maintainVisibleContentPosition).toEqual({
+    expect(requireCapturedFlashListProps().maintainVisibleContentPosition).toEqual({
       autoscrollToTopThreshold: 72,
       minIndexForVisible: 0,
     });
 
     await act(async () => {
-      requireCapturedFlatListProps().onScrollBeginDrag?.({});
+      requireCapturedFlashListProps().onScrollBeginDrag?.({});
     });
-    await flushLegacyChatListEffects({ cycles: 1, turns: 1 });
+    await flushHookEffects({ cycles: 1, turns: 1 });
 
-    expect(requireCapturedFlatListProps().maintainVisibleContentPosition).toBeUndefined();
+    expect(requireCapturedFlashListProps().maintainVisibleContentPosition).toBeUndefined();
 
     await screen.unmount();
   });
 
   it('drops impossible huge negative native offsets without repinning', async () => {
     transcriptViewportTelemetry.configure({ enabled: true, capacity: 32 });
-    const screen = await renderLegacyChatList({ flushOptions: { cycles: 0 } });
+    const screen = await renderFlashListChatListSession({ flushOptions: { cycles: 0 } });
 
-    await triggerLegacyChatListInitialFill({
+    await triggerFlashListChatListInitialFill({
       contentHeight: 24578,
       layoutHeight: 682,
       flushOptions: { cycles: 1, turns: 1 },
     });
 
-    await triggerLegacyChatListScroll(-972759, { cycles: 1, turns: 1 });
+    await triggerFlashListChatListScroll(-972759, { cycles: 1, turns: 1 });
 
     const events = transcriptViewportTelemetry.snapshot().events;
     expect(events).toEqual(expect.arrayContaining([

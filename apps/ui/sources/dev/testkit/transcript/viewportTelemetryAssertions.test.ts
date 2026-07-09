@@ -6,6 +6,7 @@ import {
     assertNoSilentBails,
     assertOneOwnerPerPhase,
     assertScenario,
+    assertWebWregDiagnostics,
     assertWriteBudget,
 } from './viewportTelemetryAssertions';
 
@@ -437,5 +438,86 @@ describe('assertScenario owner write-target spread (invariant G)', () => {
         ];
 
         expect(() => assertScenario(events, 'warm-reopen')).toThrow(/distinct targets=3/);
+    });
+});
+
+describe('assertWebWregDiagnostics', () => {
+    it('fails when a web pagination trace omits required WREG diagnostics', () => {
+        const events: TranscriptViewportTelemetryEvent[] = [
+            observed({
+                platform: 'web',
+                listImplementation: 'flash_v2',
+                mode: 'user-unpinned',
+                reason: 'observed',
+                trigger: 'edge-reached',
+                domScrollTop: 0,
+                domScrollHeight: 1200,
+                // Missing domClientHeight, FlashList metrics, scrollability,
+                // pagination diagnostics, hot/cold counts, pending anchor,
+                // and programmatic-write evidence must block WREG.7.
+                timestampMs: 10,
+            }),
+        ];
+
+        expect(() => assertWebWregDiagnostics(events)).toThrow(/domClientHeight[\s\S]*paginationPhase[\s\S]*programmaticWebWrite/);
+    });
+
+    it('passes when web pagination and restore events carry the complete WREG diagnostic set', () => {
+        const events: TranscriptViewportTelemetryEvent[] = [
+            observed({
+                platform: 'web',
+                listImplementation: 'flash_v2',
+                mode: 'user-unpinned',
+                reason: 'observed',
+                offsetY: 0,
+                layoutHeight: 600,
+                contentHeight: 1200,
+                distanceFromBottom: 600,
+                trigger: 'edge-reached',
+                domScrollTop: 0,
+                domScrollHeight: 1200,
+                domClientHeight: 600,
+                flashListContentHeight: 1180,
+                flashListLayoutHeight: 580,
+                scrollable: true,
+                paginationPhase: 'armed',
+                paginationSuspendedReasons: [],
+                coldCount: 42,
+                hotCount: 3,
+                firstVisibleAnchorTestId: 'transcript-item-turn-1',
+                pendingWebPrependAnchorKind: 'none',
+                programmaticWebWrite: false,
+                timestampMs: 10,
+            }),
+            decision({
+                platform: 'web',
+                listImplementation: 'flash_v2',
+                mode: 'restore-anchor',
+                reason: 'restored',
+                trigger: 'prepend-restore',
+                offsetY: 180,
+                layoutHeight: 600,
+                contentHeight: 1600,
+                distanceFromBottom: 820,
+                domScrollTop: 180,
+                domScrollHeight: 1600,
+                domClientHeight: 600,
+                flashListContentHeight: 1580,
+                flashListLayoutHeight: 580,
+                scrollable: true,
+                paginationPhase: 'idle',
+                paginationSuspendedReasons: [],
+                coldCount: 48,
+                hotCount: 3,
+                firstVisibleAnchorTestId: 'transcript-item-turn-1',
+                pendingWebPrependAnchorKind: 'stable',
+                pendingWebPrependAnchorId: 'transcript-anchor-message-m1',
+                pendingWebPrependAnchorIndex: 2,
+                programmaticWebWrite: true,
+                timestampMs: 40,
+            }),
+        ];
+
+        expect(() => assertWebWregDiagnostics(events)).not.toThrow();
     });
 });

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Platform, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
-import { FlashList, type FlashListRef } from '@/components/ui/lists/flashListCompat/FlashListCompat';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
@@ -16,11 +16,20 @@ import { MessageViewWithSessionCommon } from '@/components/sessions/transcript/M
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useSetting } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
+import { useSessionCatchingUpNewer } from '@/sync/store/hooks';
 import { resolveActiveThinkingMessageId } from '@/components/sessions/transcript/thinking/resolveActiveThinkingMessageId';
 import { ToolCallsGroupRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/ToolCallsGroupRow';
+import { ToolCallsGroupUnitHeaderRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/units/ToolCallsGroupUnitHeaderRow';
+import { ToolCallsGroupUnitExpandRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/units/ToolCallsGroupUnitExpandRow';
+import { ToolCallsGroupUnitToolRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/units/ToolCallsGroupUnitToolRow';
+import { ToolCallsGroupUnitFooterRowWithSessionCommon } from '@/components/sessions/transcript/toolCalls/units/ToolCallsGroupUnitFooterRow';
 import { buildTranscriptTurnsCached, type TranscriptTurn, type TranscriptTurnsBuildCache } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurns';
+import { buildTranscriptTurnUnits, type TranscriptToolGroupUnitItem } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurnUnits';
+import { resolveTranscriptToolCallsCollapsedPreviewCount } from '@/sync/domains/settings/transcriptToolCallsCollapsedPreviewCount';
 import { TurnViewWithSessionCommon } from '@/components/sessions/transcript/turns/TurnView';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useTranscriptSessionCommon } from '@/components/sessions/transcript/transcriptSessionCommon';
+import { useOptionalTranscriptSelectionState } from '@/components/sessions/transcript/messageSelection/TranscriptMessageSelectionContext';
 import {
     resolveTranscriptEdgePrefetchThresholdPx,
     TRANSCRIPT_EDGE_PREFETCH_FALLBACK_VIEWPORT_RATIO,
@@ -28,25 +37,58 @@ import {
     TRANSCRIPT_EDGE_PREFETCH_MIN_PX,
 } from '@/components/sessions/transcript/scroll/resolveTranscriptEdgePrefetchThresholdPx';
 import { resolveLatestCommittedMessageId } from '@/components/sessions/transcript/resolveLatestCommittedMessageId';
-import type { SessionRollbackRangeV1 } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 import {
-    TRANSCRIPT_NATIVE_SCROLL_EVENT_THROTTLE_MS,
     TRANSCRIPT_VISUAL_UPDATE_FALLBACK_TIMEOUT_MS,
-    TRANSCRIPT_WEB_FLASH_LIST_SCROLL_EVENT_THROTTLE_MS,
 } from '@/components/sessions/transcript/_constants';
+import { CatchUpProgressOverlay } from '@/components/sessions/transcript/CatchUpProgressOverlay';
 import { OlderLoadProgressOverlay } from '@/components/sessions/transcript/OlderLoadProgressOverlay';
 import { useTranscriptOlderPagination } from '@/components/sessions/transcript/pagination/useTranscriptOlderPagination';
+import { waitForNextTranscriptVisualUpdate } from '@/components/sessions/transcript/pagination/waitForNextTranscriptVisualUpdate';
 import { waitForVisualUpdateWithTimeout } from '@/components/sessions/transcript/pagination/waitForVisualUpdateWithTimeout';
 import {
-    getWebTranscriptDistanceFromBottom,
-    isWebTranscriptScrollable,
-    restoreWebTranscriptPrependByGrowth,
     type WebTranscriptScrollMetrics,
 } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { useTranscriptSessionCommon } from '@/components/sessions/transcript/transcriptSessionCommon';
-import { useOptionalTranscriptSelectionState } from '@/components/sessions/transcript/messageSelection/TranscriptMessageSelectionContext';
-import { splitOversizedTranscriptTurnItems } from '@/components/sessions/transcript/turnGrouping/splitOversizedTranscriptTurnItems';
+import {
+    recordTranscriptViewportTelemetryEvent,
+} from '@/components/sessions/transcript/scroll/transcriptViewportTelemetry';
+import {
+    TranscriptListShell,
+    type TranscriptListShellRef,
+} from '@/components/sessions/transcript/viewport/shell/TranscriptListShell';
+import { resolveSidechainTranscriptListShellFrame } from '@/components/sessions/transcript/viewport/shell/transcriptListShellCapabilities';
+import {
+    applySidechainInitialBottomPinRequest,
+} from '@/components/sessions/transcript/viewport/shell/sidechainInitialBottomPin';
+import {
+    applySidechainJumpToMessageRequest,
+} from '@/components/sessions/transcript/viewport/shell/sidechainJumpToMessage';
+import {
+    createWebDomScrollObservation,
+} from '@/components/sessions/transcript/viewport/driver/webDomObservation';
+import { createNativeInvertedFlashListFactSource } from '@/components/sessions/transcript/viewport/driver/nativeInvertedFlashListFacts';
+import { readNativeAbsoluteScrollOffset } from '@/components/sessions/transcript/viewport/driver/readNativeAbsoluteScrollOffset';
+import type {
+    TranscriptViewportFactSource,
+    TranscriptViewportObservedOffset,
+} from '@/components/sessions/transcript/viewport/driver/transcriptViewportFacts';
+import {
+    applySidechainOlderLoadObservation,
+    resolveSidechainOlderLoadEdgeReachedObservation,
+    resolveSidechainOlderLoadScrollEventObservation,
+    type SidechainOlderLoadObservationInput,
+} from '@/components/sessions/transcript/viewport/shell/sidechainOlderLoadObservation';
+import {
+    applySidechainOlderPageLoad,
+    applySidechainPaginationOlderPageLoad,
+} from '@/components/sessions/transcript/viewport/shell/sidechainOlderPageLoad';
+import {
+    resolveSidechainWebLocalHeightChangeAnchor,
+    resolveSidechainWebPrependAnchor,
+    type SidechainWebLocalHeightChangeAnchor,
+} from '@/components/sessions/transcript/viewport/shell/sidechainWebAnchorCapture';
+import {
+    applySidechainWebLocalHeightRestore,
+} from '@/components/sessions/transcript/viewport/shell/sidechainWebLocalHeightRestore';
 
 export type ChainTranscriptLoadOlderResult = Readonly<{
     loaded: number;
@@ -58,15 +100,14 @@ type ChainTranscriptLoadOlderOptions = Readonly<{
     webPrependAnchor?: WebTranscriptScrollMetrics | null;
 }>;
 
-const EMPTY_ROLLBACK_RANGES: readonly SessionRollbackRangeV1[] = [];
-
 type ChainTranscriptListItem =
     | ChatListItem
     | {
         kind: 'turn';
         id: string;
         turn: TranscriptTurn;
-    };
+    }
+    | TranscriptToolGroupUnitItem;
 
 function buildMessagesById(messages: readonly Message[]): Record<string, Message> {
     const result: Record<string, Message> = {};
@@ -86,9 +127,13 @@ function findLatestThinkingMessage(messages: readonly Message[]): Extract<Messag
     return null;
 }
 
-function doesItemContainMessageId(item: ChainTranscriptListItem, messageId: string): boolean {
+/** Exact ownership: rows that render the message themselves (N2c: a tool unit owns its tool message). */
+function doesItemOwnMessageId(item: ChainTranscriptListItem, messageId: string): boolean {
     if (item.kind === 'message') {
         return item.messageId === messageId;
+    }
+    if (item.kind === 'tool-group-tool') {
+        return item.toolMessageId === messageId;
     }
     if (item.kind === 'tool-calls-group') {
         return item.toolMessageIds.includes(messageId);
@@ -107,14 +152,9 @@ function doesItemContainMessageId(item: ChainTranscriptListItem, messageId: stri
     });
 }
 
-function isWebScrollElementLike(value: unknown): value is HTMLElement {
-    if (!value || typeof value !== 'object') return false;
-    const candidate = value as Partial<HTMLElement>;
-    return (
-        typeof candidate.scrollTop === 'number' &&
-        typeof candidate.scrollHeight === 'number' &&
-        typeof candidate.clientHeight === 'number'
-    );
+/** Containment fallback: the header cap stands in for tools hidden behind a collapsed preview. */
+function doesHeaderUnitContainMessageId(item: ChainTranscriptListItem, messageId: string): boolean {
+    return item.kind === 'tool-group-header' && item.toolMessageIds.includes(messageId);
 }
 
 export const ChainTranscriptList = React.memo(function ChainTranscriptList(props: {
@@ -194,16 +234,33 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
     const syncTuning = sync.getSyncTuning();
     const estimatedItemSize = syncTuning.transcriptFlashListEstimatedItemSize;
     const configuredBackwardPrefetchThresholdPx = syncTuning.transcriptBackwardPrefetchThresholdPx;
-    const transcriptMaxTurnEntriesPerListItem = syncTuning.transcriptMaxTurnEntriesPerListItem;
+    const shellFrame = React.useMemo(() => resolveSidechainTranscriptListShellFrame({
+        platformOS: Platform.OS,
+    }), []);
+    // §13 catch-up overlay signal. The sidechain list has no live-tail pinned-following composer, so
+    // there is no pinned-following streaming case to gate OFF and no
+    // composer inset to track — the overlay anchors to the bottom edge (`bottomInset` 0) and shows
+    // whenever sync is catching this session up to newer activity (fail-closed signal).
+    const isCatchingUpNewer = useSessionCatchingUpNewer(props.sessionId);
+    const transcriptToolCallsCollapsedPreviewCountSetting = useSetting('transcriptToolCallsCollapsedPreviewCount');
+
+    // Tool-group expansion state is keyed by anchor message ids (declared before the
+    // items memo: N2c per-unit decomposition derives the list rows from it).
+    const [expandedToolCallsAnchorMessageIds, setExpandedToolCallsAnchorMessageIds] = React.useState<ReadonlySet<string>>(
+        () => new Set<string>(),
+    );
 
     const items = React.useMemo<ChainTranscriptListItem[]>(() => {
         if (groupingMode === 'turns') {
+            // N2c stable virtualization units: turns decompose into per-unit rows so
+            // intra-row tool-group growth becomes between-row insertion.
             const turns = turnsCache?.turns ?? [];
-            return splitOversizedTranscriptTurnItems({
+            return buildTranscriptTurnUnits({
                 items: turns.map((turn) => ({ kind: 'turn', id: turn.id, turn })),
-                maxTurnEntriesPerListItem: transcriptMaxTurnEntriesPerListItem,
-                messagesById,
-            }) as ChainTranscriptListItem[];
+                getMessageById: (messageId) => messagesById[messageId] ?? null,
+                isGroupExpanded: (toolMessageIds) => toolMessageIds.some((id) => expandedToolCallsAnchorMessageIds.has(id)),
+                collapsedPreviewCount: resolveTranscriptToolCallsCollapsedPreviewCount(transcriptToolCallsCollapsedPreviewCountSetting),
+            });
         }
         return linearCache?.items ?? buildChatListItems({
             messageIdsOldestFirst,
@@ -213,7 +270,13 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
             actionDrafts: [],
             groupConsecutiveToolCalls: groupToolCalls,
         });
-    }, [groupToolCalls, groupingMode, linearCache, messageIdsOldestFirst, messagesById, transcriptMaxTurnEntriesPerListItem, turnsCache]);
+    }, [expandedToolCallsAnchorMessageIds, groupToolCalls, groupingMode, linearCache, messageIdsOldestFirst, messagesById, transcriptToolCallsCollapsedPreviewCountSetting, turnsCache]);
+    const renderedItems = React.useMemo<ChainTranscriptListItem[]>(() => {
+        if (shellFrame.dataOrder === 'newest-first') {
+            return [...items].reverse();
+        }
+        return items;
+    }, [items, shellFrame.dataOrder]);
 
     const latestCommittedMessageId = React.useMemo(() => resolveLatestCommittedMessageId(props.messages), [props.messages]);
     const latestThinkingMessage = React.useMemo(() => findLatestThinkingMessage(props.messages), [props.messages]);
@@ -255,15 +318,16 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
         () => new Map<string, boolean>(),
     );
     const localTranscriptInteractionDeferredInitialPinRef = React.useRef(false);
-    const resolveThinkingExpanded = React.useCallback((messageId: string): boolean => {
-        return thinkingExpandedByMessageId.get(messageId) ?? thinkingDefaultExpanded;
-    }, [thinkingDefaultExpanded, thinkingExpandedByMessageId]);
     const deferAutoPinAfterLocalTranscriptInteraction = React.useCallback(() => {
         localTranscriptInteractionDeferredInitialPinRef.current = true;
     }, []);
+    const resolveThinkingExpanded = React.useCallback((messageId: string): boolean => {
+        return thinkingExpandedByMessageId.get(messageId) ?? thinkingDefaultExpanded;
+    }, [thinkingDefaultExpanded, thinkingExpandedByMessageId]);
     const setThinkingExpanded = React.useCallback((messageId: string, expanded: boolean) => {
-        if (resolveThinkingExpanded(messageId) === expanded) return;
-        deferAutoPinAfterLocalTranscriptInteraction();
+        if (resolveThinkingExpanded(messageId) !== expanded) {
+            deferAutoPinAfterLocalTranscriptInteraction();
+        }
         setThinkingExpandedByMessageId((prev) => {
             const prevValue = prev.get(messageId);
             if (prevValue === expanded) return prev;
@@ -277,48 +341,26 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
         });
     }, [deferAutoPinAfterLocalTranscriptInteraction, resolveThinkingExpanded, thinkingDefaultExpanded]);
 
-    const [expandedToolCallsAnchorMessageIds, setExpandedToolCallsAnchorMessageIds] = React.useState<ReadonlySet<string>>(
-        () => new Set<string>(),
-    );
-    const setToolCallsGroupExpanded = React.useCallback((params: { toolCallsGroupId: string; toolMessageIds: readonly string[]; expanded: boolean }) => {
-        const isExpanded = params.toolMessageIds.some((id) => expandedToolCallsAnchorMessageIds.has(id));
-        if (isExpanded !== params.expanded) {
-            deferAutoPinAfterLocalTranscriptInteraction();
-        }
-        setExpandedToolCallsAnchorMessageIds((prev) => {
-            const next = new Set(prev);
-            if (params.expanded) {
-                const anchor = params.toolMessageIds.length > 0 ? params.toolMessageIds[params.toolMessageIds.length - 1] : null;
-                if (typeof anchor === 'string' && anchor.length > 0) {
-                    next.add(anchor);
-                }
-            } else {
-                for (const id of params.toolMessageIds) {
-                    next.delete(id);
-                }
-            }
-            return next;
-        });
-    }, [deferAutoPinAfterLocalTranscriptInteraction, expandedToolCallsAnchorMessageIds]);
-
-    React.useEffect(() => {
-        // Reset per-session state so derived caches and expansion maps cannot leak across sessions.
-        linearItemsCacheRef.current = null;
-        turnsCacheRef.current = null;
-        localTranscriptInteractionDeferredInitialPinRef.current = false;
-        setExpandedToolCallsAnchorMessageIds(new Set());
-        setThinkingExpandedByMessageId(new Map());
-    }, [props.sessionId]);
-
-    const listRef = React.useRef<FlashListRef<ChainTranscriptListItem> | null>(null);
-    const itemsRef = React.useRef<ChainTranscriptListItem[]>(items);
+    const listRef = React.useRef<TranscriptListShellRef<ChainTranscriptListItem> | null>(null);
+    const itemsRef = React.useRef<ChainTranscriptListItem[]>(renderedItems);
     const loadOlderRef = React.useRef(props.loadOlder);
     const webScrollElementRef = React.useRef<HTMLElement | null>(null);
+    const webDomObservation = React.useMemo(() => createWebDomScrollObservation(), []);
+    const pendingWebLocalHeightChangeAnchorRef = React.useRef<SidechainWebLocalHeightChangeAnchor | null>(null);
     const isLoadingOlderRef = React.useRef(false);
     const hasMoreOlderRef = React.useRef(true);
     const initialPinDoneRef = React.useRef(false);
     const listLayoutHeightRef = React.useRef(0);
     const listContentHeightRef = React.useRef(0);
+    const nativeInvertedFactSourceRef = React.useRef<TranscriptViewportFactSource | null>(null);
+    if (Platform.OS !== 'web' && shellFrame.dataOrder === 'newest-first' && nativeInvertedFactSourceRef.current === null) {
+        nativeInvertedFactSourceRef.current = createNativeInvertedFlashListFactSource({
+            readRawScrollOffset: () => readNativeAbsoluteScrollOffset(listRef.current) ?? undefined,
+            readContentHeight: () => listContentHeightRef.current,
+            readLayoutHeight: () => listLayoutHeightRef.current,
+            readRenderedItemCount: () => renderedItems.length,
+        });
+    }
     const jumpAbortRef = React.useRef<AbortController | null>(null);
     const [listLayoutHeight, setListLayoutHeight] = React.useState(0);
     const jumpToMessageId =
@@ -331,36 +373,21 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
             : 'transcript-message';
 
     React.useEffect(() => {
-        itemsRef.current = items;
-    }, [items]);
+        itemsRef.current = renderedItems;
+    }, [renderedItems]);
 
     React.useEffect(() => {
         loadOlderRef.current = props.loadOlder;
     }, [props.loadOlder]);
 
-    const waitForNextVisualUpdate = React.useCallback(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-        const raf = (globalThis as any)?.requestAnimationFrame as undefined | ((cb: () => void) => any);
-        if (typeof raf === 'function') {
-            await new Promise<void>((resolve) => {
-                raf(() => resolve());
-            });
-        }
-    }, []);
+
+    const waitForNextVisualUpdate = React.useCallback(waitForNextTranscriptVisualUpdate, []);
 
     const buildWebPrependAnchor = React.useCallback((pinThresholdPx: number): WebTranscriptScrollMetrics | null => {
-        const element = webScrollElementRef.current;
-        if (!element) return null;
-        const metrics: WebTranscriptScrollMetrics = {
-            element,
-            scrollTop: element.scrollTop,
-            scrollHeight: element.scrollHeight,
-            clientHeight: element.clientHeight,
-        };
-        if (!isWebTranscriptScrollable(metrics, 1)) return null;
-        if (getWebTranscriptDistanceFromBottom(metrics) <= pinThresholdPx) return null;
-        return metrics;
+        return resolveSidechainWebPrependAnchor({
+            element: webScrollElementRef.current,
+            pinThresholdPx,
+        });
     }, []);
 
     const resolveTopPrefetchThresholdPx = React.useCallback((viewportPx: number): number => {
@@ -391,39 +418,37 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
         }
         return thresholdPx / listLayoutHeight;
     }, [listLayoutHeight, resolveTopPrefetchThresholdPx]);
-
     const loadOlder = React.useCallback(async (options: ChainTranscriptLoadOlderOptions = {}): Promise<ChainTranscriptLoadOlderResult | null> => {
-        const fn = loadOlderRef.current;
-        if (!fn) return null;
-        if (isLoadingOlderRef.current) return null;
-        if (hasMoreOlderRef.current === false) return null;
-
-        isLoadingOlderRef.current = true;
-        try {
-            const result = await fn();
-            if (options?.webPrependAnchor && result.loaded > 0) {
+        return await applySidechainOlderPageLoad({
+            hasMoreOlder: hasMoreOlderRef.current,
+            isLoadingOlder: isLoadingOlderRef.current,
+            loadOlder: loadOlderRef.current,
+            setHasMoreOlder: (hasMore) => {
+                hasMoreOlderRef.current = hasMore;
+            },
+            setLoadingOlder: (loading) => {
+                isLoadingOlderRef.current = loading;
+            },
+            waitForVisualUpdate: async () => {
                 // D5 (evidence E10): rAF starvation must not stall the prepend-anchor restore.
                 await waitForVisualUpdateWithTimeout({
                     waitForNextVisualUpdate,
                     timeoutMs: TRANSCRIPT_VISUAL_UPDATE_FALLBACK_TIMEOUT_MS,
                 });
-                restoreWebTranscriptPrependByGrowth(options.webPrependAnchor);
-            }
-            if (result.status === 'no_more' || result.hasMore === false) {
-                hasMoreOlderRef.current = false;
-            }
-            return result;
-        } finally {
-            isLoadingOlderRef.current = false;
-        }
-    }, [waitForNextVisualUpdate]);
+            },
+            webDomObservation,
+            webPrependAnchor: options.webPrependAnchor,
+        });
+    }, [waitForNextVisualUpdate, webDomObservation]);
 
     const paginationLoadOlder = React.useCallback(async (): Promise<ChainTranscriptLoadOlderResult | null> => {
-        if (hasMoreOlderRef.current === false) {
-            return { loaded: 0, hasMore: false, status: 'no_more' };
-        }
-        const viewportGuardThresholdPx = resolveViewportGuardThresholdPx(listLayoutHeightRef.current);
-        return await loadOlder({ webPrependAnchor: buildWebPrependAnchor(viewportGuardThresholdPx) });
+        return await applySidechainPaginationOlderPageLoad({
+            hasMoreOlder: hasMoreOlderRef.current,
+            listLayoutHeightPx: listLayoutHeightRef.current,
+            loadOlder,
+            resolveViewportGuardThresholdPx,
+            resolveWebPrependAnchor: buildWebPrependAnchor,
+        });
     }, [buildWebPrependAnchor, loadOlder, resolveViewportGuardThresholdPx]);
 
     // Single owner of user-triggered older pagination (plan D2): the machine-driven hook
@@ -445,53 +470,165 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
         resetOlderPagination();
     }, [props.sessionId, resetOlderPagination]);
 
-    const observeOlderPaginationScroll = React.useCallback((offsetY: number) => {
-        const layoutH = listLayoutHeightRef.current;
-        const contentH = listContentHeightRef.current;
-        if (!Number.isFinite(offsetY)) return;
-        if (layoutH <= 0 || contentH <= 0 || contentH <= layoutH) {
-            olderPagination.onScrollObservation({ offsetY, scrollable: false });
-            return;
-        }
-        const distanceFromBottom = Math.max(0, Math.trunc(contentH - layoutH - offsetY));
-        // Follow-mode gate stays consumer-side (Lane D contract): no top prefetch while the
-        // viewport sits within the bottom pin guard.
-        const viewportGuardThresholdPx = resolveViewportGuardThresholdPx(layoutH);
-        olderPagination.onScrollObservation({
-            offsetY,
-            scrollable: distanceFromBottom > viewportGuardThresholdPx,
+    const captureWebLocalHeightChangeAnchor = React.useCallback((): SidechainWebLocalHeightChangeAnchor | null => {
+        return resolveSidechainWebLocalHeightChangeAnchor({
+            element: webScrollElementRef.current,
+            platformOS: Platform.OS,
+            resolveViewportGuardThresholdPx,
+            sessionId: props.sessionId,
         });
-    }, [olderPagination, resolveViewportGuardThresholdPx]);
+    }, [props.sessionId, resolveViewportGuardThresholdPx]);
+
+    const applyWebLocalHeightChangeAnchor = React.useCallback((anchor: SidechainWebLocalHeightChangeAnchor): void => {
+        if (anchor.sessionId !== props.sessionId) return;
+        applySidechainWebLocalHeightRestore({
+            anchor,
+            flashListContentHeightPx: listContentHeightRef.current,
+            flashListLayoutHeightPx: listLayoutHeightRef.current,
+            itemCount: itemsRef.current.length,
+            paginationSnapshot: olderPagination.getSnapshot(),
+            platformOS: Platform.OS,
+            recordTelemetry: (event) => recordTranscriptViewportTelemetryEvent(event, syncTuning),
+            timestampMs: Date.now(),
+            webDomObservation,
+        });
+    }, [olderPagination, props.sessionId, syncTuning, webDomObservation]);
+
+    const setToolCallsGroupExpanded = React.useCallback((params: { toolCallsGroupId: string; toolMessageIds: readonly string[]; expanded: boolean }) => {
+        const isExpanded = params.toolMessageIds.some((id) => expandedToolCallsAnchorMessageIds.has(id));
+        if (isExpanded !== params.expanded) {
+            const webAnchor = captureWebLocalHeightChangeAnchor();
+            pendingWebLocalHeightChangeAnchorRef.current = webAnchor;
+            if (webAnchor?.mode !== 'follow-bottom') {
+                deferAutoPinAfterLocalTranscriptInteraction();
+            }
+        }
+        setExpandedToolCallsAnchorMessageIds((prev) => {
+            const next = new Set(prev);
+            if (params.expanded) {
+                const anchor = params.toolMessageIds.length > 0 ? params.toolMessageIds[params.toolMessageIds.length - 1] : null;
+                if (typeof anchor === 'string' && anchor.length > 0) {
+                    next.add(anchor);
+                }
+            } else {
+                for (const id of params.toolMessageIds) {
+                    next.delete(id);
+                }
+            }
+            return next;
+        });
+    }, [
+        captureWebLocalHeightChangeAnchor,
+        deferAutoPinAfterLocalTranscriptInteraction,
+        expandedToolCallsAnchorMessageIds,
+    ]);
+
+    React.useLayoutEffect(() => {
+        if (Platform.OS !== 'web') return;
+        const anchor = pendingWebLocalHeightChangeAnchorRef.current;
+        if (!anchor) return;
+        pendingWebLocalHeightChangeAnchorRef.current = null;
+        applyWebLocalHeightChangeAnchor(anchor);
+    }, [applyWebLocalHeightChangeAnchor, expandedToolCallsAnchorMessageIds, items.length]);
+
+    const {
+        getSnapshot: getOlderPaginationSnapshot,
+        onScrollObservation: dispatchOlderPaginationObservation,
+    } = olderPagination;
+
+    const resolveNativeSidechainObservedOffset = React.useCallback((
+        rawOffsetY: number | null | undefined,
+    ): TranscriptViewportObservedOffset | null => {
+        if (Platform.OS === 'web') return null;
+        if (shellFrame.dataOrder !== 'newest-first') return null;
+        if (typeof rawOffsetY !== 'number' || !Number.isFinite(rawOffsetY)) return null;
+        return nativeInvertedFactSourceRef.current?.resolveObservedOffset(rawOffsetY, {
+            contentHeight: listContentHeightRef.current,
+            layoutHeight: listLayoutHeightRef.current,
+        }) ?? null;
+    }, [shellFrame.dataOrder]);
+
+    const readCurrentNativeSidechainObservedOffset = React.useCallback((): TranscriptViewportObservedOffset | null => {
+        if (Platform.OS === 'web') return null;
+        return resolveNativeSidechainObservedOffset(readNativeAbsoluteScrollOffset(listRef.current));
+    }, [resolveNativeSidechainObservedOffset]);
+
+    const attachNativeSidechainObservedOffset = React.useCallback((
+        observation: SidechainOlderLoadObservationInput,
+    ): SidechainOlderLoadObservationInput => {
+        if (Platform.OS === 'web') return observation;
+        if (shellFrame.dataOrder !== 'newest-first') return observation;
+        const rawOffsetY = typeof observation === 'number' ? observation : observation.offsetY;
+        const nativeObservedOffset = resolveNativeSidechainObservedOffset(rawOffsetY);
+        if (!nativeObservedOffset) return observation;
+        if (typeof observation === 'number') {
+            return {
+                nativeObservedOffset,
+                offsetY: nativeObservedOffset.canonicalOffsetY,
+            };
+        }
+        return {
+            ...observation,
+            nativeObservedOffset,
+            offsetY: nativeObservedOffset.canonicalOffsetY,
+        };
+    }, [
+        resolveNativeSidechainObservedOffset,
+        shellFrame.dataOrder,
+    ]);
+
+    const observeOlderPaginationScroll = React.useCallback((observation: SidechainOlderLoadObservationInput) => {
+        applySidechainOlderLoadObservation({
+            contentHeightPx: listContentHeightRef.current,
+            dataOrder: shellFrame.dataOrder,
+            flashListContentHeightPx: listContentHeightRef.current,
+            flashListLayoutHeightPx: listLayoutHeightRef.current,
+            getPaginationSnapshot: getOlderPaginationSnapshot,
+            itemCount: itemsRef.current.length,
+            layoutHeightPx: listLayoutHeightRef.current,
+            observation,
+            onScrollObservation: dispatchOlderPaginationObservation,
+            platformOS: Platform.OS,
+            recordTelemetry: (event) => recordTranscriptViewportTelemetryEvent(event, syncTuning),
+            sessionId: props.sessionId,
+            timestampMs: Date.now(),
+            viewportGuardThresholdPx: resolveViewportGuardThresholdPx(listLayoutHeightRef.current),
+        });
+    }, [dispatchOlderPaginationObservation, getOlderPaginationSnapshot, props.sessionId, resolveViewportGuardThresholdPx, syncTuning]);
+
+    const observeRenderedOlderEdge = React.useCallback(() => {
+        const ingress = resolveSidechainOlderLoadEdgeReachedObservation({
+            nativeObservedOffset: readCurrentNativeSidechainObservedOffset(),
+            viewportGuardThresholdPx: resolveViewportGuardThresholdPx(listLayoutHeightRef.current),
+            webElement: webScrollElementRef.current,
+        });
+        if (!ingress.ok) return;
+        if (ingress.webElement) {
+            webScrollElementRef.current = ingress.webElement;
+        }
+        observeOlderPaginationScroll(ingress.observation);
+    }, [
+        observeOlderPaginationScroll,
+        readCurrentNativeSidechainObservedOffset,
+        resolveViewportGuardThresholdPx,
+    ]);
 
     const pinToBottom = React.useCallback(() => {
-        if (jumpToMessageId) return;
-        if (initialPinDoneRef.current) return;
-        if (localTranscriptInteractionDeferredInitialPinRef.current) return;
-        if (items.length === 0) return;
-
-        const layoutH = listLayoutHeightRef.current;
-        const contentH = listContentHeightRef.current;
-        if (layoutH <= 0 || contentH <= 0) return;
-
-        initialPinDoneRef.current = true;
-        try {
-            const promise = listRef.current?.scrollToIndex({
-                index: items.length - 1,
-                animated: false,
-                viewPosition: 1,
-            });
-            promise?.catch(() => {
-                const fallbackOffset = Math.max(0, Math.trunc(estimatedItemSize * (items.length - 1)));
-                try {
-                    listRef.current?.scrollToOffset({ offset: fallbackOffset, animated: false });
-                } catch {
-                    // Best-effort only.
-                }
-            });
-        } catch {
-            // Best-effort only.
-        }
-    }, [estimatedItemSize, items.length, jumpToMessageId]);
+        applySidechainInitialBottomPinRequest({
+            alreadyApplied: initialPinDoneRef.current,
+            contentHeightPx: listContentHeightRef.current,
+            dataOrder: shellFrame.dataOrder,
+            deferredForLocalInteraction: localTranscriptInteractionDeferredInitialPinRef.current,
+            estimatedItemSizePx: estimatedItemSize,
+            hasJumpTarget: jumpToMessageId !== null,
+            itemCount: renderedItems.length,
+            layoutHeightPx: listLayoutHeightRef.current,
+            listRef: listRef.current,
+            setAlreadyApplied: (applied) => {
+                initialPinDoneRef.current = applied;
+            },
+        });
+    }, [estimatedItemSize, jumpToMessageId, renderedItems.length, shellFrame.dataOrder]);
 
     React.useEffect(() => {
         pinToBottom();
@@ -506,43 +643,26 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
         const signal = controller.signal;
 
         fireAndForget(
-            (async () => {
-                // Cap work to avoid infinite paging on malformed IDs.
-                for (let i = 0; i < 25; i++) {
-                    if (signal.aborted) return;
-                    const index = itemsRef.current.findIndex((item) => doesItemContainMessageId(item, jumpToMessageId));
-                    if (index >= 0) {
-                        try {
-                            const promise = listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
-                            promise?.catch(() => {
-                                const offset = Math.max(0, Math.trunc(estimatedItemSize * index));
-                                try {
-                                    listRef.current?.scrollToOffset({ offset, animated: true });
-                                } catch {
-                                    // Best-effort only.
-                                }
-                            });
-                        } catch {
-                            // Best-effort only.
-                        }
-                        return;
-                    }
-
-                    const result = await loadOlder();
-                    if (!result) return;
-                    if (signal.aborted) return;
-                    if (result.status === 'no_more' || result.hasMore === false) return;
-
+            applySidechainJumpToMessageRequest({
+                containsMessageId: doesHeaderUnitContainMessageId,
+                estimatedItemSizePx: estimatedItemSize,
+                getItems: () => itemsRef.current,
+                listRef: listRef.current,
+                loadOlder,
+                messageId: jumpToMessageId,
+                ownsMessageId: doesItemOwnMessageId,
+                signal,
+                yieldForRender: async () => {
                     // Yield to allow store updates + list re-render before re-checking.
                     await Promise.resolve();
                     await Promise.resolve();
-                }
-            })(),
+                },
+            }),
             { tag: 'ChainTranscriptList.jumpToMessageId' },
         );
 
         return () => controller.abort();
-    }, [jumpToMessageId, loadOlder]);
+    }, [estimatedItemSize, jumpToMessageId, loadOlder]);
 
     const renderItem = React.useCallback(({ item }: { item: ChainTranscriptListItem }) => {
         if (item.kind === 'turn') {
@@ -554,11 +674,96 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
                     forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
                     activeThinkingMessageId={activeThinkingMessageId}
                     getMessageById={(messageId) => messagesById[messageId] ?? null}
-                    rollbackRanges={EMPTY_ROLLBACK_RANGES}
                     expandedToolCallsAnchorMessageIds={expandedToolCallsAnchorMessageIds}
                     setToolCallsGroupExpanded={setToolCallsGroupExpanded}
                     resolveThinkingExpanded={resolveThinkingExpanded}
                     setThinkingExpanded={setThinkingExpanded}
+                    interaction={props.interaction}
+                    rollbackRanges={[]}
+                    forkCommon={transcriptSessionCommon.fork}
+                    messageDisplayCommon={transcriptSessionCommon.messageDisplay}
+                    toolChromeCommon={transcriptSessionCommon.toolChrome}
+                    toolRouteCommon={transcriptSessionCommon.toolRoute}
+                />
+            );
+        }
+
+        if (item.kind === 'tool-group-header') {
+            const headerGroupId = item.groupId;
+            const headerToolMessageIds = item.toolMessageIds;
+            const toolMessages = item.toolMessageIds
+                .map((messageId) => messagesById[messageId] ?? null)
+                .filter((message): message is Extract<Message, { kind: 'tool-call' }> => message?.kind === 'tool-call');
+            return (
+                <ToolCallsGroupUnitHeaderRowWithSessionCommon
+                    sessionId={props.sessionId}
+                    groupId={item.groupId}
+                    metadata={props.metadata}
+                    interaction={props.interaction}
+                    toolMessages={toolMessages}
+                    expanded={item.expanded}
+                    setExpanded={(expanded: boolean) => setToolCallsGroupExpanded({
+                        toolCallsGroupId: headerGroupId,
+                        toolMessageIds: headerToolMessageIds,
+                        expanded,
+                    })}
+                    forkCommon={transcriptSessionCommon.fork}
+                    messageDisplayCommon={transcriptSessionCommon.messageDisplay}
+                    toolChromeCommon={transcriptSessionCommon.toolChrome}
+                    toolRouteCommon={transcriptSessionCommon.toolRoute}
+                />
+            );
+        }
+
+        if (item.kind === 'tool-group-expand') {
+            const expandGroupId = item.groupId;
+            const expandToolMessageIds = item.toolMessageIds;
+            return (
+                <ToolCallsGroupUnitExpandRowWithSessionCommon
+                    sessionId={props.sessionId}
+                    groupId={item.groupId}
+                    metadata={props.metadata}
+                    interaction={props.interaction}
+                    hiddenCount={item.hiddenCount}
+                    setExpanded={(expanded: boolean) => setToolCallsGroupExpanded({
+                        toolCallsGroupId: expandGroupId,
+                        toolMessageIds: expandToolMessageIds,
+                        expanded,
+                    })}
+                    forkCommon={transcriptSessionCommon.fork}
+                    messageDisplayCommon={transcriptSessionCommon.messageDisplay}
+                    toolChromeCommon={transcriptSessionCommon.toolChrome}
+                    toolRouteCommon={transcriptSessionCommon.toolRoute}
+                />
+            );
+        }
+
+        if (item.kind === 'tool-group-tool') {
+            const toolMessage = messagesById[item.toolMessageId];
+            if (toolMessage?.kind !== 'tool-call') return null;
+            return (
+                <ToolCallsGroupUnitToolRowWithSessionCommon
+                    sessionId={props.sessionId}
+                    groupId={item.groupId}
+                    metadata={props.metadata}
+                    interaction={props.interaction}
+                    message={toolMessage}
+                    expanded={item.expanded}
+                    forcePermissionPromptsInTranscript={props.forcePermissionPromptsInTranscript}
+                    forkCommon={transcriptSessionCommon.fork}
+                    messageDisplayCommon={transcriptSessionCommon.messageDisplay}
+                    toolChromeCommon={transcriptSessionCommon.toolChrome}
+                    toolRouteCommon={transcriptSessionCommon.toolRoute}
+                />
+            );
+        }
+
+        if (item.kind === 'tool-group-footer') {
+            return (
+                <ToolCallsGroupUnitFooterRowWithSessionCommon
+                    sessionId={props.sessionId}
+                    groupId={item.groupId}
+                    metadata={props.metadata}
                     interaction={props.interaction}
                     forkCommon={transcriptSessionCommon.fork}
                     messageDisplayCommon={transcriptSessionCommon.messageDisplay}
@@ -618,10 +823,10 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
         activeThinkingMessageId,
         expandedToolCallsAnchorMessageIds,
         messagesById,
+        props.forcePermissionPromptsInTranscript,
         props.interaction,
         props.metadata,
         props.sessionId,
-        props.forcePermissionPromptsInTranscript,
         resolveThinkingExpanded,
         setThinkingExpanded,
         setToolCallsGroupExpanded,
@@ -633,21 +838,15 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
     ]);
 
     return (
-        <View style={{ flex: 1, minHeight: 0 }}>
-        <FlashList
-            ref={(node: FlashListRef<ChainTranscriptListItem> | null) => {
+        <TranscriptListShell<ChainTranscriptListItem>
+            ref={(node: TranscriptListShellRef<ChainTranscriptListItem> | null) => {
                 listRef.current = node;
             }}
-            style={{ flex: 1, minHeight: 0 }}
-            data={items}
+            data={renderedItems}
             extraData={transcriptMessageSelection.selectionVersion}
             keyExtractor={(item: ChainTranscriptListItem) => item.id}
             renderItem={renderItem}
-            scrollEventThrottle={
-                Platform.OS === 'web'
-                    ? TRANSCRIPT_WEB_FLASH_LIST_SCROLL_EVENT_THROTTLE_MS
-                    : TRANSCRIPT_NATIVE_SCROLL_EVENT_THROTTLE_MS
-            }
+            frame={shellFrame}
             onLayout={(e: LayoutChangeEvent) => {
                 const h = e?.nativeEvent?.layout?.height;
                 if (typeof h !== 'number' || !Number.isFinite(h)) return;
@@ -663,51 +862,29 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
                 pinToBottom();
             }}
             onScroll={(e: NativeSyntheticEvent<NativeScrollEvent>) => {
-                const yRaw =
-                    e?.nativeEvent?.contentOffset?.y ??
-                    (e?.nativeEvent as any)?.target?.scrollTop ??
-                    (e as any)?.target?.scrollTop ??
-                    null;
-                if (typeof yRaw !== 'number' || !Number.isFinite(yRaw)) return;
-
-                const eventTarget = (e?.nativeEvent as any)?.target ?? (e as any)?.target ?? null;
-                if (isWebScrollElementLike(eventTarget)) {
-                    webScrollElementRef.current = eventTarget;
+                const ingress = resolveSidechainOlderLoadScrollEventObservation({
+                    event: e,
+                    viewportGuardThresholdPx: resolveViewportGuardThresholdPx(listLayoutHeightRef.current),
+                });
+                if (!ingress.ok) return;
+                if (ingress.webElement) {
+                    webScrollElementRef.current = ingress.webElement;
                 }
 
                 // FlashList's `onStartReached` is not reliably fired on all platforms (notably web),
                 // so the pagination machine observes every scroll position.
-                observeOlderPaginationScroll(yRaw);
+                observeOlderPaginationScroll(attachNativeSidechainObservedOffset(ingress.observation));
             }}
             onStartReachedThreshold={startReachedThreshold}
-            onStartReached={() => {
-                const element = webScrollElementRef.current;
-                if (element) {
-                    observeOlderPaginationScroll(element.scrollTop);
-                    return;
-                }
-                const listHandle = listRef.current as (FlashListRef<ChainTranscriptListItem> & {
-                    getAbsoluteLastScrollOffset?: () => number;
-                }) | null;
-                const nativeOffset = (() => {
-                    try {
-                        const value = listHandle?.getAbsoluteLastScrollOffset?.();
-                        if (typeof value === 'number' && Number.isFinite(value)) return value;
-                    } catch {
-                        return null;
-                    }
-                    return null;
-                })();
-                if (typeof nativeOffset === 'number') {
-                    observeOlderPaginationScroll(nativeOffset);
-                }
-            }}
-            ListHeaderComponent={
+            onStartReached={shellFrame.dataOrder === 'newest-first' ? undefined : observeRenderedOlderEdge}
+            onEndReachedThreshold={startReachedThreshold}
+            onEndReached={shellFrame.dataOrder === 'newest-first' ? observeRenderedOlderEdge : undefined}
+            header={
                 props.header ? (
                     <View>{props.header}</View>
                 ) : null
             }
-            ListFooterComponent={
+            footer={
                 <>
                     {items.length === 0 && props.isInitialLoadInFlight !== false ? (
                         <View testID="chain-transcript-loading-footer" style={{ paddingVertical: 12 }}>
@@ -717,8 +894,14 @@ export const ChainTranscriptList = React.memo(function ChainTranscriptList(props
                     {props.footer ? <View>{props.footer}</View> : null}
                 </>
             }
+            olderLoadOverlay={olderPagination.isLoadingOlder ? <OlderLoadProgressOverlay /> : null}
+            catchUpOverlay={(
+                <CatchUpProgressOverlay
+                    isCatchingUp={isCatchingUpNewer}
+                    bottomInset={0}
+                    spinnerDelayMs={syncTuning.transcriptOlderLoadSpinnerDelayMs}
+                />
+            )}
         />
-        {olderPagination.isLoadingOlder ? <OlderLoadProgressOverlay /> : null}
-        </View>
     );
 });

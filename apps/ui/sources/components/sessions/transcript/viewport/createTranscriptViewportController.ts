@@ -1,95 +1,28 @@
 import type {
+    TranscriptViewportAnchorIdentity,
     TranscriptViewportCommand,
     TranscriptViewportControllerInput,
-    TranscriptViewportScrollReason,
+    TranscriptViewportJumpAlignment,
     TranscriptViewportMode,
-    TranscriptViewportOwner,
-    TranscriptViewportPlatform,
 } from '@/components/sessions/transcript/viewport/transcriptViewportTypes';
-import {
-    createTranscriptViewportOwnership,
-    type TranscriptViewportCloseTransactionResult,
-    type TranscriptViewportOpenTransactionResult,
-    type TranscriptViewportOwnership,
-    type TranscriptViewportTransactionOutcome,
-    type TranscriptViewportTransactionOwner,
-} from '@/components/sessions/transcript/viewport/transcriptViewportOwnership';
-
-type WritableTranscriptViewportOwner = Exclude<TranscriptViewportOwner, 'idle'>;
-
-export type TranscriptViewportWriteAdmission =
-    | Readonly<{ accepted: true; owner: WritableTranscriptViewportOwner }>
-    | Readonly<{ accepted: false; reason: 'inactive' | 'stale-session' | 'no-op' }>
-    | Readonly<{
-        accepted: false;
-        reason: 'ownership';
-        rejectedOwner: WritableTranscriptViewportOwner;
-        activeOwner: TranscriptViewportOwner;
-    }>;
-
-export type TranscriptViewportWriteAdmissionRequest = Readonly<{
-    command: TranscriptViewportCommand;
-    hasWebPrependRestoreWindow?: boolean;
-    platform: TranscriptViewportPlatform;
-}>;
 
 export type TranscriptViewportController = Readonly<{
-    activeOwner(): TranscriptViewportOwner;
-    canWrite(owner: TranscriptViewportOwner): boolean;
-    closeTransaction(
-        owner: TranscriptViewportTransactionOwner,
-        outcome: TranscriptViewportTransactionOutcome,
-    ): TranscriptViewportCloseTransactionResult;
     getMode(): TranscriptViewportMode;
-    isTransactionOpen(): boolean;
-    openTransaction(owner: TranscriptViewportTransactionOwner): TranscriptViewportOpenTransactionResult;
-    resetForSession(sessionId: string, options?: Readonly<{ openEntryTransaction?: boolean }>): void;
     resolve(input: TranscriptViewportControllerInput): TranscriptViewportCommand;
-    resolveWriteAdmission(request: TranscriptViewportWriteAdmissionRequest): TranscriptViewportWriteAdmission;
-    setActive(active: boolean): void;
 }>;
 
 export function createTranscriptViewportController(): TranscriptViewportController {
     let sessionId: string | null = null;
     let mode: TranscriptViewportMode = 'hydrating';
-    let active = true;
-    let ownership: TranscriptViewportOwnership = createTranscriptViewportOwnership();
-
-    const resetForSession = (
-        nextSessionId: string,
-        options: Readonly<{ openEntryTransaction?: boolean }> = {},
-    ): void => {
-        sessionId = nextSessionId;
-        mode = 'hydrating';
-        ownership = createTranscriptViewportOwnership();
-        if (options.openEntryTransaction === true) {
-            ownership.openTransaction('entry');
-        }
-    };
 
     return {
-        activeOwner() {
-            return ownership.activeOwner();
-        },
-        canWrite(owner) {
-            return ownership.canWrite(owner);
-        },
-        closeTransaction(owner, outcome) {
-            return ownership.closeTransaction(owner, outcome);
-        },
         getMode() {
             return mode;
         },
-        isTransactionOpen() {
-            return ownership.activeOwner() !== 'follow';
-        },
-        openTransaction(owner) {
-            return ownership.openTransaction(owner);
-        },
-        resetForSession,
         resolve(input) {
             if (sessionId !== input.sessionId) {
-                resetForSession(input.sessionId);
+                sessionId = input.sessionId;
+                mode = 'hydrating';
                 if (input.type === 'user-scroll' || input.type === 'auto-follow') {
                     return { kind: 'none', sessionId: input.sessionId, reason: 'session-change', mode };
                 }
@@ -122,87 +55,91 @@ export function createTranscriptViewportController(): TranscriptViewportControll
                         ...(typeof input.force === 'boolean' ? { force: input.force } : {}),
                         ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
                     };
-                case 'scroll-offset':
-                    mode = input.mode;
+                case 'restore-distance':
+                    mode = 'restore-distance';
                     return {
-                        kind: 'scroll-offset',
+                        kind: 'restore-distance',
                         sessionId: input.sessionId,
                         reason: input.reason,
                         mode,
-                        offsetY: normalizeNonNegative(input.offsetY),
+                        distanceFromLiveTailPx: normalizeNonNegative(input.distanceFromLiveTailPx),
+                        ...(typeof input.contentHeight === 'number' && Number.isFinite(input.contentHeight)
+                            ? { contentHeight: normalizeNonNegative(input.contentHeight) }
+                            : {}),
+                        ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
+                    };
+                case 'apply-history-correction':
+                    mode = 'restore-anchor';
+                    return {
+                        kind: 'apply-history-correction',
+                        sessionId: input.sessionId,
+                        reason: input.reason,
+                        mode,
+                        targetDistanceFromHistoryStartPx: normalizeNonNegative(input.targetDistanceFromHistoryStartPx),
                         ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
                     };
                 case 'restore-anchor':
                     mode = 'restore-anchor';
                     return {
-                        kind: 'restore-index',
+                        kind: 'restore-anchor',
                         sessionId: input.sessionId,
                         reason: input.reason,
                         mode,
-                        index: Math.max(0, Math.trunc(input.index)),
-                        ...(typeof input.viewOffset === 'number' && Number.isFinite(input.viewOffset)
-                            ? { viewOffset: Math.trunc(input.viewOffset) }
-                            : {}),
+                        target: normalizeRestoreAnchorTarget(input.anchor, input.itemOffsetPx),
+                        ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
+                    };
+                case 'restore-visible-anchor':
+                    mode = 'restore-anchor';
+                    return {
+                        kind: 'restore-visible-anchor',
+                        sessionId: input.sessionId,
+                        reason: input.reason,
+                        mode,
+                        target: normalizeRestoreAnchorTarget(input.anchor, input.itemOffsetPx, input.itemIndex),
                         ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
                     };
                 case 'jump-to-seq':
                     mode = 'jump-to-seq';
+                    {
+                        const routeMessageId = normalizeRouteMessageId(input.routeMessageId);
+                        const transcriptBlockIndex = normalizeOptionalNonNegative(input.transcriptBlockIndex);
+                        const role = normalizeRole(input.role);
+                        return {
+                            kind: 'jump-to-seq',
+                            sessionId: input.sessionId,
+                            reason: 'jump-to-seq',
+                            mode,
+                            seq: input.seq,
+                            ...(routeMessageId ? { routeMessageId } : {}),
+                            ...(transcriptBlockIndex !== null ? { transcriptBlockIndex } : {}),
+                            ...(role ? { role } : {}),
+                            ...(normalizeJumpAlignment(input.align) ?? {}),
+                        };
+                    }
+                case 'recover-jump-to-seq':
+                    mode = 'jump-to-seq';
                     return {
-                        kind: 'jump-to-seq',
+                        kind: 'recover-jump-to-seq',
                         sessionId: input.sessionId,
                         reason: 'jump-to-seq',
                         mode,
-                        seq: Math.trunc(input.seq),
-                        ...(typeof input.index === 'number' && Number.isFinite(input.index)
-                            ? { index: Math.max(0, Math.trunc(input.index)) }
-                            : {}),
+                        failedRenderedIndex: normalizeNonNegative(input.failedRenderedIndex),
+                        averageItemLengthPx: normalizeNonNegative(input.averageItemLengthPx),
+                        ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
+                    };
+                case 'preserve-live-tail-distance':
+                    return resolvePreserveLiveTailDistance(input);
+                case 'restore-web-prepend-anchor':
+                    mode = 'restore-anchor';
+                    return {
+                        kind: 'restore-web-prepend-anchor',
+                        sessionId: input.sessionId,
+                        reason: 'prepend-restore',
+                        mode,
+                        anchor: input.anchor,
+                        ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
                     };
             }
-        },
-        resolveWriteAdmission(request) {
-            if (request.command.kind === 'none') {
-                return { accepted: false, reason: 'no-op' };
-            }
-            if (!active) return { accepted: false, reason: 'inactive' };
-            if (sessionId === null) {
-                resetForSession(request.command.sessionId);
-            }
-            if (request.command.sessionId !== sessionId) {
-                return { accepted: false, reason: 'stale-session' };
-            }
-
-            const commandOwner = resolveTranscriptViewportWriteOwner(
-                request.command.reason,
-                ownership.activeOwner() === 'entry',
-            );
-            if (commandOwner === 'explicit') {
-                ownership.preempt('explicit');
-                ownership.closeTransaction('explicit', 'confirmed');
-                return { accepted: true, owner: commandOwner };
-            }
-
-            if (
-                request.platform === 'web' &&
-                ownership.activeOwner() === 'prepend' &&
-                request.hasWebPrependRestoreWindow !== true
-            ) {
-                ownership.closeTransaction('prepend', 'abandoned-identity');
-            }
-            if (request.platform === 'web' && commandOwner === 'prepend' && ownership.activeOwner() === 'follow') {
-                ownership.openTransaction('prepend');
-            }
-            if (!ownership.canWrite(commandOwner)) {
-                return {
-                    accepted: false,
-                    reason: 'ownership',
-                    rejectedOwner: commandOwner,
-                    activeOwner: ownership.activeOwner(),
-                };
-            }
-            return { accepted: true, owner: commandOwner };
-        },
-        setActive(nextActive) {
-            active = nextActive;
         },
     };
 
@@ -222,29 +159,37 @@ export function createTranscriptViewportController(): TranscriptViewportControll
 
         const entrySnapshot = input.entrySnapshot ?? null;
         if (entrySnapshot?.shouldFollowBottom === false || input.shouldFollowBottom === false) {
-            const anchorIndex = entrySnapshot?.anchorIndex;
-            if (typeof anchorIndex === 'number' && Number.isFinite(anchorIndex)) {
-                const anchorViewOffset = entrySnapshot?.anchorViewOffset;
+            const anchor = entrySnapshot?.anchor;
+            if (anchor != null) {
+                const anchorItemOffsetPx = entrySnapshot?.anchorItemOffsetPx;
                 mode = 'restore-anchor';
                 return {
-                    kind: 'restore-index',
+                    kind: 'restore-anchor',
                     sessionId: input.sessionId,
                     reason: 'entry-restore',
                     mode,
-                    index: Math.max(0, Math.trunc(anchorIndex)),
-                    ...(typeof anchorViewOffset === 'number' && Number.isFinite(anchorViewOffset)
-                        ? { viewOffset: Math.trunc(anchorViewOffset) }
-                        : {}),
+                    target: normalizeRestoreAnchorTarget(anchor, anchorItemOffsetPx),
+                };
+            }
+
+            const entryDistanceFromLiveTailPx = entrySnapshot?.distanceFromLiveTailPx;
+            if (typeof entryDistanceFromLiveTailPx !== 'number' || !Number.isFinite(entryDistanceFromLiveTailPx)) {
+                mode = 'restore-distance';
+                return {
+                    kind: 'none',
+                    sessionId: input.sessionId,
+                    reason: 'entry-restore',
+                    mode,
                 };
             }
 
             mode = 'restore-distance';
             return {
-                kind: 'restore-offset',
+                kind: 'restore-distance',
                 sessionId: input.sessionId,
                 reason: 'entry-restore',
                 mode,
-                offsetY: normalizeNonNegative(entrySnapshot?.offsetY),
+                distanceFromLiveTailPx: normalizeNonNegative(entryDistanceFromLiveTailPx),
             };
         }
 
@@ -299,15 +244,12 @@ export function createTranscriptViewportController(): TranscriptViewportControll
 
         mode = 'follow-bottom';
         if (input.skipNativeJsPin === true) {
-            return createNativeJsPinSkipCommand(input.sessionId, input.reason, input.targetOffsetY);
-        }
-        if (typeof input.targetOffsetY === 'number' && Number.isFinite(input.targetOffsetY)) {
             return {
-                kind: 'scroll-offset',
+                kind: 'skip-native-js-pin',
                 sessionId: input.sessionId,
                 reason: input.reason,
+                skipReason: 'mvcp-only',
                 mode,
-                offsetY: Math.max(0, Math.trunc(input.targetOffsetY)),
             };
         }
         return {
@@ -315,27 +257,43 @@ export function createTranscriptViewportController(): TranscriptViewportControll
             sessionId: input.sessionId,
             reason: input.reason,
             mode,
+            ...(typeof input.observedContentHeightPx === 'number' && Number.isFinite(input.observedContentHeightPx)
+                ? { contentHeight: normalizeFiniteNonNegative(input.observedContentHeightPx) }
+                : {}),
+            ...(typeof input.observedLayoutHeightPx === 'number' && Number.isFinite(input.observedLayoutHeightPx)
+                ? { layoutHeight: normalizeFiniteNonNegative(input.observedLayoutHeightPx) }
+                : {}),
         };
     }
-}
 
-export function resolveTranscriptViewportWriteOwner(
-    reason: TranscriptViewportScrollReason,
-    entryPhaseOpen: boolean,
-): WritableTranscriptViewportOwner {
-    switch (reason) {
-        case 'entry-restore':
-            return 'entry';
-        case 'prepend-restore':
-            return 'prepend';
-        case 'jump-to-bottom':
-        case 'jump-to-seq':
-            return 'explicit';
-        case 'initial-open':
-        case 'mount-settle':
-            return entryPhaseOpen ? 'entry' : 'follow';
-        default:
-            return 'follow';
+    function resolvePreserveLiveTailDistance(
+        input: Extract<TranscriptViewportControllerInput, { type: 'preserve-live-tail-distance' }>,
+    ): TranscriptViewportCommand {
+        const previousDistanceFromLiveTailPx = normalizeNonNegative(input.previousDistanceFromLiveTailPx);
+        const pinThresholdPx = normalizeNonNegative(input.pinThresholdPx);
+        if (!input.wantsPinned || mode === 'user-unpinned') {
+            mode = 'user-unpinned';
+            return { kind: 'none', sessionId: input.sessionId, reason: 'user-unpinned', mode };
+        }
+        if (input.recentUserIntent) {
+            mode = 'user-unpinned';
+            return { kind: 'none', sessionId: input.sessionId, reason: 'recent-user-intent', mode };
+        }
+        if (previousDistanceFromLiveTailPx > pinThresholdPx) {
+            return { kind: 'none', sessionId: input.sessionId, reason: 'user-unpinned', mode };
+        }
+
+        mode = 'follow-bottom';
+        return {
+            kind: 'preserve-live-tail-distance',
+            sessionId: input.sessionId,
+            reason: input.reason,
+            mode,
+            previousDistanceFromLiveTailPx,
+            ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
+            ...(input.schedulerAuthorityReason ? { schedulerAuthorityReason: input.schedulerAuthorityReason } : {}),
+            ...(input.schedulerAuthorityWriter ? { schedulerAuthorityWriter: input.schedulerAuthorityWriter } : {}),
+        };
     }
 }
 
@@ -345,19 +303,69 @@ function normalizeNonNegative(value: number | null | undefined): number {
         : 0;
 }
 
-function createNativeJsPinSkipCommand(
-    sessionId: string,
-    reason: TranscriptViewportScrollReason,
-    targetOffsetY?: number | null,
-): TranscriptViewportCommand {
+function normalizeFiniteNonNegative(value: number): number {
+    return Math.max(0, value);
+}
+
+function normalizeRouteMessageId(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeOptionalNonNegative(value: unknown): number | null {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+    return Math.trunc(value);
+}
+
+function normalizeRole(value: unknown) {
+    if (
+        value === 'user' ||
+        value === 'assistant' ||
+        value === 'tool' ||
+        value === 'system' ||
+        value === 'unknown'
+    ) {
+        return value;
+    }
+    return null;
+}
+
+function normalizeRestoreAnchorTarget(
+    anchor: TranscriptViewportAnchorIdentity,
+    itemOffsetPx: number | null | undefined,
+    itemIndex?: number | null,
+) {
+    const normalizedItemIndex =
+        typeof itemIndex === 'number' && Number.isFinite(itemIndex)
+            ? Math.max(0, Math.trunc(itemIndex))
+            : null;
     return {
-        kind: 'skip-native-js-pin',
-        sessionId,
-        reason,
-        mode: 'follow-bottom',
-        skipReason: 'mvcp-only',
-        ...(typeof targetOffsetY === 'number' && Number.isFinite(targetOffsetY)
-            ? { targetOffsetY: Math.max(0, Math.trunc(targetOffsetY)) }
-            : {}),
+        anchor: {
+            kind: anchor.kind,
+            itemId: anchor.itemId.trim(),
+            messageId: typeof anchor.messageId === 'string' && anchor.messageId.trim().length > 0
+                ? anchor.messageId.trim()
+                : null,
+        },
+        ...(normalizedItemIndex == null ? {} : { itemIndex: normalizedItemIndex }),
+        itemOffsetPx: typeof itemOffsetPx === 'number' && Number.isFinite(itemOffsetPx)
+            ? Math.trunc(itemOffsetPx)
+            : 0,
     };
+}
+
+function normalizeJumpAlignment(
+    align: TranscriptViewportJumpAlignment | null | undefined,
+): Readonly<{ align: TranscriptViewportJumpAlignment }> | null {
+    if (align?.kind === 'center') {
+        return { align: { kind: 'center' } };
+    }
+    if (align?.kind === 'top-with-item-offset') {
+        const itemOffsetPx = typeof align.itemOffsetPx === 'number' && Number.isFinite(align.itemOffsetPx)
+            ? Math.max(0, Math.trunc(align.itemOffsetPx))
+            : 0;
+        return { align: { kind: 'top-with-item-offset', itemOffsetPx } };
+    }
+    return null;
 }

@@ -12,12 +12,18 @@ function run(state: OlderPaginationState, events: readonly OlderPaginationEvent[
     return events.reduce(reduceOlderPagination, state);
 }
 
-function scrollObserved(params: Partial<{ offsetY: number; thresholdPx: number; scrollable: boolean }>): OlderPaginationEvent {
+function scrollObserved(params: Partial<{
+    offsetY: number;
+    thresholdPx: number;
+    scrollable: boolean;
+    trigger: 'scroll' | 'edge-reached';
+}>): OlderPaginationEvent {
     return {
         type: 'scrollObserved',
         offsetY: params.offsetY ?? 100,
         thresholdPx: params.thresholdPx ?? 400,
         scrollable: params.scrollable ?? true,
+        trigger: params.trigger ?? 'scroll',
     };
 }
 
@@ -110,11 +116,64 @@ describe('olderPaginationMachine', () => {
         expect(zeroThreshold.insideThreshold).toBe(false);
     });
 
-    it('suspends loads while the observed offset is <= 0 and resumes once positive', () => {
+    it('allows an explicit edge-reached trigger at exact zero to load once when eligible', () => {
+        const atExactEdge = run(createInitialOlderPaginationState(), [
+            scrollObserved({ offsetY: 0, trigger: 'edge-reached' }),
+        ]);
+        expect(atExactEdge.suspendedReasons.has('negative-offset')).toBe(false);
+        expect(atExactEdge.phase).toBe('armed');
+        expect(shouldLoadNow(atExactEdge)).toBe(true);
+    });
+
+    it('allows an explicit edge-reached trigger at a near-top fractional offset to load once when eligible', () => {
+        // The web scroll element reports `scrollTop` as an integer-rounded / sub-pixel-residue
+        // value, so a viewport resting at the genuine top is rarely EXACTLY 0 (e.g. 1 at dpr=1,
+        // 0.5/0.33 on Retina). The exact-edge re-arm must accept the same near-top band the
+        // genuine-top classifier emits, otherwise the machine starves on those frames.
+        const atNearTop = run(createInitialOlderPaginationState(), [
+            scrollObserved({ offsetY: 1, trigger: 'edge-reached' }),
+        ]);
+        expect(atNearTop.suspendedReasons.has('negative-offset')).toBe(false);
+        expect(atNearTop.phase).toBe('armed');
+        expect(shouldLoadNow(atNearTop)).toBe(true);
+    });
+
+    it('re-arms after cooldown from a near-top edge-reached frame without requiring a threshold exit', () => {
+        const afterLoad = run(createInitialOlderPaginationState(), [
+            scrollObserved({ offsetY: 1, trigger: 'edge-reached' }),
+            { type: 'loadStarted' },
+            { type: 'loadFinished', loaded: 10, hasMore: true },
+            scrollObserved({ offsetY: 0.5, trigger: 'edge-reached' }),
+            { type: 'cooldownElapsed' },
+        ]);
+        expect(afterLoad.phase).toBe('armed');
+        expect(shouldLoadNow(afterLoad)).toBe(true);
+    });
+
+    it('keeps passive scroll observations within the near-top band suspended so parked-at-top scrolls cannot burst', () => {
         const atTop = run(createInitialOlderPaginationState(), [scrollObserved({ offsetY: 0 })]);
         expect(atTop.suspendedReasons.has('negative-offset')).toBe(true);
         expect(shouldLoadNow(atTop)).toBe(false);
 
+        // A passive (non-edge-reached) near-top fractional frame stays suspended too — only an
+        // explicit edge-reached trigger gets the near-top treatment (anti-burst preserved).
+        const nearTopPassive = run(createInitialOlderPaginationState(), [scrollObserved({ offsetY: 1 })]);
+        expect(nearTopPassive.suspendedReasons.has('negative-offset')).toBe(true);
+        expect(shouldLoadNow(nearTopPassive)).toBe(false);
+    });
+
+    it('keeps an edge-reached trigger beyond the near-top epsilon suspended at exact-band only (no widening)', () => {
+        // 2px is past the 1.5px epsilon: it must NOT get the exact-edge treatment, so a viewport
+        // truly off the top cannot masquerade as the genuine top.
+        const beyondEpsilon = run(createInitialOlderPaginationState(), [
+            scrollObserved({ offsetY: 2, thresholdPx: 1, trigger: 'edge-reached' }),
+        ]);
+        // offsetY 2 > thresholdPx 1 -> outside the threshold entirely, never arms.
+        expect(beyondEpsilon.phase).toBe('idle');
+        expect(shouldLoadNow(beyondEpsilon)).toBe(false);
+    });
+
+    it('suspends loads while the observed offset is negative and resumes once positive', () => {
         const negative = run(createInitialOlderPaginationState(), [scrollObserved({ offsetY: -12 })]);
         expect(negative.suspendedReasons.has('negative-offset')).toBe(true);
         expect(shouldLoadNow(negative)).toBe(false);

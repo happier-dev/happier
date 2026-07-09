@@ -1,5 +1,4 @@
 import type {
-    TranscriptViewportListImplementation,
     TranscriptViewportMode,
     TranscriptViewportOwner,
     TranscriptViewportPlatform,
@@ -8,7 +7,7 @@ import type {
 
 export type { TranscriptViewportMode };
 export type TranscriptViewportTelemetryPlatform = TranscriptViewportPlatform;
-export type TranscriptViewportTelemetryListImplementation = TranscriptViewportListImplementation;
+export type TranscriptViewportTelemetryListImplementation = 'flash_v2' | 'flatlist_legacy' | 'web-fallback';
 export type TranscriptViewportTelemetryOwner = TranscriptViewportOwner;
 
 export type TranscriptViewportTelemetryScrollWriter =
@@ -18,8 +17,19 @@ export type TranscriptViewportTelemetryScrollWriter =
     | 'native-scroll-to-offset'
     | 'native-scroll-to-index'
     | 'native-explicit-jump'
-    | 'legacy-scroll-to-index'
     | 'mvcp-skip';
+
+export type TranscriptViewportTelemetrySchedulerAuthorityWriter =
+    | TranscriptViewportTelemetryScrollWriter
+    | 'automatic-live-tail'
+    | 'blank-recovery'
+    | 'content-growth'
+    | 'deferred-post-scroll'
+    | 'hot-tail-carve'
+    | 'passive-drift'
+    | 'proactive-auto-follow'
+    | 'settle-reconfirm'
+    | 'web-passive-correction';
 
 export type TranscriptViewportTelemetryScrollReason = TranscriptViewportScrollReason;
 
@@ -47,8 +57,191 @@ export type TranscriptViewportTelemetryObservationReason =
     | 'anchor-capture-empty'
     | 'anchor-capture-dropped';
 
+/** N1.1 — FlashList offset-corrector lifecycle, mirrored from the patched vendor hook. */
+export type TranscriptViewportTelemetryOffsetCorrectionAction =
+    | 'pause-set'
+    | 'pause-cleared'
+    | 'correction-applied'
+    | 'correction-skipped-paused'
+    | 'correction-skipped-animation'
+    | 'correction-skipped-happier-paused';
+
+export type TranscriptViewportTelemetryOffsetCorrectionSource =
+    | 'scroll-to-index'
+    | 'initial-scroll-index';
+
+/** N1.2/N1.3 — closed row-kind set (mirrors resolveTranscriptRowItemType outputs; no free-form text). */
+export type TranscriptViewportTelemetryRowKind =
+    | 'message:agent'
+    | 'message:user'
+    | 'message:thinking'
+    | 'message:tool'
+    | 'tool-group'
+    | 'tool-group-header'
+    | 'tool-group-expand'
+    | 'tool-group-tool'
+    | 'tool-group-footer'
+    | 'pending-action'
+    | 'fork-divider'
+    | 'turn:tool'
+    | 'turn:thinking'
+    | 'turn:text';
+
+export type TranscriptViewportTelemetryRowMeasurePhase = 'first' | 'remeasure';
+
+export type TranscriptViewportTelemetryRowViewportRelation = 'above' | 'inside' | 'below' | 'unknown';
+
+export type TranscriptViewportTelemetryListOrientation = 'standard' | 'inverted';
+
+export type TranscriptViewportTelemetryBottomFollowMode = 'following' | 'escaping' | 'released';
+
+export type TranscriptViewportTelemetryMvcpPolicy =
+    | 'none'
+    | 'disabled'
+    | 'default'
+    | 'start-rendering-from-bottom'
+    | 'autoscroll-threshold';
+
+export type TranscriptViewportTelemetryVisibleWindowSource =
+    | 'ref-compute'
+    | 'ref-first-index'
+    | 'native-hot-edge-slot'
+    | 'viewability-callback'
+    | 'none';
+
+export type TranscriptViewportTelemetryBlankAreaSource =
+    | 'none'
+    | 'index-estimate'
+    | 'native-blank-area';
+
+export type TranscriptViewportTelemetryNativeBlankWindowSignature =
+    | 'empty-visible-window';
+
+export type TranscriptViewportTelemetryVisibleRangeReadStatus =
+    | 'ok'
+    | 'null'
+    | 'threw'
+    | 'reversed'
+    | 'out-of-range';
+
+export type TranscriptViewportTelemetryTransactionState =
+    | 'none'
+    | 'open'
+    | 'closed';
+
+export type TranscriptViewportTelemetryLayoutCacheClearState =
+    | 'idle'
+    | 'requested'
+    | 'cleared';
+
+export type TranscriptViewportTelemetryLayoutCacheClearReason =
+    | 'none'
+    | 'row-layout-mutation'
+    | 'session-reset'
+    | 'transaction-open';
+
+export type TranscriptViewportTelemetryScrollToIndexFailureState =
+    | 'none'
+    | 'failed';
+
+/**
+ * §12 native live-tail carve — why the anchor that opened the edge-slot carve engaged.
+ * `turn-floor` = the whole-turn gate (`session.thinking`) held the carve across a transition
+ * frame where no single row was detectably mid-stream (thinking→answer / text→tool).
+ */
+export type TranscriptViewportTelemetryLiveTailAnchorKind =
+    | 'streaming-message'
+    | 'streaming-tool'
+    | 'thinking'
+    | 'turn-floor';
+
+/**
+ * §12 native live-tail carve pin diagnostics (review R9). The device-QA proof surface for the
+ * deterministic pin height (#2) and the single pin owner (#3): each carve pin records the
+ * just-measured hot-tail height it compensated for, the anchor that opened the carve, whether the
+ * live region owns the bottom, and whether the JS pin was issued or skipped. Correlate against the
+ * `mvcpPolicy` field (`start-rendering-from-bottom` = threshold withheld) and `offset-correction`
+ * events to PROVE FlashList MVCP is not fighting the JS pin while the live region is active.
+ */
+export type TranscriptViewportTelemetryLiveTailCarveDiagnostics = Readonly<{
+    liveRegionActive?: boolean;
+    nativeHotTailHeightPx?: number;
+    liveTailAnchorId?: string;
+    liveTailAnchorKind?: TranscriptViewportTelemetryLiveTailAnchorKind;
+    nativeCarvePinIssued?: boolean;
+}>;
+
+export type TranscriptViewportTelemetryWebTrigger = 'scroll' | 'edge-reached' | 'restore' | 'prepend-restore' | 'jump';
+
+export type TranscriptViewportTelemetryPaginationPhase = 'idle' | 'armed' | 'loading' | 'cooldown';
+
+export type TranscriptViewportTelemetryPaginationSuspendReason =
+    | 'negative-offset'
+    | 'transaction-open'
+    | 'fill-not-done';
+
+export type TranscriptViewportTelemetryWebPrependAnchorKind = 'stable' | 'item' | 'none';
+
+type TranscriptViewportTelemetryNativeDiagnostics = Readonly<{
+    orientation?: TranscriptViewportTelemetryListOrientation;
+    rawOffsetY?: number;
+    canonicalOffsetY?: number;
+    bottomFollowMode?: TranscriptViewportTelemetryBottomFollowMode;
+    dragSessionTrusted?: boolean;
+    nativeMomentumActive?: boolean;
+    mvcpPolicy?: TranscriptViewportTelemetryMvcpPolicy;
+    pauseOffsetCorrection?: boolean;
+    isAtRawBottom?: boolean;
+    hasVisibleRows?: boolean;
+    firstVisibleItemId?: string;
+    lastVisibleItemId?: string;
+    firstVisibleSourceIndex?: number;
+    lastVisibleSourceIndex?: number;
+    visibleWindowStale?: boolean;
+    lastKnownFirstVisibleItemId?: string;
+    lastKnownLastVisibleItemId?: string;
+    blankAreaPx?: number;
+    visibleWindowSource?: TranscriptViewportTelemetryVisibleWindowSource;
+    blankAreaSource?: TranscriptViewportTelemetryBlankAreaSource;
+    nativeBlankWindowSignature?: TranscriptViewportTelemetryNativeBlankWindowSignature;
+    listDataLength?: number;
+    fullItemCount?: number;
+    visibleRangeReadStatus?: TranscriptViewportTelemetryVisibleRangeReadStatus;
+    visibleRenderedStartIndex?: number;
+    visibleRenderedEndIndex?: number;
+    firstVisibleRenderedIndex?: number;
+    eventContentHeight?: number;
+    eventLayoutHeight?: number;
+    refContentHeight?: number;
+    refLayoutHeight?: number;
+    entryRestoreState?: TranscriptViewportTelemetryTransactionState;
+    prependState?: TranscriptViewportTelemetryTransactionState;
+    layoutCacheClearState?: TranscriptViewportTelemetryLayoutCacheClearState;
+    layoutCacheClearReason?: TranscriptViewportTelemetryLayoutCacheClearReason;
+    scrollToIndexFailureState?: TranscriptViewportTelemetryScrollToIndexFailureState;
+}>;
+
+type TranscriptViewportTelemetryWebDiagnostics = Readonly<{
+    trigger?: TranscriptViewportTelemetryWebTrigger;
+    domScrollTop?: number;
+    domScrollHeight?: number;
+    domClientHeight?: number;
+    flashListContentHeight?: number;
+    flashListLayoutHeight?: number;
+    scrollable?: boolean;
+    paginationPhase?: TranscriptViewportTelemetryPaginationPhase;
+    paginationSuspendedReasons?: readonly TranscriptViewportTelemetryPaginationSuspendReason[];
+    coldCount?: number;
+    hotCount?: number;
+    firstVisibleAnchorTestId?: string;
+    pendingWebPrependAnchorKind?: TranscriptViewportTelemetryWebPrependAnchorKind;
+    pendingWebPrependAnchorId?: string;
+    pendingWebPrependAnchorIndex?: number;
+    programmaticWebWrite?: boolean;
+}>;
+
 export type TranscriptViewportTelemetryEvent =
-    | Readonly<{
+    | Readonly<({
         type: 'scroll-write';
         writer: TranscriptViewportTelemetryScrollWriter;
         reason: TranscriptViewportTelemetryScrollReason;
@@ -62,9 +255,47 @@ export type TranscriptViewportTelemetryEvent =
         contentHeight?: number;
         distanceFromBottom?: number;
         nativeMountSettleStable?: boolean;
+        orientation?: TranscriptViewportTelemetryListOrientation;
+        rawOffsetY?: number;
+        canonicalOffsetY?: number;
+        bottomFollowMode?: TranscriptViewportTelemetryBottomFollowMode;
+        dragSessionTrusted?: boolean;
+        nativeMomentumActive?: boolean;
+        mvcpPolicy?: TranscriptViewportTelemetryMvcpPolicy;
+        pauseOffsetCorrection?: boolean;
+        schedulerAuthorityWriter?: TranscriptViewportTelemetrySchedulerAuthorityWriter;
+        schedulerAuthorityReason?: TranscriptViewportTelemetryScrollReason;
+        isAtRawBottom?: boolean;
+        hasVisibleRows?: boolean;
+        firstVisibleItemId?: string;
+        lastVisibleItemId?: string;
+        firstVisibleSourceIndex?: number;
+        lastVisibleSourceIndex?: number;
+        visibleWindowStale?: boolean;
+        lastKnownFirstVisibleItemId?: string;
+        lastKnownLastVisibleItemId?: string;
+        blankAreaPx?: number;
+        visibleWindowSource?: TranscriptViewportTelemetryVisibleWindowSource;
+        blankAreaSource?: TranscriptViewportTelemetryBlankAreaSource;
+        nativeBlankWindowSignature?: TranscriptViewportTelemetryNativeBlankWindowSignature;
+        listDataLength?: number;
+        fullItemCount?: number;
+        visibleRangeReadStatus?: TranscriptViewportTelemetryVisibleRangeReadStatus;
+        visibleRenderedStartIndex?: number;
+        visibleRenderedEndIndex?: number;
+        firstVisibleRenderedIndex?: number;
+        eventContentHeight?: number;
+        eventLayoutHeight?: number;
+        refContentHeight?: number;
+        refLayoutHeight?: number;
+        entryRestoreState?: TranscriptViewportTelemetryTransactionState;
+        prependState?: TranscriptViewportTelemetryTransactionState;
+        layoutCacheClearState?: TranscriptViewportTelemetryLayoutCacheClearState;
+        layoutCacheClearReason?: TranscriptViewportTelemetryLayoutCacheClearReason;
+        scrollToIndexFailureState?: TranscriptViewportTelemetryScrollToIndexFailureState;
         timestampMs: number;
-    }>
-    | Readonly<{
+    } & TranscriptViewportTelemetryWebDiagnostics & TranscriptViewportTelemetryLiveTailCarveDiagnostics)>
+    | Readonly<({
         type: 'scroll-write-rejected';
         writer: TranscriptViewportTelemetryScrollWriter;
         reason: TranscriptViewportTelemetryScrollReason;
@@ -80,10 +311,57 @@ export type TranscriptViewportTelemetryEvent =
         contentHeight?: number;
         distanceFromBottom?: number;
         nativeMountSettleStable?: boolean;
+        orientation?: TranscriptViewportTelemetryListOrientation;
+        rawOffsetY?: number;
+        canonicalOffsetY?: number;
+        bottomFollowMode?: TranscriptViewportTelemetryBottomFollowMode;
+        dragSessionTrusted?: boolean;
+        nativeMomentumActive?: boolean;
+        mvcpPolicy?: TranscriptViewportTelemetryMvcpPolicy;
+        pauseOffsetCorrection?: boolean;
+        schedulerAuthorityWriter?: TranscriptViewportTelemetrySchedulerAuthorityWriter;
+        schedulerAuthorityReason?: TranscriptViewportTelemetryScrollReason;
+        isAtRawBottom?: boolean;
+        hasVisibleRows?: boolean;
+        firstVisibleItemId?: string;
+        lastVisibleItemId?: string;
+        firstVisibleSourceIndex?: number;
+        lastVisibleSourceIndex?: number;
+        visibleWindowStale?: boolean;
+        lastKnownFirstVisibleItemId?: string;
+        lastKnownLastVisibleItemId?: string;
+        blankAreaPx?: number;
+        visibleWindowSource?: TranscriptViewportTelemetryVisibleWindowSource;
+        blankAreaSource?: TranscriptViewportTelemetryBlankAreaSource;
+        nativeBlankWindowSignature?: TranscriptViewportTelemetryNativeBlankWindowSignature;
+        listDataLength?: number;
+        fullItemCount?: number;
+        visibleRangeReadStatus?: TranscriptViewportTelemetryVisibleRangeReadStatus;
+        visibleRenderedStartIndex?: number;
+        visibleRenderedEndIndex?: number;
+        firstVisibleRenderedIndex?: number;
+        eventContentHeight?: number;
+        eventLayoutHeight?: number;
+        refContentHeight?: number;
+        refLayoutHeight?: number;
+        entryRestoreState?: TranscriptViewportTelemetryTransactionState;
+        prependState?: TranscriptViewportTelemetryTransactionState;
+        layoutCacheClearState?: TranscriptViewportTelemetryLayoutCacheClearState;
+        layoutCacheClearReason?: TranscriptViewportTelemetryLayoutCacheClearReason;
+        scrollToIndexFailureState?: TranscriptViewportTelemetryScrollToIndexFailureState;
         timestampMs: number;
-    }>
-    | Readonly<{
-        type: 'restore-decision' | 'scroll-observed' | 'content-measured' | 'layout-measured' | 'anchor-capture';
+    } & TranscriptViewportTelemetryWebDiagnostics & TranscriptViewportTelemetryLiveTailCarveDiagnostics)>
+    | Readonly<({
+        type:
+            | 'restore-decision'
+            | 'scroll-observed'
+            | 'content-measured'
+            | 'layout-measured'
+            | 'anchor-capture'
+            | 'offset-correction'
+            | 'row-measured'
+            | 'row-mutated'
+            | 'visible-window-observed';
         sessionId: string;
         platform: TranscriptViewportTelemetryPlatform;
         listImplementation: TranscriptViewportTelemetryListImplementation;
@@ -99,9 +377,59 @@ export type TranscriptViewportTelemetryEvent =
         anchorCorrectionAttempt?: number;
         anchorCorrectionTargetOffsetY?: number;
         anchorRestoreViewOffset?: number;
+        correctionAction?: TranscriptViewportTelemetryOffsetCorrectionAction;
+        correctionSource?: TranscriptViewportTelemetryOffsetCorrectionSource;
+        correctionDiffPx?: number;
+        /** N2d.1 prepend close diagnostics: corrector coverage over the transaction window. */
+        correctorAppliedDiffTotalPx?: number;
+        correctorEventCount?: number;
+        rowId?: string;
+        rowKind?: TranscriptViewportTelemetryRowKind;
+        rowHeightPx?: number;
+        rowPreviousHeightPx?: number;
+        rowDeltaPx?: number;
+        rowMeasurePhase?: TranscriptViewportTelemetryRowMeasurePhase;
+        rowViewportRelation?: TranscriptViewportTelemetryRowViewportRelation;
+        rowContentCount?: number;
+        rowPreviousContentCount?: number;
+        orientation?: TranscriptViewportTelemetryListOrientation;
+        rawOffsetY?: number;
+        canonicalOffsetY?: number;
+        bottomFollowMode?: TranscriptViewportTelemetryBottomFollowMode;
+        dragSessionTrusted?: boolean;
+        nativeMomentumActive?: boolean;
+        mvcpPolicy?: TranscriptViewportTelemetryMvcpPolicy;
+        isAtRawBottom?: boolean;
+        hasVisibleRows?: boolean;
+        firstVisibleItemId?: string;
+        lastVisibleItemId?: string;
+        firstVisibleSourceIndex?: number;
+        lastVisibleSourceIndex?: number;
+        visibleWindowStale?: boolean;
+        lastKnownFirstVisibleItemId?: string;
+        lastKnownLastVisibleItemId?: string;
+        blankAreaPx?: number;
+        visibleWindowSource?: TranscriptViewportTelemetryVisibleWindowSource;
+        blankAreaSource?: TranscriptViewportTelemetryBlankAreaSource;
+        nativeBlankWindowSignature?: TranscriptViewportTelemetryNativeBlankWindowSignature;
+        listDataLength?: number;
+        fullItemCount?: number;
+        visibleRangeReadStatus?: TranscriptViewportTelemetryVisibleRangeReadStatus;
+        visibleRenderedStartIndex?: number;
+        visibleRenderedEndIndex?: number;
+        firstVisibleRenderedIndex?: number;
+        eventContentHeight?: number;
+        eventLayoutHeight?: number;
+        refContentHeight?: number;
+        refLayoutHeight?: number;
+        entryRestoreState?: TranscriptViewportTelemetryTransactionState;
+        prependState?: TranscriptViewportTelemetryTransactionState;
+        layoutCacheClearState?: TranscriptViewportTelemetryLayoutCacheClearState;
+        layoutCacheClearReason?: TranscriptViewportTelemetryLayoutCacheClearReason;
+        scrollToIndexFailureState?: TranscriptViewportTelemetryScrollToIndexFailureState;
         reason?: TranscriptViewportTelemetryObservationReason;
         timestampMs: number;
-    }>;
+    } & TranscriptViewportTelemetryWebDiagnostics & TranscriptViewportTelemetryLiveTailCarveDiagnostics)>;
 
 export type TranscriptViewportTelemetrySnapshot = Readonly<{
     events: TranscriptViewportTelemetryEvent[];
@@ -138,6 +466,7 @@ export type TranscriptViewportTelemetryTuning = Readonly<{
 }>;
 
 const DEFAULT_TRANSCRIPT_VIEWPORT_TELEMETRY_CAPACITY = 512;
+const TRANSCRIPT_VIEWPORT_TELEMETRY_GLOBAL_KEY = '__HAPPIER_TRANSCRIPT_VIEWPORT_EVENTS__';
 const TRANSCRIPT_VIEWPORT_TELEMETRY_OVERRIDE_GLOBAL_KEY = '__HAPPIER_TRANSCRIPT_VIEWPORT_TELEMETRY_OVERRIDE__';
 
 const SCROLL_WRITERS = new Set<TranscriptViewportTelemetryScrollWriter>([
@@ -147,8 +476,20 @@ const SCROLL_WRITERS = new Set<TranscriptViewportTelemetryScrollWriter>([
     'native-scroll-to-offset',
     'native-scroll-to-index',
     'native-explicit-jump',
-    'legacy-scroll-to-index',
     'mvcp-skip',
+]);
+
+const SCHEDULER_AUTHORITY_WRITERS = new Set<TranscriptViewportTelemetrySchedulerAuthorityWriter>([
+    ...SCROLL_WRITERS,
+    'automatic-live-tail',
+    'blank-recovery',
+    'content-growth',
+    'deferred-post-scroll',
+    'hot-tail-carve',
+    'passive-drift',
+    'proactive-auto-follow',
+    'settle-reconfirm',
+    'web-passive-correction',
 ]);
 
 const SCROLL_REASONS = new Set<TranscriptViewportTelemetryScrollReason>([
@@ -160,6 +501,7 @@ const SCROLL_REASONS = new Set<TranscriptViewportTelemetryScrollReason>([
     'jump-to-bottom',
     'jump-to-seq',
     'stream-append',
+    'viewport-resized',
     'mount-settle',
     'passive-drift',
 ]);
@@ -172,7 +514,6 @@ const OBSERVATION_REASONS = new Set<TranscriptViewportTelemetryObservationReason
     'skipped',
     'not-ready',
     'missing-anchor',
-    'passive-drift',
     'invalid-native-offset',
     'mvcp-preserved',
     'fallback-restored',
@@ -187,6 +528,152 @@ const OBSERVATION_REASONS = new Set<TranscriptViewportTelemetryObservationReason
     'anchor-captured',
     'anchor-capture-empty',
     'anchor-capture-dropped',
+]);
+
+const OFFSET_CORRECTION_ACTIONS = new Set<TranscriptViewportTelemetryOffsetCorrectionAction>([
+    'pause-set',
+    'pause-cleared',
+    'correction-applied',
+    'correction-skipped-paused',
+    'correction-skipped-animation',
+    'correction-skipped-happier-paused',
+]);
+
+const OFFSET_CORRECTION_SOURCES = new Set<TranscriptViewportTelemetryOffsetCorrectionSource>([
+    'scroll-to-index',
+    'initial-scroll-index',
+]);
+
+const ROW_KINDS = new Set<TranscriptViewportTelemetryRowKind>([
+    'message:agent',
+    'message:user',
+    'message:thinking',
+    'message:tool',
+    'tool-group',
+    'tool-group-header',
+    'tool-group-expand',
+    'tool-group-tool',
+    'tool-group-footer',
+    'pending-action',
+    'fork-divider',
+    'turn:tool',
+    'turn:thinking',
+    'turn:text',
+]);
+
+const ROW_MEASURE_PHASES = new Set<TranscriptViewportTelemetryRowMeasurePhase>([
+    'first',
+    'remeasure',
+]);
+
+const ROW_VIEWPORT_RELATIONS = new Set<TranscriptViewportTelemetryRowViewportRelation>([
+    'above',
+    'inside',
+    'below',
+    'unknown',
+]);
+
+const LIST_ORIENTATIONS = new Set<TranscriptViewportTelemetryListOrientation>([
+    'standard',
+    'inverted',
+]);
+
+const BOTTOM_FOLLOW_MODES = new Set<TranscriptViewportTelemetryBottomFollowMode>([
+    'following',
+    'escaping',
+    'released',
+]);
+
+const MVCP_POLICIES = new Set<TranscriptViewportTelemetryMvcpPolicy>([
+    'none',
+    'disabled',
+    'default',
+    'start-rendering-from-bottom',
+    'autoscroll-threshold',
+]);
+
+const VISIBLE_WINDOW_SOURCES = new Set<TranscriptViewportTelemetryVisibleWindowSource>([
+    'ref-compute',
+    'ref-first-index',
+    'native-hot-edge-slot',
+    'viewability-callback',
+    'none',
+]);
+
+const BLANK_AREA_SOURCES = new Set<TranscriptViewportTelemetryBlankAreaSource>([
+    'none',
+    'index-estimate',
+    'native-blank-area',
+]);
+
+const NATIVE_BLANK_WINDOW_SIGNATURES = new Set<TranscriptViewportTelemetryNativeBlankWindowSignature>([
+    'empty-visible-window',
+]);
+
+const VISIBLE_RANGE_READ_STATUSES = new Set<TranscriptViewportTelemetryVisibleRangeReadStatus>([
+    'ok',
+    'null',
+    'threw',
+    'reversed',
+    'out-of-range',
+]);
+
+const TRANSACTION_STATES = new Set<TranscriptViewportTelemetryTransactionState>([
+    'none',
+    'open',
+    'closed',
+]);
+
+const LAYOUT_CACHE_CLEAR_STATES = new Set<TranscriptViewportTelemetryLayoutCacheClearState>([
+    'idle',
+    'requested',
+    'cleared',
+]);
+
+const LAYOUT_CACHE_CLEAR_REASONS = new Set<TranscriptViewportTelemetryLayoutCacheClearReason>([
+    'none',
+    'row-layout-mutation',
+    'session-reset',
+    'transaction-open',
+]);
+
+const SCROLL_TO_INDEX_FAILURE_STATES = new Set<TranscriptViewportTelemetryScrollToIndexFailureState>([
+    'none',
+    'failed',
+]);
+
+const LIVE_TAIL_ANCHOR_KINDS = new Set<TranscriptViewportTelemetryLiveTailAnchorKind>([
+    'streaming-message',
+    'streaming-tool',
+    'thinking',
+    'turn-floor',
+]);
+
+const WEB_TRIGGERS = new Set<TranscriptViewportTelemetryWebTrigger>([
+    'scroll',
+    'edge-reached',
+    'restore',
+    'prepend-restore',
+    'jump',
+]);
+
+const PAGINATION_PHASES = new Set<TranscriptViewportTelemetryPaginationPhase>([
+    'idle',
+    'armed',
+    'loading',
+    'cooldown',
+]);
+
+const PAGINATION_SUSPENDED_REASONS = new Set<TranscriptViewportTelemetryPaginationSuspendReason>([
+    'negative-offset',
+    'transaction-open',
+    'fill-not-done',
+]);
+
+const WEB_PREPEND_ANCHOR_KINDS = new Set<TranscriptViewportTelemetryWebPrependAnchorKind>([
+    'stable',
+    'item',
+    'none',
 ]);
 
 const OWNERS = new Set<TranscriptViewportTelemetryOwner>([
@@ -206,7 +693,7 @@ const PLATFORMS = new Set<TranscriptViewportTelemetryPlatform>([
 
 const LIST_IMPLEMENTATIONS = new Set<TranscriptViewportTelemetryListImplementation>([
     'flash_v2',
-    'flatlist',
+    'flatlist_legacy',
     'web-fallback',
 ]);
 
@@ -248,8 +735,149 @@ function readEnum<T extends string>(value: unknown, values: ReadonlySet<T>): T |
     return text && values.has(text as T) ? text as T : null;
 }
 
+function readEnumArray<T extends string>(value: unknown, values: ReadonlySet<T>): readonly T[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    const result: T[] = [];
+    for (const item of value) {
+        const enumValue = readEnum(item, values);
+        if (enumValue) result.push(enumValue);
+    }
+    return result;
+}
+
+function isInvalidScrollWriterTelemetryEvent(event: unknown): boolean {
+    if (!event || typeof event !== 'object') return false;
+    const source = event as Record<string, unknown>;
+    if (source.type !== 'scroll-write' && source.type !== 'scroll-write-rejected') return false;
+    if (!readString(source.writer) || readEnum(source.writer, SCROLL_WRITERS)) return false;
+    if (
+        !readString(source.sessionId) ||
+        !readEnum(source.platform, PLATFORMS) ||
+        !readEnum(source.listImplementation, LIST_IMPLEMENTATIONS) ||
+        !readEnum(source.mode, MODES) ||
+        !readEnum(source.reason, SCROLL_REASONS)
+    ) {
+        return false;
+    }
+    if (source.type === 'scroll-write-rejected') {
+        return Boolean(readEnum(source.rejectedOwner, OWNERS) && readEnum(source.activeOwner, OWNERS));
+    }
+    return true;
+}
+
 function readNumber(value: unknown): number | undefined {
     return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function spreadNumber<K extends string>(key: K, value: number | undefined): Partial<Record<K, number>> {
+    return value === undefined ? {} : { [key]: value } as Record<K, number>;
+}
+
+function spreadBoolean<K extends string>(key: K, value: unknown): Partial<Record<K, boolean>> {
+    return typeof value === 'boolean' ? { [key]: value } as Record<K, boolean> : {};
+}
+
+function readNativeDiagnostics(source: Record<string, unknown>): TranscriptViewportTelemetryNativeDiagnostics {
+    const orientation = readEnum(source.orientation, LIST_ORIENTATIONS) ?? undefined;
+    const bottomFollowMode = readEnum(source.bottomFollowMode, BOTTOM_FOLLOW_MODES) ?? undefined;
+    const mvcpPolicy = readEnum(source.mvcpPolicy, MVCP_POLICIES) ?? undefined;
+    const visibleWindowSource = readEnum(source.visibleWindowSource, VISIBLE_WINDOW_SOURCES) ?? undefined;
+    const blankAreaSource = readEnum(source.blankAreaSource, BLANK_AREA_SOURCES) ?? undefined;
+    const nativeBlankWindowSignature =
+        readEnum(source.nativeBlankWindowSignature, NATIVE_BLANK_WINDOW_SIGNATURES) ?? undefined;
+    const visibleRangeReadStatus =
+        readEnum(source.visibleRangeReadStatus, VISIBLE_RANGE_READ_STATUSES) ?? undefined;
+    const entryRestoreState = readEnum(source.entryRestoreState, TRANSACTION_STATES) ?? undefined;
+    const prependState = readEnum(source.prependState, TRANSACTION_STATES) ?? undefined;
+    const layoutCacheClearState =
+        readEnum(source.layoutCacheClearState, LAYOUT_CACHE_CLEAR_STATES) ?? undefined;
+    const layoutCacheClearReason =
+        readEnum(source.layoutCacheClearReason, LAYOUT_CACHE_CLEAR_REASONS) ?? undefined;
+    const scrollToIndexFailureState =
+        readEnum(source.scrollToIndexFailureState, SCROLL_TO_INDEX_FAILURE_STATES) ?? undefined;
+    const firstVisibleItemId = readString(source.firstVisibleItemId) ?? undefined;
+    const lastVisibleItemId = readString(source.lastVisibleItemId) ?? undefined;
+    const lastKnownFirstVisibleItemId = readString(source.lastKnownFirstVisibleItemId) ?? undefined;
+    const lastKnownLastVisibleItemId = readString(source.lastKnownLastVisibleItemId) ?? undefined;
+    return {
+        ...(orientation ? { orientation } : {}),
+        ...spreadNumber('rawOffsetY', readNumber(source.rawOffsetY)),
+        ...spreadNumber('canonicalOffsetY', readNumber(source.canonicalOffsetY)),
+        ...(bottomFollowMode ? { bottomFollowMode } : {}),
+        ...spreadBoolean('dragSessionTrusted', source.dragSessionTrusted),
+        ...spreadBoolean('nativeMomentumActive', source.nativeMomentumActive),
+        ...(mvcpPolicy ? { mvcpPolicy } : {}),
+        ...spreadBoolean('pauseOffsetCorrection', source.pauseOffsetCorrection),
+        ...spreadBoolean('isAtRawBottom', source.isAtRawBottom),
+        ...spreadBoolean('hasVisibleRows', source.hasVisibleRows),
+        ...(firstVisibleItemId ? { firstVisibleItemId } : {}),
+        ...(lastVisibleItemId ? { lastVisibleItemId } : {}),
+        ...spreadNumber('firstVisibleSourceIndex', readNumber(source.firstVisibleSourceIndex)),
+        ...spreadNumber('lastVisibleSourceIndex', readNumber(source.lastVisibleSourceIndex)),
+        ...spreadBoolean('visibleWindowStale', source.visibleWindowStale),
+        ...(lastKnownFirstVisibleItemId ? { lastKnownFirstVisibleItemId } : {}),
+        ...(lastKnownLastVisibleItemId ? { lastKnownLastVisibleItemId } : {}),
+        ...spreadNumber('blankAreaPx', readNumber(source.blankAreaPx)),
+        ...(visibleWindowSource ? { visibleWindowSource } : {}),
+        ...(blankAreaSource ? { blankAreaSource } : {}),
+        ...(nativeBlankWindowSignature ? { nativeBlankWindowSignature } : {}),
+        ...spreadNumber('listDataLength', readNumber(source.listDataLength)),
+        ...spreadNumber('fullItemCount', readNumber(source.fullItemCount)),
+        ...(visibleRangeReadStatus ? { visibleRangeReadStatus } : {}),
+        ...spreadNumber('visibleRenderedStartIndex', readNumber(source.visibleRenderedStartIndex)),
+        ...spreadNumber('visibleRenderedEndIndex', readNumber(source.visibleRenderedEndIndex)),
+        ...spreadNumber('firstVisibleRenderedIndex', readNumber(source.firstVisibleRenderedIndex)),
+        ...spreadNumber('eventContentHeight', readNumber(source.eventContentHeight)),
+        ...spreadNumber('eventLayoutHeight', readNumber(source.eventLayoutHeight)),
+        ...spreadNumber('refContentHeight', readNumber(source.refContentHeight)),
+        ...spreadNumber('refLayoutHeight', readNumber(source.refLayoutHeight)),
+        ...(entryRestoreState ? { entryRestoreState } : {}),
+        ...(prependState ? { prependState } : {}),
+        ...(layoutCacheClearState ? { layoutCacheClearState } : {}),
+        ...(layoutCacheClearReason ? { layoutCacheClearReason } : {}),
+        ...(scrollToIndexFailureState ? { scrollToIndexFailureState } : {}),
+    };
+}
+
+function readLiveTailCarveDiagnostics(
+    source: Record<string, unknown>,
+): TranscriptViewportTelemetryLiveTailCarveDiagnostics {
+    const liveTailAnchorId = readString(source.liveTailAnchorId) ?? undefined;
+    const liveTailAnchorKind = readEnum(source.liveTailAnchorKind, LIVE_TAIL_ANCHOR_KINDS) ?? undefined;
+    return {
+        ...spreadBoolean('liveRegionActive', source.liveRegionActive),
+        ...spreadNumber('nativeHotTailHeightPx', readNumber(source.nativeHotTailHeightPx)),
+        ...(liveTailAnchorId ? { liveTailAnchorId } : {}),
+        ...(liveTailAnchorKind ? { liveTailAnchorKind } : {}),
+        ...spreadBoolean('nativeCarvePinIssued', source.nativeCarvePinIssued),
+    };
+}
+
+function readWebDiagnostics(source: Record<string, unknown>): TranscriptViewportTelemetryWebDiagnostics {
+    const trigger = readEnum(source.trigger, WEB_TRIGGERS) ?? undefined;
+    const paginationPhase = readEnum(source.paginationPhase, PAGINATION_PHASES) ?? undefined;
+    const paginationSuspendedReasons = readEnumArray(source.paginationSuspendedReasons, PAGINATION_SUSPENDED_REASONS);
+    const firstVisibleAnchorTestId = readString(source.firstVisibleAnchorTestId) ?? undefined;
+    const pendingWebPrependAnchorKind = readEnum(source.pendingWebPrependAnchorKind, WEB_PREPEND_ANCHOR_KINDS) ?? undefined;
+    const pendingWebPrependAnchorId = readString(source.pendingWebPrependAnchorId) ?? undefined;
+    return {
+        ...(trigger ? { trigger } : {}),
+        ...spreadNumber('domScrollTop', readNumber(source.domScrollTop)),
+        ...spreadNumber('domScrollHeight', readNumber(source.domScrollHeight)),
+        ...spreadNumber('domClientHeight', readNumber(source.domClientHeight)),
+        ...spreadNumber('flashListContentHeight', readNumber(source.flashListContentHeight)),
+        ...spreadNumber('flashListLayoutHeight', readNumber(source.flashListLayoutHeight)),
+        ...spreadBoolean('scrollable', source.scrollable),
+        ...(paginationPhase ? { paginationPhase } : {}),
+        ...(paginationSuspendedReasons ? { paginationSuspendedReasons } : {}),
+        ...spreadNumber('coldCount', readNumber(source.coldCount)),
+        ...spreadNumber('hotCount', readNumber(source.hotCount)),
+        ...(firstVisibleAnchorTestId ? { firstVisibleAnchorTestId } : {}),
+        ...(pendingWebPrependAnchorKind ? { pendingWebPrependAnchorKind } : {}),
+        ...(pendingWebPrependAnchorId ? { pendingWebPrependAnchorId } : {}),
+        ...spreadNumber('pendingWebPrependAnchorIndex', readNumber(source.pendingWebPrependAnchorIndex)),
+        ...spreadBoolean('programmaticWebWrite', source.programmaticWebWrite),
+    };
 }
 
 function readTimestampMs(value: unknown, now: () => number): number {
@@ -277,9 +905,13 @@ function sanitizeTelemetryEvent(
         const reason = readEnum(source.reason, SCROLL_REASONS);
         if (!writer || !reason) return null;
         const sessionId = redactSessionId(rawSessionId);
+        const schedulerAuthorityWriter = readEnum(source.schedulerAuthorityWriter, SCHEDULER_AUTHORITY_WRITERS) ?? writer;
+        const schedulerAuthorityReason = readEnum(source.schedulerAuthorityReason, SCROLL_REASONS) ?? reason;
         const sharedFields = {
             writer,
             reason,
+            schedulerAuthorityWriter,
+            schedulerAuthorityReason,
             sessionId,
             platform,
             listImplementation,
@@ -292,6 +924,9 @@ function sanitizeTelemetryEvent(
             nativeMountSettleStable: typeof source.nativeMountSettleStable === 'boolean'
                 ? source.nativeMountSettleStable
                 : undefined,
+            ...readNativeDiagnostics(source),
+            ...readWebDiagnostics(source),
+            ...readLiveTailCarveDiagnostics(source),
             timestampMs,
         };
         if (type === 'scroll-write-rejected') {
@@ -304,10 +939,7 @@ function sanitizeTelemetryEvent(
             };
         }
         return {
-            event: {
-                type,
-                ...sharedFields,
-            },
+            event: { type, ...sharedFields },
             rawSessionId,
         };
     }
@@ -317,8 +949,27 @@ function sanitizeTelemetryEvent(
         type === 'scroll-observed' ||
         type === 'content-measured' ||
         type === 'layout-measured' ||
-        type === 'anchor-capture'
+        type === 'anchor-capture' ||
+        type === 'offset-correction' ||
+        type === 'row-measured' ||
+        type === 'row-mutated' ||
+        type === 'visible-window-observed'
     ) {
+        const correctionAction = readEnum(source.correctionAction, OFFSET_CORRECTION_ACTIONS) ?? undefined;
+        const correctionSource = readEnum(source.correctionSource, OFFSET_CORRECTION_SOURCES) ?? undefined;
+        const rowId = readString(source.rowId) ?? undefined;
+        const rowKind = readEnum(source.rowKind, ROW_KINDS) ?? undefined;
+        const rowHeightPx = readNumber(source.rowHeightPx);
+        const rowMeasurePhase = readEnum(source.rowMeasurePhase, ROW_MEASURE_PHASES) ?? undefined;
+        const rowViewportRelation = readEnum(source.rowViewportRelation, ROW_VIEWPORT_RELATIONS) ?? undefined;
+        // Per-type required fields (N1 evidence events): malformed events are dropped, never
+        // partially recorded, so trace analysis can rely on field presence.
+        if (type === 'offset-correction' && !correctionAction) return null;
+        if (type === 'row-measured' && (!rowId || !rowKind || rowHeightPx === undefined || !rowMeasurePhase)) {
+            return null;
+        }
+        if (type === 'row-mutated' && (!rowId || !rowKind)) return null;
+        if (type === 'visible-window-observed' && typeof source.hasVisibleRows !== 'boolean') return null;
         const reason = readEnum(source.reason, OBSERVATION_REASONS) ?? undefined;
         const sessionId = redactSessionId(rawSessionId);
         return {
@@ -339,6 +990,23 @@ function sanitizeTelemetryEvent(
                 anchorCorrectionAttempt: readNumber(source.anchorCorrectionAttempt),
                 anchorCorrectionTargetOffsetY: readNumber(source.anchorCorrectionTargetOffsetY),
                 anchorRestoreViewOffset: readNumber(source.anchorRestoreViewOffset),
+                ...(correctionAction ? { correctionAction } : {}),
+                ...(correctionSource ? { correctionSource } : {}),
+                ...(spreadNumber('correctionDiffPx', readNumber(source.correctionDiffPx))),
+                ...(spreadNumber('correctorAppliedDiffTotalPx', readNumber(source.correctorAppliedDiffTotalPx))),
+                ...(spreadNumber('correctorEventCount', readNumber(source.correctorEventCount))),
+                ...(rowId ? { rowId } : {}),
+                ...(rowKind ? { rowKind } : {}),
+                ...(spreadNumber('rowHeightPx', rowHeightPx)),
+                ...(spreadNumber('rowPreviousHeightPx', readNumber(source.rowPreviousHeightPx))),
+                ...(spreadNumber('rowDeltaPx', readNumber(source.rowDeltaPx))),
+                ...(rowMeasurePhase ? { rowMeasurePhase } : {}),
+                ...(rowViewportRelation ? { rowViewportRelation } : {}),
+                ...(spreadNumber('rowContentCount', readNumber(source.rowContentCount))),
+                ...(spreadNumber('rowPreviousContentCount', readNumber(source.rowPreviousContentCount))),
+                ...readNativeDiagnostics(source),
+                ...readWebDiagnostics(source),
+                ...readLiveTailCarveDiagnostics(source),
                 ...(reason ? { reason } : {}),
                 timestampMs,
             },
@@ -396,7 +1064,12 @@ export class TranscriptViewportTelemetry {
     record(event: unknown): void {
         if (!this.enabled) return;
         const sanitized = sanitizeTelemetryEvent(event, this.now, (sessionId) => this.redactSessionId(sessionId));
-        if (!sanitized) return;
+        if (!sanitized) {
+            if (isInvalidScrollWriterTelemetryEvent(event)) {
+                this.droppedCount += 1;
+            }
+            return;
+        }
         this.events.push(sanitized.event);
         this.rawSessionIds.push(sanitized.rawSessionId);
         this.trimToCapacity();
@@ -514,7 +1187,7 @@ export function installTranscriptViewportTelemetryGlobal(
         __HAPPIER_TRANSCRIPT_VIEWPORT_EVENTS__?: () => TranscriptViewportTelemetrySnapshot;
     };
     const isDev = options.isDev ?? readDevFlag();
-    if (!isDev || !telemetry.isEnabled()) {
+    if (!isDev) {
         delete target.__HAPPIER_TRANSCRIPT_VIEWPORT_EVENTS__;
         return;
     }
@@ -569,12 +1242,4 @@ export function resolveTranscriptViewportTelemetryPlatform(platformOs: string): 
         return platformOs;
     }
     return 'native-other';
-}
-
-export function resolveTranscriptViewportTelemetryListImplementation(
-    params: Readonly<{ listImplementation: string; platform: TranscriptViewportTelemetryPlatform }>,
-): TranscriptViewportTelemetryListImplementation {
-    if (params.listImplementation === 'flash_v2') return 'flash_v2';
-    if (params.platform === 'web') return 'web-fallback';
-    return 'flatlist';
 }

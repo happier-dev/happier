@@ -337,10 +337,10 @@ describe('ChatList (forked transcript)', () => {
         expect(useMessageMock).toHaveBeenCalledWith('parent-1', 'p1');
         expect(useMessageMock).toHaveBeenCalledWith('child-1', 'c1');
 
-        const firstMessageView = capturedMessageViewProps[0];
-        expect(firstMessageView).toBeTruthy();
-        expect(firstMessageView.sessionId).toBe('parent-1');
-        expect(firstMessageView.interaction).toEqual(
+        const parentMessageView = capturedMessageViewProps.find((props) => props?.message?.id === 'p1');
+        expect(parentMessageView).toBeTruthy();
+        expect(parentMessageView.sessionId).toBe('parent-1');
+        expect(parentMessageView.interaction).toEqual(
             expect.objectContaining({
                 canSendMessages: false,
                 canApprovePermissions: false,

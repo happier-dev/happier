@@ -1,7 +1,9 @@
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { ComposerKeyboardScaffold } from '@/components/sessions/keyboardAvoidance';
+import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useKeyboardDismissOnTap } from './useKeyboardDismissOnTap';
 
@@ -14,14 +16,24 @@ interface AgentContentViewProps {
 export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ input, content, placeholder }) => {
     const safeArea = useChromeSafeAreaInsets();
     const headerHeight = useHeaderHeight();
+    const bottomChromeHeight = useSessionCockpitBottomChromeHeight();
     const keyboardDismissOnTapHandlers = useKeyboardDismissOnTap();
+    const { theme } = useUnistyles();
 
+    // Reserve the floating bar's height *inside the session screen* (not the global
+    // chrome host) so the composer/transcript sit above the overlay bar AND this
+    // reserved area slides away with the session on dismiss — the window canvas
+    // behind the bar is never exposed as a lingering bottom band. `bottomChromeHeight`
+    // is 0 when the bar is hidden (e.g. keyboard open), collapsing the reservation
+    // so the scaffold geometry is identical to having no bar.
     return (
+        <View style={{ flex: 1, minHeight: 0, paddingBottom: bottomChromeHeight, backgroundColor: theme.colors.surface.base }}>
         <ComposerKeyboardScaffold
             testID="agent-content-keyboard-host"
             mode="session"
             contentTestID="agent-content-scroll-region"
             composerTestID="agent-content-input-footer"
+            layoutBottomInset={bottomChromeHeight}
             safeAreaBottom={safeArea.bottom}
             headerHeight={headerHeight}
             contentProps={keyboardDismissOnTapHandlers}
@@ -67,5 +79,6 @@ export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ i
                 </ScrollView>
             ) : null}
         </ComposerKeyboardScaffold>
+        </View>
     );
 });

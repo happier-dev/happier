@@ -3,10 +3,10 @@ import { describe, expect, it } from 'vitest';
 import {
     captureNativeTranscriptViewportAnchor,
     planNativeTranscriptViewportAnchorMeasuredOffsetRestore,
+    planNativeTranscriptViewportAnchorRestore,
     resolveNativeTranscriptViewportAnchorRestoreObservation,
     type NativeTranscriptViewportFlashListRef,
-} from '@/components/sessions/transcript/transcriptNativeViewportAnchor';
-import * as nativeViewportAnchor from '@/components/sessions/transcript/transcriptNativeViewportAnchor';
+} from '@/components/sessions/transcript/viewport/driver/transcriptNativeViewportAnchor';
 
 type Item = Readonly<{
     kind: 'message';
@@ -82,6 +82,47 @@ describe('transcriptNativeViewportAnchor', () => {
         expect(result.status === 'captured' ? result.anchor.itemOffsetPx : null).toBe(65);
     });
 
+    it('returns no_measurable_items when the native offset read throws during capture', () => {
+        const result = captureNativeTranscriptViewportAnchor({
+            ref: {
+                scrollToIndex: () => undefined,
+                scrollToOffset: () => undefined,
+                computeVisibleIndices: () => ({ startIndex: 1, endIndex: 1 }),
+                getLayout: (index: number) => (
+                    index === 1 ? { x: 0, y: 180, width: 320, height: 90 } : undefined
+                ),
+                getAbsoluteLastScrollOffset: () => {
+                    throw new Error('native recycler is recycling');
+                },
+            },
+            data: items,
+            focusOffsetPx: 64,
+            capturedAtMs: 654,
+        });
+
+        expect(result).toEqual({ status: 'no_measurable_items' });
+    });
+
+    it.each([Number.NaN, Infinity])(
+        'returns no_measurable_items when the native capture offset is %s',
+        (scrollOffset) => {
+            const result = captureNativeTranscriptViewportAnchor({
+                ref: createRef({
+                    scrollOffset,
+                    visibleRange: { startIndex: 1, endIndex: 1 },
+                    layouts: {
+                        1: { x: 0, y: 180, width: 320, height: 90 },
+                    },
+                }),
+                data: items,
+                focusOffsetPx: 64,
+                capturedAtMs: 655,
+            });
+
+            expect(result).toEqual({ status: 'no_measurable_items' });
+        },
+    );
+
     it('returns methods_unavailable when required FlashList measurement methods are absent', () => {
         const result = captureNativeTranscriptViewportAnchor({
             ref: {
@@ -129,18 +170,7 @@ describe('transcriptNativeViewportAnchor', () => {
     });
 
     it('plans a materialized native anchor restore with inverse scrollToIndex viewOffset', () => {
-        const planNativeTranscriptViewportAnchorRestore =
-            (nativeViewportAnchor as Record<string, unknown>).planNativeTranscriptViewportAnchorRestore;
-
-        if (typeof planNativeTranscriptViewportAnchorRestore !== 'function') {
-            expect(planNativeTranscriptViewportAnchorRestore).toBeTypeOf('function');
-            return;
-        }
-
-        const result = (planNativeTranscriptViewportAnchorRestore as (params: {
-            index: number;
-            itemOffsetPx: number;
-        }) => unknown)({
+        const result = planNativeTranscriptViewportAnchorRestore({
             index: 4,
             itemOffsetPx: 36,
         });
@@ -227,6 +257,47 @@ describe('transcriptNativeViewportAnchor', () => {
 
         expect(result).toEqual({ status: 'waiting_for_layout' });
     });
+
+    it('waits for layout when the native restore observation offset read throws', () => {
+        const result = resolveNativeTranscriptViewportAnchorRestoreObservation({
+            ref: {
+                scrollToIndex: () => undefined,
+                scrollToOffset: () => undefined,
+                computeVisibleIndices: () => ({ startIndex: 1, endIndex: 2 }),
+                getLayout: (index: number) => (
+                    index === 2 ? { x: 0, y: 240, width: 320, height: 100 } : undefined
+                ),
+                getAbsoluteLastScrollOffset: () => {
+                    throw new Error('native recycler is recycling');
+                },
+            },
+            index: 2,
+            itemOffsetPx: 40,
+            tolerancePx: 2,
+        });
+
+        expect(result).toEqual({ status: 'waiting_for_layout' });
+    });
+
+    it.each([Number.NaN, Infinity])(
+        'waits for layout when the native restore observation offset is %s',
+        (scrollOffset) => {
+            const result = resolveNativeTranscriptViewportAnchorRestoreObservation({
+                ref: createRef({
+                    scrollOffset,
+                    visibleRange: { startIndex: 1, endIndex: 2 },
+                    layouts: {
+                        2: { x: 0, y: 240, width: 320, height: 100 },
+                    },
+                }),
+                index: 2,
+                itemOffsetPx: 40,
+                tolerancePx: 2,
+            });
+
+            expect(result).toEqual({ status: 'waiting_for_layout' });
+        },
+    );
 
     it('falls back to visible-index confirmation only when pixel measurement APIs are unavailable', () => {
         const result = resolveNativeTranscriptViewportAnchorRestoreObservation({

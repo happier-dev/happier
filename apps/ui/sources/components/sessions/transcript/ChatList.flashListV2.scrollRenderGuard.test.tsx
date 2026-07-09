@@ -32,10 +32,12 @@ const onProfilerRender: React.ProfilerOnRenderCallback = () => {
     chatListCommitCount += 1;
 };
 
-function renderGuardedChatListElement(): React.ReactElement {
+function renderGuardedChatListElement(
+    session: typeof flashListChatListHarnessState.sessionState = flashListChatListHarnessState.sessionState,
+): React.ReactElement {
     return (
         <React.Profiler id="sessions.transcript.chatList.scrollRenderGuard" onRender={onProfilerRender}>
-            <ChatListLazy />
+            <ChatListLazy session={session} />
         </React.Profiler>
     );
 }
@@ -43,9 +45,9 @@ function renderGuardedChatListElement(): React.ReactElement {
 // The ChatList module must load AFTER the vi.mocks below, so the guarded element resolves it
 // lazily through a small indirection component set up per test.
 let LoadedChatList: React.ComponentType<{ session: any }> | null = null;
-function ChatListLazy(): React.ReactElement {
+function ChatListLazy(props: { session: typeof flashListChatListHarnessState.sessionState }): React.ReactElement {
     if (!LoadedChatList) throw new Error('ChatList module not loaded — call loadChatList() first');
-    return <LoadedChatList session={flashListChatListHarnessState.sessionState} />;
+    return <LoadedChatList session={props.session} />;
 }
 
 async function loadChatList(): Promise<void> {
@@ -239,5 +241,37 @@ describe('ChatList (FlashList v2 scroll-path render guard, plan G4)', () => {
             `scroll path regression: ${commitsAfterScrolls - baselineCommits} React commit(s) during `
             + `${midListOffsets.length} steady scroll frames (expected 0 — per-frame setState on the scroll path)`,
         ).toBe(0);
+    });
+
+    it('keeps FlashList data identity stable when session activity changes without changing the live-tail anchor', async () => {
+        await loadChatList();
+        flashListChatListHarnessState.sessionMessagesState = {
+            messages: [
+                { kind: 'user-text', id: 'm1', localId: 'u1', createdAt: 1, seq: 1, text: 'hi' },
+                { kind: 'agent-text', id: 'm2', localId: null, createdAt: 2, seq: 2, text: 'there' },
+            ],
+            isLoaded: true,
+        };
+
+        const inactiveSession = {
+            ...flashListChatListHarnessState.sessionState,
+            active: false,
+            thinking: false,
+        };
+        const screen = await renderFlashListChatList(renderGuardedChatListElement(inactiveSession));
+        await screen.triggerInitialFill({ layoutHeight: 600, contentHeight: 3000, contentWidth: 0 });
+        await screen.settle({ cycles: 1, turns: 1 });
+
+        const initialData = screen.requireCapturedFlashListProps().data;
+        const baselineCommits = chatListCommitCount;
+
+        await screen.update(renderGuardedChatListElement({
+            ...inactiveSession,
+            active: true,
+        }));
+        await screen.settle({ cycles: 1, turns: 1 });
+
+        expect(chatListCommitCount).toBeGreaterThan(baselineCommits);
+        expect(screen.requireCapturedFlashListProps().data).toBe(initialData);
     });
 });

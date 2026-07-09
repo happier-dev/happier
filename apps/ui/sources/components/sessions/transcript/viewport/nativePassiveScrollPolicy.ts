@@ -4,10 +4,8 @@ export type NativePassiveBottomDriftNoiseFloorRequest = Readonly<{
 }>;
 
 export type NativeInvalidScrollObservationRequest = Readonly<{
-    contentHeight: number;
     distanceFromBottom: number;
     isWeb: boolean;
-    layoutHeight: number;
     offsetY: number;
 }>;
 
@@ -56,20 +54,7 @@ export function shouldIgnoreNativeInvalidScrollObservation(request: NativeInvali
     if (request.isWeb) return false;
     if (!Number.isFinite(request.offsetY)) return true;
     if (!Number.isFinite(request.distanceFromBottom)) return true;
-    if (request.offsetY >= 0) return false;
-
-    const layoutHeight = typeof request.layoutHeight === 'number' && Number.isFinite(request.layoutHeight)
-        ? Math.max(0, request.layoutHeight)
-        : 0;
-    const contentHeight = typeof request.contentHeight === 'number' && Number.isFinite(request.contentHeight)
-        ? Math.max(0, request.contentHeight)
-        : 0;
-    const ordinaryBounceLimitPx = Math.max(1024, layoutHeight * 2);
-    if (Math.abs(request.offsetY) <= ordinaryBounceLimitPx) return false;
-    if (request.distanceFromBottom < 0) return true;
-
-    const maximumPlausibleDistanceFromBottom = contentHeight + Math.max(layoutHeight * 2, ordinaryBounceLimitPx);
-    return request.distanceFromBottom > maximumPlausibleDistanceFromBottom;
+    return request.offsetY < 0;
 }
 
 export function shouldRecordNativePassiveUnpinnedMovement(request: NativePassiveUnpinnedMovementRequest): boolean {

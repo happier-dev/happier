@@ -208,3 +208,59 @@ describe('createPrependTransaction', () => {
         expect(transaction.state()).toBe('closed');
     });
 });
+
+describe('createPrependTransaction corrector coverage (N2d.1)', () => {
+    it('starts with empty coverage', () => {
+        const transaction = createTransaction();
+        expect(transaction.correctorCoverage()).toEqual({ appliedDiffTotalPx: 0, eventCount: 0 });
+    });
+
+    it('accumulates corrections across the whole open window, including before commit', () => {
+        const transaction = createTransaction();
+        transaction.onCorrectorCorrectionApplied(2640);
+        transaction.onCommit();
+        transaction.onCorrectorCorrectionApplied(-47);
+        transaction.onCorrectorCorrectionApplied(52);
+        expect(transaction.correctorCoverage()).toEqual({ appliedDiffTotalPx: 2645, eventCount: 3 });
+    });
+
+    it('ignores corrections after the transaction closed', () => {
+        const transaction = createTransaction();
+        transaction.onCommit();
+        transaction.onObservationWindow(preserved);
+        expect(transaction.isClosed()).toBe(true);
+        transaction.onCorrectorCorrectionApplied(120);
+        expect(transaction.correctorCoverage()).toEqual({ appliedDiffTotalPx: 0, eventCount: 0 });
+    });
+
+    it('drops non-finite and zero diffs', () => {
+        const transaction = createTransaction();
+        transaction.onCorrectorCorrectionApplied(Number.NaN);
+        transaction.onCorrectorCorrectionApplied(Number.POSITIVE_INFINITY);
+        transaction.onCorrectorCorrectionApplied(0);
+        expect(transaction.correctorCoverage()).toEqual({ appliedDiffTotalPx: 0, eventCount: 0 });
+    });
+});
+
+describe('createPrependTransaction conclusive anchor delta (R1 gap)', () => {
+    it('records the conclusive observation deltaPx on mvcp-preserved', () => {
+        const transaction = createTransaction();
+        transaction.onCommit();
+        transaction.onObservationWindow({ kind: 'mvcp-preserved', observedItemOffsetPx: 82, deltaPx: 2 });
+        expect(transaction.conclusiveAnchorDeltaPx()).toBe(2);
+    });
+
+    it('records the conclusive observation deltaPx on fallback-restored', () => {
+        const transaction = createTransaction();
+        transaction.onCommit();
+        transaction.onObservationWindow(needsFallback);
+        expect(transaction.conclusiveAnchorDeltaPx()).toBe(-80);
+    });
+
+    it('stays null for abandoned outcomes', () => {
+        const transaction = createTransaction();
+        transaction.onCommit();
+        transaction.onTrustedUserScroll();
+        expect(transaction.conclusiveAnchorDeltaPx()).toBeNull();
+    });
+});

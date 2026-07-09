@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { canAutoFollowTranscriptBottom } from './transcriptAutoFollowGate';
+import {
+    canAutoFollowTranscriptBottom,
+    resolveTranscriptAutoFollowPinWaitMs,
+} from './transcriptAutoFollowGate';
 
 const baseParams = {
     autoFollowWhenPinned: true,
@@ -68,6 +71,20 @@ describe('transcript auto-follow gate', () => {
         })).toBe(true);
     });
 
+    it('blocks automatic following while a target window is active but keeps explicit bottom commands allowed', () => {
+        expect(canAutoFollowTranscriptBottom({
+            ...baseParams,
+            targetWindowActive: true,
+        })).toBe(false);
+
+        expect(canAutoFollowTranscriptBottom({
+            ...baseParams,
+            isExplicitUserCommand: true,
+            reason: 'jump-to-bottom',
+            targetWindowActive: true,
+        })).toBe(true);
+    });
+
     it('respects disabled pin settings, active jump-to-seq, and legacy wantsPinned', () => {
         expect(canAutoFollowTranscriptBottom({
             ...baseParams,
@@ -88,5 +105,53 @@ describe('transcript auto-follow gate', () => {
             ...baseParams,
             wantsPinned: false,
         })).toBe(false);
+    });
+
+    it('blocks automatic pin scheduling when auto-follow is not allowed', () => {
+        expect(resolveTranscriptAutoFollowPinWaitMs({
+            autoPinDelayMs: 1000,
+            canAutoFollow: false,
+            hasRearmedBottomFollow: false,
+            lastUserScrollIntentAtMs: Number.NEGATIVE_INFINITY,
+            nowMs: 2000,
+        })).toBeNull();
+    });
+
+    it('schedules immediately after bottom-follow was rearmed', () => {
+        expect(resolveTranscriptAutoFollowPinWaitMs({
+            autoPinDelayMs: 1000,
+            canAutoFollow: true,
+            hasRearmedBottomFollow: true,
+            lastUserScrollIntentAtMs: 1750,
+            nowMs: 2000,
+        })).toBe(0);
+    });
+
+    it('schedules immediately when the user-intent delay has elapsed or there was no recent intent', () => {
+        expect(resolveTranscriptAutoFollowPinWaitMs({
+            autoPinDelayMs: 1000,
+            canAutoFollow: true,
+            hasRearmedBottomFollow: false,
+            lastUserScrollIntentAtMs: 1000,
+            nowMs: 2000,
+        })).toBe(0);
+
+        expect(resolveTranscriptAutoFollowPinWaitMs({
+            autoPinDelayMs: 1000,
+            canAutoFollow: true,
+            hasRearmedBottomFollow: false,
+            lastUserScrollIntentAtMs: Number.NEGATIVE_INFINITY,
+            nowMs: 2000,
+        })).toBe(0);
+    });
+
+    it('returns the remaining delay while inside the recent user-intent window', () => {
+        expect(resolveTranscriptAutoFollowPinWaitMs({
+            autoPinDelayMs: 1000,
+            canAutoFollow: true,
+            hasRearmedBottomFollow: false,
+            lastUserScrollIntentAtMs: 1600,
+            nowMs: 2000,
+        })).toBe(600);
     });
 });

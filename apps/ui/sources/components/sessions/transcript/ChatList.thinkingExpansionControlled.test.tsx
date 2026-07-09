@@ -3,11 +3,11 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
 import {
-  legacyChatListHarnessState,
-  renderLegacyChatList,
-  resetLegacyChatListHarness,
-} from './ChatList.legacyListTestHarness';
-import { installLegacyChatListHarnessCommonModuleMocks } from './chatListLegacyHarnessTestHelpers';
+  flashListChatListHarnessState,
+  renderFlashListChatListSession,
+  resetFlashListChatListHarness,
+} from '@/dev/testkit/harness/chatListHarness';
+import { installFlashListChatListCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -15,14 +15,14 @@ const buildChatListItemsMock = vi.fn((..._args: any[]): any[] => []);
 
 let renderedMessageViewProps: any[] = [];
 
-installLegacyChatListHarnessCommonModuleMocks();
+installFlashListChatListCommonModuleMocks();
 
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
   useReducedMotionPreference: () => false,
 }));
 
 vi.mock('@/components/sessions/chatListItems', async () => (
-  (await import('./ChatList.legacyListTestHarness')).createLegacyChatListItemsModuleMock(buildChatListItemsMock)
+  (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListItemsModuleMock(buildChatListItemsMock)
 ));
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptMotionProvider', () => ({
@@ -94,20 +94,20 @@ describe('ChatList (thinking expansion controlled)', () => {
   });
 
   beforeEach(() => {
-    resetLegacyChatListHarness();
+    resetFlashListChatListHarness();
     buildChatListItemsMock.mockReset();
     renderedMessageViewProps = [];
   });
 
   it('controls inline thinking expansion via list-owned state (no per-row state)', async () => {
-    legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
-    legacyChatListHarnessState.settingValues.transcriptListImplementation = 'flatlist_legacy';
-    legacyChatListHarnessState.settingValues.sessionThinkingDisplayMode = 'inline';
-    legacyChatListHarnessState.settingValues.sessionThinkingInlinePresentation = 'summary';
+    flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'linear';
+    flashListChatListHarnessState.settingValues.transcriptListImplementation = 'flash_v2';
+    flashListChatListHarnessState.settingValues.sessionThinkingDisplayMode = 'inline';
+    flashListChatListHarnessState.settingValues.sessionThinkingInlinePresentation = 'summary';
 
     const thinkingMessage = { kind: 'agent-text', id: 't1', localId: null, createdAt: 1, text: 'think', isThinking: true };
     const normalMessage = { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'answer', isThinking: false };
-    legacyChatListHarnessState.sessionMessagesState = {
+    flashListChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [thinkingMessage, normalMessage],
     };
@@ -116,7 +116,7 @@ describe('ChatList (thinking expansion controlled)', () => {
       { kind: 'message', id: normalMessage.id, messageId: normalMessage.id, createdAt: normalMessage.createdAt, seq: null },
     ]);
 
-    const screen = await renderLegacyChatList();
+    const screen = await renderFlashListChatListSession();
 
     const firstThinkingProps = renderedMessageViewProps.find((p) => p?.message?.id === 't1');
     const firstNormalProps = renderedMessageViewProps.find((p) => p?.message?.id === 'a1');

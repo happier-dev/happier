@@ -223,9 +223,13 @@ vi.mock('@/components/sessions/transcript/scroll/JumpToBottomButton', () => ({
     JumpToBottomButton: (props: any) => React.createElement('JumpToBottomButton', props),
 }));
 
-vi.mock('@/components/sessions/transcript/scroll/transcriptScrollPinController', () => ({
-    reduceTranscriptScrollPinState: (state: any) => state,
-}));
+vi.mock('@/components/sessions/transcript/scroll/transcriptScrollPinController', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/sessions/transcript/scroll/transcriptScrollPinController')>();
+    return {
+        ...actual,
+        reduceTranscriptScrollPinState: (state: any) => state,
+    };
+});
 
 vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
     useReducedMotionPreference: () => false,
@@ -245,10 +249,6 @@ vi.mock('@/sync/domains/settings/settings', async (importOriginal) => {
 
 vi.mock('./chatListNativeId', () => ({
     buildChatListNativeId: () => 'transcript-chat-list-native',
-}));
-
-vi.mock('@/components/ui/lists/useWebFlashListCrashFallback', () => ({
-    useWebFlashListCrashFallback: () => false,
 }));
 
 vi.mock('@/components/sessions/transcript/segments/buildTranscriptHotColdSegments', async () => await import('./segments/buildTranscriptHotColdSegments'));

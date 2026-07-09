@@ -186,7 +186,7 @@ vi.mock('@/sync/ops', () => ({
 vi.mock('@/sync/sync', () => ({
   sync: {
     submitMessage: vi.fn(),
-    ensureSessionVisibleForMessageRoute: (sessionId: string) => ensureSessionVisibleSpy(sessionId),
+    ensureSessionVisibleForMessageRoute: (...args: any[]) => ensureSessionVisibleSpy(...args),
     patchSessionMetadataWithRetry: (...args: any[]) => patchSessionMetadataWithRetrySpy(...args),
   },
 }));
@@ -408,12 +408,16 @@ describe('MessageView (fork button)', () => {
       forkPoint: { type: 'seq', upToSeqInclusive: 5 },
       serverId: 'server-a',
     }));
-    expect(routerPushSpy).toHaveBeenCalledWith('/session/child-1');
-    expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('child-1');
+    expect(routerPushSpy).toHaveBeenCalledWith('/session/child-1?serverId=server-a');
+    expect(ensureSessionVisibleSpy).toHaveBeenCalledWith('child-1', {
+      forceRefresh: true,
+      serverId: 'server-a',
+    });
     expect(updateSessionDraftSpy).toHaveBeenCalledWith('child-1', 'hi');
     expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledWith(
       'child-1',
       expect.any(Function),
+      { serverId: 'server-a' },
     );
   });
 
@@ -442,6 +446,7 @@ describe('MessageView (fork button)', () => {
     expect(patchSessionMetadataWithRetrySpy).toHaveBeenCalledWith(
       'child-1',
       expect.any(Function),
+      { serverId: 'server-a' },
     );
   });
 
@@ -504,18 +509,22 @@ describe('MessageView (fork button)', () => {
     });
   });
 
-  it('threads the explicit session server id into the default action executor when preferred resolution is unavailable', async () => {
+  it('threads the explicit session server id into the fork request when preferred resolution is unavailable', async () => {
     resolvePreferredServerIdForSessionIdSpy.mockReturnValue(undefined);
     resolveSessionTargetServerIdSpy.mockReturnValue(null);
+    forkSessionSpy.mockResolvedValueOnce({ ok: true, childSessionId: 'child-explicit' });
     const { MessageView } = await import('./MessageView');
 
     const message: any = { kind: 'agent-text', id: 'm-explicit', createdAt: 1, text: 'hi', isThinking: false, seq: 5 };
 
-    await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+    const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
 
-    expect(createDefaultActionExecutorSpy).toHaveBeenCalled();
-    const executorOptions = createDefaultActionExecutorSpy.mock.calls[0]?.[0];
-    expect(executorOptions?.resolveServerIdForSessionId?.('s1')).toBe('server-explicit');
+    await screen.pressByTestIdAsync('transcript-message-fork:m-explicit');
+
+    expect(forkSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
+      parentSessionId: 's1',
+      serverId: 'server-explicit',
+    }));
     expect(resolvePreferredServerIdForSessionIdSpy).toHaveBeenCalledWith('s1');
     expect(resolveSessionTargetServerIdSpy).not.toHaveBeenCalled();
   });

@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  getCapturedFlatListProps,
-  legacyChatListHarnessState,
-  renderLegacyChatList,
-  resetLegacyChatListHarness,
-} from './ChatList.legacyListTestHarness';
-import { installLegacyChatListHarnessCommonModuleMocks } from './chatListLegacyHarnessTestHelpers';
+  getCapturedFlashListProps,
+  flashListChatListHarnessState,
+  renderFlashListChatListSession,
+  resetFlashListChatListHarness,
+} from '@/dev/testkit/harness/chatListHarness';
+import { installFlashListChatListCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,7 +14,7 @@ let capturedMessageViewProps: any[] = [];
 
 const buildChatListItemsMock = vi.fn((..._args: any[]): any[] => []);
 
-installLegacyChatListHarnessCommonModuleMocks();
+installFlashListChatListCommonModuleMocks();
 
 vi.mock('@/components/sessions/chatListItems', () => ({
   buildChatListItems: buildChatListItemsMock,
@@ -78,22 +78,22 @@ vi.mock('@/sync/sync', () => ({
 
 describe('ChatList (turn grouping mode)', () => {
   beforeEach(() => {
-    resetLegacyChatListHarness();
+    resetFlashListChatListHarness();
     capturedMessageViewProps = [];
     buildChatListItemsMock.mockClear();
   });
 
   it('renders turn items when transcriptGroupingMode is turns', async () => {
-    legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
-    legacyChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
-    legacyChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
-    legacyChatListHarnessState.settingValues.transcriptListImplementation = 'flatlist_legacy';
+    flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+    flashListChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
+    flashListChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    flashListChatListHarnessState.settingValues.transcriptListImplementation = 'flash_v2';
 
     const messages = [
       { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'a1' },
       { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
     ];
-    legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
+    flashListChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
     buildChatListItemsMock.mockImplementation((opts: any) => {
       if (opts?.includeCommittedMessages === false) return [];
       return messages.map((message) => ({
@@ -105,9 +105,9 @@ describe('ChatList (turn grouping mode)', () => {
       }));
     });
 
-    const screen = await renderLegacyChatList();
+    const screen = await renderFlashListChatListSession();
 
-    const capturedFlatListProps = getCapturedFlatListProps();
+    const capturedFlatListProps = getCapturedFlashListProps();
     expect(capturedFlatListProps).toBeTruthy();
     expect(Array.isArray(capturedFlatListProps.data)).toBe(true);
     expect(capturedFlatListProps.data[0]?.kind).toBe('turn');
@@ -117,10 +117,10 @@ describe('ChatList (turn grouping mode)', () => {
   });
 
   it('keeps oversized turns grouped as one transcript row', async () => {
-    legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
-    legacyChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
-    legacyChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
-    legacyChatListHarnessState.settingValues.transcriptListImplementation = 'flatlist_legacy';
+    flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+    flashListChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
+    flashListChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    flashListChatListHarnessState.settingValues.transcriptListImplementation = 'flash_v2';
 
     const messages = [
       { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, seq: 1, text: 'u1' },
@@ -129,7 +129,7 @@ describe('ChatList (turn grouping mode)', () => {
       { kind: 'agent-text', id: 'a3', localId: null, createdAt: 4, seq: 4, text: 'a3' },
       { kind: 'agent-text', id: 'a4', localId: null, createdAt: 5, seq: 5, text: 'a4' },
     ];
-    legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
+    flashListChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
     buildChatListItemsMock.mockImplementation((opts: any) => {
       if (opts?.includeCommittedMessages === false) return [];
       return messages.map((message) => ({
@@ -141,9 +141,9 @@ describe('ChatList (turn grouping mode)', () => {
       }));
     });
 
-    const screen = await renderLegacyChatList();
+    const screen = await renderFlashListChatListSession();
 
-    const capturedFlatListProps = getCapturedFlatListProps();
+    const capturedFlatListProps = getCapturedFlashListProps();
     expect(capturedFlatListProps).toBeTruthy();
     expect(capturedFlatListProps.data).toHaveLength(1);
     expect(capturedFlatListProps.data[0]?.kind).toBe('turn');
@@ -153,18 +153,18 @@ describe('ChatList (turn grouping mode)', () => {
   });
 
   it('does not group tool calls into tool-call groups when tool chrome mode is cards', async () => {
-    legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
-    legacyChatListHarnessState.settingValues.transcriptGroupToolCalls = true;
-    legacyChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
-    legacyChatListHarnessState.settingValues.toolViewTimelineChromeMode = 'cards';
-    legacyChatListHarnessState.settingValues.transcriptListImplementation = 'flatlist_legacy';
+    flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+    flashListChatListHarnessState.settingValues.transcriptGroupToolCalls = true;
+    flashListChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    flashListChatListHarnessState.settingValues.toolViewTimelineChromeMode = 'cards';
+    flashListChatListHarnessState.settingValues.transcriptListImplementation = 'flash_v2';
 
     const messages = [
       { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
       { kind: 'tool-call', id: 't1', localId: null, createdAt: 2, tool: { name: 'Bash' } },
       { kind: 'agent-text', id: 'a1', localId: null, createdAt: 3, text: 'a1' },
     ];
-    legacyChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
+    flashListChatListHarnessState.sessionMessagesState = { isLoaded: true, messages };
     buildChatListItemsMock.mockImplementation((opts: any) => {
       if (opts?.includeCommittedMessages === false) return [];
       return messages.map((message) => ({
@@ -176,9 +176,9 @@ describe('ChatList (turn grouping mode)', () => {
       }));
     });
 
-    const screen = await renderLegacyChatList();
+    const screen = await renderFlashListChatListSession();
 
-    const capturedFlatListProps = getCapturedFlatListProps();
+    const capturedFlatListProps = getCapturedFlashListProps();
     const firstTurn = capturedFlatListProps?.data[0]?.turn;
     expect(firstTurn).toBeTruthy();
     const kinds = (firstTurn.content ?? []).map((content: any) => content.kind);

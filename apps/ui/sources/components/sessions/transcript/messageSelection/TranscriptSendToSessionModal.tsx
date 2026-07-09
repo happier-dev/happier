@@ -1,9 +1,14 @@
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import * as React from 'react';
-import { Ionicons } from '@expo/vector-icons';
-import { View, useWindowDimensions } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import {
+    Ionicons } from '@expo/vector-icons';
+import { View,
+    useWindowDimensions } from 'react-native';
+import { StyleSheet,
+    useUnistyles } from 'react-native-unistyles';
 
-import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID,
+} from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { SelectionList, type SelectionListOption, type SelectionListStep } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
@@ -133,7 +138,7 @@ function appendSessionListTargets(
 }
 
 function resolveSessionAgentId(session: TranscriptSendToSessionTargetSource) {
-    return resolveAgentIdFromFlavor(session.metadata?.flavor) ?? DEFAULT_AGENT_ID;
+    return resolveAgentIdFromSessionMetadata(session.metadata) ?? DEFAULT_AGENT_ID;
 }
 
 const TranscriptSendToSessionRowMeta = React.memo(function TranscriptSendToSessionRowMeta(

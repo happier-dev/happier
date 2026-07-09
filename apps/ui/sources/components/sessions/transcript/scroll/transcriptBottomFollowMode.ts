@@ -2,6 +2,7 @@ export type TranscriptBottomFollowMode = 'following' | 'escaping' | 'released';
 
 export type TranscriptBottomFollowDragSession = Readonly<{
     latestDistanceFromBottom: number | null;
+    returnedToBottom?: boolean;
     sawAwayMovement: boolean;
     trusted: boolean;
 }>;
@@ -11,6 +12,28 @@ export type TranscriptBottomFollowModeState = Readonly<{
     mode: TranscriptBottomFollowMode;
 }>;
 
+export type TranscriptScrollPinState = {
+    isPinned: boolean;
+    newActivityCount: number;
+    lastActivityKey: string | null;
+};
+
+export type TranscriptScrollPinEvent =
+    | {
+        type: 'scroll';
+        enabled: boolean;
+        offsetY: number;
+        pinnedOffsetThresholdPx: number;
+    }
+    | {
+        type: 'newActivity';
+        enabled: boolean;
+        activityKey: string | null;
+    }
+    | {
+        type: 'resetNewActivity';
+    };
+
 export type TranscriptBottomFollowModeEvent =
     | { type: 'session-entry'; shouldFollowBottom: boolean }
     | { type: 'list-drag-start' }
@@ -19,6 +42,7 @@ export type TranscriptBottomFollowModeEvent =
     | { type: 'passive-bottom-observation'; distanceFromBottom: number; pinThresholdPx: number }
     | { type: 'drag-end'; distanceFromBottom: number | null; pinThresholdPx: number; sawAwayMovement: boolean }
     | { type: 'momentum-settle'; distanceFromBottom: number | null; pinThresholdPx: number }
+    | { type: 'release-live-tail-intent' }
     | { type: 'jump-to-bottom' }
     | { type: 'follow-bottom-intent' }
     | { type: 'content-growth' };
@@ -37,6 +61,7 @@ export function resolveTranscriptBottomFollowMode(
             return {
                 dragSession: {
                     latestDistanceFromBottom: null,
+                    returnedToBottom: false,
                     sawAwayMovement: false,
                     trusted: true,
                 },
@@ -49,6 +74,7 @@ export function resolveTranscriptBottomFollowMode(
                 distanceFromBottom > normalizeDistance(event.pinThresholdPx);
             const dragSession = {
                 latestDistanceFromBottom: distanceFromBottom,
+                returnedToBottom: state.dragSession?.returnedToBottom === true,
                 sawAwayMovement: (state.dragSession?.sawAwayMovement ?? false) || sawAwayMovement,
                 trusted: true,
             };
@@ -81,6 +107,7 @@ export function resolveTranscriptBottomFollowMode(
                 return {
                     dragSession: {
                         latestDistanceFromBottom: distanceFromBottom,
+                        returnedToBottom: nearBottom || state.dragSession.returnedToBottom === true,
                         sawAwayMovement: state.dragSession.sawAwayMovement,
                         trusted: true,
                     },
@@ -91,6 +118,7 @@ export function resolveTranscriptBottomFollowMode(
                 return {
                     dragSession: {
                         latestDistanceFromBottom: distanceFromBottom,
+                        returnedToBottom: nearBottom || state.dragSession?.returnedToBottom === true,
                         sawAwayMovement: state.dragSession?.sawAwayMovement ?? false,
                         trusted: true,
                     },
@@ -104,6 +132,9 @@ export function resolveTranscriptBottomFollowMode(
             return {
                 dragSession: {
                     latestDistanceFromBottom: normalizeDistance(event.distanceFromBottom),
+                    returnedToBottom:
+                        normalizeDistance(event.distanceFromBottom) <= normalizeDistance(event.pinThresholdPx) ||
+                        state.dragSession?.returnedToBottom === true,
                     sawAwayMovement: state.dragSession?.sawAwayMovement ?? false,
                     trusted: state.dragSession?.trusted ?? false,
                 },
@@ -118,27 +149,31 @@ export function resolveTranscriptBottomFollowMode(
                 typeof distanceFromBottom === 'number' &&
                 normalizeDistance(distanceFromBottom) <= normalizeDistance(event.pinThresholdPx);
             const sawAwayMovement = event.sawAwayMovement || (state.dragSession?.sawAwayMovement ?? false);
-            if ((state.mode === 'escaping' || state.mode === 'released') && nearBottom) {
+            const nextTrustedDragSession = {
+                latestDistanceFromBottom:
+                    typeof distanceFromBottom === 'number' ? normalizeDistance(distanceFromBottom) : null,
+                returnedToBottom: state.dragSession?.returnedToBottom === true,
+                sawAwayMovement,
+                trusted: state.dragSession?.trusted ?? true,
+            };
+            const confirmedReturnToBottom =
+                nearBottom &&
+                (!sawAwayMovement || state.dragSession?.returnedToBottom === true);
+            if ((state.mode === 'escaping' || state.mode === 'released') && confirmedReturnToBottom) {
                 // The fling's momentum may still be pending at finger-up (hard flicks have
                 // short finger travel): keep the trusted session open as the release
                 // attribution window until momentum-settle closes it (plan B9).
                 return {
                     dragSession: {
-                        latestDistanceFromBottom:
-                            typeof distanceFromBottom === 'number' ? normalizeDistance(distanceFromBottom) : null,
-                        sawAwayMovement,
-                        trusted: state.dragSession?.trusted ?? true,
+                        ...nextTrustedDragSession,
+                        returnedToBottom: true,
                     },
                     mode: 'following',
                 };
             }
-            if (state.mode === 'escaping') {
+            if (state.mode === 'escaping' || (state.mode === 'released' && sawAwayMovement)) {
                 return {
-                    dragSession: {
-                        latestDistanceFromBottom: typeof distanceFromBottom === 'number' ? normalizeDistance(distanceFromBottom) : null,
-                        sawAwayMovement,
-                        trusted: state.dragSession?.trusted ?? true,
-                    },
+                    dragSession: nextTrustedDragSession,
                     mode: 'released',
                 };
             }
@@ -167,6 +202,11 @@ export function resolveTranscriptBottomFollowMode(
                 mode: nearBottom ? 'following' : 'released',
             };
         }
+        case 'release-live-tail-intent':
+            return {
+                dragSession: null,
+                mode: 'released',
+            };
         case 'jump-to-bottom':
         case 'follow-bottom-intent':
             return {
@@ -176,6 +216,59 @@ export function resolveTranscriptBottomFollowMode(
         case 'content-growth':
             return state;
     }
+}
+
+export function resolveTranscriptScrollPinStateUpdate(
+    state: TranscriptScrollPinState,
+    event: TranscriptScrollPinEvent,
+): TranscriptScrollPinState | null {
+    const next = reduceTranscriptScrollPinState(state, event);
+    return next === state ? null : next;
+}
+
+export function reduceTranscriptScrollPinState(
+    state: TranscriptScrollPinState,
+    event: TranscriptScrollPinEvent,
+): TranscriptScrollPinState {
+    if (event.type === 'resetNewActivity') {
+        if (state.newActivityCount === 0) return state;
+        return { ...state, newActivityCount: 0 };
+    }
+
+    if (event.type === 'scroll') {
+        if (!event.enabled) {
+            if (state.isPinned && state.newActivityCount === 0) return state;
+            return { ...state, isPinned: true, newActivityCount: 0 };
+        }
+
+        const threshold = normalizeDistance(event.pinnedOffsetThresholdPx);
+        const offsetY = Number.isFinite(event.offsetY) ? event.offsetY : 0;
+        const nextPinned = offsetY <= threshold;
+
+        if (nextPinned) {
+            if (state.isPinned && state.newActivityCount === 0) return state;
+            return { ...state, isPinned: true, newActivityCount: 0 };
+        }
+
+        if (!state.isPinned) return state;
+        return { ...state, isPinned: false };
+    }
+
+    if (!event.enabled) return state;
+
+    const key = typeof event.activityKey === 'string' && event.activityKey.length > 0 ? event.activityKey : null;
+    if (!key) return state;
+    if (state.lastActivityKey === key) return state;
+
+    if (state.isPinned) {
+        return { ...state, lastActivityKey: key };
+    }
+
+    return {
+        ...state,
+        lastActivityKey: key,
+        newActivityCount: state.newActivityCount + 1,
+    };
 }
 
 function normalizeDistance(value: number): number {

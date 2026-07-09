@@ -4,7 +4,11 @@ import { act } from 'react-test-renderer';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
-import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
+import type { UserTextMessage } from '@/sync/domains/messages/messageTypes';
+import {
+    EMPTY_PLUGIN_UI_PROJECTION,
+    type PluginUiProjectionModel,
+} from '@/sync/domains/plugins/ui/projection';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -160,17 +164,114 @@ describe('StructuredMessageBlock', () => {
             {...({ pluginUiProjection } as any)}
         />);
 
-        expect(screen.tree.toJSON()).toBeNull();
+        expect(screen.findByTestId('structured-message-unavailable')).toBeTruthy();
     });
 
-    it('returns null for unknown kinds', async () => {
-        let tree: renderer.ReactTestRenderer | null = null;
-        tree = (await renderScreen(<StructuredMessageBlock
-                    message={{ meta: { happier: { kind: 'unknown.v1', payload: {} } } } as any}
-                    sessionId="s1"
-                    onJumpToAnchor={() => {}}
-                />)).tree;
-        expect(tree!.toJSON()).toBeNull();
+    it('renders a stable host fallback for projected plugin structured messages with unknown host renderers', async () => {
+        const pluginUiProjection: PluginUiProjectionModel = {
+            ...EMPTY_PLUGIN_UI_PROJECTION,
+            structuredMessagesByKind: {
+                'acme.preview/preview-card.v1': {
+                    id: 'structuredMessage:acme.preview:preview-card',
+                    pluginId: 'acme.preview',
+                    contributionKind: 'structuredMessage',
+                    descriptorId: 'preview-card',
+                    kind: 'acme.preview/preview-card.v1',
+                    renderer: { kind: 'host', rendererId: 'customRenderer' },
+                    display: { titleKey: 'title' },
+                    payloadSchema: { type: 'object' },
+                },
+            },
+        };
+        const message = {
+            kind: 'user-text',
+            id: 'm_plugin',
+            localId: null,
+            createdAt: 1,
+            text: 'Open preview',
+            meta: {
+                happier: {
+                    kind: 'acme.preview/preview-card.v1',
+                    payload: { previewId: 'preview_1' },
+                },
+            },
+        } satisfies UserTextMessage;
+
+        const screen = await renderScreen(<StructuredMessageBlock
+            message={message}
+            sessionId="s1"
+            onJumpToAnchor={() => {}}
+            pluginUiProjection={pluginUiProjection}
+        />);
+
+        expect(screen.findByTestId('structured-message-unavailable')).toBeTruthy();
+    });
+
+    it('renders a stable host fallback for projected plugin structured messages with malformed host renderers', async () => {
+        const pluginUiProjection: PluginUiProjectionModel = {
+            ...EMPTY_PLUGIN_UI_PROJECTION,
+            structuredMessagesByKind: {
+                'acme.preview/preview-card.v1': {
+                    id: 'structuredMessage:acme.preview:preview-card',
+                    pluginId: 'acme.preview',
+                    contributionKind: 'structuredMessage',
+                    descriptorId: 'preview-card',
+                    kind: 'acme.preview/preview-card.v1',
+                    renderer: { kind: 'host', rendererId: '' },
+                    display: { titleKey: 'title' },
+                    payloadSchema: { type: 'object' },
+                },
+            },
+        };
+        const message = {
+            kind: 'user-text',
+            id: 'm_plugin',
+            localId: null,
+            createdAt: 1,
+            text: 'Open preview',
+            meta: {
+                happier: {
+                    kind: 'acme.preview/preview-card.v1',
+                    payload: { previewId: 'preview_1' },
+                },
+            },
+        } satisfies UserTextMessage;
+
+        const screen = await renderScreen(<StructuredMessageBlock
+            message={message}
+            sessionId="s1"
+            onJumpToAnchor={() => {}}
+            pluginUiProjection={pluginUiProjection}
+        />);
+
+        expect(screen.findByTestId('structured-message-unavailable')).toBeTruthy();
+    });
+
+    it('renders a stable host fallback for unknown structured message kinds', async () => {
+        const screen = await renderScreen(<StructuredMessageBlock
+            message={{ meta: { happier: { kind: 'unknown.v1', payload: {} } } } as any}
+            sessionId="s1"
+            onJumpToAnchor={() => {}}
+        />);
+
+        expect(screen.findByTestId('structured-message-unavailable')).toBeTruthy();
+    });
+
+    it('renders a stable host fallback for malformed structured message payloads', async () => {
+        const screen = await renderScreen(<StructuredMessageBlock
+            message={{
+                meta: {
+                    happier: {
+                        kind: 'review_comments.v1',
+                        payload: { comments: 'not-an-array' },
+                    },
+                },
+            } as any}
+            sessionId="s1"
+            onJumpToAnchor={() => {}}
+        />);
+
+        expect(screen.findByTestId('structured-message-unavailable')).toBeTruthy();
     });
 
     it('renders review comments card for valid payload', async () => {

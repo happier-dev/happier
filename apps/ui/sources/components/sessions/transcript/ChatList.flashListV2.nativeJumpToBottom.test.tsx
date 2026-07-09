@@ -33,6 +33,16 @@ const fileFlashListRefHandle = {
     getAbsoluteLastScrollOffset: vi.fn(() => nativeScrollOffsetState.value),
 };
 
+async function triggerNativeScroll(
+    screen: Awaited<ReturnType<typeof renderFlashListChatList>>,
+    offsetY: number,
+    event: Record<string, unknown> = {},
+    options: Parameters<Awaited<ReturnType<typeof renderFlashListChatList>>['triggerScroll']>[2] = { cycles: 1, turns: 1 },
+): Promise<void> {
+    nativeScrollOffsetState.value = offsetY;
+    await screen.triggerScroll(offsetY, event, options);
+}
+
 beforeEach(() => {
     resetTranscriptCommonModuleMockState();
     nativeScrollOffsetState.value = 0;
@@ -148,7 +158,65 @@ vi.mock('@/sync/sync', async () =>
 );
 
 describe('ChatList (FlashList v2, native jump-to-bottom)', () => {
-    it('hides the jump-to-bottom affordance when native scrolling returns within the bottom threshold', async () => {
+    it('recovers a sustained invalid native offset once when viewport telemetry is disabled', async () => {
+        vi.useFakeTimers({ now: new Date(0) });
+
+        flashListChatListHarnessState.sessionMessagesState = {
+            messages: [
+                { kind: 'user-text', id: 'm1', localId: 'u1', createdAt: 1, seq: 1, text: 'hi' },
+                { kind: 'assistant-text', id: 'm2', localId: null, createdAt: 2, seq: 2, text: 'there' },
+            ],
+            isLoaded: true,
+        };
+
+        const { ChatList } = await import('./ChatList');
+        const telemetryMod = await import('./scroll/transcriptViewportTelemetry');
+        telemetryMod.transcriptViewportTelemetry.configure({ enabled: false, sink: null });
+
+        const screen = await renderFlashListChatList(
+            <ChatList session={flashListChatListHarnessState.sessionState} />,
+        );
+
+        await screen.triggerInitialFill({
+            layoutHeight: 500,
+            contentHeight: 2000,
+            contentWidth: 0,
+            flushOptions: { cycles: 1, turns: 1 },
+        });
+        fileFlashListRefHandle.scrollToIndex.mockClear();
+        fileFlashListRefHandle.scrollToOffset.mockClear();
+
+        await triggerNativeScroll(screen, -995_030, {
+            contentSize: { height: 2000, width: 0 },
+            layoutMeasurement: { height: 500, width: 0 },
+        }, { cycles: 1, turns: 1 });
+        expect(fileFlashListRefHandle.scrollToIndex).not.toHaveBeenCalled();
+        expect(fileFlashListRefHandle.scrollToOffset).not.toHaveBeenCalled();
+
+        await act(async () => {
+            vi.setSystemTime(new Date(120));
+        });
+        await triggerNativeScroll(screen, -995_030, {
+            contentSize: { height: 2000, width: 0 },
+            layoutMeasurement: { height: 500, width: 0 },
+        }, { cycles: 1, turns: 1 });
+
+        expect(fileFlashListRefHandle.scrollToIndex).toHaveBeenCalledTimes(1);
+        expect(fileFlashListRefHandle.scrollToIndex).toHaveBeenCalledWith(
+            expect.objectContaining({ index: 0 }),
+        );
+
+        await act(async () => {
+            vi.setSystemTime(new Date(240));
+        });
+        await triggerNativeScroll(screen, -995_030, {
+            contentSize: { height: 2000, width: 0 },
+            layoutMeasurement: { height: 500, width: 0 },
+        }, { cycles: 1, turns: 1 });
+        expect(fileFlashListRefHandle.scrollToIndex).toHaveBeenCalledTimes(1);
+    });
+
+    it('hides the jump-to-bottom affordance when native scrolling settles back at the bottom', async () => {
         vi.useFakeTimers({ now: new Date(0) });
 
         const { ChatList } = await import('./ChatList');
@@ -163,7 +231,7 @@ describe('ChatList (FlashList v2, native jump-to-bottom)', () => {
             flushOptions: { cycles: 1, turns: 1 },
         });
 
-        await screen.triggerScroll(1500, { isTrusted: true }, { cycles: 1, turns: 1 });
+        await triggerNativeScroll(screen, 0, { isTrusted: true }, { cycles: 1, turns: 1 });
         expect(screen.findAllByTestId('transcript-jump-to-bottom')).toHaveLength(0);
 
         const flashListProps = screen.requireCapturedFlashListProps();
@@ -171,14 +239,22 @@ describe('ChatList (FlashList v2, native jump-to-bottom)', () => {
             flashListProps.onScrollBeginDrag?.({});
         });
 
-        await screen.triggerScroll(1000, {}, { cycles: 1, turns: 1 });
+        await triggerNativeScroll(screen, 500, {}, { cycles: 1, turns: 1 });
         expect(screen.findAllByTestId('transcript-jump-to-bottom').length).toBeGreaterThan(0);
 
         await act(async () => {
             vi.setSystemTime(new Date(600));
         });
 
-        await screen.triggerScroll(1460, {}, { cycles: 1, turns: 1 });
+        await triggerNativeScroll(screen, 0, {
+            contentSize: { height: 2000, width: 0 },
+            isTrusted: true,
+            layoutMeasurement: { height: 500, width: 0 },
+        }, { cycles: 1, turns: 1 });
+        await act(async () => {
+            flashListProps.onScrollEndDrag?.({});
+        });
+        await screen.settle({ cycles: 1, turns: 1 });
         expect(screen.findAllByTestId('transcript-jump-to-bottom')).toHaveLength(0);
     });
 
@@ -197,23 +273,23 @@ describe('ChatList (FlashList v2, native jump-to-bottom)', () => {
             flushOptions: { cycles: 1, turns: 1 },
         });
 
-        await screen.triggerScroll(1500, { isTrusted: true }, { cycles: 1, turns: 1 });
+        await triggerNativeScroll(screen, 0, { isTrusted: true }, { cycles: 1, turns: 1 });
 
         const flashListProps = screen.requireCapturedFlashListProps();
         await act(async () => {
             flashListProps.onScrollBeginDrag?.({});
         });
 
-        await screen.triggerScroll(1200, {}, { cycles: 1, turns: 1 });
+        await triggerNativeScroll(screen, 300, {}, { cycles: 1, turns: 1 });
         expect(screen.findAllByTestId('transcript-jump-to-bottom')).toHaveLength(0);
 
-        await screen.triggerScroll(1000, {}, { cycles: 1, turns: 1 });
+        await triggerNativeScroll(screen, 500, {}, { cycles: 1, turns: 1 });
         expect(screen.findAllByTestId('transcript-jump-to-bottom').length).toBeGreaterThan(0);
     });
 
     it('shows jump-to-bottom when a trusted drag flings far from the bottom on untrusted momentum frames (plan B9 momentum release)', async () => {
         vi.useFakeTimers({ now: new Date(0) });
-        nativeScrollOffsetState.value = 7500;
+        nativeScrollOffsetState.value = 0;
 
         const { ChatList } = await import('./ChatList');
         const screen = await renderFlashListChatList(
@@ -234,22 +310,17 @@ describe('ChatList (FlashList v2, native jump-to-bottom)', () => {
         await act(async () => {
             flashListProps.onScrollBeginDrag?.({});
         });
-        nativeScrollOffsetState.value = 7460;
-        await screen.triggerScroll(7460, { isTrusted: true }, { cycles: 1, turns: 1 });
+        await triggerNativeScroll(screen, 40, { isTrusted: true }, { cycles: 1, turns: 1 });
         await act(async () => {
             flashListProps.onScrollEndDrag?.({});
             flashListProps.onMomentumScrollBegin?.({});
         });
 
         // Untrusted momentum frames carry the viewport far from the bottom.
-        nativeScrollOffsetState.value = 7000;
-        await screen.triggerScroll(7000, {}, { cycles: 1, turns: 1 });
-        nativeScrollOffsetState.value = 5000;
-        await screen.triggerScroll(5000, {}, { cycles: 1, turns: 1 });
-        nativeScrollOffsetState.value = 500;
-        await screen.triggerScroll(500, {}, { cycles: 1, turns: 1 });
-        nativeScrollOffsetState.value = 0;
-        await screen.triggerScroll(0, {}, { cycles: 1, turns: 1 });
+        await triggerNativeScroll(screen, 500, {}, { cycles: 1, turns: 1 });
+        await triggerNativeScroll(screen, 2500, {}, { cycles: 1, turns: 1 });
+        await triggerNativeScroll(screen, 7000, {}, { cycles: 1, turns: 1 });
+        await triggerNativeScroll(screen, 7500, {}, { cycles: 1, turns: 1 });
         await act(async () => {
             flashListProps.onMomentumScrollEnd?.({});
         });
@@ -259,7 +330,7 @@ describe('ChatList (FlashList v2, native jump-to-bottom)', () => {
 
     it('shows jump-to-bottom at momentum settle even when every momentum frame was swallowed (plan B9 settle release)', async () => {
         vi.useFakeTimers({ now: new Date(0) });
-        nativeScrollOffsetState.value = 7500;
+        nativeScrollOffsetState.value = 0;
 
         const { ChatList } = await import('./ChatList');
         const screen = await renderFlashListChatList(
@@ -281,14 +352,13 @@ describe('ChatList (FlashList v2, native jump-to-bottom)', () => {
         await act(async () => {
             flashListProps.onScrollBeginDrag?.({});
         });
-        nativeScrollOffsetState.value = 7460;
-        await screen.triggerScroll(7460, { isTrusted: true }, { cycles: 1, turns: 1 });
+        await triggerNativeScroll(screen, 40, { isTrusted: true }, { cycles: 1, turns: 1 });
         await act(async () => {
             flashListProps.onScrollEndDrag?.({});
             flashListProps.onMomentumScrollBegin?.({});
         });
 
-        nativeScrollOffsetState.value = 0;
+        nativeScrollOffsetState.value = 7500;
         await act(async () => {
             flashListProps.onMomentumScrollEnd?.({});
         });
@@ -320,8 +390,8 @@ describe('ChatList (FlashList v2, native jump-to-bottom)', () => {
         await act(async () => {
             flashListProps.onMomentumScrollBegin?.({});
         });
-        await screen.triggerScroll(1000, {}, { cycles: 1, turns: 1 });
-        await screen.triggerScroll(800, {}, { cycles: 1, turns: 1 });
+        await triggerNativeScroll(screen, 500, {}, { cycles: 1, turns: 1 });
+        await triggerNativeScroll(screen, 700, {}, { cycles: 1, turns: 1 });
         await act(async () => {
             flashListProps.onMomentumScrollEnd?.({});
         });
@@ -345,7 +415,7 @@ describe('ChatList (FlashList v2, native jump-to-bottom)', () => {
             flushOptions: { cycles: 1, turns: 1 },
         });
 
-        await screen.triggerScroll(1700, {
+        await triggerNativeScroll(screen, 0, {
             contentSize: { height: 2200, width: 0 },
             isTrusted: true,
             layoutMeasurement: { height: 500, width: 0 },
@@ -357,16 +427,20 @@ describe('ChatList (FlashList v2, native jump-to-bottom)', () => {
             flashListProps.onScrollBeginDrag?.({});
         });
 
-        await screen.triggerScroll(1000, {
+        await triggerNativeScroll(screen, 500, {
             contentSize: { height: 2000, width: 0 },
             layoutMeasurement: { height: 500, width: 0 },
         }, { cycles: 1, turns: 1 });
         expect(screen.findAllByTestId('transcript-jump-to-bottom').length).toBeGreaterThan(0);
 
-        await screen.triggerScroll(1500, {
+        await triggerNativeScroll(screen, 0, {
             contentSize: { height: 2000, width: 0 },
             layoutMeasurement: { height: 500, width: 0 },
         }, { cycles: 1, turns: 1 });
+        await act(async () => {
+            flashListProps.onScrollEndDrag?.({});
+        });
+        await screen.settle({ cycles: 1, turns: 1 });
         expect(screen.findAllByTestId('transcript-jump-to-bottom')).toHaveLength(0);
     });
 });

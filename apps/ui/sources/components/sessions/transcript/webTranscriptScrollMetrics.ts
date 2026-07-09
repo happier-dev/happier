@@ -91,15 +91,3 @@ export function isWebTranscriptAtVisualBottom(
             : 0;
     return getWebTranscriptDistanceFromBottom(metrics) <= tolerance;
 }
-
-export function restoreWebTranscriptPrependByGrowth(metrics: WebTranscriptScrollMetrics): boolean {
-    const nextScrollHeight = metrics.element.scrollHeight;
-    const growth = Math.max(0, nextScrollHeight - metrics.scrollHeight);
-    if (growth <= 0) return false;
-    try {
-        metrics.element.scrollTop = metrics.scrollTop + growth;
-        return true;
-    } catch {
-        return false;
-    }
-}

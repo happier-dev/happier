@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 
 import { parseSessionMediaMessageMeta } from '@/sync/domains/session/media/sessionMediaMessageMeta';
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import { compareTranscriptMessagesOldestFirst } from '@/sync/domains/messages/transcriptOrdering';
 import { storage, useSetting } from '@/sync/domains/state/storage';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
@@ -33,29 +34,10 @@ function buildDiscardedMessageLocalIdsSignature(metadata: Metadata | null | unde
     return readDiscardedMessageLocalIds(metadata).join('\0');
 }
 
-function normalizeMessageSeq(value: unknown): number | null {
-    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-    return Math.trunc(value);
-}
-
-function compareMessagesOldestFirst(left: Message, right: Message): number {
-    const leftSeq = normalizeMessageSeq(left.seq);
-    const rightSeq = normalizeMessageSeq(right.seq);
-    if (leftSeq !== null && rightSeq !== null && leftSeq !== rightSeq) {
-        return leftSeq - rightSeq;
-    }
-
-    if (left.createdAt !== right.createdAt) {
-        return left.createdAt - right.createdAt;
-    }
-
-    return String(left.id).localeCompare(String(right.id));
-}
-
 function listMessagesByFallbackOrder(messagesById: Record<string, Message | undefined>): Message[] {
     return Object.values(messagesById)
         .filter((message): message is Message => message != null)
-        .sort(compareMessagesOldestFirst);
+        .sort(compareTranscriptMessagesOldestFirst);
 }
 
 function resolveMessageEligibility(message: Message, discarded: boolean, hiddenThinking: boolean): Readonly<{

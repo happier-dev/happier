@@ -1,78 +1,37 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import * as FlashListCompat from '@/components/ui/lists/flashListCompat/FlashListCompat';
 
 import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
+import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/sessionMessagePins';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 
-import { Text } from '@/components/ui/text/Text';
-import { ToolView } from '@/components/tools/shell/views/ToolView';
-import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
-import { MessageViewWithSessionCommon } from '@/components/sessions/transcript/MessageView';
-import { t } from '@/text';
 import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
 import { TranscriptCollapsible } from '@/components/sessions/transcript/motion/TranscriptCollapsible';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { resolveMessageRouteIdForDisplay } from '@/sync/domains/messages/messageRouteIds';
-import { isSubAgentTranscriptToolName } from '@happier-dev/protocol/tools/v2';
 import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
-import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
-import { Typography } from '@/constants/Typography';
 import { resolveTranscriptToolCallsCollapsedPreviewCount } from '@/sync/domains/settings/transcriptToolCallsCollapsedPreviewCount';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import * as FlashListCompat from '@/components/ui/lists/flashListCompat/FlashListCompat';
 import {
+    useTranscriptSessionCommon,
     type TranscriptForkCommon,
     type TranscriptMessageDisplayCommon,
     type TranscriptToolChromeCommon,
     type TranscriptToolRouteCommon,
-    useTranscriptSessionCommon,
 } from '@/components/sessions/transcript/transcriptSessionCommon';
 import { TRANSCRIPT_WEB_TOOL_CALL_PREPEND_ANCHOR_TEST_ID_PREFIX } from '@/components/sessions/transcript/webTranscriptPrependAnchor';
-
-function shouldRenderGroupedToolCallWithMessageView(
-    message: ToolCallMessage,
-    chromeMode: 'activity_feed' | 'cards',
-    groupExpanded: boolean,
-): boolean {
-    if (chromeMode === 'cards') {
-        return true;
-    }
-    const hasStructuredMeta = Boolean(message.meta?.happier);
-    if (hasStructuredMeta) return true;
-
-    // Avoid switching the renderer for subagent tool calls based on streaming children.
-    // Otherwise the row remounts (ToolTimelineRow → MessageView) and the user's expanded/collapsed state resets.
-    if (isSubAgentTranscriptToolName(message.tool?.name ?? '')) {
-        return groupExpanded;
-    }
-
-    return false;
-}
-
-export function resolveGroupedPreviewSidechainIds(params: Readonly<{
-    chromeMode: 'activity_feed' | 'cards';
-    previewMessages: readonly ToolCallMessage[];
-}>): readonly string[] {
-    if (params.chromeMode !== 'activity_feed') {
-        return [];
-    }
-
-    const sidechainIds = new Set<string>();
-    for (const message of params.previewMessages) {
-        const toolName = typeof message.tool?.name === 'string' ? message.tool.name : '';
-        if (!isSubAgentTranscriptToolName(toolName)) continue;
-        const sidechainId = resolveToolTranscriptSidechainId({
-            tool: message.tool,
-            normalizedToolName: toolName,
-        });
-        if (!sidechainId) continue;
-        sidechainIds.add(sidechainId);
-    }
-    return [...sidechainIds];
-}
+import {
+    renderGroupedToolCallRowContent,
+    resolveGroupedPreviewSidechainIds,
+} from '@/components/sessions/transcript/toolCalls/units/groupedToolCallRowContent';
+import { ToolCallPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
+import { resolveMessagePinAvailability } from '@/components/sessions/transcript/messageActions/resolveMessagePinAvailability';
+import {
+    ToolCallsGroupExpandMoreChrome,
+    ToolCallsGroupHeaderChrome,
+} from '@/components/sessions/transcript/toolCalls/units/toolCallsGroupChrome';
 
 const fallbackMappingHelper = {
     getMappingKey: (itemKey: string | number | bigint) => itemKey,
@@ -94,68 +53,6 @@ function resolveToolCallsGroupMappingHelper() {
 
 const useToolCallsGroupMappingHelper = resolveToolCallsGroupMappingHelper();
 
-function renderGroupedToolCallRowContent(params: Readonly<{
-    message: ToolCallMessage;
-    chromeMode: 'activity_feed' | 'cards';
-    groupExpanded: boolean;
-    metadata: Metadata | null;
-    sessionId: string;
-    nestedMessageId: string | undefined;
-    forcePermissionPromptsInTranscript?: boolean;
-    approvalRequests?: readonly OpenApprovalArtifactForSession[];
-    interaction: TranscriptInteraction;
-    forkCommon: TranscriptForkCommon;
-    messageDisplayCommon: TranscriptMessageDisplayCommon;
-    toolChromeCommon: TranscriptToolChromeCommon;
-    toolRouteCommon: TranscriptToolRouteCommon;
-}>): React.ReactNode {
-    if (shouldRenderGroupedToolCallWithMessageView(params.message, params.chromeMode, params.groupExpanded)) {
-        return (
-            <MessageViewWithSessionCommon
-                message={params.message}
-                metadata={params.metadata}
-                sessionId={params.sessionId}
-                layoutContext="tool_calls_group"
-                forcePermissionPromptsInTranscript={params.forcePermissionPromptsInTranscript}
-                approvalRequests={params.approvalRequests}
-                interaction={params.interaction}
-                forkCommon={params.forkCommon}
-                messageDisplayCommon={params.messageDisplayCommon}
-                toolChromeCommon={params.toolChromeCommon}
-                toolRouteCommon={params.toolRouteCommon}
-            />
-        );
-    }
-
-    if (params.chromeMode === 'activity_feed') {
-        return (
-            <ToolTimelineRow
-                tool={params.message.tool}
-                metadata={params.metadata}
-                messages={params.message.children}
-                sessionId={params.sessionId}
-                messageId={params.nestedMessageId}
-                approvalRequests={params.approvalRequests}
-                forcePermissionPromptsInTranscript={params.forcePermissionPromptsInTranscript}
-                interaction={params.interaction}
-            />
-        );
-    }
-
-    return (
-        <ToolView
-            tool={params.message.tool}
-            metadata={params.metadata}
-            messages={params.message.children}
-            sessionId={params.sessionId}
-            messageId={params.nestedMessageId}
-            approvalRequests={params.approvalRequests}
-            forcePermissionPromptsInTranscript={params.forcePermissionPromptsInTranscript}
-            interaction={params.interaction}
-        />
-    );
-}
-
 type ToolCallsGroupViewProps = Readonly<{
     id: string;
     status: 'running' | 'completed' | 'error';
@@ -166,6 +63,8 @@ type ToolCallsGroupViewProps = Readonly<{
     approvalRequests?: readonly OpenApprovalArtifactForSession[];
     expanded: boolean;
     setExpanded: (expanded: boolean) => void;
+    messagePins?: readonly PersistedSessionMessagePinV1[];
+    onToggleToolPin?: (pin: PersistedSessionMessagePinV1) => void;
     interaction: TranscriptInteraction;
 }>;
 
@@ -178,13 +77,42 @@ type ToolCallsGroupViewWithSessionCommonProps = ToolCallsGroupViewProps & Readon
 
 export const ToolCallsGroupView = React.memo((props: ToolCallsGroupViewProps) => {
     const transcriptSessionCommon = useTranscriptSessionCommon(props.sessionId);
+    const forkCommon = React.useMemo(() => transcriptSessionCommon.fork, [
+        transcriptSessionCommon.fork.executionRunsEnabled,
+        transcriptSessionCommon.fork.sessionForkSupportSource,
+        transcriptSessionCommon.fork.sessionReplayEnabled,
+        transcriptSessionCommon.fork.sessionReplayMaxSeedChars,
+        transcriptSessionCommon.fork.sessionReplayStrategy,
+        transcriptSessionCommon.fork.sessionReplaySummaryRunnerV1,
+    ]);
+    const messageDisplayCommon = React.useMemo(() => transcriptSessionCommon.messageDisplay, [
+        transcriptSessionCommon.messageDisplay.sessionThinkingDisplayMode,
+        transcriptSessionCommon.messageDisplay.sessionThinkingInlineChrome,
+        transcriptSessionCommon.messageDisplay.sessionThinkingInlinePresentation,
+        transcriptSessionCommon.messageDisplay.transcriptMessageTimestampDisplayMode,
+        transcriptSessionCommon.messageDisplay.transcriptStreamingMarkdownRenderingEnabled,
+        transcriptSessionCommon.messageDisplay.transcriptStreamingPartialOutputEnabled,
+        transcriptSessionCommon.messageDisplay.transcriptStreamingSettleDelayMs,
+        transcriptSessionCommon.messageDisplay.transcriptStreamingSmoothingEnabled,
+        transcriptSessionCommon.messageDisplay.workspacePath,
+    ]);
+    const toolChromeCommon = React.useMemo(() => transcriptSessionCommon.toolChrome, [
+        transcriptSessionCommon.toolChrome.toolViewTimelineChromeMode,
+        transcriptSessionCommon.toolChrome.transcriptToolCallsCollapsedPreviewCount,
+        transcriptSessionCommon.toolChrome.transcriptToolCallsGroupShowBackground,
+    ]);
+    const toolRouteCommon = React.useMemo(() => transcriptSessionCommon.toolRoute, [
+        transcriptSessionCommon.toolRoute.messagesById,
+        transcriptSessionCommon.toolRoute.reducerState,
+    ]);
+
     return (
         <ToolCallsGroupViewWithSessionCommon
             {...props}
-            forkCommon={transcriptSessionCommon.fork}
-            messageDisplayCommon={transcriptSessionCommon.messageDisplay}
-            toolChromeCommon={transcriptSessionCommon.toolChrome}
-            toolRouteCommon={transcriptSessionCommon.toolRoute}
+            forkCommon={forkCommon}
+            messageDisplayCommon={messageDisplayCommon}
+            toolChromeCommon={toolChromeCommon}
+            toolRouteCommon={toolRouteCommon}
         />
     );
 });
@@ -207,7 +135,7 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
     const feedBackgroundStyle = showFeedBackground
         ? {
             borderRadius: 14,
-            backgroundColor: theme.colors.feed.card.background,
+            backgroundColor: theme.colors.feed?.card?.background ?? theme.colors.surface.elevated,
             overflow: 'hidden' as const,
             paddingHorizontal: 10,
             paddingVertical: 6,
@@ -219,8 +147,12 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
         return props.toolMessages.slice(-previewCount);
     }, [expanded, previewCount, props.toolMessages]);
 
-    const hiddenCount = !expanded && previewCount > 0 ? Math.max(0, count - previewMessages.length) : 0;
-    const headerPressable = expanded;
+    const hiddenCount = expanded ? 0 : Math.max(0, count - previewMessages.length);
+    const showExpandButton = !expanded && hiddenCount > 0;
+    const showCollapsedPreview = previewMessages.length > 0;
+    const { setExpanded } = props;
+    const onCollapse = React.useCallback(() => setExpanded(false), [setExpanded]);
+    const onExpand = React.useCallback(() => setExpanded(true), [setExpanded]);
     const previewSidechainIds = React.useMemo(() => {
         return resolveGroupedPreviewSidechainIds({
             chromeMode: normalizedChromeMode,
@@ -229,7 +161,7 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
     }, [normalizedChromeMode, previewMessages]);
 
     useEnsureSidechainsLoaded({
-        enabled: !expanded && previewSidechainIds.length > 0,
+        enabled: !expanded && previewSidechainIds.length > 0 && props.interaction.disableToolNavigation !== true,
         sessionId: props.sessionId,
         sidechainIds: previewSidechainIds,
     });
@@ -242,6 +174,26 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
             reducerState,
         });
     }, [messagesById, props.interaction.disableToolNavigation, reducerState]);
+    const renderToolPinAction = React.useCallback((message: ToolCallMessage, nestedMessageId: string | undefined) => {
+        if (!props.onToggleToolPin) return null;
+        const toolPinAvailability = resolveMessagePinAvailability({
+            sessionId: props.sessionId,
+            seq: message.seq ?? null,
+            transcriptBlockIndex: message.transcriptBlockIndex ?? null,
+            routeMessageId: nestedMessageId ?? null,
+            role: 'tool',
+            pins: props.messagePins ?? [],
+            readOnlyContext: props.interaction.permissionDisabledReason === 'readOnly',
+        });
+        if (toolPinAvailability.status !== 'available') return null;
+        return (
+            <ToolCallPinAction
+                availability={toolPinAvailability}
+                onTogglePin={props.onToggleToolPin}
+                testID={`transcript-tool-call-pin:${message.id}`}
+            />
+        );
+    }, [props.interaction.permissionDisabledReason, props.messagePins, props.onToggleToolPin, props.sessionId]);
 
     return (
         <View
@@ -253,62 +205,27 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
                     : styles.containerCards,
             ]}
         >
-            <Pressable
-                testID="transcript-tool-calls-header"
-                onPress={headerPressable ? () => props.setExpanded(false) : undefined}
-                disabled={!headerPressable}
-                style={({ pressed }) => [
-                    styles.header,
-                    headerPressable && pressed && (normalizedChromeMode === 'activity_feed' ? styles.headerFeedPressed : styles.headerCardsPressed),
-                ]}
-            >
-                <View style={styles.headerGutter}>
-                    <Ionicons name="layers-outline" size={16} color={theme.colors.text.secondary} />
-                </View>
-                <Text style={styles.title}>
-                    {t('session.toolCalls')}
-                    <Text style={styles.subtitle}> · {count}</Text>
-                </Text>
-                <View style={styles.headerRight}>
-                    <View style={styles.statusIconRight}>
-                        {props.status === 'running' ? (
-                            <ActivitySpinner size="small" color={theme.colors.text.secondary} />
-                        ) : props.status === 'error' ? (
-                            <Ionicons name="alert-circle" size={16} color={theme.colors.state.danger.foreground} />
-                        ) : (
-                            <Ionicons name="checkmark-circle" size={16} color={theme.colors.state.success.foreground} />
-                        )}
-                    </View>
-                    {expanded ? (
-                        <Ionicons
-                            name="chevron-up-outline"
-                            size={16}
-                            color={theme.colors.text.secondary}
-                        />
-                    ) : null}
-                </View>
-            </Pressable>
+            <ToolCallsGroupHeaderChrome
+                chromeMode={normalizedChromeMode}
+                status={props.status}
+                count={count}
+                expanded={expanded}
+                onCollapse={onCollapse}
+            />
 
             <View style={[styles.contentRow, normalizedChromeMode === 'activity_feed' ? styles.contentRowFeed : styles.contentRowCards]}>
                 <View style={styles.contentGutter}>
                     <View style={styles.gutterLine} />
                 </View>
                 <View style={styles.contentBody}>
-                    {previewMessages.length > 0 ? (
+                    {showExpandButton || showCollapsedPreview ? (
                         <View style={[styles.preview, normalizedChromeMode === 'activity_feed' ? styles.previewFeed : styles.previewCards]}>
-                            {hiddenCount > 0 ? (
-                                <Pressable
-                                    testID="transcript-tool-calls-preview-more"
-                                    onPress={() => props.setExpanded(true)}
-                                    style={({ pressed }) => [styles.previewMore, pressed && styles.previewMorePressed]}
-                                >
-                                    <Text style={styles.previewMoreText}>
-                                        {t('session.toolCallsCollapsedPreviewMore', { count: hiddenCount })}
-                                    </Text>
-                                </Pressable>
+                            {showExpandButton ? (
+                                <ToolCallsGroupExpandMoreChrome hiddenCount={hiddenCount} onExpand={onExpand} />
                             ) : null}
-                            {previewMessages.map((m, index) => {
+                            {showCollapsedPreview ? previewMessages.map((m, index) => {
                                 const nestedMessageId = resolveToolRouteMessageId(m);
+                                const toolPinAction = renderToolPinAction(m, nestedMessageId);
                                 return (
                                 <View
                                     key={getMappingKey(`preview:${m.id}`, index)}
@@ -327,6 +244,9 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
                                             nestedMessageId,
                                             forcePermissionPromptsInTranscript: props.forcePermissionPromptsInTranscript,
                                             approvalRequests: props.approvalRequests,
+                                            messagePins: props.messagePins,
+                                            onToggleToolPin: props.onToggleToolPin,
+                                            toolPinAction,
                                             interaction: props.interaction,
                                             forkCommon: props.forkCommon,
                                             messageDisplayCommon: props.messageDisplayCommon,
@@ -336,7 +256,7 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
                                     </View>
                                 </View>
                                 );
-                            })}
+                            }) : null}
                         </View>
                     ) : null}
 
@@ -345,6 +265,7 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
                             <View style={[styles.body, normalizedChromeMode === 'activity_feed' ? styles.bodyFeed : styles.bodyCards]}>
                                 {props.toolMessages.map((m, index) => {
                                     const nestedMessageId = resolveToolRouteMessageId(m);
+                                    const toolPinAction = renderToolPinAction(m, nestedMessageId);
                                     return (
                                     <TranscriptEnterWrapper key={getMappingKey(m.id, index)} id={m.id} createdAt={m.createdAt}>
                                         <View
@@ -363,6 +284,9 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
                                                     nestedMessageId,
                                                     forcePermissionPromptsInTranscript: props.forcePermissionPromptsInTranscript,
                                                     approvalRequests: props.approvalRequests,
+                                                    messagePins: props.messagePins,
+                                                    onToggleToolPin: props.onToggleToolPin,
+                                                    toolPinAction,
                                                     interaction: props.interaction,
                                                     forkCommon: props.forkCommon,
                                                     messageDisplayCommon: props.messageDisplayCommon,
@@ -398,44 +322,6 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: 'transparent',
         overflow: 'visible',
     },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingTop: 4,
-        paddingBottom: 6,
-        gap: 8,
-    },
-    headerCardsPressed: {
-        opacity: 0.92,
-    },
-    headerFeedPressed: {
-        backgroundColor: theme.colors.surface.pressedOverlay,
-    },
-    headerGutter: {
-        width: 18,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    title: {
-        flexGrow: 1,
-        color: theme.colors.text.primary,
-        fontSize: 13,
-        ...Typography.default('semiBold'),
-    },
-    subtitle: {
-        color: theme.colors.message.event.foreground,
-        fontSize: 13,
-    },
-    headerRight: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
-    statusIconRight: {
-        width: 18,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
     contentRow: {
         flexDirection: 'row',
         alignItems: 'stretch',
@@ -462,7 +348,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingLeft: 6,
     },
     preview: {
-        paddingBottom: 3,
+        paddingBottom: 6,
     },
     previewCards: {
         paddingHorizontal: 0,
@@ -478,20 +364,6 @@ const styles = StyleSheet.create((theme) => ({
     previewRowFeed: {
         marginHorizontal: 0,
     },
-    previewMore: {
-        paddingHorizontal: 0,
-        paddingTop: 6,
-        paddingBottom: 6,
-        alignSelf: 'flex-start',
-    },
-    previewMorePressed: {
-        opacity: 0.9,
-    },
-    previewMoreText: {
-        color: theme.colors.text.secondary,
-        ...Typography.default('regular'),
-        fontSize: 13,
-    },
     body: {
         paddingBottom: 6,
     },
@@ -501,7 +373,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     toolRowCards: {
         marginHorizontal: 0,
-        marginBottom: 6,
+        marginBottom: 0,
     },
     toolRowFeed: {
         marginHorizontal: 0,

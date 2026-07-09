@@ -5,6 +5,10 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createReducer } from '@/sync/reducer/reducer';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import type { UserTextMessage } from '@/sync/domains/messages/messageTypes';
+import {
+    EMPTY_PLUGIN_UI_PROJECTION,
+    type PluginUiProjectionModel,
+} from '@/sync/domains/plugins/ui/projection';
 
 installMessageViewCommonModuleMocks({
     reactNative: async () => {
@@ -205,7 +209,73 @@ vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
 
 const routerPushSpy = vi.fn();
 
+function createPluginStructuredMessageProjection(params: Readonly<{
+    kind: string;
+    rendererId: string;
+}>): PluginUiProjectionModel {
+    return {
+        ...EMPTY_PLUGIN_UI_PROJECTION,
+        structuredMessagesByKind: {
+            [params.kind]: {
+                id: 'structuredMessage:acme.preview:preview-card',
+                pluginId: 'acme.preview',
+                contributionKind: 'structuredMessage',
+                descriptorId: 'preview-card',
+                kind: params.kind,
+                renderer: { kind: 'host', rendererId: params.rendererId },
+                display: { titleKey: 'preview.title' },
+                payloadSchema: {
+                    type: 'object',
+                    required: ['title'],
+                    properties: {
+                        title: { type: 'string' },
+                        summary: { type: 'string' },
+                    },
+                },
+            },
+        },
+    };
+}
+
 describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
+    it('passes plugin UI projection into product structured message rendering', async () => {
+        const { MessageView } = await import('./MessageView');
+        const kind = 'acme.preview/preview-card.v1';
+        const pluginUiProjection = createPluginStructuredMessageProjection({
+            kind,
+            rendererId: 'summaryCard',
+        });
+        const message = {
+            kind: 'user-text',
+            id: 'plugin-structured-message-1',
+            localId: 'local-plugin-structured-message-1',
+            createdAt: 0,
+            text: 'Plugin preview',
+            meta: {
+                happier: {
+                    kind,
+                    payload: {
+                        title: 'Preview ready',
+                        summary: 'Open the local preview when you need to inspect it.',
+                    },
+                },
+            },
+        } satisfies UserTextMessage;
+
+        const screen = await renderScreen(
+            <MessageView
+                message={message}
+                metadata={null}
+                sessionId="s1"
+                pluginUiProjection={pluginUiProjection}
+            />,
+        );
+
+        expect(screen.findByTestId('plugin-structured-message-summaryCard')).toBeTruthy();
+        expect(screen.findByTestId('plugin-structured-message-title')).toBeTruthy();
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('Preview ready');
+    });
+
     it('renders session_media.v1 inline images from the dedicated media metadata slot', async () => {
         const { MessageView } = await import('./MessageView');
 
@@ -274,6 +344,39 @@ describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
 
         expect(screen.findByTestId('message-session-media-inline-images')).toBeTruthy();
         expect(screen.findByTestId('message-session-media-inline-image-unavailable:failure-0')).toBeTruthy();
+    });
+
+    it('renders session_media.v1 video evidence references from the dedicated media metadata slot', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-media-video-1',
+            text: 'Browser recording',
+            meta: {
+                happierMedia: {
+                    kind: 'session_media.v1',
+                    payload: {
+                        media: [{
+                            id: 'recording-1',
+                            role: 'output',
+                            category: 'tool-artifact',
+                            mediaKind: 'video',
+                            mimeType: 'video/webm',
+                            name: 'browser-recording.webm',
+                            path: '.happier/uploads/artifacts/session-1/message-1/browser-recording.webm',
+                            sizeBytes: 2048,
+                            origin: { source: 'tool-output' },
+                        }],
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findByTestId('message-session-media-inline-images')).toBeTruthy();
+        expect(screen.findByTestId('message-session-media-inline-video:.happier/uploads/artifacts/session-1/message-1/browser-recording.webm')).toBeTruthy();
     });
 
     it('renders a structured review-comments card when meta.happier.kind is review_comments.v1', async () => {

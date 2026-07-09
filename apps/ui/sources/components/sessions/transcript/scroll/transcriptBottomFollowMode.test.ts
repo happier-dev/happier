@@ -26,6 +26,50 @@ describe('transcript bottom-follow mode', () => {
         });
     });
 
+    it('keeps the user-owned drag session escaping near bottom, then re-follows on near-bottom drag end', () => {
+        const nearBottomDrag = resolveTranscriptBottomFollowMode(state(), {
+            type: 'list-drag-start',
+        });
+
+        expect(nearBottomDrag).toMatchObject({
+            mode: 'escaping',
+            dragSession: {
+                latestDistanceFromBottom: null,
+                sawAwayMovement: false,
+                trusted: true,
+            },
+        });
+
+        const observedNearBottom = resolveTranscriptBottomFollowMode(nearBottomDrag, {
+            distanceFromBottom: 40,
+            movedAwayFromBottom: true,
+            pinThresholdPx: 72,
+            type: 'trusted-away-observation',
+        });
+
+        expect(observedNearBottom).toMatchObject({
+            dragSession: {
+                latestDistanceFromBottom: 40,
+                sawAwayMovement: false,
+            },
+            mode: 'escaping',
+        });
+
+        expect(resolveTranscriptBottomFollowMode(observedNearBottom, {
+            distanceFromBottom: 40,
+            pinThresholdPx: 72,
+            sawAwayMovement: false,
+            type: 'drag-end',
+        })).toMatchObject({
+            dragSession: {
+                latestDistanceFromBottom: 40,
+                returnedToBottom: true,
+                sawAwayMovement: false,
+            },
+            mode: 'following',
+        });
+    });
+
     it('releases after trusted away movement beyond the pinned threshold', () => {
         expect(resolveTranscriptBottomFollowMode(state({
             dragSession: {
@@ -101,6 +145,65 @@ describe('transcript bottom-follow mode', () => {
         });
     });
 
+    it('keeps exact-bottom drags following when no trusted away movement occurred', () => {
+        const escaping = resolveTranscriptBottomFollowMode(state(), {
+            type: 'list-drag-start',
+        });
+
+        const observedBottom = resolveTranscriptBottomFollowMode(escaping, {
+            distanceFromBottom: 0,
+            pinThresholdPx: 72,
+            type: 'passive-bottom-observation',
+        });
+
+        expect(resolveTranscriptBottomFollowMode(observedBottom, {
+            distanceFromBottom: 0,
+            pinThresholdPx: 72,
+            sawAwayMovement: false,
+            type: 'drag-end',
+        })).toMatchObject({
+            dragSession: {
+                latestDistanceFromBottom: 0,
+                sawAwayMovement: false,
+                trusted: true,
+            },
+            mode: 'following',
+        });
+    });
+
+    it('releases exact-bottom drag only after a trusted away observation crosses the threshold', () => {
+        const escaping = resolveTranscriptBottomFollowMode(state(), {
+            type: 'list-drag-start',
+        });
+
+        const stillEscaping = resolveTranscriptBottomFollowMode(escaping, {
+            distanceFromBottom: 48,
+            movedAwayFromBottom: true,
+            pinThresholdPx: 72,
+            type: 'trusted-away-observation',
+        });
+        expect(stillEscaping).toMatchObject({
+            dragSession: {
+                latestDistanceFromBottom: 48,
+                sawAwayMovement: false,
+            },
+            mode: 'escaping',
+        });
+
+        expect(resolveTranscriptBottomFollowMode(stillEscaping, {
+            distanceFromBottom: 120,
+            movedAwayFromBottom: true,
+            pinThresholdPx: 72,
+            type: 'trusted-away-observation',
+        })).toMatchObject({
+            dragSession: {
+                latestDistanceFromBottom: 120,
+                sawAwayMovement: true,
+            },
+            mode: 'released',
+        });
+    });
+
     it('rearms released mode only from explicit jump or trusted movement back near bottom', () => {
         expect(resolveTranscriptBottomFollowMode(state({ mode: 'released' }), {
             type: 'jump-to-bottom',
@@ -122,6 +225,15 @@ describe('transcript bottom-follow mode', () => {
             pinThresholdPx: 72,
             type: 'passive-bottom-observation',
         })).toMatchObject({
+            mode: 'released',
+        });
+    });
+
+    it('releases following mode from explicit live-tail release intent', () => {
+        expect(resolveTranscriptBottomFollowMode(state({ mode: 'following' }), {
+            type: 'release-live-tail-intent',
+        })).toEqual({
+            dragSession: null,
             mode: 'released',
         });
     });
@@ -169,7 +281,7 @@ describe('transcript bottom-follow mode', () => {
         });
     });
 
-    it('rearms on drag end when the user returned near bottom during the drag', () => {
+    it('does not rearm on drag end after confirmed away movement, even if native offset is still near bottom', () => {
         expect(resolveTranscriptBottomFollowMode(state({
             dragSession: {
                 latestDistanceFromBottom: 40,
@@ -183,8 +295,64 @@ describe('transcript bottom-follow mode', () => {
             sawAwayMovement: true,
             type: 'drag-end',
         })).toMatchObject({
-            // The trusted session stays open as the pending-momentum release window (plan B9).
             dragSession: { trusted: true },
+            mode: 'released',
+        });
+    });
+
+    it('does not rearm on drag end after confirmed away movement when the native offset is still exact bottom', () => {
+        expect(resolveTranscriptBottomFollowMode(state({
+            dragSession: {
+                latestDistanceFromBottom: 0,
+                sawAwayMovement: true,
+                trusted: true,
+            },
+            mode: 'released',
+        }), {
+            distanceFromBottom: 0,
+            pinThresholdPx: 72,
+            sawAwayMovement: true,
+            type: 'drag-end',
+        })).toMatchObject({
+            dragSession: { trusted: true },
+            mode: 'released',
+        });
+    });
+
+    it('rearms on drag end after the same drag actively returns near bottom', () => {
+        const released = state({
+            dragSession: {
+                latestDistanceFromBottom: 180,
+                sawAwayMovement: true,
+                trusted: true,
+            },
+            mode: 'released',
+        });
+        const returned = resolveTranscriptBottomFollowMode(released, {
+            distanceFromBottom: 40,
+            pinThresholdPx: 72,
+            type: 'passive-bottom-observation',
+        });
+
+        expect(returned).toMatchObject({
+            dragSession: {
+                latestDistanceFromBottom: 40,
+                returnedToBottom: true,
+                sawAwayMovement: true,
+            },
+            mode: 'released',
+        });
+        expect(resolveTranscriptBottomFollowMode(returned, {
+            distanceFromBottom: 40,
+            pinThresholdPx: 72,
+            sawAwayMovement: true,
+            type: 'drag-end',
+        })).toMatchObject({
+            dragSession: {
+                latestDistanceFromBottom: 40,
+                returnedToBottom: true,
+                sawAwayMovement: true,
+            },
             mode: 'following',
         });
     });

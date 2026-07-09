@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ToolCallMessage } from '@/sync/domains/messages/messageTypes';
 
-import { resolveGroupedPreviewSidechainIds } from './ToolCallsGroupView';
+import { resolveGroupedPreviewSidechainIds } from '@/components/sessions/transcript/toolCalls/units/groupedToolCallRowContent';
 
 function makeToolMessage(overrides?: Partial<ToolCallMessage>): ToolCallMessage {
     return {

@@ -88,14 +88,12 @@ describe('ToolCallsGroupView (motion wiring)', () => {
             toolMessages,
         });
 
+        expect(screen.findAllByTestId('transcript-enter-wrapper')).toHaveLength(0);
+        expect(screen.findByTestId('transcript-collapsible')).toBeNull();
+
+        await screen.pressByTestIdAsync('transcript-tool-calls-preview-more');
+
         expect(screen.findAllByTestId('transcript-enter-wrapper')).toHaveLength(2);
-
-        const collapsible = screen.findByTestId('transcript-collapsible') as any;
-        expect(collapsible).not.toBeNull();
-        expect(collapsible?.props.expanded).toBe(false);
-
-        await screen.pressByTestIdAsync('transcript-tool-calls-header');
-
         const collapsibleAfter = screen.findByTestId('transcript-collapsible') as any;
         expect(collapsibleAfter?.props.expanded).toBe(true);
     });
@@ -112,10 +110,10 @@ describe('ToolCallsGroupView (motion wiring)', () => {
         });
 
         expect(screen.findByTestId('ionicons:layers-outline')).not.toBeNull();
-        expect(screen.findByTestId('ionicons:chevron-down-outline')).not.toBeNull();
+        expect(screen.findByTestId('ionicons:chevron-down-outline')).toBeNull();
         expect(screen.findByTestId('ionicons:chevron-up-outline')).toBeNull();
 
-        await screen.pressByTestIdAsync('transcript-tool-calls-header');
+        await screen.pressByTestIdAsync('transcript-tool-calls-preview-more');
 
         expect(screen.findByTestId('ionicons:chevron-up-outline')).not.toBeNull();
     });

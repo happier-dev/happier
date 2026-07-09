@@ -143,6 +143,32 @@ describe('TranscriptList (FlashList v2)', () => {
         expect(capturedFlashListProps.scrollEventThrottle).toBe(16);
     });
 
+    it('uses canonical inverted FlashList presentation on native even for stale legacy settings', async () => {
+        platformOs = 'ios';
+        transcriptListImplementationSetting = 'flatlist_legacy';
+
+        const { TranscriptList } = await import('./TranscriptList');
+        await renderScreen(<TranscriptList
+                    sessionId="s1"
+                    metadata={null}
+                    messages={[
+                        { kind: 'user-text', id: 'oldest', localId: null, createdAt: 1, text: 'one' } as any,
+                        { kind: 'agent-text', id: 'middle', localId: null, createdAt: 2, text: 'two' } as any,
+                        { kind: 'user-text', id: 'newest', localId: null, createdAt: 3, text: 'three' } as any,
+                    ]}
+                    interaction={{ canSendMessages: true, canApprovePermissions: true }}
+                />);
+
+        expect(renderedFlatListCount).toBe(0);
+        expect(capturedFlashListProps).not.toBeNull();
+        expect(capturedFlashListProps.inverted).toBe(true);
+        expect((capturedFlashListProps.data ?? []).map((message: any) => message.id)).toEqual([
+            'newest',
+            'middle',
+            'oldest',
+        ]);
+    });
+
     it('keeps drag scrolling from dismissing the keyboard on iOS', async () => {
         platformOs = 'ios';
         const { TranscriptList } = await import('./TranscriptList');

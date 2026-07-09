@@ -10,8 +10,36 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@shopify/flash-list', () => ({
-    FlashList: () => null,
+vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
+    FlashList: React.forwardRef((props: any, ref: any) => {
+        if (ref && typeof ref === 'object') {
+            ref.current = { scrollToIndex: vi.fn(), scrollToOffset: vi.fn() };
+        }
+        const header =
+            typeof props.ListHeaderComponent === 'function' ? props.ListHeaderComponent() : props.ListHeaderComponent;
+        const footer =
+            typeof props.ListFooterComponent === 'function' ? props.ListFooterComponent() : props.ListFooterComponent;
+        return React.createElement('FlashList', props, header, footer);
+    }),
+    LayoutCommitObserver: ({ children, onCommitLayoutEffect }: any) => {
+        React.useLayoutEffect(() => {
+            onCommitLayoutEffect?.();
+        });
+        return React.createElement(React.Fragment, null, children);
+    },
+    useLayoutState: <T,>(initialValue: T) => React.useState(initialValue),
+    useMappingHelper: () => ({
+        getMappingKey: (_key: string | number, index: number) => index,
+    }),
+    useRecyclingState: <T,>(initialValue: T, dependencies: readonly unknown[], onReset?: () => void) => {
+        const [state, setState] = React.useState(initialValue);
+        React.useEffect(() => {
+            setState(initialValue);
+            onReset?.();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, dependencies);
+        return [state, setState] as const;
+    },
 }));
 
 vi.mock('react-native-safe-area-context', () => ({
@@ -123,9 +151,15 @@ describe('ChatList', () => {
 
         const screen = await renderScreen(<ChatList session={session} />);
 
-        const flatList = screen.tree.root.findByType('FlatList');
-        const transcriptRoot = findAncestorWithStyle(flatList, (style) => {
-            return style != null && typeof style === 'object' && 'flex' in style;
+        const flashList = screen.tree.root.findByType('FlashList');
+        const transcriptRoot = findAncestorWithStyle(flashList, (style) => {
+            return (
+                style != null &&
+                typeof style === 'object' &&
+                'flex' in style &&
+                'minWidth' in style &&
+                'overflow' in style
+            );
         });
 
         expect(transcriptRoot?.props?.style).toEqual(

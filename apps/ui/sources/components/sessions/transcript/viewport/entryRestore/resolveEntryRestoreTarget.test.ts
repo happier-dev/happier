@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveTranscriptViewportAnchorIndex } from '@/components/sessions/transcript/transcriptViewportAnchorResolution';
+import { resolveTranscriptViewportAnchorIndex } from '@/components/sessions/transcript/viewport/entryRestore/transcriptViewportAnchorResolution';
+import type { EntryRestoreTransactionTarget } from './entryRestoreTransaction';
 import {
     resolveEntryRestoreTarget,
     type EntryRestoreAnchorSnapshot,
+    type EntryRestoreSliceCapability,
+    type EntryRestoreTarget,
     type ResolveEntryRestoreTargetParams,
 } from './resolveEntryRestoreTarget';
 
@@ -82,7 +85,7 @@ describe('resolve entry restore target', () => {
                 offsetY: 600,
                 anchor: { itemId: 'msg:m-20', messageId: 'm-20', itemOffsetPx: 84 },
             },
-        }))).toEqual({ kind: 'anchor', index: 1, viewOffset: -84 });
+        }))).toEqual({ kind: 'anchor', index: 1, itemOffsetPx: 84 });
     });
 
     it('falls back to the nearest surviving item when the anchor message was pruned', () => {
@@ -93,7 +96,7 @@ describe('resolve entry restore target', () => {
                 anchor: { itemId: 'msg:m-25', messageId: 'm-25', itemOffsetPx: 48 },
             },
             canMaterializeOlder: false,
-        }))).toEqual({ kind: 'anchor', index: 1, viewOffset: -48 });
+        }))).toEqual({ kind: 'anchor', index: 1, itemOffsetPx: 48 });
     });
 
     it('requests bounded materialization while the anchor may live in an unloaded older region', () => {
@@ -110,9 +113,55 @@ describe('resolve entry restore target', () => {
         }))).toEqual({ kind: 'materialize-then-anchor', anchorSeqHint: 3 });
 
         expect(resolveEntryRestoreTarget(buildParams({
-            snapshot,
+            snapshot: {
+                ...snapshot,
+                anchor: { ...snapshot.anchor, seq: 3 },
+            },
             canMaterializeOlder: true,
-        }))).toEqual({ kind: 'materialize-then-anchor', anchorSeqHint: null });
+        }))).toEqual({ kind: 'materialize-then-anchor', anchorSeqHint: 3 });
+    });
+
+    it('does not materialize older pages when the durable anchor seq is already inside the loaded range', () => {
+        expect(resolveEntryRestoreTarget(buildParams({
+            snapshot: {
+                shouldFollowBottom: false,
+                offsetY: 420,
+                anchor: {
+                    itemId: 'toolCalls:turn:runtime#header',
+                    itemOffsetPx: 26,
+                    messageId: 'rotated-runtime-id',
+                    seq: 25,
+                },
+            },
+            canMaterializeOlder: true,
+            anchorIndexResolver: () => null,
+            anchorSeqLoadedResolver: () => true,
+            nearestSurvivingResolver: () => 1,
+        }))).toEqual({ kind: 'anchor', index: 1, itemOffsetPx: 26 });
+    });
+
+    it('does not materialize an unresolvable anchor without a durable seq hint', () => {
+        expect(resolveEntryRestoreTarget(buildParams({
+            snapshot: {
+                shouldFollowBottom: false,
+                offsetY: 900,
+                anchor: { itemId: 'runtime-tool-group', messageId: 'rotated-tool-id', itemOffsetPx: 24 },
+            },
+            canMaterializeOlder: true,
+            fillSettled: true,
+        }))).toEqual({ kind: 'distance-oneshot', targetOffsetY: 2300 });
+    });
+
+    it('treats seq zero on an unresolvable anchor as missing durable seq', () => {
+        expect(resolveEntryRestoreTarget(buildParams({
+            snapshot: {
+                shouldFollowBottom: false,
+                offsetY: 900,
+                anchor: { itemId: 'runtime-tool-group', messageId: 'rotated-tool-id', itemOffsetPx: 24, seq: 0 },
+            },
+            canMaterializeOlder: true,
+            fillSettled: true,
+        }))).toEqual({ kind: 'distance-oneshot', targetOffsetY: 2300 });
     });
 
     it('restores by one-shot distance only after the initial fill settles', () => {
@@ -129,6 +178,13 @@ describe('resolve entry restore target', () => {
         expect(resolveEntryRestoreTarget(buildParams({
             snapshot: { shouldFollowBottom: false, offsetY: 5000, anchor: null },
         }))).toEqual({ kind: 'distance-oneshot', targetOffsetY: 0 });
+    });
+
+    it('does not synthesize a bottom restore when the restored distance is unknown', () => {
+        expect(resolveEntryRestoreTarget(buildParams({
+            snapshot: { shouldFollowBottom: false, offsetY: null, anchor: null },
+            fillSettled: true,
+        }))).toEqual({ kind: 'none', reason: 'missing-restored-distance' });
     });
 
     it('waits for content measurement before issuing a one-shot distance target', () => {
@@ -193,7 +249,7 @@ describe('resolve entry restore target', () => {
                 offsetY: 120,
                 anchor: { itemId: 'msg:m-20', messageId: 'm-20', itemOffsetPx: 84 },
             },
-        }))).toEqual({ kind: 'anchor', index: 1, viewOffset: -84 });
+        }))).toEqual({ kind: 'anchor', index: 1, itemOffsetPx: 84 });
     });
 
     it('returns none for an empty transcript', () => {
@@ -205,6 +261,112 @@ describe('resolve entry restore target', () => {
             items: [],
             snapshot: { shouldFollowBottom: true, offsetY: 0, anchor: null },
         }))).toEqual({ kind: 'none', reason: 'empty-transcript' });
+    });
+
+    describe('slice outcome (N2b, write-free anchored entry)', () => {
+        const sliceCapability: EntryRestoreSliceCapability = { hostCanBuildAnchorWindow: true };
+        const anchoredSnapshot = {
+            shouldFollowBottom: false,
+            offsetY: 600,
+            anchor: { itemId: 'msg:m-3', messageId: 'm-3', itemOffsetPx: 12 },
+        } as const;
+
+        function buildSliceParams(
+            overrides: Partial<ResolveEntryRestoreTargetParams<TestItem>> = {},
+        ): ResolveEntryRestoreTargetParams<TestItem> & Readonly<{ slice: EntryRestoreSliceCapability }> {
+            return { ...buildParams(overrides), slice: sliceCapability };
+        }
+
+        it('returns slice for an anchored entry when the host can build the anchor window', () => {
+            expect(resolveEntryRestoreTarget(buildSliceParams({
+                snapshot: anchoredSnapshot,
+                anchorSeqResolver: (anchor) => (anchor.messageId ? anchorSeqByMessageId[anchor.messageId] ?? null : null),
+            }))).toEqual({
+                kind: 'slice',
+                anchorMessageId: 'm-3',
+                anchorSeq: 3,
+                anchorItemOffsetPx: 12,
+            });
+        });
+
+        it('wins over wait and final none verdicts: the slice decides what to fill', () => {
+            // Empty/unmeasured/unsettled states are legitimate at the
+            // initial-window decision point — slice precedes the fill barrier.
+            const sliceTarget = {
+                kind: 'slice',
+                anchorMessageId: 'm-3',
+                anchorSeq: null,
+                anchorItemOffsetPx: 12,
+            };
+
+            expect(resolveEntryRestoreTarget(buildSliceParams({
+                snapshot: anchoredSnapshot,
+                items: [],
+            }))).toEqual(sliceTarget);
+
+            expect(resolveEntryRestoreTarget(buildSliceParams({
+                snapshot: anchoredSnapshot,
+                contentMeasured: { contentHeight: 0, layoutHeight: 0 },
+                fillSettled: false,
+            }))).toEqual(sliceTarget);
+
+            expect(resolveEntryRestoreTarget(buildSliceParams({
+                snapshot: anchoredSnapshot,
+                contentMeasured: { contentHeight: 500, layoutHeight: 800 },
+            }))).toEqual(sliceTarget);
+        });
+
+        it('prefers the seq stamped on the hydrated anchor over the seq resolver', () => {
+            expect(resolveEntryRestoreTarget(buildSliceParams({
+                snapshot: {
+                    ...anchoredSnapshot,
+                    anchor: { ...anchoredSnapshot.anchor, seq: 99 },
+                },
+                anchorSeqResolver: () => 3,
+            }))).toEqual({
+                kind: 'slice',
+                anchorMessageId: 'm-3',
+                anchorSeq: 99,
+                anchorItemOffsetPx: 12,
+            });
+        });
+
+        it('keeps follow-bottom entries on their write-free bottom path', () => {
+            expect(resolveEntryRestoreTarget(buildSliceParams({
+                snapshot: { shouldFollowBottom: true, offsetY: 0, anchor: { ...anchoredSnapshot.anchor } },
+            }))).toEqual({ kind: 'bottom' });
+        });
+
+        it('does not restore identity-less anchors as if they were durable anchor restores', () => {
+            expect(resolveEntryRestoreTarget(buildSliceParams({
+                snapshot: {
+                    shouldFollowBottom: false,
+                    offsetY: 600,
+                    anchor: { itemId: 'divider:1', messageId: null, itemOffsetPx: 0 },
+                },
+            }))).toEqual({ kind: 'none', reason: 'missing-durable-anchor' });
+        });
+
+        it('never returns slice to hosts that did not opt in (type- and value-level)', () => {
+            // Without the capability the same params resolve through the
+            // existing pipeline; the return type has no 'slice' member.
+            const resolved: EntryRestoreTarget = resolveEntryRestoreTarget(buildParams({
+                snapshot: anchoredSnapshot,
+                canMaterializeOlder: true,
+            }));
+            expect(resolved).toEqual({ kind: 'anchor', index: 0, itemOffsetPx: 12 });
+        });
+
+        it('keeps slice out of the writable entry-transaction target space (type-level)', () => {
+            const sliceOutcome = resolveEntryRestoreTarget(buildSliceParams({
+                snapshot: anchoredSnapshot,
+            }));
+            expect(sliceOutcome.kind).toBe('slice');
+            if (sliceOutcome.kind !== 'slice') return;
+            // @ts-expect-error a slice outcome is a data-layer act, never a writable transaction target
+            const target: EntryRestoreTransactionTarget = sliceOutcome;
+            expect(target.kind).toBe('slice');
+        });
     });
 
     it('does not match anchors against fork divider items', () => {
@@ -220,7 +382,7 @@ describe('resolve entry restore target', () => {
                 offsetY: 600,
                 anchor: { itemId: 'msg:m-20', messageId: 'm-20', itemOffsetPx: 84 },
             },
-        }))).toEqual({ kind: 'anchor', index: 2, viewOffset: -84 });
+        }))).toEqual({ kind: 'anchor', index: 2, itemOffsetPx: 84 });
 
         expect(resolveEntryRestoreTarget(buildParams({
             items: forkedItems,
@@ -229,6 +391,6 @@ describe('resolve entry restore target', () => {
                 offsetY: 600,
                 anchor: { itemId: 'msg:m-25', messageId: 'm-25', itemOffsetPx: 48 },
             },
-        }))).toEqual({ kind: 'anchor', index: 2, viewOffset: -48 });
+        }))).toEqual({ kind: 'anchor', index: 2, itemOffsetPx: 48 });
     });
 });

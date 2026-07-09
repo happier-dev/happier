@@ -1,5 +1,6 @@
+import { readTurnChangeToolMetadataFromToolCall } from '@happier-dev/protocol';
+
 import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
-import { readTurnChangeToolMetadataFromToolCall } from '@/sync/domains/session/changes/parsing/readTurnChangeToolMetadata';
 import { isPendingUserActionRequest } from '@/utils/sessions/permissions/permissionPromptPolicy';
 
 export function isToolCallMessageGroupableInTranscript(message: Message): message is ToolCallMessage {

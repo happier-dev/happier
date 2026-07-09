@@ -75,6 +75,46 @@ describe('useTranscriptOlderPagination', () => {
         expect(hook.getCurrent().hasMore).toBe(true);
     });
 
+    it('exposes the current reducer snapshot immediately after threshold dispatch starts loading', async () => {
+        vi.useFakeTimers();
+        const { input, pendingLoads } = createHarness();
+        const hook = await renderHook(() => useTranscriptOlderPagination(input));
+
+        await observe(hook, { offsetY: 120 });
+
+        expect(hook.getCurrent().getSnapshot()).toEqual({
+            hasMore: true,
+            insideThreshold: true,
+            phase: 'loading',
+            suspendedReasons: [],
+        });
+
+        await resolveLoad(pendingLoads, { status: 'loaded', loaded: 20, hasMore: true });
+    });
+
+    it('exposes active suspension reasons in the reducer snapshot', async () => {
+        vi.useFakeTimers();
+        let transactionOpen = true;
+        const { input } = createHarness({ isTransactionOpen: () => transactionOpen });
+        const hook = await renderHook(() => useTranscriptOlderPagination(input));
+
+        await observe(hook, { offsetY: 120 });
+
+        expect(hook.getCurrent().getSnapshot()).toEqual({
+            hasMore: true,
+            insideThreshold: true,
+            phase: 'armed',
+            suspendedReasons: ['transaction-open'],
+        });
+
+        transactionOpen = false;
+        await observe(hook, { offsetY: 110 });
+        expect(hook.getCurrent().getSnapshot()).toMatchObject({
+            phase: 'loading',
+            suspendedReasons: [],
+        });
+    });
+
     it('delays the loading indicator by spinnerDelayMs and clears it when the load settles', async () => {
         vi.useFakeTimers();
         const { input, pendingLoads } = createHarness({ spinnerDelayMs: 200 });

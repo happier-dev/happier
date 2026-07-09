@@ -20,6 +20,25 @@ export type TranscriptScrollPinEvent =
         type: 'resetNewActivity';
     };
 
+export function reduceTranscriptScrollPinStateWithPinnedSnapshot(
+    state: TranscriptScrollPinState,
+    params: Readonly<{
+        activityKey: string | null;
+        enabled: boolean;
+        isPinned: boolean;
+    }>,
+): TranscriptScrollPinState {
+    const snapshotState =
+        state.isPinned === params.isPinned
+            ? state
+            : { ...state, isPinned: params.isPinned };
+    return reduceTranscriptScrollPinState(snapshotState, {
+        type: 'newActivity',
+        enabled: params.enabled,
+        activityKey: params.activityKey,
+    });
+}
+
 export function reduceTranscriptScrollPinState(
     state: TranscriptScrollPinState,
     event: TranscriptScrollPinEvent,

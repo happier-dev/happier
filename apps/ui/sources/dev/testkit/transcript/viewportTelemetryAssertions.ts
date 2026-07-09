@@ -45,6 +45,7 @@ export type ViewportTelemetryScenarioOptions = Readonly<{
 
 type ScrollWriteEvent = Extract<TranscriptViewportTelemetryEvent, { type: 'scroll-write' }>;
 type ObservationEvent = Exclude<TranscriptViewportTelemetryEvent, { type: 'scroll-write' | 'scroll-write-rejected' }>;
+type WebWregDiagnosticEvent = ObservationEvent;
 
 const DEFAULT_PIN_THRESHOLD_PX = 72;
 
@@ -70,15 +71,12 @@ const TRANSACTION_OUTCOME_REASONS: ReadonlySet<TranscriptViewportTelemetryObserv
 
 const TERMINAL_DECISION_REASONS: ReadonlySet<TranscriptViewportTelemetryObservationReason> = new Set([
     ...TRANSACTION_OUTCOME_REASONS,
+    'observed',
+    'not-ready',
     'restored',
     'skipped',
     'missing-anchor',
     'entry-anchor-missing',
-]);
-
-const WEB_TERMINAL_DECISION_REASONS: ReadonlySet<TranscriptViewportTelemetryObservationReason> = new Set([
-    'observed',
-    'not-ready',
 ]);
 
 function isCommittedScrollWrite(event: TranscriptViewportTelemetryEvent): event is ScrollWriteEvent {
@@ -87,12 +85,6 @@ function isCommittedScrollWrite(event: TranscriptViewportTelemetryEvent): event 
 
 function isObservationEvent(event: TranscriptViewportTelemetryEvent): event is ObservationEvent {
     return event.type !== 'scroll-write' && event.type !== 'scroll-write-rejected';
-}
-
-function isTerminalRestoreDecision(event: ObservationEvent): boolean {
-    if (event.reason === undefined) return false;
-    if (TERMINAL_DECISION_REASONS.has(event.reason)) return true;
-    return event.platform === 'web' && WEB_TERMINAL_DECISION_REASONS.has(event.reason);
 }
 
 export function deriveViewportWriteOwner(event: ScrollWriteEvent): TranscriptViewportTelemetryOwner | null {
@@ -118,6 +110,71 @@ function describeEvent(event: TranscriptViewportTelemetryEvent): string {
 function failWithEvents(message: string, offenders: readonly TranscriptViewportTelemetryEvent[]): never {
     const lines = offenders.map((event) => `  - ${describeEvent(event)}`);
     throw new Error([message, ...lines].join('\n'));
+}
+
+function hasOwn(event: TranscriptViewportTelemetryEvent, key: keyof TranscriptViewportTelemetryEvent): boolean {
+    return Object.prototype.hasOwnProperty.call(event, key);
+}
+
+function isWebWregDiagnosticEvent(event: TranscriptViewportTelemetryEvent): event is WebWregDiagnosticEvent {
+    return event.platform === 'web' && (event.type === 'scroll-observed' || event.type === 'restore-decision');
+}
+
+function collectMissingWebWregFields(event: WebWregDiagnosticEvent): string[] {
+    const required: (keyof TranscriptViewportTelemetryEvent)[] = [
+        'trigger',
+        'domScrollTop',
+        'domScrollHeight',
+        'domClientHeight',
+        'flashListContentHeight',
+        'flashListLayoutHeight',
+        'scrollable',
+        'distanceFromBottom',
+        'paginationPhase',
+        'paginationSuspendedReasons',
+        'coldCount',
+        'hotCount',
+        'pendingWebPrependAnchorKind',
+        'programmaticWebWrite',
+    ];
+    const missing = required.filter((field) => !hasOwn(event, field));
+    if (
+        event.pendingWebPrependAnchorKind !== undefined &&
+        event.pendingWebPrependAnchorKind !== 'none'
+    ) {
+        if (!hasOwn(event, 'pendingWebPrependAnchorId')) missing.push('pendingWebPrependAnchorId');
+        if (!hasOwn(event, 'pendingWebPrependAnchorIndex')) missing.push('pendingWebPrependAnchorIndex');
+    }
+    if (
+        event.type === 'restore-decision' ||
+        event.trigger === 'restore' ||
+        event.trigger === 'prepend-restore'
+    ) {
+        if (!hasOwn(event, 'firstVisibleAnchorTestId')) missing.push('firstVisibleAnchorTestId');
+    }
+    return missing;
+}
+
+export function assertWebWregDiagnostics(events: readonly TranscriptViewportTelemetryEvent[]): void {
+    const offenders: TranscriptViewportTelemetryEvent[] = [];
+    const missingByEvent = new Map<TranscriptViewportTelemetryEvent, string[]>();
+    for (const event of events) {
+        if (!isWebWregDiagnosticEvent(event)) continue;
+        const missing = collectMissingWebWregFields(event);
+        if (missing.length === 0) continue;
+        offenders.push(event);
+        missingByEvent.set(event, missing);
+    }
+    if (offenders.length === 0) return;
+
+    const details = offenders.map((event) => {
+        const missing = missingByEvent.get(event) ?? [];
+        return `  - missing ${missing.join(', ')} :: ${describeEvent(event)}`;
+    });
+    throw new Error([
+        'WREG telemetry diagnostics missing required web pagination/restore fields:',
+        ...details,
+    ].join('\n'));
 }
 
 function describePhase(phase: ViewportTelemetryPhaseWindow): string {
@@ -187,7 +244,7 @@ export function assertNoSilentBails(events: readonly TranscriptViewportTelemetry
             openPendingBySession.set(event.sessionId, open);
             continue;
         }
-        if (isTerminalRestoreDecision(event)) {
+        if (TERMINAL_DECISION_REASONS.has(event.reason)) {
             openPendingBySession.get(event.sessionId)?.pop();
         }
     }
@@ -270,6 +327,27 @@ function assertWarmReopen(events: readonly TranscriptViewportTelemetryEvent[]): 
         failWithEvents('Invariant B violated: prepend writes issued during entry restore:', prependWrites);
     }
     const entryWrites = writes.filter((event) => deriveViewportWriteOwner(event) === 'entry');
+    // N2b slice-from-anchor (NATIVE only — web keeps its write-based restore path):
+    // anchored native entries land write-free (the data window starts at the anchor;
+    // the observe-only transaction confirms by observation). An anchored entry is
+    // identified by its slice decision pair (pending/restored, mode restore-anchor);
+    // anchor-mode native entry WRITES no longer exist at all. The degraded
+    // identity-less distance one-shot (missing-anchor lookups → restore-distance
+    // write) keeps the legacy ≤2 budget below.
+    const anchoredNativeEntryDecision = events.some((event) =>
+        event.type === 'restore-decision' &&
+        event.mode === 'restore-anchor' &&
+        (event.reason === 'pending' || event.reason === 'restored') &&
+        event.platform !== 'web');
+    const anchorModeNativeEntryWrites = entryWrites.filter((event) =>
+        event.mode === 'restore-anchor' && event.platform !== 'web');
+    const nativeEntryWrites = entryWrites.filter((event) => event.platform !== 'web');
+    if ((anchoredNativeEntryDecision || anchorModeNativeEntryWrites.length > 0) && nativeEntryWrites.length > 0) {
+        failWithEvents(
+            `Invariant B violated: anchored entry must land write-free (N2b slice) but issued writes=${nativeEntryWrites.length}:`,
+            nativeEntryWrites,
+        );
+    }
     const distinctTargets = distinctTargetCount(entryWrites);
     if (entryWrites.length > 2 || distinctTargets > 2) {
         failWithEvents(
@@ -282,6 +360,14 @@ function assertWarmReopen(events: readonly TranscriptViewportTelemetryEvent[]): 
     assertOwnerTargetSpread(events);
 }
 
+/**
+ * Invariant D: exactly one transaction outcome per prepend, with the write budget derived from
+ * the outcome — `fallback-restored` = exactly ONE prepend write; every other outcome
+ * (`mvcp-preserved` incl. the N2d.1 corrector-covered classification, and the abandoned family)
+ * = ZERO writes. Since N2d.1 the expected-dominant outcome is `mvcp-preserved`: the transaction
+ * defers to FlashList's own offset corrector, and the fallback write remains only for commits
+ * the corrector demonstrably did not cover.
+ */
 function assertPrepend(events: readonly TranscriptViewportTelemetryEvent[]): void {
     const outcomes = events.filter(isObservationEvent)
         .filter((event) => event.reason !== undefined && TRANSACTION_OUTCOME_REASONS.has(event.reason));

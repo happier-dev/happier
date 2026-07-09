@@ -176,6 +176,40 @@ describe('useTranscriptSelectionEligibleMessageIds', () => {
         }
     });
 
+    it('uses transcript block order in the messagesById fallback when transcript ids have not hydrated yet', async () => {
+        const previousState = storage.getState();
+        try {
+            writeSessionMessages([
+                message({
+                    id: 'z-first',
+                    kind: 'agent-text',
+                    seq: 10,
+                    transcriptBlockIndex: 0,
+                    createdAt: 2_000,
+                    text: 'First block',
+                }),
+                message({
+                    id: 'a-second',
+                    kind: 'agent-text',
+                    seq: 10,
+                    transcriptBlockIndex: 1,
+                    createdAt: 2_000,
+                    text: 'Second block',
+                }),
+            ], { ids: [] });
+
+            const hook = await renderHook(
+                () => useTranscriptSelectionEligibleMessageIds('s1', { enabled: true, metadata: null }),
+                { flushOptions: { cycles: 1, turns: 4 } },
+            );
+
+            expect(hook.getCurrent()).toEqual(['z-first', 'a-second']);
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
     it('preserves cached eligible ids while transcript messages are transiently unloaded', async () => {
         const previousState = storage.getState();
         try {

@@ -13,7 +13,7 @@ function stableSignature(
 ): TranscriptItemHeightValiditySignature {
     return {
         itemId: 'message-1',
-        kind: 'message:agent-short',
+        kind: 'message:agent',
         structuralKey: 'message-1:content-v1',
         widthBucket: 'width:400',
         fontScaleKey: 'font:100',

@@ -6,6 +6,12 @@ import {
     installTranscriptCommonModuleMocks,
     resetTranscriptCommonModuleMockState,
 } from '../transcriptTestHelpers';
+import type {
+    TranscriptForkCommon,
+    TranscriptMessageDisplayCommon,
+    TranscriptToolChromeCommon,
+    TranscriptToolRouteCommon,
+} from '@/components/sessions/transcript/transcriptSessionCommon';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -17,7 +23,7 @@ let renderedToolCallsGroupRowProps: any[] = [];
 let renderedToolCallsGroupRowWithCommonProps: any[] = [];
 let renderedRollbackButtonProps: any[] = [];
 const flashListCompatMockState = vi.hoisted(() => ({
-    getMappingKey: vi.fn((itemKey: string, index: number) => `mapped:${itemKey}:${index}`),
+  mappingKeyCalls: [] as Array<Readonly<{ index: number; itemKey: string | number | bigint }>>,
 }));
 
 installTranscriptCommonModuleMocks({
@@ -76,17 +82,20 @@ vi.mock('@/components/sessions/transcript/toolCalls/ToolCallsGroupRow', () => ({
   },
 }));
 
-vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
-  useMappingHelper: () => ({
-    getMappingKey: flashListCompatMockState.getMappingKey,
-  }),
-}));
-
 vi.mock('@/components/sessions/transcript/TranscriptRollbackActionButton', () => ({
   TranscriptRollbackActionButton: (props: any) => {
     renderedRollbackButtonProps.push(props);
     return React.createElement('TranscriptRollbackActionButton', props);
   },
+}));
+
+vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
+  useMappingHelper: () => ({
+    getMappingKey: (itemKey: string | number | bigint, index: number) => {
+      flashListCompatMockState.mappingKeyCalls.push({ itemKey, index });
+      return index;
+    },
+  }),
 }));
 
 function getRenderedMessageViewProps() {
@@ -109,7 +118,7 @@ describe('TurnView (thinking expansion controlled)', () => {
     renderedToolCallsGroupRowProps = [];
     renderedToolCallsGroupRowWithCommonProps = [];
     renderedRollbackButtonProps = [];
-    flashListCompatMockState.getMappingKey.mockClear();
+    flashListCompatMockState.mappingKeyCalls = [];
   });
 
   it('forwards parent-provided transcript session common to nested message and tool rows', async () => {
@@ -122,8 +131,10 @@ describe('TurnView (thinking expansion controlled)', () => {
       transcriptStreamingPartialOutputEnabled: true,
       transcriptStreamingSettleDelayMs: 0,
       transcriptStreamingSmoothingEnabled: false,
+      transcriptMessageSelectionEnabled: true,
+      transcriptMessageSendToSessionEnabled: false,
       workspacePath: null,
-    } as const;
+    } satisfies TranscriptMessageDisplayCommon;
     const forkCommon = {
       executionRunsEnabled: false,
       sessionForkSupportSource: null,
@@ -131,16 +142,16 @@ describe('TurnView (thinking expansion controlled)', () => {
       sessionReplayMaxSeedChars: 120_000,
       sessionReplayStrategy: 'recent_messages',
       sessionReplaySummaryRunnerV1: null,
-    } as const;
+    } satisfies TranscriptForkCommon;
     const toolChromeCommon = {
       toolViewTimelineChromeMode: 'cards',
       transcriptToolCallsCollapsedPreviewCount: 1,
       transcriptToolCallsGroupShowBackground: false,
-    } as const;
+    } satisfies TranscriptToolChromeCommon;
     const toolRouteCommon = {
       messagesById: {},
       reducerState: null,
-    } as const;
+    } satisfies TranscriptToolRouteCommon;
     messageById = {
       'agent-1': { kind: 'agent-text', id: 'agent-1', localId: null, createdAt: 1, text: 'reply', isThinking: false },
       'tool-1': { kind: 'tool-call', id: 'tool-1', localId: null, createdAt: 2, tool: { name: 'Bash', state: 'completed' }, children: [] },
@@ -191,6 +202,72 @@ describe('TurnView (thinking expansion controlled)', () => {
         toolRouteCommon,
       }),
     ]);
+  });
+
+  it('routes mapped turn content keys through the FlashList mapping helper', async () => {
+    messageById = {
+      'agent-1': { kind: 'agent-text', id: 'agent-1', localId: null, createdAt: 1, text: 'reply', isThinking: false },
+      'agent-2': { kind: 'agent-text', id: 'agent-2', localId: null, createdAt: 3, text: 'done', isThinking: false },
+    };
+
+    const turn: any = {
+      id: 'turn-1',
+      userMessageId: null,
+      content: [
+        { kind: 'message', messageId: 'agent-1' },
+        { kind: 'tool_calls', id: 'tool-group-1', toolMessageIds: ['tool-1'] },
+        { kind: 'message', messageId: 'agent-2' },
+      ],
+    };
+
+    const { TurnView } = await import('./TurnView');
+    await renderScreen(React.createElement(TurnView as any, {
+          turn,
+          metadata: null,
+          sessionId: 's1',
+          activeThinkingMessageId: null,
+          expandedToolCallsAnchorMessageIds: new Set(),
+          setToolCallsGroupExpanded: () => {},
+          interaction: { canSendMessages: true, canApprovePermissions: true },
+        }));
+
+    expect(flashListCompatMockState.mappingKeyCalls).toEqual([
+      { itemKey: 'agent-1', index: 0 },
+      { itemKey: 'tool-group-1', index: 1 },
+      { itemKey: 'agent-2', index: 2 },
+    ]);
+  });
+
+  it('forwards the active thinking id only to the matching nested message row', async () => {
+    messageById = {
+      'user-1': { kind: 'user-text', id: 'user-1', localId: null, createdAt: 1, text: 'prompt' },
+      'thinking-1': { kind: 'agent-text', id: 'thinking-1', localId: null, createdAt: 2, text: 'thinking', isThinking: true },
+      'agent-1': { kind: 'agent-text', id: 'agent-1', localId: null, createdAt: 3, text: 'reply', isThinking: false },
+    };
+    const turn: any = {
+      id: 'turn-1',
+      userMessageId: 'user-1',
+      content: [
+        { kind: 'message', messageId: 'thinking-1' },
+        { kind: 'message', messageId: 'agent-1' },
+      ],
+    };
+
+    const { TurnView } = await import('./TurnView');
+    await renderScreen(React.createElement(TurnView as any, {
+          turn,
+          metadata: null,
+          sessionId: 's1',
+          activeThinkingMessageId: 'thinking-1',
+          expandedToolCallsAnchorMessageIds: new Set(),
+          setToolCallsGroupExpanded: () => {},
+          interaction: { canSendMessages: true, canApprovePermissions: true },
+        }));
+
+    const renderedMessageProps = getRenderedMessageViewProps();
+    expect(renderedMessageProps.find((p) => p?.message?.id === 'thinking-1')?.activeThinkingMessageId).toBe('thinking-1');
+    expect(renderedMessageProps.find((p) => p?.message?.id === 'user-1')?.activeThinkingMessageId).toBeNull();
+    expect(renderedMessageProps.find((p) => p?.message?.id === 'agent-1')?.activeThinkingMessageId).toBeNull();
   });
 
   it('forwards list-owned thinking expansion state to MessageView for thinking messages', async () => {
@@ -269,36 +346,6 @@ describe('TurnView (thinking expansion controlled)', () => {
     expect(renderedToolGroupProps[0]?.expanded).toBe(true);
   });
 
-  it('uses FlashList recycling-aware keys for mapped turn content rows', async () => {
-    messageById = {
-      'agent-1': { kind: 'agent-text', id: 'agent-1', localId: null, createdAt: 1, text: 'reply', isThinking: false },
-      'tool-1': { kind: 'tool-call', id: 'tool-1', localId: null, createdAt: 2, tool: { name: 'Bash', state: 'completed' }, children: [] },
-    };
-
-    const turn: any = {
-      id: 'turn-1',
-      userMessageId: null,
-      content: [
-        { kind: 'message', messageId: 'agent-1' },
-        { kind: 'tool_calls', id: 'tool-group-1', toolMessageIds: ['tool-1'] },
-      ],
-    };
-
-    const { TurnView } = await import('./TurnView');
-    await renderScreen(React.createElement(TurnView as any, {
-      turn,
-      metadata: null,
-      sessionId: 's1',
-      activeThinkingMessageId: null,
-      expandedToolCallsAnchorMessageIds: new Set(),
-      setToolCallsGroupExpanded: () => {},
-      interaction: { canSendMessages: true, canApprovePermissions: true },
-    }));
-
-    expect(flashListCompatMockState.getMappingKey).toHaveBeenCalledWith('agent-1', 0);
-    expect(flashListCompatMockState.getMappingKey).toHaveBeenCalledWith('tool-group-1', 1);
-  });
-
   it('forwards forced transcript permission prompts to nested message and tool-call rows', async () => {
     messageById = {
       'agent-1': { kind: 'agent-text', id: 'agent-1', localId: null, createdAt: 1, text: 'reply', isThinking: false },
@@ -372,6 +419,50 @@ describe('TurnView (thinking expansion controlled)', () => {
       expect.arrayContaining([
         expect.objectContaining({
           message: expect.objectContaining({ id: 'agent-sidechain-1', text: 'sidechain reply' }),
+        }),
+      ]),
+    );
+  });
+
+  it('renders ancestor-origin turn messages with read-only interaction and origin session id', async () => {
+    messageById = {};
+
+    const ancestorMessage = { kind: 'agent-text', id: 'ancestor-agent-1', localId: null, createdAt: 1, text: 'ancestor reply', isThinking: false };
+    const turn: any = {
+      id: 'turn-1',
+      userMessageId: null,
+      content: [
+        { kind: 'message', messageId: 'ancestor-agent-1' },
+      ],
+    };
+
+    const { TurnView } = await import('./TurnView');
+    await renderScreen(React.createElement(TurnView as any, {
+          turn,
+          metadata: null,
+          sessionId: 'child-session',
+          activeThinkingMessageId: null,
+          expandedToolCallsAnchorMessageIds: new Set(),
+          setToolCallsGroupExpanded: () => {},
+          interaction: { canSendMessages: true, canApprovePermissions: true },
+          getMessageById: (messageId: string) => (messageId === 'ancestor-agent-1' ? ancestorMessage : null),
+          getMessageOrigin: (messageId: string) =>
+            messageId === 'ancestor-agent-1'
+              ? { sessionId: 'parent-session', isReadOnlyContext: true }
+              : null,
+        }));
+
+    expect(getRenderedMessageViewProps()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.objectContaining({ id: 'ancestor-agent-1', text: 'ancestor reply' }),
+          sessionId: 'parent-session',
+          interaction: expect.objectContaining({
+            canSendMessages: false,
+            canApprovePermissions: false,
+            permissionDisabledReason: 'readOnly',
+            disableToolNavigation: true,
+          }),
         }),
       ]),
     );

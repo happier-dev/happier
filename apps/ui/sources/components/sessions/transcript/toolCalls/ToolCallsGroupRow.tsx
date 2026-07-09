@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
+import type { PersistedSessionMessagePinV1 } from '@/sync/domains/messages/pins/sessionMessagePins';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { useMessagesByIds } from '@/sync/domains/state/storage';
@@ -29,6 +30,8 @@ type ToolCallsGroupRowProps = Readonly<{
     getMessageById?: (messageId: string) => Message | null;
     expanded: boolean;
     onSetExpanded: (params: { toolCallsGroupId: string; toolMessageIds: readonly string[]; expanded: boolean }) => void;
+    messagePins?: readonly PersistedSessionMessagePinV1[];
+    onToggleToolPin?: (pin: PersistedSessionMessagePinV1) => void;
     interaction: TranscriptInteraction;
 }>;
 
@@ -119,6 +122,8 @@ export const ToolCallsGroupRowWithSessionCommon = React.memo(function ToolCallsG
                             approvalRequests={props.approvalRequests}
                             expanded={props.expanded}
                             setExpanded={setExpanded}
+                            messagePins={props.messagePins}
+                            onToggleToolPin={props.onToggleToolPin}
                             interaction={props.interaction}
                             forkCommon={props.forkCommon}
                             messageDisplayCommon={props.messageDisplayCommon}

@@ -34,7 +34,10 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('@/text', () => ({
-    t: (key: string) => key,
+    t: (key: string, params?: { count?: number }) =>
+        key === 'settingsSession.transcript.jumpToBottomButtonNewActivityLabel'
+            ? `new-activity:${String(params?.count)}`
+            : key,
 }));
 
 describe('JumpToBottomButton compact layout', () => {
@@ -64,7 +67,27 @@ describe('JumpToBottomButton compact layout', () => {
 
         expect(screen.getTextContent()).not.toContain('settingsSession.transcript.jumpToBottomButtonLabel');
         expect(screen.getTextContent()).toContain('3');
-        expect(screen.findByTestId('jump')?.props.accessibilityLabel).toBe('settingsSession.transcript.jumpToBottomButtonLabel');
+        expect(screen.findByTestId('jump')?.props.accessibilityLabel).toBe('new-activity:3');
         expect(screen.findByType('Ionicons')).toBeTruthy();
+    });
+
+    it('uses compact layout for activity presentation on large screens', async () => {
+        const { JumpToBottomButton } = await import('./JumpToBottomButton');
+        const screen = await renderScreen(
+            <JumpToBottomButton count={3} onPress={() => {}} presentation="activity" testID="jump" />,
+        );
+
+        expect(screen.getTextContent()).not.toContain('settingsSession.transcript.jumpToBottomButtonLabel');
+        expect(screen.getTextContent()).toContain('3');
+        expect(screen.findByTestId('jump')?.props.accessibilityLabel).toBe('new-activity:3');
+    });
+
+    it('uses the generic accessibility label without new activity', async () => {
+        const { JumpToBottomButton } = await import('./JumpToBottomButton');
+        const screen = await renderScreen(
+            <JumpToBottomButton count={0} onPress={() => {}} testID="jump" />,
+        );
+
+        expect(screen.findByTestId('jump')?.props.accessibilityLabel).toBe('settingsSession.transcript.jumpToBottomButtonLabel');
     });
 });

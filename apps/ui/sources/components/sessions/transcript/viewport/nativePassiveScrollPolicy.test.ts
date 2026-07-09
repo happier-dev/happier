@@ -23,37 +23,55 @@ describe('native passive scroll policy', () => {
         })).toBe(0);
     });
 
-    it('ignores impossible native negative offsets without suppressing ordinary top bounce', () => {
+    it('ignores native negative offsets without orientation or content metrics', () => {
         expect(shouldIgnoreNativeInvalidScrollObservation({
-            contentHeight: 24578,
             distanceFromBottom: 996655,
             isWeb: false,
-            layoutHeight: 682,
             offsetY: -972759,
         })).toBe(true);
 
         expect(shouldIgnoreNativeInvalidScrollObservation({
-            contentHeight: 24578,
             distanceFromBottom: -972759,
             isWeb: false,
-            layoutHeight: 682,
             offsetY: -972759,
         })).toBe(true);
 
         expect(shouldIgnoreNativeInvalidScrollObservation({
-            contentHeight: 24578,
-            distanceFromBottom: 23928,
+            distanceFromBottom: 0,
             isWeb: false,
-            layoutHeight: 682,
             offsetY: -32,
+        })).toBe(true);
+
+        expect(shouldIgnoreNativeInvalidScrollObservation({
+            distanceFromBottom: 996655,
+            isWeb: true,
+            offsetY: -972759,
+        })).toBe(false);
+    });
+
+    it('keeps non-negative native offsets observable after rejecting negative raw bottom-bounce offsets', () => {
+        expect(shouldIgnoreNativeInvalidScrollObservation({
+            distanceFromBottom: 0,
+            isWeb: false,
+            offsetY: -20,
+        })).toBe(true);
+
+        expect(shouldIgnoreNativeInvalidScrollObservation({
+            distanceFromBottom: 0,
+            isWeb: false,
+            offsetY: -681,
+        })).toBe(true);
+
+        expect(shouldIgnoreNativeInvalidScrollObservation({
+            distanceFromBottom: 249,
+            isWeb: false,
+            offsetY: 249,
         })).toBe(false);
 
         expect(shouldIgnoreNativeInvalidScrollObservation({
-            contentHeight: 24578,
-            distanceFromBottom: 996655,
+            distanceFromBottom: 0,
             isWeb: true,
-            layoutHeight: 682,
-            offsetY: -972759,
+            offsetY: -681,
         })).toBe(false);
     });
 

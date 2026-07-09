@@ -12,6 +12,12 @@ import type { EntryRestoreFinalNoneReason, EntryRestoreTarget } from './resolveE
  * content-size changes: height churn during entry must never re-issue
  * scroll writes (evidence E1).
  *
+ * Observe-only transactions (N2b slice-from-anchor entries): the entry's
+ * initial act is a DATA-layer slice, not a scroll write — the transaction
+ * opens with zero issued writes and can never authorize one. It confirms via
+ * observation only, or closes at deadline/preemption (anchored entry = 0
+ * writes, harness invariant B).
+ *
  * Targets exclude `materialize-then-anchor` (materialization happens BEFORE a
  * transaction exists; the host re-resolves once the data arrives) and the wait
  * `none` verdicts (`awaiting-fill-settle` / `content-unmeasured`): turning a
@@ -31,7 +37,7 @@ export type EntryRestoreTransactionOutcome =
     | 'no-target';
 
 export type EntryRestoreTransactionObservation = Readonly<{
-    status: 'aligned' | 'misaligned';
+    status: 'aligned' | 'misaligned' | 'not-ready';
 }>;
 
 export type EntryRestoreTransactionObservationDirective = Readonly<{
@@ -50,16 +56,20 @@ export type EntryRestoreTransaction = Readonly<{
     outcome(): EntryRestoreTransactionOutcome | null;
 }>;
 
+export type EntryRestoreTransactionWritePolicy = 'issue-initial-write' | 'observe-only';
+
 export function createEntryRestoreTransaction(params: Readonly<{
     sessionId: string;
     target: EntryRestoreTransactionTarget;
     nowMs: number;
     deadlineMs: number;
+    writePolicy?: EntryRestoreTransactionWritePolicy;
 }>): EntryRestoreTransaction {
     const deadlineAtMs = params.nowMs + normalizeMs(params.deadlineMs);
+    const observeOnly = params.writePolicy === 'observe-only';
     let state: EntryRestoreTransactionState = 'pending';
     let outcome: EntryRestoreTransactionOutcome | null = null;
-    let issueCount = 1;
+    let issueCount = observeOnly ? 0 : 1;
 
     if (params.target.kind === 'none') {
         issueCount = 0;
@@ -79,7 +89,10 @@ export function createEntryRestoreTransaction(params: Readonly<{
                 close('confirmed');
                 return { action: 'none' };
             }
-            if (state === 'pending') {
+            if (observation.status === 'not-ready') {
+                return { action: 'none' };
+            }
+            if (state === 'pending' && !observeOnly) {
                 state = 'confirming';
                 issueCount += 1;
                 return { action: 'issue-correction-write' };

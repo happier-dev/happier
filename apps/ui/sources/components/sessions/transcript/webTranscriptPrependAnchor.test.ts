@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import * as webTranscriptPrependAnchorModule from '@/components/sessions/transcript/webTranscriptPrependAnchor';
+import * as webTranscriptPrependAnchorModule from '@/components/sessions/transcript/viewport/prepend/webTranscriptPrependAnchor';
 import {
     captureWebTranscriptPrependAnchor,
     refreshWebTranscriptPrependAnchor,
     restoreWebTranscriptPrependAnchor,
-} from '@/components/sessions/transcript/webTranscriptPrependAnchor';
+} from '@/components/sessions/transcript/viewport/prepend/webTranscriptPrependAnchor';
 import type { WebTranscriptScrollMetrics } from '@/components/sessions/transcript/webTranscriptScrollMetrics';
 
 type CaptureWebTranscriptViewportAnchor = (params: Readonly<{
@@ -47,6 +47,9 @@ class FakeElement {
     public clientWidth = 0;
     public isConnected = true;
     public parentElement: FakeElement | null = null;
+    public querySelectorAllCount = 0;
+    public querySelectorCount = 0;
+    public querySelectorShouldThrow = false;
 
     private rect: { top: number; bottom: number };
     private readonly nodesBySelector = new Map<string, FakeElement[]>();
@@ -77,7 +80,18 @@ class FakeElement {
     }
 
     querySelectorAll(selector: string) {
+        this.querySelectorAllCount += 1;
         return this.nodesBySelector.get(selector) ?? [];
+    }
+
+    querySelector(selector: string) {
+        this.querySelectorCount += 1;
+        if (this.querySelectorShouldThrow) {
+            throw new Error('querySelector unavailable');
+        }
+        const testId = parseDataTestIdAttributeSelector(selector);
+        if (testId == null) return this.nodesBySelector.get(selector)?.[0] ?? null;
+        return this.nodesBySelector.get('[data-testid]')?.find((node) => node.getAttribute('data-testid') === testId) ?? null;
     }
 
     setQuerySelectorAll(selector: string, nodes: FakeElement[]) {
@@ -87,6 +101,14 @@ class FakeElement {
     setRect(rect: { top: number; bottom: number }) {
         this.rect = rect;
     }
+}
+
+function parseDataTestIdAttributeSelector(selector: string): string | null {
+    const match = selector.match(/^\[data-testid="((?:\\.|[^"\\])*)"\]$/);
+    if (!match) return null;
+    return match[1]
+        .replace(/\\([0-9a-fA-F]{1,6})\s?/g, (_value, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
+        .replace(/\\(.)/g, '$1');
 }
 
 function createContainer(params: Readonly<{
@@ -243,42 +265,6 @@ describe('webTranscriptPrependAnchor', () => {
         }
     });
 
-    it('restores through the saved message anchor when its containing item id changed', () => {
-        const restoreWebTranscriptViewportAnchor =
-            resolveModuleFunction<RestoreWebTranscriptViewportAnchor>('restoreWebTranscriptViewportAnchor');
-        if (!restoreWebTranscriptViewportAnchor) return;
-        const restoreHTMLElement = installFakeHTMLElement();
-
-        try {
-            const regroupedItemAnchor = new FakeElement('transcript-item-turn:regrouped', { top: 210, bottom: 640 });
-            const messageAnchor = new FakeElement('transcript-anchor-message-m1', { top: 260, bottom: 320 });
-            messageAnchor.parentElement = regroupedItemAnchor;
-            const container = createContainer({
-                scrollTop: 500,
-                scrollHeight: 1600,
-                clientHeight: 600,
-                anchors: [regroupedItemAnchor, messageAnchor],
-            });
-            regroupedItemAnchor.parentElement = container;
-
-            expect(restoreWebTranscriptViewportAnchor({
-                container: container as unknown as HTMLElement,
-                anchor: {
-                    kind: 'message',
-                    messageId: 'm1',
-                    itemId: 'turn:stale',
-                    itemOffsetPx: 72,
-                },
-            }, writeScrollTopFor(container))).toEqual({
-                didAdjustScroll: true,
-                status: 'restored',
-            });
-            expect(container.scrollTop).toBe(638);
-        } finally {
-            restoreHTMLElement();
-        }
-    });
-
     it('delegates viewport anchor scroll writes to the supplied writer', () => {
         const restoreWebTranscriptViewportAnchor =
             resolveModuleFunction<RestoreWebTranscriptViewportAnchor>('restoreWebTranscriptViewportAnchor');
@@ -317,6 +303,246 @@ describe('webTranscriptPrependAnchor', () => {
             });
             expect(requestedTargets).toEqual([608]);
             expect(container.scrollTop).toBe(500);
+        } finally {
+            restoreHTMLElement();
+        }
+    });
+
+    it('falls back to scroll-height growth when virtualized DOM anchors are unavailable', () => {
+        const restoreHTMLElement = installFakeHTMLElement();
+
+        try {
+            const itemAnchor = new FakeElement('transcript-item-turn:1', { top: 120, bottom: 360 });
+            const messageAnchor = new FakeElement('transcript-anchor-message-m1', { top: 160, bottom: 220 });
+            messageAnchor.parentElement = itemAnchor;
+            const container = createContainer({
+                scrollTop: 100,
+                scrollHeight: 1800,
+                clientHeight: 600,
+                anchors: [],
+            });
+            itemAnchor.parentElement = container;
+
+            const result = restoreWebTranscriptPrependAnchor({
+                metrics: {
+                    element: container as unknown as HTMLElement,
+                    scrollTop: 100,
+                    scrollHeight: 1200,
+                    clientHeight: 600,
+                },
+                anchorTestId: 'transcript-anchor-message-m1',
+                anchorTop: 160,
+                itemTestId: 'transcript-item-turn:1',
+                itemTop: 120,
+                stabilizeForMs: 1000,
+                userIntentAtMs: 0,
+                expiresAtMs: Date.now() + 1000,
+            }, writeScrollTopFor(container));
+
+            expect(result).toEqual({ didAdjustScroll: true, strategy: 'growth' });
+            expect(container.scrollTop).toBe(700);
+        } finally {
+            restoreHTMLElement();
+        }
+    });
+
+    it('tries the generic item anchor before scroll-height growth when the stable anchor is unavailable', () => {
+        const restoreHTMLElement = installFakeHTMLElement();
+
+        try {
+            const itemAnchor = new FakeElement('transcript-item-turn:1', { top: 260, bottom: 500 });
+            const messageAnchor = new FakeElement('transcript-anchor-message-m1', { top: 160, bottom: 220 });
+            messageAnchor.parentElement = itemAnchor;
+            const container = createContainer({
+                scrollTop: 100,
+                scrollHeight: 1800,
+                clientHeight: 600,
+                anchors: [itemAnchor],
+            });
+            itemAnchor.parentElement = container;
+
+            const result = restoreWebTranscriptPrependAnchor({
+                metrics: {
+                    element: container as unknown as HTMLElement,
+                    scrollTop: 100,
+                    scrollHeight: 1200,
+                    clientHeight: 600,
+                },
+                anchorTestId: 'transcript-anchor-message-m1',
+                anchorTop: 160,
+                itemTestId: 'transcript-item-turn:1',
+                itemTop: 120,
+                stabilizeForMs: 1000,
+                userIntentAtMs: 0,
+                expiresAtMs: Date.now() + 1000,
+            }, writeScrollTopFor(container));
+
+            expect(result).toEqual({ didAdjustScroll: true, strategy: 'item' });
+            expect(container.scrollTop).toBe(240);
+        } finally {
+            restoreHTMLElement();
+        }
+    });
+
+    it('leaves scroll position unchanged when the prepend growth fallback writer refuses the write', () => {
+        const restoreHTMLElement = installFakeHTMLElement();
+
+        try {
+            const itemAnchor = new FakeElement('transcript-item-turn:1', { top: 120, bottom: 360 });
+            const messageAnchor = new FakeElement('transcript-anchor-message-m1', { top: 160, bottom: 220 });
+            messageAnchor.parentElement = itemAnchor;
+            const container = createContainer({
+                scrollTop: 100,
+                scrollHeight: 1800,
+                clientHeight: 600,
+                anchors: [],
+            });
+            itemAnchor.parentElement = container;
+            const requestedTargets: number[] = [];
+
+            const result = restoreWebTranscriptPrependAnchor({
+                metrics: {
+                    element: container as unknown as HTMLElement,
+                    scrollTop: 100,
+                    scrollHeight: 1200,
+                    clientHeight: 600,
+                },
+                anchorTestId: 'transcript-anchor-message-m1',
+                anchorTop: 160,
+                itemTestId: 'transcript-item-turn:1',
+                itemTop: 120,
+                stabilizeForMs: 1000,
+                userIntentAtMs: 0,
+                expiresAtMs: Date.now() + 1000,
+            }, {
+                writeScrollTop: (targetScrollTop) => {
+                    requestedTargets.push(targetScrollTop);
+                    return false;
+                },
+            });
+
+            expect(result).toEqual({ didAdjustScroll: false, strategy: 'none' });
+            expect(requestedTargets).toEqual([700]);
+            expect(container.scrollTop).toBe(100);
+        } finally {
+            restoreHTMLElement();
+        }
+    });
+
+    it('restores through the saved message anchor when its containing item id changed', () => {
+        const restoreWebTranscriptViewportAnchor =
+            resolveModuleFunction<RestoreWebTranscriptViewportAnchor>('restoreWebTranscriptViewportAnchor');
+        if (!restoreWebTranscriptViewportAnchor) return;
+        const restoreHTMLElement = installFakeHTMLElement();
+
+        try {
+            const currentItemAnchor = new FakeElement('transcript-item-turn:current', { top: 180, bottom: 640 });
+            const messageAnchor = new FakeElement('transcript-anchor-message-m1', { top: 240, bottom: 320 });
+            messageAnchor.parentElement = currentItemAnchor;
+            const container = createContainer({
+                scrollTop: 500,
+                scrollHeight: 1600,
+                clientHeight: 600,
+                anchors: [currentItemAnchor, messageAnchor],
+            });
+            currentItemAnchor.parentElement = container;
+
+            expect(restoreWebTranscriptViewportAnchor({
+                container: container as unknown as HTMLElement,
+                anchor: {
+                    kind: 'message',
+                    messageId: 'm1',
+                    itemId: 'turn:stale',
+                    itemOffsetPx: 72,
+                },
+            }, writeScrollTopFor(container))).toEqual({
+                didAdjustScroll: true,
+                status: 'restored',
+            });
+            expect(container.scrollTop).toBe(608);
+        } finally {
+            restoreHTMLElement();
+        }
+    });
+
+    it('restores saved viewport anchors with exact DOM lookups instead of scanning every test id descendant', () => {
+        const restoreWebTranscriptViewportAnchor =
+            resolveModuleFunction<RestoreWebTranscriptViewportAnchor>('restoreWebTranscriptViewportAnchor');
+        if (!restoreWebTranscriptViewportAnchor) return;
+        const restoreHTMLElement = installFakeHTMLElement();
+
+        try {
+            const itemId = 'turn:1/[quoted]"\\slash';
+            const messageId = 'm1/[quoted]"\\slash';
+            const itemAnchor = new FakeElement(`transcript-item-${itemId}`, { top: 180, bottom: 640 });
+            const messageAnchor = new FakeElement(`transcript-anchor-message-${messageId}`, { top: 240, bottom: 320 });
+            messageAnchor.parentElement = itemAnchor;
+            const unrelatedAnchors = Array.from(
+                { length: 300 },
+                (_value, index) => new FakeElement(`unrelated-${index}`, { top: 0, bottom: 1 }),
+            );
+            const container = createContainer({
+                scrollTop: 500,
+                scrollHeight: 1600,
+                clientHeight: 600,
+                anchors: [...unrelatedAnchors, itemAnchor, messageAnchor],
+            });
+            itemAnchor.parentElement = container;
+
+            expect(restoreWebTranscriptViewportAnchor({
+                container: container as unknown as HTMLElement,
+                anchor: {
+                    kind: 'message',
+                    messageId,
+                    itemId,
+                    itemOffsetPx: 72,
+                },
+            }, writeScrollTopFor(container))).toEqual({
+                didAdjustScroll: true,
+                status: 'restored',
+            });
+            expect(container.scrollTop).toBe(608);
+            expect(container.querySelectorCount).toBe(2);
+            expect(container.querySelectorAllCount).toBe(0);
+        } finally {
+            restoreHTMLElement();
+        }
+    });
+
+    it('falls back to a test-id scan when exact DOM lookup is unavailable', () => {
+        const restoreWebTranscriptViewportAnchor =
+            resolveModuleFunction<RestoreWebTranscriptViewportAnchor>('restoreWebTranscriptViewportAnchor');
+        if (!restoreWebTranscriptViewportAnchor) return;
+        const restoreHTMLElement = installFakeHTMLElement();
+
+        try {
+            const itemAnchor = new FakeElement('transcript-item-turn:1', { top: 180, bottom: 640 });
+            const messageAnchor = new FakeElement('transcript-anchor-message-m1', { top: 240, bottom: 320 });
+            messageAnchor.parentElement = itemAnchor;
+            const container = createContainer({
+                scrollTop: 500,
+                scrollHeight: 1600,
+                clientHeight: 600,
+                anchors: [itemAnchor, messageAnchor],
+            });
+            container.querySelectorShouldThrow = true;
+            itemAnchor.parentElement = container;
+
+            expect(restoreWebTranscriptViewportAnchor({
+                container: container as unknown as HTMLElement,
+                anchor: {
+                    kind: 'message',
+                    messageId: 'm1',
+                    itemId: 'turn:1',
+                    itemOffsetPx: 72,
+                },
+            }, writeScrollTopFor(container))).toEqual({
+                didAdjustScroll: true,
+                status: 'restored',
+            });
+            expect(container.scrollTop).toBe(608);
+            expect(container.querySelectorCount).toBe(2);
+            expect(container.querySelectorAllCount).toBe(2);
         } finally {
             restoreHTMLElement();
         }
@@ -413,89 +639,6 @@ describe('webTranscriptPrependAnchor', () => {
                 status: 'not_found',
             });
             expect(container.scrollTop).toBe(500);
-        } finally {
-            restoreHTMLElement();
-        }
-    });
-
-    it('falls back to scroll-height growth when a virtualized prepend keeps the tracked anchor at the same top', () => {
-        const restoreHTMLElement = installFakeHTMLElement();
-
-        try {
-            const itemAnchor = new FakeElement('transcript-item-turn:1', { top: 120, bottom: 360 });
-            const messageAnchor = new FakeElement('transcript-anchor-message-m1', { top: 160, bottom: 220 });
-            messageAnchor.parentElement = itemAnchor;
-            const container = createContainer({
-                scrollTop: 100,
-                scrollHeight: 1800,
-                clientHeight: 600,
-                anchors: [itemAnchor, messageAnchor],
-            });
-            itemAnchor.parentElement = container;
-
-            const result = restoreWebTranscriptPrependAnchor({
-                metrics: {
-                    element: container as unknown as HTMLElement,
-                    scrollTop: 100,
-                    scrollHeight: 1200,
-                    clientHeight: 600,
-                },
-                anchorTestId: 'transcript-anchor-message-m1',
-                anchorTop: 160,
-                itemTestId: 'transcript-item-turn:1',
-                itemTop: 120,
-                stabilizeForMs: 1000,
-                userIntentAtMs: 0,
-                expiresAtMs: Date.now() + 1000,
-            }, writeScrollTopFor(container));
-
-            expect(result).toEqual({ didAdjustScroll: true, strategy: 'growth' });
-            expect(container.scrollTop).toBe(700);
-        } finally {
-            restoreHTMLElement();
-        }
-    });
-
-    it('leaves scroll position unchanged when the prepend growth fallback writer refuses the write', () => {
-        const restoreHTMLElement = installFakeHTMLElement();
-
-        try {
-            const itemAnchor = new FakeElement('transcript-item-turn:1', { top: 120, bottom: 360 });
-            const messageAnchor = new FakeElement('transcript-anchor-message-m1', { top: 160, bottom: 220 });
-            messageAnchor.parentElement = itemAnchor;
-            const container = createContainer({
-                scrollTop: 100,
-                scrollHeight: 1800,
-                clientHeight: 600,
-                anchors: [itemAnchor, messageAnchor],
-            });
-            itemAnchor.parentElement = container;
-            const requestedTargets: number[] = [];
-
-            const result = restoreWebTranscriptPrependAnchor({
-                metrics: {
-                    element: container as unknown as HTMLElement,
-                    scrollTop: 100,
-                    scrollHeight: 1200,
-                    clientHeight: 600,
-                },
-                anchorTestId: 'transcript-anchor-message-m1',
-                anchorTop: 160,
-                itemTestId: 'transcript-item-turn:1',
-                itemTop: 120,
-                stabilizeForMs: 1000,
-                userIntentAtMs: 0,
-                expiresAtMs: Date.now() + 1000,
-            }, {
-                writeScrollTop: (targetScrollTop) => {
-                    requestedTargets.push(targetScrollTop);
-                    return false;
-                },
-            });
-
-            expect(result).toEqual({ didAdjustScroll: false, strategy: 'none' });
-            expect(requestedTargets).toEqual([700]);
-            expect(container.scrollTop).toBe(100);
         } finally {
             restoreHTMLElement();
         }
@@ -675,6 +818,217 @@ describe('webTranscriptPrependAnchor', () => {
         (globalThis as any).HTMLElement = originalHTMLElement;
     });
 
+    it('captures the prepend anchor with a single DOM scan for stable visible anchor and item offsets', () => {
+        const originalHTMLElement = (globalThis as any).HTMLElement;
+        (globalThis as any).HTMLElement = FakeElement;
+
+        const enclosingItemAnchor = new FakeElement('transcript-item-turn:1', { top: -120, bottom: 420 });
+        const stableMessageAnchor = new FakeElement('transcript-anchor-message-m1', { top: 82, bottom: 162 });
+        stableMessageAnchor.parentElement = enclosingItemAnchor;
+        const container = createContainer({
+            scrollTop: 400,
+            scrollHeight: 1800,
+            clientHeight: 600,
+            anchors: [enclosingItemAnchor, stableMessageAnchor],
+        });
+        enclosingItemAnchor.parentElement = container;
+
+        const metrics: WebTranscriptScrollMetrics = {
+            element: container as unknown as HTMLElement,
+            scrollTop: container.scrollTop,
+            scrollHeight: container.scrollHeight,
+            clientHeight: container.clientHeight,
+        };
+
+        const anchor = captureWebTranscriptPrependAnchor({
+            metrics,
+            userIntentAtMs: 1,
+            stabilizeForMs: 3000,
+        });
+
+        expect(anchor.anchorTestId).toBe('transcript-anchor-message-m1');
+        expect(anchor.anchorTop).toBe(82);
+        expect(anchor.itemTestId).toBe('transcript-item-turn:1');
+        expect(anchor.itemTop).toBe(-120);
+        expect(container.querySelectorAllCount).toBe(1);
+
+        (globalThis as any).HTMLElement = originalHTMLElement;
+    });
+
+    it('refreshes a recaptured prepend anchor with a single DOM scan', () => {
+        const originalHTMLElement = (globalThis as any).HTMLElement;
+        (globalThis as any).HTMLElement = FakeElement;
+
+        const staleAnchor = new FakeElement('transcript-anchor-message-old', { top: 500, bottom: 580 });
+        const nextItemAnchor = new FakeElement('transcript-item-turn:next', { top: -80, bottom: 460 });
+        const nextMessageAnchor = new FakeElement('transcript-anchor-message-next', { top: 90, bottom: 160 });
+        nextMessageAnchor.parentElement = nextItemAnchor;
+        const container = createContainer({
+            scrollTop: 400,
+            scrollHeight: 1800,
+            clientHeight: 600,
+            anchors: [staleAnchor, nextItemAnchor, nextMessageAnchor],
+        });
+        nextItemAnchor.parentElement = container;
+
+        const metrics: WebTranscriptScrollMetrics = {
+            element: container as unknown as HTMLElement,
+            scrollTop: container.scrollTop,
+            scrollHeight: container.scrollHeight,
+            clientHeight: container.clientHeight,
+        };
+        const anchor = captureWebTranscriptPrependAnchor({
+            metrics,
+            userIntentAtMs: 1,
+            stabilizeForMs: 3000,
+        });
+        container.querySelectorAllCount = 0;
+
+        const refreshed = refreshWebTranscriptPrependAnchor(anchor, metrics, {
+            recaptureAnchor: true,
+            recaptureItem: true,
+        });
+
+        expect(refreshed.anchorTestId).toBe('transcript-anchor-message-next');
+        expect(refreshed.anchorTop).toBe(90);
+        expect(refreshed.itemTestId).toBe('transcript-item-turn:next');
+        expect(refreshed.itemTop).toBe(-80);
+        expect(container.querySelectorAllCount).toBe(1);
+
+        (globalThis as any).HTMLElement = originalHTMLElement;
+    });
+
+    it('preserves the existing prepend anchor during restore refresh unless user intent retargets it', () => {
+        const originalHTMLElement = (globalThis as any).HTMLElement;
+        (globalThis as any).HTMLElement = FakeElement;
+
+        const originalItemAnchor = new FakeElement('transcript-item-turn:original', { top: -80, bottom: 460 });
+        const originalMessageAnchor = new FakeElement('transcript-anchor-message-original', { top: 90, bottom: 160 });
+        originalMessageAnchor.parentElement = originalItemAnchor;
+        const container = createContainer({
+            scrollTop: 400,
+            scrollHeight: 1800,
+            clientHeight: 600,
+            anchors: [originalItemAnchor, originalMessageAnchor],
+        });
+        originalItemAnchor.parentElement = container;
+
+        const metrics: WebTranscriptScrollMetrics = {
+            element: container as unknown as HTMLElement,
+            scrollTop: container.scrollTop,
+            scrollHeight: container.scrollHeight,
+            clientHeight: container.clientHeight,
+        };
+        const anchor = captureWebTranscriptPrependAnchor({
+            metrics,
+            userIntentAtMs: 1,
+            stabilizeForMs: 3000,
+        });
+
+        const prependedItemAnchor = new FakeElement('transcript-item-turn:prepended', { top: 0, bottom: 260 });
+        const prependedMessageAnchor = new FakeElement('transcript-anchor-message-prepended', { top: 96, bottom: 156 });
+        prependedMessageAnchor.parentElement = prependedItemAnchor;
+        prependedItemAnchor.parentElement = container;
+        originalItemAnchor.setRect({ top: 320, bottom: 860 });
+        originalMessageAnchor.setRect({ top: 420, bottom: 490 });
+        container.setQuerySelectorAll('[data-testid]', [
+            prependedItemAnchor,
+            prependedMessageAnchor,
+            originalItemAnchor,
+            originalMessageAnchor,
+        ]);
+        container.querySelectorAllCount = 0;
+
+        const restoreRefresh = refreshWebTranscriptPrependAnchor(anchor, {
+            ...metrics,
+            scrollTop: 900,
+            scrollHeight: 2400,
+        }, {
+            recaptureAnchor: true,
+            recaptureItem: true,
+        });
+
+        expect(restoreRefresh.anchorTestId).toBe('transcript-anchor-message-original');
+        expect(restoreRefresh.anchorTop).toBe(90);
+        expect(restoreRefresh.itemTestId).toBe('transcript-item-turn:original');
+        expect(restoreRefresh.itemTop).toBe(-80);
+        expect(container.querySelectorAllCount).toBe(1);
+
+        const userRetargetRefresh = refreshWebTranscriptPrependAnchor(anchor, {
+            ...metrics,
+            scrollTop: 900,
+            scrollHeight: 2400,
+        }, {
+            recaptureAnchor: true,
+            recaptureItem: true,
+            userIntentAtMs: 2,
+        });
+
+        expect(userRetargetRefresh.anchorTestId).toBe('transcript-anchor-message-prepended');
+        expect(userRetargetRefresh.itemTestId).toBe('transcript-item-turn:prepended');
+
+        (globalThis as any).HTMLElement = originalHTMLElement;
+    });
+
+    it('can adopt the current mounted anchor position after a successful anchor restore without retargeting', () => {
+        const originalHTMLElement = (globalThis as any).HTMLElement;
+        (globalThis as any).HTMLElement = FakeElement;
+
+        const prependedItemAnchor = new FakeElement('transcript-item-turn:prepended', { top: 0, bottom: 260 });
+        const prependedMessageAnchor = new FakeElement('transcript-anchor-message-prepended', { top: 96, bottom: 156 });
+        prependedMessageAnchor.parentElement = prependedItemAnchor;
+        const originalItemAnchor = new FakeElement('transcript-item-turn:original', { top: 320, bottom: 860 });
+        const originalMessageAnchor = new FakeElement('transcript-anchor-message-original', { top: 420, bottom: 490 });
+        originalMessageAnchor.parentElement = originalItemAnchor;
+        const container = createContainer({
+            scrollTop: 700,
+            scrollHeight: 2400,
+            clientHeight: 600,
+            anchors: [
+                prependedItemAnchor,
+                prependedMessageAnchor,
+                originalItemAnchor,
+                originalMessageAnchor,
+            ],
+        });
+        prependedItemAnchor.parentElement = container;
+        originalItemAnchor.parentElement = container;
+
+        const anchor = {
+            metrics: {
+                element: container as unknown as HTMLElement,
+                scrollTop: 100,
+                scrollHeight: 1800,
+                clientHeight: 600,
+            },
+            anchorTestId: 'transcript-anchor-message-original',
+            anchorTop: 90,
+            itemTestId: 'transcript-item-turn:original',
+            itemTop: -80,
+            stabilizeForMs: 3000,
+            userIntentAtMs: 1,
+            expiresAtMs: Date.now() + 3000,
+        };
+
+        const refreshed = refreshWebTranscriptPrependAnchor(anchor, {
+            element: container as unknown as HTMLElement,
+            scrollTop: 700,
+            scrollHeight: 2400,
+            clientHeight: 600,
+        }, {
+            adoptCurrentAnchorPosition: true,
+            recaptureAnchor: true,
+            recaptureItem: true,
+        });
+
+        expect(refreshed.anchorTestId).toBe('transcript-anchor-message-original');
+        expect(refreshed.anchorTop).toBe(420);
+        expect(refreshed.itemTestId).toBe('transcript-item-turn:original');
+        expect(refreshed.itemTop).toBe(320);
+
+        (globalThis as any).HTMLElement = originalHTMLElement;
+    });
+
     it('captures the containing transcript item for the chosen anchor instead of an unrelated closer item wrapper', () => {
         const originalHTMLElement = (globalThis as any).HTMLElement;
         (globalThis as any).HTMLElement = FakeElement;
@@ -787,5 +1141,95 @@ describe('webTranscriptPrependAnchor', () => {
         expect(anchor.itemTestId).toBe('transcript-item-turn:stale');
 
         (globalThis as any).HTMLElement = originalHTMLElement;
+    });
+
+    it('does not spend the scroll-height growth fallback when the stable prepend anchor is already aligned', () => {
+        const originalHTMLElement = (globalThis as any).HTMLElement;
+        (globalThis as any).HTMLElement = FakeElement;
+
+        const stableMessageAnchor = new FakeElement('transcript-anchor-message-m1', { top: 120, bottom: 180 });
+        const container = createContainer({
+            scrollTop: 100,
+            scrollHeight: 1800,
+            clientHeight: 600,
+            anchors: [stableMessageAnchor],
+        });
+        const anchor = captureWebTranscriptPrependAnchor({
+            metrics: {
+                element: container as unknown as HTMLElement,
+                scrollTop: 100,
+                scrollHeight: 1200,
+                clientHeight: 600,
+            },
+            stabilizeForMs: 1000,
+            userIntentAtMs: 1,
+        });
+        const writes: number[] = [];
+
+        expect(restoreWebTranscriptPrependAnchor(anchor, {
+            writeScrollTop: (targetScrollTop) => {
+                writes.push(targetScrollTop);
+                container.scrollTop = targetScrollTop;
+                return true;
+            },
+        })).toEqual({
+            didAdjustScroll: false,
+            strategy: 'anchor',
+        });
+        expect(writes).toEqual([]);
+        expect(container.scrollTop).toBe(100);
+
+        (globalThis as any).HTMLElement = originalHTMLElement;
+    });
+
+    it('recovers browser-clamped scrollTop when scrollHeight recovers to baseline after a transient drop', () => {
+        // Scenario: anchor captured at scrollTop=45000, scrollHeight=50000 with no DOM anchor
+        // (anchor element virtualized out of the render window).
+        // FlashList window reallocation drops sh to 24100 → browser clamps scrollTop to ~23500.
+        // sh then recovers back to 50000 (items remeasure). The growth fallback must still
+        // re-apply scrollTop=45000 because remainingGrowthPx (21500) > 1.
+        //
+        // BUG (before fix): restoreFromScrollHeightGrowth computes growth = 50000-50000 = 0,
+        // then returns null due to `if (growth <= 0) return null`, leaving scrollTop clamped.
+        // FIX: replace the early-exit with Math.max(0, growth) for the additive contribution
+        // only; remainingGrowthPx > 1 becomes the sole no-op guard.
+        const container = createContainer({
+            scrollTop: 45000,
+            scrollHeight: 50000,
+            clientHeight: 600,
+            anchors: [], // anchor element virtualized out — no DOM anchors
+        });
+
+        // Capture baseline: scrollTop=45000, scrollHeight=50000, no visible DOM anchors
+        const anchor = captureWebTranscriptPrependAnchor({
+            metrics: {
+                element: container as unknown as HTMLElement,
+                scrollTop: 45000,
+                scrollHeight: 50000,
+                clientHeight: 600,
+            },
+            stabilizeForMs: 3000,
+            userIntentAtMs: 1,
+        });
+
+        // Simulate: sh dropped and recovered; browser clamped scrollTop during the drop
+        container.scrollTop = 23500;  // browser-clamped value during sh collapse
+        // container.scrollHeight remains 50000 (sh recovered to baseline)
+
+        // Growth = 50000 - 50000 = 0.  Without the fix, returns { didAdjustScroll: false }.
+        // With the fix, targetScrollTop = 45000, remainingGrowthPx = 21500 > 1 → must write.
+        const writes: number[] = [];
+        expect(restoreWebTranscriptPrependAnchor(anchor, {
+            writeScrollTop: (targetScrollTop) => {
+                writes.push(targetScrollTop);
+                container.scrollTop = targetScrollTop;
+                return true;
+            },
+        })).toEqual({
+            didAdjustScroll: true,
+            strategy: 'growth',
+        });
+        expect(writes).toEqual([45000]);
+        expect(container.scrollTop).toBe(45000);
     });
 });

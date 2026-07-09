@@ -20,6 +20,7 @@ export type TranscriptBottomFollowIntentResult = Readonly<{
  * observations can never unpin a user who did not scroll.
  */
 export function resolveTranscriptBottomFollowIntent(params: Readonly<{
+    canRearmBottom?: boolean;
     canRelease: boolean;
     direction: TranscriptBottomScrollDirection;
     distanceFromBottom: number;
@@ -53,13 +54,13 @@ export function resolveTranscriptBottomFollowIntent(params: Readonly<{
     let rearmed = false;
     let released = false;
 
-    if (distanceFromBottom === 0) {
+    if (distanceFromBottom === 0 && params.canRearmBottom !== false) {
         rearmed = wantsPinned !== true;
         wantsPinned = true;
     } else if (params.canRelease && movedAwayFromBottom) {
         released = wantsPinned !== false;
         wantsPinned = false;
-    } else if (movedTowardBottom && distanceFromBottom <= pinThresholdPx) {
+    } else if (params.canRearmBottom !== false && movedTowardBottom && distanceFromBottom <= pinThresholdPx) {
         rearmed = wantsPinned !== true;
         wantsPinned = true;
     }
@@ -68,7 +69,7 @@ export function resolveTranscriptBottomFollowIntent(params: Readonly<{
 
     return {
         effectivePinnedOffsetThresholdPx,
-        isPinned: distanceFromBottom <= effectivePinnedOffsetThresholdPx,
+        isPinned: wantsPinned && distanceFromBottom <= effectivePinnedOffsetThresholdPx,
         nextDistanceFromBottom: distanceFromBottom,
         nextScrollOffset: scrollOffset,
         rearmed,

@@ -1,9 +1,11 @@
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import { ComposerKeyboardScaffold } from '@/components/sessions/keyboardAvoidance';
+import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import * as React from 'react';
 import { View } from 'react-native';
 import { ScrollView } from 'react-native-gesture-handler';
+import { useUnistyles } from 'react-native-unistyles';
 import { useKeyboardDismissOnTap } from './useKeyboardDismissOnTap';
 
 interface AgentContentViewProps {
@@ -15,13 +17,20 @@ interface AgentContentViewProps {
 export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ input, content, placeholder }) => {
     const safeArea = useChromeSafeAreaInsets();
     const headerHeight = useHeaderHeight();
+    const bottomChromeHeight = useSessionCockpitBottomChromeHeight();
     const keyboardDismissOnTapHandlers = useKeyboardDismissOnTap();
+    const { theme } = useUnistyles();
+    // Reserve the floating bar's height inside the session screen (see the native
+    // controller for the rationale): the bar overlays content, so the composer is
+    // lifted above it here rather than by an in-flow chrome-host reservation.
     return (
+        <View style={{ flex: 1, minHeight: 0, paddingBottom: bottomChromeHeight, backgroundColor: theme.colors.surface.base }}>
         <ComposerKeyboardScaffold
             testID="agent-content-keyboard-host"
             mode="session"
             contentTestID="agent-content-scroll-region"
             composerTestID="agent-content-input-footer"
+            layoutBottomInset={bottomChromeHeight}
             safeAreaBottom={safeArea.bottom}
             headerHeight={headerHeight}
             contentProps={keyboardDismissOnTapHandlers}
@@ -62,5 +71,6 @@ export const AgentContentView: React.FC<AgentContentViewProps> = React.memo(({ i
                 </ScrollView>
             ) : null}
         </ComposerKeyboardScaffold>
+        </View>
     );
 });

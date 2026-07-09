@@ -9,29 +9,30 @@ import {
   markStreamingMessagesAppliedForSessionUiTelemetry,
 } from '@/sync/runtime/performance/sessionUiTelemetry';
 import {
-  buildLegacyChatListItems,
-  legacyChatListHarnessState,
-  renderLegacyChatList,
-  resetLegacyChatListHarness,
-} from './ChatList.legacyListTestHarness';
-import { installLegacyChatListHarnessCommonModuleMocks } from './chatListLegacyHarnessTestHelpers';
+  buildFlashListChatListItems,
+  flashListChatListHarnessState,
+  renderFlashListChatListSession,
+  resetFlashListChatListHarness,
+} from '@/dev/testkit/harness/chatListHarness';
+import { installFlashListChatListCommonModuleMocks } from '@/dev/testkit/harness/chatListHarnessModuleMocks';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const scrollToOffsetSpy = vi.fn();
+const scrollToIndexSpy = vi.fn();
 
-installLegacyChatListHarnessCommonModuleMocks({
+installFlashListChatListCommonModuleMocks({
   reactNative: async () =>
-    (await import('@/dev/testkit/harness/chatListHarness')).createLegacyChatListReactNativeMock({
+    (await import('@/dev/testkit/harness/chatListHarness')).createFlashListChatListReactNativeMock({
       platformOs: 'ios',
     }),
 });
 
 vi.mock('@/components/sessions/chatListItems', () => ({
-  buildChatListItems: buildLegacyChatListItems,
+  buildChatListItems: buildFlashListChatListItems,
   buildChatListItemsCached: (opts: any) => ({
     cache: null,
-    items: buildLegacyChatListItems(opts),
+    items: buildFlashListChatListItems(opts),
   }),
 }));
 
@@ -112,16 +113,17 @@ const chatListModulePromise = import('./ChatList');
 
 describe('ChatList (auto-follow while pinned)', () => {
   beforeEach(() => {
-    resetLegacyChatListHarness({
+    resetFlashListChatListHarness({
       platformOs: 'ios',
-      flatListRefValue: {
+      flashListRefHandle: {
         scrollToOffset: scrollToOffsetSpy,
-        scrollToIndex: vi.fn(),
+        scrollToIndex: scrollToIndexSpy,
       },
     });
     scrollToOffsetSpy.mockClear();
+    scrollToIndexSpy.mockClear();
 
-    legacyChatListHarnessState.settingValues.transcriptScrollAutoFollowWhenPinned = true;
+    flashListChatListHarnessState.settingValues.transcriptScrollAutoFollowWhenPinned = true;
   });
 
   afterEach(() => {
@@ -131,7 +133,7 @@ describe('ChatList (auto-follow while pinned)', () => {
     standardCleanup();
   });
 
-  it('pins to bottom when pinned and new activity arrives', async () => {
+  it('keeps native FlashList bottom maintenance as the follow owner when pinned activity arrives', async () => {
     const { ChatList } = await chatListModulePromise;
     (globalThis as any).requestAnimationFrame = (cb: any) => {
       cb(0);
@@ -139,7 +141,7 @@ describe('ChatList (auto-follow while pinned)', () => {
     };
     (globalThis as any).cancelAnimationFrame = () => {};
 
-    legacyChatListHarnessState.sessionMessagesState = {
+    flashListChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [
         { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
@@ -147,14 +149,15 @@ describe('ChatList (auto-follow while pinned)', () => {
       ],
     };
 
-    const screen = await renderLegacyChatList();
+    const screen = await renderFlashListChatListSession();
 
     scrollToOffsetSpy.mockClear();
+    scrollToIndexSpy.mockClear();
 
-    legacyChatListHarnessState.sessionMessagesState = {
+    flashListChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [
-        ...legacyChatListHarnessState.sessionMessagesState.messages,
+        ...flashListChatListHarnessState.sessionMessagesState.messages,
         { kind: 'agent-text', id: 'a2', localId: null, createdAt: 3, text: 'a2' },
       ],
     };
@@ -163,12 +166,16 @@ describe('ChatList (auto-follow while pinned)', () => {
       await screen.update(
         // New committed activity bumps the session seq in production; the ChatList memo
         // (buildTranscriptRenderSignature) needs a signature-relevant change to re-render.
-        <ChatList session={{ ...legacyChatListHarnessState.sessionState, seq: 1 }} />,
+        <ChatList session={{ ...flashListChatListHarnessState.sessionState, seq: 1 }} />,
       );
     });
+    await screen.settle();
 
-    expect(scrollToOffsetSpy).toHaveBeenCalled();
-  });
+    expect(screen.requireCapturedFlashListProps().maintainVisibleContentPosition).toMatchObject({
+      startRenderingFromBottom: true,
+    });
+    expect(scrollToOffsetSpy.mock.calls.length + scrollToIndexSpy.mock.calls.length).toBe(0);
+  }, 120000);
 
   it('pins to bottom when a pending message appears while pinned before commit', async () => {
     const { ChatList } = await chatListModulePromise;
@@ -178,24 +185,25 @@ describe('ChatList (auto-follow while pinned)', () => {
     };
     (globalThis as any).cancelAnimationFrame = () => {};
 
-    legacyChatListHarnessState.sessionMessagesState = {
+    flashListChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [
         { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
         { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'a1' },
       ],
     };
-    legacyChatListHarnessState.sessionPendingState = {
+    flashListChatListHarnessState.sessionPendingState = {
       messages: [],
       discarded: [],
       isLoaded: true,
     };
 
-    const screen = await renderLegacyChatList();
+    const screen = await renderFlashListChatListSession();
 
     scrollToOffsetSpy.mockClear();
+    scrollToIndexSpy.mockClear();
 
-    legacyChatListHarnessState.sessionPendingState = {
+    flashListChatListHarnessState.sessionPendingState = {
       messages: [
         {
           id: 'p1',
@@ -214,12 +222,16 @@ describe('ChatList (auto-follow while pinned)', () => {
       await screen.update(
         // New committed activity bumps the session seq in production; the ChatList memo
         // (buildTranscriptRenderSignature) needs a signature-relevant change to re-render.
-        <ChatList session={{ ...legacyChatListHarnessState.sessionState, seq: 1 }} />,
+        <ChatList session={{ ...flashListChatListHarnessState.sessionState, seq: 1 }} />,
       );
     });
+    await screen.settle();
 
-    expect(scrollToOffsetSpy).toHaveBeenCalled();
-  });
+    expect(screen.requireCapturedFlashListProps().maintainVisibleContentPosition).toMatchObject({
+      startRenderingFromBottom: true,
+    });
+    expect(scrollToOffsetSpy.mock.calls.length + scrollToIndexSpy.mock.calls.length).toBe(0);
+  }, 120000);
 
   it('records visible streaming update telemetry when a marked socket message reaches the transcript', async () => {
     const { ChatList } = await chatListModulePromise;
@@ -230,27 +242,27 @@ describe('ChatList (auto-follow while pinned)', () => {
     });
     syncPerformanceTelemetry.reset();
 
-    legacyChatListHarnessState.sessionMessagesState = {
+    flashListChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [
         { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
       ],
     };
 
-    const screen = await renderLegacyChatList();
+    const screen = await renderFlashListChatListSession();
 
     markStreamingMessagesAppliedForSessionUiTelemetry({
-      sessionId: legacyChatListHarnessState.sessionState.id,
+      sessionId: flashListChatListHarnessState.sessionState.id,
       source: 'socketMessage',
       messages: [
         { id: 'a1' },
       ],
     });
 
-    legacyChatListHarnessState.sessionMessagesState = {
+    flashListChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [
-        ...legacyChatListHarnessState.sessionMessagesState.messages,
+        ...flashListChatListHarnessState.sessionMessagesState.messages,
         { kind: 'agent-text', id: 'a1', localId: null, createdAt: 2, text: 'a1' },
       ],
     };
@@ -259,9 +271,10 @@ describe('ChatList (auto-follow while pinned)', () => {
       await screen.update(
         // New committed activity bumps the session seq in production; the ChatList memo
         // (buildTranscriptRenderSignature) needs a signature-relevant change to re-render.
-        <ChatList session={{ ...legacyChatListHarnessState.sessionState, seq: 1 }} />,
+        <ChatList session={{ ...flashListChatListHarnessState.sessionState, seq: 1 }} />,
       );
     });
+    await screen.settle();
 
     const event = syncPerformanceTelemetry
       .snapshot()
@@ -274,7 +287,7 @@ describe('ChatList (auto-follow while pinned)', () => {
       committedMessages: 2,
     });
     expect(Object.values(event?.fields ?? {}).every((value) => typeof value === 'number')).toBe(true);
-  });
+  }, 120000);
 
   it('pins to bottom when a committed message extends the newest turn while pinned', async () => {
     const { ChatList } = await chatListModulePromise;
@@ -284,21 +297,22 @@ describe('ChatList (auto-follow while pinned)', () => {
     };
     (globalThis as any).cancelAnimationFrame = () => {};
 
-    legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
-    legacyChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
-    legacyChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
-    legacyChatListHarnessState.sessionMessagesState = {
+    flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+    flashListChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
+    flashListChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    flashListChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [
         { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
       ],
     };
 
-    const screen = await renderLegacyChatList();
+    const screen = await renderFlashListChatListSession();
 
     scrollToOffsetSpy.mockClear();
+    scrollToIndexSpy.mockClear();
 
-    legacyChatListHarnessState.sessionMessagesState = {
+    flashListChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [
         { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
@@ -310,12 +324,16 @@ describe('ChatList (auto-follow while pinned)', () => {
       await screen.update(
         // New committed activity bumps the session seq in production; the ChatList memo
         // (buildTranscriptRenderSignature) needs a signature-relevant change to re-render.
-        <ChatList session={{ ...legacyChatListHarnessState.sessionState, seq: 1 }} />,
+        <ChatList session={{ ...flashListChatListHarnessState.sessionState, seq: 1 }} />,
       );
     });
+    await screen.settle();
 
-    expect(scrollToOffsetSpy).toHaveBeenCalled();
-  });
+    expect(screen.requireCapturedFlashListProps().maintainVisibleContentPosition).toMatchObject({
+      startRenderingFromBottom: true,
+    });
+    expect(scrollToOffsetSpy.mock.calls.length + scrollToIndexSpy.mock.calls.length).toBe(0);
+  }, 120000);
 
   it('pins to bottom when multiple committed messages extend the same newest turn while pinned', async () => {
     const { ChatList } = await chatListModulePromise;
@@ -325,10 +343,10 @@ describe('ChatList (auto-follow while pinned)', () => {
     };
     (globalThis as any).cancelAnimationFrame = () => {};
 
-    legacyChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
-    legacyChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
-    legacyChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
-    legacyChatListHarnessState.sessionMessagesState = {
+    flashListChatListHarnessState.settingValues.transcriptGroupingMode = 'turns';
+    flashListChatListHarnessState.settingValues.transcriptGroupToolCalls = false;
+    flashListChatListHarnessState.settingValues.transcriptTurnToolCallsGroupStrategy = 'consecutive_tools';
+    flashListChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [
         { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
@@ -336,11 +354,12 @@ describe('ChatList (auto-follow while pinned)', () => {
       ],
     };
 
-    const screen = await renderLegacyChatList();
+    const screen = await renderFlashListChatListSession();
 
     scrollToOffsetSpy.mockClear();
+    scrollToIndexSpy.mockClear();
 
-    legacyChatListHarnessState.sessionMessagesState = {
+    flashListChatListHarnessState.sessionMessagesState = {
       isLoaded: true,
       messages: [
         { kind: 'user-text', id: 'u1', localId: null, createdAt: 1, text: 'u1' },
@@ -353,10 +372,14 @@ describe('ChatList (auto-follow while pinned)', () => {
       await screen.update(
         // New committed activity bumps the session seq in production; the ChatList memo
         // (buildTranscriptRenderSignature) needs a signature-relevant change to re-render.
-        <ChatList session={{ ...legacyChatListHarnessState.sessionState, seq: 1 }} />,
+        <ChatList session={{ ...flashListChatListHarnessState.sessionState, seq: 1 }} />,
       );
     });
+    await screen.settle();
 
-    expect(scrollToOffsetSpy).toHaveBeenCalled();
-  });
+    expect(screen.requireCapturedFlashListProps().maintainVisibleContentPosition).toMatchObject({
+      startRenderingFromBottom: true,
+    });
+    expect(scrollToOffsetSpy.mock.calls.length + scrollToIndexSpy.mock.calls.length).toBe(0);
+  }, 120000);
 });

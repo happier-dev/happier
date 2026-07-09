@@ -1,13 +1,9 @@
-import type {
-    TranscriptViewportListImplementation,
-    TranscriptViewportPlatform,
-} from '@/components/sessions/transcript/viewport/transcriptViewportTypes';
+import type { TranscriptViewportPlatform } from '@/components/sessions/transcript/viewport/transcriptViewportTypes';
 
 type TranscriptWarmPaintRecord = Readonly<{
     committedMessagesCount: number;
     items: number;
     latestCommittedActivityKey: string;
-    listImplementation: TranscriptViewportListImplementation;
     observedAtMs: number;
     platform: TranscriptViewportPlatform;
 }>;
@@ -45,18 +41,16 @@ function normalizeLatestCommittedActivityKey(value: string | null): string | nul
 }
 
 function buildCacheKey(params: Readonly<{
-    listImplementation: TranscriptViewportListImplementation;
     platform: TranscriptViewportPlatform;
     sessionId: string;
 }>): string {
-    return `${params.platform}:${params.listImplementation}:${params.sessionId}`;
+    return `${params.platform}:${params.sessionId}`;
 }
 
-function isNativeFlashList(params: Readonly<{
-    listImplementation: TranscriptViewportListImplementation;
+function isNativePlatform(params: Readonly<{
     platform: TranscriptViewportPlatform;
 }>): boolean {
-    return params.platform !== 'web' && params.listImplementation === 'flash_v2';
+    return params.platform !== 'web';
 }
 
 function enforceCacheLimit(store: TranscriptWarmPaintStore): void {
@@ -71,13 +65,12 @@ export function rememberTranscriptWarmStablePaint(params: Readonly<{
     committedMessagesCount: number;
     items: number;
     latestCommittedActivityKey: string | null;
-    listImplementation: TranscriptViewportListImplementation;
     nowMs?: number;
     platform: TranscriptViewportPlatform;
     routeHydrationPending?: boolean;
     sessionId: string;
 }>): void {
-    if (!isNativeFlashList(params)) return;
+    if (!isNativePlatform(params)) return;
     if (params.routeHydrationPending === true) return;
 
     const sessionId = normalizeSessionId(params.sessionId);
@@ -94,7 +87,6 @@ export function rememberTranscriptWarmStablePaint(params: Readonly<{
             : Date.now();
     const store = getStore();
     const key = buildCacheKey({
-        listImplementation: params.listImplementation,
         platform: params.platform,
         sessionId,
     });
@@ -103,7 +95,6 @@ export function rememberTranscriptWarmStablePaint(params: Readonly<{
         committedMessagesCount,
         items,
         latestCommittedActivityKey,
-        listImplementation: params.listImplementation,
         observedAtMs,
         platform: params.platform,
     });
@@ -114,13 +105,12 @@ export function hasTranscriptWarmStablePaint(params: Readonly<{
     committedMessagesCount: number;
     items: number;
     latestCommittedActivityKey: string | null;
-    listImplementation: TranscriptViewportListImplementation;
     nowMs?: number;
     platform: TranscriptViewportPlatform;
     routeHydrationPending?: boolean;
     sessionId: string;
 }>): boolean {
-    if (!isNativeFlashList(params)) return false;
+    if (!isNativePlatform(params)) return false;
     if (params.routeHydrationPending === true) return false;
 
     const sessionId = normalizeSessionId(params.sessionId);
@@ -133,7 +123,6 @@ export function hasTranscriptWarmStablePaint(params: Readonly<{
 
     const store = getStore();
     const key = buildCacheKey({
-        listImplementation: params.listImplementation,
         platform: params.platform,
         sessionId,
     });

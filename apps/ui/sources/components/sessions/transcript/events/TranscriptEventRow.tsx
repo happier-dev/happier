@@ -1,23 +1,88 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Text } from '@/components/ui/text/Text';
 import { resolveConnectedServiceUxDiagnosticPresentation } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
+import {
+    isTerminalComposerDraftBlockedEvent,
+    readTerminalComposerDraftBlockedStateAtMs,
+} from '@/components/sessions/terminalComposer/terminalComposerDraftBlockedEvent';
+import { useTerminalComposerClearAction } from '@/components/sessions/terminalComposer/useTerminalComposerClearAction';
 import { useSettings } from '@/sync/store/hooks';
 import type { AgentEvent } from '@/sync/typesRaw';
 import { t } from '@/text';
+import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
 import { buildConnectedServiceAccountSwitchMessage } from './connectedServiceAccountSwitchMessage';
 
 const EVENT_ICON_SIZE = 18;
+const EVENT_SPINNER_SIZE = 20;
 const EVENT_ICON_CONTAINER_SIZE = 20;
+
+function readEventRecord(event: AgentEvent): Record<string, unknown> {
+    return event as unknown as Record<string, unknown>;
+}
+
+function readTerminalComposerDraftBlockedMessage(event: AgentEvent): string | null {
+    const record = readEventRecord(event);
+    return record.type === 'terminal-composer-draft-blocked'
+        && typeof record.message === 'string'
+        && record.message.trim().length > 0
+        ? record.message
+        : null;
+}
+
+function TerminalComposerClearEventAction(props: Readonly<{
+    event: AgentEvent;
+    sessionId: string;
+}>) {
+    const { theme } = useUnistyles();
+    const terminalComposerClear = useTerminalComposerClearAction(props.sessionId);
+    const expectedStateAtMs = readTerminalComposerDraftBlockedStateAtMs(props.event);
+
+    return (
+        <Pressable
+            testID="transcriptEvent.clearTerminalComposer"
+            accessibilityRole="button"
+            accessibilityLabel={t('session.pendingMessages.clearComposer.action')}
+            disabled={terminalComposerClear.busy}
+            onPress={() => {
+                void terminalComposerClear.clearTerminalComposer({ expectedStateAtMs });
+            }}
+            style={({ pressed }) => ([
+                styles.action,
+                {
+                    backgroundColor: pressed ? theme.colors.surface.pressedOverlay : theme.colors.surface.base,
+                    borderColor: theme.colors.border.default,
+                    opacity: terminalComposerClear.busy ? 0.6 : 1,
+                },
+            ])}
+        >
+            {terminalComposerClear.busy ? (
+                <ActivitySpinner
+                    testID="transcriptEvent.clearTerminalComposerSpinner"
+                    size={EVENT_SPINNER_SIZE}
+                    color={theme.colors.text.secondary}
+                />
+            ) : (
+                <Ionicons name="close-circle-outline" size={12} color={theme.colors.state.danger.foreground} />
+            )}
+            <Text style={[styles.actionText, { color: theme.colors.state.danger.foreground }]}>
+                {terminalComposerClear.busy
+                    ? t('session.pendingMessages.clearComposer.clearing')
+                    : t('session.pendingMessages.clearComposer.action')}
+            </Text>
+        </Pressable>
+    );
+}
 
 function formatLimitReachedTime(timestamp: number): string {
     try {
         const date = new Date(timestamp * 1000);
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return formatWithCachedDateTimeFormatter(date, [], { hour: '2-digit', minute: '2-digit' });
     } catch {
         return t('message.unknownTime');
     }
@@ -26,7 +91,7 @@ function formatLimitReachedTime(timestamp: number): string {
 function formatQuotaResetTime(timestampMs: number): string {
     try {
         const date = new Date(timestampMs);
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return formatWithCachedDateTimeFormatter(date, [], { hour: '2-digit', minute: '2-digit' });
     } catch {
         return t('message.unknownTime');
     }
@@ -46,14 +111,17 @@ function formatConnectedServiceSwitchAttemptFailureText(event: Extract<AgentEven
 
 function formatConnectedServiceSwitchAttemptSuccessText(event: Extract<AgentEvent, { type: 'connected-service-account-switch-attempt' }>): string {
     const outcomeAction = event.outcomeAction;
+    if (outcomeAction === 'credential_refreshed' || (!outcomeAction && event.attemptedContinuityMode === 'credential_refresh')) {
+        return t('connectedServices.authSwitch.status.credentialsRefreshed');
+    }
+    if (outcomeAction === 'hot_applied' || (!outcomeAction && event.action === 'hot_applied')) {
+        return t('connectedServices.authSwitch.status.liveApplied');
+    }
     if (outcomeAction === 'restarted' || (!outcomeAction && event.action === 'restart_requested')) {
         return t('connectedServices.authSwitch.status.restarting');
     }
     if (outcomeAction === 'metadata_updated' || (!outcomeAction && event.action === 'metadata_updated')) {
         return t('connectedServices.authSwitch.status.appliesOnNextResume');
-    }
-    if (outcomeAction === 'credential_refreshed') {
-        return t('connectedServices.authSwitch.confirmAction');
     }
     return t('connectedServices.authSwitch.confirmAction');
 }
@@ -201,6 +269,7 @@ function formatRuntimeConfigOutcomeSessionModeChange(changes: RuntimeConfigOutco
 
 export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: {
     event: AgentEvent;
+    sessionId?: string | null;
 }) {
     const { theme } = useUnistyles();
     const settings = useSettings();
@@ -208,8 +277,16 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
     let text = t('message.unknownEvent');
     let detailText: string | undefined;
     let testID: string | undefined;
+    const terminalComposerDraftBlocked = isTerminalComposerDraftBlockedEvent(props.event);
+    const terminalComposerClearSessionId = typeof props.sessionId === 'string' ? props.sessionId.trim() : '';
+    const showTerminalComposerClearAction = terminalComposerDraftBlocked && terminalComposerClearSessionId.length > 0;
 
-    if (props.event.type === 'switch') {
+    if (terminalComposerDraftBlocked && readEventRecord(props.event).type === 'terminal-composer-draft-blocked') {
+        testID = 'transcript-event-terminal-composer-draft-blocked';
+        iconName = 'pause-circle-outline';
+        text = readTerminalComposerDraftBlockedMessage(props.event)
+            ?? t('session.pendingMessages.steerBlockedTerminalDraftNotice');
+    } else if (props.event.type === 'switch') {
         iconName = 'swap-horizontal-outline';
         text = t('message.switchedToMode', { mode: props.event.mode });
     } else if (props.event.type === 'message') {
@@ -344,6 +421,12 @@ export const TranscriptEventRow = React.memo(function TranscriptEventRow(props: 
                             {detailText}
                         </Text>
                     ) : null}
+                    {showTerminalComposerClearAction ? (
+                        <TerminalComposerClearEventAction
+                            event={props.event}
+                            sessionId={terminalComposerClearSessionId}
+                        />
+                    ) : null}
                 </View>
             </View>
         </>
@@ -396,5 +479,22 @@ const styles = StyleSheet.create((theme) => ({
         lineHeight: 16,
         fontWeight: '400',
         flexShrink: 1,
+    },
+    action: {
+        marginTop: 6,
+        alignSelf: 'flex-start',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        minHeight: 24,
+        borderWidth: 1,
+        borderRadius: 6,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+    },
+    actionText: {
+        fontSize: 12,
+        lineHeight: 16,
+        fontWeight: '700',
     },
 }));

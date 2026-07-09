@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     observePrependOutcome,
     PREPEND_ANCHOR_ALIGNMENT_TOLERANCE_PX,
+    PREPEND_CORRECTOR_COVERED_RESIDUAL_TOLERANCE_PX,
     type PrependCapturedAnchor,
     type PrependPostCommitObservation,
 } from '@/components/sessions/transcript/viewport/prepend/observePrependOutcome';
@@ -290,5 +291,154 @@ describe('observePrependOutcome', () => {
             }),
         });
         expect(outcome).toEqual({ kind: 'unresolvable', reason: 'layout-not-ready' });
+    });
+});
+
+describe('observePrependOutcome corrector deference (N2d.1)', () => {
+    const items = [messageItem('m1'), messageItem('m2'), messageItem('m3'), messageItem('m4'), messageItem('m5')];
+    const staleObservation = postCommit({
+        items,
+        layoutYByIndex: { 0: 0, 1: 450, 2: 900, 3: 1100, 4: 1300 },
+        absoluteScrollOffset: 0,
+        contentHeight: 1500,
+        layoutHeight: 300,
+    });
+
+    it('classifies mvcp-preserved when the corrector coverage exactly explains the misalignment', () => {
+        const outcome = observePrependOutcome({
+            capturedAnchor: capturedAnchor(),
+            postCommit: staleObservation,
+            correctorCoverage: { appliedDiffTotalPx: 820, eventCount: 1 },
+        });
+        expect(outcome).toEqual({
+            kind: 'mvcp-preserved',
+            observedItemOffsetPx: 900,
+            deltaPx: 820,
+            correctorCovered: true,
+        });
+    });
+
+    it('classifies mvcp-preserved when the residual after coverage is within tolerance', () => {
+        const outcome = observePrependOutcome({
+            capturedAnchor: capturedAnchor(),
+            postCommit: staleObservation,
+            correctorCoverage: { appliedDiffTotalPx: 823, eventCount: 2 },
+        });
+        expect(outcome).toMatchObject({ kind: 'mvcp-preserved', correctorCovered: true });
+    });
+
+    it('falls back as today when the corrector only partially covered the commit', () => {
+        const outcome = observePrependOutcome({
+            capturedAnchor: capturedAnchor(),
+            postCommit: staleObservation,
+            correctorCoverage: { appliedDiffTotalPx: 600, eventCount: 1 },
+        });
+        expect(outcome).toMatchObject({ kind: 'needs-fallback', targetOffsetY: 820, deltaPx: 820 });
+    });
+
+    it('falls back as today when coverage carries no correction events', () => {
+        const outcome = observePrependOutcome({
+            capturedAnchor: capturedAnchor(),
+            postCommit: staleObservation,
+            correctorCoverage: { appliedDiffTotalPx: 0, eventCount: 0 },
+        });
+        expect(outcome).toMatchObject({ kind: 'needs-fallback', targetOffsetY: 820 });
+    });
+
+    it('covers negative-direction corrections symmetrically', () => {
+        const outcome = observePrependOutcome({
+            capturedAnchor: capturedAnchor(),
+            postCommit: postCommit({
+                items,
+                layoutYByIndex: { 0: 0, 1: 30, 2: 70, 3: 700, 4: 1100 },
+                absoluteScrollOffset: 0,
+                contentHeight: 1500,
+                layoutHeight: 300,
+            }),
+            correctorCoverage: { appliedDiffTotalPx: -10, eventCount: 1 },
+        });
+        expect(outcome).toMatchObject({ kind: 'mvcp-preserved', deltaPx: -10, correctorCovered: true });
+    });
+
+    it('keeps an aligned anchor preserved without marking it corrector-covered', () => {
+        const outcome = observePrependOutcome({
+            capturedAnchor: capturedAnchor(),
+            postCommit: postCommit({
+                items,
+                layoutYByIndex: { 0: 0, 1: 40, 2: 80, 3: 700, 4: 1100 },
+                absoluteScrollOffset: 0,
+                contentHeight: 1500,
+                layoutHeight: 300,
+            }),
+            correctorCoverage: { appliedDiffTotalPx: 820, eventCount: 1 },
+        });
+        expect(outcome).toEqual({ kind: 'mvcp-preserved', observedItemOffsetPx: 80, deltaPx: 0 });
+    });
+
+    it('ignores non-finite coverage totals', () => {
+        const outcome = observePrependOutcome({
+            capturedAnchor: capturedAnchor(),
+            postCommit: staleObservation,
+            correctorCoverage: { appliedDiffTotalPx: Number.NaN, eventCount: 1 },
+        });
+        expect(outcome).toMatchObject({ kind: 'needs-fallback', targetOffsetY: 820 });
+    });
+
+    it('exposes the corrector-covered residual tolerance', () => {
+        expect(PREPEND_CORRECTOR_COVERED_RESIDUAL_TOLERANCE_PX).toBe(48);
+        expect(PREPEND_CORRECTOR_COVERED_RESIDUAL_TOLERANCE_PX).toBeGreaterThan(PREPEND_ANCHOR_ALIGNMENT_TOLERANCE_PX);
+    });
+
+    it('classifies mvcp-preserved when the reading caught up and the residual is settle jitter', () => {
+        const outcome = observePrependOutcome({
+            capturedAnchor: capturedAnchor(),
+            postCommit: postCommit({
+                items,
+                layoutYByIndex: { 0: 0, 1: 60, 2: 122, 3: 700, 4: 1100 },
+                absoluteScrollOffset: 0,
+                contentHeight: 1500,
+                layoutHeight: 300,
+            }),
+            correctorCoverage: { appliedDiffTotalPx: 14594, eventCount: 2 },
+        });
+        expect(outcome).toMatchObject({ kind: 'mvcp-preserved', deltaPx: 42, correctorCovered: true });
+    });
+
+    it('treats the corrector-covered residual boundary as preserved and one px beyond as fallback', () => {
+        const observationAtResidual = (residualPx: number) => postCommit({
+            items,
+            layoutYByIndex: { 0: 0, 1: 40, 2: 80 + residualPx, 3: 700, 4: 1100 },
+            absoluteScrollOffset: 0,
+            contentHeight: 1500,
+            layoutHeight: 300,
+        });
+        const coverage = { appliedDiffTotalPx: 2944, eventCount: 1 };
+
+        expect(observePrependOutcome({
+            capturedAnchor: capturedAnchor(),
+            postCommit: observationAtResidual(48),
+            correctorCoverage: coverage,
+        })).toMatchObject({ kind: 'mvcp-preserved', correctorCovered: true });
+
+        expect(observePrependOutcome({
+            capturedAnchor: capturedAnchor(),
+            postCommit: observationAtResidual(49),
+            correctorCoverage: coverage,
+        })).toMatchObject({ kind: 'needs-fallback', deltaPx: 49 });
+    });
+
+    it('still falls back on real partial coverage even with the wider covered tolerance', () => {
+        const outcome = observePrependOutcome({
+            capturedAnchor: capturedAnchor(),
+            postCommit: postCommit({
+                items,
+                layoutYByIndex: { 0: 0, 1: 200, 2: 470, 3: 900, 4: 1300 },
+                absoluteScrollOffset: 0,
+                contentHeight: 1500,
+                layoutHeight: 300,
+            }),
+            correctorCoverage: { appliedDiffTotalPx: 3047, eventCount: 4 },
+        });
+        expect(outcome).toMatchObject({ kind: 'needs-fallback', deltaPx: 390 });
     });
 });

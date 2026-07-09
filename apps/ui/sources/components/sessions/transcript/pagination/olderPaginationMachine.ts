@@ -11,8 +11,14 @@
  * - exactly one load in flight (`loading` phase is single-entry),
  * - arming requires an observed threshold EXIT -> ENTER transition; missing or
  *   invalid layout metrics count as OUTSIDE the threshold,
- * - loads are suspended while the offset is <= 0, while a viewport transaction
- *   is open, or while the initial fill is not done,
+ * - loads are suspended while the offset is < 0, while passive scroll reports a
+ *   near-top frame (offset within the genuine-top epsilon), while a viewport
+ *   transaction is open, or while the initial fill is not done,
+ * - explicit edge-reached triggers may use a near-top frame once so web callbacks
+ *   that fire only at the genuine top do not starve. The genuine top is rarely
+ *   EXACTLY `scrollTop === 0` (the browser reports integer-rounded / sub-pixel
+ *   residues), so the exact-edge acceptance and the passive suspension share the
+ *   same `TRANSCRIPT_WEB_GENUINE_TOP_EPSILON_PX` band the web classifier emits,
  * - a caller-timed cooldown follows every load (and every error) before any
  *   re-arm,
  * - hasMore=false is terminal until `reset` (session change).
@@ -20,9 +26,13 @@
  * No timers, no React: callers own time (cooldownElapsed) and side effects.
  */
 
+import { TRANSCRIPT_WEB_GENUINE_TOP_EPSILON_PX } from '@/components/sessions/transcript/_constants';
+
 export type OlderPaginationPhase = 'idle' | 'armed' | 'loading' | 'cooldown';
 
 export type OlderPaginationSuspendReason = 'negative-offset' | 'transaction-open' | 'fill-not-done';
+
+export type OlderPaginationScrollTrigger = 'scroll' | 'edge-reached';
 
 export type OlderPaginationState = Readonly<{
     phase: OlderPaginationPhase;
@@ -42,6 +52,7 @@ export type OlderPaginationScrollObservation = Readonly<{
     offsetY: number;
     thresholdPx: number;
     scrollable: boolean;
+    trigger?: OlderPaginationScrollTrigger;
 }>;
 
 export type OlderPaginationEvent =
@@ -89,19 +100,36 @@ function reduceScrollObserved(
         Number.isFinite(observation.offsetY) &&
         Number.isFinite(observation.thresholdPx) &&
         observation.thresholdPx > 0;
+    const trigger = observation.trigger ?? 'scroll';
+    // The genuine top is reported as a near-zero (integer-rounded / sub-pixel-residue) offset,
+    // not exactly 0, so accept the same epsilon band the web genuine-top classifier emits.
+    const atGenuineTop =
+        Number.isFinite(observation.offsetY) &&
+        observation.offsetY >= 0 &&
+        observation.offsetY <= TRANSCRIPT_WEB_GENUINE_TOP_EPSILON_PX;
+    const allowsExactEdge = trigger === 'edge-reached' && atGenuineTop;
     const inside = validMetrics && observation.offsetY <= observation.thresholdPx;
-    const offsetNonPositive = !Number.isFinite(observation.offsetY) || observation.offsetY <= 0;
+    const offsetSuspended =
+        !Number.isFinite(observation.offsetY) ||
+        observation.offsetY < 0 ||
+        (atGenuineTop && !allowsExactEdge);
 
-    const suspendedReasons = withSuspendedReason(state.suspendedReasons, 'negative-offset', offsetNonPositive);
+    const suspendedReasons = withSuspendedReason(state.suspendedReasons, 'negative-offset', offsetSuspended);
     const exited = state.insideThreshold && !inside;
     const entered = !state.insideThreshold && inside;
-    const rearmEligible = state.rearmEligible || exited;
+    const exactEdgeRetryEligible =
+        allowsExactEdge &&
+        inside &&
+        state.insideThreshold &&
+        state.hasMore &&
+        (state.phase === 'cooldown' || state.phase === 'idle');
+    const rearmEligible = state.rearmEligible || exited || exactEdgeRetryEligible;
 
     let phase = state.phase;
     if (phase === 'armed' && !inside) {
         phase = 'idle';
     }
-    if (phase === 'idle' && entered && rearmEligible && state.hasMore) {
+    if (phase === 'idle' && (entered || exactEdgeRetryEligible) && rearmEligible && state.hasMore) {
         phase = 'armed';
     }
 

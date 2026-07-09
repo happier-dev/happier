@@ -206,7 +206,7 @@ async function primeAtBottom(screen: Awaited<ReturnType<typeof renderFlashListCh
 }
 
 async function observeNativeScrollAtBottom(screen: Awaited<ReturnType<typeof renderFlashListChatList>>) {
-    await screen.triggerScroll(600, {
+    await screen.triggerScroll(0, {
         contentSize: { height: 1200, width: 0 },
         isTrusted: true,
         layoutMeasurement: { height: 600, width: 0 },
@@ -352,14 +352,14 @@ describe('ChatList (FlashList v2 native scroll escape)', () => {
         await act(async () => {
             screen.requireCapturedFlashListProps().onScrollBeginDrag?.({});
         });
-        await screen.triggerScroll(400, {
+        await screen.triggerScroll(200, {
             contentSize: { height: 1200, width: 0 },
             layoutMeasurement: { height: 600, width: 0 },
         }, { cycles: 1, turns: 1 });
         await act(async () => {
             vi.setSystemTime(new Date(500));
         });
-        await screen.triggerScroll(600, {
+        await screen.triggerScroll(0, {
             contentSize: { height: 1200, width: 0 },
             layoutMeasurement: { height: 600, width: 0 },
         }, { cycles: 1, turns: 1 });
@@ -382,7 +382,7 @@ describe('ChatList (FlashList v2 native scroll escape)', () => {
             vi.setSystemTime(new Date(500));
         });
 
-        await screen.triggerScroll(400, {
+        await screen.triggerScroll(500, {
             contentSize: { height: 1500, width: 0 },
             layoutMeasurement: { height: 600, width: 0 },
         }, { cycles: 1, turns: 1 });
@@ -393,7 +393,7 @@ describe('ChatList (FlashList v2 native scroll escape)', () => {
         );
     });
 
-    it('keeps native bottom autoscroll disabled while the same drag returns near bottom, then rearms on drag end', async () => {
+    it('keeps native bottom autoscroll disabled while the same drag returns near bottom, then rearms after momentum settles', async () => {
         const { ChatList, screen } = await renderStreamingChatList();
 
         await primeAtBottom(screen);
@@ -402,13 +402,13 @@ describe('ChatList (FlashList v2 native scroll escape)', () => {
             screen.requireCapturedFlashListProps().onScrollBeginDrag?.({});
         });
 
-        await screen.triggerScroll(400, {
+        await screen.triggerScroll(200, {
             contentSize: { height: 1200, width: 0 },
             isTrusted: true,
             layoutMeasurement: { height: 600, width: 0 },
         }, { cycles: 1, turns: 1 });
 
-        await screen.triggerScroll(560, {
+        await screen.triggerScroll(40, {
             contentSize: { height: 1200, width: 0 },
             isTrusted: true,
             layoutMeasurement: { height: 600, width: 0 },
@@ -430,6 +430,13 @@ describe('ChatList (FlashList v2 native scroll escape)', () => {
         await act(async () => {
             screen.requireCapturedFlashListProps().onScrollEndDrag?.({});
         });
+        expect(screen.requireCapturedFlashListProps().maintainVisibleContentPosition).toEqual(
+            nativeAnchoringWithoutBottomAutoscroll,
+        );
+
+        await act(async () => {
+            screen.requireCapturedFlashListProps().onMomentumScrollEnd?.({});
+        });
         expect(screen.requireCapturedFlashListProps().maintainVisibleContentPosition).toEqual({
             animateAutoScrollToBottom: false,
             autoscrollToBottomThreshold: 0.12,
@@ -437,7 +444,7 @@ describe('ChatList (FlashList v2 native scroll escape)', () => {
         });
     });
 
-    it('rearms native bottom follow on drag end after non-trusted native events return near bottom', async () => {
+    it('rearms native bottom follow after momentum settles when non-trusted native events return near bottom', async () => {
         const { ChatList, screen } = await renderStreamingChatList();
 
         await primeAtBottom(screen);
@@ -446,12 +453,12 @@ describe('ChatList (FlashList v2 native scroll escape)', () => {
             screen.requireCapturedFlashListProps().onScrollBeginDrag?.({});
         });
 
-        await screen.triggerScroll(400, {
+        await screen.triggerScroll(200, {
             contentSize: { height: 1200, width: 0 },
             layoutMeasurement: { height: 600, width: 0 },
         }, { cycles: 1, turns: 1 });
 
-        await screen.triggerScroll(560, {
+        await screen.triggerScroll(40, {
             contentSize: { height: 1200, width: 0 },
             layoutMeasurement: { height: 600, width: 0 },
         }, { cycles: 1, turns: 1 });
@@ -462,6 +469,13 @@ describe('ChatList (FlashList v2 native scroll escape)', () => {
 
         await act(async () => {
             screen.requireCapturedFlashListProps().onScrollEndDrag?.({});
+        });
+        expect(screen.requireCapturedFlashListProps().maintainVisibleContentPosition).toEqual(
+            nativeAnchoringWithoutBottomAutoscroll,
+        );
+
+        await act(async () => {
+            screen.requireCapturedFlashListProps().onMomentumScrollEnd?.({});
         });
         expect(screen.requireCapturedFlashListProps().maintainVisibleContentPosition).toEqual({
             animateAutoScrollToBottom: false,
@@ -480,7 +494,7 @@ describe('ChatList (FlashList v2 native scroll escape)', () => {
         expect(scrollToOffsetSpy).not.toHaveBeenCalled();
     });
 
-    it('follows immediate content growth after drag end re-arms bottom follow', async () => {
+    it('does not rearm native bottom follow from an unusable raw scroll observation', async () => {
         const { ChatList, screen } = await renderStreamingChatList();
 
         await primeAtBottom(screen);
@@ -489,12 +503,41 @@ describe('ChatList (FlashList v2 native scroll escape)', () => {
             screen.requireCapturedFlashListProps().onScrollBeginDrag?.({});
         });
 
-        await screen.triggerScroll(400, {
+        await screen.triggerScroll(0, {
+            contentSize: { height: 0, width: 0 },
+            layoutMeasurement: { height: 0, width: 0 },
+        }, { cycles: 1, turns: 1 });
+
+        await act(async () => {
+            screen.requireCapturedFlashListProps().onScrollEndDrag?.({});
+        });
+        scrollToOffsetSpy.mockClear();
+        viewportControllerMockState.resolveInputs = [];
+
+        await growStreamingAssistantMessage(ChatList, screen, 1500);
+
+        expect(autoFollowReasons()).not.toContain('stream-append');
+        expect(scrollToOffsetSpy).not.toHaveBeenCalled();
+        expect(screen.requireCapturedFlashListProps().maintainVisibleContentPosition).toEqual(
+            nativeAnchoringWithoutBottomAutoscroll,
+        );
+    });
+
+    it('does not follow immediate content growth after drag end before momentum settles', async () => {
+        const { ChatList, screen } = await renderStreamingChatList();
+
+        await primeAtBottom(screen);
+        await observeNativeScrollAtBottom(screen);
+        await act(async () => {
+            screen.requireCapturedFlashListProps().onScrollBeginDrag?.({});
+        });
+
+        await screen.triggerScroll(200, {
             contentSize: { height: 1200, width: 0 },
             layoutMeasurement: { height: 600, width: 0 },
         }, { cycles: 1, turns: 1 });
 
-        await screen.triggerScroll(600, {
+        await screen.triggerScroll(0, {
             contentSize: { height: 1200, width: 0 },
             layoutMeasurement: { height: 600, width: 0 },
         }, { cycles: 1, turns: 1 });
@@ -507,7 +550,7 @@ describe('ChatList (FlashList v2 native scroll escape)', () => {
         viewportControllerMockState.resolveInputs = [];
         await growStreamingAssistantMessage(ChatList, screen, 1500);
 
-        expect(autoFollowReasons()).toContain('stream-append');
+        expect(autoFollowReasons()).not.toContain('stream-append');
         expect(scrollToOffsetSpy).not.toHaveBeenCalled();
     });
 

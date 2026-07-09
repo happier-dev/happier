@@ -1,11 +1,104 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { t } from '@/text';
+import type { AgentEvent } from '@/sync/typesRaw';
 
 import { TranscriptEventRow } from './TranscriptEventRow';
 
+const executeDefaultAction = vi.fn();
+const modalConfirm = vi.fn();
+const modalAlert = vi.fn();
+
+vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
+    createDefaultActionExecutor: () => ({
+        execute: (...args: unknown[]) => executeDefaultAction(...args),
+    }),
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId', () => ({
+    resolveServerIdForSessionIdFromLocalCache: () => 'server-1',
+}));
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+        spies: {
+            confirm: (...args: unknown[]) => modalConfirm(...args),
+            alert: (...args: unknown[]) => modalAlert(...args),
+        },
+    }).module;
+});
+
 describe('TranscriptEventRow', () => {
+    beforeEach(() => {
+        executeDefaultAction.mockReset();
+        executeDefaultAction.mockResolvedValue({ ok: true, result: { ok: true, status: 'cleared', sessionId: 's1' } });
+        modalConfirm.mockReset();
+        modalConfirm.mockResolvedValue(true);
+        modalAlert.mockReset();
+    });
+
+    it('offers to clear the terminal composer for typed terminal draft blocked events', async () => {
+        const screen = await renderScreen(
+            <TranscriptEventRow
+                sessionId="s1"
+                event={{
+                    type: 'terminal-composer-draft-blocked',
+                    reason: 'idle_draft_guard',
+                    stateAtMs: 1234,
+                    message: 'Terminal draft blocked delivery.',
+                } as unknown as AgentEvent}
+            />,
+        );
+
+        expect(screen.findByProps({ testID: 'transcript-event-terminal-composer-draft-blocked' })).toBeTruthy();
+        expect(screen.findByTestId('transcriptEvent.clearTerminalComposer')).toBeTruthy();
+
+        await screen.pressByTestIdAsync('transcriptEvent.clearTerminalComposer');
+
+        expect(modalConfirm).toHaveBeenCalledTimes(1);
+        expect(executeDefaultAction).toHaveBeenCalledWith(
+            'session.terminalComposer.clear',
+            { sessionId: 's1', expectedStateAtMs: 1234 },
+            { defaultSessionId: 's1', surface: 'ui', placement: 'pending_messages' },
+        );
+        expect(modalAlert).not.toHaveBeenCalled();
+    });
+
+    it('offers to clear the terminal composer for legacy passive terminal draft notices', async () => {
+        const legacyMessages = [
+            "Your queued message can't steer the running turn: the terminal composer holds an unsent draft. Clear the draft in the terminal (or interrupt the turn) to deliver it.",
+            'Your queued message is waiting: the terminal composer holds an unsent draft. Clear the draft in the terminal to deliver it.',
+        ];
+
+        for (const message of legacyMessages) {
+            const screen = await renderScreen(
+                <TranscriptEventRow
+                    sessionId="s1"
+                    event={{ type: 'message', message }}
+                />,
+            );
+
+            expect(screen.findByTestId('transcriptEvent.clearTerminalComposer')).toBeTruthy();
+        }
+    });
+
+    it('does not offer terminal composer clearing when the transcript row has no session id', async () => {
+        const screen = await renderScreen(
+            <TranscriptEventRow
+                event={{
+                    type: 'terminal-composer-draft-blocked',
+                    reason: 'idle_draft_guard',
+                    stateAtMs: 1234,
+                    message: 'Terminal draft blocked delivery.',
+                } as unknown as AgentEvent}
+            />,
+        );
+
+        expect(screen.findByTestId('transcriptEvent.clearTerminalComposer')).toBeNull();
+    });
+
     it('renders structured context compaction events', async () => {
         const started = await renderScreen(
             <TranscriptEventRow
@@ -56,8 +149,11 @@ describe('TranscriptEventRow', () => {
                     type: 'connected-service-account-switch',
                     serviceId: 'openai-codex',
                     groupId: 'codex-main',
+                    groupLabel: 'Happier',
                     fromProfileId: 'work',
                     toProfileId: 'backup',
+                    fromProfileLabel: 'team@happier.dev',
+                    toProfileLabel: 'leeroy.brun@gmail.com',
                     reason: 'usage_limit',
                     mode: 'hot_apply',
                     effectiveRemainingPct: 12,
@@ -65,11 +161,15 @@ describe('TranscriptEventRow', () => {
             />,
         );
 
+        const serialized = JSON.stringify(screen.tree.toJSON());
         expect(screen.findByProps({ testID: 'transcript-event-connected-service-account-switch' })).toBeTruthy();
         expect(screen.findByProps({ testID: 'session-event-connected-service-account-switch' })).toBeTruthy();
+        expect(serialized).toContain('Switched Codex group Happier from team@happier.dev to leeroy.brun@gmail.com');
+        expect(serialized).not.toContain('from group');
+        expect(serialized).not.toContain('to profile');
     });
 
-    it('renders event-carried switch endpoint labels instead of raw profile ids (P7 identity display)', async () => {
+    it('renders event-carried switch selection labels instead of raw profile ids (P7 identity display)', async () => {
         const screen = await renderScreen(
             <TranscriptEventRow
                 event={{
@@ -92,7 +192,7 @@ describe('TranscriptEventRow', () => {
         expect(serialized).not.toContain('batiplus');
     });
 
-    it('renders native connected-service account switch endpoints without leaking null labels', async () => {
+    it('renders native connected-service account switch sides without leaking null labels', async () => {
         const screen = await renderScreen(
             <TranscriptEventRow
                 event={{
@@ -172,6 +272,64 @@ describe('TranscriptEventRow', () => {
         expect(JSON.stringify(failed.tree.toJSON())).not.toContain('Unknown event');
     });
 
+    it('renders direct live switch attempts without restart copy', async () => {
+        const screen = await renderScreen(
+            <TranscriptEventRow
+                event={{
+                    type: 'connected-service-account-switch-attempt',
+                    ok: true,
+                    action: 'hot_applied',
+                    attemptedContinuityMode: 'hot_apply',
+                    outcome: 'succeeded',
+                    outcomeAction: 'hot_applied',
+                    partialState: 'runtime_auth_applied',
+                }}
+            />,
+        );
+
+        const serialized = JSON.stringify(screen.tree.toJSON());
+        expect(screen.findByProps({ testID: 'transcript-event-connected-service-account-switch-attempt' })).toBeTruthy();
+        expect(serialized).toContain('Authentication switched in the running session');
+        expect(serialized).not.toContain('Restarting session');
+        expect(serialized).not.toContain('Switch authentication');
+    });
+
+    it('renders credential refresh or recycle attempts distinctly from restart-resume', async () => {
+        const credentialRefresh = await renderScreen(
+            <TranscriptEventRow
+                event={{
+                    type: 'connected-service-account-switch-attempt',
+                    ok: true,
+                    action: 'hot_applied',
+                    attemptedContinuityMode: 'credential_refresh',
+                    outcome: 'succeeded',
+                    outcomeAction: 'credential_refreshed',
+                    partialState: 'runtime_auth_applied',
+                }}
+            />,
+        );
+        const restartResume = await renderScreen(
+            <TranscriptEventRow
+                event={{
+                    type: 'connected-service-account-switch-attempt',
+                    ok: true,
+                    action: 'restart_requested',
+                    attemptedContinuityMode: 'restart',
+                    outcome: 'succeeded',
+                    outcomeAction: 'restarted',
+                    groupGeneration: 2,
+                    sessionAdoption: 'applied',
+                }}
+            />,
+        );
+
+        const refreshSerialized = JSON.stringify(credentialRefresh.tree.toJSON());
+        const restartSerialized = JSON.stringify(restartResume.tree.toJSON());
+        expect(refreshSerialized).toContain('Authentication refreshed');
+        expect(refreshSerialized).not.toContain('Restarting session');
+        expect(restartSerialized).toContain('Restarting session');
+    });
+
     it('renders connected-service account switch attempt diagnostics through the shared presentation mapping', async () => {
         const screen = await renderScreen(
             <TranscriptEventRow
@@ -197,6 +355,26 @@ describe('TranscriptEventRow', () => {
         expect(screen.findByProps({ testID: 'transcript-event-connected-service-account-switch-attempt' })).toBeTruthy();
         expect(serialized).toContain(t('connectedServices.diagnostics.status.provider_account_adoption_mismatch'));
         expect(serialized).not.toContain('provider_account_adoption_mismatch)');
+    });
+
+    it('falls back safely for future switch attempt diagnostics with an error code', async () => {
+        const screen = await renderScreen(
+            <TranscriptEventRow
+                event={{
+                    type: 'connected-service-account-switch-attempt',
+                    ok: false,
+                    action: 'hot_applied',
+                    outcome: 'failed',
+                    outcomeAction: 'none',
+                    errorCode: 'live_hot_auth_failed',
+                }}
+            />,
+        );
+
+        const serialized = JSON.stringify(screen.tree.toJSON());
+        expect(screen.findByProps({ testID: 'transcript-event-connected-service-account-switch-attempt' })).toBeTruthy();
+        expect(serialized).toContain('Authentication could not be switched for this session. (live_hot_auth_failed)');
+        expect(serialized).not.toContain(t('message.unknownEvent'));
     });
 
     it('renders observed-only switch attempts as neutral instead of successful adoption', async () => {

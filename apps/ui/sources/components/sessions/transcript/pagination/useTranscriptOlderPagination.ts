@@ -5,7 +5,9 @@ import {
     reduceOlderPagination,
     shouldLoadNow,
     type OlderPaginationEvent,
+    type OlderPaginationScrollTrigger,
     type OlderPaginationState,
+    type OlderPaginationSuspendReason,
 } from './olderPaginationMachine';
 
 export type TranscriptOlderPaginationLoadStatus = 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
@@ -25,6 +27,14 @@ export type TranscriptOlderPaginationLoadOptions = Readonly<{
 export type TranscriptOlderPaginationScrollMetrics = Readonly<{
     offsetY: number;
     scrollable: boolean;
+    trigger?: OlderPaginationScrollTrigger;
+}>;
+
+export type TranscriptOlderPaginationSnapshot = Readonly<{
+    phase: OlderPaginationState['phase'];
+    suspendedReasons: readonly OlderPaginationSuspendReason[];
+    hasMore: boolean;
+    insideThreshold: boolean;
 }>;
 
 export type UseTranscriptOlderPaginationInput = Readonly<{
@@ -41,6 +51,7 @@ export type UseTranscriptOlderPaginationResult = Readonly<{
     onScrollObservation: (metrics: TranscriptOlderPaginationScrollMetrics) => void;
     isLoadingOlder: boolean;
     hasMore: boolean;
+    getSnapshot: () => TranscriptOlderPaginationSnapshot;
     reset: () => void;
 }>;
 
@@ -175,9 +186,20 @@ export function useTranscriptOlderPagination(input: UseTranscriptOlderPagination
             offsetY: metrics.offsetY,
             thresholdPx: inputRef.current.thresholdPx,
             scrollable: metrics.scrollable,
+            trigger: metrics.trigger,
         });
         maybeStartLoad('threshold-enter');
     }, [dispatch, maybeStartLoad]);
+
+    const getSnapshot = React.useCallback((): TranscriptOlderPaginationSnapshot => {
+        const state = stateRef.current;
+        return {
+            phase: state.phase,
+            suspendedReasons: Array.from(state.suspendedReasons),
+            hasMore: state.hasMore,
+            insideThreshold: state.insideThreshold,
+        };
+    }, []);
 
     const reset = React.useCallback(() => {
         clearCooldownTimeout();
@@ -195,5 +217,5 @@ export function useTranscriptOlderPagination(input: UseTranscriptOlderPagination
         };
     }, [clearCooldownTimeout, clearSpinnerTimeout]);
 
-    return { onScrollObservation, isLoadingOlder, hasMore, reset };
+    return { onScrollObservation, isLoadingOlder, hasMore, getSnapshot, reset };
 }

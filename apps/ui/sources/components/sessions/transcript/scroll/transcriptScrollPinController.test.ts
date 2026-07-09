@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { reduceTranscriptScrollPinState, type TranscriptScrollPinState } from './transcriptScrollPinController';
+import {
+    reduceTranscriptScrollPinState,
+    reduceTranscriptScrollPinStateWithPinnedSnapshot,
+    type TranscriptScrollPinState,
+} from './transcriptScrollPinController';
 
 describe('reduceTranscriptScrollPinState', () => {
     it('tracks pinned/unpinned based on offset threshold', () => {
@@ -61,7 +65,35 @@ describe('reduceTranscriptScrollPinState', () => {
             activityKey: 'm1',
             enabled: true,
         });
+        expect(s1).toBe(initial);
         expect(s1.newActivityCount).toBe(1);
+    });
+
+    it('preserves identity for unchanged activity when applying a pinned snapshot', () => {
+        const initial: TranscriptScrollPinState = {
+            isPinned: false,
+            newActivityCount: 1,
+            lastActivityKey: 'm1',
+        };
+
+        const unchanged = reduceTranscriptScrollPinStateWithPinnedSnapshot(initial, {
+            activityKey: 'm1',
+            enabled: true,
+            isPinned: false,
+        });
+        expect(unchanged).toBe(initial);
+
+        const pinned = reduceTranscriptScrollPinStateWithPinnedSnapshot(initial, {
+            activityKey: 'm1',
+            enabled: true,
+            isPinned: true,
+        });
+        expect(pinned).not.toBe(initial);
+        expect(pinned).toEqual({
+            isPinned: true,
+            newActivityCount: 1,
+            lastActivityKey: 'm1',
+        });
     });
 
     it('resets newActivityCount when pinned again', () => {

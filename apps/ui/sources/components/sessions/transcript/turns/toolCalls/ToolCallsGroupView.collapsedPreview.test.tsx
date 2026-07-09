@@ -14,13 +14,15 @@ import { installToolCallsGroupViewCommonModuleMocks } from './toolCallsGroupView
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let collapsedPreviewCount: number | null = 1;
+const stableMessagesById = {};
+const stableReducerState = createReducer();
+const flashListCompatMockState = vi.hoisted(() => ({
+    mappingKeyCalls: [] as Array<Readonly<{ index: number; itemKey: string | number | bigint }>>,
+}));
 const storageHookCalls = vi.hoisted(() => [] as string[]);
 const messageViewMockState = vi.hoisted(() => ({
     messageViewCalls: [] as Array<Record<string, unknown>>,
     messageViewWithCommonCalls: [] as Array<Record<string, unknown>>,
-}));
-const flashListCompatMockState = vi.hoisted(() => ({
-    getMappingKey: vi.fn((itemKey: string, index: number) => `mapped:${itemKey}:${index}`),
 }));
 
 installToolCallsGroupViewCommonModuleMocks({
@@ -62,11 +64,11 @@ installToolCallsGroupViewCommonModuleMocks({
                 },
                 useSessionMessagesById: () => {
                     storageHookCalls.push('useSessionMessagesById');
-                    return {};
+                    return stableMessagesById;
                 },
                 useSessionMessagesReducerState: () => {
                     storageHookCalls.push('useSessionMessagesReducerState');
-                    return createReducer();
+                    return stableReducerState;
                 },
             },
         });
@@ -110,20 +112,86 @@ vi.mock('@/components/sessions/transcript/motion/TranscriptCollapsible', () => (
 
 vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', () => ({
     useMappingHelper: () => ({
-        getMappingKey: flashListCompatMockState.getMappingKey,
+        getMappingKey: (itemKey: string | number | bigint, index: number) => {
+            flashListCompatMockState.mappingKeyCalls.push({ itemKey, index });
+            return index;
+        },
     }),
 }));
 
 describe('ToolCallsGroupView (collapsed preview)', () => {
     beforeEach(() => {
+        flashListCompatMockState.mappingKeyCalls = [];
         storageHookCalls.length = 0;
         messageViewMockState.messageViewCalls = [];
         messageViewMockState.messageViewWithCommonCalls = [];
     });
 
-    afterEach(() => {
-        flashListCompatMockState.getMappingKey.mockClear();
-        standardCleanup();
+    afterEach(standardCleanup);
+
+    it('routes only visible preview rows through the FlashList mapping helper while collapsed', async () => {
+        collapsedPreviewCount = 2;
+
+        const toolMessages = [
+            createToolCallMessageFixture({ id: 'm1', createdAt: 1 }),
+            createToolCallMessageFixture({ id: 'm2', createdAt: 2 }),
+            createToolCallMessageFixture({ id: 'm3', createdAt: 3 }),
+        ];
+
+        await renderToolCallsGroupView({
+            toolMessages,
+            expanded: false,
+            setExpanded: vi.fn(),
+        });
+
+        expect(flashListCompatMockState.mappingKeyCalls).toEqual([
+            { itemKey: 'preview:m2', index: 0 },
+            { itemKey: 'preview:m3', index: 1 },
+        ]);
+    });
+
+    it('does not allocate hidden body rows for large collapsed tool groups', async () => {
+        collapsedPreviewCount = 3;
+
+        const toolMessages = Array.from({ length: 200 }, (_, index) =>
+            createToolCallMessageFixture({ id: `tool-${index + 1}`, createdAt: index + 1 }),
+        );
+
+        const screen = await renderToolCallsGroupView({
+            toolMessages,
+            expanded: false,
+            setExpanded: vi.fn(),
+        });
+
+        expect(screen.findAllByTestId('transcript-tool-calls-preview-row')).toHaveLength(3);
+        expect(screen.findAllByTestId('transcript-tool-calls-tool-row')).toHaveLength(0);
+        expect(flashListCompatMockState.mappingKeyCalls).toEqual([
+            { itemKey: 'preview:tool-198', index: 0 },
+            { itemKey: 'preview:tool-199', index: 1 },
+            { itemKey: 'preview:tool-200', index: 2 },
+        ]);
+    });
+
+    it('routes every body tool row through the FlashList mapping helper while expanded', async () => {
+        collapsedPreviewCount = 2;
+
+        const toolMessages = [
+            createToolCallMessageFixture({ id: 'm1', createdAt: 1 }),
+            createToolCallMessageFixture({ id: 'm2', createdAt: 2 }),
+            createToolCallMessageFixture({ id: 'm3', createdAt: 3 }),
+        ];
+
+        await renderToolCallsGroupView({
+            toolMessages,
+            expanded: true,
+            setExpanded: vi.fn(),
+        });
+
+        expect(flashListCompatMockState.mappingKeyCalls).toEqual([
+            { itemKey: 'm1', index: 0 },
+            { itemKey: 'm2', index: 1 },
+            { itemKey: 'm3', index: 2 },
+        ]);
     });
 
     it('renders with parent-provided transcript session common without row-local session storage subscriptions', async () => {
@@ -154,12 +222,12 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
             sessionThinkingInlineChrome: 'plain',
             sessionThinkingInlinePresentation: 'full',
             transcriptMessageTimestampDisplayMode: 'always',
-            transcriptMessageSelectionEnabled: false,
-            transcriptMessageSendToSessionEnabled: false,
             transcriptStreamingMarkdownRenderingEnabled: true,
             transcriptStreamingPartialOutputEnabled: true,
             transcriptStreamingSettleDelayMs: 0,
             transcriptStreamingSmoothingEnabled: true,
+            transcriptMessageSelectionEnabled: true,
+            transcriptMessageSendToSessionEnabled: false,
             workspacePath: null,
         } as const;
         const toolChromeCommon = {
@@ -200,30 +268,6 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
         });
     });
 
-    it('does not allocate hidden body rows for large collapsed tool groups', async () => {
-        collapsedPreviewCount = 3;
-
-        const toolMessages = Array.from({ length: 200 }, (_, index) =>
-            createToolCallMessageFixture({ id: `tool-${index + 1}`, createdAt: index + 1 }),
-        );
-
-        const screen = await renderToolCallsGroupView({
-            toolMessages,
-            expanded: false,
-            setExpanded: vi.fn(),
-        });
-
-        expect(screen.findAllByTestId('transcript-tool-calls-preview-row')).toHaveLength(3);
-        expect(screen.findAllByTestId('transcript-tool-calls-tool-row')).toHaveLength(0);
-        const mappedKeys = flashListCompatMockState.getMappingKey.mock.calls.map(([key]) => key);
-        expect(mappedKeys.every((key) => String(key).startsWith('preview:'))).toBe(true);
-        expect(new Set(mappedKeys)).toEqual(new Set([
-            'preview:tool-198',
-            'preview:tool-199',
-            'preview:tool-200',
-        ]));
-    });
-
     it('renders the last N tool previews when collapsed', async () => {
         collapsedPreviewCount = 2;
 
@@ -259,6 +303,25 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
         ]);
     });
 
+    it('keeps stable web prepend anchors inside each collapsed preview row', async () => {
+        collapsedPreviewCount = 2;
+
+        const toolMessages = [
+            createToolCallMessageFixture({ id: 'm1', createdAt: 1 }),
+            createToolCallMessageFixture({ id: 'm2', createdAt: 2 }),
+            createToolCallMessageFixture({ id: 'm3', createdAt: 3 }),
+        ];
+
+        const screen = await renderToolCallsGroupView({
+            toolMessages,
+            setExpanded: vi.fn(),
+        });
+
+        expect(screen.findAllByTestId('transcript-anchor-tool-call-m2')).toHaveLength(1);
+        expect(screen.findAllByTestId('transcript-anchor-tool-call-m3')).toHaveLength(1);
+        expect(screen.findAllByTestId('transcript-tool-calls-preview-row')).toHaveLength(2);
+    });
+
     it('defaults to the newest three tool previews when the setting is unavailable', async () => {
         collapsedPreviewCount = null;
 
@@ -281,25 +344,6 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
 
         expect(previewIds).toEqual(['m2', 'm3', 'm4']);
         expect(screen.findAllByTestId('transcript-tool-calls-preview-more')).toHaveLength(1);
-    });
-
-    it('keeps stable web prepend anchors inside each collapsed preview row', async () => {
-        collapsedPreviewCount = 2;
-
-        const toolMessages = [
-            createToolCallMessageFixture({ id: 'm1', createdAt: 1 }),
-            createToolCallMessageFixture({ id: 'm2', createdAt: 2 }),
-            createToolCallMessageFixture({ id: 'm3', createdAt: 3 }),
-        ];
-
-        const screen = await renderToolCallsGroupView({
-            toolMessages,
-            setExpanded: vi.fn(),
-        });
-
-        expect(screen.findAllByTestId('transcript-anchor-tool-call-m2')).toHaveLength(1);
-        expect(screen.findAllByTestId('transcript-anchor-tool-call-m3')).toHaveLength(1);
-        expect(screen.findAllByTestId('transcript-tool-calls-preview-row')).toHaveLength(2);
     });
 
     it('updates collapsed previews to the newest tools when a tool is appended', async () => {
@@ -350,34 +394,6 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
         expect(screen.findAllByTestId('transcript-tool-calls-preview-more')).toHaveLength(1);
     });
 
-    it('uses FlashList recycling-aware keys for preview and expanded tool rows', async () => {
-        collapsedPreviewCount = 2;
-        const toolMessages = [
-            createToolCallMessageFixture({ id: 'm1', createdAt: 1 }),
-            createToolCallMessageFixture({ id: 'm2', createdAt: 2 }),
-        ];
-
-        await renderToolCallsGroupView({
-            toolMessages,
-            expanded: true,
-            setExpanded: vi.fn(),
-        });
-
-        expect(flashListCompatMockState.getMappingKey).toHaveBeenCalledWith('m1', 0);
-        expect(flashListCompatMockState.getMappingKey).toHaveBeenCalledWith('m2', 1);
-
-        flashListCompatMockState.getMappingKey.mockClear();
-
-        await renderToolCallsGroupView({
-            toolMessages,
-            expanded: false,
-            setExpanded: vi.fn(),
-        });
-
-        expect(flashListCompatMockState.getMappingKey).toHaveBeenCalledWith('preview:m1', 0);
-        expect(flashListCompatMockState.getMappingKey).toHaveBeenCalledWith('preview:m2', 1);
-    });
-
     it('renders no previews when count is 0', async () => {
         collapsedPreviewCount = 0;
 
@@ -395,7 +411,7 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
         expect(previews).toHaveLength(0);
 
         const moreRows = screen.findAllByTestId('transcript-tool-calls-preview-more');
-        expect(moreRows).toHaveLength(0);
+        expect(moreRows).toHaveLength(1);
     });
 
     it('clamps preview count to 15', async () => {
@@ -463,6 +479,7 @@ describe('ToolCallsGroupView (collapsed preview)', () => {
 
         const screen = await renderToolCallsGroupView({
             toolMessages,
+            expanded: false,
             setExpanded,
         });
 

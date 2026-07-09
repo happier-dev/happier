@@ -164,6 +164,85 @@ describe('MessageView (tool timeline chrome mode)', () => {
         expect(renderedToolViewProps).toHaveLength(0);
     });
 
+    it('passes a tool pin action to the activity feed header when pinning is available', async () => {
+        toolChromeMode = 'activity_feed';
+        const onToggleToolPin = vi.fn();
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'm1',
+            seq: 7,
+            localId: null,
+            createdAt: 1,
+            tool: {
+                name: 'read',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: {},
+            },
+            children: [],
+        };
+
+        await renderScreen(
+            <MessageView
+                message={message}
+                metadata={null}
+                sessionId="s1"
+                onToggleToolPin={onToggleToolPin}
+            />,
+        );
+
+        expect(renderedToolTimelineRowProps).toHaveLength(1);
+        expect(renderedToolTimelineRowProps[0]!.headerAction).toBeTruthy();
+    });
+
+    it('omits the tool pin header action in read-only contexts', async () => {
+        toolChromeMode = 'activity_feed';
+        const onToggleToolPin = vi.fn();
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'm1',
+            seq: 7,
+            localId: null,
+            createdAt: 1,
+            tool: {
+                name: 'read',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: {},
+            },
+            children: [],
+        };
+
+        await renderScreen(
+            <MessageView
+                message={message}
+                metadata={null}
+                sessionId="s1"
+                onToggleToolPin={onToggleToolPin}
+                interaction={{
+                    canSendMessages: false,
+                    canApprovePermissions: false,
+                    permissionDisabledReason: 'readOnly',
+                }}
+            />,
+        );
+
+        expect(renderedToolTimelineRowProps).toHaveLength(1);
+        expect(renderedToolTimelineRowProps[0]!.headerAction).toBeNull();
+    });
+
     it('passes a stable server route id to ToolView when the message is already persisted', async () => {
         toolChromeMode = 'cards';
         const { MessageView } = await import('./MessageView');

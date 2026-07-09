@@ -1,14 +1,16 @@
-import { planNativeTranscriptViewportAnchorMeasuredOffsetRestore } from '@/components/sessions/transcript/transcriptNativeViewportAnchor';
+import { planNativeTranscriptViewportAnchorMeasuredOffsetRestore } from '@/components/sessions/transcript/viewport/driver/transcriptNativeViewportAnchor';
 import {
     resolveTranscriptViewportAnchorIndex,
     type TranscriptViewportAnchorResolvableItem,
-} from '@/components/sessions/transcript/transcriptViewportAnchorResolution';
+} from '@/components/sessions/transcript/viewport/entryRestore/transcriptViewportAnchorResolution';
 
 /**
  * Default alignment tolerance for classifying a prepend as MVCP-preserved.
  * Mirrors the legacy `TRANSCRIPT_NATIVE_PREPEND_ANCHOR_RESTORE_ALIGNMENT_TOLERANCE_PX` constant.
  */
 export const PREPEND_ANCHOR_ALIGNMENT_TOLERANCE_PX = 4;
+
+export const PREPEND_CORRECTOR_COVERED_RESIDUAL_TOLERANCE_PX = 48;
 
 export type PrependAnchorKey = Readonly<{
     itemId: string;
@@ -37,9 +39,14 @@ export type PrependOutcomeUnresolvableReason =
     | 'identity-unchanged';
 
 export type PrependOutcome =
-    | Readonly<{ kind: 'mvcp-preserved'; observedItemOffsetPx: number; deltaPx: number }>
+    | Readonly<{ kind: 'mvcp-preserved'; observedItemOffsetPx: number; deltaPx: number; correctorCovered?: boolean }>
     | Readonly<{ kind: 'needs-fallback'; targetOffsetY: number; deltaPx: number }>
     | Readonly<{ kind: 'unresolvable'; reason: PrependOutcomeUnresolvableReason }>;
+
+export type PrependCorrectorCoverage = Readonly<{
+    appliedDiffTotalPx: number;
+    eventCount: number;
+}>;
 
 function resolveCurrentFirstItemId(items: readonly TranscriptViewportAnchorResolvableItem[]): string | null {
     const id = items[0]?.id;
@@ -58,6 +65,7 @@ export function observePrependOutcome(params: Readonly<{
     capturedAnchor: PrependCapturedAnchor;
     postCommit: PrependPostCommitObservation;
     tolerancePx?: number;
+    correctorCoverage?: PrependCorrectorCoverage;
 }>): PrependOutcome {
     const { capturedAnchor, postCommit } = params;
     const tolerancePx = params.tolerancePx ?? PREPEND_ANCHOR_ALIGNMENT_TOLERANCE_PX;
@@ -94,6 +102,17 @@ export function observePrependOutcome(params: Readonly<{
     const deltaPx = observedItemOffsetPx - capturedAnchor.itemOffsetPx;
     if (Math.abs(deltaPx) <= Math.max(0, tolerancePx)) {
         return { kind: 'mvcp-preserved', observedItemOffsetPx, deltaPx };
+    }
+
+    const coverage = params.correctorCoverage;
+    if (coverage != null && coverage.eventCount > 0 && Number.isFinite(coverage.appliedDiffTotalPx)) {
+        const residualPx = Math.min(
+            Math.abs(deltaPx),
+            Math.abs(deltaPx - coverage.appliedDiffTotalPx),
+        );
+        if (residualPx <= PREPEND_CORRECTOR_COVERED_RESIDUAL_TOLERANCE_PX) {
+            return { kind: 'mvcp-preserved', observedItemOffsetPx, deltaPx, correctorCovered: true };
+        }
     }
 
     const fallbackPlan = planNativeTranscriptViewportAnchorMeasuredOffsetRestore({
