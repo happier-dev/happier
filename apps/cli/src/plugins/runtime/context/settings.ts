@@ -145,6 +145,7 @@ export function createPluginSettingsService(params: CreatePluginSettingsServiceP
         },
         projectForm(): PluginSettingsFormProjectionV1 {
             return Object.freeze({
+                storageScope: 'pluginLocal',
                 fields: Object.freeze(descriptors
                     .filter((descriptor) => descriptor.hidden !== true)
                     .map(toFormField)),

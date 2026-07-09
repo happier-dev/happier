@@ -1,21 +1,25 @@
 import type {
     BackendCatalogDefinition,
-    ProviderCatalogDefinition,
+    ProviderCatalogDefinition as AgentCatalogDefinition,
     BackendDefinitionContractV1,
-    ProviderDefinitionContractV1,
+    ProviderDefinitionContractV1 as AgentDefinitionContractV1,
 } from '@happier-dev/agents';
 import type {
   ActionDefinitionV1,
+  AgentDefinitionV1,
   BackendDefinitionV1,
   BackendSurfaceDeclarationV1,
   PluginBackendCapabilitiesV1,
+  PluginBrowserActionContributionV1,
+  PluginBrowserTargetContributionV1,
   PluginNotificationCategoryContributionV2,
   PluginNotificationChannelContributionV2,
   PluginExecutionRunProfileContributionV2,
   PluginHostedWebContributionV1,
+  PluginEmbeddedWebBundleContributionV1,
   PluginReactNativeBundleContributionV1,
   PluginSessionHeaderActionDescriptorV1,
-  PluginSessionSurfaceDescriptorV1,
+  PluginSurfacePlacementDescriptorV1,
   PluginMcpDiscoveryProviderContributionV1,
   PluginMcpServerContributionV1,
   PluginRequestInterceptorContributionV1,
@@ -31,7 +35,6 @@ import type {
   PluginContributionIdentityV1,
   PluginUiTranslationsContributionV1,
   HookRegistrationV1,
-  ProviderDefinitionV1,
 } from '@happier-dev/protocol';
 import type { ProviderCliRuntimeDescriptor } from '@happier-dev/cli-common/providers';
 import type {
@@ -39,7 +42,7 @@ import type {
     CliRuntimeCoreGetter,
 } from '@/agent/runtime/registry/engineRegistryTypes';
 
-import type { AgentCatalogEntry } from '@/backends/types';
+import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 
 export type ResolvedContributionProvenance = 'first_party' | 'external';
@@ -48,6 +51,14 @@ export type ResolvedContributionSourceKind = 'bundled' | 'path' | 'archive' | 'm
 
 export type ResolvedContributionSource = Readonly<{
     kind: ResolvedContributionSourceKind;
+}>;
+
+export type ResolvedAgentDefinitionContract = AgentDefinitionContractV1 & Readonly<
+    Partial<Omit<AgentDefinitionV1, keyof AgentDefinitionContractV1>>
+>;
+
+export type ResolvedAgentRuntimeDefinitionContract = Omit<BackendDefinitionContractV1, 'providerId'> & Readonly<{
+    agentId: string;
 }>;
 
 /**
@@ -64,18 +75,18 @@ export type ResolvedCatalogEntry = Readonly<
     }
 >;
 
-export type ResolvedProviderRichDefinition = Readonly<
+export type ResolvedAgentRichDefinition = Readonly<
     | {
         provenance: 'first_party';
-        definition: ProviderCatalogDefinition;
+        definition: AgentCatalogDefinition;
     }
     | {
         provenance: 'external';
-        definition: ProviderDefinitionV1;
+        definition: AgentDefinitionV1;
     }
 >;
 
-export type ResolvedBackendRichDefinition = Readonly<
+export type ResolvedAgentRuntimeRichDefinition = Readonly<
     | {
         provenance: 'first_party';
         definition: BackendCatalogDefinition;
@@ -89,12 +100,12 @@ export type ResolvedBackendRichDefinition = Readonly<
     }
 >;
 
-export type ResolvedProviderContribution = Readonly<{
+export type ResolvedAgentContribution = Readonly<{
     id: string;
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
-    definition: ProviderDefinitionContractV1;
-    richDefinition?: ResolvedProviderRichDefinition;
+    definition: ResolvedAgentDefinitionContract;
+    richDefinition?: ResolvedAgentRichDefinition;
     runtimeSpec?: ProviderCliRuntimeDescriptor | null;
     catalogEntry?: ResolvedCatalogEntry | null;
     sourceSpec?: PluginSourceSpecV1;
@@ -102,15 +113,16 @@ export type ResolvedProviderContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
 }>;
 
-export type ResolvedBackendContribution = Readonly<{
+export type ResolvedAgentRuntimeContribution = Readonly<{
     id: string;
-    providerId: string;
+    agentId: string;
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
-    definition: BackendDefinitionContractV1;
-    richDefinition?: ResolvedBackendRichDefinition;
+    definition: ResolvedAgentRuntimeDefinitionContract;
+    richDefinition?: ResolvedAgentRuntimeRichDefinition;
     runtimeKind?: string | null;
     capabilities?: PluginBackendCapabilitiesV1;
     surfaceHandlers?: readonly BackendSurfaceDeclarationV1[];
@@ -121,6 +133,7 @@ export type ResolvedBackendContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
 }>;
 
 export type ResolvedActionContribution = Readonly<{
@@ -130,6 +143,7 @@ export type ResolvedActionContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: ActionDefinitionV1;
 }>;
@@ -141,13 +155,16 @@ export type ResolvedToolDefinition = Readonly<{
     title: string;
     description?: string | null;
     safety: ActionDefinitionV1['safety'];
-    surfaces: Readonly<Record<'cli' | 'mcp' | 'session_agent', boolean>>;
+    surfaces: Readonly<Record<'cli' | 'mcp' | 'agent', boolean>>;
     inputSchema?: ActionDefinitionV1['inputSchema'];
     outputSchema?: ActionDefinitionV1['outputSchema'];
     inputHints?: ActionDefinitionV1['inputHints'];
     compatibility?: ActionDefinitionV1['compatibility'];
     examples?: ActionDefinitionV1['examples'];
+    promptSnippet?: string | null;
+    promptGuidelines?: readonly string[];
     actionId: string;
+    execution?: ActionDefinitionV1['execution'];
 }>;
 
 export type ResolvedToolContribution = Readonly<{
@@ -157,6 +174,7 @@ export type ResolvedToolContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: ResolvedToolDefinition;
 }>;
@@ -183,11 +201,12 @@ export type ResolvedCommandContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: ResolvedCommandDefinition;
 }>;
 
-export type ResolvedLifecycleHandlerEvent = 'activated' | 'deactivating';
+export type ResolvedLifecycleHandlerEvent = 'activated' | 'deactivating' | 'deactivated';
 
 export type ResolvedLifecycleHandlerDefinition = Readonly<{
     kindVersion: 1;
@@ -203,6 +222,7 @@ export type ResolvedLifecycleHandlerContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: ResolvedLifecycleHandlerDefinition;
 }>;
@@ -224,6 +244,7 @@ export type ResolvedResourceContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: ResolvedResourceDefinition;
 }>;
@@ -263,6 +284,7 @@ export type ResolvedUiDescriptorContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: ResolvedUiDescriptorDefinition;
 }>;
@@ -274,6 +296,7 @@ export type ResolvedUiTranslationsContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginUiTranslationsContributionV1;
 }>;
@@ -285,19 +308,9 @@ export type ResolvedStructuredMessageContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginStructuredMessageDescriptorV1;
-}>;
-
-export type ResolvedSessionSurfaceContribution = Readonly<{
-    provenance: ResolvedContributionProvenance;
-    source: ResolvedContributionSource;
-    pluginId?: string;
-    manifestPath?: string;
-    manifestDigest?: string;
-    daemonEntryPath?: string | null;
-    sourceSpec?: PluginSourceSpecV1;
-    definition: PluginSessionSurfaceDescriptorV1;
 }>;
 
 export type ResolvedSessionHeaderActionContribution = Readonly<{
@@ -307,19 +320,46 @@ export type ResolvedSessionHeaderActionContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginSessionHeaderActionDescriptorV1;
 }>;
 
-export type ResolvedHostedWebContribution = Readonly<{
+export type ResolvedSurfacePlacementContribution = Readonly<{
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
     pluginId?: string;
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginSurfacePlacementDescriptorV1;
+}>;
+
+export type ResolvedHostedWebContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    pluginRootPath?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginHostedWebContributionV1;
+}>;
+
+export type ResolvedEmbeddedWebBundleContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginEmbeddedWebBundleContributionV1;
 }>;
 
 export type ResolvedReactNativeBundleContribution = Readonly<{
@@ -329,6 +369,7 @@ export type ResolvedReactNativeBundleContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginReactNativeBundleContributionV1;
 }>;
@@ -337,11 +378,37 @@ export type ResolvedUiArtifactContribution = Readonly<{
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
     pluginId?: string;
+    pluginRootPath?: string;
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginUiArtifactContributionV1;
+}>;
+
+export type ResolvedBrowserTargetContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginBrowserTargetContributionV1;
+}>;
+
+export type ResolvedBrowserActionContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginBrowserActionContributionV1;
 }>;
 
 export type ResolvedNotificationCategoryContribution = Readonly<{
@@ -351,6 +418,7 @@ export type ResolvedNotificationCategoryContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginNotificationCategoryContributionV2;
 }>;
@@ -362,6 +430,7 @@ export type ResolvedNotificationChannelContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginNotificationChannelContributionV2;
 }>;
@@ -378,6 +447,7 @@ export type ResolvedEventContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: ResolvedEventDefinition;
 }>;
@@ -389,6 +459,7 @@ export type ResolvedSettingsContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
   definition: PluginSettingsContributionV2;
 }>;
@@ -400,6 +471,7 @@ export type ResolvedExecutionRunProfileContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginExecutionRunProfileContributionV2;
 }>;
@@ -411,6 +483,7 @@ export type ResolvedMcpServerContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginMcpServerContributionV1;
 }>;
@@ -422,6 +495,7 @@ export type ResolvedMcpDiscoveryProviderContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginMcpDiscoveryProviderContributionV1;
 }>;
@@ -433,6 +507,7 @@ export type ResolvedInstallableContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: InstallableDependencyDescriptor;
 }>;
@@ -444,6 +519,7 @@ export type ResolvedRequestInterceptorContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginRequestInterceptorContributionV1;
 }>;
@@ -457,6 +533,7 @@ export type ResolvedScmHostingProviderContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: ScmHostingProviderContribution;
 }>;
@@ -470,6 +547,7 @@ export type ResolvedScmBackendContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: ScmBackendContribution;
 }>;
@@ -481,6 +559,7 @@ export type ResolvedConnectedAccountDescriptorContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginConnectedAccountDescriptorContributionV2;
 }>;
@@ -498,6 +577,7 @@ export type ResolvedBackendSurfaceContribution = Readonly<{
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
 }>;
 
@@ -508,6 +588,7 @@ export type ResolvedHookRegistration = Readonly<{
     manifestPath: string;
     manifestDigest: string;
     daemonEntryPath: string | null;
+    devDaemonEntryPath?: string | null;
     sourceSpec: PluginSourceSpecV1;
     definition: HookRegistrationV1;
 }>;
@@ -519,12 +600,14 @@ export type ResolvedActivationTarget = Readonly<{
     manifestPath: string;
     manifestDigest: string;
     daemonEntryPath: string;
+    devDaemonEntryPath?: string | null;
     sourceSpec: PluginSourceSpecV1;
+    activationEvents?: readonly string[];
 }>;
 
 export type ResolvedContributionInputs = Readonly<{
-    providers: readonly ResolvedProviderContribution[];
-    backends: readonly ResolvedBackendContribution[];
+    agents?: readonly ResolvedAgentContribution[];
+    agentRuntimes?: readonly ResolvedAgentRuntimeContribution[];
     catalogEntries?: readonly ResolvedCatalogEntry[];
     actions?: readonly ResolvedActionContribution[];
     tools?: readonly ResolvedToolContribution[];
@@ -533,11 +616,14 @@ export type ResolvedContributionInputs = Readonly<{
     uiDescriptors?: readonly ResolvedUiDescriptorContribution[];
     uiTranslations?: readonly ResolvedUiTranslationsContribution[];
     structuredMessages?: readonly ResolvedStructuredMessageContribution[];
-    sessionSurfaces?: readonly ResolvedSessionSurfaceContribution[];
     sessionHeaderActions?: readonly ResolvedSessionHeaderActionContribution[];
+    surfacePlacements?: readonly ResolvedSurfacePlacementContribution[];
     hostedWeb?: readonly ResolvedHostedWebContribution[];
+    embeddedWebBundles?: readonly ResolvedEmbeddedWebBundleContribution[];
     reactNativeBundles?: readonly ResolvedReactNativeBundleContribution[];
     uiArtifacts?: readonly ResolvedUiArtifactContribution[];
+    browserTargets?: readonly ResolvedBrowserTargetContribution[];
+    browserActions?: readonly ResolvedBrowserActionContribution[];
     settings?: readonly ResolvedSettingsContribution[];
     notifications?: readonly ResolvedNotificationCategoryContribution[];
     notificationChannels?: readonly ResolvedNotificationChannelContribution[];
@@ -545,7 +631,7 @@ export type ResolvedContributionInputs = Readonly<{
     executionRunProfiles?: readonly ResolvedExecutionRunProfileContribution[];
     mcpServers?: readonly ResolvedMcpServerContribution[];
     mcpDiscoveryProviders?: readonly ResolvedMcpDiscoveryProviderContribution[];
-    installables?: readonly ResolvedInstallableContribution[];
+    managedDependencies?: readonly ResolvedInstallableContribution[];
     requestInterceptors?: readonly ResolvedRequestInterceptorContribution[];
     scmHostingProviders?: readonly ResolvedScmHostingProviderContribution[];
     scmBackends?: readonly ResolvedScmBackendContribution[];
@@ -558,8 +644,8 @@ export type ResolvedContributionInputs = Readonly<{
 
 export type ResolvedContributionRegistry = Readonly<{
     generationId?: string;
-    providers: readonly ResolvedProviderContribution[];
-    backends: readonly ResolvedBackendContribution[];
+    agents: readonly ResolvedAgentContribution[];
+    agentRuntimes: readonly ResolvedAgentRuntimeContribution[];
     actions: readonly ResolvedActionContribution[];
     tools?: readonly ResolvedToolContribution[];
     commands?: readonly ResolvedCommandContribution[];
@@ -567,11 +653,14 @@ export type ResolvedContributionRegistry = Readonly<{
     uiDescriptors: readonly ResolvedUiDescriptorContribution[];
     uiTranslations?: readonly ResolvedUiTranslationsContribution[];
     structuredMessages?: readonly ResolvedStructuredMessageContribution[];
-    sessionSurfaces?: readonly ResolvedSessionSurfaceContribution[];
     sessionHeaderActions?: readonly ResolvedSessionHeaderActionContribution[];
+    surfacePlacements?: readonly ResolvedSurfacePlacementContribution[];
     hostedWeb?: readonly ResolvedHostedWebContribution[];
+    embeddedWebBundles?: readonly ResolvedEmbeddedWebBundleContribution[];
     reactNativeBundles?: readonly ResolvedReactNativeBundleContribution[];
     uiArtifacts?: readonly ResolvedUiArtifactContribution[];
+    browserTargets?: readonly ResolvedBrowserTargetContribution[];
+    browserActions?: readonly ResolvedBrowserActionContribution[];
     settings?: readonly ResolvedSettingsContribution[];
     notifications?: readonly ResolvedNotificationCategoryContribution[];
     notificationChannels?: readonly ResolvedNotificationChannelContribution[];
@@ -579,7 +668,7 @@ export type ResolvedContributionRegistry = Readonly<{
     executionRunProfiles?: readonly ResolvedExecutionRunProfileContribution[];
     mcpServers?: readonly ResolvedMcpServerContribution[];
     mcpDiscoveryProviders?: readonly ResolvedMcpDiscoveryProviderContribution[];
-    installables?: readonly ResolvedInstallableContribution[];
+    managedDependencies?: readonly ResolvedInstallableContribution[];
     requestInterceptors?: readonly ResolvedRequestInterceptorContribution[];
     scmHostingProviders?: readonly ResolvedScmHostingProviderContribution[];
     scmBackends?: readonly ResolvedScmBackendContribution[];
@@ -593,24 +682,27 @@ export type ResolvedContributionRegistry = Readonly<{
     resourcesById?: ReadonlyMap<string, ResolvedResourceContribution>;
     uiDescriptorsById?: ReadonlyMap<string, ResolvedUiDescriptorContribution>;
     structuredMessagesById?: ReadonlyMap<string, ResolvedStructuredMessageContribution>;
-    sessionSurfacesById?: ReadonlyMap<string, ResolvedSessionSurfaceContribution>;
     sessionHeaderActionsById?: ReadonlyMap<string, ResolvedSessionHeaderActionContribution>;
+    surfacePlacementsById?: ReadonlyMap<string, ResolvedSurfacePlacementContribution>;
     hostedWebById?: ReadonlyMap<string, ResolvedHostedWebContribution>;
+    embeddedWebBundlesById?: ReadonlyMap<string, ResolvedEmbeddedWebBundleContribution>;
     reactNativeBundlesById?: ReadonlyMap<string, ResolvedReactNativeBundleContribution>;
     uiArtifactsById?: ReadonlyMap<string, ResolvedUiArtifactContribution>;
+    browserTargetsById?: ReadonlyMap<string, ResolvedBrowserTargetContribution>;
+    browserActionsById?: ReadonlyMap<string, ResolvedBrowserActionContribution>;
     settingsById?: ReadonlyMap<string, ResolvedSettingsContribution>;
     notificationsById?: ReadonlyMap<string, ResolvedNotificationCategoryContribution>;
     notificationChannelsById?: ReadonlyMap<string, ResolvedNotificationChannelContribution>;
     eventsById?: ReadonlyMap<string, ResolvedEventContribution>;
     executionRunProfilesById?: ReadonlyMap<string, ResolvedExecutionRunProfileContribution>;
-    installablesByKey?: ReadonlyMap<string, ResolvedInstallableContribution>;
+    managedDependenciesByKey?: ReadonlyMap<string, ResolvedInstallableContribution>;
     scmHostingProvidersById?: ReadonlyMap<string, ResolvedScmHostingProviderContribution>;
     scmBackendsById?: ReadonlyMap<string, ResolvedScmBackendContribution>;
     connectedAccountDescriptorsById?: ReadonlyMap<string, ResolvedConnectedAccountDescriptorContribution>;
     lifecycleHandlersById?: ReadonlyMap<string, ResolvedLifecycleHandlerContribution>;
     surfaceHandlersByBackendId: ReadonlyMap<string, readonly ResolvedBackendSurfaceContribution[]>;
     catalogEntriesById: Readonly<Record<string, ResolvedCatalogEntry>>;
-    providerDefinitionsById: ReadonlyMap<string, ResolvedProviderContribution>;
-    backendDefinitionsById: ReadonlyMap<string, ResolvedBackendContribution>;
+    agentDefinitionsById: ReadonlyMap<string, ResolvedAgentContribution>;
+    agentRuntimeDefinitionsById: ReadonlyMap<string, ResolvedAgentRuntimeContribution>;
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
 }>;

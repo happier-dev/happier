@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ScmBackendContributionSchema } from './scmBackends';
+import { ScmBackendContributionSchema } from './scmBackends.js';
 
 describe('plugin SDK SCM backend manifest surface', () => {
     it('re-exports the protocol SCM backend contribution schema for authoring', () => {

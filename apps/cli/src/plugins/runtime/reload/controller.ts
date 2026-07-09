@@ -2,6 +2,8 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutab
 import {
     writePluginReloadStateSnapshot,
 } from './state';
+import { publishHostPluginEvent } from '../context/events';
+import { logger } from '@/ui/logger';
 
 export type PluginRuntimeRegistryLease = Readonly<{
     registry: ResolvedExecutablePluginRuntimeRegistry;
@@ -51,12 +53,23 @@ export type PluginReloadState = Readonly<{
     lastResult: PluginReloadResult | null;
 }>;
 
+export type PluginReloadListener = (result: PluginReloadResult) => void;
+
 export type PluginReloadController = Readonly<{
     reload: (params?: Readonly<{ pluginId?: string | null }>) => Promise<PluginReloadResult>;
     acquireRuntimeRegistry: (params?: Readonly<{
         resolveRuntimeRegistry?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>;
     }>) => Promise<PluginRuntimeRegistryLease>;
+    shutdown: (params?: Readonly<{ timeoutMs?: number }>) => Promise<void>;
     getState: () => PluginReloadState;
+    /**
+     * Notified once per settled reload cycle (regardless of trigger: CLI, RPC action,
+     * agent tool, or dev-loop action), after `lastResult`/`activeRegistry` have been
+     * updated. This is the canonical signal that the installed/active plugin set may
+     * have changed — consumers that mirror the installed-plugin set (e.g. the plugin
+     * dev-reload file watcher) should resync from it instead of snapshotting once.
+     */
+    subscribe: (listener: PluginReloadListener) => () => void;
 }>;
 
 function normalizeAffectedPluginIds(pluginId: string | null | undefined): readonly string[] {
@@ -148,10 +161,10 @@ function areAffectedPluginIdsEqual(
 
 function collectRegistryPluginIds(registry: ResolvedExecutablePluginRuntimeRegistry): readonly string[] {
     const pluginIds = new Set<string>();
-    for (const contribution of registry.contributes.providers) {
+    for (const contribution of registry.contributes.agents) {
         if (contribution.pluginId) pluginIds.add(contribution.pluginId);
     }
-    for (const contribution of registry.contributes.backends) {
+    for (const contribution of registry.contributes.agentRuntimes) {
         if (contribution.pluginId) pluginIds.add(contribution.pluginId);
     }
     for (const contribution of registry.contributes.actions) {
@@ -192,10 +205,56 @@ function resolveActiveGenerationId(
     return registry.contributes.generationId ?? `reload:${generation}`;
 }
 
-function hasActivationFailure(registry: ResolvedExecutablePluginRuntimeRegistry): boolean {
-    return Object.values(registry.pluginDiagnosticsByPluginId).some((diagnostics) => (
-        diagnostics.some((diagnostic) => diagnostic.code === 'plugin_activation_failed')
+const BLOCKING_PLUGIN_RELOAD_DIAGNOSTIC_CODES = new Set([
+    'plugin_activation_failed',
+    'plugin_daemon_module_load_failed',
+    'plugin_source_missing',
+    'plugin_source_kind_unsupported',
+    'plugin_trust_approval_required',
+    'plugin_untrusted',
+]);
+
+/**
+ * Blocking is scoped to the plugins actually targeted by this reload cycle
+ * (`scopedPluginIds`, i.e. `changedPluginIds`) — not the whole registry.
+ *
+ * Intended invariant: a reload that would activate a BROKEN version of the
+ * plugin(s) being reloaded must roll back to last-known-good (or fail if no
+ * baseline exists) rather than promote breakage. A pre-existing diagnostic on
+ * an UNRELATED plugin outside this reload's scope must not poison this reload
+ * or prevent a healthy baseline from being established — that unrelated
+ * plugin simply stays unactivated with its diagnostic preserved.
+ */
+function hasBlockingPluginReloadDiagnostic(
+    registry: ResolvedExecutablePluginRuntimeRegistry,
+    scopedPluginIds: readonly string[],
+): boolean {
+    return scopedPluginIds.some((pluginId) => (
+        (registry.pluginDiagnosticsByPluginId[pluginId] ?? []).some((diagnostic) => (
+            BLOCKING_PLUGIN_RELOAD_DIAGNOSTIC_CODES.has(diagnostic.code)
+        ))
     ));
+}
+
+function normalizeShutdownTimeoutMs(value: number | undefined): number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return 5_000;
+    }
+    return Math.max(0, Math.trunc(value));
+}
+
+function createShutdownError(): Error {
+    return new Error('Plugin runtime registry has shut down');
+}
+
+async function publishReloadLifecycleEvent(
+    eventId: 'plugin.reload.before' | 'plugin.reload.after',
+    payload: Record<string, unknown>,
+): Promise<void> {
+    await publishHostPluginEvent(`@happier/lifecycle/${eventId.replaceAll('.', '/')}`, {
+        eventId,
+        ...payload,
+    });
 }
 
 export function createPluginReloadController(params?: Readonly<{
@@ -215,10 +274,24 @@ export function createPluginReloadController(params?: Readonly<{
     let activeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     let lastResult: PluginReloadResult | null = null;
     let inFlight: Promise<PluginReloadResult> | null = null;
+    let shutdownPromise: Promise<void> | null = null;
+    let shutdownStarted = false;
+    let shutdownTimeoutMs = normalizeShutdownTimeoutMs(undefined);
     let activeRequestedPluginIds: readonly string[] = Object.freeze([]);
     let queuedReloadBatch: QueuedReloadBatch | null = null;
     const outstandingLeaseCounts = new Map<ResolvedExecutablePluginRuntimeRegistry, number>();
     const pendingDisposal = new Set<ResolvedExecutablePluginRuntimeRegistry>();
+    const reloadListeners = new Set<PluginReloadListener>();
+
+    function notifyReloadListeners(result: PluginReloadResult): void {
+        for (const listener of reloadListeners) {
+            try {
+                listener(result);
+            } catch (error) {
+                logger.debug('[PLUGIN RUNTIME] Plugin reload listener threw', error);
+            }
+        }
+    }
 
     async function resolveHappyHomeDir(): Promise<string> {
         if (params?.happyHomeDir) {
@@ -257,9 +330,50 @@ export function createPluginReloadController(params?: Readonly<{
         await registry.dispose();
     }
 
-    async function resolveRuntimeRegistry(): Promise<ResolvedExecutablePluginRuntimeRegistry> {
-        if (params?.resolveRuntimeRegistry) {
-            return await params.resolveRuntimeRegistry();
+    async function disposeRegistryForShutdown(
+        registry: ResolvedExecutablePluginRuntimeRegistry,
+        timeoutMs: number,
+    ): Promise<void> {
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+        const disposePromise = registry.dispose({
+            timeoutMs,
+            onError: (event) => {
+                logger.warn('[PLUGIN RUNTIME] Plugin cleanup failed during daemon shutdown', {
+                    pluginId: event.pluginId,
+                    phase: event.phase,
+                    error: event.error instanceof Error ? event.error.message : String(event.error),
+                });
+            },
+        }).then(
+            () => 'disposed' as const,
+            (error: unknown) => {
+                logger.warn('[PLUGIN RUNTIME] Plugin runtime registry disposal failed during daemon shutdown', {
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                return 'failed' as const;
+            },
+        );
+        const timeoutPromise = new Promise<'timeout'>((resolve) => {
+            timeoutHandle = setTimeout(() => resolve('timeout'), timeoutMs);
+            timeoutHandle.unref?.();
+        });
+        const result = await Promise.race([disposePromise, timeoutPromise]);
+        if (timeoutHandle) {
+            clearTimeout(timeoutHandle);
+        }
+        if (result === 'timeout') {
+            logger.warn('[PLUGIN RUNTIME] Plugin runtime registry disposal timed out during daemon shutdown', {
+                timeoutMs,
+            });
+        }
+    }
+
+    async function resolveRuntimeRegistry(
+        resolveRuntimeRegistryOverride?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>,
+    ): Promise<ResolvedExecutablePluginRuntimeRegistry> {
+        const resolver = resolveRuntimeRegistryOverride ?? params?.resolveRuntimeRegistry;
+        if (resolver) {
+            return await resolver();
         }
         const { resolveExecutablePluginRuntimeRegistry } = await import('../resolveExecutablePluginRuntimeRegistry');
         return await resolveExecutablePluginRuntimeRegistry({
@@ -272,6 +386,9 @@ export function createPluginReloadController(params?: Readonly<{
         eventId: 'plugin.reload.before' | 'plugin.reload.after';
         payload: Record<string, unknown>;
     }>): Promise<void> {
+        if (paramsForEvent.eventId === 'plugin.reload.after') {
+            await publishReloadLifecycleEvent(paramsForEvent.eventId, paramsForEvent.payload);
+        }
         if (!params?.dispatchReloadHookEvent || !paramsForEvent.runtimeRegistry) {
             return;
         }
@@ -297,7 +414,10 @@ export function createPluginReloadController(params?: Readonly<{
         }
     }
 
-    async function runReload(affectedPluginIds: readonly string[]): Promise<PluginReloadResult> {
+    async function runReload(
+        affectedPluginIds: readonly string[],
+        resolveRuntimeRegistryOverride?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>,
+    ): Promise<PluginReloadResult> {
         const attemptedGeneration = generation + 1;
         if (params?.dispatchReloadHookEvent && activeRegistry) {
             await emitReloadHook({
@@ -312,9 +432,13 @@ export function createPluginReloadController(params?: Readonly<{
             });
         }
         try {
-            const registry = await resolveRuntimeRegistry();
+            const registry = await resolveRuntimeRegistry(resolveRuntimeRegistryOverride);
+            if (shutdownStarted) {
+                await disposeRegistryForShutdown(registry, shutdownTimeoutMs);
+                throw createShutdownError();
+            }
             const changedPluginIds = resolveChangedPluginIds(affectedPluginIds, registry);
-            if (hasActivationFailure(registry)) {
+            if (hasBlockingPluginReloadDiagnostic(registry, changedPluginIds)) {
                 if (!activeRegistry) {
                     lastResult = {
                         ok: false,
@@ -374,6 +498,9 @@ export function createPluginReloadController(params?: Readonly<{
             if (previousRegistry && previousRegistry !== registry) {
                 await disposeRegistryWhenSafe(previousRegistry);
             }
+            if (shutdownStarted) {
+                throw createShutdownError();
+            }
             lastResult = {
                 ok: true,
                 generation,
@@ -398,6 +525,9 @@ export function createPluginReloadController(params?: Readonly<{
                 });
             }
             await publishInstalledManifestProjections(affectedPluginIds);
+            if (shutdownStarted) {
+                throw createShutdownError();
+            }
             await emitReloadHook({
                 runtimeRegistry: lastResult.registry,
                 eventId: 'plugin.reload.after',
@@ -410,6 +540,9 @@ export function createPluginReloadController(params?: Readonly<{
                     registryStatus: lastResult.registryStatus,
                 },
             });
+            if (shutdownStarted) {
+                throw createShutdownError();
+            }
             return lastResult;
         } catch (error) {
             const diagnostics = Object.freeze([
@@ -477,9 +610,10 @@ export function createPluginReloadController(params?: Readonly<{
     function startReloadCycle(
         affectedPluginIds: readonly string[],
         deferreds?: readonly DeferredPluginReloadResult[],
+        resolveRuntimeRegistryOverride?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>,
     ): Promise<PluginReloadResult> {
         activeRequestedPluginIds = affectedPluginIds;
-        const cyclePromise = runReload(affectedPluginIds);
+        const cyclePromise = runReload(affectedPluginIds, resolveRuntimeRegistryOverride);
         inFlight = cyclePromise;
         if (deferreds && deferreds.length > 0) {
             void cyclePromise.then(
@@ -495,6 +629,12 @@ export function createPluginReloadController(params?: Readonly<{
                 },
             );
         }
+        void cyclePromise.then(
+            (result) => notifyReloadListeners(result),
+            () => {
+                // A rejected reload cycle leaves lastResult unset; nothing to notify.
+            },
+        );
         void cyclePromise.finally(() => {
             if (inFlight === cyclePromise) {
                 inFlight = null;
@@ -507,6 +647,9 @@ export function createPluginReloadController(params?: Readonly<{
 
     return {
         reload(paramsForReload) {
+            if (shutdownStarted) {
+                return Promise.reject(createShutdownError());
+            }
             const affectedPluginIds = normalizeAffectedPluginIds(paramsForReload?.pluginId);
             if (inFlight) {
                 if (areAffectedPluginIdsEqual(affectedPluginIds, activeRequestedPluginIds)) {
@@ -533,6 +676,9 @@ export function createPluginReloadController(params?: Readonly<{
             return startReloadCycle(affectedPluginIds);
         },
         async acquireRuntimeRegistry(leaseParams) {
+            if (shutdownStarted) {
+                throw createShutdownError();
+            }
             if (activeRegistry) {
                 const leasedRegistry = activeRegistry;
                 retainRegistryLease(leasedRegistry);
@@ -544,22 +690,69 @@ export function createPluginReloadController(params?: Readonly<{
                     },
                 };
             }
-            const registry = leaseParams?.resolveRuntimeRegistry
-                ? await leaseParams.resolveRuntimeRegistry()
-                : await resolveRuntimeRegistry();
+            const result = await (inFlight ?? startReloadCycle(
+                Object.freeze([]),
+                undefined,
+                leaseParams?.resolveRuntimeRegistry,
+            ));
+            const leasedRegistry = result.registry ?? activeRegistry;
+            if (shutdownStarted) {
+                throw createShutdownError();
+            }
+            if (!result.ok || !leasedRegistry) {
+                throw new Error(result.diagnostics[0]?.message ?? 'Plugin runtime registry unavailable');
+            }
+            retainRegistryLease(leasedRegistry);
             return {
-                registry,
-                source: 'ephemeral',
+                registry: leasedRegistry,
+                source: 'active',
                 release: async () => {
-                    await registry.dispose();
+                    await releaseRegistryLease(leasedRegistry);
                 },
             };
+        },
+        async shutdown(shutdownParams) {
+            if (shutdownPromise) {
+                return await shutdownPromise;
+            }
+            shutdownPromise = (async () => {
+                shutdownStarted = true;
+                shutdownTimeoutMs = normalizeShutdownTimeoutMs(shutdownParams?.timeoutMs);
+                if (queuedReloadBatch) {
+                    const error = createShutdownError();
+                    for (const deferred of queuedReloadBatch.deferreds) {
+                        deferred.reject(error);
+                    }
+                    queuedReloadBatch = null;
+                }
+                const registriesToDispose = new Set<ResolvedExecutablePluginRuntimeRegistry>();
+                if (activeRegistry) {
+                    registriesToDispose.add(activeRegistry);
+                }
+                for (const registry of pendingDisposal) {
+                    registriesToDispose.add(registry);
+                }
+                activeRegistry = null;
+                outstandingLeaseCounts.clear();
+                pendingDisposal.clear();
+                for (const registry of registriesToDispose) {
+                    // eslint-disable-next-line no-await-in-loop
+                    await disposeRegistryForShutdown(registry, shutdownTimeoutMs);
+                }
+            })();
+            return await shutdownPromise;
         },
         getState() {
             return {
                 generation,
                 activeRegistry,
                 lastResult,
+            };
+        },
+        subscribe(listener) {
+            reloadListeners.add(listener);
+            return () => {
+                reloadListeners.delete(listener);
             };
         },
     };

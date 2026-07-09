@@ -1,5 +1,12 @@
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import type { ResolvedHookRegistration } from '@/plugins/projection/registry/types';
+import type {
+    PluginActionHandler as SdkPluginActionHandler,
+    PluginActionHandlerRequest as SdkPluginActionHandlerRequest,
+    PluginActionResultV1 as SdkPluginActionResultV1,
+    PluginActionSurface as SdkPluginActionSurface,
+    PluginHandlerServicesV1,
+} from '@happier-dev/plugin-sdk';
 
 export type PluginDaemonModuleNamespace = Readonly<Record<string, unknown>> & Readonly<{
     default?: unknown;
@@ -7,26 +14,19 @@ export type PluginDaemonModuleNamespace = Readonly<Record<string, unknown>> & Re
 
 export type PluginHookHandler = (...args: readonly unknown[]) => unknown | Promise<unknown>;
 
-export type PluginActionSurface = 'cli' | 'mcp' | 'session_agent';
+export type PluginRuntimeHookHandler = (event?: unknown, context?: unknown) => unknown | Promise<unknown>;
 
-export type PluginActionHandlerRequest = Readonly<{
-    actionId: string;
-    pluginId: string;
-    input: unknown;
-    context: Readonly<{
-        defaultSessionId?: string;
-        surface: PluginActionSurface;
-    }>;
-    provenance: Readonly<{
-        manifestPath?: string;
-        manifestDigest?: string;
-        sourceKind?: string;
-    }>;
+export type PluginActionSurface = SdkPluginActionSurface;
+export type PluginActionHandlerRequest = Omit<SdkPluginActionHandlerRequest, 'context'> & Readonly<{
+    context: Omit<SdkPluginActionHandlerRequest['context'], keyof PluginHandlerServicesV1>;
 }>;
+export type PluginActionResult = SdkPluginActionResultV1;
+export type PluginActionHandler = (
+    request: PluginActionHandlerRequest,
+) => PluginActionResult | Promise<PluginActionResult>;
+export type PluginSdkActionHandler = SdkPluginActionHandler;
 
-export type PluginActionHandler = (request: PluginActionHandlerRequest) => unknown | Promise<unknown>;
-
-export type PluginLifecycleEvent = 'activated' | 'deactivating';
+export type PluginLifecycleEvent = 'activated' | 'deactivating' | 'deactivated';
 
 export type PluginLifecycleHandlerRequest = Readonly<{
     event: PluginLifecycleEvent;
@@ -51,7 +51,7 @@ export type ResolvedPluginHookHandler = Readonly<{
     daemonEntryPath: string;
     exportName: string;
     registration: ResolvedHookRegistration;
-    handler: PluginHookHandler;
+    handler: PluginRuntimeHookHandler;
 }>;
 
 export type ResolvedPluginLifecycleHandler = Readonly<{

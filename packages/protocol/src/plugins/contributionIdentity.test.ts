@@ -41,4 +41,23 @@ describe('plugin contribution identity', () => {
       provenance: 'first_party',
     }).contributionId).toBe('codex');
   });
+
+  it('keeps projection identity strict so manifest passthrough fields cannot enter dedupe keys', () => {
+    expect(PluginContributionIdentityV1Schema.safeParse({
+      pluginId: 'happier.agent.codex',
+      family: 'agents',
+      contributionId: 'codex',
+      provenance: 'first_party',
+      xFutureManifestRoot: { preservedByManifestSchema: true },
+    }).success).toBe(false);
+
+    const identity = createPluginContributionIdentity({
+      pluginId: 'happier.agent.codex',
+      family: 'agents',
+      contributionId: 'codex',
+      provenance: 'first_party',
+    });
+
+    expect(buildQualifiedPluginContributionKey(identity)).toBe('happier.agent.codex:agents:codex');
+  });
 });

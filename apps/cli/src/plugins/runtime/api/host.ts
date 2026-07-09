@@ -1,10 +1,17 @@
-import { getPluginHookDefinitionV1, type PluginPermissionCapabilityV1 } from '@happier-dev/protocol';
+import {
+    getPluginHookDefinitionV1,
+    type PluginActionContributionV2,
+    type PluginHookIdV1,
+    type PluginPermissionCapabilityV1,
+} from '@happier-dev/protocol';
+import type { PluginApiHookRegistrationV1 } from '@happier-dev/plugin-sdk';
 import type {
-    PluginApiBackendEngineRegistration,
+    PluginApiAgentRuntimeRegistration,
     PluginDisposable,
     PluginApi,
     PluginApiActionRegistration,
     PluginApiCommandRegistration,
+    PluginApiDaemonAuthBridgeRegistration,
     PluginApiHostPolicy,
     PluginApiHookRegistration,
     PluginApiLifecycleHandlerRegistration,
@@ -48,6 +55,106 @@ const REQUEST_INTERCEPTOR_MANIFEST_OWNED_REGISTRATION_KEYS = new Set([
     'urlOrigins',
 ]);
 
+const ACTION_STALE_REGISTRATION_METADATA_KEYS = new Set([
+    'title',
+    'description',
+    'scopes',
+    'surfaces',
+    'placement',
+    'inputSchema',
+    'resultSchema',
+    'availability',
+    'dangerLevel',
+    'confirmation',
+    'surface',
+    'safety',
+    'outputSchema',
+    'inputHints',
+    'compatibility',
+    'examples',
+]);
+
+const TOOL_MANIFEST_OWNED_REGISTRATION_KEYS = new Set([
+    'name',
+    'title',
+    'description',
+    'safety',
+    'surfaces',
+    'inputSchema',
+    'outputSchema',
+    'inputHints',
+    'compatibility',
+    'examples',
+]);
+
+const COMMAND_MANIFEST_OWNED_REGISTRATION_KEYS = new Set([
+    'command',
+    'rootHelpLabel',
+    'rootHelpDescription',
+    'rootHelpDetail',
+    'allowTmux',
+    'visibility',
+    'featureGate',
+]);
+
+function hasOwn(value: object, key: string): boolean {
+    return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function stableNormalize(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.map(stableNormalize);
+    }
+    if (!isRecord(value)) {
+        return value;
+    }
+    return Object.fromEntries(
+        Object.keys(value)
+            .sort()
+            .map((key) => [key, stableNormalize(value[key])]),
+    );
+}
+
+function stableJson(value: unknown): string {
+    return JSON.stringify(stableNormalize(value));
+}
+
+function normalizeComparableArray(value: readonly unknown[] | undefined): readonly unknown[] | undefined {
+    return value ? Object.freeze([...value].sort((left, right) => String(left).localeCompare(String(right)))) : undefined;
+}
+
+function readManifestActionMetadataDrift(params: Readonly<{
+    registration: PluginApiActionRegistration;
+    declaration: PluginActionContributionV2;
+}>): readonly string[] {
+    const drift: string[] = [];
+    const registration = params.registration as unknown as Record<string, unknown>;
+    for (const key of ACTION_STALE_REGISTRATION_METADATA_KEYS) {
+        if (hasOwn(registration, key)) {
+            drift.push(key);
+        }
+    }
+
+    const compare = (key: keyof PluginActionContributionV2, actual: unknown, expected: unknown) => {
+        if (hasOwn(registration, key) && stableJson(actual) !== stableJson(expected)) {
+            drift.push(String(key));
+        }
+    };
+
+    compare('title', registration.title, params.declaration.title);
+    compare('description', registration.description ?? null, params.declaration.description ?? null);
+    compare('scopes', normalizeComparableArray(registration.scopes as readonly unknown[] | undefined), normalizeComparableArray(params.declaration.scopes));
+    compare('surfaces', normalizeComparableArray(registration.surfaces as readonly unknown[] | undefined), normalizeComparableArray(params.declaration.surfaces));
+    compare('placement', registration.placement, params.declaration.placement);
+    compare('inputSchema', registration.inputSchema, params.declaration.inputSchema);
+    compare('resultSchema', registration.resultSchema, params.declaration.resultSchema);
+    compare('availability', registration.availability, params.declaration.availability);
+    compare('dangerLevel', registration.dangerLevel, params.declaration.dangerLevel);
+    compare('confirmation', registration.confirmation, params.declaration.confirmation);
+
+    return Object.freeze([...new Set(drift)]);
+}
+
 function formatPluginLabel(pluginId: string | undefined): string {
     return pluginId?.trim().length ? `Plugin '${pluginId}'` : 'Plugin activation';
 }
@@ -68,13 +175,25 @@ function getRequestInterceptorManifestOwnedRegistrationKeys(value: PluginApiRequ
     return Object.keys(value).filter((key) => REQUEST_INTERCEPTOR_MANIFEST_OWNED_REGISTRATION_KEYS.has(key));
 }
 
+function getManifestOwnedRegistrationKeys(value: object, keys: ReadonlySet<string>): readonly string[] {
+    return Object.keys(value).filter((key) => keys.has(key));
+}
+
+function storeHookRegistration<THookId extends PluginHookIdV1>(
+    registration: PluginApiHookRegistrationV1<THookId>,
+): PluginApiHookRegistration {
+    // The host stores an existential hook registration while registerHook preserves the caller's hook-id-specific handler type.
+    return registration as unknown as PluginApiHookRegistration;
+}
+
 export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
     api: PluginApi;
     registrations: () => PluginApiRegistrations;
     addDisposable: (disposable: PluginDisposable) => PluginDisposable;
     dispose: () => Promise<void>;
 }> {
-    const backendEngines: PluginApiBackendEngineRegistration[] = [];
+    const agentRuntimes: PluginApiAgentRuntimeRegistration[] = [];
+    const daemonAuthBridges: PluginApiDaemonAuthBridgeRegistration[] = [];
     const actions: PluginApiActionRegistration[] = [];
     const tools: PluginApiToolRegistration[] = [];
     const commands: PluginApiCommandRegistration[] = [];
@@ -95,11 +214,14 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
     const declaredPermissions = policy?.permissions
         ? new Set(policy.permissions)
         : null;
-    const declaredBackendIds = policy?.declaredBackendIds
-        ? new Set(policy.declaredBackendIds)
+    const declaredAgentIds = policy?.declaredAgentIds
+        ? new Set(policy.declaredAgentIds)
         : null;
     const declaredActionIds = policy?.declaredActionIds
         ? new Set(policy.declaredActionIds)
+        : null;
+    const declaredActionsById = policy?.declaredActions
+        ? new Map(policy.declaredActions.map((definition) => [definition.id, definition]))
         : null;
     const declaredToolIds = policy?.declaredToolIds
         ? new Set(policy.declaredToolIds)
@@ -191,26 +313,54 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
 
     const api: PluginApi = Object.freeze({
         ...siblingRegisterMethods,
-        registerBackendEngine(registration) {
+        registerAgentRuntime(registration) {
             const blocked = isRegistrationAllowed({
-                family: 'backends',
-                methodName: 'registerBackendEngine',
+                family: 'agents',
+                methodName: 'registerAgentRuntime',
             });
             if (blocked) {
                 return blocked;
             }
-            if (declaredBackendIds && !declaredBackendIds.has(registration.backendId)) {
+            if (declaredAgentIds && !declaredAgentIds.has(registration.agentId)) {
                 appendDiagnostic({
-                    code: 'plugin_backend_engine_undeclared_backend_id',
-                    message: `${formatPluginLabel(policy?.pluginId)} cannot register backend engine '${registration.backendId}' because it is not a manifest-declared backend id`,
+                    code: 'plugin_agent_runtime_undeclared_agent_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register agent runtime '${registration.agentId}' because it is not a manifest-declared agent id`,
                 });
-                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register backend engine '${registration.backendId}' because it is not a manifest-declared backend id`);
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register agent runtime '${registration.agentId}' because it is not a manifest-declared agent id`);
             }
-            backendEngines.push(registration);
+            agentRuntimes.push(registration);
             return addDisposable(() => {
-                const index = backendEngines.indexOf(registration);
+                const index = agentRuntimes.indexOf(registration);
                 if (index >= 0) {
-                    backendEngines.splice(index, 1);
+                    agentRuntimes.splice(index, 1);
+                }
+            });
+        },
+        registerDaemonAuthBridge(registration) {
+            const serviceId = registration.serviceId.trim();
+            if (!serviceId) {
+                appendDiagnostic({
+                    code: 'plugin_daemon_auth_bridge_invalid_service_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register daemon auth bridge with an empty service id`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register daemon auth bridge with an empty service id`);
+            }
+            if (daemonAuthBridges.some((entry) => entry.serviceId === serviceId)) {
+                appendDiagnostic({
+                    code: 'plugin_daemon_auth_bridge_duplicate_service_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} registered duplicate daemon auth bridge for service '${serviceId}'`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} registered duplicate daemon auth bridge for service '${serviceId}'`);
+            }
+            const storedRegistration = Object.freeze({
+                ...registration,
+                serviceId,
+            });
+            daemonAuthBridges.push(storedRegistration);
+            return addDisposable(() => {
+                const index = daemonAuthBridges.indexOf(storedRegistration);
+                if (index >= 0) {
+                    daemonAuthBridges.splice(index, 1);
                 }
             });
         },
@@ -218,7 +368,6 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             const blocked = isRegistrationAllowed({
                 family: 'actions',
                 methodName: 'registerAction',
-                requiredPermission: 'actions.register',
             });
             if (blocked) {
                 return blocked;
@@ -229,6 +378,39 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                     message: `${formatPluginLabel(policy?.pluginId)} cannot register action '${registration.id}' because it is not a manifest-declared action id`,
                 });
                 throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register action '${registration.id}' because it is not a manifest-declared action id`);
+            }
+            if (actions.some((entry) => entry.id === registration.id)) {
+                appendDiagnostic({
+                    code: 'plugin_action_duplicate_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} registered duplicate action handler '${registration.id}'`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} registered duplicate action handler '${registration.id}'`);
+            }
+            const declaredAction = declaredActionsById?.get(registration.id) ?? null;
+            if (declaredActionsById && !declaredAction) {
+                appendDiagnostic({
+                    code: 'plugin_action_undeclared_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register action '${registration.id}' because it is not a manifest-declared action id`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register action '${registration.id}' because it is not a manifest-declared action id`);
+            }
+            if (declaredAction) {
+                const drift = readManifestActionMetadataDrift({ registration, declaration: declaredAction });
+                if (drift.length > 0) {
+                    appendDiagnostic({
+                        code: 'plugin_action_metadata_drift',
+                        message: `${formatPluginLabel(policy?.pluginId)} registerAction metadata for '${registration.id}' does not match the manifest action metadata: ${drift.join(', ')}`,
+                    });
+                    throw new Error(`${formatPluginLabel(policy?.pluginId)} registerAction metadata for '${registration.id}' does not match the manifest action metadata`);
+                }
+            }
+            const manifestOwnedKeys = getManifestOwnedRegistrationKeys(registration, ACTION_STALE_REGISTRATION_METADATA_KEYS);
+            if (manifestOwnedKeys.length > 0) {
+                appendDiagnostic({
+                    code: 'plugin_action_manifest_fields_redeclared',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot redeclare manifest-owned action metadata at runtime: ${manifestOwnedKeys.join(', ')}`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot redeclare manifest-owned action metadata at runtime`);
             }
             actions.push(registration);
             return addDisposable(() => {
@@ -242,7 +424,6 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             const blocked = isRegistrationAllowed({
                 family: 'tools',
                 methodName: 'registerTool',
-                requiredPermission: 'tools.register',
             });
             if (blocked) {
                 return blocked;
@@ -253,6 +434,14 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                     message: `${formatPluginLabel(policy?.pluginId)} cannot register tool '${registration.id}' because it is not a manifest-declared tool id`,
                 });
                 throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register tool '${registration.id}' because it is not a manifest-declared tool id`);
+            }
+            const manifestOwnedKeys = getManifestOwnedRegistrationKeys(registration, TOOL_MANIFEST_OWNED_REGISTRATION_KEYS);
+            if (manifestOwnedKeys.length > 0) {
+                appendDiagnostic({
+                    code: 'plugin_tool_manifest_fields_redeclared',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot redeclare manifest-owned tool metadata at runtime: ${manifestOwnedKeys.join(', ')}`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot redeclare manifest-owned tool metadata at runtime`);
             }
             tools.push(registration);
             return addDisposable(() => {
@@ -266,7 +455,6 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             const blocked = isRegistrationAllowed({
                 family: 'commands',
                 methodName: 'registerCommand',
-                requiredPermission: 'commands.register',
             });
             if (blocked) {
                 return blocked;
@@ -277,6 +465,14 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                     message: `${formatPluginLabel(policy?.pluginId)} cannot register command '${registration.id}' because it is not a manifest-declared command id`,
                 });
                 throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register command '${registration.id}' because it is not a manifest-declared command id`);
+            }
+            const manifestOwnedKeys = getManifestOwnedRegistrationKeys(registration, COMMAND_MANIFEST_OWNED_REGISTRATION_KEYS);
+            if (manifestOwnedKeys.length > 0) {
+                appendDiagnostic({
+                    code: 'plugin_command_manifest_fields_redeclared',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot redeclare manifest-owned command metadata at runtime: ${manifestOwnedKeys.join(', ')}`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot redeclare manifest-owned command metadata at runtime`);
             }
             commands.push(registration);
             return addDisposable(() => {
@@ -290,7 +486,6 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             const blocked = isRegistrationAllowed({
                 family: 'notifications',
                 methodName: 'registerNotificationCategory',
-                requiredPermission: 'notifications.register',
             });
             if (blocked) {
                 return blocked;
@@ -321,7 +516,6 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             const blocked = isRegistrationAllowed({
                 family: 'notifications',
                 methodName: 'registerNotificationChannel',
-                requiredPermission: 'notifications.register',
             });
             if (blocked) {
                 return blocked;
@@ -533,7 +727,6 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
             const blocked = isRegistrationAllowed({
                 family: 'hooks',
                 methodName: 'registerHook',
-                requiredPermission: 'hooks.register',
             });
             if (blocked) {
                 return blocked;
@@ -552,9 +745,10 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                 });
                 throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register unsupported hook id '${registration.hookId}'`);
             }
-            hooks.push(registration);
+            const storedRegistration = storeHookRegistration(registration);
+            hooks.push(storedRegistration);
             return addDisposable(() => {
-                const index = hooks.indexOf(registration);
+                const index = hooks.indexOf(storedRegistration);
                 if (index >= 0) {
                     hooks.splice(index, 1);
                 }
@@ -569,30 +763,18 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                 return blocked;
             }
             const registrationId = normalizeOptionalRegistrationId(registration.id);
-            let lifecycleHandlerRegistration = registration;
+            if (registrationId === null) {
+                appendDiagnostic({
+                    code: 'plugin_lifecycle_handler_undeclared_id',
+                    message: `${formatPluginLabel(policy?.pluginId)} cannot register lifecycle handler '<missing>' because lifecycle handler registrations must declare a stable lifecycle handler id`,
+                });
+                throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register lifecycle handler '<missing>' because lifecycle handler registrations must declare a stable lifecycle handler id`);
+            }
             const isDeclaredLifecycleHandler = declaredLifecycleHandlers
-                ? (() => {
-                    const matchingDeclarations = declaredLifecycleHandlers.filter((declaration) => {
-                        const declarationId = normalizeOptionalRegistrationId(declaration.id);
-                        const canonicalId = normalizeOptionalRegistrationId(declaration.canonicalId);
-                        return declaration.event === registration.event
-                            && (registrationId === null
-                                ? declarationId === null
-                                : declarationId === registrationId || canonicalId === registrationId);
-                    });
-                    if (matchingDeclarations.length !== 1) {
-                        return false;
-                    }
-                    const canonicalId = normalizeOptionalRegistrationId(matchingDeclarations[0]!.canonicalId);
-                    if (registrationId === null && canonicalId !== null) {
-                        lifecycleHandlerRegistration = {
-                            ...registration,
-                            id: canonicalId,
-                        };
-                    }
-                    return true;
-                })()
-                : declaredLifecycleHandlerIds === null || (registrationId !== null && declaredLifecycleHandlerIds.has(registrationId));
+                ? declaredLifecycleHandlers.some((declaration) => (
+                    declaration.event === registration.event && declaration.id === registrationId
+                ))
+                : declaredLifecycleHandlerIds === null || declaredLifecycleHandlerIds.has(registrationId);
             if (!isDeclaredLifecycleHandler) {
                 appendDiagnostic({
                     code: 'plugin_lifecycle_handler_undeclared_id',
@@ -600,16 +782,13 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
                 });
                 throw new Error(`${formatPluginLabel(policy?.pluginId)} cannot register lifecycle handler '${registrationId ?? '<missing>'}' because it is not a manifest-declared lifecycle handler id`);
             }
-            lifecycleHandlers.push(lifecycleHandlerRegistration);
+            lifecycleHandlers.push(registration);
             return addDisposable(() => {
-                const index = lifecycleHandlers.indexOf(lifecycleHandlerRegistration);
+                const index = lifecycleHandlers.indexOf(registration);
                 if (index >= 0) {
                     lifecycleHandlers.splice(index, 1);
                 }
             });
-        },
-        registerDisposable(disposable) {
-            return addDisposable(disposable);
         },
         onDispose(disposable) {
             return addDisposable(disposable);
@@ -620,7 +799,8 @@ export function createPluginApiHost(policy?: PluginApiHostPolicy): Readonly<{
         api,
         addDisposable,
         registrations: () => Object.freeze({
-            backendEngines: Object.freeze([...backendEngines]),
+            agentRuntimes: Object.freeze([...agentRuntimes]),
+            daemonAuthBridges: Object.freeze([...daemonAuthBridges]),
             actions: Object.freeze([...actions]),
             tools: Object.freeze([...tools]),
             commands: Object.freeze([...commands]),

@@ -1,0 +1,10 @@
+{
+  "id": "happier-rn-firstparty-root-v1",
+  "keys": [
+    {
+      "keyId": "happier-rn-firstparty-key-1",
+      "alg": "ed25519",
+      "publicKeyBase64Url": "nHq6JH1Lmot5tW6rGCV05fjNlUAomh-JWgaeAFtYs8o"
+    }
+  ]
+}

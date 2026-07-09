@@ -5,6 +5,7 @@ import type { ResolvedContributionRegistry } from '@/plugins/projection/registry
 export type PluginProjectionFamilyContextV2 = Readonly<{
     registry: ResolvedContributionRegistry;
     generation: number;
+    pluginUiHostRuntime?: unknown;
 }>;
 
 export type PluginProjectionFamilyDescriptorV2 = Readonly<{

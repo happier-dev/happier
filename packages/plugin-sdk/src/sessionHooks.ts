@@ -8,9 +8,8 @@ export type SessionHookServerStartRequestV1 = Readonly<{
     onSessionHook?: (providerSessionId: string, data: SessionHookProviderPayloadV1) => void | Promise<void>;
     onPermissionHook?: (data: SessionHookProviderPayloadV1) => unknown | Promise<unknown>;
     /**
-     * Claude statusline payloads pushed by the statusline forwarder wrapper (`/hook/statusline`,
-     * authenticated with the session hook secret). The host responds before the consumer runs and
-     * swallows consumer errors — statusline processing must never delay the provider's status bar.
+     * Statusline payloads pushed by a session-hook forwarder. The host responds before the consumer
+     * runs and swallows consumer errors, so statusline processing cannot delay the provider UI.
      */
     onStatuslineUpdate?: (data: SessionHookProviderPayloadV1) => void | Promise<void>;
     defaultPermissionHookResponse?: (data: SessionHookProviderPayloadV1) => unknown;
@@ -19,9 +18,8 @@ export type SessionHookServerStartRequestV1 = Readonly<{
     permissionRequestTimeoutMs?: number | null;
     /**
      * Optional per-tool override for the permission-response timeout, resolved by tool name once
-     * the hook body is read. Returning `null` means no Happier-imposed timeout (bounded only by
-     * Claude's provider hook timeout) — used for interactive tools (AskUserQuestion/ExitPlanMode);
-     * a number sets that timeout; `undefined` falls back to `permissionRequestTimeoutMs`.
+     * the hook body is read. Returning `null` means no Happier-imposed timeout; a number sets that
+     * timeout; `undefined` falls back to `permissionRequestTimeoutMs`.
      */
     permissionRequestTimeoutMsForTool?: (toolName: string | null) => number | null | undefined;
 }>;
@@ -54,8 +52,21 @@ export type SessionHookPluginFileV1 =
         json?: never;
     }>;
 
+export type SessionHookPluginDirLifecycleV1 =
+    | Readonly<{ kind: 'runner' }>
+    | Readonly<{
+        kind: 'session';
+        sessionId: string;
+    }>;
+
 export type SessionHookPluginDirCreateRequestV1 = Readonly<{
     providerId: string;
+    /**
+     * Defaults to a runner-scoped temporary plugin dir. Session lifecycle dirs are stable for the
+     * provider/session pair and are retained when the runner disposes them, so resumable providers
+     * can keep referring to the same plugin path across process restarts.
+     */
+    lifecycle?: SessionHookPluginDirLifecycleV1;
     files: readonly SessionHookPluginFileV1[];
 }>;
 

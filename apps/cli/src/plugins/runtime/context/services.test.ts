@@ -4,7 +4,13 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ExecLaunchInputV1, ExecRuntimeServiceV1, FetchRuntimeServiceV1, ManagedServerSpecV1 } from '@happier-dev/plugin-sdk';
+import type {
+    ExecLaunchInputV1,
+    ExecRuntimeServiceV1,
+    FetchRuntimeServiceV1,
+    ManagedServerSpecV1,
+    PluginSettingsFieldDescriptorV1,
+} from '@happier-dev/plugin-sdk';
 import {
     SESSION_PROVIDER_HOOK_EVENT_ID_V1,
     type TypedEventV1,
@@ -236,11 +242,64 @@ describe('A.11 plugin context services', () => {
             code: 'PLUGIN_SETTINGS_VALIDATION_FAILED',
         });
         expect(settings.projectForm().fields.map((field) => field.id)).toEqual(['notes', 'endpoint']);
+        expect(settings.projectForm().storageScope).toBe('pluginLocal');
         expect(settings.describeFields().find((field) => field.id === 'enabled')).toMatchObject({
             hidden: true,
             defaultBooleanValue: false,
         });
         expect(changes.length).toBeGreaterThan(0);
+        subscription.unsubscribe();
+    });
+
+    it('keeps generic settings plugin-local across service reloads and limits onChange to same-instance writes', async () => {
+        const happyHomeDir = await makeHappyHome();
+        const storage = createPluginStorageService({
+            pluginId: 'acme.plugin',
+            paths: resolvePluginStorePaths({ happyHomeDir }),
+        });
+        const descriptors: PluginSettingsFieldDescriptorV1[] = [
+            {
+                id: 'endpoint',
+                kind: 'settings.field',
+                version: '1.0.0',
+                valueSchema: { type: 'string' },
+                control: 'text',
+                displayKey: 'plugins.acme.endpoint.label',
+                capabilityGates: [],
+                permissionGates: [],
+                redaction: 'none',
+                hidden: false,
+                clearWhenEmpty: 'persist',
+            },
+        ];
+        const first = createPluginSettingsService({
+            pluginId: 'acme.plugin',
+            storage: storage.local,
+            descriptors,
+        });
+
+        await first.set('endpoint', 'https://initial.example');
+
+        const reloaded = createPluginSettingsService({
+            pluginId: 'acme.plugin',
+            storage: storage.local,
+            descriptors,
+        });
+        expect(await reloaded.get('endpoint')).toBe('https://initial.example');
+        expect(reloaded.projectForm().storageScope).toBe('pluginLocal');
+
+        const firstChanges: unknown[] = [];
+        const subscription = first.onChange((next) => firstChanges.push(next));
+        await storage.local.set('settings', { endpoint: 'https://external.example' });
+        await reloaded.set('endpoint', 'https://reloaded.example');
+        expect(firstChanges).toEqual([]);
+
+        await first.set('endpoint', 'https://same-instance.example');
+        expect(firstChanges).toEqual([
+            {
+                endpoint: 'https://same-instance.example',
+            },
+        ]);
         subscription.unsubscribe();
     });
 
@@ -774,7 +833,10 @@ describe('A.11 plugin context services', () => {
             },
             isolatedEnv: true,
         });
-        expect(injectUserPrompt).toHaveBeenCalledWith(handle, prompt);
+        expect(injectUserPrompt).toHaveBeenCalledWith(handle, {
+            ...prompt,
+            scheduling: { timeoutMs: 15_000 },
+        });
 
         const disabled = createPluginTerminalHostService({
             hasCapability: () => false,
@@ -797,6 +859,192 @@ describe('A.11 plugin context services', () => {
         await expect(missingPermission.resolve({ preference: 'auto' })).rejects.toMatchObject({
             code: 'PLUGIN_TERMINAL_HOST_CAPABILITY_REQUIRED',
         });
+    });
+
+    it('normalizes terminal prompt line endings before adapter injection', async () => {
+        const handle: TerminalHostHandle = {
+            kind: 'tmux',
+            sessionName: 'claude-session',
+            paneId: '0',
+            attachMetadata: {
+                attachStrategy: 'terminal_host',
+                topology: 'exclusive',
+                locality: 'same_machine',
+                maxClients: null,
+                requiresLocalAttachmentInfo: true,
+                liveProbe: 'required',
+            },
+        };
+        const injectUserPrompt = vi.fn<NonNullable<TerminalHostAdapter['injectUserPrompt']>>(async () => ({
+            status: 'injected',
+            injectedAt: 123,
+            bytesWritten: 5,
+            hostKind: 'tmux',
+            hostSessionName: 'claude-session',
+            paneId: '0',
+        }));
+        const adapter: TerminalHostAdapter = {
+            kind: 'tmux',
+            createOrAttachHost: vi.fn(async () => handle),
+            injectUserPrompt,
+            interruptTurn: vi.fn(async () => undefined),
+            evaluateLiveness: vi.fn(async () => ({ paneAlive: true, observedAt: 456 })),
+            dispose: vi.fn(async () => undefined),
+        };
+        const service = createPluginTerminalHostService({
+            hasCapability: (capability) => capability === 'terminalHost' || capability === 'terminal.host.control',
+            resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'tmux_available' }),
+            resolveAgentCliLaunch: () => ({ command: '/usr/local/bin/claude', args: [] }),
+        });
+
+        const activeHandle = await service.createOrAttachHost({
+            preference: 'tmux',
+            sessionName: 'claude-session',
+            workingDirectory: '/workspace',
+            launch: { kind: 'agent-cli', agentId: 'claude' },
+            isolatedEnv: true,
+        });
+        await expect(service.injectUserPrompt(activeHandle, {
+            text: 'alpha\r\nbeta\rgamma',
+            multiline: false,
+            origin: { kind: 'ui_pending', nonce: 'nonce-cr' },
+            scheduling: {},
+        })).resolves.toMatchObject({ status: 'injected' });
+
+        expect(injectUserPrompt).toHaveBeenCalledWith(handle, {
+            text: 'alpha\nbeta\ngamma',
+            multiline: true,
+            origin: { kind: 'ui_pending', nonce: 'nonce-cr' },
+            scheduling: { timeoutMs: 15_000 },
+        });
+    });
+
+    it('scales terminal prompt write timeout before adapter injection', async () => {
+        const handle: TerminalHostHandle = {
+            kind: 'tmux',
+            sessionName: 'claude-session',
+            paneId: '0',
+            attachMetadata: {
+                attachStrategy: 'terminal_host',
+                topology: 'exclusive',
+                locality: 'same_machine',
+                maxClients: null,
+                requiresLocalAttachmentInfo: true,
+                liveProbe: 'required',
+            },
+        };
+        const injectUserPrompt = vi.fn<NonNullable<TerminalHostAdapter['injectUserPrompt']>>(async () => ({
+            status: 'injected',
+            injectedAt: 123,
+            bytesWritten: 128_000,
+            hostKind: 'tmux',
+            hostSessionName: 'claude-session',
+            paneId: '0',
+        }));
+        const adapter: TerminalHostAdapter = {
+            kind: 'tmux',
+            createOrAttachHost: vi.fn(async () => handle),
+            injectUserPrompt,
+            interruptTurn: vi.fn(async () => undefined),
+            evaluateLiveness: vi.fn(async () => ({ paneAlive: true, observedAt: 456 })),
+            dispose: vi.fn(async () => undefined),
+        };
+        const service = createPluginTerminalHostService({
+            hasCapability: (capability) => capability === 'terminalHost' || capability === 'terminal.host.control',
+            resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'tmux_available' }),
+            resolveAgentCliLaunch: () => ({ command: '/usr/local/bin/claude', args: [] }),
+        });
+
+        const activeHandle = await service.createOrAttachHost({
+            preference: 'tmux',
+            sessionName: 'claude-session',
+            workingDirectory: '/workspace',
+            launch: { kind: 'agent-cli', agentId: 'claude' },
+            isolatedEnv: true,
+        });
+        await expect(service.injectUserPrompt(activeHandle, {
+            text: 'x'.repeat(128_000),
+            multiline: false,
+            origin: { kind: 'ui_pending', nonce: 'nonce-large' },
+            scheduling: {},
+        })).resolves.toMatchObject({ status: 'injected' });
+
+        const injectedInput = injectUserPrompt.mock.calls[0]?.[1];
+        expect(injectedInput?.scheduling.timeoutMs).toBeGreaterThan(15_000);
+    });
+
+    it('rejects terminal control bytes before prompt text reaches the active adapter', async () => {
+        const handle: TerminalHostHandle = {
+            kind: 'tmux',
+            sessionName: 'claude-session',
+            paneId: '0',
+            attachMetadata: {
+                attachStrategy: 'terminal_host',
+                topology: 'exclusive',
+                locality: 'same_machine',
+                maxClients: null,
+                requiresLocalAttachmentInfo: true,
+                liveProbe: 'required',
+            },
+        };
+        const injectUserPrompt = vi.fn<NonNullable<TerminalHostAdapter['injectUserPrompt']>>(async () => ({
+            status: 'injected',
+            injectedAt: 123,
+            bytesWritten: 5,
+            hostKind: 'tmux',
+            hostSessionName: 'claude-session',
+            paneId: '0',
+        }));
+        const adapter: TerminalHostAdapter = {
+            kind: 'tmux',
+            createOrAttachHost: vi.fn(async () => handle),
+            injectUserPrompt,
+            interruptTurn: vi.fn(async () => undefined),
+            evaluateLiveness: vi.fn(async () => ({ paneAlive: true, observedAt: 456 })),
+            dispose: vi.fn(async () => undefined),
+        };
+        const service = createPluginTerminalHostService({
+            hasCapability: (capability) => capability === 'terminalHost' || capability === 'terminal.host.control',
+            resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'tmux_available' }),
+            resolveAgentCliLaunch: () => ({ command: '/usr/local/bin/claude', args: [] }),
+        });
+        const activeHandle = await service.createOrAttachHost({
+            preference: 'tmux',
+            sessionName: 'claude-session',
+            workingDirectory: '/workspace',
+            launch: { kind: 'agent-cli', agentId: 'claude' },
+            isolatedEnv: true,
+        });
+        const unsafePrompts = [
+            ['nul', 'alpha\x00beta'],
+            ['ctrl-c', 'alpha\x03beta'],
+            ['ctrl-d', 'alpha\x04beta'],
+            ['escape', 'alpha\x1bbeta'],
+            ['csi', 'alpha\x1b[31mbeta'],
+            ['osc', 'alpha\x1b]0;title\x07beta'],
+            ['bracketed-paste-start', 'alpha\x1b[200~beta'],
+            ['bracketed-paste-end', 'alpha\x1b[201~beta'],
+        ] as const;
+
+        for (const [caseName, text] of unsafePrompts) {
+            await expect(service.injectUserPrompt(activeHandle, {
+                text,
+                multiline: false,
+                origin: { kind: 'ui_pending', nonce: `nonce-${caseName}` },
+                scheduling: {},
+            })).resolves.toMatchObject({
+                status: 'failed',
+                reason: 'invalid_prompt_text',
+                phase: 'before_write',
+                duplicateRisk: 'none',
+                recoverable: false,
+                hostKind: 'tmux',
+                hostSessionName: 'claude-session',
+                paneId: '0',
+            });
+        }
+
+        expect(injectUserPrompt).not.toHaveBeenCalled();
     });
 
     it('exposes the terminal control port through the active adapter and returns null when unsupported', async () => {
@@ -1280,6 +1528,24 @@ describe('A.11 plugin context services', () => {
         });
     });
 
+    it('closes stdin for one-shot ctx.exec.run launches that do not provide input', async () => {
+        const exec = createPluginExecService({
+            allowedExecutablePaths: [process.execPath],
+            allowPathRuntimeNames: ['node'],
+        });
+
+        await expect(exec.run({
+            kind: 'binary',
+            executablePath: process.execPath,
+            args: ['-e', 'process.stdin.resume(); process.stdin.on("end", () => process.stdout.write("eof"));'],
+        }, {
+            timeoutMs: 1_000,
+        })).resolves.toMatchObject({
+            exitCode: 0,
+            stdout: 'eof',
+        });
+    });
+
     it('resolves manifest lookup names through the host PATH without exposing PATH to child launches', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-system-tool-path-'));
         const toolPath = join(root, 'acme-audit');
@@ -1353,6 +1619,49 @@ describe('A.11 plugin context services', () => {
             expect(grant.executablePath).toBe(overrideToolPath);
             await expect(exec.run(grant.launch)).resolves.toMatchObject({
                 stdout: 'override',
+            });
+        } finally {
+            process.env.PATH = previousPath;
+        }
+    });
+
+    it('prefers an explicit system-tool executable path over a matching PATH command', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-system-tool-explicit-path-'));
+        const pathToolDir = join(root, 'path');
+        const explicitToolDir = join(root, 'explicit');
+        await mkdir(pathToolDir, { recursive: true });
+        await mkdir(explicitToolDir, { recursive: true });
+        const pathToolPath = join(pathToolDir, 'acme-tool');
+        const explicitToolPath = join(explicitToolDir, 'acme-tool');
+        await writeFile(pathToolPath, ['#!/bin/sh', 'printf path', ''].join('\n'), 'utf8');
+        await writeFile(explicitToolPath, ['#!/bin/sh', 'printf explicit', ''].join('\n'), 'utf8');
+        await chmod(pathToolPath, 0o755);
+        await chmod(explicitToolPath, 0o755);
+        const previousPath = process.env.PATH;
+        process.env.PATH = pathToolDir;
+        try {
+            const exec = createPluginExecService({
+                systemTools: [
+                    {
+                        toolId: 'acme.audit',
+                        displayName: 'Acme Audit',
+                        executablePath: explicitToolPath,
+                        lookupNames: ['acme-tool'],
+                        source: 'system',
+                    },
+                ],
+                baseEnv: {},
+            });
+
+            const grant = await exec.systemTools.resolve({
+                toolId: 'acme.audit',
+                purpose: 'verify explicit path precedence',
+                preferredCommand: 'acme-tool',
+            });
+
+            expect(grant.executablePath).toBe(explicitToolPath);
+            await expect(exec.run(grant.launch)).resolves.toMatchObject({
+                stdout: 'explicit',
             });
         } finally {
             process.env.PATH = previousPath;

@@ -1,8 +1,8 @@
 import { AGENT_IDS, type AgentId } from '@happier-dev/agents';
 
 import type {
-    ResolvedBackendContribution,
-    ResolvedProviderContribution,
+    ResolvedAgentRuntimeContribution,
+    ResolvedAgentContribution,
 } from './types';
 
 const BUILT_IN_AGENT_ID_SET = new Set<string>(AGENT_IDS);
@@ -16,17 +16,22 @@ export function normalizeBuiltInAgentId(value: unknown): AgentId | null {
 }
 
 function readPluginCompatibilityAgentId(
-    richDefinition: ResolvedBackendContribution['richDefinition'] | ResolvedProviderContribution['richDefinition'] | undefined,
+    richDefinition: ResolvedAgentRuntimeContribution['richDefinition'] | ResolvedAgentContribution['richDefinition'] | undefined,
 ): AgentId | null {
     if (richDefinition?.provenance !== 'external') {
         return null;
     }
-    return normalizeBuiltInAgentId(richDefinition.definition.providerAgentId);
+    const definition = richDefinition.definition as Readonly<{
+        catalogAgentId?: unknown;
+        providerAgentId?: unknown;
+    }>;
+    return normalizeBuiltInAgentId(definition.catalogAgentId)
+        ?? normalizeBuiltInAgentId(definition.providerAgentId);
 }
 
 export function resolveContributionProviderAgentId(params: Readonly<{
-    backend: ResolvedBackendContribution;
-    provider: ResolvedProviderContribution;
+    backend: ResolvedAgentRuntimeContribution;
+    provider: ResolvedAgentContribution;
 }>): AgentId | null {
     const explicitCompatibilityAgentId = readPluginCompatibilityAgentId(params.backend.richDefinition)
         ?? readPluginCompatibilityAgentId(params.provider.richDefinition);
@@ -36,5 +41,5 @@ export function resolveContributionProviderAgentId(params: Readonly<{
 
     return explicitCompatibilityAgentId
         ?? normalizeBuiltInAgentId(params.provider.id)
-        ?? normalizeBuiltInAgentId(params.backend.providerId);
+        ?? normalizeBuiltInAgentId(params.backend.agentId);
 }

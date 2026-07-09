@@ -8,6 +8,7 @@ import {
 } from '@/plugins/store/state';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { installPluginFromSource, type InstallPluginFromSourceResult } from '@/plugins/store/install/source';
+import { removeInstalledPlugin, type RemoveInstalledPluginResult } from '@/plugins/store/install/remove';
 import { resolvePluginSource } from '@/plugins/discovery/sources/resolve';
 import type { ResolvedPluginSource } from '@/plugins/discovery/sources/resolve';
 import { resolvePluginDaemonEntryPath } from '@/plugins/manifest/daemonEntry';
@@ -41,7 +42,20 @@ export type InstallPluginFromLocatorResult =
       diagnostics: readonly PluginCompatibilityDiagnostic[];
   }>;
 
+export type UninstallPluginFromCatalogResult =
+  | Readonly<{
+      ok: true;
+      pluginId: string;
+      entry: PluginCatalogEntry;
+      removedInstalledPath: string | null;
+    }>
+  | Readonly<{
+      ok: false;
+      diagnostics: readonly PluginCompatibilityDiagnostic[];
+  }>;
+
 type InstallPluginFromSourceErrorCode = Extract<Extract<InstallPluginFromSourceResult, { ok: false }>, { ok: false }>['errorCode'];
+type RemoveInstalledPluginErrorCode = Extract<Extract<RemoveInstalledPluginResult, { ok: false }>, { ok: false }>['errorCode'];
 
 function mapInstallPluginErrorCodeToDiagnosticCode(errorCode: InstallPluginFromSourceErrorCode): PluginCompatibilityDiagnostic['code'] {
   switch (errorCode) {
@@ -50,6 +64,16 @@ function mapInstallPluginErrorCodeToDiagnosticCode(errorCode: InstallPluginFromS
     case 'plugin_already_installed':
       return 'plugin_manifest_invalid';
     case 'plugin_source_invalid':
+    default:
+      return 'plugin_source_missing';
+  }
+}
+
+function mapRemovePluginErrorCodeToDiagnosticCode(errorCode: RemoveInstalledPluginErrorCode): PluginCompatibilityDiagnostic['code'] {
+  switch (errorCode) {
+    case 'plugin_not_uninstallable':
+      return 'plugin_source_kind_unsupported';
+    case 'plugin_not_found':
     default:
       return 'plugin_source_missing';
   }
@@ -213,6 +237,8 @@ export async function installPluginFromLocator(params: Readonly<{
   happyHomeDir?: string;
   skipIfInstalled: boolean;
   dryRun?: boolean;
+  dev?: boolean;
+  workspaceRoot?: string;
 }>): Promise<InstallPluginFromLocatorResult> {
   const stateStore = createPluginStateStore({ happyHomeDir: params.happyHomeDir });
   const happyHomeDir = stateStore.paths.happyHomeDir;
@@ -224,6 +250,8 @@ export async function installPluginFromLocator(params: Readonly<{
     locator: params.locator,
     skipIfInstalled: params.skipIfInstalled,
     dryRun: params.dryRun,
+    dev: params.dev,
+    workspaceRoot: params.workspaceRoot,
   });
 
   if (!installResult.ok) {
@@ -288,5 +316,80 @@ export async function installPluginFromLocator(params: Readonly<{
       }
       return entry;
     }),
+  };
+}
+
+export async function uninstallPluginFromCatalog(params: Readonly<{
+  pluginId: string;
+  happyHomeDir?: string;
+}>): Promise<UninstallPluginFromCatalogResult> {
+  const pluginId = params.pluginId.trim();
+  if (!pluginId) {
+    return {
+      ok: false,
+      diagnostics: [
+        {
+          code: 'plugin_manifest_semantic_invalid',
+          message: 'plugins.uninstall requires a non-empty pluginId',
+        },
+      ],
+    };
+  }
+
+  const stateStore = createPluginStateStore({ happyHomeDir: params.happyHomeDir });
+  const happyHomeDir = stateStore.paths.happyHomeDir;
+  if (!happyHomeDir) {
+    throw new Error('Plugin state store resolved without a happyHomeDir');
+  }
+
+  const entry = await readInstalledPluginCatalogEntry({
+    pluginId,
+    happyHomeDir,
+  });
+  if (!entry) {
+    return {
+      ok: false,
+      diagnostics: [
+        {
+          code: 'plugin_source_missing',
+          message: `Installed plugin '${pluginId}' was not found`,
+        },
+      ],
+    };
+  }
+
+  if (entry.source.kind === 'bundled') {
+    return {
+      ok: false,
+      diagnostics: [
+        {
+          code: 'plugin_source_kind_unsupported',
+          message: `Bundled first-party plugin '${pluginId}' cannot be removed from the local installed plugin catalog`,
+        },
+      ],
+    };
+  }
+
+  const removed = await removeInstalledPlugin({
+    happyHomeDir,
+    pluginId,
+  });
+  if (!removed.ok) {
+    return {
+      ok: false,
+      diagnostics: [
+        {
+          code: mapRemovePluginErrorCodeToDiagnosticCode(removed.errorCode),
+          message: removed.errorMessage,
+        },
+      ],
+    };
+  }
+
+  return {
+    ok: true,
+    pluginId: removed.pluginId,
+    entry,
+    removedInstalledPath: removed.removedInstalledPath,
   };
 }

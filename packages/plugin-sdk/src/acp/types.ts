@@ -1,8 +1,12 @@
 import type { AcpBackendAuthConfigV1 } from '@happier-dev/protocol';
 
-import type { AcpCapabilityFlagsV1 } from './acpCapabilities';
-import type { AcpTransportSpecV1 } from './acpTransport';
-import type { PluginContextV1 } from '../context';
+import type { AcpCapabilityFlagsV1 } from './acpCapabilities.js';
+import type { AcpTransportSpecV1 } from './acpTransport.js';
+import type { PluginContextV1 } from '../context.js';
+import type {
+    SessionPermissionFollowUpPromptIntentV1,
+    SessionPermissionPersistAllowRuleV1,
+} from '../sessions/scoped.js';
 
 export type AcpMcpInputPolicyV1 = Readonly<{
     policy: 'pass_through' | 'drop';
@@ -13,6 +17,13 @@ export type AcpAuthDetectionV1 = 'logged_in' | 'logged_out' | 'unknown';
 export type AcpAuthSpecV1 = Readonly<{
     config?: AcpBackendAuthConfigV1;
     methodId?: string;
+    resolveMethodId?: (
+        ctx: PluginContextV1,
+        params: Readonly<{
+            cwd: string;
+            env: Readonly<Record<string, string>>;
+        }>
+    ) => string | null | undefined;
     detectAuthStatus?: (ctx: PluginContextV1) => Promise<AcpAuthDetectionV1>;
     buildAuthEnv?: (ctx: PluginContextV1) => Readonly<Record<string, string>>;
     buildAuthenticateMeta?: (ctx: PluginContextV1) => Readonly<Record<string, unknown>> | null | undefined;
@@ -73,6 +84,8 @@ export type AcpTier2PreflightV1 = (params: Readonly<{
 export type AcpTier2PermissionDecisionResultV1 = Readonly<{
     kind: 'allow' | 'deny' | 'defer';
     rationale?: string;
+    followUpPrompt?: SessionPermissionFollowUpPromptIntentV1;
+    persistAllowRule?: SessionPermissionPersistAllowRuleV1;
 }>;
 
 export type AcpTier2PermissionDecisionRequestV1 = Readonly<{
@@ -91,7 +104,6 @@ export type AcpToolNameResolverV1 = (
         toolCallId: string;
         input: Readonly<Record<string, unknown>>;
         context: Readonly<{
-            recentPromptHadChangeTitle: boolean;
             toolCallCountSincePrompt: number;
         }>;
     }>

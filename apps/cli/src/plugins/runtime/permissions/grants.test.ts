@@ -11,11 +11,11 @@ import type {
 } from '@happier-dev/protocol';
 
 import type {
-    ResolvedBackendContribution,
+    ResolvedAgentRuntimeContribution,
     ResolvedContributionProvenance,
     ResolvedContributionRegistry,
     ResolvedContributionSourceKind,
-    ResolvedProviderContribution,
+    ResolvedAgentContribution,
 } from '@/plugins/projection/registry/types';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
@@ -59,6 +59,7 @@ async function writePlugin(params: Readonly<{
     requiredPermissions?: readonly PluginPermissionDeclarationV1[];
     optionalPermissions?: readonly PluginPermissionDeclarationV1[];
     actionIds?: readonly string[];
+    requestInterceptorIds?: readonly string[];
     daemonSource?: string;
 }>): Promise<Readonly<{
     manifestPath: string;
@@ -76,18 +77,13 @@ async function writePlugin(params: Readonly<{
             version: '1.0.0',
             displayName: params.pluginId,
             description: `${params.pluginId} optional grants test manifest`,
-            runtime: {
-                apiVersion: 1,
-                capabilities: params.runtimeCapabilities ?? [],
+            uses: params.runtimeCapabilities ?? [],
+            entrypoints: {
+                main: './daemon.mjs',
             },
-            capabilities: {
-                permissions: params.requiredPermissions ?? [],
-                optionalPermissions: params.optionalPermissions ?? [],
-            },
-            targets: {
-                daemon: {
-                    entry: './daemon.mjs',
-                },
+            permissions: {
+                required: params.requiredPermissions ?? [],
+                optional: params.optionalPermissions ?? [],
             },
             contributes: {
                 actions: (params.actionIds ?? []).map((actionId) => ({
@@ -98,6 +94,11 @@ async function writePlugin(params: Readonly<{
                     placement: 'commandPalette',
                     dangerLevel: 'safe',
                     handler: { target: 'daemon', registrationId: actionId },
+                })),
+                requestInterceptors: (params.requestInterceptorIds ?? []).map((interceptorId) => ({
+                    id: interceptorId,
+                    order: 10,
+                    targets: [{ scope: 'plugin-fetch' }],
                 })),
             },
         })),
@@ -120,7 +121,7 @@ function createContributes(params: Readonly<{
 }>): ResolvedContributionRegistry {
     const provenance = params.provenance ?? 'external';
     const sourceKind = params.sourceKind ?? 'path';
-    const provider: ResolvedProviderContribution = {
+    const provider: ResolvedAgentContribution = {
         id: params.pluginId,
         provenance,
         source: { kind: sourceKind },
@@ -140,9 +141,9 @@ function createContributes(params: Readonly<{
             ownedBackendIds: [`${params.pluginId}.backend`],
         },
     };
-    const backend: ResolvedBackendContribution = {
+    const backend: ResolvedAgentRuntimeContribution = {
         id: `${params.pluginId}.backend`,
-        providerId: params.pluginId,
+        agentId: params.pluginId,
         provenance,
         source: { kind: sourceKind },
         pluginId: params.pluginId,
@@ -153,13 +154,13 @@ function createContributes(params: Readonly<{
         definition: {
             kindVersion: 1,
             id: `${params.pluginId}.backend`,
-            providerId: params.pluginId,
+            agentId: params.pluginId,
         },
     };
 
     return {
-        providers: [provider],
-        backends: [backend],
+        agents: [provider],
+        agentRuntimes: [backend],
         actions: [],
         resources: [],
         uiDescriptors: [],
@@ -167,8 +168,8 @@ function createContributes(params: Readonly<{
         hookRegistrations: [],
         surfaceHandlersByBackendId: new Map(),
         catalogEntriesById: Object.freeze({}),
-        providerDefinitionsById: new Map([[provider.id, provider]]),
-        backendDefinitionsById: new Map([[backend.id, backend]]),
+        agentDefinitionsById: new Map([[provider.id, provider]]),
+        agentRuntimeDefinitionsById: new Map([[backend.id, backend]]),
         pluginDiagnosticsByPluginId: Object.freeze({}),
     };
 }
@@ -215,6 +216,21 @@ describe('trusted optional plugin permission grants', () => {
             updatedAt: 1,
         };
     }
+
+    it('fails closed when credentials cannot be read from the local auth store', async () => {
+        readCredentialsMock.mockReturnValue(undefined);
+
+        const grants = await resolveTrustedOptionalPermissionGrantsFromServer({
+            pluginId: 'acme.optional.no-auth',
+            manifestPath: '/tmp/acme/.happier-plugin/plugin.json',
+            manifestDigest: 'sha256:acme',
+            requiredPermissions: [],
+            optionalPermissions: [{ capability: 'env', scope: 'HAPPIER_OPTIONAL_TOKEN' }],
+        });
+
+        expect(grants).toEqual([]);
+        expect(axiosPostMock).not.toHaveBeenCalled();
+    });
 
     it('loads only trusted active optional grants from the server grant list endpoint', async () => {
         const pluginId = 'acme.optional.server';
@@ -457,19 +473,16 @@ describe('trusted optional plugin permission grants', () => {
 
     it('uses trusted optional grants for activation-time API permission checks', async () => {
         const pluginId = 'acme.optional.activation';
-        const actionId = 'acme.optional.activation.action';
+        const interceptorId = 'acme.optional.activation.fetch.audit';
         const { manifestPath, daemonEntryPath } = await writePlugin({
             pluginId,
-            runtimeCapabilities: ['actions'],
-            optionalPermissions: [{ capability: 'actions.register' }],
-            actionIds: [actionId],
+            optionalPermissions: [{ capability: 'network.intercept' }],
+            requestInterceptorIds: [interceptorId],
             daemonSource: [
                 'export async function activate(api) {',
-                '  api.registerAction({',
-                `    id: ${JSON.stringify(actionId)},`,
-                '    title: "Optional activation action",',
-                '    surface: "cli",',
-                '    handler: async () => "ok",',
+                '  api.registerRequestInterceptor({',
+                `    id: ${JSON.stringify(interceptorId)},`,
+                '    handle: async () => ({ kind: "allow" }),',
                 '  });',
                 '}',
                 '',
@@ -481,21 +494,21 @@ describe('trusted optional plugin permission grants', () => {
             generation: 4,
             resolveTrustedOptionalPermissionGrants: async () => [
                 {
-                    ...createGrant({ pluginId, capability: 'actions.register' }),
+                    ...createGrant({ pluginId, capability: 'network.intercept' }),
                     targetScope: { kind: 'account' },
                 },
             ],
         });
 
         expect(activated.pluginDiagnosticsByPluginId[pluginId]).toEqual([]);
-        expect(activated.actions).toEqual([
+        expect(activated.requestInterceptors).toEqual([
             expect.objectContaining({
                 pluginId,
-                definition: expect.objectContaining({ id: actionId }),
+                registration: expect.objectContaining({ id: interceptorId }),
             }),
         ]);
         expect(activated.trustedOptionalPermissionsByPluginId.get(pluginId)).toEqual(
-            new Set(['actions.register']),
+            new Set(['network.intercept']),
         );
     });
 });

@@ -22,7 +22,7 @@ export const mcpProjectionFamily = definePluginProjectionFamilyV2({
                         id: `discoveryProvider:${provider.definition.id}`,
                         pluginId: provider.pluginId,
                         contributionKind: 'discoveryProvider',
-                        providerId: provider.definition.providerId,
+                        agentId: provider.definition.agentId,
                     },
                 ]),
             ]),

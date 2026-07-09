@@ -3,20 +3,20 @@
   "id": "examples.external-declarative-ui",
   "version": "0.1.0",
   "displayName": "External Declarative UI Example",
-  "description": "External extension with declarative UI descriptor + resource contributions (no daemon target).",
+  "description": "External extension with declarative UI descriptor + resource contributions (no agent runtime).",
   "engines": {
     "happier": "^0.2.0"
   },
-  "runtime": {
-    "apiVersion": 1,
-    "capabilities": [
-      "resources",
-      "uiDescriptors"
-    ]
+  "uses": [
+    "resources",
+    "uiDescriptors"
+  ],
+  "entrypoints": {
+    "main": "./daemon.mjs"
   },
-  "targets": {},
-  "capabilities": {
-    "permissions": []
+  "permissions": {
+    "required": [],
+    "optional": []
   },
   "contributes": {
     "resources": [

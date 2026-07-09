@@ -1,20 +1,32 @@
 import { extname } from 'node:path';
+import { createRequire } from 'node:module';
 
 import {
   BackendSurfaceOperationCatalogV1,
+  PluginManifestV2Schema,
   isHookHandlerTargetV1,
   isReservedHappierPluginId,
 } from '@happier-dev/protocol';
-import { compareVersions } from '@happier-dev/cli-common/update';
+import type { z } from 'zod';
 
 import { configuration } from '../../configuration';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { isSupportedBackendSurfaceOperation } from './adapters';
-import { readCanonicalPluginManifest } from './normalize';
+import { normalizeManifestHookRegistrations, readCanonicalPluginManifest } from './normalize';
 import type { CanonicalPluginManifest } from './types';
 
 const SUPPORTED_PLUGIN_DAEMON_ENTRY_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
+const require = createRequire(import.meta.url);
+
+type SemverModule = Readonly<{
+  valid(version: string): string | null;
+  validRange(range: string): string | null;
+  satisfies(version: string, range: string, options?: Readonly<{ includePrerelease?: boolean }>): boolean;
+}>;
+
+// Boundary import: semver is CommonJS and does not expose project-local ESM types.
+const semver = require('semver') as SemverModule;
 
 export type PluginManifestValidationResult =
   | Readonly<{ ok: true; manifest: CanonicalPluginManifest }>
@@ -26,6 +38,37 @@ export type PluginManifestValidationOptions = Readonly<{
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function formatManifestJsonPath(path: readonly (string | number)[]): string {
+  if (path.length === 0) {
+    return '<manifest>';
+  }
+
+  return path.reduce<string>((formatted, segment) => {
+    if (typeof segment === 'number') {
+      return `${formatted}[${segment}]`;
+    }
+
+    if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(segment)) {
+      return formatted ? `${formatted}.${segment}` : segment;
+    }
+
+    const escaped = JSON.stringify(segment);
+    return formatted ? `${formatted}[${escaped}]` : escaped;
+  }, '');
+}
+
+function formatManifestSchemaIssue(issue: z.ZodIssue): PluginCompatibilityDiagnostic {
+  return {
+    code: 'plugin_manifest_invalid',
+    message: `${formatManifestJsonPath(issue.path.filter((seg): seg is string | number => typeof seg !== 'symbol'))}: ${issue.message}`,
+  };
+}
+
+function readManifestSchemaDiagnostics(input: unknown): PluginCompatibilityDiagnostic[] {
+  const parsed = PluginManifestV2Schema.safeParse(normalizeManifestHookRegistrations(input));
+  return parsed.success ? [] : parsed.error.issues.map(formatManifestSchemaIssue);
 }
 
 function readUnsupportedPluginTargetDiagnostics(input: unknown): PluginCompatibilityDiagnostic[] {
@@ -61,8 +104,8 @@ function readUnsupportedBackendSurfaceTargetDiagnostics(input: unknown): PluginC
   const contributes = input.contributes;
   const backends = Array.isArray(contributes)
     ? contributes.filter((entry) => isRecord(entry) && entry.kind === 'backend')
-    : isRecord(contributes) && Array.isArray(contributes.backends)
-      ? contributes.backends
+    : isRecord(contributes) && Array.isArray(contributes.agents)
+      ? contributes.agents
       : [];
   if (backends.length === 0) {
     return [];
@@ -79,7 +122,7 @@ function readUnsupportedBackendSurfaceTargetDiagnostics(input: unknown): PluginC
       continue;
     }
 
-    const backendId = typeof backendDefinition.id === 'string' && backendDefinition.id.trim().length > 0
+      const backendId = typeof backendDefinition.id === 'string' && backendDefinition.id.trim().length > 0
       ? backendDefinition.id.trim()
       : 'unknown';
 
@@ -157,7 +200,7 @@ function readUnsupportedHookTargetDiagnostics(input: unknown): PluginCompatibili
 function pushDuplicateIdDiagnostics(
   diagnostics: PluginCompatibilityDiagnostic[],
   values: readonly string[],
-  kind: 'provider' | 'backend' | 'action' | 'tool' | 'command' | 'resource' | 'ui descriptor' | 'notification category' | 'notification channel' | 'event' | 'SCM hosting provider' | 'SCM backend' | 'installable' | 'request interceptor' | 'hook' | 'lifecycle handler',
+  kind: 'agent' | 'agent runtime' | 'action' | 'tool' | 'command' | 'resource' | 'ui descriptor' | 'notification category' | 'notification channel' | 'event' | 'SCM hosting provider' | 'SCM backend' | 'managed dependency' | 'request interceptor' | 'hook' | 'lifecycle handler',
 ): void {
   const seen = new Set<string>();
   for (const value of values) {
@@ -183,24 +226,19 @@ function readDefinitionIds(definitions: readonly unknown[]): readonly string[] {
   });
 }
 
-function pushAmbiguousIdlessLifecycleHandlerDiagnostics(
+function pushMissingLifecycleHandlerIdDiagnostics(
   diagnostics: PluginCompatibilityDiagnostic[],
   manifest: CanonicalPluginManifest,
 ): void {
-  const seenEvents = new Set<string>();
   for (const definition of manifest.contributes.lifecycleHandlers) {
     const hasId = typeof definition.id === 'string' && definition.id.trim().length > 0;
     if (hasId) {
       continue;
     }
-    if (seenEvents.has(definition.event)) {
-      diagnostics.push({
-        code: 'plugin_manifest_semantic_invalid',
-        message: `Duplicate id-less lifecycle handler for event '${definition.event}' is ambiguous; add explicit lifecycle handler ids`,
-      });
-      continue;
-    }
-    seenEvents.add(definition.event);
+    diagnostics.push({
+      code: 'plugin_manifest_semantic_invalid',
+      message: `Lifecycle handler for event '${definition.event}' must declare a stable id`,
+    });
   }
 }
 
@@ -208,7 +246,7 @@ function pushDuplicateSurfaceHandlerIdDiagnostics(
   diagnostics: PluginCompatibilityDiagnostic[],
   manifest: CanonicalPluginManifest,
 ): void {
-  for (const backend of manifest.contributes.backends) {
+  for (const backend of manifest.contributes.agentRuntimes) {
     const seen = new Set<string>();
     for (const surfaceHandler of backend.surfaceHandlers) {
       if (seen.has(surfaceHandler.id)) {
@@ -227,7 +265,7 @@ function pushDuplicateSurfaceHandlerOperationDiagnostics(
   diagnostics: PluginCompatibilityDiagnostic[],
   manifest: CanonicalPluginManifest,
 ): void {
-  for (const backend of manifest.contributes.backends) {
+  for (const backend of manifest.contributes.agentRuntimes) {
     const seen = new Set<string>();
     for (const surfaceHandler of backend.surfaceHandlers) {
       const operationKey = `${surfaceHandler.kind}:${surfaceHandler.operation}`;
@@ -250,7 +288,7 @@ function pushUnsupportedSurfaceHandlerOperationIdDiagnostics(
   // Backend-surface operations are the stable plugin-facing ABI names.
   // Protocol parsing stays additive; host semantic validation fails closed when
   // the current runtime does not execute the declared operation for that kind.
-  for (const backend of manifest.contributes.backends) {
+  for (const backend of manifest.contributes.agentRuntimes) {
     for (const surfaceHandler of backend.surfaceHandlers) {
       if (
         !isSupportedBackendSurfaceOperation({
@@ -271,7 +309,7 @@ function pushConditionalSurfaceAvailabilityDiagnostics(
   diagnostics: PluginCompatibilityDiagnostic[],
   manifest: CanonicalPluginManifest,
 ): void {
-  for (const backend of manifest.contributes.backends) {
+  for (const backend of manifest.contributes.agentRuntimes) {
     const availabilityHandlerKinds = new Set(
       backend.surfaceHandlers
         .filter((surfaceHandler) => (
@@ -306,7 +344,7 @@ function pushUnsupportedDaemonEntryDiagnostics(
   diagnostics: PluginCompatibilityDiagnostic[],
   manifest: CanonicalPluginManifest,
 ): void {
-  const daemonEntry = manifest.targets.daemon?.entry;
+  const daemonEntry = manifest.entrypoints.main;
   if (!daemonEntry) {
     return;
   }
@@ -322,13 +360,8 @@ function pushUnsupportedDaemonEntryDiagnostics(
   });
 }
 
-function parseStableSemver(version: string): string | null {
-  const normalized = String(version ?? '').trim();
-  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z-.]+)?$/.exec(normalized);
-  if (!match) {
-    return null;
-  }
-  return `${match[1]}.${match[2]}.${match[3]}`;
+function isValidHappierEngineRange(range: string): boolean {
+  return semver.validRange(String(range ?? '').trim()) !== null;
 }
 
 function isCompatibleHappierEngineRange(range: string, currentVersion: string): boolean {
@@ -337,38 +370,12 @@ function isCompatibleHappierEngineRange(range: string, currentVersion: string): 
     return false;
   }
 
-  const normalizedCurrentVersion = parseStableSemver(currentVersion);
+  const normalizedCurrentVersion = semver.valid(String(currentVersion ?? '').trim());
   if (!normalizedCurrentVersion) {
     return false;
   }
 
-  if (!normalizedRange.startsWith('^')) {
-    const normalizedExactRange = parseStableSemver(normalizedRange);
-    return normalizedExactRange !== null && compareVersions(normalizedCurrentVersion, normalizedExactRange) === 0;
-  }
-
-  const baseVersion = parseStableSemver(normalizedRange.slice(1));
-  if (!baseVersion) {
-    return false;
-  }
-
-  const [majorRaw, minorRaw, patchRaw] = baseVersion.split('.');
-  const major = Number(majorRaw);
-  const minor = Number(minorRaw);
-  const patch = Number(patchRaw);
-  if (![major, minor, patch].every((value) => Number.isInteger(value))) {
-    return false;
-  }
-
-  const upperBound =
-    major > 0
-      ? `${major + 1}.0.0`
-      : minor > 0
-        ? `0.${minor + 1}.0`
-        : `0.0.${patch + 1}`;
-
-  return compareVersions(normalizedCurrentVersion, baseVersion) >= 0
-    && compareVersions(normalizedCurrentVersion, upperBound) < 0;
+  return semver.satisfies(normalizedCurrentVersion, normalizedRange, { includePrerelease: true });
 }
 
 export function validatePluginManifest(
@@ -384,6 +391,14 @@ export function validatePluginManifest(
     return {
       ok: false,
       diagnostics: unsupportedTargetDiagnostics,
+    };
+  }
+
+  const schemaDiagnostics = readManifestSchemaDiagnostics(input);
+  if (schemaDiagnostics.length > 0) {
+    return {
+      ok: false,
+      diagnostics: schemaDiagnostics,
     };
   }
 
@@ -409,7 +424,8 @@ export function validatePluginManifest(
   }
 
   const hasExecutableContributes =
-    manifest.contributes.backends.length > 0
+    manifest.contributes.agents.length > 0
+    || manifest.contributes.agentRuntimes.length > 0
     || manifest.contributes.actions.length > 0
     || manifest.contributes.tools.length > 0
     || manifest.contributes.commands.length > 0
@@ -418,22 +434,27 @@ export function validatePluginManifest(
     || manifest.contributes.hooks.length > 0
     || manifest.contributes.lifecycleHandlers.length > 0;
 
-  if (hasExecutableContributes && !manifest.targets.daemon) {
+  if (hasExecutableContributes && !manifest.entrypoints.main) {
     diagnostics.push({
       code: 'plugin_manifest_semantic_invalid',
-      message: 'Daemon target is required for executable plugin contributes',
+      message: 'Entrypoint main is required for executable plugin contributes',
     });
   }
 
-  if (!isCompatibleHappierEngineRange(manifest.engines.happier, configuration.currentCliVersion)) {
+  if (!isValidHappierEngineRange(manifest.engines.happier)) {
+    diagnostics.push({
+      code: 'plugin_manifest_engine_range_invalid',
+      message: `Plugin manifest engines.happier range '${manifest.engines.happier}' is not valid npm semver range syntax`,
+    });
+  } else if (!isCompatibleHappierEngineRange(manifest.engines.happier, configuration.currentCliVersion)) {
     diagnostics.push({
       code: 'plugin_manifest_semantic_invalid',
       message: `Plugin manifest requires happier ${manifest.engines.happier} but current CLI version is ${configuration.currentCliVersion}`,
     });
   }
 
-  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.providers), 'provider');
-  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.backends), 'backend');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.agents), 'agent');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.agentRuntimes), 'agent runtime');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.actions), 'action');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.tools), 'tool');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.commands), 'command');
@@ -444,7 +465,7 @@ export function validatePluginManifest(
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.events ?? []), 'event');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.scmHostingProviders ?? []), 'SCM hosting provider');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.scmBackends ?? []), 'SCM backend');
-  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.installables ?? []), 'installable');
+  pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.managedDependencies ?? []), 'managed dependency');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.requestInterceptors ?? []), 'request interceptor');
   pushDuplicateIdDiagnostics(diagnostics, readDefinitionIds(manifest.contributes.hooks), 'hook');
   pushDuplicateIdDiagnostics(
@@ -454,7 +475,7 @@ export function validatePluginManifest(
     )),
     'lifecycle handler',
   );
-  pushAmbiguousIdlessLifecycleHandlerDiagnostics(diagnostics, manifest);
+  pushMissingLifecycleHandlerIdDiagnostics(diagnostics, manifest);
   pushDuplicateSurfaceHandlerIdDiagnostics(diagnostics, manifest);
   pushDuplicateSurfaceHandlerOperationDiagnostics(diagnostics, manifest);
   pushUnsupportedSurfaceHandlerOperationIdDiagnostics(diagnostics, manifest);

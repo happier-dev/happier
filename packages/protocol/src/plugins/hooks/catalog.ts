@@ -2,14 +2,14 @@ import { z } from 'zod';
 
 import { ActionIdSchema } from '../../actions/actionIds.js';
 import { ApprovalRequestCreatedBySchema } from '../../approvals/approvalRequestV1.js';
-import { BackendTargetKeySchema } from '../../backendTargets/backendTargetRef.js';
-import { BackendTargetRefV2Schema } from '../../backendTargets/backendTargetRefV2.js';
+import { BackendTargetKeySchema } from '../../backends/targets/backendTargetRef.js';
+import { BackendTargetRefV2Schema } from '../../backends/targets/backendTargetRefV2.js';
 import {
   ExecutionRunClassSchema,
   ExecutionRunIntentSchema,
   ExecutionRunIoModeSchema,
   ExecutionRunRetentionPolicySchema,
-} from '../../executionRunStartRequest.js';
+} from '../../execution/runs/startRequest.js';
 import {
   HookCategoryV1Schema,
   type HookCategoryV1,
@@ -23,15 +23,19 @@ import { MemorySearchModeSchema } from '../../memory/memorySearch.js';
 import { SubagentRefV1Schema } from '../../sessions/subagents/subagentRefV1.js';
 
 export const PLUGIN_HOOK_IDS_V1 = [
-  'session.spawn_new',
+  'session.spawned',
   'session.message.send',
-  'execution_run.start',
-  'execution_run.send',
-  'execution_run.stop',
-  'execution_run.terminal',
-  'backend.resolveRuntimePrerequisites',
-  'spawn.augmentEnv',
-  'provider.response.after',
+  'session.input.transform',
+  'executionRun.started',
+  'executionRun.messageSent',
+  'executionRun.stopped',
+  'executionRun.completed',
+  'agent.resolvePrerequisites',
+  'agent.spawnEnv.augment',
+  'agent.response.after',
+  'agent.context.before',
+  'agent.request.before',
+  'agent.stream.token',
   'tool.call.before',
   'tool.result.after',
   'resource.discovery',
@@ -56,8 +60,8 @@ export const PLUGIN_HOOK_IDS_V1 = [
   'automation.run.failed',
   'automation.run.expired',
   'approval.decision.made',
-  'subagent.start',
-  'subagent.end',
+  'subagent.started',
+  'subagent.ended',
 ] as const;
 export const PluginHookIdV1Schema = z.enum(PLUGIN_HOOK_IDS_V1);
 export type PluginHookIdV1 = z.infer<typeof PluginHookIdV1Schema>;
@@ -66,9 +70,7 @@ export const PluginHookScopeV1Schema = z.enum([
   'machine',
   'project',
   'session',
-  'backend',
   'agent',
-  'provider',
   'daemon',
   'tool',
   'resource',
@@ -92,6 +94,14 @@ export type PluginHookFailureModeV1 = z.infer<typeof PluginHookFailureModeV1Sche
 export const PluginHookPurityV1Schema = z.enum(['observer', 'participant']);
 export type PluginHookPurityV1 = z.infer<typeof PluginHookPurityV1Schema>;
 
+export const PluginHookSupportedRuntimeFamilyV1Schema = z.enum([
+  'hostSession',
+  'acpSession',
+  'pluginSession',
+  'executionRun',
+]);
+export type PluginHookSupportedRuntimeFamilyV1 = z.infer<typeof PluginHookSupportedRuntimeFamilyV1Schema>;
+
 export const PluginHookDefinitionV1Schema = z.object({
   id: PluginHookIdV1Schema,
   category: HookCategoryV1Schema,
@@ -100,6 +110,7 @@ export const PluginHookDefinitionV1Schema = z.object({
   aggregation: PluginHookAggregationKindV1Schema,
   failureMode: PluginHookFailureModeV1Schema,
   purity: PluginHookPurityV1Schema.optional(),
+  supportedRuntimes: z.array(PluginHookSupportedRuntimeFamilyV1Schema).default([]),
   payloadSchema: z.record(z.string(), z.unknown()).default({}),
   resultSchema: z.record(z.string(), z.unknown()).default({}),
 }).strict();
@@ -111,11 +122,10 @@ const RequiredUnknownSchema = z.unknown().refine((value) => value !== undefined,
   message: 'Required',
 });
 
-export const SessionSpawnNewHookPayloadV1Schema = z.object({
+export const SessionSpawnedHookPayloadV1Schema = z.object({
   sessionId: NonEmptyStringSchema,
-  backendId: NonEmptyStringSchema,
-  backendTarget: BackendTargetRefV2Schema,
-  agentId: NonEmptyStringSchema.optional(),
+  agentId: NonEmptyStringSchema,
+  runtimeTarget: BackendTargetRefV2Schema,
   modelId: NonEmptyStringSchema.optional(),
   cwd: z.string().optional(),
   initialMessage: z.string().optional(),
@@ -133,11 +143,19 @@ export const SessionMessageSendHookPayloadV1Schema = z.object({
   timestampMs: TimestampMsSchema,
 }).passthrough();
 
-export const ExecutionRunStartHookPayloadV1Schema = z.object({
+export const SessionInputTransformHookPayloadV1Schema = z.object({
+  sessionId: NonEmptyStringSchema,
+  localId: NonEmptyStringSchema.optional(),
+  text: z.string(),
+  meta: z.record(z.string(), z.unknown()).optional(),
+  timestampMs: TimestampMsSchema,
+}).passthrough();
+
+export const ExecutionRunStartedHookPayloadV1Schema = z.object({
   sessionId: NonEmptyStringSchema.optional(),
   runId: NonEmptyStringSchema,
   intent: ExecutionRunIntentSchema,
-  backendTargetKeys: z.array(BackendTargetKeySchema),
+  runtimeTargetKeys: z.array(BackendTargetKeySchema),
   permissionMode: z.string().optional(),
   retentionPolicy: ExecutionRunRetentionPolicySchema,
   runClass: ExecutionRunClassSchema,
@@ -145,7 +163,7 @@ export const ExecutionRunStartHookPayloadV1Schema = z.object({
   timestampMs: TimestampMsSchema,
 }).passthrough();
 
-export const ExecutionRunSendHookPayloadV1Schema = z.object({
+export const ExecutionRunMessageSentHookPayloadV1Schema = z.object({
   sessionId: NonEmptyStringSchema.optional(),
   runId: NonEmptyStringSchema,
   message: z.string(),
@@ -153,14 +171,14 @@ export const ExecutionRunSendHookPayloadV1Schema = z.object({
   timestampMs: TimestampMsSchema,
 }).passthrough();
 
-export const ExecutionRunStopHookPayloadV1Schema = z.object({
+export const ExecutionRunStoppedHookPayloadV1Schema = z.object({
   sessionId: NonEmptyStringSchema.optional(),
   runId: NonEmptyStringSchema,
   reason: z.enum(['user', 'plugin', 'timeout', 'error']),
   timestampMs: TimestampMsSchema,
 }).passthrough();
 
-export const ExecutionRunTerminalHookPayloadV1Schema = z.object({
+export const ExecutionRunCompletedHookPayloadV1Schema = z.object({
   sessionId: NonEmptyStringSchema.optional(),
   runId: NonEmptyStringSchema,
   status: z.enum(['succeeded', 'failed', 'canceled']),
@@ -170,29 +188,61 @@ export const ExecutionRunTerminalHookPayloadV1Schema = z.object({
   timestampMs: TimestampMsSchema,
 }).passthrough();
 
-export const BackendResolveRuntimePrerequisitesHookPayloadV1Schema = z.object({
-  backendId: NonEmptyStringSchema,
-  targetRef: BackendTargetRefV2Schema,
+export const AgentResolvePrerequisitesHookPayloadV1Schema = z.object({
+  agentId: NonEmptyStringSchema,
+  runtimeTarget: BackendTargetRefV2Schema,
   sessionId: NonEmptyStringSchema.optional(),
   cwd: z.string().optional(),
   timestampMs: TimestampMsSchema,
 }).passthrough();
 
-export const SpawnAugmentEnvHookPayloadV1Schema = z.object({
-  backendId: NonEmptyStringSchema,
+export const AgentSpawnEnvAugmentHookPayloadV1Schema = z.object({
   agentId: NonEmptyStringSchema,
   sessionId: NonEmptyStringSchema.optional(),
   cwd: z.string().optional(),
   timestampMs: TimestampMsSchema,
 }).passthrough();
 
-export const ProviderResponseAfterHookPayloadV1Schema = z.object({
-  providerId: NonEmptyStringSchema,
+export const AgentResponseAfterHookPayloadV1Schema = z.object({
+  agentId: NonEmptyStringSchema,
   sessionId: NonEmptyStringSchema,
   requestId: NonEmptyStringSchema,
   status: z.enum(['ok', 'error']),
   durationMs: TimestampMsSchema,
   byteCount: TimestampMsSchema,
+  timestampMs: TimestampMsSchema,
+}).passthrough();
+
+const AgentMessageProjectionV1Schema = z.object({
+  role: z.string().trim().min(1),
+  content: z.unknown(),
+}).passthrough();
+
+export const AgentContextBeforeHookPayloadV1Schema = z.object({
+  sessionId: NonEmptyStringSchema,
+  agentId: NonEmptyStringSchema.optional(),
+  runtimeFamily: PluginHookSupportedRuntimeFamilyV1Schema,
+  prompt: z.string(),
+  messages: z.array(AgentMessageProjectionV1Schema),
+  timestampMs: TimestampMsSchema,
+}).passthrough();
+
+export const AgentRequestBeforeHookPayloadV1Schema = z.object({
+  sessionId: NonEmptyStringSchema.optional(),
+  agentId: NonEmptyStringSchema.optional(),
+  runtimeFamily: PluginHookSupportedRuntimeFamilyV1Schema,
+  method: NonEmptyStringSchema,
+  request: z.record(z.string(), z.unknown()),
+  timestampMs: TimestampMsSchema,
+}).passthrough();
+
+export const AgentStreamTokenHookPayloadV1Schema = z.object({
+  sessionId: NonEmptyStringSchema,
+  agentId: NonEmptyStringSchema.optional(),
+  runtimeFamily: PluginHookSupportedRuntimeFamilyV1Schema,
+  turnId: NonEmptyStringSchema,
+  tokenText: z.string(),
+  streamKind: z.enum(['assistant', 'thinking', 'unknown']),
   timestampMs: TimestampMsSchema,
 }).passthrough();
 
@@ -391,66 +441,33 @@ export const ApprovalDecisionMadeHookPayloadV1Schema = z.object({
   timestampMs: TimestampMsSchema,
 }).passthrough();
 
-const SubagentProviderRefHookPayloadV1Schema = z.object({
-  providerId: NonEmptyStringSchema,
-  providerKind: z.string().optional(),
-}).passthrough();
-
-const SubagentSpawnRefHookPayloadV1Schema = z.object({
-  toolCallId: z.string().optional(),
-}).passthrough();
-
-const FlatSubagentStartHookPayloadV1Schema = z.object({
-  subagentId: NonEmptyStringSchema,
-  parentSessionId: NonEmptyStringSchema,
-  origin: z.enum(['happier', 'provider', 'plugin']),
-  kind: z.enum(['execution-run', 'native', 'custom']),
-  providerRef: SubagentProviderRefHookPayloadV1Schema.optional(),
-  spawnRef: SubagentSpawnRefHookPayloadV1Schema.optional(),
-  sidechainId: NonEmptyStringSchema.optional(),
-  timestampMs: TimestampMsSchema,
-}).passthrough();
-
-const RefSubagentStartHookPayloadV1Schema = z.object({
+export const SubagentStartedHookPayloadV1Schema = z.object({
   subagentRef: SubagentRefV1Schema,
+  timestampMs: TimestampMsSchema.optional(),
 }).passthrough();
+export type SubagentStartedHookPayloadV1 = z.infer<typeof SubagentStartedHookPayloadV1Schema>;
 
-export const SubagentStartHookPayloadV1Schema = z.union([
-  RefSubagentStartHookPayloadV1Schema,
-  FlatSubagentStartHookPayloadV1Schema,
-]);
-export type SubagentStartHookPayloadV1 = z.infer<typeof SubagentStartHookPayloadV1Schema>;
-
-const FlatSubagentEndHookPayloadV1Schema = z.object({
-  subagentId: NonEmptyStringSchema,
-  parentSessionId: NonEmptyStringSchema,
-  status: z.enum(['completed', 'failed', 'aborted']),
-  reason: z.string().optional(),
-  sidechainId: NonEmptyStringSchema.optional(),
-  timestampMs: TimestampMsSchema,
-}).passthrough();
-
-const RefSubagentEndHookPayloadV1Schema = z.object({
+export const SubagentEndedHookPayloadV1Schema = z.object({
   subagentRef: SubagentRefV1Schema,
   outcome: RequiredUnknownSchema,
+  timestampMs: TimestampMsSchema.optional(),
 }).passthrough();
-
-export const SubagentEndHookPayloadV1Schema = z.union([
-  RefSubagentEndHookPayloadV1Schema,
-  FlatSubagentEndHookPayloadV1Schema,
-]);
-export type SubagentEndHookPayloadV1 = z.infer<typeof SubagentEndHookPayloadV1Schema>;
+export type SubagentEndedHookPayloadV1 = z.infer<typeof SubagentEndedHookPayloadV1Schema>;
 
 export const PLUGIN_HOOK_PAYLOAD_SCHEMAS_BY_ID_V1 = Object.freeze({
-  'session.spawn_new': SessionSpawnNewHookPayloadV1Schema,
+  'session.spawned': SessionSpawnedHookPayloadV1Schema,
   'session.message.send': SessionMessageSendHookPayloadV1Schema,
-  'execution_run.start': ExecutionRunStartHookPayloadV1Schema,
-  'execution_run.send': ExecutionRunSendHookPayloadV1Schema,
-  'execution_run.stop': ExecutionRunStopHookPayloadV1Schema,
-  'execution_run.terminal': ExecutionRunTerminalHookPayloadV1Schema,
-  'backend.resolveRuntimePrerequisites': BackendResolveRuntimePrerequisitesHookPayloadV1Schema,
-  'spawn.augmentEnv': SpawnAugmentEnvHookPayloadV1Schema,
-  'provider.response.after': ProviderResponseAfterHookPayloadV1Schema,
+  'session.input.transform': SessionInputTransformHookPayloadV1Schema,
+  'executionRun.started': ExecutionRunStartedHookPayloadV1Schema,
+  'executionRun.messageSent': ExecutionRunMessageSentHookPayloadV1Schema,
+  'executionRun.stopped': ExecutionRunStoppedHookPayloadV1Schema,
+  'executionRun.completed': ExecutionRunCompletedHookPayloadV1Schema,
+  'agent.resolvePrerequisites': AgentResolvePrerequisitesHookPayloadV1Schema,
+  'agent.spawnEnv.augment': AgentSpawnEnvAugmentHookPayloadV1Schema,
+  'agent.response.after': AgentResponseAfterHookPayloadV1Schema,
+  'agent.context.before': AgentContextBeforeHookPayloadV1Schema,
+  'agent.request.before': AgentRequestBeforeHookPayloadV1Schema,
+  'agent.stream.token': AgentStreamTokenHookPayloadV1Schema,
   'tool.call.before': ToolCallBeforeHookPayloadV1Schema,
   'tool.result.after': ToolResultAfterHookPayloadV1Schema,
   'resource.discovery': ResourceDiscoveryHookPayloadV1Schema,
@@ -475,8 +492,8 @@ export const PLUGIN_HOOK_PAYLOAD_SCHEMAS_BY_ID_V1 = Object.freeze({
   'automation.run.failed': AutomationRunFailedHookPayloadV1Schema,
   'automation.run.expired': AutomationRunExpiredHookPayloadV1Schema,
   'approval.decision.made': ApprovalDecisionMadeHookPayloadV1Schema,
-  'subagent.start': SubagentStartHookPayloadV1Schema,
-  'subagent.end': SubagentEndHookPayloadV1Schema,
+  'subagent.started': SubagentStartedHookPayloadV1Schema,
+  'subagent.ended': SubagentEndedHookPayloadV1Schema,
 } satisfies Readonly<Record<PluginHookIdV1, z.ZodType<unknown>>>);
 
 export type PluginHookPayloadSchemaMapV1 = typeof PLUGIN_HOOK_PAYLOAD_SCHEMAS_BY_ID_V1;
@@ -516,6 +533,7 @@ function definePluginHookDefinitionV1(input: Readonly<{
   aggregation: PluginHookAggregationKindV1;
   failureMode: PluginHookFailureModeV1;
   purity?: PluginHookPurityV1;
+  supportedRuntimes?: readonly PluginHookSupportedRuntimeFamilyV1[];
   payloadSchema?: Record<string, unknown>;
   resultSchema?: Record<string, unknown>;
 }>): PluginHookDefinitionV1 {
@@ -523,6 +541,7 @@ function definePluginHookDefinitionV1(input: Readonly<{
   return PluginHookDefinitionV1Schema.parse({
     ...input,
     executionKind,
+    supportedRuntimes: input.supportedRuntimes ?? [],
     payloadSchema: input.payloadSchema ?? {},
     resultSchema: input.resultSchema ?? {},
   });
@@ -532,6 +551,7 @@ const lifecycle = (params: Readonly<{
   id: PluginHookIdV1;
   scope: PluginHookScopeV1;
   purity?: PluginHookPurityV1;
+  supportedRuntimes?: readonly PluginHookSupportedRuntimeFamilyV1[];
 }>): PluginHookDefinitionV1 => definePluginHookDefinitionV1({
   id: params.id,
   category: 'lifecycle',
@@ -539,30 +559,61 @@ const lifecycle = (params: Readonly<{
   aggregation: 'orderedList',
   failureMode: 'bestEffort',
   ...(params.purity ? { purity: params.purity } : {}),
+  ...(params.supportedRuntimes ? { supportedRuntimes: params.supportedRuntimes } : {}),
 });
 
 export const PLUGIN_HOOK_CATALOG_V1 = [
-  lifecycle({ id: 'session.spawn_new', scope: 'session' }),
+  lifecycle({ id: 'session.spawned', scope: 'session' }),
   lifecycle({ id: 'session.message.send', scope: 'session' }),
-  lifecycle({ id: 'execution_run.start', scope: 'session' }),
-  lifecycle({ id: 'execution_run.send', scope: 'session' }),
-  lifecycle({ id: 'execution_run.stop', scope: 'session' }),
-  lifecycle({ id: 'execution_run.terminal', scope: 'session' }),
   definePluginHookDefinitionV1({
-    id: 'backend.resolveRuntimePrerequisites',
+    id: 'session.input.transform',
+    category: 'augmentation',
+    scope: 'session',
+    aggregation: 'replace',
+    failureMode: 'bestEffort',
+    supportedRuntimes: ['hostSession'],
+  }),
+  lifecycle({ id: 'executionRun.started', scope: 'session' }),
+  lifecycle({ id: 'executionRun.messageSent', scope: 'session' }),
+  lifecycle({ id: 'executionRun.stopped', scope: 'session' }),
+  lifecycle({ id: 'executionRun.completed', scope: 'session' }),
+  definePluginHookDefinitionV1({
+    id: 'agent.resolvePrerequisites',
     category: 'decision',
-    scope: 'backend',
+    scope: 'agent',
     aggregation: 'firstDecision',
     failureMode: 'failClosed',
   }),
   definePluginHookDefinitionV1({
-    id: 'spawn.augmentEnv',
+    id: 'agent.spawnEnv.augment',
     category: 'augmentation',
     scope: 'daemon',
     aggregation: 'mergeObject',
     failureMode: 'bestEffort',
   }),
-  lifecycle({ id: 'provider.response.after', scope: 'provider' }),
+  lifecycle({ id: 'agent.response.after', scope: 'agent' }),
+  definePluginHookDefinitionV1({
+    id: 'agent.context.before',
+    category: 'augmentation',
+    scope: 'agent',
+    aggregation: 'replace',
+    failureMode: 'bestEffort',
+    supportedRuntimes: ['hostSession'],
+  }),
+  definePluginHookDefinitionV1({
+    id: 'agent.request.before',
+    category: 'augmentation',
+    scope: 'agent',
+    aggregation: 'replace',
+    failureMode: 'bestEffort',
+    supportedRuntimes: ['acpSession'],
+  }),
+  lifecycle({
+    id: 'agent.stream.token',
+    scope: 'agent',
+    purity: 'observer',
+    supportedRuntimes: ['hostSession'],
+  }),
   definePluginHookDefinitionV1({
     id: 'tool.call.before',
     category: 'decision',
@@ -599,8 +650,8 @@ export const PLUGIN_HOOK_CATALOG_V1 = [
   lifecycle({ id: 'automation.run.failed', scope: 'project' }),
   lifecycle({ id: 'automation.run.expired', scope: 'project' }),
   lifecycle({ id: 'approval.decision.made', scope: 'session', purity: 'observer' }),
-  lifecycle({ id: 'subagent.start', scope: 'session', purity: 'observer' }),
-  lifecycle({ id: 'subagent.end', scope: 'session', purity: 'observer' }),
+  lifecycle({ id: 'subagent.started', scope: 'session', purity: 'observer' }),
+  lifecycle({ id: 'subagent.ended', scope: 'session', purity: 'observer' }),
 ] as const satisfies readonly PluginHookDefinitionV1[];
 
 const PLUGIN_HOOK_CATALOG_BY_ID_V1: ReadonlyMap<string, PluginHookDefinitionV1> = new Map(

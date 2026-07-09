@@ -1,20 +1,16 @@
-import { dirname, isAbsolute } from 'node:path';
-
-import { autoRegisterAcpBackend } from '@happier-dev/plugin-sdk/acp';
-import { PluginManifestV2Schema } from '@happier-dev/protocol';
 import type {
     PluginPermissionDeclarationV1,
     PluginPermissionCapabilityV1,
-    ParsedPluginManifestV2,
+    PluginActionContributionV2,
     ParsedPluginEventContributionV1,
     PluginRequestInterceptorContributionV1,
-    PluginRuntimeCapabilityFamilyV1,
     PluginSourceSpecV1,
     PluginSystemToolContributionV1,
+    PluginToolContributionV2,
+    PluginCommandContributionV2,
 } from '@happier-dev/protocol';
 
 import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
-import { readPluginManifest } from '../../manifest/read';
 import type {
     ResolvedContributionRegistry,
     ResolvedCommandContribution,
@@ -28,11 +24,10 @@ import type {
 import { createPluginApiHost } from '../api/host';
 import type {
     PluginApiActionRegistration,
-    PluginApiBackendEngineRegistration,
+    PluginApiAgentRuntimeRegistration,
     PluginApiCommandRegistration,
+    PluginApiDaemonAuthBridgeRegistration,
     PluginDisposable,
-    PluginApi,
-    PluginApiHostLifecycleHandlerDeclaration,
     PluginApiHookRegistration,
     PluginApiLifecycleHandlerRegistration,
     PluginApiMcpDiscoveryProviderRegistration,
@@ -52,113 +47,82 @@ import {
     type ResolveTrustedOptionalPluginPermissionGrants,
 } from '../permissions/grants';
 import { createPluginDisposableRegistry } from './disposables';
+import { logger } from '@/ui/logger';
 import type {
     PluginDaemonModuleNamespace,
     PluginHookHandler,
     PluginLifecycleHandlerRequest,
     ResolvedPluginLifecycleHandler,
 } from '../types';
+import type { PluginContextV1, PluginHandlerServicesV1 } from '@happier-dev/plugin-sdk';
+import { createHostPluginContextV1 } from '../../../agent/runtime/registry/engineRegistry/pluginContext';
 
-type ActivationTarget = Readonly<{
-    provenance: ResolvedContributionProvenance;
-    source: ResolvedContributionSource;
+import {
+    appendDiagnostic,
+    appendDiagnostics,
+    normalizePositiveTimeoutMs,
+    runWithOptionalTimeout,
+    mapDaemonModuleLoadErrorToDiagnostic,
+} from './utils';
+import {
+    type ActivationTarget,
+    collectActivationTargets,
+    shouldActivateTargetAtStartup,
+    activationTargetMatchesEvent,
+} from './activation/targets';
+import { resolveActivationExport, resolveActivationSource, resolveAutoAcpPluginRoot } from './activation/source';
+import { readBundledActivationPolicy, resolveActivationPolicy, type ActivationPolicy } from './activation/policy';
+import { autoRegisterAcpBackend } from './activation/autoAcp';
+import {
+    toResolvedActionContribution,
+    toResolvedToolContribution,
+    toSyntheticActionContributionFromTool,
+    toResolvedCommandContribution,
+    toSyntheticActionContributionFromCommand,
+    toResolvedLifecycleHandlerContribution,
+} from './contributions/resolve';
+import {
+    normalizeNetworkPermissionOrigin,
+    normalizeProcessSpawnPermissionPath,
+    normalizeEnvPermissionName,
+    normalizeFilesystemPermissionPath,
+    collectOptionalScopedPermissionMap,
+    collectScopedPermissionMap,
+} from './permissions/scopeNormalizers';
+
+/**
+ * Orchestration entrypoint for the plugin runtime activation/deactivation
+ * lifecycle. The individual responsibilities (contribution reading,
+ * permission-scope normalization, activation-target/source/policy
+ * resolution, ACP auto-registration, contribution resolution) live in the
+ * sibling `contributions/`, `permissions/`, and `activation/` modules; this
+ * file wires them together and owns the activated-registry shape, disposal,
+ * and lazy (on-demand) activation.
+ */
+
+export type PluginActivationDemandResult = Readonly<{
     pluginId: string;
-    manifestPath: string;
-    manifestDigest: string;
-    daemonEntryPath: string;
-    sourceSpec?: PluginSourceSpecV1;
+    diagnostics: readonly PluginCompatibilityDiagnostic[];
 }>;
-
-type ActivationExport = (api: PluginApi) => void | PluginDisposable | Promise<void | PluginDisposable>;
-
-type ActivationPolicy = Readonly<{
-    permissions: readonly PluginPermissionCapabilityV1[];
-    permissionDeclarations: readonly PluginPermissionDeclarationV1[];
-    optionalPermissionDeclarations: readonly PluginPermissionDeclarationV1[];
-    runtimeCapabilities: readonly PluginRuntimeCapabilityFamilyV1[];
-    declaredBackendIds: readonly string[];
-    declaredActionIds: readonly string[];
-    declaredToolIds: readonly string[];
-    declaredCommandIds: readonly string[];
-    declaredHookIds: readonly string[];
-    declaredLifecycleHandlerIds: readonly string[];
-    declaredLifecycleHandlers: readonly PluginApiHostLifecycleHandlerDeclaration[];
-    declaredNotificationCategoryIds: readonly string[];
-    declaredNotificationChannelIds: readonly string[];
-    declaredEventIds: readonly string[];
-    declaredEventDeclarations: readonly ParsedPluginEventContributionV1[];
-    declaredScmHostingProviderIds: readonly string[];
-    declaredScmBackendIds: readonly string[];
-    declaredRequestInterceptorIds: readonly string[];
-    declaredMcpServerIds: readonly string[];
-    declaredMcpDiscoveryProviderIds: readonly string[];
-    declaredRequestInterceptors: readonly PluginRequestInterceptorContributionV1[];
-    systemTools: readonly PluginSystemToolContributionV1[];
+type PluginRuntimeDisposalPhase = 'deactivating' | 'runtime_disposables' | 'registered_disposables' | 'deactivated';
+type PluginRuntimeDisposalOptions = Readonly<{
+    timeoutMs?: number;
+    onError?: (event: Readonly<{
+        pluginId: string;
+        phase: PluginRuntimeDisposalPhase;
+        error: unknown;
+    }>) => void;
 }>;
-
-function readBundledActivationPolicy(params: Readonly<{
-    target: ActivationTarget;
-    moduleNamespace: PluginDaemonModuleNamespace;
-    diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]>;
-}>): ActivationPolicy | null {
-    const raw = (params.moduleNamespace as Record<string, unknown>).PLUGIN_MANIFEST;
-    if (raw === undefined) {
-        appendDiagnostic(params.diagnosticsByPluginId, params.target.pluginId, {
-            code: 'plugin_manifest_semantic_invalid',
-            message: `Bundled plugin '${params.target.pluginId}' is missing PLUGIN_MANIFEST export`,
-        });
-        return null;
-    }
-
-    const parsed = PluginManifestV2Schema.safeParse(raw);
-    if (!parsed.success) {
-        appendDiagnostic(params.diagnosticsByPluginId, params.target.pluginId, {
-            code: 'plugin_manifest_semantic_invalid',
-            message: `Bundled plugin '${params.target.pluginId}' has an invalid PLUGIN_MANIFEST export`,
-        });
-        return null;
-    }
-
-    const manifest: ParsedPluginManifestV2 = parsed.data;
-    if (manifest.id !== params.target.pluginId) {
-        appendDiagnostic(params.diagnosticsByPluginId, params.target.pluginId, {
-            code: 'plugin_manifest_semantic_invalid',
-            message: `Bundled plugin '${params.target.pluginId}' PLUGIN_MANIFEST id '${manifest.id}' must match the plugin id`,
-        });
-        return null;
-    }
-
-    return Object.freeze({
-        permissions: Object.freeze(manifest.capabilities.permissions.map((permission) => permission.capability)),
-        permissionDeclarations: Object.freeze([...manifest.capabilities.permissions]),
-        optionalPermissionDeclarations: Object.freeze([...manifest.capabilities.optionalPermissions]),
-        runtimeCapabilities: Object.freeze([...manifest.runtime.capabilities]),
-        declaredBackendIds: readDeclaredBackendIds(manifest.contributes),
-        declaredActionIds: readDeclaredContributionIds(manifest.contributes, 'actions'),
-        declaredToolIds: readDeclaredContributionIds(manifest.contributes, 'tools'),
-        declaredCommandIds: readDeclaredContributionIds(manifest.contributes, 'commands'),
-        declaredHookIds: readDeclaredContributionIds(manifest.contributes, 'hooks'),
-        declaredLifecycleHandlerIds: readDeclaredContributionIds(manifest.contributes, 'lifecycleHandlers'),
-        declaredLifecycleHandlers: readDeclaredLifecycleHandlers(manifest.id, manifest.contributes),
-        declaredNotificationCategoryIds: readDeclaredContributionIds(manifest.contributes, 'notifications'),
-        declaredNotificationChannelIds: readDeclaredContributionIds(manifest.contributes, 'notificationChannels'),
-        declaredEventIds: readDeclaredContributionIds(manifest.contributes, 'events'),
-        declaredEventDeclarations: readDeclaredEventContributions(manifest.contributes),
-        declaredScmHostingProviderIds: readDeclaredContributionIds(manifest.contributes, 'scmHostingProviders'),
-        declaredScmBackendIds: readDeclaredContributionIds(manifest.contributes, 'scmBackends'),
-        declaredRequestInterceptorIds: readDeclaredContributionIds(manifest.contributes, 'requestInterceptors'),
-        declaredMcpServerIds: readDeclaredNestedContributionIds(manifest.contributes, 'mcp', 'servers'),
-        declaredMcpDiscoveryProviderIds: readDeclaredNestedContributionIds(manifest.contributes, 'mcp', 'discoveryProviders'),
-        declaredRequestInterceptors: readDeclaredRequestInterceptorContributions(manifest.contributes),
-        systemTools: readDeclaredSystemToolContributions(manifest.contributes),
-    });
-}
 
 export type ActivatedPluginRuntimeRegistry = ActivatedHandlerRegistry & Readonly<{
     generation: number;
-    backendEnginesByBackendId: ReadonlyMap<string, Readonly<{
+    agentRuntimesByAgentId: ReadonlyMap<string, Readonly<{
         pluginId: string;
-        registration: PluginApiBackendEngineRegistration;
+        registration: PluginApiAgentRuntimeRegistration;
+    }>>;
+    daemonAuthBridgesByServiceId: ReadonlyMap<string, Readonly<{
+        pluginId: string;
+        registration: PluginApiDaemonAuthBridgeRegistration;
     }>>;
     notificationCategoriesById: ReadonlyMap<string, Readonly<{
         pluginId: string;
@@ -216,604 +180,41 @@ export type ActivatedPluginRuntimeRegistry = ActivatedHandlerRegistry & Readonly
     commands: readonly ResolvedCommandContribution[];
     lifecycleHandlers: readonly ResolvedLifecycleHandlerContribution[];
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+    activatedPluginIds: ReadonlySet<string>;
+    activatePluginsByEvent: (activationEvent: string) => Promise<readonly PluginActivationDemandResult[]>;
     addRuntimeDisposable: (pluginId: string, disposable: PluginDisposable) => PluginDisposable;
-    dispose: () => Promise<void>;
+    dispose: (params?: PluginRuntimeDisposalOptions) => Promise<void>;
 }>;
 
-function appendDiagnostic(
-    diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]>,
-    pluginId: string,
-    diagnostic: PluginCompatibilityDiagnostic,
-): void {
-    const existing = diagnosticsByPluginId[pluginId];
-    if (existing) {
-        existing.push(diagnostic);
-        return;
-    }
-    diagnosticsByPluginId[pluginId] = [diagnostic];
-}
+const DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS = 30_000;
 
-function appendDiagnostics(
-    diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]>,
-    pluginId: string,
-    diagnostics: readonly PluginCompatibilityDiagnostic[],
-): void {
-    for (const diagnostic of diagnostics) {
-        appendDiagnostic(diagnosticsByPluginId, pluginId, diagnostic);
-    }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object';
-}
-
-function readDeclaredBackendIds(value: unknown): readonly string[] {
-    return readDeclaredContributionIds(value, 'backends');
-}
-
-function readDeclaredContributionIds(value: unknown, key: string): readonly string[] {
-    if (!isRecord(value) || !Array.isArray(value[key])) {
-        return Object.freeze([]);
-    }
-    return Object.freeze(value[key].flatMap((definition) => {
-        if (!isRecord(definition)) {
-            return [];
-        }
-        const id = typeof definition.id === 'string' ? definition.id.trim() : '';
-        return id.length > 0 ? [id] : [];
-    }));
-}
-
-function readDeclaredEventContributions(value: unknown): readonly ParsedPluginEventContributionV1[] {
-    if (!isRecord(value) || !Array.isArray(value.events)) {
-        return Object.freeze([]);
-    }
-    return Object.freeze(value.events.flatMap((definition) => {
-        if (!isRecord(definition)) {
-            return [];
-        }
-        const id = typeof definition.id === 'string' ? definition.id.trim() : '';
-        return id.length > 0 ? [definition as ParsedPluginEventContributionV1] : [];
-    }));
-}
-
-function readDeclaredNestedContributionIds(value: unknown, parentKey: string, childKey: string): readonly string[] {
-    if (!isRecord(value) || !isRecord(value[parentKey])) {
-        return Object.freeze([]);
-    }
-    return readDeclaredContributionIds(value[parentKey], childKey);
-}
-
-function readDeclaredRequestInterceptorContributions(value: unknown): readonly PluginRequestInterceptorContributionV1[] {
-    if (!isRecord(value) || !Array.isArray(value.requestInterceptors)) {
-        return Object.freeze([]);
-    }
-    return Object.freeze(value.requestInterceptors as PluginRequestInterceptorContributionV1[]);
-}
-
-function readDeclaredSystemToolContributions(value: unknown): readonly PluginSystemToolContributionV1[] {
-    if (!isRecord(value) || !Array.isArray(value.systemTools)) {
-        return Object.freeze([]);
-    }
-    return Object.freeze(value.systemTools as PluginSystemToolContributionV1[]);
-}
-
-function readDeclaredLifecycleHandlers(pluginId: string, value: unknown): readonly PluginApiHostLifecycleHandlerDeclaration[] {
-    if (!isRecord(value) || !Array.isArray(value.lifecycleHandlers)) {
-        return Object.freeze([]);
-    }
-    return Object.freeze(value.lifecycleHandlers.flatMap((definition, index) => {
-        if (!isRecord(definition) || (definition.event !== 'activated' && definition.event !== 'deactivating')) {
-            return [];
-        }
-        const id = typeof definition.id === 'string' && definition.id.trim().length > 0
-            ? definition.id.trim()
-            : null;
-        const canonicalId = id ?? `${pluginId}:${definition.event}:${index}`;
-        return [
-            Object.freeze({
-                ...(id ? { id } : {}),
-                canonicalId,
-                event: definition.event,
-            }),
-        ];
-    }));
-}
-
-function resolveActivationExport(moduleNamespace: PluginDaemonModuleNamespace): Readonly<
-    | { status: 'found'; activate: ActivationExport }
-    | { status: 'missing' }
-    | { status: 'invalid' }
-> {
-    if (typeof moduleNamespace.activate === 'function') {
-        return { status: 'found', activate: moduleNamespace.activate as ActivationExport };
-    }
-
-    if (typeof moduleNamespace.default === 'function') {
-        return { status: 'found', activate: moduleNamespace.default as ActivationExport };
-    }
-
-    if (isRecord(moduleNamespace.default) && typeof moduleNamespace.default.activate === 'function') {
-        return { status: 'found', activate: moduleNamespace.default.activate as ActivationExport };
-    }
-
-    if (
-        moduleNamespace.activate !== undefined
-        || (isRecord(moduleNamespace.default) && moduleNamespace.default.activate !== undefined)
-    ) {
-        return { status: 'invalid' };
-    }
-
-    return { status: 'missing' };
-}
-
-function addActivationTarget(targets: Map<string, ActivationTarget>, raw: Readonly<{
-    provenance?: ResolvedContributionProvenance;
-    source?: ResolvedContributionSource;
-    pluginId?: string;
-    manifestPath?: string;
-    manifestDigest?: string;
-    daemonEntryPath?: string | null;
-    sourceSpec?: PluginSourceSpecV1;
-}>): void {
-    if (!raw.pluginId || !raw.manifestPath || !raw.manifestDigest || !raw.daemonEntryPath) {
-        return;
-    }
-    const key = `${raw.pluginId}::${raw.daemonEntryPath}`;
-    if (targets.has(key)) {
-        return;
-    }
-    targets.set(key, {
-        provenance: raw.provenance ?? 'external',
-        source: raw.source ?? { kind: raw.sourceSpec?.kind ?? 'path' },
-        pluginId: raw.pluginId,
-        manifestPath: raw.manifestPath,
-        manifestDigest: raw.manifestDigest,
-        daemonEntryPath: raw.daemonEntryPath,
-        sourceSpec: raw.sourceSpec,
-    });
-}
-
-function collectActivationTargets(contributes: ResolvedContributionRegistry): readonly ActivationTarget[] {
-    const targets = new Map<string, ActivationTarget>();
-    for (const target of contributes.activationTargets) {
-        addActivationTarget(targets, target);
-    }
-    for (const provider of contributes.providers) {
-        addActivationTarget(targets, provider);
-    }
-    for (const backend of contributes.backends) {
-        addActivationTarget(targets, backend);
-    }
-    for (const action of contributes.actions) {
-        addActivationTarget(targets, action);
-    }
-    for (const tool of contributes.tools ?? []) {
-        addActivationTarget(targets, tool);
-    }
-    for (const command of contributes.commands ?? []) {
-        addActivationTarget(targets, command);
-    }
-    for (const hookRegistration of contributes.hookRegistrations) {
-        addActivationTarget(targets, hookRegistration);
-    }
-    for (const lifecycleHandler of contributes.lifecycleHandlers ?? []) {
-        addActivationTarget(targets, lifecycleHandler);
-    }
-    return Object.freeze([...targets.values()]);
-}
-
-function freezeDiagnostics(
-    diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]>,
-): Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>> {
-    return Object.freeze(
-        Object.fromEntries(
-            Object.entries(diagnosticsByPluginId).map(([pluginId, diagnostics]) => [
-                pluginId,
-                Object.freeze([...diagnostics]),
-            ]),
-        ) as Record<string, readonly PluginCompatibilityDiagnostic[]>,
-    );
-}
-
-function normalizeNetworkPermissionOrigin(scope: string | undefined): string | null {
-    if (!scope || scope.trim().length === 0) {
-        return null;
-    }
-    if (scope.trim() === '*') {
-        return '*';
-    }
-    try {
-        return new URL(scope.trim()).origin;
-    } catch {
-        return null;
-    }
-}
-
-function normalizeProcessSpawnPermissionPath(scope: string | undefined): string | null {
-    if (!scope || scope.trim().length === 0) {
-        return null;
-    }
-    const normalized = scope.trim();
-    return isAbsolute(normalized) ? normalized : null;
-}
-
-function normalizeEnvPermissionName(scope: string | undefined): string | null {
-    const normalized = scope?.trim() ?? '';
-    if (!/^[A-Z_][A-Z0-9_]*$/.test(normalized)) {
-        return null;
-    }
-    return normalized;
-}
-
-function normalizeFilesystemPermissionPath(scope: string | undefined): string | null {
-    const normalized = scope?.trim() ?? '';
-    if (normalized.length === 0 || normalized === '*') {
-        return '';
-    }
-    return isAbsolute(normalized) ? null : normalized;
-}
-
-function collectOptionalScopedPermissionMap(
-    entries: readonly Readonly<{
-        pluginId: string;
-        permissionDeclarations: readonly PluginPermissionDeclarationV1[];
-    }>[],
-    capability: PluginPermissionCapabilityV1,
-    normalizeScope: (scope: string | undefined) => string | null,
-): ReadonlyMap<string, ReadonlySet<string>> {
-    const byPluginId = new Map<string, ReadonlySet<string>>();
-    for (const entry of entries) {
-        const scopes = entry.permissionDeclarations
-            .filter((permission) => permission.capability === capability)
-            .flatMap((permission) => {
-                const normalized = normalizeScope(permission.scope);
-                return normalized === null ? [] : [normalized];
-            });
-        if (scopes.length > 0) {
-            byPluginId.set(entry.pluginId, new Set(scopes));
-        }
-    }
-    return byPluginId;
-}
-
-function collectScopedPermissionMap(
-    entries: readonly Readonly<{
-        pluginId: string;
-        permissionDeclarations: readonly PluginPermissionDeclarationV1[];
-    }>[],
-    capability: PluginPermissionCapabilityV1,
-    normalizeScope: (scope: string | undefined) => string | null,
-): ReadonlyMap<string, ReadonlySet<string>> {
-    const byPluginId = new Map<string, ReadonlySet<string>>();
-    for (const entry of entries) {
-        const scopes = entry.permissionDeclarations
-            .filter((permission) => permission.capability === capability)
-            .flatMap((permission) => {
-                const normalized = normalizeScope(permission.scope);
-                return normalized ? [normalized] : [];
-            });
-        if (scopes.length > 0) {
-            byPluginId.set(entry.pluginId, new Set(scopes));
-        }
-    }
-    return byPluginId;
-}
-
-function resolveContributionMetadata(target: ActivationTarget): Readonly<{
-    provenance: ResolvedContributionProvenance;
-    source: ResolvedContributionSource;
+async function runPluginDisposalStep(params: Readonly<{
     pluginId: string;
-    manifestPath: string;
-    manifestDigest: string;
-    daemonEntryPath: string;
-    sourceSpec?: PluginSourceSpecV1;
-}> {
-    return {
-        provenance: target.provenance,
-        source: target.source,
-        pluginId: target.pluginId,
-        manifestPath: target.manifestPath,
-        manifestDigest: target.manifestDigest,
-        daemonEntryPath: target.daemonEntryPath,
-        ...(target.sourceSpec ? { sourceSpec: target.sourceSpec } : {}),
-    };
-}
-
-function mapDaemonModuleLoadErrorToDiagnostic(error: unknown): PluginCompatibilityDiagnostic {
-    const errorCode = error instanceof Error ? String((error as Error & { code?: string }).code ?? '') : '';
-    return {
-        code:
-            errorCode === 'PLUGIN_DAEMON_TRUST_APPROVAL_REQUIRED'
-                ? 'plugin_trust_approval_required'
-                : errorCode === 'PLUGIN_DAEMON_TRUST_UNTRUSTED'
-                    ? 'plugin_untrusted'
-                    : errorCode === 'PLUGIN_DAEMON_ENTRY_MISSING'
-                        ? 'plugin_source_missing'
-                        : errorCode === 'PLUGIN_DAEMON_ENTRY_KIND_UNSUPPORTED'
-                            ? 'plugin_source_kind_unsupported'
-                            : 'plugin_daemon_module_load_failed',
-        message: error instanceof Error ? error.message : 'Failed to load plugin daemon module',
-    };
-}
-
-function resolveActivationSource(
-    target: ActivationTarget,
-    resolver: ((target: ActivationTarget) => PluginActivationSource<PluginDaemonModuleNamespace> | null) | undefined,
-): PluginActivationSource<PluginDaemonModuleNamespace> {
-    const resolved = resolver?.(target) ?? null;
-    if (resolved) {
-        return resolved;
+    phase: PluginRuntimeDisposalPhase;
+    options: PluginRuntimeDisposalOptions;
+    operation: () => Promise<void>;
+}>): Promise<boolean> {
+    const timeoutMs = normalizePositiveTimeoutMs(params.options.timeoutMs);
+    try {
+        await runWithOptionalTimeout(
+            timeoutMs,
+            params.operation,
+            () => new Error(`Plugin '${params.pluginId}' ${params.phase} timed out after ${timeoutMs}ms`),
+        );
+        return true;
+    } catch (error) {
+        params.options.onError?.({
+            pluginId: params.pluginId,
+            phase: params.phase,
+            error,
+        });
+        logger.warn('[PLUGIN RUNTIME] Plugin cleanup step failed during disposal', {
+            pluginId: params.pluginId,
+            phase: params.phase,
+            error: error instanceof Error ? error.message : String(error),
+        });
+        return false;
     }
-
-    return {
-        kind: 'file_backed',
-        entryPath: target.daemonEntryPath,
-        trustPolicy: target.sourceSpec?.trustPolicy,
-    };
-}
-
-function resolveAutoAcpPluginRoot(target: ActivationTarget, activationSource: PluginActivationSource<PluginDaemonModuleNamespace>): string | null {
-    if (activationSource.kind !== 'file_backed') {
-        return null;
-    }
-    if (target.sourceSpec?.kind === 'path' && target.sourceSpec.locator.trim().length > 0) {
-        return target.sourceSpec.locator;
-    }
-    return dirname(dirname(target.manifestPath));
-}
-
-async function resolveActivationPolicy(
-    target: ActivationTarget,
-    cache: Map<string, ActivationPolicy>,
-): Promise<
-    | Readonly<{ ok: true; policy: ActivationPolicy }>
-    | Readonly<{ ok: false; diagnostics: readonly PluginCompatibilityDiagnostic[] }>
-> {
-    const cached = cache.get(target.manifestPath);
-    if (cached) {
-        return { ok: true, policy: cached };
-    }
-
-    const manifestResult = await readPluginManifest({
-        manifestPath: target.manifestPath,
-    });
-    if (!manifestResult.ok) {
-        return {
-            ok: false,
-            diagnostics: manifestResult.diagnostics,
-        };
-    }
-
-    const policy: ActivationPolicy = Object.freeze({
-        permissions: Object.freeze(manifestResult.manifest.permissions.map((permission) => permission.capability)),
-        permissionDeclarations: Object.freeze([...manifestResult.manifest.permissions]),
-        optionalPermissionDeclarations: Object.freeze([...(manifestResult.manifest.optionalPermissions ?? [])]),
-        runtimeCapabilities: Object.freeze([...manifestResult.manifest.runtime.capabilities]),
-        declaredBackendIds: readDeclaredBackendIds(manifestResult.manifest.contributes),
-        declaredActionIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'actions'),
-        declaredToolIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'tools'),
-        declaredCommandIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'commands'),
-        declaredHookIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'hooks'),
-        declaredLifecycleHandlerIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'lifecycleHandlers'),
-        declaredLifecycleHandlers: readDeclaredLifecycleHandlers(manifestResult.manifest.id, manifestResult.manifest.contributes),
-        declaredNotificationCategoryIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'notifications'),
-        declaredNotificationChannelIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'notificationChannels'),
-        declaredEventIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'events'),
-        declaredEventDeclarations: readDeclaredEventContributions(manifestResult.manifest.contributes),
-        declaredScmHostingProviderIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'scmHostingProviders'),
-        declaredScmBackendIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'scmBackends'),
-        declaredRequestInterceptorIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'requestInterceptors'),
-        declaredMcpServerIds: readDeclaredNestedContributionIds(manifestResult.manifest.contributes, 'mcp', 'servers'),
-        declaredMcpDiscoveryProviderIds: readDeclaredNestedContributionIds(manifestResult.manifest.contributes, 'mcp', 'discoveryProviders'),
-        declaredRequestInterceptors: readDeclaredRequestInterceptorContributions(manifestResult.manifest.contributes),
-        systemTools: readDeclaredSystemToolContributions(manifestResult.manifest.contributes),
-    });
-    cache.set(target.manifestPath, policy);
-    return { ok: true, policy };
-}
-
-function toResolvedActionContribution(
-    target: ActivationTarget,
-    definition: PluginApiActionRegistration,
-): ResolvedActionContribution {
-    const declaredSurfaces = new Set(definition.surfaces ?? []);
-    const surfaces = {
-        ui: declaredSurfaces.has('settings')
-            || declaredSurfaces.has('agentSettings')
-            || declaredSurfaces.has('backendSettings')
-            || declaredSurfaces.has('sessionMenu')
-            || declaredSurfaces.has('executionRunMenu')
-            || declaredSurfaces.has('commandPalette'),
-        voice: false,
-        session_agent: declaredSurfaces.has('agentTool'),
-        mcp: false,
-        cli: declaredSurfaces.has('cli'),
-        rpc: false,
-        sdk: false,
-    };
-    if (definition.surface) {
-        if (definition.surface === 'cli') {
-            surfaces.cli = true;
-        } else if (definition.surface === 'agentTool') {
-            surfaces.session_agent = true;
-        } else {
-            surfaces.ui = true;
-        }
-    }
-
-    const normalizedDescription = typeof definition.description === 'string'
-        ? definition.description.trim()
-        : '';
-
-    return {
-        ...resolveContributionMetadata(target),
-        definition: {
-            kindVersion: 1,
-            id: definition.id,
-            title: definition.title,
-            description: normalizedDescription.length > 0 ? normalizedDescription : null,
-            safety: definition.safety === 'safe' || definition.safety === undefined ? 'safe' : 'danger',
-            placements: [],
-            slash: null,
-            bindings: null,
-            examples: definition.examples ?? null,
-            surfaces,
-            inputHints: definition.inputHints ?? null,
-            inputSchema: definition.inputSchema ?? {},
-            ...(definition.outputSchema ? { outputSchema: definition.outputSchema } : {}),
-            ...(definition.compatibility ? { compatibility: definition.compatibility } : {}),
-        },
-    };
-}
-
-function toResolvedToolContribution(
-    target: ActivationTarget,
-    definition: PluginApiToolRegistration,
-): ResolvedToolContribution {
-    const normalizedDescription = typeof definition.description === 'string'
-        ? definition.description.trim()
-        : '';
-    const surfaces = {
-        cli: definition.surfaces?.cli === true,
-        mcp: definition.surfaces?.mcp === true,
-        session_agent: definition.surfaces?.session_agent === true,
-    };
-
-    return {
-        ...resolveContributionMetadata(target),
-        definition: {
-            kindVersion: 1,
-            id: definition.id,
-            name: definition.name,
-            title: definition.title,
-            description: normalizedDescription.length > 0 ? normalizedDescription : null,
-            safety: definition.safety ?? 'safe',
-            surfaces,
-            inputSchema: definition.inputSchema ?? {},
-            ...(definition.outputSchema ? { outputSchema: definition.outputSchema } : {}),
-            ...(definition.inputHints ? { inputHints: definition.inputHints } : {}),
-            ...(definition.compatibility ? { compatibility: definition.compatibility } : {}),
-            ...(definition.examples ? { examples: definition.examples } : {}),
-            actionId: definition.id,
-        },
-    };
-}
-
-function toSyntheticActionContributionFromTool(
-    target: ActivationTarget,
-    definition: PluginApiToolRegistration,
-): ResolvedActionContribution {
-    return {
-        ...resolveContributionMetadata(target),
-        definition: {
-            kindVersion: 1,
-            id: definition.id,
-            title: definition.title,
-            description: typeof definition.description === 'string' && definition.description.trim().length > 0
-                ? definition.description.trim()
-                : null,
-            safety: definition.safety ?? 'safe',
-            placements: [],
-            slash: null,
-            bindings: {
-                mcpToolName: definition.name,
-            },
-            examples: definition.examples ?? null,
-            surfaces: {
-                ui: false,
-                voice: false,
-                session_agent: definition.surfaces?.session_agent === true,
-                mcp: definition.surfaces?.mcp === true,
-                cli: definition.surfaces?.cli === true,
-                rpc: false,
-                sdk: false,
-            },
-            inputHints: definition.inputHints ?? null,
-            inputSchema: definition.inputSchema ?? {},
-            ...(definition.outputSchema ? { outputSchema: definition.outputSchema } : {}),
-            ...(definition.compatibility ? { compatibility: definition.compatibility } : {}),
-        },
-    };
-}
-
-function toResolvedCommandContribution(
-    target: ActivationTarget,
-    definition: PluginApiCommandRegistration,
-): ResolvedCommandContribution {
-    return {
-        ...resolveContributionMetadata(target),
-        definition: {
-            kindVersion: 1,
-            id: definition.id,
-            command: definition.command,
-            ...(definition.rootHelpLabel ? { rootHelpLabel: definition.rootHelpLabel } : {}),
-            ...(definition.rootHelpDescription ? { rootHelpDescription: definition.rootHelpDescription } : {}),
-            ...(definition.rootHelpDetail ? { rootHelpDetail: definition.rootHelpDetail } : {}),
-            allowTmux: definition.allowTmux,
-            ...(definition.visibility ? { visibility: definition.visibility } : {}),
-            ...(definition.featureGate ? { featureGate: definition.featureGate } : {}),
-            actionId: definition.actionId ?? definition.id,
-        },
-    };
-}
-
-function toSyntheticActionContributionFromCommand(
-    target: ActivationTarget,
-    definition: PluginApiCommandRegistration,
-): ResolvedActionContribution {
-    return {
-        ...resolveContributionMetadata(target),
-        definition: {
-            kindVersion: 1,
-            id: definition.actionId ?? definition.id,
-            title: definition.rootHelpLabel ?? definition.command,
-            description: definition.rootHelpDescription ?? null,
-            safety: 'safe',
-            placements: [],
-            slash: null,
-            bindings: null,
-            examples: null,
-            surfaces: {
-                ui: false,
-                voice: false,
-                session_agent: false,
-                mcp: false,
-                cli: true,
-                rpc: false,
-                sdk: false,
-            },
-            inputHints: null,
-            inputSchema: {
-                type: 'object',
-                properties: {
-                    argv: {
-                        type: 'array',
-                    },
-                    rawArgv: {
-                        type: 'array',
-                    },
-                },
-                additionalProperties: true,
-            },
-        },
-    };
-}
-
-function toResolvedLifecycleHandlerContribution(
-    target: ActivationTarget,
-    definition: PluginApiLifecycleHandlerRegistration,
-    index: number,
-): ResolvedLifecycleHandlerContribution {
-    return {
-        ...resolveContributionMetadata(target),
-        definition: {
-            kindVersion: 1,
-            id: definition.id?.trim().length ? definition.id.trim() : `${target.pluginId}:${definition.event}:${index}`,
-            event: definition.event,
-            priority: definition.priority ?? 0,
-        },
-    };
 }
 
 async function dispatchLifecycleHandlers(params: Readonly<{
@@ -845,15 +246,26 @@ async function dispatchLifecycleHandlers(params: Readonly<{
     }
 }
 
+function readPluginHandlerServices(ctx: PluginContextV1): PluginHandlerServicesV1 {
+    return Object.freeze({
+        storage: ctx.storage,
+        settings: ctx.settings,
+        logger: ctx.logger,
+        events: ctx.events,
+    });
+}
+
 export async function activatePluginRuntimeRegistry(params: Readonly<{
     contributes: ResolvedContributionRegistry;
     generation: number;
+    happyHomeDir?: string;
     pluginIds?: readonly string[];
     resolveActivationSource?: (target: ActivationTarget) => PluginActivationSource<PluginDaemonModuleNamespace> | null;
     resolveTrustedOptionalPermissionGrants?: ResolveTrustedOptionalPluginPermissionGrants;
 }>): Promise<ActivatedPluginRuntimeRegistry> {
     const diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]> = {};
     const allowedPluginIds = params.pluginIds ? new Set(params.pluginIds) : null;
+    const activationTargets = collectActivationTargets(params.contributes);
     const activationPolicyCache = new Map<string, ActivationPolicy>();
     const activatedEntries: Array<{
         pluginId: string;
@@ -863,7 +275,8 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         manifestDigest: string;
         daemonEntryPath: string;
         sourceSpec?: PluginSourceSpecV1;
-        backendEngines: readonly PluginApiBackendEngineRegistration[];
+        agentRuntimes: readonly PluginApiAgentRuntimeRegistration[];
+        daemonAuthBridges: readonly PluginApiDaemonAuthBridgeRegistration[];
         actions: readonly PluginApiActionRegistration[];
         tools: readonly PluginApiToolRegistration[];
         commands: readonly PluginApiCommandRegistration[];
@@ -886,14 +299,21 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         systemTools: readonly PluginSystemToolContributionV1[];
         declaredEventIds: readonly string[];
         declaredEventDeclarations: readonly ParsedPluginEventContributionV1[];
+        declaredActions: readonly PluginActionContributionV2[];
+        declaredTools: readonly PluginToolContributionV2[];
+        declaredCommands: readonly PluginCommandContributionV2[];
         hooks: readonly PluginApiHookRegistration[];
         lifecycleHandlers: readonly PluginApiLifecycleHandlerRegistration[];
+        handlerServices: PluginHandlerServicesV1;
+        dispose: () => Promise<void>;
     }> = [];
-    const disposers: Array<() => Promise<void>> = [];
     const runtimeDisposableRegistriesByPluginId = new Map<string, ReturnType<typeof createPluginDisposableRegistry>>();
 
-    for (const target of collectActivationTargets(params.contributes)) {
+    for (const target of activationTargets) {
         if (allowedPluginIds && !allowedPluginIds.has(target.pluginId)) {
+            continue;
+        }
+        if (!allowedPluginIds && !shouldActivateTargetAtStartup(target)) {
             continue;
         }
         diagnosticsByPluginId[target.pluginId] = diagnosticsByPluginId[target.pluginId] ?? [];
@@ -970,6 +390,12 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         const activePermissions = Object.freeze(
             Array.from(new Set(activePermissionDeclarations.map((permission) => permission.capability))),
         );
+        const declaredEventIds = activationSource.kind === 'bundled'
+            ? bundledPolicy!.declaredEventIds
+            : activationPolicy!.policy.declaredEventIds;
+        const declaredEventDeclarations = activationSource.kind === 'bundled'
+            ? bundledPolicy!.declaredEventDeclarations
+            : activationPolicy!.policy.declaredEventDeclarations;
 
         const host = createPluginApiHost({
             pluginId: target.pluginId,
@@ -977,12 +403,15 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 ? bundledPolicy!.runtimeCapabilities
                 : activationPolicy!.policy.runtimeCapabilities,
             permissions: activePermissions,
-            declaredBackendIds: activationSource.kind === 'bundled'
-                ? bundledPolicy!.declaredBackendIds
-                : activationPolicy!.policy.declaredBackendIds,
+            declaredAgentIds: activationSource.kind === 'bundled'
+                ? bundledPolicy!.declaredAgentIds
+                : activationPolicy!.policy.declaredAgentIds,
             declaredActionIds: activationSource.kind === 'bundled'
                 ? bundledPolicy!.declaredActionIds
                 : activationPolicy!.policy.declaredActionIds,
+            declaredActions: activationSource.kind === 'bundled'
+                ? bundledPolicy!.declaredActions
+                : activationPolicy!.policy.declaredActions,
             declaredToolIds: activationSource.kind === 'bundled'
                 ? bundledPolicy!.declaredToolIds
                 : activationPolicy!.policy.declaredToolIds,
@@ -1001,9 +430,9 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             declaredNotificationCategoryIds: activationSource.kind === 'bundled'
                 ? bundledPolicy!.declaredNotificationCategoryIds
                 : activationPolicy!.policy.declaredNotificationCategoryIds,
-        declaredNotificationChannelIds: activationSource.kind === 'bundled'
-            ? bundledPolicy!.declaredNotificationChannelIds
-            : activationPolicy!.policy.declaredNotificationChannelIds,
+            declaredNotificationChannelIds: activationSource.kind === 'bundled'
+                ? bundledPolicy!.declaredNotificationChannelIds
+                : activationPolicy!.policy.declaredNotificationChannelIds,
             declaredScmHostingProviderIds: activationSource.kind === 'bundled'
                 ? bundledPolicy!.declaredScmHostingProviderIds
                 : activationPolicy!.policy.declaredScmHostingProviderIds,
@@ -1021,7 +450,13 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 : activationPolicy!.policy.declaredMcpDiscoveryProviderIds,
         });
         try {
-            const disposable = await activationExport.activate(host.api);
+            const disposable = await runWithOptionalTimeout(
+                DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS,
+                async () => await activationExport.activate(host.api),
+                () => new Error(
+                    `Plugin '${target.pluginId}' activation timed out after ${DEFAULT_PLUGIN_ACTIVATION_TIMEOUT_MS}ms`,
+                ),
+            );
             if (disposable) {
                 host.addDisposable(disposable);
             }
@@ -1039,8 +474,13 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             continue;
         }
 
-        disposers.push(host.dispose);
         const registrations = host.registrations();
+        const pluginContext = createHostPluginContextV1({
+            happyHomeDir: params.happyHomeDir,
+            backendId: target.pluginId,
+            contributes: params.contributes,
+        });
+        const handlerServices = readPluginHandlerServices(pluginContext);
         appendDiagnostics(diagnosticsByPluginId, target.pluginId, registrations.diagnostics);
         activatedEntries.push({
             pluginId: target.pluginId,
@@ -1050,7 +490,8 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             manifestDigest: target.manifestDigest,
             daemonEntryPath: target.daemonEntryPath,
             sourceSpec: target.sourceSpec,
-            backendEngines: registrations.backendEngines,
+            agentRuntimes: registrations.agentRuntimes,
+            daemonAuthBridges: registrations.daemonAuthBridges,
             actions: registrations.actions,
             tools: registrations.tools,
             commands: registrations.commands,
@@ -1077,19 +518,31 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             systemTools: activationSource.kind === 'bundled'
                 ? bundledPolicy!.systemTools
                 : activationPolicy!.policy.systemTools,
-            declaredEventIds: activationSource.kind === 'bundled'
-                ? bundledPolicy!.declaredEventIds
-                : activationPolicy!.policy.declaredEventIds,
-            declaredEventDeclarations: activationSource.kind === 'bundled'
-                ? bundledPolicy!.declaredEventDeclarations
-                : activationPolicy!.policy.declaredEventDeclarations,
+            declaredEventIds,
+            declaredEventDeclarations,
+            declaredActions: activationSource.kind === 'bundled'
+                ? bundledPolicy!.declaredActions
+                : activationPolicy!.policy.declaredActions,
+            declaredTools: activationSource.kind === 'bundled'
+                ? bundledPolicy!.declaredTools
+                : activationPolicy!.policy.declaredTools,
+            declaredCommands: activationSource.kind === 'bundled'
+                ? bundledPolicy!.declaredCommands
+                : activationPolicy!.policy.declaredCommands,
             hooks: registrations.hooks,
             lifecycleHandlers: registrations.lifecycleHandlers,
+            handlerServices,
+            dispose: host.dispose,
         });
     }
 
+    let lifecycleState: 'active' | 'disposing' | 'disposed' = 'active';
     const handlerRegistry = createActivatedHandlerRegistry({
         entries: activatedEntries,
+        lifetime: {
+            isHandlerActive: () => lifecycleState === 'active',
+            isLifecycleHandlerActive: () => lifecycleState !== 'disposed',
+        },
     });
     await dispatchLifecycleHandlers({
         diagnosticsByPluginId,
@@ -1097,10 +550,13 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         generation: params.generation,
         handlers: handlerRegistry.lifecycleHandlersByEvent.get('activated') ?? [],
     });
-    let disposed = false;
-    const backendEnginesByBackendId = new Map<string, Readonly<{
+    const agentRuntimesByAgentId = new Map<string, Readonly<{
         pluginId: string;
-        registration: PluginApiBackendEngineRegistration;
+        registration: PluginApiAgentRuntimeRegistration;
+    }>>();
+    const daemonAuthBridgesByServiceId = new Map<string, Readonly<{
+        pluginId: string;
+        registration: PluginApiDaemonAuthBridgeRegistration;
     }>>();
     const notificationCategoriesById = new Map<string, Readonly<{
         pluginId: string;
@@ -1123,21 +579,37 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         registration: PluginApiScmBackendRegistration;
     }>[] = [];
     for (const entry of activatedEntries) {
-        for (const registration of entry.backendEngines) {
-            const existing = backendEnginesByBackendId.get(registration.backendId) ?? null;
+        for (const registration of entry.agentRuntimes) {
+            const existing = agentRuntimesByAgentId.get(registration.agentId) ?? null;
             if (existing) {
                 appendDiagnostic(diagnosticsByPluginId, entry.pluginId, {
-                    code: 'plugin_backend_engine_duplicate_backend_id',
-                    message: `Plugin '${entry.pluginId}' registered a backend engine for '${registration.backendId}', but it is already registered by plugin '${existing.pluginId}'`,
+                    code: 'plugin_agent_runtime_duplicate_agent_id',
+                    message: `Plugin '${entry.pluginId}' registered an agent runtime for '${registration.agentId}', but it is already registered by plugin '${existing.pluginId}'`,
                 });
                 appendDiagnostic(diagnosticsByPluginId, existing.pluginId, {
-                    code: 'plugin_backend_engine_duplicate_backend_id',
-                    message: `Plugin '${existing.pluginId}' registered a backend engine for '${registration.backendId}', but it is also registered by plugin '${entry.pluginId}'`,
+                    code: 'plugin_agent_runtime_duplicate_agent_id',
+                    message: `Plugin '${existing.pluginId}' registered an agent runtime for '${registration.agentId}', but it is also registered by plugin '${entry.pluginId}'`,
                 });
                 continue;
             }
 
-            backendEnginesByBackendId.set(registration.backendId, Object.freeze({ pluginId: entry.pluginId, registration }));
+            agentRuntimesByAgentId.set(registration.agentId, Object.freeze({ pluginId: entry.pluginId, registration }));
+        }
+        for (const registration of entry.daemonAuthBridges) {
+            const existing = daemonAuthBridgesByServiceId.get(registration.serviceId) ?? null;
+            if (existing) {
+                appendDiagnostic(diagnosticsByPluginId, entry.pluginId, {
+                    code: 'plugin_daemon_auth_bridge_duplicate_service_id',
+                    message: `Plugin '${entry.pluginId}' registered daemon auth bridge for service '${registration.serviceId}', but it is already registered by plugin '${existing.pluginId}'`,
+                });
+                appendDiagnostic(diagnosticsByPluginId, existing.pluginId, {
+                    code: 'plugin_daemon_auth_bridge_duplicate_service_id',
+                    message: `Plugin '${existing.pluginId}' registered daemon auth bridge for service '${registration.serviceId}', but it is also registered by plugin '${entry.pluginId}'`,
+                });
+                continue;
+            }
+
+            daemonAuthBridgesByServiceId.set(registration.serviceId, Object.freeze({ pluginId: entry.pluginId, registration }));
         }
         for (const registration of entry.notificationCategories) {
             const existing = notificationCategoriesById.get(registration.id) ?? null;
@@ -1206,160 +678,426 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
             scmBackendsById.set(registration.id, ownerScopedRegistration);
         }
     }
-    const networkAllowedUrlOriginsByPluginId = collectScopedPermissionMap(
+    const networkAllowedUrlOriginsByPluginId = new Map(collectScopedPermissionMap(
         activatedEntries,
         'network',
         normalizeNetworkPermissionOrigin,
-    );
-    const processSpawnAllowedPathsByPluginId = collectScopedPermissionMap(
+    ));
+    const processSpawnAllowedPathsByPluginId = new Map(collectScopedPermissionMap(
         activatedEntries,
         'process.spawn',
         normalizeProcessSpawnPermissionPath,
-    );
-    const envAllowedNamesByPluginId = collectScopedPermissionMap(
+    ));
+    const envAllowedNamesByPluginId = new Map(collectScopedPermissionMap(
         activatedEntries,
         'env',
         normalizeEnvPermissionName,
-    );
-    const filesystemReadAllowedPathsByPluginId = collectOptionalScopedPermissionMap(
+    ));
+    const filesystemReadAllowedPathsByPluginId = new Map(collectOptionalScopedPermissionMap(
         activatedEntries,
         'filesystem.read',
         normalizeFilesystemPermissionPath,
-    );
-    const filesystemWriteAllowedPathsByPluginId = collectOptionalScopedPermissionMap(
+    ));
+    const filesystemWriteAllowedPathsByPluginId = new Map(collectOptionalScopedPermissionMap(
         activatedEntries,
         'filesystem.write',
         normalizeFilesystemPermissionPath,
-    );
+    ));
+    const actionHandlersByActionId = new Map(handlerRegistry.actionHandlersByActionId);
+    const hookHandlersByHookId = new Map(handlerRegistry.hookHandlersByHookId);
+    const lifecycleHandlersByEvent = new Map(handlerRegistry.lifecycleHandlersByEvent);
+    const requestInterceptors = activatedEntries.flatMap((entry) => {
+        const contributionsById = new Map(entry.requestInterceptorContributions.map((contribution) => [contribution.id, contribution]));
+        return entry.requestInterceptors.flatMap((registration) => {
+            const contribution = contributionsById.get(registration.id);
+            if (!contribution) {
+                return [];
+            }
+            return [Object.freeze({
+                pluginId: entry.pluginId,
+                contribution,
+                registration,
+            })];
+        });
+    });
+    const mcpServers = activatedEntries.flatMap((entry) => entry.mcpServers.map((registration) => Object.freeze({
+        pluginId: entry.pluginId,
+        registration,
+    })));
+    const mcpDiscoveryProviders = activatedEntries.flatMap((entry) => entry.mcpDiscoveryProviders.map((registration) => Object.freeze({
+        pluginId: entry.pluginId,
+        registration,
+    })));
+    const networkAllowedPluginIds = new Set(activatedEntries.flatMap((entry) => (
+        entry.permissions.includes('network') ? [entry.pluginId] : []
+    )));
+    const systemToolDefinitionsByPluginId = new Map(activatedEntries.map((entry) => [
+        entry.pluginId,
+        Object.freeze([...entry.systemTools]),
+    ]));
+    const permissionsByPluginId = new Map(activatedEntries.map((entry) => [
+        entry.pluginId,
+        new Set(entry.permissions),
+    ]));
+    const permissionDeclarationsByPluginId = new Map(activatedEntries.map((entry) => [
+        entry.pluginId,
+        Object.freeze([...entry.permissionDeclarations]),
+    ]));
+    const requiredPermissionsByPluginId = new Map(activatedEntries.map((entry) => [
+        entry.pluginId,
+        new Set(entry.requiredPermissions),
+    ]));
+    const requiredPermissionDeclarationsByPluginId = new Map(activatedEntries.map((entry) => [
+        entry.pluginId,
+        Object.freeze([...entry.requiredPermissionDeclarations]),
+    ]));
+    const optionalPermissionDeclarationsByPluginId = new Map(activatedEntries.map((entry) => [
+        entry.pluginId,
+        Object.freeze([...entry.optionalPermissionDeclarations]),
+    ]));
+    const trustedOptionalPermissionsByPluginId = new Map(activatedEntries.map((entry) => [
+        entry.pluginId,
+        new Set(entry.trustedOptionalPermissions),
+    ]));
+    const trustedOptionalPermissionDeclarationsByPluginId = new Map(activatedEntries.map((entry) => [
+        entry.pluginId,
+        Object.freeze([...entry.trustedOptionalPermissionDeclarations]),
+    ]));
+    const runtimeCapabilitiesByPluginId = new Map(activatedEntries.map((entry) => [
+        entry.pluginId,
+        new Set(entry.runtimeCapabilities),
+    ]));
+    const eventDeclarationsByPluginId = new Map(activatedEntries.map((entry) => [
+        entry.pluginId,
+        Object.freeze([...entry.declaredEventDeclarations]),
+    ]));
+    const eventSubscriptionPermissionsByPluginId = new Map(activatedEntries.map((entry) => [
+        entry.pluginId,
+        new Set(entry.permissions),
+    ]));
+    const actions = activatedEntries.flatMap((entry) => {
+        const declaredActionsById = new Map(entry.declaredActions.map((definition) => [definition.id, definition]));
+        const declaredToolsById = new Map(entry.declaredTools.map((definition) => [definition.id, definition]));
+        const declaredCommandsById = new Map(entry.declaredCommands.map((definition) => [definition.id, definition]));
+        return [
+            ...entry.actions.flatMap((registration) => {
+                const declaration = declaredActionsById.get(registration.id);
+                return declaration ? [toResolvedActionContribution(entry, declaration)] : [];
+            }),
+            ...entry.tools.flatMap((registration) => {
+                const declaration = declaredToolsById.get(registration.id);
+                return declaration ? [toSyntheticActionContributionFromTool(entry, declaration)] : [];
+            }),
+            ...entry.commands.flatMap((registration) => {
+                const declaration = declaredCommandsById.get(registration.id);
+                return declaration ? [toSyntheticActionContributionFromCommand(entry, declaration)] : [];
+            }),
+        ];
+    });
+    const tools = activatedEntries.flatMap((entry) => {
+        const declaredToolsById = new Map(entry.declaredTools.map((definition) => [definition.id, definition]));
+        return entry.tools.flatMap((registration) => {
+            const declaration = declaredToolsById.get(registration.id);
+            return declaration ? [toResolvedToolContribution(entry, declaration)] : [];
+        });
+    });
+    const commands = activatedEntries.flatMap((entry) => {
+        const declaredCommandsById = new Map(entry.declaredCommands.map((definition) => [definition.id, definition]));
+        return entry.commands.flatMap((registration) => {
+            const declaration = declaredCommandsById.get(registration.id);
+            return declaration ? [toResolvedCommandContribution(entry, declaration)] : [];
+        });
+    });
+    const lifecycleHandlers = activatedEntries.flatMap((entry) => entry.lifecycleHandlers.map(
+        (definition) => toResolvedLifecycleHandlerContribution(entry, definition),
+    ));
+    const activatedPluginIds = new Set(activatedEntries.map((entry) => entry.pluginId));
+    const failedLazyActivationPluginIds = new Set<string>();
+    const lazyActivationPromisesByPluginId = new Map<string, Promise<PluginActivationDemandResult>>();
+    const lazyActivatedRegistries: ActivatedPluginRuntimeRegistry[] = [];
+
     const addRuntimeDisposable = (pluginId: string, disposable: PluginDisposable): PluginDisposable => {
         const registry = runtimeDisposableRegistriesByPluginId.get(pluginId) ?? createPluginDisposableRegistry();
         runtimeDisposableRegistriesByPluginId.set(pluginId, registry);
         return registry.add(disposable);
     };
 
+    function mergeHandlerMaps(registry: ActivatedHandlerRegistry): void {
+        for (const [actionId, handler] of registry.actionHandlersByActionId.entries()) {
+            actionHandlersByActionId.set(actionId, handler);
+        }
+        for (const [hookId, handlers] of registry.hookHandlersByHookId.entries()) {
+            const existing = hookHandlersByHookId.get(hookId) ?? [];
+            hookHandlersByHookId.set(
+                hookId,
+                Object.freeze([...existing, ...handlers].sort((left, right) => (
+                    left.priority - right.priority
+                    || left.pluginId.localeCompare(right.pluginId)
+                    || left.registrationIndex - right.registrationIndex
+                    || left.manifestPath.localeCompare(right.manifestPath)
+                    || left.exportName.localeCompare(right.exportName)
+                    || left.daemonEntryPath.localeCompare(right.daemonEntryPath)
+                ))),
+            );
+        }
+        for (const [event, handlers] of registry.lifecycleHandlersByEvent.entries()) {
+            const existing = lifecycleHandlersByEvent.get(event) ?? [];
+            lifecycleHandlersByEvent.set(
+                event,
+                Object.freeze([...existing, ...handlers].sort((left, right) => (
+                    right.priority - left.priority
+                    || left.pluginId.localeCompare(right.pluginId)
+                    || left.registrationId.localeCompare(right.registrationId)
+                    || left.manifestPath.localeCompare(right.manifestPath)
+                    || left.daemonEntryPath.localeCompare(right.daemonEntryPath)
+                ))),
+            );
+        }
+    }
+
+    function mergeMapEntries<TKey, TValue>(target: Map<TKey, TValue>, source: ReadonlyMap<TKey, TValue>): void {
+        for (const [key, value] of source.entries()) {
+            target.set(key, value);
+        }
+    }
+
+    function mergeSetEntries<TValue>(target: Set<TValue>, source: ReadonlySet<TValue>): void {
+        for (const value of source) {
+            target.add(value);
+        }
+    }
+
+    function mergeDiagnosticsFromRegistry(registry: ActivatedPluginRuntimeRegistry, pluginId: string): void {
+        const diagnostics = registry.pluginDiagnosticsByPluginId[pluginId] ?? [];
+        diagnosticsByPluginId[pluginId] = diagnosticsByPluginId[pluginId] ?? [];
+        for (const diagnostic of diagnostics) {
+            if (!diagnosticsByPluginId[pluginId].some((existing) => (
+                existing.code === diagnostic.code && existing.message === diagnostic.message
+            ))) {
+                diagnosticsByPluginId[pluginId].push(diagnostic);
+            }
+        }
+    }
+
+    function appendLazyActivationUnavailableDiagnostic(pluginId: string): void {
+        const message = `Plugin '${pluginId}' activation skipped because the plugin runtime registry is disposed`;
+        if (!diagnosticsByPluginId[pluginId]?.some((diagnostic) => (
+            diagnostic.code === 'plugin_activation_failed' && diagnostic.message === message
+        ))) {
+            appendDiagnostic(diagnosticsByPluginId, pluginId, {
+                code: 'plugin_activation_failed',
+                message,
+            });
+        }
+        failedLazyActivationPluginIds.add(pluginId);
+    }
+
+    async function mergeActivatedRegistry(registry: ActivatedPluginRuntimeRegistry, pluginId: string): Promise<void> {
+        mergeHandlerMaps(registry);
+        mergeMapEntries(agentRuntimesByAgentId, registry.agentRuntimesByAgentId);
+        mergeMapEntries(daemonAuthBridgesByServiceId, registry.daemonAuthBridgesByServiceId);
+        mergeMapEntries(notificationCategoriesById, registry.notificationCategoriesById);
+        mergeMapEntries(notificationChannelsById, registry.notificationChannelsById);
+        mergeMapEntries(scmHostingProvidersById, registry.scmHostingProvidersById);
+        mergeMapEntries(scmBackendsById, registry.scmBackendsById);
+        scmBackendRegistrations.push(...registry.scmBackendRegistrations);
+        requestInterceptors.push(...registry.requestInterceptors);
+        mcpServers.push(...registry.mcpServers);
+        mcpDiscoveryProviders.push(...registry.mcpDiscoveryProviders);
+        mergeSetEntries(networkAllowedPluginIds, registry.networkAllowedPluginIds);
+        mergeMapEntries(networkAllowedUrlOriginsByPluginId, registry.networkAllowedUrlOriginsByPluginId);
+        mergeMapEntries(processSpawnAllowedPathsByPluginId, registry.processSpawnAllowedPathsByPluginId);
+        mergeMapEntries(systemToolDefinitionsByPluginId, registry.systemToolDefinitionsByPluginId);
+        mergeMapEntries(envAllowedNamesByPluginId, registry.envAllowedNamesByPluginId);
+        mergeMapEntries(filesystemReadAllowedPathsByPluginId, registry.filesystemReadAllowedPathsByPluginId);
+        mergeMapEntries(filesystemWriteAllowedPathsByPluginId, registry.filesystemWriteAllowedPathsByPluginId);
+        mergeMapEntries(permissionsByPluginId, registry.permissionsByPluginId);
+        mergeMapEntries(permissionDeclarationsByPluginId, registry.permissionDeclarationsByPluginId);
+        mergeMapEntries(requiredPermissionsByPluginId, registry.requiredPermissionsByPluginId);
+        mergeMapEntries(requiredPermissionDeclarationsByPluginId, registry.requiredPermissionDeclarationsByPluginId);
+        mergeMapEntries(optionalPermissionDeclarationsByPluginId, registry.optionalPermissionDeclarationsByPluginId);
+        mergeMapEntries(trustedOptionalPermissionsByPluginId, registry.trustedOptionalPermissionsByPluginId);
+        mergeMapEntries(trustedOptionalPermissionDeclarationsByPluginId, registry.trustedOptionalPermissionDeclarationsByPluginId);
+        mergeMapEntries(runtimeCapabilitiesByPluginId, registry.runtimeCapabilitiesByPluginId);
+        mergeMapEntries(eventDeclarationsByPluginId, registry.eventDeclarationsByPluginId);
+        mergeMapEntries(eventSubscriptionPermissionsByPluginId, registry.eventSubscriptionPermissionsByPluginId);
+        actions.push(...registry.actions);
+        tools.push(...registry.tools);
+        commands.push(...registry.commands);
+        lifecycleHandlers.push(...registry.lifecycleHandlers);
+        mergeDiagnosticsFromRegistry(registry, pluginId);
+        if (registry.activatedPluginIds.has(pluginId)) {
+            activatedPluginIds.add(pluginId);
+            lazyActivatedRegistries.push(registry);
+        } else {
+            failedLazyActivationPluginIds.add(pluginId);
+        }
+    }
+
+    async function activatePluginIdForDemand(pluginId: string): Promise<PluginActivationDemandResult> {
+        if (lifecycleState !== 'active') {
+            appendLazyActivationUnavailableDiagnostic(pluginId);
+            return {
+                pluginId,
+                diagnostics: Object.freeze([...(diagnosticsByPluginId[pluginId] ?? [])]),
+            };
+        }
+        if (activatedPluginIds.has(pluginId) || failedLazyActivationPluginIds.has(pluginId)) {
+            return {
+                pluginId,
+                diagnostics: Object.freeze([...(diagnosticsByPluginId[pluginId] ?? [])]),
+            };
+        }
+        const existing = lazyActivationPromisesByPluginId.get(pluginId);
+        if (existing) {
+            return await existing;
+        }
+
+        const promise = (async (): Promise<PluginActivationDemandResult> => {
+            const registry = await activatePluginRuntimeRegistry({
+                contributes: params.contributes,
+                generation: params.generation,
+                happyHomeDir: params.happyHomeDir,
+                pluginIds: [pluginId],
+                resolveActivationSource: params.resolveActivationSource,
+                resolveTrustedOptionalPermissionGrants: params.resolveTrustedOptionalPermissionGrants,
+            });
+            if (lifecycleState !== 'active') {
+                appendLazyActivationUnavailableDiagnostic(pluginId);
+                await registry.dispose({ timeoutMs: 5_000 }).catch((error: unknown) => {
+                    logger.warn('[PLUGIN RUNTIME] Failed to dispose late lazy activation after registry disposal', {
+                        pluginId,
+                        error: error instanceof Error ? error.message : String(error),
+                    });
+                });
+                return {
+                    pluginId,
+                    diagnostics: Object.freeze([...(diagnosticsByPluginId[pluginId] ?? [])]),
+                };
+            }
+            await mergeActivatedRegistry(registry, pluginId);
+            return {
+                pluginId,
+                diagnostics: Object.freeze([...(diagnosticsByPluginId[pluginId] ?? [])]),
+            };
+        })();
+        lazyActivationPromisesByPluginId.set(pluginId, promise);
+        try {
+            return await promise;
+        } finally {
+            lazyActivationPromisesByPluginId.delete(pluginId);
+        }
+    }
+
+    async function activatePluginsByEvent(activationEvent: string): Promise<readonly PluginActivationDemandResult[]> {
+        const pluginIds = [...new Set(
+            activationTargets
+                .filter((target) => activationTargetMatchesEvent(target, activationEvent))
+                .map((target) => target.pluginId),
+        )].sort();
+        return Object.freeze(await Promise.all(pluginIds.map((pluginId) => activatePluginIdForDemand(pluginId))));
+    }
+
     return {
         generation: params.generation,
-        backendEnginesByBackendId,
+        agentRuntimesByAgentId,
+        daemonAuthBridgesByServiceId,
         notificationCategoriesById,
         notificationChannelsById,
         scmHostingProvidersById,
         scmBackendsById,
-        scmBackendRegistrations: Object.freeze(scmBackendRegistrations),
-        requestInterceptors: Object.freeze(activatedEntries.flatMap((entry) => {
-            const contributionsById = new Map(entry.requestInterceptorContributions.map((contribution) => [contribution.id, contribution]));
-            return entry.requestInterceptors.flatMap((registration) => {
-                const contribution = contributionsById.get(registration.id);
-                if (!contribution) {
-                    return [];
-                }
-                return [Object.freeze({
-                    pluginId: entry.pluginId,
-                    contribution,
-                    registration,
-                })];
-            });
-        })),
-        mcpServers: Object.freeze(activatedEntries.flatMap((entry) => entry.mcpServers.map((registration) => Object.freeze({
-            pluginId: entry.pluginId,
-            registration,
-        })))),
-        mcpDiscoveryProviders: Object.freeze(activatedEntries.flatMap((entry) => entry.mcpDiscoveryProviders.map((registration) => Object.freeze({
-            pluginId: entry.pluginId,
-            registration,
-        })))),
-        networkAllowedPluginIds: new Set(activatedEntries.flatMap((entry) => (
-            entry.permissions.includes('network') ? [entry.pluginId] : []
-        ))),
+        scmBackendRegistrations,
+        requestInterceptors,
+        mcpServers,
+        mcpDiscoveryProviders,
+        networkAllowedPluginIds,
         networkAllowedUrlOriginsByPluginId,
         processSpawnAllowedPathsByPluginId,
-        systemToolDefinitionsByPluginId: new Map(activatedEntries.map((entry) => [
-            entry.pluginId,
-            Object.freeze([...entry.systemTools]),
-        ])),
+        systemToolDefinitionsByPluginId,
         envAllowedNamesByPluginId,
         filesystemReadAllowedPathsByPluginId,
         filesystemWriteAllowedPathsByPluginId,
-        permissionsByPluginId: new Map(activatedEntries.map((entry) => [
-            entry.pluginId,
-            new Set(entry.permissions),
-        ])),
-        permissionDeclarationsByPluginId: new Map(activatedEntries.map((entry) => [
-            entry.pluginId,
-            Object.freeze([...entry.permissionDeclarations]),
-        ])),
-        requiredPermissionsByPluginId: new Map(activatedEntries.map((entry) => [
-            entry.pluginId,
-            new Set(entry.requiredPermissions),
-        ])),
-        requiredPermissionDeclarationsByPluginId: new Map(activatedEntries.map((entry) => [
-            entry.pluginId,
-            Object.freeze([...entry.requiredPermissionDeclarations]),
-        ])),
-        optionalPermissionDeclarationsByPluginId: new Map(activatedEntries.map((entry) => [
-            entry.pluginId,
-            Object.freeze([...entry.optionalPermissionDeclarations]),
-        ])),
-        trustedOptionalPermissionsByPluginId: new Map(activatedEntries.map((entry) => [
-            entry.pluginId,
-            new Set(entry.trustedOptionalPermissions),
-        ])),
-        trustedOptionalPermissionDeclarationsByPluginId: new Map(activatedEntries.map((entry) => [
-            entry.pluginId,
-            Object.freeze([...entry.trustedOptionalPermissionDeclarations]),
-        ])),
-        runtimeCapabilitiesByPluginId: new Map(activatedEntries.map((entry) => [
-            entry.pluginId,
-            new Set(entry.runtimeCapabilities),
-        ])),
-        eventDeclarationsByPluginId: new Map(activatedEntries.map((entry) => [
-            entry.pluginId,
-            Object.freeze([...entry.declaredEventDeclarations]),
-        ])),
-        eventSubscriptionPermissionsByPluginId: new Map(activatedEntries.map((entry) => [
-            entry.pluginId,
-            new Set(entry.permissions),
-        ])),
+        permissionsByPluginId,
+        permissionDeclarationsByPluginId,
+        requiredPermissionsByPluginId,
+        requiredPermissionDeclarationsByPluginId,
+        optionalPermissionDeclarationsByPluginId,
+        trustedOptionalPermissionsByPluginId,
+        trustedOptionalPermissionDeclarationsByPluginId,
+        runtimeCapabilitiesByPluginId,
+        eventDeclarationsByPluginId,
+        eventSubscriptionPermissionsByPluginId,
         runtimeCoreHandlersByBackendId: new Map(),
-        actions: Object.freeze(
-            activatedEntries.flatMap((entry) => [
-                ...entry.actions.map((definition) => toResolvedActionContribution(entry, definition)),
-                ...entry.tools.map((definition) => toSyntheticActionContributionFromTool(entry, definition)),
-                ...entry.commands.map((definition) => toSyntheticActionContributionFromCommand(entry, definition)),
-            ]),
-        ),
-        tools: Object.freeze(
-            activatedEntries.flatMap((entry) => entry.tools.map((definition) => toResolvedToolContribution(entry, definition))),
-        ),
-        commands: Object.freeze(
-            activatedEntries.flatMap((entry) => entry.commands.map((definition) => toResolvedCommandContribution(entry, definition))),
-        ),
-        lifecycleHandlers: Object.freeze(
-            activatedEntries.flatMap((entry) => entry.lifecycleHandlers.map(
-                (definition, index) => toResolvedLifecycleHandlerContribution(entry, definition, index),
-            )),
-        ),
-        actionHandlersByActionId: handlerRegistry.actionHandlersByActionId,
-        hookHandlersByHookId: handlerRegistry.hookHandlersByHookId,
-        lifecycleHandlersByEvent: handlerRegistry.lifecycleHandlersByEvent,
-        pluginDiagnosticsByPluginId: freezeDiagnostics(diagnosticsByPluginId),
+        actions,
+        tools,
+        commands,
+        lifecycleHandlers,
+        actionHandlersByActionId,
+        hookHandlersByHookId,
+        lifecycleHandlersByEvent,
+        pluginDiagnosticsByPluginId: diagnosticsByPluginId,
+        activatedPluginIds,
+        activatePluginsByEvent,
         addRuntimeDisposable,
-        async dispose() {
-            if (disposed) {
+        async dispose(disposeOptions = {}) {
+            if (lifecycleState !== 'active') {
                 return;
             }
-            disposed = true;
-            for (const registry of [...runtimeDisposableRegistriesByPluginId.values()].reverse()) {
-                await registry.dispose();
+            lifecycleState = 'disposing';
+            for (const registry of [...lazyActivatedRegistries].reverse()) {
+                await registry.dispose(disposeOptions);
             }
-            await dispatchLifecycleHandlers({
-                diagnosticsByPluginId,
-                event: 'deactivating',
-                generation: params.generation,
-                handlers: handlerRegistry.lifecycleHandlersByEvent.get('deactivating') ?? [],
-            });
-            for (const dispose of [...disposers].reverse()) {
-                await dispose();
+            for (const entry of [...activatedEntries].reverse()) {
+                const deactivatingOk = await runPluginDisposalStep({
+                    pluginId: entry.pluginId,
+                    phase: 'deactivating',
+                    options: disposeOptions,
+                    operation: async () => {
+                        await dispatchLifecycleHandlers({
+                            diagnosticsByPluginId,
+                            event: 'deactivating',
+                            generation: params.generation,
+                            handlers: (handlerRegistry.lifecycleHandlersByEvent.get('deactivating') ?? [])
+                                .filter((handler) => handler.pluginId === entry.pluginId),
+                        });
+                    },
+                });
+                const runtimeDisposableRegistry = runtimeDisposableRegistriesByPluginId.get(entry.pluginId);
+                const runtimeDisposablesOk = runtimeDisposableRegistry
+                    ? await runPluginDisposalStep({
+                        pluginId: entry.pluginId,
+                        phase: 'runtime_disposables',
+                        options: disposeOptions,
+                        operation: async () => {
+                            await runtimeDisposableRegistry.dispose();
+                        },
+                    })
+                    : true;
+                const registeredDisposablesOk = await runPluginDisposalStep({
+                    pluginId: entry.pluginId,
+                    phase: 'registered_disposables',
+                    options: disposeOptions,
+                    operation: entry.dispose,
+                });
+                if (!deactivatingOk || !runtimeDisposablesOk || !registeredDisposablesOk) {
+                    continue;
+                }
+                await runPluginDisposalStep({
+                    pluginId: entry.pluginId,
+                    phase: 'deactivated',
+                    options: disposeOptions,
+                    operation: async () => {
+                        await dispatchLifecycleHandlers({
+                            diagnosticsByPluginId,
+                            event: 'deactivated',
+                            generation: params.generation,
+                            handlers: (handlerRegistry.lifecycleHandlersByEvent.get('deactivated') ?? [])
+                                .filter((handler) => handler.pluginId === entry.pluginId),
+                        });
+                    },
+                });
             }
+            lifecycleState = 'disposed';
         },
     };
 }

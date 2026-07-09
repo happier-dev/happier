@@ -69,6 +69,88 @@ describe('managedServerPersistence', () => {
         expect(removeState).toHaveBeenCalledTimes(1);
     });
 
+    it('refuses to kill a sole-claimant managed server while its turn is in flight', async () => {
+        const killPid = vi.fn(async () => true);
+        const removeState = vi.fn(async () => {});
+        const hasInFlightTurnForLaunchFingerprint = vi.fn(async () => true);
+
+        const result = await releaseManagedServerForSwitchFromState({
+            readState: async () => buildState(),
+            removeState,
+            isPidAlive: () => true,
+            readProcessInfo: async () => ({ command: 'provider serve --hostname=127.0.0.1 --port=43111', startedAtMs: 2_501 }),
+            killPid,
+            isExpectedProcessCommand: (command) => command.includes('provider serve'),
+            expectedOwnerToken: 'owner-token-a',
+            expectedActiveServerDir: '/tmp/happy/servers/cloud',
+            expectedDaemonInstanceId: 'cloud',
+            drainMs: 9_000,
+            trackedClaimCount: 1,
+            allowCurrentSessionClaim: true,
+            hasInFlightTurnForLaunchFingerprint,
+        });
+
+        expect(result).toEqual({ released: false, reason: 'in_flight_turn' });
+        expect(hasInFlightTurnForLaunchFingerprint).toHaveBeenCalledTimes(1);
+        expect(killPid).not.toHaveBeenCalled();
+        expect(removeState).not.toHaveBeenCalled();
+    });
+
+    it('does not consult the in-flight-turn guard when another tracked session still claims the server', async () => {
+        const killPid = vi.fn(async () => true);
+        const removeState = vi.fn(async () => {});
+        const hasInFlightTurnForLaunchFingerprint = vi.fn(async () => true);
+
+        const result = await releaseManagedServerForSwitchFromState({
+            readState: async () => buildState(),
+            removeState,
+            isPidAlive: () => true,
+            readProcessInfo: async () => ({ command: 'provider serve --hostname=127.0.0.1 --port=43111', startedAtMs: 2_500 }),
+            killPid,
+            isExpectedProcessCommand: (command) => command.includes('provider serve'),
+            expectedOwnerToken: 'owner-token-a',
+            expectedActiveServerDir: '/tmp/happy/servers/cloud',
+            expectedDaemonInstanceId: 'cloud',
+            drainMs: 9_000,
+            trackedClaimCount: 2,
+            allowCurrentSessionClaim: true,
+            hasInFlightTurnForLaunchFingerprint,
+        });
+
+        expect(result).toEqual({ released: false, reason: 'tracked_session_claimed' });
+        expect(hasInFlightTurnForLaunchFingerprint).not.toHaveBeenCalled();
+        expect(killPid).not.toHaveBeenCalled();
+        expect(removeState).not.toHaveBeenCalled();
+    });
+
+    it('fails closed and releases the sole-claimant server when the in-flight-turn guard throws', async () => {
+        const killPid = vi.fn(async () => true);
+        const removeState = vi.fn(async () => {});
+        const hasInFlightTurnForLaunchFingerprint = vi.fn(async () => {
+            throw new Error('registry unavailable');
+        });
+
+        const result = await releaseManagedServerForSwitchFromState({
+            readState: async () => buildState(),
+            removeState,
+            isPidAlive: () => true,
+            readProcessInfo: async () => ({ command: 'provider serve --hostname=127.0.0.1 --port=43111', startedAtMs: 2_501 }),
+            killPid,
+            isExpectedProcessCommand: (command) => command.includes('provider serve'),
+            expectedOwnerToken: 'owner-token-a',
+            expectedActiveServerDir: '/tmp/happy/servers/cloud',
+            expectedDaemonInstanceId: 'cloud',
+            drainMs: 9_000,
+            trackedClaimCount: 1,
+            allowCurrentSessionClaim: true,
+            hasInFlightTurnForLaunchFingerprint,
+        });
+
+        expect(result).toEqual({ released: true, reason: 'released' });
+        expect(killPid).toHaveBeenCalledWith(777, 9_000);
+        expect(removeState).toHaveBeenCalledTimes(1);
+    });
+
     it('keeps the managed server when another tracked session still claims it', async () => {
         const killPid = vi.fn(async () => true);
         const removeState = vi.fn(async () => {});

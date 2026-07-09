@@ -1,6 +1,14 @@
 import { z } from 'zod';
 
-export const PluginUiLocaleCodeV1Schema = z.string().trim().regex(/^[a-z]{2,3}(?:-[A-Z0-9]{2,8})?$/);
+// BCP-47 subset: a 2–3 letter primary language subtag, then an OPTIONAL script
+// subtag (titlecase, `[A-Z][a-z]{3}`, e.g. `Hans`/`Hant`) and an OPTIONAL region
+// subtag (`[A-Z]{2}` or `[0-9]{3}`, e.g. `US`/`419`). The script subtag is
+// required so the host app's shipped `zh-Hans` / `zh-Hant` locales — which the
+// UI resolves plugin translation bundles against — are expressible by a plugin.
+export const PluginUiLocaleCodeV1Schema = z
+  .string()
+  .trim()
+  .regex(/^[a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-(?:[A-Z]{2}|[0-9]{3}))?$/);
 export type PluginUiLocaleCodeV1 = z.infer<typeof PluginUiLocaleCodeV1Schema>;
 
 export const PluginUiTranslationKeyV1Schema = z.string().trim().min(1);

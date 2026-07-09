@@ -1,4 +1,4 @@
-import type { ExecLaunchInputV1 } from './exec';
+import type { ExecLaunchInputV1 } from './exec.js';
 
 export const HAPPIER_LOCAL_SERVICE_ENV = Object.freeze({
     PORT: 'PORT',

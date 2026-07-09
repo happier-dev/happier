@@ -10,7 +10,7 @@ describe('React Native plugin UI compatibility contracts', () => {
     const parsed = PluginReactNativeCompatibilityInputV1Schema.parse({
       pluginId: 'acme.preview',
       contributionId: 'native-preview',
-      artifactDigest: 'sha256:bundle',
+      artifactDigest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       hostAppVersion: '2.0.0',
       hostUiApiVersion: '1.0.0',
       reactVersion: '19.0.0',

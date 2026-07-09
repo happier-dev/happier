@@ -8,7 +8,7 @@ describe('bridgeLifecycleHookEmissionInventory', () => {
   it('stays aligned with the protocol-owned bridge lifecycle event definitions', () => {
     expect(BRIDGE_LIFECYCLE_HOOK_EMISSION_INVENTORY_V1.map((entry) => entry.eventId)).toEqual([
       ...BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_BY_BRIDGE_V1.session,
-      ...BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_BY_BRIDGE_V1.execution_run,
+      ...BRIDGE_LIFECYCLE_HOOK_EVENT_IDS_BY_BRIDGE_V1.executionRun,
     ]);
   });
 
@@ -16,7 +16,7 @@ describe('bridgeLifecycleHookEmissionInventory', () => {
     expect(BRIDGE_LIFECYCLE_HOOK_EMISSION_INVENTORY_V1).toEqual([
       expect.objectContaining({
         bridgeId: 'session',
-        eventId: 'session.spawn_new',
+        eventId: 'session.spawned',
         owner: 'SessionHostBridge',
         seam: 'emitLifecycleHookEvent',
       }),
@@ -27,26 +27,26 @@ describe('bridgeLifecycleHookEmissionInventory', () => {
         seam: 'emitLifecycleHookEvent',
       }),
       expect.objectContaining({
-        bridgeId: 'execution_run',
-        eventId: 'execution_run.start',
+        bridgeId: 'executionRun',
+        eventId: 'executionRun.started',
         owner: 'ExecutionRunHostBridge',
         seam: 'start',
       }),
       expect.objectContaining({
-        bridgeId: 'execution_run',
-        eventId: 'execution_run.send',
+        bridgeId: 'executionRun',
+        eventId: 'executionRun.messageSent',
         owner: 'ExecutionRunHostBridge',
         seam: 'send',
       }),
       expect.objectContaining({
-        bridgeId: 'execution_run',
-        eventId: 'execution_run.stop',
+        bridgeId: 'executionRun',
+        eventId: 'executionRun.stopped',
         owner: 'ExecutionRunHostBridge',
         seam: 'stop',
       }),
       expect.objectContaining({
-        bridgeId: 'execution_run',
-        eventId: 'execution_run.terminal',
+        bridgeId: 'executionRun',
+        eventId: 'executionRun.completed',
         owner: 'ExecutionRunHostBridge',
         seam: 'finishRun',
       }),

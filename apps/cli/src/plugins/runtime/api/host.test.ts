@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { PluginActionContributionV2 } from '@happier-dev/protocol';
 
 import { createPluginApiHost } from './host';
 import type { PluginApiHostPolicy, PluginDisposable } from './types';
@@ -101,9 +102,7 @@ describe('createPluginApiHost', () => {
 
         host.api.registerAction({
             id: 'acme.action',
-            title: 'Acme Action',
-            surface: 'cli',
-            handler: async () => null,
+            handler: async () => ({ ok: true }),
         });
         host.api.onDispose({ dispose });
 
@@ -116,62 +115,87 @@ describe('createPluginApiHost', () => {
         expect(dispose).toHaveBeenCalledTimes(1);
     });
 
-    it('captures backend engine registrations and disposes their removal handlers', async () => {
+    it('captures agent runtime registrations and disposes their removal handlers', async () => {
         const host = createPluginApiHost();
 
-        host.api.registerBackendEngine({
-            backendId: 'acme.backend',
+        host.api.registerAgentRuntime({
+            agentId: 'acme.agent',
             create: async () => ({}),
         });
 
-        expect(host.registrations().backendEngines).toHaveLength(1);
+        expect(host.registrations().agentRuntimes).toHaveLength(1);
 
         await host.dispose();
 
-        expect(host.registrations().backendEngines).toHaveLength(0);
+        expect(host.registrations().agentRuntimes).toHaveLength(0);
     });
 
-    it('rejects backend engine registrations for backend ids absent from the manifest', () => {
+    it('captures daemon auth bridge registrations and rejects duplicate service ids', () => {
+        const host = createPluginApiHost();
+
+        host.api.registerDaemonAuthBridge({
+            serviceId: 'acme-service',
+            refresh: async () => ({ accessToken: 'first' }),
+        });
+
+        expect(() => host.api.registerDaemonAuthBridge({
+            serviceId: 'acme-service',
+            refresh: async () => ({ accessToken: 'shadow' }),
+        })).toThrow(/duplicate daemon auth bridge/i);
+
+        expect(host.registrations().daemonAuthBridges).toHaveLength(1);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_daemon_auth_bridge_duplicate_service_id',
+            }),
+        ]);
+    });
+
+    it('rejects agent runtime registrations for agent ids absent from the manifest', () => {
         const policy = {
-            declaredBackendIds: ['acme.backend'],
+            declaredAgentIds: ['acme.agent'],
         } satisfies Parameters<typeof createPluginApiHost>[0] & Readonly<{
-            declaredBackendIds: readonly string[];
+            declaredAgentIds: readonly string[];
         }>;
         const host = createPluginApiHost(policy);
 
-        expect(() => host.api.registerBackendEngine({
-            backendId: 'acme.undeclared',
+        expect(() => host.api.registerAgentRuntime({
+            agentId: 'acme.undeclared',
             create: async () => ({}),
-        })).toThrow(/manifest-declared backend id/);
+        })).toThrow(/manifest-declared agent id/);
 
-        expect(host.registrations().backendEngines).toEqual([]);
+        expect(host.registrations().agentRuntimes).toEqual([]);
         expect(host.registrations().diagnostics).toEqual([
             expect.objectContaining({
-                code: 'plugin_backend_engine_undeclared_backend_id',
+                code: 'plugin_agent_runtime_undeclared_agent_id',
             }),
         ]);
+    });
+
+    it('does not expose the retired disposable registration alias after onDispose became the single disposal API', () => {
+        const host = createPluginApiHost();
+        const api = host.api as typeof host.api & Record<string, unknown>;
+        const retiredRegisterName = ['register', 'Disposable'].join('');
+
+        expect(api.onDispose).toBeTypeOf('function');
+        expect(api[retiredRegisterName]).toBeUndefined();
     });
 
     it('rejects action registrations for ids absent from the same plugin manifest', () => {
         const host = createPluginApiHost({
             pluginId: 'acme.actions',
             runtimeCapabilities: ['actions'],
-            permissions: ['actions.register'],
             declaredActionIds: ['acme.actions.allowed'],
         });
 
         host.api.registerAction({
             id: 'acme.actions.allowed',
-            title: 'Allowed',
-            surface: 'cli',
-            handler: async () => null,
+            handler: async () => ({ ok: true }),
         });
 
         expect(() => host.api.registerAction({
             id: 'acme.actions.shadow',
-            title: 'Shadow',
-            surface: 'cli',
-            handler: async () => null,
+            handler: async () => ({ ok: true }),
         })).toThrow(/manifest-declared action id/);
 
         expect(host.registrations().actions.map((entry) => entry.id)).toEqual([
@@ -184,28 +208,84 @@ describe('createPluginApiHost', () => {
         ]);
     });
 
+    it('rejects duplicate action handler registrations for the same manifest action id', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme.actions',
+            runtimeCapabilities: ['actions'],
+            declaredActionIds: ['acme.actions.allowed'],
+        });
+
+        host.api.registerAction({
+            id: 'acme.actions.allowed',
+            handler: async () => ({ ok: true }),
+        });
+
+        expect(() => host.api.registerAction({
+            id: 'acme.actions.allowed',
+            handler: async () => ({ ok: true }),
+        })).toThrow(/duplicate action handler/i);
+
+        expect(host.registrations().actions.map((entry) => entry.id)).toEqual([
+            'acme.actions.allowed',
+        ]);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_action_duplicate_id',
+            }),
+        ]);
+    });
+
+    it('rejects inline action metadata that drifts from the manifest contribution', () => {
+        const manifestAction: PluginActionContributionV2 = {
+            id: 'acme.actions.allowed',
+            title: 'Manifest Title',
+            description: 'Manifest-owned description',
+            scopes: ['global'],
+            surfaces: ['cli'],
+            placement: 'commandPalette',
+            permissions: [],
+            dangerLevel: 'safe',
+            handler: { target: 'daemon', registrationId: 'acme.actions.allowed' },
+        };
+        const host = createPluginApiHost({
+            pluginId: 'acme.actions',
+            runtimeCapabilities: ['actions'],
+            declaredActionIds: ['acme.actions.allowed'],
+            declaredActions: [manifestAction],
+        } satisfies PluginApiHostPolicy);
+
+        const registrationWithManifestMetadata = {
+            id: 'acme.actions.allowed',
+            title: 'Drifted Title',
+            surfaces: ['cli'],
+            handler: async () => ({ ok: true }),
+        } as unknown as Parameters<typeof host.api.registerAction>[0];
+
+        expect(() => host.api.registerAction(registrationWithManifestMetadata)).toThrow(/manifest action metadata/i);
+
+        expect(host.registrations().actions).toEqual([]);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_action_metadata_drift',
+            }),
+        ]);
+    });
+
     it('rejects tool registrations for ids absent from the same plugin manifest', () => {
         const host = createPluginApiHost({
             pluginId: 'acme.tools',
             runtimeCapabilities: ['tools'],
-            permissions: ['tools.register'],
             declaredToolIds: ['acme.tools.allowed'],
         });
 
         host.api.registerTool({
             id: 'acme.tools.allowed',
-            name: 'acme_tools_allowed',
-            title: 'Allowed',
-            surfaces: { cli: true, mcp: false, session_agent: false },
-            handler: async () => null,
+            handler: async () => ({ ok: true }),
         });
 
         expect(() => host.api.registerTool({
             id: 'acme.tools.shadow',
-            name: 'acme_tools_shadow',
-            title: 'Shadow',
-            surfaces: { cli: true, mcp: false, session_agent: false },
-            handler: async () => null,
+            handler: async () => ({ ok: true }),
         })).toThrow(/manifest-declared tool id/);
 
         expect(host.registrations().tools.map((entry) => entry.id)).toEqual([
@@ -218,26 +298,49 @@ describe('createPluginApiHost', () => {
         ]);
     });
 
+    it('rejects runtime tool registrations that redeclare manifest-owned metadata', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme.tools',
+            runtimeCapabilities: ['tools'],
+            declaredToolIds: ['acme.tools.allowed'],
+        });
+        const registerTool = host.api.registerTool as (registration: Readonly<{
+            id: string;
+            name?: string;
+            surfaces?: readonly string[];
+            handler: () => Promise<{ ok: true }>;
+        }>) => PluginDisposable;
+
+        expect(() => registerTool({
+            id: 'acme.tools.allowed',
+            name: 'acme_tools_allowed',
+            surfaces: ['agent'],
+            handler: async () => ({ ok: true }),
+        })).toThrow(/manifest-owned tool metadata/);
+
+        expect(host.registrations().tools).toEqual([]);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_tool_manifest_fields_redeclared',
+            }),
+        ]);
+    });
+
     it('rejects command registrations for ids absent from the same plugin manifest', () => {
         const host = createPluginApiHost({
             pluginId: 'acme.commands',
             runtimeCapabilities: ['commands'],
-            permissions: ['commands.register'],
             declaredCommandIds: ['acme.commands.allowed'],
         });
 
         host.api.registerCommand({
             id: 'acme.commands.allowed',
-            command: 'allowed',
-            allowTmux: false,
-            handler: async () => null,
+            handler: async () => ({ ok: true }),
         });
 
         expect(() => host.api.registerCommand({
             id: 'acme.commands.shadow',
-            command: 'shadow',
-            allowTmux: false,
-            handler: async () => null,
+            handler: async () => ({ ok: true }),
         })).toThrow(/manifest-declared command id/);
 
         expect(host.registrations().commands.map((entry) => entry.id)).toEqual([
@@ -250,23 +353,48 @@ describe('createPluginApiHost', () => {
         ]);
     });
 
+    it('rejects runtime command registrations that redeclare manifest-owned metadata', () => {
+        const host = createPluginApiHost({
+            pluginId: 'acme.commands',
+            runtimeCapabilities: ['commands'],
+            declaredCommandIds: ['acme.commands.allowed'],
+        });
+        const registerCommand = host.api.registerCommand as (registration: Readonly<{
+            id: string;
+            command?: string;
+            handler: () => Promise<{ ok: true }>;
+        }>) => PluginDisposable;
+
+        expect(() => registerCommand({
+            id: 'acme.commands.allowed',
+            command: 'allowed',
+            handler: async () => ({ ok: true }),
+        })).toThrow(/manifest-owned command metadata/);
+
+        expect(host.registrations().commands).toEqual([]);
+        expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_command_manifest_fields_redeclared',
+            }),
+        ]);
+    });
+
     it('rejects hook registrations for ids absent from the same plugin manifest', () => {
         const host = createPluginApiHost({
             pluginId: 'acme.hooks',
             runtimeCapabilities: ['hooks'],
-            permissions: ['hooks.register'],
             declaredHookIds: ['session.message.send', 'provider.request.before'],
         });
 
         host.api.registerHook({
             hookId: 'session.message.send',
-            handler: async () => null,
+            handler: async () => undefined,
         });
 
         expect(() => host.api.registerHook({
             // @ts-expect-error custom hook id intentionally exercises runtime rejection.
             hookId: 'acme.hooks.shadow',
-            handler: async () => null,
+            handler: async () => undefined,
         })).toThrow(/manifest-declared hook id/);
 
         expect(host.registrations().hooks.map((entry) => entry.hookId)).toEqual([
@@ -275,7 +403,7 @@ describe('createPluginApiHost', () => {
         expect(() => host.api.registerHook({
             // @ts-expect-error stale hook id intentionally exercises runtime rejection.
             hookId: 'provider.request.before',
-            handler: async () => null,
+            handler: async () => undefined,
         })).toThrow(/unsupported hook id/);
         expect(host.registrations().diagnostics).toEqual([
             expect.objectContaining({
@@ -316,33 +444,37 @@ describe('createPluginApiHost', () => {
         ]);
     });
 
-    it('allows id-less lifecycle handler registrations declared for the same event', () => {
+    it('rejects lifecycle handler registrations without stable ids', () => {
         const policy: PluginApiHostPolicy = {
             pluginId: 'acme.lifecycle',
             runtimeCapabilities: ['lifecycle'],
             declaredLifecycleHandlers: [
-                { event: 'activated' },
+                { id: 'acme.lifecycle.activated', event: 'activated' },
             ],
         };
         const host = createPluginApiHost(policy);
+        const registerMalformedLifecycleHandler = host.api.registerLifecycleHandler as (registration: Readonly<{
+            id?: string;
+            event: 'activated';
+            handler: () => Promise<void>;
+        }>) => PluginDisposable;
 
-        host.api.registerLifecycleHandler({
+        expect(() => registerMalformedLifecycleHandler({
             event: 'activated',
             handler: async () => undefined,
-        });
+        })).toThrow(/lifecycle handler id/);
 
-        expect(() => host.api.registerLifecycleHandler({
-            event: 'deactivating',
+        expect(() => registerMalformedLifecycleHandler({
+            id: '   ',
+            event: 'activated',
             handler: async () => undefined,
-        })).toThrow(/manifest-declared lifecycle handler id/);
+        })).toThrow(/lifecycle handler id/);
 
-        expect(host.registrations().lifecycleHandlers.map((entry) => ({
-            event: entry.event,
-            id: entry.id ?? null,
-        }))).toEqual([
-            { event: 'activated', id: null },
-        ]);
+        expect(host.registrations().lifecycleHandlers).toEqual([]);
         expect(host.registrations().diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'plugin_lifecycle_handler_undeclared_id',
+            }),
             expect.objectContaining({
                 code: 'plugin_lifecycle_handler_undeclared_id',
             }),
@@ -482,7 +614,6 @@ describe('createPluginApiHost', () => {
         const host = createPluginApiHost({
             pluginId: 'acme.notifications',
             runtimeCapabilities: ['notifications'],
-            permissions: ['notifications.register'],
             declaredNotificationCategoryIds: ['acme.notifications.ready'],
             declaredNotificationChannelIds: ['acme.notifications.webhook'],
         });

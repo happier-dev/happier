@@ -1,12 +1,12 @@
 import { createTerminalRuntimeExecutionRunBackend } from '@/agent/runtime/bridges/executionRun/runtime/terminal';
 import type { CreateCliExecutionRunBackendParams } from '@/agent/runtime/registry/engineRegistryTypes';
 import type { AnyTerminalRuntimeOps } from '@/agent/terminalRuntime/providers/types';
-import type { ResolvedBackendContribution } from '@/plugins/projection/registry/types';
+import type { ResolvedAgentRuntimeContribution } from '@/plugins/projection/registry/types';
 
 import { buildPluginExecutionRunLaunchParams } from './executionRunLaunch';
 
 export function createPluginExecutionRunBackend(params: Readonly<{
-    backend: ResolvedBackendContribution;
+    backend: ResolvedAgentRuntimeContribution;
     launch: NonNullable<AnyTerminalRuntimeOps['launch']>;
     opts: CreateCliExecutionRunBackendParams;
 }>) {
@@ -14,7 +14,14 @@ export function createPluginExecutionRunBackend(params: Readonly<{
         cwd: params.opts.cwd,
         backendId: params.opts.backendId,
         backend: params.backend,
-        launch: async (launchParams) => await params.launch(buildPluginExecutionRunLaunchParams(launchParams) as never),
+        // Forward the host-assembled isolation env (run isolation + connected-services
+        // materialization) into the plugin launch params — the catalog backend path consumes
+        // `isolation.env` the same way; dropping it here would silently launch plugin backends
+        // on ambient auth.
+        launch: async (launchParams) => await params.launch(buildPluginExecutionRunLaunchParams({
+            ...(launchParams && typeof launchParams === 'object' ? launchParams : {}),
+            ...(params.opts.isolation?.env ? { env: params.opts.isolation.env } : {}),
+        }) as never),
         modelId: params.opts.modelId,
         permissionMode: params.opts.permissionMode,
         accountSettings: params.opts.accountSettings ?? null,

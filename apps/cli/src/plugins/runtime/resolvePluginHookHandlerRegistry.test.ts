@@ -39,9 +39,9 @@ function createHookRegistration(
         },
         definition: {
             hookApiVersion: 1,
-            id: 'backend.resolveRuntimePrerequisites',
+            id: 'agent.resolvePrerequisites',
             category: 'decision',
-            scope: 'backend',
+            scope: 'agent',
             executionKind: 'decide',
             ...(params.priority !== undefined ? { priority: params.priority } : {}),
             handler: {
@@ -54,8 +54,8 @@ function createHookRegistration(
 
 function createRegistry(hookRegistrations: readonly ResolvedHookRegistration[]): ResolvedContributionRegistry {
     return {
-        providers: Object.freeze([]),
-        backends: Object.freeze([]),
+        agents: Object.freeze([]),
+        agentRuntimes: Object.freeze([]),
         actions: Object.freeze([]),
         resources: Object.freeze([]),
         uiDescriptors: Object.freeze([]),
@@ -63,14 +63,14 @@ function createRegistry(hookRegistrations: readonly ResolvedHookRegistration[]):
         hookRegistrations: Object.freeze([...hookRegistrations]),
         surfaceHandlersByBackendId: new Map(),
         catalogEntriesById: Object.freeze({}),
-        providerDefinitionsById: new Map(),
-        backendDefinitionsById: new Map(),
+        agentDefinitionsById: new Map(),
+        agentRuntimeDefinitionsById: new Map(),
         pluginDiagnosticsByPluginId: Object.freeze({}),
     };
 }
 
 describe('resolvePluginHookHandlerRegistry', () => {
-    it('loads plugin hook exports and orders handlers deterministically by priority', async () => {
+    it('loads plugin hook exports and orders handlers deterministically by ascending priority', async () => {
         const highPriorityPath = await writeDaemonModule({
             basename: 'daemon-high.mjs',
             contents: 'export async function resolveTranscriptBinding() { return "high"; }\n',
@@ -97,10 +97,10 @@ describe('resolvePluginHookHandlerRegistry', () => {
             ]),
         });
 
-        const handlers = result.handlersByHookId.get('backend.resolveRuntimePrerequisites');
-        expect(handlers?.map((handler) => handler.pluginId)).toEqual(['acme.high', 'acme.low']);
-        await expect(handlers?.[0]?.handler()).resolves.toBe('high');
-        await expect(handlers?.[1]?.handler()).resolves.toBe('low');
+        const handlers = result.handlersByHookId.get('agent.resolvePrerequisites');
+        expect(handlers?.map((handler) => handler.pluginId)).toEqual(['acme.low', 'acme.high']);
+        await expect(handlers?.[0]?.handler()).resolves.toBe('low');
+        await expect(handlers?.[1]?.handler()).resolves.toBe('high');
         expect(result.diagnosticsByPluginId['acme.high']).toEqual([]);
         expect(result.diagnosticsByPluginId['acme.low']).toEqual([]);
     });
@@ -131,7 +131,7 @@ describe('resolvePluginHookHandlerRegistry', () => {
             ]),
         });
 
-        const handlers = result.handlersByHookId.get('backend.resolveRuntimePrerequisites');
+        const handlers = result.handlersByHookId.get('agent.resolvePrerequisites');
 
         expect(handlers?.map((handler) => handler.exportName)).toEqual(['zetaHandler', 'alphaHandler']);
         await expect(handlers?.[0]?.handler()).resolves.toBe('first');
@@ -163,10 +163,43 @@ describe('resolvePluginHookHandlerRegistry', () => {
             },
         });
 
-        const handlers = result.handlersByHookId.get('backend.resolveRuntimePrerequisites');
+        const handlers = result.handlersByHookId.get('agent.resolvePrerequisites');
         expect(handlers?.map((handler) => handler.pluginId)).toEqual(['acme.bundled']);
         await expect(handlers?.[0]?.handler()).resolves.toBe('bundled');
         expect(result.diagnosticsByPluginId['acme.bundled']).toEqual([]);
+    });
+
+    it('filters hook registrations by targeted plugin id before loading daemon modules', async () => {
+        const targetEntryPath = await writeDaemonModule({
+            basename: 'daemon-target.mjs',
+            contents: 'export async function resolveTranscriptBinding() { return "target"; }\n',
+        });
+        const unrelatedEntryPath = await writeDaemonModule({
+            basename: 'daemon-unrelated.mjs',
+            contents: 'throw new Error("unrelated hook module must not be imported");\n',
+        });
+
+        const result = await resolvePluginHookHandlerRegistry({
+            registry: createRegistry([
+                createHookRegistration({
+                    pluginId: 'acme.target',
+                    daemonEntryPath: targetEntryPath,
+                    exportName: 'resolveTranscriptBinding',
+                }),
+                createHookRegistration({
+                    pluginId: 'acme.unrelated',
+                    daemonEntryPath: unrelatedEntryPath,
+                    exportName: 'resolveTranscriptBinding',
+                }),
+            ]),
+            pluginIds: ['acme.target'],
+        });
+
+        const handlers = result.handlersByHookId.get('agent.resolvePrerequisites');
+        expect(handlers?.map((handler) => handler.pluginId)).toEqual(['acme.target']);
+        await expect(handlers?.[0]?.handler()).resolves.toBe('target');
+        expect(result.diagnosticsByPluginId['acme.target']).toEqual([]);
+        expect(result.diagnosticsByPluginId['acme.unrelated']).toBeUndefined();
     });
 
     it('records a diagnostic and excludes plugin hooks whose export is missing', async () => {
@@ -185,7 +218,7 @@ describe('resolvePluginHookHandlerRegistry', () => {
             ]),
         });
 
-        expect(result.handlersByHookId.get('backend.resolveRuntimePrerequisites')).toBeUndefined();
+        expect(result.handlersByHookId.get('agent.resolvePrerequisites')).toBeUndefined();
         expect(result.diagnosticsByPluginId['acme.missing']).toEqual([
             expect.objectContaining({
                 code: 'plugin_hook_handler_missing',
@@ -240,7 +273,7 @@ describe('resolvePluginHookHandlerRegistry', () => {
             ]),
         });
 
-        expect(result.handlersByHookId.get('backend.resolveRuntimePrerequisites')).toBeUndefined();
+        expect(result.handlersByHookId.get('agent.resolvePrerequisites')).toBeUndefined();
         expect(result.diagnosticsByPluginId['acme.invalid']).toEqual([
             expect.objectContaining({
                 code: 'plugin_hook_handler_invalid',
@@ -275,7 +308,7 @@ describe('resolvePluginHookHandlerRegistry', () => {
             },
         });
 
-        expect(result.handlersByHookId.get('backend.resolveRuntimePrerequisites')).toHaveLength(1);
+        expect(result.handlersByHookId.get('agent.resolvePrerequisites')).toHaveLength(1);
         expect(result.diagnosticsByPluginId['acme.preexisting']).toEqual([]);
     });
 
@@ -299,9 +332,9 @@ describe('resolvePluginHookHandlerRegistry', () => {
             },
             definition: {
                 hookApiVersion: 1,
-                id: 'backend.resolveRuntimePrerequisites',
+                id: 'agent.resolvePrerequisites',
                 category: 'integration',
-                scope: 'backend',
+                scope: 'agent',
                 executionKind: 'integrate',
                 handler: {
                     target: 'daemon' as const,
@@ -314,7 +347,7 @@ describe('resolvePluginHookHandlerRegistry', () => {
             registry: createRegistry([unsupportedRegistration]),
         });
 
-        expect(result.handlersByHookId.get('backend.resolveRuntimePrerequisites')).toBeUndefined();
+        expect(result.handlersByHookId.get('agent.resolvePrerequisites')).toBeUndefined();
         expect(result.diagnosticsByPluginId['acme.daemon-target']).toEqual([
             expect.objectContaining({
                 code: 'plugin_manifest_semantic_invalid',
@@ -348,7 +381,7 @@ describe('resolvePluginHookHandlerRegistry', () => {
             ]),
         });
 
-        expect(result.handlersByHookId.get('backend.resolveRuntimePrerequisites')).toBeUndefined();
+        expect(result.handlersByHookId.get('agent.resolvePrerequisites')).toBeUndefined();
         expect(result.diagnosticsByPluginId['acme.prompt']).toEqual([
             expect.objectContaining({
                 code: 'plugin_trust_approval_required',
@@ -383,7 +416,7 @@ describe('resolvePluginHookHandlerRegistry', () => {
             ]),
         });
 
-        expect(result.handlersByHookId.get('backend.resolveRuntimePrerequisites')).toBeUndefined();
+        expect(result.handlersByHookId.get('agent.resolvePrerequisites')).toBeUndefined();
         expect(result.diagnosticsByPluginId['acme.untrusted']).toEqual([
             expect.objectContaining({
                 code: 'plugin_untrusted',

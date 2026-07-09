@@ -62,8 +62,30 @@ export class PluginSessionHooksError extends Error {
     }
 }
 
+function sanitizePathSegment(value: string, fallback: string): string {
+    return value.trim().replace(/[^a-zA-Z0-9._-]+/gu, '-').replace(/^-+|-+$/gu, '') || fallback;
+}
+
 function sanitizeProviderId(providerId: string): string {
-    return providerId.trim().replace(/[^a-zA-Z0-9._-]+/gu, '-').replace(/^-+|-+$/gu, '') || 'provider';
+    return sanitizePathSegment(providerId, 'provider');
+}
+
+function resolveHookPluginDirPath(params: Readonly<{
+    pluginsRoot: string;
+    request: SessionHookPluginDirCreateRequestV1;
+}>): string {
+    const providerSegment = sanitizeProviderId(params.request.providerId);
+    if (params.request.lifecycle?.kind === 'session') {
+        return join(
+            params.pluginsRoot,
+            `${providerSegment}-session-${sanitizePathSegment(params.request.lifecycle.sessionId, 'session')}`,
+        );
+    }
+    return join(params.pluginsRoot, `${providerSegment}-${process.pid}-${pluginDirSequence++}`);
+}
+
+function shouldRetainHookPluginDir(request: SessionHookPluginDirCreateRequestV1): boolean {
+    return request.lifecycle?.kind === 'session';
 }
 
 function resolveNodeExecutable(): string {
@@ -251,6 +273,7 @@ export function createSessionHooksService(
 ): SessionHooksRuntimeServiceV1 {
     const activePluginDirs = new Set<string>();
     const disposedPluginDirs = new Set<string>();
+    const retainedPluginDirs = new Set<string>();
     const pluginsRoot = resolveHookPluginsRoot(params.happyHomeDir);
 
     async function disposeRegisteredHookPluginDir(pluginDir: string): Promise<void> {
@@ -260,6 +283,10 @@ export function createSessionHooksService(
             throw new Error(`Session hook plugin dir is not owned by this service: ${pluginDir}`);
         }
         activePluginDirs.delete(resolvedPluginDir);
+        if (retainedPluginDirs.has(resolvedPluginDir)) {
+            disposedPluginDirs.add(resolvedPluginDir);
+            return;
+        }
         try {
             await disposeHookPluginDir(resolvedPluginDir);
             disposedPluginDirs.add(resolvedPluginDir);
@@ -346,21 +373,32 @@ export function createSessionHooksService(
         },
         async createPluginDir(request: SessionHookPluginDirCreateRequestV1) {
             assertSessionHooksCapability(params);
-            const providerSegment = sanitizeProviderId(request.providerId);
-            const pluginDir = join(pluginsRoot, `${providerSegment}-${process.pid}-${pluginDirSequence++}`);
+            const pluginDir = resolveHookPluginDirPath({ pluginsRoot, request });
             const resolvedPluginDir = resolve(pluginDir);
+            const retainPluginDir = shouldRetainHookPluginDir(request);
+            const filesToWrite = request.files.map((file) => ({
+                file,
+                filePath: resolvePluginFilePath(pluginDir, file.path),
+            }));
 
             try {
-                for (const file of request.files) {
-                    const filePath = resolvePluginFilePath(pluginDir, file.path);
+                for (const { file, filePath } of filesToWrite) {
                     await createPrivateDirectoryTree(pluginsRoot, dirname(filePath));
                     await writePrivateFile(filePath, toFileContents(file));
                 }
             } catch (error) {
-                await disposeHookPluginDir(resolvedPluginDir);
+                if (!retainPluginDir) {
+                    await disposeHookPluginDir(resolvedPluginDir);
+                }
                 throw error;
             }
 
+            disposedPluginDirs.delete(resolvedPluginDir);
+            if (retainPluginDir) {
+                retainedPluginDirs.add(resolvedPluginDir);
+            } else {
+                retainedPluginDirs.delete(resolvedPluginDir);
+            }
             activePluginDirs.add(resolvedPluginDir);
             params.addDisposable?.(createOnceDisposable(async () => await disposeRegisteredHookPluginDir(resolvedPluginDir)));
 

@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 2,
+  "id": "examples.multi-mode-fallback",
+  "version": "0.1.0",
+  "displayName": "Multi-Mode Fallback Example",
+  "description": "React Native to hostedWeb to descriptor fallback surface.",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "uses": [
+    "uiDescriptors"
+  ],
+  "entrypoints": {
+    "main": "./dist/index.js"
+  },
+  "permissions": {
+    "required": [],
+    "optional": []
+  },
+  "contributes": {
+    "surfacePlacements": [
+      {
+        "id": "examples.fallback.panelPlacement",
+        "placement": "session.details",
+        "target": {
+          "kind": "session",
+          "sessionIdPath": "/sessionId"
+        },
+        "renderer": {
+          "kind": "reactNative",
+          "contributionId": "examples.fallback.native",
+          "fallback": {
+            "kind": "hostedWeb",
+            "contributionId": "examples.fallback.web"
+          }
+        },
+        "display": {
+          "titleKey": "examples.fallback.title",
+          "developerFallback": "Multi-mode fallback example"
+        },
+        "actions": [],
+        "hostActions": []
+      },
+      {
+        "id": "examples.fallback.descriptor",
+        "placement": "session.details",
+        "target": {
+          "kind": "session",
+          "sessionIdPath": "/sessionId"
+        },
+        "renderer": {
+          "kind": "host",
+          "rendererId": "descriptorPanel"
+        },
+        "display": {
+          "titleKey": "examples.fallback.descriptorTitle",
+          "developerFallback": "Descriptor fallback"
+        },
+        "actions": [],
+        "hostActions": []
+      }
+    ],
+    "reactNativeBundles": [
+      {
+        "id": "examples.fallback.native",
+        "bundle": {
+          "platform": "ios",
+          "channel": "internal",
+          "assetPath": "dist/native/ios.bundle.js",
+          "integrity": {
+            "digest": "sha256:3522541b808172cee500272fce1054da7a775fe5fab8ab431047b08cb75f98cd"
+          }
+        },
+        "entry": {
+          "modulePath": "./PluginPanel",
+          "exportName": "PluginPanel"
+        },
+        "compatibility": {
+          "hostUiApiVersion": "1.0.0",
+          "reactVersion": "19.2.0",
+          "reactNativeVersion": "0.83.4",
+          "supportedPlatforms": [
+            "ios"
+          ],
+          "supportedChannels": [
+            "internal"
+          ]
+        },
+        "hostApi": {
+          "minVersion": "1.0.0",
+          "methods": [
+            "getSurfaceContext"
+          ]
+        },
+        "fallback": {
+          "kind": "hostedWeb",
+          "contributionId": "examples.fallback.web"
+        },
+        "display": {
+          "titleKey": "examples.fallback.rnTitle",
+          "developerFallback": "Multi-mode RN"
+        }
+      }
+    ],
+    "hostedWeb": [
+      {
+        "id": "examples.fallback.web",
+        "service": {
+          "kind": "staticAssets",
+          "assetRootId": "hosted-web/fallback"
+        },
+        "entry": {
+          "routeMode": "pathFallback",
+          "path": "/"
+        },
+        "bridge": {
+          "allowedMessages": [
+            "ready"
+          ]
+        },
+        "sandbox": {
+          "scripts": true
+        },
+        "security": {
+          "allowedNavigationOrigins": [],
+          "allowedCallbackOrigins": [],
+          "allowedConnectOrigins": [],
+          "csp": {
+            "connectSrc": "selfOnly",
+            "allowEval": false
+          }
+        },
+        "fallback": {
+          "kind": "descriptor",
+          "descriptorId": "examples.fallback.descriptor"
+        },
+        "display": {
+          "titleKey": "examples.fallback.webTitle",
+          "developerFallback": "Multi-mode hosted web"
+        }
+      }
+    ],
+    "uiArtifacts": [
+      {
+        "id": "examples.fallback.webArtifact",
+        "contributionId": "examples.fallback.web",
+        "contributionFamily": "hostedWeb",
+        "artifactKind": "hostedWebAsset",
+        "platform": "web",
+        "channel": "internal",
+        "integrity": {
+          "digest": "sha256:25899644ccfc1dc072079141bb227605724d128e04ca98dd8b0c605d3b119013"
+        },
+        "compatibility": {
+          "hostAppVersion": "2.0.0",
+          "hostUiApiVersion": "1.0.0",
+          "nativeCapabilities": []
+        },
+        "byteSize": 512,
+        "contentType": "text/html",
+        "assetPath": "hosted-web/fallback"
+      },
+      {
+        "id": "examples.fallback.nativeArtifact",
+        "contributionId": "examples.fallback.native",
+        "contributionFamily": "reactNativeBundles",
+        "artifactKind": "reactNativeBundle",
+        "platform": "ios",
+        "channel": "internal",
+        "integrity": {
+          "digest": "sha256:3522541b808172cee500272fce1054da7a775fe5fab8ab431047b08cb75f98cd"
+        },
+        "compatibility": {
+          "hostAppVersion": "2.0.0",
+          "hostUiApiVersion": "1.0.0",
+          "reactVersion": "19.2.0",
+          "reactNativeVersion": "0.83.4",
+          "nativeCapabilities": []
+        },
+        "byteSize": 1121,
+        "contentType": "application/javascript",
+        "assetPath": "dist/native/ios.bundle.js"
+      }
+    ]
+  }
+}

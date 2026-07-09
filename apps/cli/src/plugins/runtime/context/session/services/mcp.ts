@@ -4,12 +4,14 @@ import type {
 } from '@happier-dev/plugin-sdk';
 
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import type { PermissionRequestOwner } from '@/agent/permissions/permissionRequestOwner';
 
 type SessionMcpScope = Readonly<{
     permissionHandler: Pick<ProviderEnforcedPermissionHandler, 'handleToolCall'>;
 }>;
 
 export type CreateSessionScopedMcpServicesParams = Readonly<{
+    owner?: PermissionRequestOwner | null;
     readScope: (signal?: AbortSignal) => Promise<SessionMcpScope | null>;
 }>;
 
@@ -147,7 +149,12 @@ export function createSessionScopedMcpServices(
                 ?? 'mcp-elicitation';
             try {
                 const result = await raceWithAbort(
-                    scope.permissionHandler.handleToolCall(toolCallId, toolName, request.input),
+                    scope.permissionHandler.handleToolCall(
+                        toolCallId,
+                        toolName,
+                        request.input,
+                        params.owner ? { owner: params.owner } : undefined,
+                    ),
                     options?.signal,
                 );
                 return mapPermissionResult(result);

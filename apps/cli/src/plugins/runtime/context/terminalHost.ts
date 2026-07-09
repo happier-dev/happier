@@ -9,9 +9,15 @@ import type {
     TerminalHostAdapter,
     TerminalHostHandle,
     TerminalHostPreference,
+    TerminalInputInjectionResult,
+    TerminalPromptInput,
+} from '@happier-dev/agents';
+import {
+    prepareTerminalPromptTextForInjection,
+    resolveTerminalPromptWriteTimeoutMs,
 } from '@happier-dev/agents';
 
-import type { CatalogAgentLookupId } from '@/backends/types';
+import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import { createTerminalHostRegistry } from '@/integrations/terminal/host/registry';
 import { resolveTerminalHost } from '@/integrations/terminal/host/resolveTerminalHost';
 import type { TerminalHostResolution } from '@/integrations/terminal/host/_types';
@@ -22,6 +28,8 @@ import {
     resolveZellijRuntimeBinary,
     resolveZellijSocketDir,
 } from '@/integrations/zellij';
+import { createPtyTerminalHostAdapter } from '@/terminal/pty/hostAdapter';
+import type { TerminalPromptSubmitVerificationPolicy } from '@/integrations/terminalHost/promptSubmitVerification';
 import {
     requireProviderCliLaunchSpec,
     type ProviderCliLaunchSpec,
@@ -56,6 +64,7 @@ export type CreatePluginTerminalHostServiceParams = Readonly<{
 export type CreateDefaultPluginTerminalHostServiceParams = Readonly<{
     happyHomeDir: string;
     hasCapability: (capability: string) => boolean;
+    resolvePromptSubmitVerification?: (() => Promise<TerminalPromptSubmitVerificationPolicy | null>) | undefined;
     platform?: NodeJS.Platform;
     arch?: NodeJS.Architecture;
 }>;
@@ -130,6 +139,48 @@ function resolveActiveHost(
     return active;
 }
 
+function handleFields(
+    handle: TerminalHostHandle,
+): Pick<
+    Extract<TerminalInputInjectionResult, { status: 'failed' }>,
+    'hostKind' | 'hostSessionName' | 'paneId'
+> {
+    return {
+        hostKind: handle.kind,
+        hostSessionName: handle.sessionName,
+        ...(handle.paneId ? { paneId: handle.paneId } : {}),
+    };
+}
+
+function invalidPromptTextResult(
+    handle: TerminalHostHandle,
+    observedAt: number,
+): Extract<TerminalInputInjectionResult, { status: 'failed' }> {
+    return {
+        status: 'failed',
+        reason: 'invalid_prompt_text',
+        phase: 'before_write',
+        duplicateRisk: 'none',
+        recoverable: false,
+        observedAt,
+        ...handleFields(handle),
+    };
+}
+
+function preparePromptInputForAdapter(input: TerminalPromptInput): TerminalPromptInput | null {
+    const prepared = prepareTerminalPromptTextForInjection(input.text);
+    if (!prepared.ok) return null;
+    return {
+        ...input,
+        text: prepared.text,
+        multiline: prepared.multiline,
+        scheduling: {
+            ...input.scheduling,
+            timeoutMs: input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(prepared.text),
+        },
+    };
+}
+
 async function requireResolvedHost(
     params: CreatePluginTerminalHostServiceParams,
     preference: TerminalHostPreference,
@@ -189,7 +240,11 @@ export function createPluginTerminalHostService(
             input: Parameters<TerminalHostRuntimeServiceV1['injectUserPrompt']>[1],
         ) {
             const active = resolveActiveHost(activeHosts, handle);
-            return active.adapter.injectUserPrompt(active.handle, input);
+            const preparedInput = preparePromptInputForAdapter(input);
+            if (preparedInput === null) {
+                return invalidPromptTextResult(active.handle, Date.now());
+            }
+            return active.adapter.injectUserPrompt(active.handle, preparedInput);
         },
         async interruptTurn(handle: Parameters<TerminalHostRuntimeServiceV1['interruptTurn']>[0]) {
             const active = resolveActiveHost(activeHosts, handle);
@@ -223,18 +278,27 @@ async function resolveDefaultTerminalHost(
 ): Promise<TerminalHostResolution> {
     const adapters: TerminalHostAdapter[] = [];
     const platform = params.platform ?? process.platform;
+    const promptSubmitVerification = await params.resolvePromptSubmitVerification?.() ?? null;
     const tmuxAvailable = platform === 'win32' ? false : await isTmuxAvailable();
     if (tmuxAvailable) {
-        adapters.push(createTmuxTerminalHostAdapter());
+        adapters.push(createTmuxTerminalHostAdapter({
+            ...(promptSubmitVerification ? { promptSubmitVerification } : {}),
+        }));
     }
 
-    const zellijBinary = await resolveZellijRuntimeBinary();
+    if (platform === 'win32') {
+        adapters.push(createPtyTerminalHostAdapter());
+    }
+
+    const shouldConfigureZellij = platform !== 'win32' || preference === 'zellij';
+    const zellijBinary = shouldConfigureZellij ? await resolveZellijRuntimeBinary() : null;
     if (zellijBinary) {
         const socketDir = resolveZellijSocketDir(params.happyHomeDir);
         await prepareZellijSocketDir(socketDir);
         adapters.push(createZellijTerminalHostAdapter({
             zellijBinary,
             socketDir,
+            ...(promptSubmitVerification ? { promptSubmitVerification } : {}),
         }));
     }
 

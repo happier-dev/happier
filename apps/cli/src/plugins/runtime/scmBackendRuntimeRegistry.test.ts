@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import type { ScmBackendContribution } from '@happier-dev/protocol';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedContributionSourceKind } from '@/plugins/projection/registry/types';
-import { createPluginScmBackendRegistryFromRuntimeRegistry } from '@/scm/scmBackendCatalog';
+import { createPluginScmBackendRegistryFromRuntimeRegistry } from '@/scm/pluginBackends/runtimeRegistry';
 
 import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
@@ -143,6 +143,7 @@ async function writeScmBackendPlugin(params: Readonly<{
     pluginId: string;
     detectedRootPath: string;
     registerAction?: boolean;
+    registerBackend?: boolean;
 }>): Promise<Readonly<{
     root: string;
     manifestPath: string;
@@ -162,13 +163,13 @@ async function writeScmBackendPlugin(params: Readonly<{
             displayName: params.pluginId,
             description: `${params.pluginId} SCM backend`,
             engines: { happier: '^0.2.0' },
-            runtime: {
-                apiVersion: 1,
-                capabilities: params.registerAction ? ['scmBackends', 'actions'] : ['scmBackends'],
+            uses: params.registerAction ? ['scmBackends', 'actions'] : ['scmBackends'],
+            entrypoints: {
+                main: './daemon.mjs',
             },
-            capabilities: { permissions: params.registerAction ? [{ capability: 'actions.register' }] : [] },
-            targets: {
-                daemon: { entry: './daemon.mjs' },
+            permissions: {
+                required: [],
+                optional: [],
             },
             contributes: {
                 ...(params.registerAction ? {
@@ -192,6 +193,7 @@ async function writeScmBackendPlugin(params: Readonly<{
         }),
         'utf8',
     );
+    const registerBackend = params.registerBackend ?? true;
     await writeFile(
         daemonEntryPath,
         [
@@ -199,21 +201,22 @@ async function writeScmBackendPlugin(params: Readonly<{
             ...(params.registerAction ? [
                 '  api.registerAction({',
                 `    id: ${JSON.stringify(`${params.pluginId}.diagnostic`)},`,
-                '    title: "Diagnostic action",',
                 '    handler: async () => ({ ok: true }),',
                 '  });',
             ] : []),
-            '  api.registerScmBackend({',
-            `    id: ${JSON.stringify(BACKEND_ID)},`,
-            '    handlers: {',
-            '      detection: {',
-            `        detectRepo: async () => ({ isRepo: true, rootPath: ${JSON.stringify(params.detectedRootPath)}, mode: ".git" }),`,
-            '      },',
-            '      read: {',
-            '        statusSnapshot: async () => ({ success: true }),',
-            '      },',
-            '    },',
-            '  });',
+            ...(registerBackend ? [
+                '  api.registerScmBackend({',
+                `    id: ${JSON.stringify(BACKEND_ID)},`,
+                '    handlers: {',
+                '      detection: {',
+                `        detectRepo: async () => ({ isRepo: true, rootPath: ${JSON.stringify(params.detectedRootPath)}, mode: ".git" }),`,
+                '      },',
+                '      read: {',
+                '        statusSnapshot: async () => ({ success: true }),',
+                '      },',
+                '    },',
+                '  });',
+            ] : []),
             '}',
             '',
         ].join('\n'),
@@ -233,8 +236,8 @@ describe('SCM backend runtime registry', () => {
             registerAction: true,
         });
         const contributes = createResolvedContributionRegistry({
-            providers: [],
-            backends: [],
+            agents: [],
+            agentRuntimes: [],
             actions: [
                 {
                     provenance: 'external',
@@ -265,7 +268,7 @@ describe('SCM backend runtime registry', () => {
 	                            voice: false,
 	                            cli: true,
 	                            mcp: false,
-	                            session_agent: false,
+	                            agent: false,
 	                            rpc: false,
 	                            sdk: false,
 	                        },
@@ -368,8 +371,8 @@ describe('SCM backend runtime registry', () => {
             definition: createScmBackendContribution(),
         });
         const contributes = createResolvedContributionRegistry({
-            providers: [],
-            backends: [],
+            agents: [],
+            agentRuntimes: [],
             activationTargets: [
                 createRuntimeEntry({
                     pluginId: losingPluginId,
@@ -422,5 +425,137 @@ describe('SCM backend runtime registry', () => {
                 'plugin_scm_backend_duplicate_id',
                 'plugin_scm_backend_undeclared_id',
             ]));
+    });
+
+    // Regression coverage for the Settings->Plugins projection reporting a
+    // false `plugin_scm_backend_missing_activation` for scm-git/scm-sapling
+    // on every reload: those plugins declare `activationEvents:
+    // ['onScmProvider:<id>']` (lazy) instead of `startup`, so their runtime
+    // registration only exists once that event has fired. Any consumer of
+    // `resolveExecutablePluginRuntimeRegistry` (the projection handler
+    // included) must see them as activated, matching the SCM catalog path.
+    it('activates an onScmProvider-gated SCM backend before computing diagnostics, so a correctly-wired lazy plugin reports no missing_activation', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-home-'));
+        const pluginId = 'acme.scm.lazy-backend';
+        const plugin = await writeScmBackendPlugin({
+            pluginId,
+            detectedRootPath: '/acme-lazy-root',
+        });
+        const contributes = createResolvedContributionRegistry({
+            agents: [],
+            agentRuntimes: [],
+            activationTargets: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId,
+                    manifestPath: plugin.manifestPath,
+                    manifestDigest: 'sha256:acme-lazy',
+                    daemonEntryPath: plugin.daemonEntryPath,
+                    sourceSpec: {
+                        kind: 'path',
+                        locator: plugin.root,
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                    },
+                    // Lazy, event-gated activation - the same shape scm-git
+                    // and scm-sapling declare in their real manifests.
+                    activationEvents: [`onScmProvider:${BACKEND_ID}`],
+                },
+            ],
+            scmBackends: [
+                {
+                    id: BACKEND_ID,
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId,
+                    manifestPath: plugin.manifestPath,
+                    manifestDigest: 'sha256:acme-lazy',
+                    daemonEntryPath: plugin.daemonEntryPath,
+                    sourceSpec: {
+                        kind: 'path',
+                        locator: plugin.root,
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                    },
+                    definition: createScmBackendContribution(),
+                },
+            ],
+        });
+
+        const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+            happyHomeDir,
+            contributes,
+        });
+        const scmRegistry = createPluginScmBackendRegistryFromRuntimeRegistry(runtimeRegistry);
+
+        expect(runtimeRegistry.pluginDiagnosticsByPluginId[pluginId]?.map((diagnostic) => diagnostic.code))
+            .not.toContain('plugin_scm_backend_missing_activation');
+        expect(scmRegistry.diagnostics).toEqual([]);
+        expect(scmRegistry.backends).toHaveLength(1);
+        await expect(scmRegistry.backends[0]?.detectRepo({ cwd: '/workspace' })).resolves.toEqual({
+            isRepo: true,
+            rootPath: '/acme-lazy-root',
+            mode: '.git',
+        });
+    });
+
+    it('still reports missing_activation for an onScmProvider-gated backend whose plugin activates but never registers it', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-home-'));
+        const pluginId = 'acme.scm.lazy-backend-broken';
+        const plugin = await writeScmBackendPlugin({
+            pluginId,
+            detectedRootPath: '/acme-lazy-broken-root',
+            registerBackend: false,
+        });
+        const contributes = createResolvedContributionRegistry({
+            agents: [],
+            agentRuntimes: [],
+            activationTargets: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId,
+                    manifestPath: plugin.manifestPath,
+                    manifestDigest: 'sha256:acme-lazy-broken',
+                    daemonEntryPath: plugin.daemonEntryPath,
+                    sourceSpec: {
+                        kind: 'path',
+                        locator: plugin.root,
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                    },
+                    activationEvents: [`onScmProvider:${BACKEND_ID}`],
+                },
+            ],
+            scmBackends: [
+                {
+                    id: BACKEND_ID,
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId,
+                    manifestPath: plugin.manifestPath,
+                    manifestDigest: 'sha256:acme-lazy-broken',
+                    daemonEntryPath: plugin.daemonEntryPath,
+                    sourceSpec: {
+                        kind: 'path',
+                        locator: plugin.root,
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                    },
+                    definition: createScmBackendContribution(),
+                },
+            ],
+        });
+
+        const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+            happyHomeDir,
+            contributes,
+        });
+        const scmRegistry = createPluginScmBackendRegistryFromRuntimeRegistry(runtimeRegistry);
+
+        expect(runtimeRegistry.pluginDiagnosticsByPluginId[pluginId]?.map((diagnostic) => diagnostic.code))
+            .toContain('plugin_scm_backend_missing_activation');
+        expect(scmRegistry.backends).toHaveLength(0);
     });
 });

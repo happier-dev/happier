@@ -2,9 +2,11 @@ import type { PermissionMode } from '@/api/types';
 import type { Credentials } from '@/persistence';
 import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
+import type { ProviderAcceptancePendingMaterializationPolicy } from '@/api/session/pendingMaterializationActiveTurnPolicy';
+import { normalizeProviderAcceptancePendingMaterializationPolicy } from '@/api/session/pendingMaterializationActiveTurnPolicy';
 import type {
-    ResolvedBackendContribution,
-    ResolvedProviderContribution,
+    ResolvedAgentRuntimeContribution,
+    ResolvedAgentContribution,
 } from '@/plugins/projection/registry/types';
 import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
 import type { PluginSessionLaunchResultCandidate } from './sessionMetadata';
@@ -16,6 +18,7 @@ export type PluginSessionBindingInput = Readonly<{
         target?: BackendTargetRefV2Input;
         source?: 'daemon' | 'terminal';
         accountSettingsContext?: AccountSettingsContext | null;
+        environmentVariables?: Readonly<Record<string, string>>;
     }>;
     resume: Readonly<{
         existingSessionId?: string;
@@ -35,6 +38,7 @@ export type PluginSessionBindingInput = Readonly<{
             id: string;
             updatedAt?: number;
         }>;
+        providerAcceptancePendingMaterialization?: ProviderAcceptancePendingMaterializationPolicy;
     }>;
 }>;
 
@@ -68,6 +72,24 @@ function readOptionalNumber(value: unknown): number | undefined {
     return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+function readStringRecord(value: unknown): Readonly<Record<string, string>> | undefined {
+    if (!isRecord(value)) {
+        return undefined;
+    }
+    const entries = Object.entries(value).filter((entry): entry is [string, string] =>
+        typeof entry[0] === 'string' && entry[0].length > 0 && typeof entry[1] === 'string'
+    );
+    return entries.length > 0 ? Object.freeze(Object.fromEntries(entries)) : undefined;
+}
+
+function readProviderAcceptancePendingMaterialization(
+    value: unknown,
+): ProviderAcceptancePendingMaterializationPolicy | undefined {
+    return value === 'claimUntilProviderAccept' || value === 'commitAtMaterialize'
+        ? normalizeProviderAcceptancePendingMaterializationPolicy(value)
+        : undefined;
+}
+
 export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindingInput {
     if (!isRecord(raw)) {
         throw new Error('Plugin session launch params must be an object payload');
@@ -77,6 +99,10 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
     if (!credentials) {
         throw new Error('Plugin session launch params must include credentials');
     }
+
+    const providerAcceptancePendingMaterialization = readProviderAcceptancePendingMaterialization(
+        raw.providerAcceptancePendingMaterialization,
+    );
 
     return Object.freeze({
         credentials,
@@ -88,6 +114,9 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
                 : {}),
             ...(raw.accountSettingsContext === null || isRecord(raw.accountSettingsContext)
                 ? { accountSettingsContext: raw.accountSettingsContext as AccountSettingsContext | null }
+                : {}),
+            ...(readStringRecord(raw.environmentVariables)
+                ? { environmentVariables: readStringRecord(raw.environmentVariables) }
                 : {}),
         }),
         resume: Object.freeze({
@@ -128,13 +157,18 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
                     }),
                 }
                 : {}),
+            ...(providerAcceptancePendingMaterialization
+                ? {
+                    providerAcceptancePendingMaterialization,
+                }
+                : {}),
         }),
     });
 }
 
 export function buildPluginSessionLaunchParams(params: Readonly<{
-    backend: ResolvedBackendContribution;
-    provider: ResolvedProviderContribution;
+    backend: ResolvedAgentRuntimeContribution;
+    provider: ResolvedAgentContribution;
     input: PluginSessionBindingInput;
     runtime: Readonly<{
         sessionId: string;
@@ -179,6 +213,9 @@ export function buildPluginHostSessionRuntimeOptions(
         ...(input.resume.resumeSessionId ? { resume: input.resume.resumeSessionId } : {}),
         ...(input.bootstrap.accountSettingsContext !== undefined
             ? { accountSettingsContext: input.bootstrap.accountSettingsContext }
+            : {}),
+        ...(input.bootstrap.environmentVariables
+            ? { environmentVariables: { ...input.bootstrap.environmentVariables } }
             : {}),
     });
 }

@@ -152,8 +152,5 @@ export async function buildClientSpecFromAcpSpec(params: Readonly<{
         }),
         protocol: Object.freeze({ kind: 'json-rpc-2.0' }),
         ...(hooks ? { hooks } : {}),
-        lifecycle: Object.freeze({
-            requestTimeoutMs: definition.transport.timeouts?.idleMs,
-        }),
     });
 }

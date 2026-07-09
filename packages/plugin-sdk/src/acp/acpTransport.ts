@@ -1,4 +1,4 @@
-import type { AcpTimeoutsV1 } from './types';
+import type { AcpTimeoutsV1 } from './types.js';
 
 export type AcpTransportLaunchInputV1 =
     | Readonly<{

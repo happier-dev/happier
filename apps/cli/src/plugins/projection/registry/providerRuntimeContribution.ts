@@ -8,6 +8,12 @@ import type {
 } from '@happier-dev/agents';
 import type { AcpBackendSpecV1, ExecRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
 import type {
+    ExternalSessionCandidateHostAdapterV1,
+    ExternalSessionHostAdaptersContributionV1,
+    ExternalSessionRuntimeHostAdapterParamsV1,
+    ExternalSessionTranscriptStoreAdapterV1,
+} from '@happier-dev/plugin-sdk/sessions';
+import type {
     CloudCustomAuthenticatorContextV1,
     CloudCustomAuthenticatorV1,
 } from '@happier-dev/plugin-sdk';
@@ -23,14 +29,19 @@ import type {
 import type { parseProviderResetAt } from '@/daemon/connectedServices/quotas/normalization';
 import type {
     CliAuthStatusDraft,
+    ConnectedServiceDaemonAuthBridgeRefresh,
     ConnectedServiceSwitchContinuityParams,
     ConnectedServiceSwitchContinuityResult,
     ExternalSessionRuntimeHostAdapterParams,
-} from '@/backends/types';
+} from '@/agent/catalog/types';
+import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
+import type { ConnectedServiceQuotaFetcherDescriptor } from '@/daemon/connectedServices/quotas/types';
 import type { ConnectedServiceProviderRuntimeAuthAdapter } from '@/daemon/connectedServices/runtimeAuth/types';
+import type { ConnectedServiceMaterializedHomeFreshness } from '@/daemon/connectedServices/materialization/materializedHomeFreshness';
 import type { ProviderSessionArgPartitionResult } from '@/cli/providerSessionArgPartition';
 import type { ExternalSessionCandidateHostAdapter } from '@/session/external/candidates/host';
 import type { ExternalSessionTranscriptStoreAdapter } from '@/session/external/transcripts/store';
+import type { TerminalPromptSubmitVerificationPolicy } from '@/integrations/terminalHost/promptSubmitVerification';
 
 import type { ResolvedCatalogEntry } from './types';
 import type { ConnectedServiceStateSharingMode } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingManifest';
@@ -65,6 +76,15 @@ type ProviderAttachContributionSource = Readonly<{
 
 type SessionRuntimePreferencesContributionSource = Readonly<{
     resolve?: RuntimeContributionFunction;
+}>;
+
+type CodingPromptBehaviorContributionSource = Readonly<{
+    resolve?: RuntimeContributionFunction;
+}>;
+
+type DaemonSpawnHooksContributionSource = Readonly<{
+    resolveRuntimePrerequisites?: RuntimeContributionFunction;
+    augmentEnv?: RuntimeContributionFunction;
 }>;
 
 type VendorResumeSupportContributionSource = Readonly<{
@@ -116,6 +136,7 @@ type SessionControlsContributionSource = Readonly<{
 
 type TerminalContributionSource = Readonly<{
     transformHeadlessTmuxArgv?: RuntimeContributionFunction;
+    promptSubmitVerification?: RuntimeContributionObject;
 }>;
 
 type AcpBackendContributionSource = Readonly<{
@@ -138,6 +159,7 @@ type ProviderCliSessionCommandContributionSource = Readonly<{
     forwardResumeFlag?: unknown;
     yoloProviderArgs?: readonly unknown[];
     versionFlags?: readonly unknown[];
+    providerInfoCommandPrefixes?: readonly (readonly unknown[])[];
     buildSessionOptions?: RuntimeContributionFunction;
 }>;
 
@@ -145,6 +167,7 @@ type ConnectedServicesContributionSource = Readonly<{
     serviceIds?: readonly unknown[];
     stateSharingServiceIds?: readonly unknown[];
     materializedRootSubdir?: unknown;
+    noRestartRequiredServiceIds?: readonly unknown[];
     materializedHomeCredentialEntries?: readonly unknown[];
     resolveStateSharingSourceRoot?: RuntimeContributionFunction;
     resolveStateSharingStateEntryNames?: RuntimeContributionFunction;
@@ -154,6 +177,7 @@ type ConnectedServicesContributionSource = Readonly<{
     readConnectedServiceId?: RuntimeContributionFunction;
     createAuthMaterializationInput?: RuntimeContributionFunction;
     materializeAuthEnvironment?: RuntimeContributionFunction;
+    isMaterializedHomeStale?: RuntimeContributionFunction;
     materializeRuntimeAuthSelection?: unknown;
     stateSharingDescriptor?: unknown;
     shouldRestartForServiceSwitch?: RuntimeContributionFunction;
@@ -164,6 +188,8 @@ type ConnectedServicesContributionSource = Readonly<{
     resolveResumeReachabilityUnsupported?: RuntimeContributionFunction;
     classifyUsageLimitError?: RuntimeContributionFunction;
     runtimeAuthAdapter?: unknown;
+    daemonAuthBridge?: RuntimeContributionObject;
+    quotaFetcherDescriptor?: unknown;
     recoveryCapabilities?: unknown;
     usageLimitRecovery?: RuntimeContributionObject;
 }>;
@@ -265,6 +291,8 @@ export type SessionRuntimePreferencesContribution = Readonly<{
     resolve: NonNullable<ResolvedCatalogEntry['resolveSessionRuntimePreferences']>;
 }>;
 
+export type DaemonSpawnHooksContribution = DaemonSpawnHooks;
+
 export type SessionHandoffProviderBundleRecordExtractor = NonNullable<
     Awaited<ReturnType<NonNullable<ResolvedCatalogEntry['getSessionHandoffProviderBundleRecordExtractor']>>>
 >;
@@ -323,7 +351,8 @@ export type SessionControlsContribution = Readonly<{
 }>;
 
 export type TerminalContribution = Readonly<{
-    transformHeadlessTmuxArgv: (argv: string[]) => string[];
+    transformHeadlessTmuxArgv?: (argv: string[]) => string[];
+    promptSubmitVerification?: TerminalPromptSubmitVerificationPolicy;
 }>;
 
 export type ProviderCliSessionCommandResumeDelegationV1 = Readonly<{
@@ -340,6 +369,7 @@ export type ProviderCliSessionCommandContribution = Readonly<{
     forwardResumeFlag?: boolean;
     yoloProviderArgs?: readonly string[];
     versionFlags?: readonly string[];
+    providerInfoCommandPrefixes?: readonly (readonly string[])[];
     buildSessionOptions?: (input: Readonly<{
         args: readonly string[];
         parsed: ProviderSessionArgPartitionResult;
@@ -350,6 +380,7 @@ export type ConnectedServicesContribution = Readonly<{
     serviceIds: readonly ConnectedServiceId[];
     stateSharingServiceIds?: readonly ConnectedServiceId[];
     materializedRootSubdir?: string;
+    noRestartRequiredServiceIds?: readonly ConnectedServiceId[];
     materializedHomeCredentialEntries?: readonly string[];
     resolveStateSharingSourceRoot?: (params: Readonly<{ env: NodeJS.ProcessEnv }>) => string;
     resolveStateSharingStateEntryNames?: (params: Readonly<{
@@ -384,6 +415,7 @@ export type ConnectedServicesContribution = Readonly<{
             env: Readonly<Record<string, string>>;
             diagnostics?: readonly unknown[];
         }>;
+    materializedHomeFreshness?: ConnectedServiceMaterializedHomeFreshness;
     stateSharingDescriptor: NonNullable<ConnectedServiceStateSharingDescriptorResult>;
     materializeRuntimeAuthSelection?: boolean;
     shouldRestartForServiceSwitch?: (serviceId: unknown) => boolean;
@@ -399,8 +431,12 @@ export type ConnectedServicesContribution = Readonly<{
         parseResetAt: typeof parseProviderResetAt;
     }>) => unknown;
     runtimeAuthAdapter?: ConnectedServiceProviderRuntimeAuthAdapter | false;
+    daemonAuthBridge?: Readonly<{
+        refresh: ConnectedServiceDaemonAuthBridgeRefresh;
+    }>;
+    quotaFetcherDescriptor?: ConnectedServiceQuotaFetcherDescriptor;
     usageLimitRecovery?: Readonly<{
-        providerId: string;
+        agentId: string;
         issueProviderFilter?: string;
         defaultNativeServiceId?: ConnectedServiceId;
         fallbackBackoffEnvKey: string;
@@ -447,17 +483,20 @@ export type RuntimeControlContribution = Readonly<{
         checkNow?: (
             input: RuntimeControlInput<Parameters<NonNullable<NonNullable<SessionUsageLimitRecoveryControlAdapterResult>['checkNow']>>[0]>,
         ) => Promise<unknown> | unknown;
+        consumeResetCredit?: (
+            input: RuntimeControlInput<Parameters<NonNullable<NonNullable<SessionUsageLimitRecoveryControlAdapterResult>['consumeResetCredit']>>[0]>,
+        ) => Promise<unknown> | unknown;
     }>;
 }>;
 
 export type ExternalSessionsContribution = Readonly<{
     createTranscriptStoreAdapter?: (
-        params: ExternalSessionRuntimeHostAdapterParams,
-    ) => ExternalSessionTranscriptStoreAdapter;
+        params: ExternalSessionRuntimeHostAdapterParamsV1,
+    ) => ExternalSessionTranscriptStoreAdapter | ExternalSessionTranscriptStoreAdapterV1;
     createCandidateHostAdapter?: (
-        params: ExternalSessionRuntimeHostAdapterParams,
-    ) => ExternalSessionCandidateHostAdapter;
-}>;
+        params: ExternalSessionRuntimeHostAdapterParamsV1,
+    ) => ExternalSessionCandidateHostAdapter | ExternalSessionCandidateHostAdapterV1;
+}> & ExternalSessionHostAdaptersContributionV1;
 
 export type ProviderRuntimeContribution = Readonly<{
     builtInAcpCatalog?: boolean;
@@ -466,6 +505,8 @@ export type ProviderRuntimeContribution = Readonly<{
     managedServer?: ManagedServerContributionSource;
     attach?: ProviderAttachContributionSource;
     sessionRuntimePreferences?: SessionRuntimePreferencesContributionSource;
+    codingPromptBehavior?: CodingPromptBehaviorContributionSource;
+    daemonSpawnHooks?: DaemonSpawnHooksContributionSource;
     vendorResumeSupport?: VendorResumeSupportContributionSource;
     checklists?: AgentChecklistContributionSource;
     sessionHandoff?: SessionHandoffContributionSource;

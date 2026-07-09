@@ -7,18 +7,13 @@
   "engines": {
     "happier": "^0.2.0"
   },
-  "runtime": {
-    "apiVersion": 1,
-    "capabilities": []
+  "uses": [],
+  "entrypoints": {
+    "main": "./agent/daemon.mjs"
   },
-  "targets": {
-    "daemon": {
-      "entry": "./agent/daemon.mjs"
-    }
-  },
-  "capabilities": {
-    "permissions": [],
-    "optionalPermissions": []
+  "permissions": {
+    "required": [],
+    "optional": []
   },
   "contributes": {
     "resources": [

@@ -3,9 +3,6 @@ export async function activate(api) {
 
     api.registerAction({
         id: 'examples.reload.report',
-        title: 'Report Reload Timestamp',
-        description: 'Returns activation-time data so you can verify happier plugins reload.',
-        surface: 'cli',
         handler: async () => ({
             ok: true,
             data: {

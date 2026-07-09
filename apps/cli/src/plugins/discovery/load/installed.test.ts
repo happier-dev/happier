@@ -22,16 +22,47 @@ async function writePluginManifest(rootDir: string, pluginId: string): Promise<v
       engines: {
         happier: '^0.2.0',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: [],
+      uses: [],
+      entrypoints: {
+        main: './daemon.js',
       },
-      targets: {
-        daemon: {
-          entry: './daemon.js',
-        },
+      permissions: {
+        required: [],
+        optional: [],
       },
-      capabilities: { permissions: [] },
+      contributes: {},
+    }, null, 2),
+    'utf8',
+  );
+}
+
+async function writePluginManifestWithEntrypoints(rootDir: string, pluginId: string): Promise<void> {
+  const manifestDir = join(rootDir, '.happier-plugin');
+  await mkdir(join(rootDir, 'dist'), { recursive: true });
+  await mkdir(join(rootDir, 'src'), { recursive: true });
+  await mkdir(manifestDir, { recursive: true });
+  await writeFile(join(rootDir, 'dist', 'daemon.mjs'), 'export const version = "compiled";\n', 'utf8');
+  await writeFile(join(rootDir, 'src', 'daemon.ts'), 'export const version: string = "dev";\n', 'utf8');
+  await writeFile(
+    join(manifestDir, 'plugin.json'),
+    JSON.stringify({
+      schemaVersion: 2,
+      id: pluginId,
+      version: '1.0.0',
+      displayName: `Plugin ${pluginId}`,
+      description: `Plugin ${pluginId}`,
+      engines: {
+        happier: '^0.2.0',
+      },
+      uses: [],
+      entrypoints: {
+        main: './dist/daemon.mjs',
+        dev: './src/daemon.ts',
+      },
+      permissions: {
+        required: [],
+        optional: [],
+      },
       contributes: {},
     }, null, 2),
     'utf8',
@@ -52,16 +83,14 @@ async function writeStandaloneManifest(manifestPath: string, pluginId: string): 
       engines: {
         happier: '^0.2.0',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: [],
+      uses: [],
+      entrypoints: {
+        main: './daemon.js',
       },
-      targets: {
-        daemon: {
-          entry: './daemon.js',
-        },
+      permissions: {
+        required: [],
+        optional: [],
       },
-      capabilities: { permissions: [] },
       contributes: {},
     }, null, 2),
     'utf8',
@@ -138,6 +167,53 @@ describe('loadInstalledPlugins', () => {
     expect(result.diagnosticsByPluginId['acme.disabled']).toBeUndefined();
   });
 
+  it('carries the TypeScript dev daemon entry for enabled local trusted path plugins', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-loader-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-dev-entry-'));
+    const store = createPluginStateStore({ happyHomeDir });
+
+    await writePluginManifestWithEntrypoints(pluginRoot, 'acme.dev-entry');
+
+    await store.write({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: {
+        'acme.dev-entry': {
+          source: {
+            kind: 'path',
+            locator: pluginRoot,
+            trustPolicy: 'local_trusted',
+            installPolicy: 'link',
+            resolvedPath: pluginRoot,
+            manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+          },
+          compatibility: {
+            status: 'compatible',
+            diagnostics: [],
+          },
+          install: {
+            mode: 'link',
+            manifestVersion: '1.0.0',
+            manifestDigest: null,
+            installedPath: null,
+          },
+          state: {
+            enabled: true,
+          },
+        },
+      },
+    });
+
+    const result = await loadInstalledPlugins({ happyHomeDir });
+
+    expect(result.loadedPlugins).toHaveLength(1);
+    expect(result.loadedPlugins[0]).toMatchObject({
+      daemonEntryPath: expect.stringMatching(/dist[/\\]daemon\.mjs$/),
+      devDaemonEntryPath: expect.stringMatching(/src[/\\]daemon\.ts$/),
+    });
+    expect(result.diagnosticsByPluginId['acme.dev-entry']).toEqual([]);
+  });
+
   it('loads managed-install plugins from the installed payload path even when their source is archived', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-loader-'));
     const installedPluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-installed-'));
@@ -189,6 +265,54 @@ describe('loadInstalledPlugins', () => {
       },
     });
     expect(result.diagnosticsByPluginId['acme.archived']).toEqual([]);
+  });
+
+  it('rejects installed state that claims host-derived bundled provenance', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-loader-'));
+    const installedPluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-installed-'));
+    const store = createPluginStateStore({ happyHomeDir });
+
+    await writePluginManifest(installedPluginRoot, 'acme.spoofed-bundled');
+
+    await store.write({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: {
+        'acme.spoofed-bundled': {
+          source: {
+            kind: 'bundled',
+            locator: '@acme/spoofed-bundled',
+            trustPolicy: 'local_trusted',
+            installPolicy: 'managed_install',
+            resolvedPath: installedPluginRoot,
+            manifestPath: join(installedPluginRoot, '.happier-plugin', 'plugin.json'),
+          },
+          compatibility: {
+            status: 'compatible',
+            diagnostics: [],
+          },
+          install: {
+            mode: 'managed_install',
+            manifestVersion: '1.0.0',
+            manifestDigest: 'sha256:abc123',
+            installedPath: installedPluginRoot,
+          },
+          state: {
+            enabled: true,
+          },
+        },
+      },
+    });
+
+    const result = await loadInstalledPlugins({ happyHomeDir });
+
+    expect(result.loadedPlugins).toEqual([]);
+    expect(result.diagnosticsByPluginId['acme.spoofed-bundled']).toEqual([
+      expect.objectContaining({
+        code: 'plugin_source_kind_unsupported',
+        message: expect.stringMatching(/host-derived bundled/i),
+      }),
+    ]);
   });
 
   it('preserves stored trust policy for linked path installs when reloading plugin state', async () => {
@@ -433,17 +557,15 @@ describe('loadInstalledPlugins', () => {
         engines: {
           happier: '^0.2.0',
         },
-        runtime: {
-          apiVersion: 1,
-          capabilities: [],
+        uses: [],
+        entrypoints: {
+          main: '../../outside.js',
         },
-        targets: {
-          daemon: {
-            entry: '../../outside.js',
-          },
+        permissions: {
+          required: [],
+          optional: [],
         },
-      capabilities: { permissions: [] },
-      contributes: {},
+        contributes: {},
       }, null, 2),
       'utf8',
     );
@@ -506,17 +628,15 @@ describe('loadInstalledPlugins', () => {
         engines: {
           happier: '^0.2.0',
         },
-        runtime: {
-          apiVersion: 1,
-          capabilities: [],
+        uses: [],
+        entrypoints: {
+          main: './missing-daemon.mjs',
         },
-        targets: {
-          daemon: {
-            entry: './missing-daemon.mjs',
-          },
+        permissions: {
+          required: [],
+          optional: [],
         },
-      capabilities: { permissions: [] },
-      contributes: {},
+        contributes: {},
       }, null, 2),
       'utf8',
     );
@@ -580,17 +700,15 @@ describe('loadInstalledPlugins', () => {
         engines: {
           happier: '^0.2.0',
         },
-        runtime: {
-          apiVersion: 1,
-          capabilities: [],
+        uses: [],
+        entrypoints: {
+          main: './daemon.ts',
         },
-        targets: {
-          daemon: {
-            entry: './daemon.ts',
-          },
+        permissions: {
+          required: [],
+          optional: [],
         },
-      capabilities: { permissions: [] },
-      contributes: {},
+        contributes: {},
       }, null, 2),
       'utf8',
     );

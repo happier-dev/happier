@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -142,6 +142,92 @@ describe('createSessionHooksService', () => {
     await service.disposePluginDir(pluginDir);
     for (const disposable of disposables) await disposable.dispose();
     await expect(stat(pluginDir)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('keeps session-scoped hook plugin dirs stable across runner cleanup', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-hooks-'));
+    const disposables: Array<{ dispose(): Promise<void> | void }> = [];
+    const service = createSessionHooksService({
+      happyHomeDir,
+      hasCapability: hasSessionHooksCapability,
+      addDisposable: (dispose) => {
+        disposables.push(dispose);
+      },
+    });
+    const createdDirs: string[] = [];
+
+    try {
+      const firstPluginDir = await service.createPluginDir({
+        providerId: 'claude',
+        lifecycle: { kind: 'session', sessionId: 'cmr3dpuka06zhtmtpaa1af5gh' },
+        files: [
+          { path: '.claude-plugin/plugin.json', json: { name: 'happier-session-hooks-stable-v1' } },
+          { path: 'hooks/hooks.json', json: { hooks: { PreToolUse: [] } } },
+        ],
+      });
+      createdDirs.push(firstPluginDir);
+      const secondPluginDir = await service.createPluginDir({
+        providerId: 'claude',
+        lifecycle: { kind: 'session', sessionId: 'cmr3dpuka06zhtmtpaa1af5gh' },
+        files: [
+          { path: '.claude-plugin/plugin.json', json: { name: 'happier-session-hooks-stable-v2' } },
+          { path: 'hooks/hooks.json', json: { hooks: { UserPromptSubmit: [] } } },
+        ],
+      });
+      createdDirs.push(secondPluginDir);
+
+      expect(secondPluginDir).toBe(firstPluginDir);
+      expect(firstPluginDir).toContain('claude-session-cmr3dpuka06zhtmtpaa1af5gh');
+      await expect(readFile(join(firstPluginDir, '.claude-plugin', 'plugin.json'), 'utf8')).resolves.toContain(
+        'happier-session-hooks-stable-v2',
+      );
+
+      await service.disposePluginDir(firstPluginDir);
+      for (const disposable of disposables) await disposable.dispose();
+      await expect(readFile(join(firstPluginDir, '.claude-plugin', 'plugin.json'), 'utf8')).resolves.toContain(
+        'happier-session-hooks-stable-v2',
+      );
+    } finally {
+      for (const pluginDir of new Set(createdDirs)) {
+        await rm(pluginDir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('preserves a previous session-scoped hook plugin dir when regeneration fails', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-hooks-'));
+    const service = createSessionHooksService({
+      happyHomeDir,
+      hasCapability: hasSessionHooksCapability,
+    });
+    let pluginDir: string | null = null;
+
+    try {
+      pluginDir = await service.createPluginDir({
+        providerId: 'claude',
+        lifecycle: { kind: 'session', sessionId: 'cmr3dpuka06zhtmtpaa1af5gh' },
+        files: [
+          { path: '.claude-plugin/plugin.json', json: { name: 'happier-session-hooks-stable-v1' } },
+          { path: 'hooks/hooks.json', json: { hooks: { PreToolUse: [] } } },
+        ],
+      });
+
+      await expect(service.createPluginDir({
+        providerId: 'claude',
+        lifecycle: { kind: 'session', sessionId: 'cmr3dpuka06zhtmtpaa1af5gh' },
+        files: [
+          { path: '.claude-plugin/plugin.json', json: { name: 'happier-session-hooks-stable-broken' } },
+          { path: '../escape.json', json: { invalid: true } },
+        ],
+      })).rejects.toThrow(/Invalid session hook plugin file path/);
+
+      await expect(readFile(join(pluginDir, '.claude-plugin', 'plugin.json'), 'utf8')).resolves.toContain(
+        'happier-session-hooks-stable-v1',
+      );
+      await expect(readFile(join(pluginDir, 'hooks', 'hooks.json'), 'utf8')).resolves.toContain('PreToolUse');
+    } finally {
+      if (pluginDir) await rm(pluginDir, { recursive: true, force: true });
+    }
   });
 
   it('rejects hook plugin dir cleanup for paths not created by the service', async () => {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { RuntimeCore, SessionStateFacet } from '@happier-dev/agents';
 import type {
-    BackendEngineV1,
+    AgentRuntimeV1,
     ConnectionRuntimeServiceV1,
     ConnectionStateV1,
     ExternalSessionTakeoverInputV1,
@@ -30,7 +30,7 @@ import type {
     RetryRuntimeServiceV1,
     TimeoutRuntimeServiceV1,
     TranscriptsRuntimeServiceV1,
-    RegisterBackendEngineV1,
+    RegisterAgentRuntimeV1,
     RuntimeCoreV1,
     SessionRuntimeV1,
     SubagentRefInputV1,
@@ -43,10 +43,10 @@ import type {
     ForkResultV1,
     RestoreCheckpointResultV1,
     TerminalRuntimeRunResultV1,
-} from './index';
+} from './index.js';
 
 describe('plugin SDK engine contracts', () => {
-    it('types backend engine registration through runtimeCore', () => {
+    it('types agent runtime registration through runtimeCore', () => {
         const sessionRuntime: SessionRuntimeV1 = {
             send: async (input, options) => ({
                 status: options?.signal?.aborted ? 'rejected' : 'accepted',
@@ -85,14 +85,14 @@ describe('plugin SDK engine contracts', () => {
             },
         };
 
-        const registration: RegisterBackendEngineV1 = {
-            backendId: 'acme.backend',
+        const registration: RegisterAgentRuntimeV1 = {
+            agentId: 'acme.agent',
             create: (_ctx) => ({ runtimeCore }),
         };
 
-        expect(registration.backendId).toBe('acme.backend');
+        expect(registration.agentId).toBe('acme.agent');
 
-        const engine: BackendEngineV1 = registration.create({} as PluginContextV1) as BackendEngineV1;
+        const engine: AgentRuntimeV1 = registration.create({} as PluginContextV1) as AgentRuntimeV1;
         expect(engine.runtimeCore).toBe(runtimeCore);
         expect(engine.runtimeCore?.createExecutionRunBackend({
             backendId: 'acme.backend',
@@ -111,8 +111,8 @@ describe('plugin SDK engine contracts', () => {
     it('rejects raw unknown runtimeCore at the plugin authoring seam', () => {
         const runtimeCore = {} as RuntimeCore<unknown, unknown, unknown, unknown>;
 
-        const engine: BackendEngineV1 = {
-            // @ts-expect-error A.13q requires the public SDK backend engine to expose RuntimeCoreV1.
+        const engine: AgentRuntimeV1 = {
+            // @ts-expect-error A.13q requires the public SDK agent runtime to expose RuntimeCoreV1.
             runtimeCore,
         };
 
@@ -120,7 +120,7 @@ describe('plugin SDK engine contracts', () => {
     });
 
     it('does not expose host session runtime plans through the public session runtime result', () => {
-        type PublicSessionRuntimeCreateResult = import('./index').SessionRuntimeCreateResultV1;
+        type PublicSessionRuntimeCreateResult = import('./index.js').SessionRuntimeCreateResultV1;
         type PublicHostPlanLeak = Extract<PublicSessionRuntimeCreateResult, { kind: 'hostSessionRuntimePlan' }>;
         type AssertNever<T extends never> = T;
         type NoHostPlanLeak = AssertNever<PublicHostPlanLeak>;
@@ -139,7 +139,7 @@ describe('plugin SDK engine contracts', () => {
     it('types session state as a runtime facet adjunct', () => {
         const sessionState = {} as SessionStateFacet;
 
-        const engine: BackendEngineV1 = {
+        const engine: AgentRuntimeV1 = {
             facets: {
                 sessionState,
             },
@@ -149,7 +149,7 @@ describe('plugin SDK engine contracts', () => {
         expect('sessionState' in engine).toBe(false);
     });
 
-    it('exposes final backend executable surface fields without stale handoff naming', () => {
+    it('exposes final agent executable surface fields without stale handoff naming', () => {
         const terminalResult: TerminalRuntimeRunResultV1 = {
             type: 'process_exited',
             exitCode: 0,
@@ -174,7 +174,7 @@ describe('plugin SDK engine contracts', () => {
             outcome: 'completed',
             restoredScopes: ['conversation'],
         };
-        const engine: BackendEngineV1 = {
+        const engine: AgentRuntimeV1 = {
             terminalRuntimeSurface: {
                 launch: async () => terminalResult,
                 resolveTranscriptBinding: async () => null,
@@ -216,8 +216,8 @@ describe('plugin SDK engine contracts', () => {
         expect('sessionHandoffSurface' in engine).toBe(false);
     });
 
-    it('rejects arbitrary raw payloads on final backend executable surfaces', () => {
-        const engine: BackendEngineV1 = {
+    it('rejects arbitrary raw payloads on final agent executable surfaces', () => {
+        const engine: AgentRuntimeV1 = {
             terminalRuntimeSurface: {
                 // @ts-expect-error terminal runtime launch returns TerminalRuntimeRunResultV1, not arbitrary objects.
                 launch: async () => ({ ok: true }),
@@ -238,7 +238,7 @@ describe('plugin SDK engine contracts', () => {
     it('rejects stale bindings-only backend engines at the SDK seam', () => {
         const runtimeCore = {} as RuntimeCore<unknown, unknown, unknown, unknown>;
 
-        const registration: RegisterBackendEngineV1 = {
+        const registration: RegisterAgentRuntimeV1 = {
             backendId: 'acme.backend',
             // @ts-expect-error A.6 hard-breaks stale engine bindings in favor of runtimeCore.
             create: () => ({
@@ -388,7 +388,10 @@ describe('plugin SDK engine contracts', () => {
         const progress = {} as ProgressRuntimeServiceV1;
         const transcripts = {} as TranscriptsRuntimeServiceV1;
         const context = {
-            exec,
+            agentRuntime: {
+                exec,
+                transcripts,
+            },
             managedServer,
             errors,
             retry,
@@ -397,11 +400,10 @@ describe('plugin SDK engine contracts', () => {
             abort,
             timeout,
             progress,
-            transcripts,
         } as PluginContextV1;
         const contextRecord = context as unknown as Readonly<Record<string, unknown>>;
 
-        expect(context.exec).toBe(exec);
+        expect(context.agentRuntime.exec).toBe(exec);
         expect(context.managedServer).toBe(managedServer);
         expect(context.errors).toBe(errors);
         expect(context.retry).toBe(retry);
@@ -410,7 +412,9 @@ describe('plugin SDK engine contracts', () => {
         expect(context.abort).toBe(abort);
         expect(context.timeout).toBe(timeout);
         expect(context.progress).toBe(progress);
-        expect(context.transcripts).toBe(transcripts);
+        expect(context.agentRuntime.transcripts).toBe(transcripts);
+        expect('exec' in contextRecord).toBe(false);
+        expect('transcripts' in contextRecord).toBe(false);
         expect('managedTools' in contextRecord).toBe(false);
         expect('rpc' in contextRecord).toBe(false);
         expect('jsonRpcStdio' in contextRecord).toBe(false);
@@ -545,13 +549,15 @@ describe('plugin SDK engine contracts', () => {
     });
 
     it('exposes provider-account usage recording on runtime context without putting it on activate api', async () => {
-        const accountUsage = {} as PluginContextV1['accountUsage'];
+        const accountUsage = {} as PluginContextV1['agentRuntime']['accountUsage'];
         const service = accountUsage;
         const context = {
-            accountUsage: service,
+            agentRuntime: {
+                accountUsage: service,
+            },
         } as PluginContextV1;
 
-        expect(context.accountUsage).toBe(service);
+        expect(context.agentRuntime.accountUsage).toBe(service);
 
         const api = {} as PluginApiV1;
         expect('accountUsage' in api).toBe(false);
@@ -588,7 +594,7 @@ describe('plugin SDK engine contracts', () => {
                         },
                         sanitizer: {
                             redactedValues: ['known-secret-value'],
-                            sensitiveKeys: ['vendorSessionId'],
+                            sensitiveKeys: ['providerSessionId'],
                             maxStringBytes: 256,
                             maxArrayItems: 4,
                             maxObjectKeys: 8,
@@ -611,6 +617,43 @@ describe('plugin SDK engine contracts', () => {
                 },
                 protocol: {
                     kind: 'json-rpc-2.0',
+                },
+            });
+
+            void exec.spawnClient({
+                launch: {
+                    kind: 'managed-installable',
+                    installableId: 'dep.acme.sidecar',
+                    executableName: 'sidecar',
+                    args: ['--runtime'],
+                    cwd: '/workspace',
+                    env: {
+                        HAPPIER_PLUGIN_RUNTIME: '1',
+                    },
+                    sourcePreference: 'managed-first',
+                },
+                transport: {
+                    kind: 'spawned-loopback-websocket',
+                    handshake: {
+                        byteOrder: 'little-endian',
+                        requestFrames: [
+                            new Uint8Array([1, 2, 3]),
+                        ],
+                        response: {
+                            byteOrder: 'little-endian',
+                            maxFrameBytes: 1024,
+                            timeoutMs: 250,
+                        },
+                    },
+                },
+                protocol: {
+                    kind: 'json-websocket',
+                    endpoint: {
+                        decodeHandshakeResponse: () => ({
+                            host: '127.0.0.1',
+                            port: 12345,
+                        }),
+                    },
                 },
             });
 
@@ -656,6 +699,64 @@ describe('plugin SDK engine contracts', () => {
                 },
                 protocol: {
                     kind: 'framed-bytes',
+                },
+            });
+
+            void exec.spawnClient({
+                launch: {
+                    kind: 'binary',
+                    executablePath: '/bin/agent',
+                },
+                transport: {
+                    kind: 'spawned-loopback-websocket',
+                    handshake: {
+                        byteOrder: 'little-endian',
+                        requestFrames: [
+                            new Uint8Array([1, 2, 3]),
+                        ],
+                        response: {
+                            byteOrder: 'little-endian',
+                            maxFrameBytes: 1024,
+                            timeoutMs: 250,
+                        },
+                    },
+                    connect: {
+                        timeoutMs: 500,
+                        retryInitialDelayMs: 5,
+                        retryMaxDelayMs: 25,
+                    },
+                    shutdown: {
+                        kind: 'close-stdin',
+                        graceMs: 100,
+                    },
+                    limits: {
+                        maxMessageBytes: 4096,
+                        maxPendingMessages: 4,
+                        maxBufferedBytes: 8192,
+                    },
+                },
+                protocol: {
+                    kind: 'json-websocket',
+                    endpoint: {
+                        decodeHandshakeResponse(bytes) {
+                            expect(bytes).toBeInstanceOf(Uint8Array);
+                            return {
+                                host: '127.0.0.1',
+                                port: 49321,
+                                path: '/runtime',
+                                credential: 'loopback-secret',
+                            };
+                        },
+                        buildHeaders(endpoint) {
+                            return [
+                                {
+                                    name: 'x-loopback-api-key',
+                                    value: endpoint.credential,
+                                    sensitive: true,
+                                },
+                            ];
+                        },
+                    },
                 },
             });
         }

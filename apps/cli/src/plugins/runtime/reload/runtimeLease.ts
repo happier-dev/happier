@@ -1,4 +1,5 @@
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { configuration } from '@/configuration';
 
 import type { PluginReloadController, PluginRuntimeRegistryLease } from './controller';
 import { pluginReloadController } from './singleton';
@@ -10,9 +11,11 @@ export async function acquireAuthoritativePluginRuntimeRegistryLease(params?: Re
 }>): Promise<PluginRuntimeRegistryLease> {
     // Callers may scope the registry resolution to a specific home directory (tests, multi-home
     // diagnostics). The singleton controller is global and reads `configuration.happyHomeDir`,
-    // so it must not silently override an explicit home-dir request.
+    // so only alternate explicit home-dir requests should bypass it.
+    const shouldUseSingletonController = typeof params?.happyHomeDir !== 'string'
+        || params.happyHomeDir === configuration.happyHomeDir;
     const controller = params?.controller
-        ?? (typeof params?.happyHomeDir === 'string' ? null : pluginReloadController);
+        ?? (shouldUseSingletonController ? pluginReloadController : null);
     if (controller && typeof controller.acquireRuntimeRegistry === 'function') {
         return await controller.acquireRuntimeRegistry({
             resolveRuntimeRegistry: params?.resolveRuntimeRegistry,

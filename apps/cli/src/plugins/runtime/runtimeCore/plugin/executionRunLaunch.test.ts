@@ -23,4 +23,23 @@ describe('buildPluginExecutionRunLaunchParams', () => {
       initialPrompt: 'boot',
     });
   });
+
+  it('forwards isolation env into plugin launch params (parity with the catalog backend path)', () => {
+    expect(buildPluginExecutionRunLaunchParams({
+      cwd: '/tmp/plugin-backend',
+      backendId: 'acme.sample.backend',
+      permissionMode: 'read_only',
+      env: {
+        CODEX_HOME: '/materialized/run_1/codex-home',
+        IGNORED_NON_STRING: 42,
+      },
+    })).toEqual({
+      cwd: '/tmp/plugin-backend',
+      backendId: 'acme.sample.backend',
+      permissionMode: 'read_only',
+      env: {
+        CODEX_HOME: '/materialized/run_1/codex-home',
+      },
+    });
+  });
 });

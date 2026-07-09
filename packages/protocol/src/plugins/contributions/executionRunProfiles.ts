@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { ExecutionRunIntentSchema } from '../../executionRuns.js';
+import { ExecutionRunIntentSchema } from '../../execution/runs/index.js';
 import { PluginDescriptorBaseV1Schema } from './_descriptors.js';
 
 export const PluginExecutionRunProfileContributionV2Schema = PluginDescriptorBaseV1Schema.safeExtend({

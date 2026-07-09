@@ -193,7 +193,7 @@ describe('createPluginAcpRuntimeService', () => {
                         method: context.method,
                         requestId: context.requestId,
                         sessionId: context.sessionId,
-                        backendId: context.backendId,
+                        agentId: context.agentId,
                         agentName: context.agentName,
                         aborted: context.signal.aborted,
                     }),
@@ -224,7 +224,7 @@ describe('createPluginAcpRuntimeService', () => {
             method: 'fixture/customRequest',
             requestId: 'child-request-42',
             sessionId: 'session-1',
-            backendId: 'fixture.custom.acp',
+            agentId: 'fixture.custom.acp',
             agentName: 'Fixture ACP',
             aborted: false,
         });
@@ -234,7 +234,7 @@ describe('createPluginAcpRuntimeService', () => {
             expect.objectContaining({
                 method: 'fixture/customNotification',
                 sessionId: 'session-1',
-                backendId: 'fixture.custom.acp',
+                agentId: 'fixture.custom.acp',
             }),
         );
         expect(handle.runtime.client).toBe(fixture.client);
@@ -267,6 +267,88 @@ describe('createPluginAcpRuntimeService', () => {
                 framing: { kind: 'strict-lf-json' },
             },
             protocol: { kind: 'json-rpc-2.0' },
+        });
+    });
+
+    it('does not map ACP idle debounce to the JSON-RPC request timeout', async () => {
+        const fixture = createExecFixture();
+        const service = createPluginAcpRuntimeService({
+            exec: fixture.exec,
+        });
+
+        await service.createRuntime({
+            ...ACP_SPEC,
+            transport: {
+                ...ACP_SPEC.transport,
+                timeouts: {
+                    idleMs: 25,
+                },
+            },
+        }, {
+            sessionId: 'session-1',
+            cwd: '/workspace',
+        });
+
+        expect(fixture.readSpawnClientSpec()).not.toMatchObject({
+            lifecycle: {
+                requestTimeoutMs: 25,
+            },
+        });
+    });
+
+    it('bridges shared ACP permission requests to the active session permission service', async () => {
+        const fixture = createExecFixture();
+        const requestDecision = vi.fn(async () => ({
+            decision: 'denied' as const,
+            rationale: 'host denied',
+        }));
+        const service = createPluginAcpRuntimeService({
+            exec: fixture.exec,
+            readPluginContext: () => ({
+                sessions: {
+                    current: {
+                        permissions: {
+                            requestDecision,
+                        },
+                    },
+                },
+            }) as unknown as PluginContextV1,
+        });
+
+        await service.createRuntime(ACP_SPEC, {
+            sessionId: 'happier-session-1',
+            cwd: '/workspace',
+        });
+
+        const requestHandler = fixture.readSpawnClientSpec().handlers?.jsonRpc?.requests?.['session/request_permission'];
+        expect(requestHandler).toEqual(expect.any(Function));
+        await expect(requestHandler?.({
+            toolCall: {
+                toolCallId: 'tool-1',
+                toolName: 'write_file',
+                rawInput: { path: 'README.md' },
+            },
+            options: [
+                { optionId: 'allow-once', kind: 'allow_once', name: 'Allow' },
+                { optionId: 'reject-once', kind: 'reject_once', name: 'Reject' },
+            ],
+        }, {
+            method: 'session/request_permission',
+            requestId: 'request-1',
+        })).resolves.toEqual({
+            outcome: {
+                outcome: 'selected',
+                optionId: 'reject-once',
+            },
+        });
+        expect(requestDecision).toHaveBeenCalledWith({
+            provider: 'fixture.custom.acp',
+            requestId: 'request-1',
+            toolCallId: 'tool-1',
+            toolName: 'write_file',
+            input: { path: 'README.md' },
+        }, {
+            signal: undefined,
         });
     });
 
@@ -422,6 +504,13 @@ describe('createPluginAcpRuntimeService', () => {
         const fixture = createExecFixture({ client });
         const service = createPluginAcpRuntimeService({
             exec: fixture.exec,
+            transformAgentRequestBeforeDispatch: async (payload: Record<string, unknown>) => ({
+                ...payload,
+                request: {
+                    ...(payload.request as Record<string, unknown>),
+                    prompt: [{ type: 'text', text: 'hello provider [request-hook]' }],
+                },
+            }),
         });
 
         const handle = await service.createRuntime(ACP_SPEC, {
@@ -435,9 +524,7 @@ describe('createPluginAcpRuntimeService', () => {
         await handle.sessionRuntime.updateSessionRuntimeConfig({
             modeId: 'ask',
             modelId: 'composer-2.5',
-            configOptions: {
-                fast: true,
-            },
+            configOption: { id: 'fast', value: true },
         });
         await handle.sessionRuntime.cancelTurn();
 
@@ -452,7 +539,7 @@ describe('createPluginAcpRuntimeService', () => {
                 method: 'session/prompt',
                 params: {
                     sessionId: 'provider-session-1',
-                    prompt: 'hello provider',
+                    prompt: [{ type: 'text', text: 'hello provider [request-hook]' }],
                 },
             },
             {
@@ -481,6 +568,43 @@ describe('createPluginAcpRuntimeService', () => {
                 method: 'session/cancel',
                 params: {
                     sessionId: 'provider-session-1',
+                },
+            },
+        ]);
+    });
+
+    it('passes ACP MCP server lists through provider session creation', async () => {
+        const requests: { method: string; params: unknown }[] = [];
+        const client = createJsonRpcClientFixture({
+            request: async <TParams = unknown, TResult = unknown>(method: string, params?: TParams): Promise<TResult> => {
+                requests.push({ method, params });
+                if (method === 'session/new') {
+                    return { sessionId: 'provider-session-1' } as TResult;
+                }
+                return {} as TResult;
+            },
+        });
+        const fixture = createExecFixture({ client });
+        const service = createPluginAcpRuntimeService({
+            exec: fixture.exec,
+        });
+
+        const handle = await service.createRuntime(ACP_SPEC, {
+            sessionId: 'happier-session-1',
+            cwd: '/workspace',
+            clientSpec: CLIENT_SPEC,
+        });
+
+        await handle.sessionRuntime.startOrLoadSession({
+            mcpServers: [],
+        } as Parameters<typeof handle.sessionRuntime.startOrLoadSession>[0]);
+
+        expect(requests).toEqual([
+            {
+                method: 'session/new',
+                params: {
+                    cwd: '/workspace',
+                    mcpServers: [],
                 },
             },
         ]);
@@ -521,6 +645,70 @@ describe('createPluginAcpRuntimeService', () => {
                 value: 'high',
             },
         });
+    });
+
+    it('ignores legacy plural configOptions updates over the composed A.13p runtime', async () => {
+        const requests: { method: string; params: unknown }[] = [];
+        const client = createJsonRpcClientFixture({
+            request: async <TParams = unknown, TResult = unknown>(method: string, params?: TParams): Promise<TResult> => {
+                requests.push({ method, params });
+                if (method === 'session/new') {
+                    return { sessionId: 'provider-session-1' } as TResult;
+                }
+                return {} as TResult;
+            },
+        });
+        const fixture = createExecFixture({ client });
+        const service = createPluginAcpRuntimeService({
+            exec: fixture.exec,
+        });
+
+        const handle = await service.createRuntime(ACP_SPEC, {
+            sessionId: 'happier-session-1',
+            cwd: '/workspace',
+            clientSpec: CLIENT_SPEC,
+        });
+
+        await handle.sessionRuntime.startOrLoadSession();
+        const legacyUpdate = {
+            configOptions: {
+                reasoning_effort: 'high',
+            },
+        } as unknown as Parameters<typeof handle.sessionRuntime.updateSessionRuntimeConfig>[0];
+        await handle.sessionRuntime.updateSessionRuntimeConfig(legacyUpdate);
+
+        expect(requests).toEqual([
+            {
+                method: 'session/new',
+                params: {
+                    cwd: '/workspace',
+                },
+            },
+        ]);
+    });
+
+    it('ignores empty config updates before provider session creation', async () => {
+        const requests: { method: string; params: unknown }[] = [];
+        const client = createJsonRpcClientFixture({
+            request: async <TParams = unknown, TResult = unknown>(method: string, params?: TParams): Promise<TResult> => {
+                requests.push({ method, params });
+                return {} as TResult;
+            },
+        });
+        const fixture = createExecFixture({ client });
+        const service = createPluginAcpRuntimeService({
+            exec: fixture.exec,
+        });
+
+        const handle = await service.createRuntime(ACP_SPEC, {
+            sessionId: 'happier-session-1',
+            cwd: '/workspace',
+            clientSpec: CLIENT_SPEC,
+        });
+
+        await expect(handle.sessionRuntime.updateSessionRuntimeConfig({})).resolves.toBeUndefined();
+
+        expect(requests).toEqual([]);
     });
 
     it('passes initialize meta through provider session creation', async () => {
@@ -837,7 +1025,80 @@ describe('createPluginAcpRuntimeService', () => {
                 method: 'session/prompt',
                 params: {
                     sessionId: 'provider-session-1',
-                    prompt: 'hello provider',
+                    prompt: [
+                        {
+                            type: 'text',
+                            text: 'hello provider',
+                        },
+                    ],
+                },
+            },
+        ]);
+    });
+
+    it('treats ACP session/prompt end-turn results as turn completion', async () => {
+        const requests: { method: string; params: unknown }[] = [];
+        const client = createJsonRpcClientFixture({
+            request: async <TParams = unknown, TResult = unknown>(method: string, params?: TParams): Promise<TResult> => {
+                requests.push({ method, params });
+                if (method === 'session/new') {
+                    return { sessionId: 'provider-session-1' } as TResult;
+                }
+                if (method === 'session/prompt') {
+                    return { stopReason: 'end_turn' } as TResult;
+                }
+                return {} as TResult;
+            },
+        });
+        const fixture = createExecFixture({ client });
+        const service = createPluginAcpRuntimeService({
+            exec: fixture.exec,
+        });
+
+        const handle = await service.createRuntime(ACP_SPEC, {
+            sessionId: 'happier-session-1',
+            cwd: '/workspace',
+            clientSpec: CLIENT_SPEC,
+        });
+        const events: unknown[] = [];
+        const unsubscribe = handle.sessionRuntime.subscribeRuntimeEvents((event) => {
+            events.push(event);
+        });
+
+        await handle.sessionRuntime.startOrLoadSession();
+        handle.sessionRuntime.beginTurnLifecycle();
+        const pendingCompletion = handle.sessionRuntime.waitForTurnCompletion({ timeoutMs: 10 });
+        await handle.sessionRuntime.sendTurnPrompt('hello provider');
+
+        await expect(pendingCompletion).resolves.toBeUndefined();
+        unsubscribe();
+        const runtimeEvents = events.map((event) => RuntimeEventV1Schema.parse(event));
+        const turnStart = runtimeEvents.find((event) => event.kind === 'turn-start');
+        expect(runtimeEvents).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                kind: 'turn-complete',
+                sessionId: 'happier-session-1',
+                turnId: turnStart?.turnId,
+                providerTurnId: turnStart?.providerTurnId,
+            }),
+        ]));
+        expect(requests).toEqual([
+            {
+                method: 'session/new',
+                params: {
+                    cwd: '/workspace',
+                },
+            },
+            {
+                method: 'session/prompt',
+                params: {
+                    sessionId: 'provider-session-1',
+                    prompt: [
+                        {
+                            type: 'text',
+                            text: 'hello provider',
+                        },
+                    ],
                 },
             },
         ]);

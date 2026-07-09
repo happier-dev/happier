@@ -20,13 +20,13 @@ async function loadOpenCodePluginActivate(): Promise<(api: unknown) => unknown> 
 }
 
 describe('plugins/opencode activate(api)', () => {
-    it('always registers a backend engine for opencode', async () => {
+    it('always registers an agent runtime for opencode', async () => {
         const activate = await loadOpenCodePluginActivate();
-        const host = createPluginApiHost({ runtimeCapabilities: ['backends'] });
+        const host = createPluginApiHost({ runtimeCapabilities: ['agents'] });
 
         await activate(host.api);
 
         const registrations = host.registrations();
-        expect(registrations.backendEngines.map((engine) => engine.backendId)).toEqual(['opencode']);
+        expect(registrations.agentRuntimes.map((runtime) => runtime.agentId)).toEqual(['opencode']);
     });
 });

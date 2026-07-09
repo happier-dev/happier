@@ -3,32 +3,27 @@
   "id": "examples.bundled-first-party",
   "version": "0.1.0",
   "displayName": "Bundled First-Party Example",
-  "description": "Bundled first-party provider/backend example with domain-organized topology.",
+  "description": "Bundled first-party agent-runtime example with domain-organized topology.",
   "engines": {
     "happier": "^0.2.0"
   },
-  "runtime": {
-    "apiVersion": 1,
-    "capabilities": [
-      "agents",
-      "backends"
-    ]
+  "uses": [
+    "agents"
+  ],
+  "entrypoints": {
+    "main": "./agent/daemon.mjs"
   },
-  "targets": {
-    "daemon": {
-      "entry": "./agent/daemon.mjs"
-    }
-  },
-  "capabilities": {
-    "permissions": []
+  "permissions": {
+    "required": [],
+    "optional": []
   },
   "contributes": {
     "agents": [
       {
         "kindVersion": 1,
-        "id": "examples.bundled.provider",
+        "id": "examples.bundled.backend",
         "display": {
-          "name": "Bundled Example Provider",
+          "name": "Bundled Example Agent",
           "tags": [
             "bundled",
             "first-party"
@@ -37,19 +32,15 @@
         "ownedBackendIds": [
           "examples.bundled.backend"
         ],
-        "catalogAgentId": "claude"
-      }
-    ],
-    "backends": [
-      {
-        "kindVersion": 1,
-        "id": "examples.bundled.backend",
+        "catalogAgentId": "claude",
+        "runtime": {
+          "kind": "custom"
+        },
         "capabilities": {},
         "target": {
           "sourceKind": "first_party",
           "id": "examples.bundled-first-party"
         },
-        "agentId": "examples.bundled.provider",
         "surfaceHandlers": [
           {
             "id": "backend.terminalRuntime.launch",
@@ -69,10 +60,7 @@
               "exportName": "discoverIdentity"
             }
           }
-        ],
-        "engine": {
-          "kind": "custom"
-        }
+        ]
       }
     ]
   }

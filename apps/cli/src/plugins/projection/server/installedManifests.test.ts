@@ -21,16 +21,14 @@ function createManifest(params: Readonly<{
         engines: {
             happier: '^0.2.0',
         },
-        runtime: {
-            apiVersion: 1,
-            capabilities: [],
-        },
-        targets: {},
+        activationEvents: [],
+        uses: [],
+        entrypoints: { main: './daemon.js' },
         permissions: [],
         optionalPermissions: params.optionalPermissions ?? [],
         contributes: {
-            providers: [],
-            backends: [],
+            agents: [],
+            agentRuntimes: [],
             actions: [],
             tools: [],
             commands: [],

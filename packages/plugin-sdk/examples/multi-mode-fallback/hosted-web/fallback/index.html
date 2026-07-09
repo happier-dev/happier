@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Multi-Mode Hosted Web Fallback</title>
+  </head>
+  <body>
+    <main id="root">Multi-mode hosted-web fallback</main>
+    <script>
+      window.parent?.postMessage({ version: 1, kind: 'ready' }, '*');
+    </script>
+  </body>
+</html>

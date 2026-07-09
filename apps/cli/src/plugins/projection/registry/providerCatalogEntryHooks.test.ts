@@ -7,9 +7,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse, buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { CLAUDE_PROVIDER_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-claude/agent/contributions/runtime';
 import { CODEX_PROVIDER_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-codex/agent/contributions/runtime';
+import { GEMINI_PROVIDER_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-gemini/agent/contributions/runtime';
+import { KIMI_PROVIDER_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-kimi/agent/contributions/runtime';
+import { OH_MY_PI_PROVIDER_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-ohmypi/agent/contributions/runtime';
+import { PI_PROVIDER_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-pi/agent/contributions/runtime';
+import type { ExternalSessionTranscriptStoreAdapterV1 } from '@happier-dev/plugin-sdk/sessions';
 
 import type { ApiClient } from '@/api/api';
 import type { TrackedSession } from '@/daemon/types';
+import { resolveConnectedServiceGroupHomeDir } from '@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir';
 import type { Credentials } from '@/persistence';
 import type { ExternalSessionCandidateHostAdapter } from '@/session/external/candidates/host';
 import type { ExternalSessionTranscriptStoreAdapter } from '@/session/external/transcripts/store';
@@ -77,6 +83,25 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
         })).toBe('/tmp/native-claude');
     });
 
+    it('projects provider-owned materialized-home freshness checks through connected-services catalog hooks', async () => {
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'claude',
+            packageName: '@happier-dev/plugins-claude',
+            contribution: CLAUDE_PROVIDER_RUNTIME_CONTRIBUTION,
+        })();
+        const contributedFreshness = (
+            CLAUDE_PROVIDER_RUNTIME_CONTRIBUTION as {
+                connectedServices: {
+                    isMaterializedHomeStale: unknown;
+                };
+            }
+        ).connectedServices.isMaterializedHomeStale;
+
+        await expect(hooks.getConnectedServiceMaterializedHomeFreshness?.()).resolves.toEqual({
+            isMaterializedHomeStale: contributedFreshness,
+        });
+    });
+
     it('uses plugin-provided CLI auth hooks ahead of built-in auth parsing', async () => {
         const hooks = createProviderRuntimeCatalogEntryHooks({
             agentId: 'kiro',
@@ -102,6 +127,48 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
             source: 'mixed',
             accountLabel: 'plugin-auth@example.com',
         });
+    });
+
+    it('projects Pi CLI catalog residuals from the Pi runtime contribution', async () => {
+        const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
+        const originalAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
+        try {
+            process.env.OPENAI_API_KEY = 'sk-pi-test';
+            delete process.env.ANTHROPIC_API_KEY;
+
+            const hooks = createProviderRuntimeCatalogEntryHooks({
+                agentId: 'pi',
+                packageName: '@happier-dev/plugins-pi',
+                contribution: PI_PROVIDER_RUNTIME_CONTRIBUTION,
+            })();
+
+            expect(hooks.getCliCommandHandler).toBeTypeOf('function');
+            expect(hooks.checklists).toEqual({});
+
+            await expect(hooks.getCliDetect?.()).resolves.toEqual({
+                versionArgsToTry: [['--version'], ['version'], ['-v']],
+                loginStatusArgs: null,
+            });
+
+            const authSpec = await hooks.getCliAuthSpec?.();
+            expect(authSpec?.binaryNames).toEqual(['pi']);
+            await expect(authSpec?.detectAuthStatus?.({ resolvedPath: '/bin/pi' })).resolves.toMatchObject({
+                state: 'logged_in',
+                method: 'api_key_env',
+                source: 'env',
+            });
+        } finally {
+            if (originalOpenAiApiKey === undefined) {
+                delete process.env.OPENAI_API_KEY;
+            } else {
+                process.env.OPENAI_API_KEY = originalOpenAiApiKey;
+            }
+            if (originalAnthropicApiKey === undefined) {
+                delete process.env.ANTHROPIC_API_KEY;
+            } else {
+                process.env.ANTHROPIC_API_KEY = originalAnthropicApiKey;
+            }
+        }
     });
 
     it('projects external-session host adapters from runtime contributions', async () => {
@@ -139,16 +206,138 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
             env,
         });
 
-        expect(createTranscriptStoreAdapter).toHaveBeenCalledWith({
+        expect(createTranscriptStoreAdapter).toHaveBeenCalledWith(expect.objectContaining({
             activeServerDir: '/tmp/server',
             env,
-        });
-        expect(createCandidateHostAdapter).toHaveBeenCalledWith({
+            exec: expect.objectContaining({
+                run: expect.any(Function),
+                spawnClient: expect.any(Function),
+            }),
+        }));
+        expect(createCandidateHostAdapter).toHaveBeenCalledWith(expect.objectContaining({
             activeServerDir: '/tmp/server',
             env,
-        });
+            exec: expect.objectContaining({
+                run: expect.any(Function),
+                spawnClient: expect.any(Function),
+            }),
+        }));
         expect(adapters?.transcriptStores).toEqual([transcriptStoreAdapter]);
         expect(adapters?.candidateHosts).toEqual([candidateHostAdapter]);
+    });
+
+    it('adapts public external-session transcript services to host transcript stores', async () => {
+        const unsubscribe = vi.fn();
+        const release = vi.fn(async () => undefined);
+        const publicTranscriptStoreAdapter: ExternalSessionTranscriptStoreAdapterV1 = Object.freeze({
+            providerId: 'codex',
+            getActivity: vi.fn(async () => ({ lastActivityAtMs: 123, isRunning: false })),
+            page: vi.fn(async () => ({
+                items: [],
+                nextCursor: 'next-page',
+                tailCursor: 'tail-page',
+                hasMore: false,
+                truncated: false,
+            })),
+            readAfter: vi.fn(async () => ({
+                items: [],
+                nextCursor: 'next-read',
+                tailCursor: 'tail-read',
+                truncated: false,
+            })),
+            acquireFollowLease: vi.fn(async () => ({
+                release,
+                getTailCursor: () => 'lease-tail',
+                subscribeToTranscriptUpdates: vi.fn(() => unsubscribe),
+            })),
+            resolveFollowTranscriptPath: vi.fn(async () => ({ path: '/tmp/codex/transcript.jsonl', sourceId: 'thread-1' })),
+            getWorkingDirectory: vi.fn(async () => '/repo'),
+            getProviderHome: vi.fn(async () => '/tmp/codex'),
+        });
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'codex',
+            packageName: '@happier-dev/plugins-codex',
+            contribution: {
+                externalSessions: {
+                    createTranscriptStoreAdapter: () => publicTranscriptStoreAdapter,
+                },
+            },
+        })();
+
+        const adapters = await hooks.getExternalSessionRuntimeHostAdapters?.({
+            activeServerDir: '/tmp/server',
+            env: { HOME: '/tmp/home' } as NodeJS.ProcessEnv,
+        });
+        const transcriptStore = adapters?.transcriptStores?.[0];
+        expect(transcriptStore).toEqual(expect.objectContaining({ providerId: 'codex' }));
+
+        const key = {
+            providerId: 'codex',
+            source: { kind: 'codexHome', home: 'user' },
+            providerSessionId: 'thread-1',
+        } as const;
+        await transcriptStore?.withStore(key, async (store) => {
+            await expect(store.pageOlder({ cursor: 'before', maxBytes: 50, maxItems: 2 })).resolves.toEqual({
+                items: [],
+                nextCursor: 'next-page',
+                hasMore: false,
+                tailCursor: 'tail-page',
+                truncated: false,
+            });
+            await expect(store.readAfter({ cursor: 'tail-page', maxBytes: 50, maxItems: 2 })).resolves.toEqual({
+                items: [],
+                nextCursor: 'next-read',
+                truncated: false,
+            });
+            await expect(store.getActivity()).resolves.toEqual({ lastActivityAtMs: 123, isRunning: false });
+            await expect(store.getWorkingDirectory()).resolves.toBe('/repo');
+        });
+
+        expect(publicTranscriptStoreAdapter.page).toHaveBeenCalledWith({
+            ...key,
+            direction: 'older',
+            cursor: 'before',
+            maxBytes: 50,
+            maxItems: 2,
+        });
+        expect(publicTranscriptStoreAdapter.readAfter).toHaveBeenCalledWith({
+            ...key,
+            cursor: 'tail-page',
+            maxBytes: 50,
+            maxItems: 2,
+        });
+
+        const lease = await transcriptStore?.acquireStore({ ...key, reason: 'attached_view' });
+        expect(lease?.key).toEqual({
+            providerId: 'codex',
+            source: key.source,
+            remoteSessionId: 'thread-1',
+        });
+        expect(lease?.store.getTailCursor()).toBe('lease-tail');
+        lease?.store.subscribe();
+        await lease?.release();
+        expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('projects the bundled OhMyPi external-session transcript store adapter', async () => {
+        const env = { PI_CODING_AGENT_DIR: '/tmp/ohmypi-agent-dir' } as NodeJS.ProcessEnv;
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'ohMyPi',
+            packageName: '@happier-dev/plugins-ohmypi',
+            contribution: OH_MY_PI_PROVIDER_RUNTIME_CONTRIBUTION as Parameters<
+                typeof createProviderRuntimeCatalogEntryHooks
+            >[0]['contribution'],
+        })();
+
+        const adapters = await hooks.getExternalSessionRuntimeHostAdapters?.({
+            activeServerDir: '/tmp/server',
+            env,
+        });
+
+        expect(adapters?.transcriptStores).toEqual([
+            expect.objectContaining({ providerId: 'ohMyPi' }),
+        ]);
+        expect(adapters?.candidateHosts).toEqual([]);
     });
 
     it('drops invalid implicit resume delegation descriptors while keeping CLI command dispatch', () => {
@@ -587,6 +776,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
             timeoutMs: 1_500,
             backendTarget: undefined,
             accountSettings: { runtimeFlavor: 'app-server' },
+            env: { CODEX_HOME: '/tmp/preflight-codex-home' } as any,
         })).resolves.toEqual([{ id: 'model-from-plugin', name: 'Model from plugin' }]);
         await expect(adapter?.probeModesRaw?.({
             cwd: '/workspace',
@@ -607,7 +797,9 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
             exec: expect.objectContaining({
                 spawnClient: expect.any(Function),
             }),
-            env: expect.any(Object),
+            env: expect.objectContaining({
+                CODEX_HOME: '/tmp/preflight-codex-home',
+            }),
             probeKind: 'models',
         }));
         expect(probeInputs[1]?.[0]).toEqual(expect.objectContaining({ probeKind: 'modes' }));
@@ -646,6 +838,79 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                 process.env.OPENAI_API_KEY = previousOpenAiApiKey;
             }
         }
+    });
+
+    it('projects Codex daemon auth bridge refresh through the plugin runtime contribution', async () => {
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'codex',
+            packageName: '@happier-dev/plugins-codex',
+            contribution: CODEX_PROVIDER_RUNTIME_CONTRIBUTION,
+        })() as ReturnType<ReturnType<typeof createProviderRuntimeCatalogEntryHooks>> & {
+            getConnectedServiceDaemonAuthBridgeRefresh?: () => Promise<((input: Readonly<{
+                serviceId: string;
+                request: Readonly<Record<string, unknown>>;
+                refreshCoordinator: {
+                    refreshOpenAiCodexChatGptTokensForBridge(input: unknown): Promise<unknown>;
+                };
+            }>) => Promise<unknown>) | null>;
+        };
+        const refreshOpenAiCodexChatGptTokensForBridge = vi.fn(async () => ({
+            accessToken: 'codex-access',
+            chatgptAccountId: 'acct_123',
+            chatgptPlanType: 'plus',
+        }));
+
+        const refresh = await hooks.getConnectedServiceDaemonAuthBridgeRefresh?.();
+
+        await expect(refresh?.({
+            serviceId: 'openai-codex',
+            request: {
+                sessionId: 'sess_codex',
+                selection: {
+                    kind: 'profile',
+                    serviceId: 'openai-codex',
+                    profileId: 'codex-profile',
+                },
+                chatgptPlanType: 'plus',
+                forceRefresh: true,
+            },
+            refreshCoordinator: { refreshOpenAiCodexChatGptTokensForBridge } as never,
+        })).resolves.toEqual({
+            accessToken: 'codex-access',
+            chatgptAccountId: 'acct_123',
+            chatgptPlanType: 'plus',
+        });
+        expect(refreshOpenAiCodexChatGptTokensForBridge).toHaveBeenCalledWith({
+            selection: {
+                kind: 'profile',
+                serviceId: 'openai-codex',
+                profileId: 'codex-profile',
+            },
+            chatgptPlanType: 'plus',
+            forceRefresh: true,
+        });
+    });
+
+    it('projects connected-service quota fetchers through the plugin runtime contribution', async () => {
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'codex',
+            packageName: '@happier-dev/plugins-codex',
+            contribution: CODEX_PROVIDER_RUNTIME_CONTRIBUTION,
+        })() as ReturnType<ReturnType<typeof createProviderRuntimeCatalogEntryHooks>> & {
+            getConnectedServiceQuotaFetcherDescriptor?: () => Promise<Readonly<{
+                id: string;
+                createFetcher: (params: Readonly<{
+                    env: NodeJS.ProcessEnv;
+                    staleAfterMs: number;
+                    userAgent?: string;
+                }>) => unknown;
+            }> | null>;
+        };
+
+        const descriptor = await hooks.getConnectedServiceQuotaFetcherDescriptor?.();
+
+        expect(descriptor?.id).toBe('openai-codex');
+        expect(descriptor?.createFetcher).toBeTypeOf('function');
     });
 
     it('projects Claude readiness hooks from the plugin runtime contribution', async () => {
@@ -709,6 +974,14 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
             const transform = await hooks.getHeadlessTmuxArgvTransform?.();
             expect(transform?.(['--foo'])).toEqual(['--foo', '--happy-starting-mode', 'remote']);
 
+            const promptSubmitVerification = await hooks.getTerminalPromptSubmitVerificationPolicy?.();
+            expect(promptSubmitVerification?.shouldVerifyBeforeSubmit('first\nsecond')).toBe(false);
+            expect(promptSubmitVerification?.shouldVerifyAfterSubmit('first\nsecond')).toBe(true);
+            expect(promptSubmitVerification?.verifyAfterSubmit({
+                promptText: 'first\nsecond',
+                screenText: '❯ [Pasted text #1 +1 line]',
+            })).toBe(true);
+
             const adapter = await hooks.getPreflightSessionControlsProbeAdapter?.();
             expect(adapter?.failureCacheStrategy).toBe('cooldown');
             expect(adapter?.probeModelsRaw).toBeTypeOf('function');
@@ -768,6 +1041,55 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
         }
     });
 
+    it('projects Claude daemon auth bridge refresh through the plugin runtime contribution', async () => {
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'claude',
+            packageName: '@happier-dev/plugins-claude',
+            contribution: CLAUDE_PROVIDER_RUNTIME_CONTRIBUTION,
+        })() as ReturnType<ReturnType<typeof createProviderRuntimeCatalogEntryHooks>> & {
+            getConnectedServiceDaemonAuthBridgeRefresh?: () => Promise<((input: Readonly<{
+                serviceId: string;
+                request: Readonly<Record<string, unknown>>;
+                refreshCoordinator: {
+                    refreshClaudeSubscriptionTokensForBridge(input: unknown): Promise<unknown>;
+                };
+            }>) => Promise<unknown>) | null>;
+        };
+        const refreshClaudeSubscriptionTokensForBridge = vi.fn(async () => ({
+            accessToken: 'claude-access',
+            anthropicAccountId: 'anthropic-acct',
+            expiresAt: null,
+        }));
+
+        const refresh = await hooks.getConnectedServiceDaemonAuthBridgeRefresh?.();
+
+        await expect(refresh?.({
+            serviceId: 'claude-subscription',
+            request: {
+                sessionId: 'sess_claude',
+                selection: {
+                    kind: 'profile',
+                    serviceId: 'claude-subscription',
+                    profileId: 'claude-profile',
+                },
+                forceRefresh: false,
+            },
+            refreshCoordinator: { refreshClaudeSubscriptionTokensForBridge } as never,
+        })).resolves.toEqual({
+            accessToken: 'claude-access',
+            anthropicAccountId: 'anthropic-acct',
+            expiresAt: null,
+        });
+        expect(refreshClaudeSubscriptionTokensForBridge).toHaveBeenCalledWith({
+            selection: {
+                kind: 'profile',
+                serviceId: 'claude-subscription',
+                profileId: 'claude-profile',
+            },
+            forceRefresh: false,
+        });
+    });
+
     it('uses plugin-provided connected-service runtime auth adapters instead of the restart-only fallback', async () => {
         const runtimeAuthAdapter = {
             classifyRuntimeAuthFailure: () => null,
@@ -788,7 +1110,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                     createAuthMaterializationInput: () => ({}),
                     materializeAuthEnvironment: () => ({ env: {} }),
                     stateSharingDescriptor: {
-                        providerId: 'codex',
+                        agentId: 'codex',
                         providerSupportStatus: 'supported',
                         config: { supported: true, modes: ['isolated'], entries: [] },
                         state: {
@@ -805,7 +1127,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                     classifyUsageLimitError: () => null,
                     runtimeAuthAdapter,
                     usageLimitRecovery: {
-                        providerId: 'codex',
+                        agentId: 'codex',
                         fallbackBackoffEnvKey: 'HAPPIER_TEST_BACKOFF_MS',
                         maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
                         defaultFallbackBackoffMs: 1,
@@ -826,6 +1148,103 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
         })).resolves.toEqual({ status: 'available', via: 'plugin' });
     });
 
+    it('projects Pi connected-service hooks from the plugin runtime contribution', async () => {
+        expect(PI_PROVIDER_RUNTIME_CONTRIBUTION.connectedServices.usageLimitRecovery).toMatchObject({
+            agentId: 'pi',
+        });
+
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'pi',
+            packageName: '@happier-dev/plugins-pi',
+            contribution: PI_PROVIDER_RUNTIME_CONTRIBUTION as Parameters<
+                typeof createProviderRuntimeCatalogEntryHooks
+            >[0]['contribution'],
+        })();
+
+        expect(hooks.getConnectedServicesMaterializer).toBeTypeOf('function');
+        expect(hooks.materializeConnectedServiceRuntimeAuthSelection).toBeTypeOf('function');
+        expect(hooks.getConnectedServiceRuntimeAuthAdapter).toBeTypeOf('function');
+        expect(hooks.getConnectedServiceStateSharingDescriptor).toBeTypeOf('function');
+        expect(hooks.getConnectedServiceRecoveryCapabilities).toBeTypeOf('function');
+        expect(hooks.getSessionUsageLimitRecoveryControlAdapter).toBeTypeOf('function');
+        expect(hooks.resolveConnectedServiceSwitchContinuity).toBeTypeOf('function');
+        expect(hooks.verifyResumeReachable).toBeTypeOf('function');
+        expect(hooks.resolveConnectedServiceCandidatePersistedSessionFile).toBeTypeOf('function');
+
+        await expect(hooks.getConnectedServiceRecoveryCapabilities?.()).resolves.toEqual({
+            predictiveSoftSwitch: { mode: 'unsupported' },
+        });
+        await expect(hooks.getConnectedServiceStateSharingDescriptor?.()).resolves.toMatchObject({
+            providerId: 'pi',
+            authIsolation: {
+                mode: 'materialized_home',
+                secretEntries: expect.arrayContaining(['auth.json']),
+            },
+        });
+    });
+
+    it('projects OhMyPi connected-service hooks from the plugin runtime contribution', async () => {
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'ohMyPi',
+            packageName: '@happier-dev/plugins-ohmypi',
+            contribution: OH_MY_PI_PROVIDER_RUNTIME_CONTRIBUTION as Parameters<
+                typeof createProviderRuntimeCatalogEntryHooks
+            >[0]['contribution'],
+        })();
+
+        expect(hooks.getConnectedServicesMaterializer).toBeTypeOf('function');
+        expect(hooks.materializeConnectedServiceRuntimeAuthSelection).toBeTypeOf('function');
+        expect(hooks.getConnectedServiceRuntimeAuthAdapter).toBeTypeOf('function');
+        expect(hooks.getConnectedServiceStateSharingDescriptor).toBeTypeOf('function');
+        expect(hooks.resolveConnectedServiceSwitchContinuity).toBeTypeOf('function');
+        expect(hooks.verifyResumeReachable).toBeTypeOf('function');
+
+        await expect(hooks.getConnectedServiceStateSharingDescriptor?.()).resolves.toMatchObject({
+            providerId: 'ohMyPi',
+            providerSupportStatus: 'unsupported',
+            authIsolation: {
+                mode: 'process_env',
+                secretEntries: [
+                    'OPENAI_CODEX_OAUTH_TOKEN',
+                    'OPENAI_API_KEY',
+                    'ANTHROPIC_OAUTH_TOKEN',
+                    'ANTHROPIC_API_KEY',
+                    'GEMINI_API_KEY',
+                ],
+            },
+        });
+
+        const adapter = await hooks.getConnectedServiceRuntimeAuthAdapter?.();
+        expect(adapter?.canHotApply({
+            target: { agentId: 'ohMyPi' },
+            selection: null,
+        })).toEqual({ supported: false, recovery: 'restart_rematerialize' });
+
+        const materializer = await hooks.getConnectedServicesMaterializer?.();
+        const record = buildConnectedServiceCredentialRecord({
+            now: 1,
+            serviceId: 'openai',
+            profileId: 'openai-api',
+            kind: 'token',
+            token: {
+                token: 'sk-test',
+                providerAccountId: null,
+                providerEmail: null,
+            },
+        });
+        const result = await materializer?.({
+            materializationKey: 'mat-ohmypi',
+            activeServerDir: '/tmp/happier-active',
+            baseDir: '/tmp/happier-base',
+            rootDir: '/tmp/happier-root',
+            recordsByServiceId: new Map([['openai', record]]),
+            processEnv: { HOME: '/tmp/home' },
+        });
+
+        expect(result?.env).toEqual({ OPENAI_API_KEY: 'sk-test' });
+        expect(result?.targetMaterializedRoot).toContain('ohmypi-auth');
+    });
+
     it('threads usage-limit recovery provider attribution into the generic backoff adapter', async () => {
         const hooks = createProviderRuntimeCatalogEntryHooks({
             agentId: 'claude',
@@ -837,7 +1256,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                     createAuthMaterializationInput: () => ({}),
                     materializeAuthEnvironment: () => ({ env: {} }),
                     stateSharingDescriptor: {
-                        providerId: 'claude',
+                        agentId: 'claude',
                         providerSupportStatus: 'supported',
                         config: { supported: true, modes: ['isolated'], entries: [] },
                         state: {
@@ -850,7 +1269,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                     },
                     classifyUsageLimitError: () => null,
                     usageLimitRecovery: {
-                        providerId: 'claude',
+                        agentId: 'claude',
                         issueProviderFilter: 'claude',
                         defaultNativeServiceId: 'claude-subscription',
                         fallbackBackoffEnvKey: 'HAPPIER_TEST_BACKOFF_MS',
@@ -928,6 +1347,44 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
         });
     });
 
+    it('projects runtime-control usage-limit reset consumption adapters', async () => {
+        const checkNow = vi.fn(async () => ({ ok: true, status: 'waiting' }));
+        const consumeResetCredit = vi.fn(async () => ({ ok: true, status: 'waiting' }));
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'codex',
+            packageName: '@happier-dev/plugins-test',
+            contribution: {
+                runtimeControl: {
+                    usageLimitRecovery: {
+                        checkNow,
+                        consumeResetCredit,
+                    },
+                },
+            },
+        })();
+
+        const adapter = await hooks.getSessionUsageLimitRecoveryControlAdapter?.();
+        type AdapterParams = Parameters<NonNullable<NonNullable<typeof adapter>['consumeResetCredit']>>[0];
+        const params = {
+            token: 'token',
+            sessionId: 'sess_1',
+            rawSession: { id: 'sess_1', metadata: '{}' } as unknown as AdapterParams['rawSession'],
+            metadata: {},
+            currentMachineId: 'machine-local',
+            sessionMachineId: 'machine-local',
+            cwd: '/repo',
+            ctx: {
+                encryptionKey: new Uint8Array(32).fill(1),
+                encryptionVariant: 'legacy' as const,
+            },
+            mode: 'plain' as const,
+        } satisfies AdapterParams;
+
+        await expect(adapter?.consumeResetCredit?.(params)).resolves.toEqual({ ok: true, status: 'waiting' });
+        expect(checkNow).not.toHaveBeenCalled();
+        expect(consumeResetCredit).toHaveBeenCalledTimes(1);
+    });
+
     it('projects declared connected-service recovery capability descriptors', async () => {
         const hooks = createProviderRuntimeCatalogEntryHooks({
             agentId: 'claude',
@@ -939,7 +1396,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                     createAuthMaterializationInput: () => ({}),
                     materializeAuthEnvironment: () => ({ env: {} }),
                     stateSharingDescriptor: {
-                        providerId: 'claude',
+                        agentId: 'claude',
                         providerSupportStatus: 'supported',
                         config: { supported: true, modes: ['isolated'], entries: [] },
                         state: {
@@ -952,6 +1409,18 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                     },
                     recoveryCapabilities: {
                         predictiveSoftSwitch: { mode: 'supported' },
+                        sameAccountFanoutStrategy: 'provider_account_id',
+                        runtimeAuthApply: {
+                            directLiveHotAuth: {
+                                supportsInTurnApply: true,
+                                requiresExactRuntimeIdentity: true,
+                                refreshSelectionResync: 'required',
+                                authMode: {
+                                    kind: 'external_token_injection',
+                                    surface: 'codex_chatgpt_auth_tokens',
+                                },
+                            },
+                        },
                     },
                 },
             },
@@ -959,6 +1428,18 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
 
         await expect(hooks.getConnectedServiceRecoveryCapabilities?.()).resolves.toEqual({
             predictiveSoftSwitch: { mode: 'supported' },
+            sameAccountFanoutStrategy: 'provider_account_id',
+            runtimeAuthApply: {
+                directLiveHotAuth: {
+                    supportsInTurnApply: true,
+                    requiresExactRuntimeIdentity: true,
+                    refreshSelectionResync: 'required',
+                    authMode: {
+                        kind: 'external_token_injection',
+                        surface: 'codex_chatgpt_auth_tokens',
+                    },
+                },
+            },
         });
 
         const claudeHooks = createProviderRuntimeCatalogEntryHooks({
@@ -969,8 +1450,63 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
             >[0]['contribution'],
         })();
         await expect(claudeHooks.getConnectedServiceRecoveryCapabilities?.()).resolves.toEqual({
-            predictiveSoftSwitch: { mode: 'unsupported' },
+            predictiveSoftSwitch: {
+                mode: 'supported',
+                liveSessionRequirement: {
+                    kind: 'shared_group_auth_surface',
+                    serviceIds: ['claude-subscription'],
+                    authEnvKey: 'CLAUDE_CONFIG_DIR',
+                    authEnvSubpath: ['claude-config'],
+                },
+            },
+            sameAccountFanoutStrategy: 'shared_group_auth_surface',
+            runtimeAuthApply: {
+                directLiveHotAuth: {
+                    supportsInTurnApply: false,
+                    requiresExactRuntimeIdentity: false,
+                    refreshSelectionResync: 'not_applicable',
+                    authMode: {
+                        kind: 'provider_owned',
+                        name: 'claude_shared_group_auth_surface',
+                    },
+                },
+            },
         });
+    });
+
+    it('rejects partial direct-live runtime apply capability declarations', async () => {
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'codex',
+            packageName: '@happier-dev/plugins-test',
+            contribution: {
+                connectedServices: {
+                    serviceIds: ['openai-codex'],
+                    readConnectedServiceId: (selection: unknown) => selection === 'openai-codex' ? 'openai-codex' : null,
+                    createAuthMaterializationInput: () => ({}),
+                    materializeAuthEnvironment: () => ({ env: {} }),
+                    stateSharingDescriptor: {
+                        agentId: 'codex',
+                        providerSupportStatus: 'supported',
+                        config: { supported: true, modes: ['isolated'], entries: [] },
+                        state: {
+                            supported: true,
+                            modes: ['isolated'],
+                            entries: [],
+                            symlinkUnavailableDegradePolicy: 'block_continuity',
+                        },
+                        authIsolation: { mode: 'materialized_home', secretEntries: [] },
+                    },
+                    recoveryCapabilities: {
+                        predictiveSoftSwitch: { mode: 'supported' },
+                        runtimeAuthApply: {
+                            directLiveHotAuth: { supportsInTurnApply: true },
+                        },
+                    },
+                },
+            },
+        })();
+
+        expect(hooks.getConnectedServiceRecoveryCapabilities).toBeUndefined();
     });
 
     it('omits the recovery capability hook when a contribution declares none', async () => {
@@ -984,7 +1520,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                     createAuthMaterializationInput: () => ({}),
                     materializeAuthEnvironment: () => ({ env: {} }),
                     stateSharingDescriptor: {
-                        providerId: 'codex',
+                        agentId: 'codex',
                         providerSupportStatus: 'supported',
                         config: { supported: true, modes: ['isolated'], entries: [] },
                         state: {
@@ -1012,10 +1548,50 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
         ).connectedServices.usageLimitRecovery;
 
         expect(usageLimitRecovery).toMatchObject({
-            providerId: 'claude',
+            agentId: 'claude',
             issueProviderFilter: 'claude',
             defaultNativeServiceId: 'claude-subscription',
         });
+    });
+
+    it('rejects retired usage-limit recovery provider-id contributions', async () => {
+        const retiredProviderIdKey = ['provider', 'Id'].join('');
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'claude',
+            packageName: '@happier-dev/plugins-test',
+            contribution: {
+                connectedServices: {
+                    serviceIds: ['claude-subscription'],
+                    readConnectedServiceId: (selection: unknown) => selection === 'claude-subscription' ? 'claude-subscription' : null,
+                    createAuthMaterializationInput: () => ({}),
+                    materializeAuthEnvironment: () => ({ env: {} }),
+                    stateSharingDescriptor: {
+                        agentId: 'claude',
+                        providerSupportStatus: 'supported',
+                        config: { supported: true, modes: ['isolated'], entries: [] },
+                        state: {
+                            supported: true,
+                            modes: ['isolated'],
+                            entries: [],
+                            symlinkUnavailableDegradePolicy: 'block_continuity',
+                        },
+                        authIsolation: { mode: 'materialized_home', secretEntries: [] },
+                    },
+                    classifyUsageLimitError: () => null,
+                    usageLimitRecovery: {
+                        [retiredProviderIdKey]: 'claude',
+                        issueProviderFilter: 'claude',
+                        defaultNativeServiceId: 'claude-subscription',
+                        fallbackBackoffEnvKey: 'HAPPIER_TEST_BACKOFF_MS',
+                        maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
+                        defaultFallbackBackoffMs: 60_000,
+                        defaultMaxAttempts: 3,
+                    },
+                },
+            },
+        })();
+
+        expect(hooks.getSessionUsageLimitRecoveryControlAdapter).toBeUndefined();
     });
 
     it('lets connected-service contributions opt out of generated runtime hooks while keeping materialization', async () => {
@@ -1031,7 +1607,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                     createAuthMaterializationInput: (_serviceId: string, record: unknown) => ({ openaiCodex: record }),
                     materializeAuthEnvironment: () => ({ env: { CODEX_HOME: '/tmp/codex-home' } }),
                     stateSharingDescriptor: {
-                        providerId: 'codex',
+                        agentId: 'codex',
                         providerSupportStatus: 'supported',
                         config: { supported: true, modes: ['isolated'], entries: [] },
                         state: {
@@ -1077,7 +1653,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                         return { env: { CLAUDE_CONFIG_DIR: String(input.rootDir) } };
                     },
                     stateSharingDescriptor: {
-                        providerId: 'claude',
+                        agentId: 'claude',
                         providerSupportStatus: 'supported',
                         config: { supported: true, modes: ['isolated'], entries: [] },
                         state: {
@@ -1093,7 +1669,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                     resolveResumeReachabilityUnsupported: async () => ({ ok: false, reason: 'unsupported' }),
                     classifyUsageLimitError: () => null,
                     usageLimitRecovery: {
-                        providerId: 'claude',
+                        agentId: 'claude',
                         fallbackBackoffEnvKey: 'HAPPIER_TEST_BACKOFF_MS',
                         maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
                         defaultFallbackBackoffMs: 1,
@@ -1141,6 +1717,185 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
         });
     });
 
+    // R4-4/F3: group-bound selections thread their groupId to plugin materializers so broker
+    // selection identities can be pool-scoped (WITHOUT generation) at the single mint owner.
+    it('threads group ids from group selections into plugin materializer input (profile selections omit the map)', async () => {
+        const inputs: Readonly<Record<string, unknown>>[] = [];
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'claude',
+            packageName: '@happier-dev/plugins-test',
+            contribution: {
+                connectedServices: {
+                    serviceIds: ['anthropic'],
+                    materializedRootSubdir: 'claude-config',
+                    readConnectedServiceId: (selection: unknown) => selection === 'anthropic' ? 'anthropic' : null,
+                    createAuthMaterializationInput: (_serviceId: string, record: unknown) => ({ anthropic: record }),
+                    materializeAuthEnvironment: (input: Readonly<Record<string, unknown>>) => {
+                        inputs.push(input);
+                        return { env: {} };
+                    },
+                    stateSharingDescriptor: {
+                        agentId: 'claude',
+                        providerSupportStatus: 'supported',
+                        config: { supported: true, modes: ['isolated'], entries: [] },
+                        state: {
+                            supported: true,
+                            modes: ['isolated'],
+                            entries: [],
+                            symlinkUnavailableDegradePolicy: 'block_continuity',
+                        },
+                        authIsolation: { mode: 'materialized_home', secretEntries: [] },
+                    },
+                },
+            },
+        })();
+
+        const materializer = await hooks.getConnectedServicesMaterializer?.();
+        const record = buildConnectedServiceCredentialRecord({
+            now: 1,
+            serviceId: 'anthropic',
+            profileId: 'work',
+            kind: 'token',
+            token: { token: 'sk-test', providerAccountId: null, providerEmail: null },
+        });
+
+        await materializer?.({
+            materializationKey: 'mat-group',
+            activeServerDir: '/tmp/happier-active',
+            baseDir: '/tmp/happier-base',
+            rootDir: '/tmp/happier-root',
+            recordsByServiceId: new Map([['anthropic', record]]),
+            selectionsByServiceId: new Map([['anthropic', {
+                kind: 'group' as const,
+                serviceId: 'anthropic' as const,
+                groupId: 'pool-A',
+                activeProfileId: 'work',
+                fallbackProfileId: 'work',
+                generation: 3,
+                record,
+                policy: null,
+            }]]),
+            processEnv: { HOME: '/tmp/home' },
+        });
+        expect(inputs[0].connectedServiceGroupIdsByServiceId).toEqual({ anthropic: 'pool-A' });
+
+        await materializer?.({
+            materializationKey: 'mat-profile',
+            activeServerDir: '/tmp/happier-active',
+            baseDir: '/tmp/happier-base',
+            rootDir: '/tmp/happier-root',
+            recordsByServiceId: new Map([['anthropic', record]]),
+            selectionsByServiceId: new Map([['anthropic', {
+                kind: 'profile' as const,
+                serviceId: 'anthropic' as const,
+                profileId: 'work',
+                record,
+            }]]),
+            processEnv: { HOME: '/tmp/home' },
+        });
+        expect(inputs[1].connectedServiceGroupIdsByServiceId).toBeUndefined();
+    });
+
+    it('preserves sanitized credential-refresh materialization diagnostics from plugin-owned materializers', async () => {
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'claude',
+            packageName: '@happier-dev/plugins-test',
+            contribution: {
+                connectedServices: {
+                    serviceIds: ['anthropic'],
+                    readConnectedServiceId: (selection: unknown) => selection === 'anthropic' ? 'anthropic' : null,
+                    createAuthMaterializationInput: (_serviceId: string, record: unknown) => ({ anthropic: record }),
+                    materializeAuthEnvironment: () => ({
+                        env: {},
+                        diagnostics: [
+                            {
+                                code: 'valid_diagnostic',
+                                agentId: 'claude',
+                                serviceId: 'anthropic',
+                                severity: 'blocking',
+                                reason: 'missing_required_scope',
+                                credentialRefreshFailure: {
+                                    category: 'provider_403',
+                                    providerStatus: 403,
+                                    providerErrorCode: 'claude_subscription_missing_scope',
+                                },
+                            },
+                            {
+                                code: 'invalid_refresh_metadata',
+                                agentId: 'claude',
+                                serviceId: 'anthropic',
+                                severity: 'blocking',
+                                reason: 'bad_metadata',
+                                credentialRefreshFailure: {
+                                    category: 'not_a_category',
+                                    providerStatus: 999,
+                                    providerErrorCode: 'should_be_dropped',
+                                },
+                            },
+                        ],
+                    }),
+                    stateSharingDescriptor: {
+                        agentId: 'claude',
+                        providerSupportStatus: 'supported',
+                        config: { supported: true, modes: ['isolated'], entries: [] },
+                        state: {
+                            supported: true,
+                            modes: ['isolated'],
+                            entries: [],
+                            symlinkUnavailableDegradePolicy: 'block_continuity',
+                        },
+                        authIsolation: { mode: 'materialized_home', secretEntries: [] },
+                    },
+                    shouldRestartForServiceSwitch: (serviceId: unknown) => serviceId === 'anthropic',
+                    restartRematerializeRequiredReason: 'claude_session_state_sharing_required',
+                    resolveResumeReachabilityUnsupported: async () => ({ ok: false, reason: 'unsupported' }),
+                    classifyUsageLimitError: () => null,
+                    usageLimitRecovery: {
+                        agentId: 'claude',
+                        fallbackBackoffEnvKey: 'HAPPIER_TEST_BACKOFF_MS',
+                        maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
+                        defaultFallbackBackoffMs: 1,
+                        defaultMaxAttempts: 1,
+                    },
+                },
+            },
+        })();
+
+        const materializer = await hooks.getConnectedServicesMaterializer?.();
+        const record = buildConnectedServiceCredentialRecord({
+            now: 1,
+            serviceId: 'anthropic',
+            profileId: 'work',
+            kind: 'token',
+            token: {
+                token: 'sk-test',
+                providerAccountId: null,
+                providerEmail: null,
+            },
+        });
+        const result = await materializer?.({
+            materializationKey: 'mat-1',
+            activeServerDir: '/tmp/happier-active',
+            baseDir: '/tmp/happier-base',
+            rootDir: '/tmp/happier-root',
+            recordsByServiceId: new Map([['anthropic', record]]),
+        });
+
+        expect(result?.diagnostics).toEqual([
+            expect.objectContaining({
+                code: 'valid_diagnostic',
+                credentialRefreshFailure: {
+                    category: 'provider_403',
+                    providerStatus: 403,
+                    providerErrorCode: 'claude_subscription_missing_scope',
+                },
+            }),
+            expect.not.objectContaining({
+                credentialRefreshFailure: expect.anything(),
+            }),
+        ]);
+    });
+
     it('lets provider contributions require shared-state restarts for non-exact connected-service switches', async () => {
         const hooks = createProviderRuntimeCatalogEntryHooks({
             agentId: 'claude',
@@ -1152,7 +1907,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                     createAuthMaterializationInput: () => ({}),
                     materializeAuthEnvironment: () => ({ env: {} }),
                     stateSharingDescriptor: {
-                        providerId: 'claude',
+                        agentId: 'claude',
                         providerSupportStatus: 'supported',
                         config: { supported: true, modes: ['isolated'], entries: [] },
                         state: {
@@ -1170,7 +1925,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                     resolveResumeReachabilityUnsupported: async () => ({ ok: false, reason: 'unsupported' }),
                     classifyUsageLimitError: () => null,
                     usageLimitRecovery: {
-                        providerId: 'claude',
+                        agentId: 'claude',
                         fallbackBackoffEnvKey: 'HAPPIER_TEST_BACKOFF_MS',
                         maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
                         defaultFallbackBackoffMs: 1,
@@ -1231,6 +1986,213 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
         });
     });
 
+    it('keeps connected-service restart continuity when runtime control only contributes resume reachability', async () => {
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'gemini',
+            packageName: '@happier-dev/plugins-test',
+            contribution: {
+                connectedServices: {
+                    serviceIds: ['gemini'],
+                    readConnectedServiceId: (selection: unknown) => selection === 'gemini' ? 'gemini' : null,
+                    createAuthMaterializationInput: () => ({}),
+                    materializeAuthEnvironment: () => ({ env: {} }),
+                    stateSharingDescriptor: {
+                        agentId: 'gemini',
+                        providerSupportStatus: 'unsupported',
+                        authIsolation: { mode: 'process_env', secretEntries: ['GEMINI_API_KEY'] },
+                    },
+                    shouldRestartForServiceSwitch: (serviceId: unknown) => serviceId === 'gemini',
+                    restartRematerializeRequiredReason: 'gemini_auth_environment_rematerialization_required',
+                },
+                runtimeControl: {
+                    connectedServices: {
+                        verifyResumeReachable: async () => ({ ok: true }),
+                    },
+                },
+            },
+        })();
+
+        expect(hooks.resolveConnectedServiceSwitchContinuity).toBeTypeOf('function');
+        await expect(hooks.resolveConnectedServiceSwitchContinuity?.({
+            sessionId: 'session-1',
+            agentId: 'gemini',
+            serviceId: 'gemini',
+            previousBinding: {
+                source: 'native',
+                selection: 'native',
+                serviceId: 'gemini',
+                profileId: null,
+                groupId: null,
+            },
+            nextBinding: {
+                source: 'connected',
+                selection: 'profile',
+                serviceId: 'gemini',
+                profileId: 'work',
+                groupId: null,
+            },
+            fromBindings: { v: 1, bindingsByServiceId: { gemini: { source: 'native' } } },
+            toBindings: {
+                v: 1,
+                bindingsByServiceId: {
+                    gemini: { source: 'connected', selection: 'profile', profileId: 'work' },
+                },
+            },
+        })).resolves.toEqual({
+            mode: 'restart_same_home',
+            reason: 'gemini_auth_environment_rematerialization_required',
+        });
+    });
+
+    it('projects Gemini daemon spawn hooks so missing auth fails before ACP launch', async () => {
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'gemini',
+            packageName: '@happier-dev/plugins-gemini',
+            contribution: GEMINI_PROVIDER_RUNTIME_CONTRIBUTION,
+        })();
+
+        const daemonSpawnHooks = await hooks.getDaemonSpawnHooks?.();
+        expect(daemonSpawnHooks?.resolveRuntimePrerequisites).toBeTypeOf('function');
+        await expect(daemonSpawnHooks?.resolveRuntimePrerequisites?.({
+            providerRuntimeSelection: { geminiBackendMode: 'acp' },
+            env: {},
+        })).resolves.toMatchObject({
+            ok: false,
+            reasonCode: 'gemini_acp_credentials_unavailable',
+            errorMessage: expect.stringContaining('GEMINI_API_KEY'),
+        });
+    });
+
+    it('projects Kimi daemon spawn hooks so incompatible ACP CLIs fail before ACP launch', async () => {
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'kimi',
+            packageName: '@happier-dev/plugins-kimi',
+            contribution: KIMI_PROVIDER_RUNTIME_CONTRIBUTION,
+        })();
+        const runSystemTool = vi.fn(async () => ({
+            ok: true as const,
+            command: '/usr/local/bin/kimi',
+            args: ['--work-dir', '/repo', 'acp'],
+            source: 'system' as const,
+            exitCode: 1,
+            signal: null,
+            stdout: '',
+            stderr: 'error: unknown option --work-dir\n',
+        }));
+
+        const daemonSpawnHooks = await hooks.getDaemonSpawnHooks?.();
+        expect(daemonSpawnHooks?.resolveRuntimePrerequisites).toBeTypeOf('function');
+        await expect(daemonSpawnHooks?.resolveRuntimePrerequisites?.({
+            cwd: '/repo',
+            tools: {
+                signal: new AbortController().signal,
+                resolveSystemTool: vi.fn(async () => ({
+                    ok: false as const,
+                    reasonCode: 'tool_unavailable' as const,
+                    errorMessage: 'unused',
+                })),
+                runSystemTool,
+                resolveManagedInstallable: vi.fn(async () => ({
+                    ok: false as const,
+                    reasonCode: 'installable_unavailable' as const,
+                    errorMessage: 'unused',
+                })),
+                diagnostics: {
+                    info: vi.fn(),
+                    warn: vi.fn(),
+                },
+            },
+        })).resolves.toMatchObject({
+            ok: false,
+            reasonCode: 'kimi_acp_unavailable',
+            errorMessage: expect.stringContaining('ACP-compatible Kimi CLI'),
+        });
+    });
+
+    it('lets plugin runtime-auth adapters select hot-apply continuity for runtime auth switches', async () => {
+        const runtimeAuthSelection = {
+            serviceId: 'anthropic',
+            profileId: 'new',
+            record: { id: 'credential-new' },
+        };
+        const targetMaterializedEnv = { CLAUDE_CONFIG_DIR: '/tmp/happier/claude-group' };
+        const canHotApply = vi.fn(() => ({ supported: true, mode: 'plugin_hot_apply' }));
+        const hooks = createProviderRuntimeCatalogEntryHooks({
+            agentId: 'claude',
+            packageName: '@happier-dev/plugins-test',
+            contribution: {
+                connectedServices: {
+                    serviceIds: ['anthropic'],
+                    readConnectedServiceId: (selection: unknown) => selection === 'anthropic' ? 'anthropic' : null,
+                    createAuthMaterializationInput: () => ({}),
+                    materializeAuthEnvironment: () => ({ env: {} }),
+                    stateSharingDescriptor: {
+                        agentId: 'claude',
+                        providerSupportStatus: 'supported',
+                        config: { supported: true, modes: ['isolated'], entries: [] },
+                        state: {
+                            supported: true,
+                            modes: ['isolated'],
+                            entries: [],
+                            symlinkUnavailableDegradePolicy: 'block_continuity',
+                        },
+                        authIsolation: { mode: 'materialized_home', secretEntries: [] },
+                    },
+                    shouldRestartForServiceSwitch: (serviceId: unknown) => serviceId === 'anthropic',
+                    connectedSwitchSharedStateRequiredReason: 'claude_shared_state_required',
+                    resolveResumeReachabilityUnsupported: async () => ({ ok: false, reason: 'unsupported' }),
+                    classifyUsageLimitError: () => null,
+                    runtimeAuthAdapter: {
+                        classifyRuntimeAuthFailure: () => null,
+                        materializeActiveProfile: async () => ({ supported: true }),
+                        canHotApply,
+                        hotApply: async () => ({ applied: true }),
+                        recoverAfterRuntimeAuthSwitch: async () => ({ recovered: true }),
+                        probeQuota: async () => ({ status: 'available' }),
+                        refreshActiveProfile: async () => ({ status: 'available' }),
+                    },
+                    usageLimitRecovery: {
+                        agentId: 'claude',
+                        fallbackBackoffEnvKey: 'HAPPIER_TEST_BACKOFF_MS',
+                        maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
+                        defaultFallbackBackoffMs: 1,
+                        defaultMaxAttempts: 1,
+                    },
+                },
+            },
+        })();
+
+        await expect(hooks.resolveConnectedServiceSwitchContinuity?.({
+            sessionId: 'session-1',
+            agentId: 'claude',
+            serviceId: 'anthropic',
+            previousBinding: {
+                source: 'connected',
+                selection: 'profile',
+                serviceId: 'anthropic',
+                profileId: 'old',
+                groupId: null,
+            },
+            nextBinding: {
+                source: 'connected',
+                selection: 'profile',
+                serviceId: 'anthropic',
+                profileId: 'new',
+                groupId: null,
+            },
+            fromBindings: { v: 1, bindingsByServiceId: {} },
+            toBindings: { v: 1, bindingsByServiceId: {} },
+            runtimeAuthSelection,
+            targetMaterializedEnv,
+        })).resolves.toEqual({ mode: 'hot_apply' });
+        expect(canHotApply).toHaveBeenCalledWith({
+            target: { agentId: 'claude' },
+            selection: runtimeAuthSelection,
+            targetMaterializedEnv,
+            materializedEnv: targetMaterializedEnv,
+        });
+    });
+
     it('applies provider state-sharing descriptors when materializing runtime auth selections', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-selection-'));
         try {
@@ -1258,7 +2220,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                             },
                         }),
                         stateSharingDescriptor: {
-                            providerId: 'claude',
+                            agentId: 'claude',
                             providerSupportStatus: 'supported',
                             config: {
                                 supported: true,
@@ -1278,7 +2240,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                         resolveResumeReachabilityUnsupported: async () => ({ ok: false, reason: 'unsupported' }),
                         classifyUsageLimitError: () => null,
                         usageLimitRecovery: {
-                            providerId: 'claude',
+                            agentId: 'claude',
                             fallbackBackoffEnvKey: 'HAPPIER_TEST_BACKOFF_MS',
                             maxAttemptsEnvKey: 'HAPPIER_TEST_MAX_ATTEMPTS',
                             defaultFallbackBackoffMs: 1,
@@ -1318,6 +2280,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                     record,
                 },
                 input: {
+                    mode: 'apply',
                     tracked: {
                         startedBy: 'daemon',
                         happySessionId: 'session-1',
@@ -1349,6 +2312,376 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
             expect(typeof targetRoot).toBe('string');
             await expect(readFile(join(String(targetRoot), 'settings.json'), 'utf8')).resolves.toBe('{"theme":"dark"}\n');
             expect((materialized as { materializationDiagnostics?: unknown }).materializationDiagnostics).toEqual([]);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('preflights shared group runtime-auth selections without materializing provider state', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-selection-preflight-'));
+        try {
+            const activeServerDir = join(root, 'active-server');
+            const nativeConfigRoot = join(root, 'native-config');
+            const sessionDirectory = join(root, 'workspace');
+            await mkdir(nativeConfigRoot, { recursive: true });
+            await mkdir(sessionDirectory, { recursive: true });
+            const resolveStateSharingSourceRoot = vi.fn(() => nativeConfigRoot);
+            const materializeAuthEnvironment = vi.fn(() => {
+                throw new Error('preflight must not materialize provider auth');
+            });
+            const hooks = createProviderRuntimeCatalogEntryHooks({
+                agentId: 'claude',
+                packageName: '@happier-dev/plugins-test',
+                contribution: {
+                    connectedServices: {
+                        serviceIds: ['claude-subscription'],
+                        materializedRootSubdir: 'claude-config',
+                        resolveStateSharingSourceRoot,
+                        readConnectedServiceId: (selection: unknown) =>
+                            selection === 'claude-subscription' ? 'claude-subscription' : null,
+                        createAuthMaterializationInput: (_serviceId: string, record: unknown) => ({ claude: record }),
+                        materializeAuthEnvironment,
+                        stateSharingDescriptor: {
+                            agentId: 'claude',
+                            providerSupportStatus: 'supported',
+                            config: {
+                                supported: true,
+                                modes: ['linked', 'copied', 'isolated'],
+                                entries: [{ path: 'settings.json', mode: 'linked_or_copied' }],
+                            },
+                            state: {
+                                supported: true,
+                                modes: ['isolated', 'shared'],
+                                entries: [],
+                                symlinkUnavailableDegradePolicy: 'block_continuity',
+                            },
+                            authIsolation: { mode: 'materialized_home', secretEntries: [] },
+                        },
+                        recoveryCapabilities: {
+                            predictiveSoftSwitch: {
+                                mode: 'supported',
+                                liveSessionRequirement: {
+                                    kind: 'shared_group_auth_surface',
+                                    serviceIds: ['claude-subscription'],
+                                    authEnvKey: 'CLAUDE_CONFIG_DIR',
+                                    authEnvSubpath: ['claude-config'],
+                                },
+                            },
+                            sameAccountFanoutStrategy: 'shared_group_auth_surface',
+                        },
+                    },
+                },
+            })();
+            const record = buildConnectedServiceCredentialRecord({
+                now: 1,
+                serviceId: 'claude-subscription',
+                profileId: 'work',
+                kind: 'token',
+                token: {
+                    token: 'sk-test',
+                    providerAccountId: null,
+                    providerEmail: null,
+                },
+            });
+            const expectedRoot = join(resolveConnectedServiceGroupHomeDir({
+                activeServerDir,
+                serviceId: 'claude-subscription',
+                groupId: 'anthropic-cloud',
+                agentId: 'claude',
+            }), 'claude-config');
+
+            const materialized = await hooks.materializeConnectedServiceRuntimeAuthSelection?.({
+                activeServerDir,
+                api: {} as unknown as ApiClient,
+                credentials: {} as Credentials,
+                processEnv: { HOME: join(root, 'home') },
+                accountSettings: accountSettingsParse({
+                    connectedServicesProviderStateSharingSettingsV1: {
+                        v: 1,
+                        defaults: { configMode: 'copied', stateMode: 'shared' },
+                    },
+                }),
+                baseSelection: {
+                    serviceId: 'claude-subscription',
+                    binding: { selection: 'group' },
+                    profileId: 'new-profile',
+                    groupId: 'anthropic-cloud',
+                    activeProfileId: 'new-profile',
+                    fallbackProfileId: 'previous-profile',
+                    record,
+                },
+                input: {
+                    mode: 'preflight',
+                    tracked: {
+                        startedBy: 'daemon',
+                        happySessionId: 'session-1',
+                        pid: 123,
+                        spawnOptions: {
+                            directory: sessionDirectory,
+                            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+                            connectedServices: { v: 1, bindingsByServiceId: {} },
+                            environmentVariables: { CLAUDE_CONFIG_DIR: expectedRoot },
+                        },
+                    } satisfies TrackedSession,
+                    sessionId: 'session-1',
+                    agentId: 'claude',
+                    serviceId: 'claude-subscription',
+                    previous: null,
+                    next: {
+                        source: 'connected',
+                        selection: 'group',
+                        serviceId: 'claude-subscription',
+                        profileId: 'new-profile',
+                        groupId: 'anthropic-cloud',
+                    },
+                    previousBindings: { v: 1, bindingsByServiceId: {} },
+                    normalizedBindings: { v: 1, bindingsByServiceId: {} },
+                },
+            });
+
+            expect((materialized as { targetMaterializedRoot?: unknown }).targetMaterializedRoot).toBe(expectedRoot);
+            expect((materialized as { targetMaterializedEnv?: unknown }).targetMaterializedEnv).toEqual({
+                CLAUDE_CONFIG_DIR: expectedRoot,
+            });
+            expect((materialized as { materializationDiagnostics?: unknown }).materializationDiagnostics).toEqual([]);
+            expect(resolveStateSharingSourceRoot).not.toHaveBeenCalled();
+            expect(materializeAuthEnvironment).not.toHaveBeenCalled();
+            await expect(readFile(join(expectedRoot, '.credentials.json'), 'utf8')).rejects.toThrow();
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('does not expose shared group hot-apply selection when the live Claude runtime is on another config dir', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-selection-profile-'));
+        try {
+            const activeServerDir = join(root, 'active-server');
+            const sessionDirectory = join(root, 'workspace');
+            await mkdir(sessionDirectory, { recursive: true });
+            const materializeAuthEnvironment = vi.fn(() => {
+                throw new Error('preflight must not materialize provider auth');
+            });
+            const hooks = createProviderRuntimeCatalogEntryHooks({
+                agentId: 'claude',
+                packageName: '@happier-dev/plugins-test',
+                contribution: {
+                    connectedServices: {
+                        serviceIds: ['claude-subscription'],
+                        materializedRootSubdir: 'claude-config',
+                        readConnectedServiceId: (selection: unknown) =>
+                            selection === 'claude-subscription' ? 'claude-subscription' : null,
+                        createAuthMaterializationInput: (_serviceId: string, record: unknown) => ({ claude: record }),
+                        materializeAuthEnvironment,
+                        stateSharingDescriptor: {
+                            agentId: 'claude',
+                            providerSupportStatus: 'supported',
+                            config: {
+                                supported: true,
+                                modes: ['linked', 'copied', 'isolated'],
+                                entries: [],
+                            },
+                            state: {
+                                supported: true,
+                                modes: ['isolated', 'shared'],
+                                entries: [],
+                            },
+                            authIsolation: { mode: 'materialized_home', secretEntries: [] },
+                        },
+                        recoveryCapabilities: {
+                            predictiveSoftSwitch: {
+                                mode: 'supported',
+                                liveSessionRequirement: {
+                                    kind: 'shared_group_auth_surface',
+                                    serviceIds: ['claude-subscription'],
+                                    authEnvKey: 'CLAUDE_CONFIG_DIR',
+                                    authEnvSubpath: ['claude-config'],
+                                },
+                            },
+                            sameAccountFanoutStrategy: 'shared_group_auth_surface',
+                        },
+                    },
+                },
+            })();
+            const record = buildConnectedServiceCredentialRecord({
+                now: 1,
+                serviceId: 'claude-subscription',
+                profileId: 'new-profile',
+                kind: 'token',
+                token: {
+                    token: 'sk-test',
+                    providerAccountId: null,
+                    providerEmail: null,
+                },
+            });
+
+            const materialized = await hooks.materializeConnectedServiceRuntimeAuthSelection?.({
+                activeServerDir,
+                api: {} as unknown as ApiClient,
+                credentials: {} as Credentials,
+                processEnv: { HOME: join(root, 'home') },
+                baseSelection: {
+                    serviceId: 'claude-subscription',
+                    binding: { selection: 'group' },
+                    profileId: 'new-profile',
+                    groupId: 'anthropic-cloud',
+                    activeProfileId: 'new-profile',
+                    fallbackProfileId: 'previous-profile',
+                    record,
+                },
+                input: {
+                    mode: 'preflight',
+                    tracked: {
+                        startedBy: 'daemon',
+                        happySessionId: 'session-1',
+                        pid: 123,
+                        spawnOptions: {
+                            directory: sessionDirectory,
+                            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+                            connectedServices: { v: 1, bindingsByServiceId: {} },
+                            environmentVariables: { CLAUDE_CONFIG_DIR: join(root, 'profile-home', 'claude-config') },
+                        },
+                    } satisfies TrackedSession,
+                    sessionId: 'session-1',
+                    agentId: 'claude',
+                    serviceId: 'claude-subscription',
+                    previous: null,
+                    next: {
+                        source: 'connected',
+                        selection: 'group',
+                        serviceId: 'claude-subscription',
+                        profileId: 'new-profile',
+                        groupId: 'anthropic-cloud',
+                    },
+                    previousBindings: { v: 1, bindingsByServiceId: {} },
+                    normalizedBindings: { v: 1, bindingsByServiceId: {} },
+                },
+            });
+
+            expect((materialized as { targetMaterializedRoot?: unknown }).targetMaterializedRoot).toBeUndefined();
+            expect((materialized as { targetMaterializedEnv?: unknown }).targetMaterializedEnv).toBeUndefined();
+            expect(materializeAuthEnvironment).not.toHaveBeenCalled();
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('returns shared group runtime-auth metadata in apply mode without rewriting the live group home', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-provider-runtime-selection-live-'));
+        try {
+            const activeServerDir = join(root, 'active-server');
+            const sessionDirectory = join(root, 'workspace');
+            await mkdir(sessionDirectory, { recursive: true });
+            const materializeAuthEnvironment = vi.fn(() => {
+                throw new Error('shared-surface hot apply must own credential writes');
+            });
+            const hooks = createProviderRuntimeCatalogEntryHooks({
+                agentId: 'claude',
+                packageName: '@happier-dev/plugins-test',
+                contribution: {
+                    connectedServices: {
+                        serviceIds: ['claude-subscription'],
+                        materializedRootSubdir: 'claude-config',
+                        readConnectedServiceId: (selection: unknown) =>
+                            selection === 'claude-subscription' ? 'claude-subscription' : null,
+                        createAuthMaterializationInput: (_serviceId: string, record: unknown) => ({ claude: record }),
+                        materializeAuthEnvironment,
+                        stateSharingDescriptor: {
+                            agentId: 'claude',
+                            providerSupportStatus: 'supported',
+                            config: {
+                                supported: true,
+                                modes: ['linked', 'copied', 'isolated'],
+                                entries: [],
+                            },
+                            state: {
+                                supported: true,
+                                modes: ['isolated', 'shared'],
+                                entries: [],
+                            },
+                            authIsolation: { mode: 'materialized_home', secretEntries: [] },
+                        },
+                        recoveryCapabilities: {
+                            predictiveSoftSwitch: {
+                                mode: 'supported',
+                                liveSessionRequirement: {
+                                    kind: 'shared_group_auth_surface',
+                                    serviceIds: ['claude-subscription'],
+                                    authEnvKey: 'CLAUDE_CONFIG_DIR',
+                                    authEnvSubpath: ['claude-config'],
+                                },
+                            },
+                            sameAccountFanoutStrategy: 'shared_group_auth_surface',
+                        },
+                    },
+                },
+            })();
+            const record = buildConnectedServiceCredentialRecord({
+                now: 1,
+                serviceId: 'claude-subscription',
+                profileId: 'new-profile',
+                kind: 'token',
+                token: {
+                    token: 'sk-test',
+                    providerAccountId: null,
+                    providerEmail: null,
+                },
+            });
+            const expectedRoot = join(resolveConnectedServiceGroupHomeDir({
+                activeServerDir,
+                serviceId: 'claude-subscription',
+                groupId: 'anthropic-cloud',
+                agentId: 'claude',
+            }), 'claude-config');
+
+            const materialized = await hooks.materializeConnectedServiceRuntimeAuthSelection?.({
+                activeServerDir,
+                api: {} as unknown as ApiClient,
+                credentials: {} as Credentials,
+                processEnv: { HOME: join(root, 'home') },
+                baseSelection: {
+                    serviceId: 'claude-subscription',
+                    binding: { selection: 'group' },
+                    profileId: 'new-profile',
+                    groupId: 'anthropic-cloud',
+                    activeProfileId: 'new-profile',
+                    fallbackProfileId: 'previous-profile',
+                    record,
+                },
+                input: {
+                    mode: 'apply',
+                    tracked: {
+                        startedBy: 'daemon',
+                        happySessionId: 'session-1',
+                        pid: 123,
+                        spawnOptions: {
+                            directory: sessionDirectory,
+                            backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+                            connectedServices: { v: 1, bindingsByServiceId: {} },
+                            environmentVariables: { CLAUDE_CONFIG_DIR: expectedRoot },
+                        },
+                    } satisfies TrackedSession,
+                    sessionId: 'session-1',
+                    agentId: 'claude',
+                    serviceId: 'claude-subscription',
+                    previous: null,
+                    next: {
+                        source: 'connected',
+                        selection: 'group',
+                        serviceId: 'claude-subscription',
+                        profileId: 'new-profile',
+                        groupId: 'anthropic-cloud',
+                    },
+                    previousBindings: { v: 1, bindingsByServiceId: {} },
+                    normalizedBindings: { v: 1, bindingsByServiceId: {} },
+                },
+            });
+
+            expect((materialized as { targetMaterializedRoot?: unknown }).targetMaterializedRoot).toBe(expectedRoot);
+            expect((materialized as { targetMaterializedEnv?: unknown }).targetMaterializedEnv).toEqual({
+                CLAUDE_CONFIG_DIR: expectedRoot,
+            });
+            expect(materializeAuthEnvironment).not.toHaveBeenCalled();
+            await expect(readFile(join(expectedRoot, '.credentials.json'), 'utf8')).rejects.toThrow();
         } finally {
             await rm(root, { recursive: true, force: true });
         }
@@ -1435,6 +2768,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                     record,
                 },
                 input: {
+                    mode: 'apply',
                     tracked: {
                         startedBy: 'daemon',
                         happySessionId: 'session-1',
@@ -1481,6 +2815,13 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
             const targetCredential = await readFile(join(String(targetRoot), '.credentials.json'), 'utf8');
             expect(targetCredential).toContain('new-access-token');
             expect(targetCredential).not.toContain('old-access-token');
+            const exec = (materialized as { exec?: unknown }).exec;
+            expect(exec).toEqual(expect.objectContaining({
+                run: expect.any(Function),
+                systemTools: expect.objectContaining({
+                    resolve: expect.any(Function),
+                }),
+            }));
             expect((materialized as { materializationDiagnostics?: unknown }).materializationDiagnostics).toEqual([]);
         } finally {
             await rm(root, { recursive: true, force: true });
@@ -1564,6 +2905,7 @@ describe('createProviderRuntimeCatalogEntryHooks', () => {
                     record,
                 },
                 input: {
+                    mode: 'apply',
                     tracked: {
                         startedBy: 'daemon',
                         happySessionId: 'session-1',

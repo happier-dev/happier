@@ -1,6 +1,12 @@
 import { basename, isAbsolute } from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 
+import {
+    BUILT_IN_INSTALLABLES_REGISTRY,
+    type AccountSettings,
+    type InstallableKey,
+    type InstallablesRegistry,
+} from '@happier-dev/protocol';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import type {
     ExecClientHandleV1,
@@ -8,9 +14,11 @@ import type {
     ExecClientDiagnosticSanitizerV1,
     ExecProtocolClientV1,
     ExecClientSpecV1,
+    ExecClientTransportV1,
     ExecFramedBytesClientSpecV1,
     ExecJsonRpcClientSpecV1,
     ExecJsonStreamClientSpecV1,
+    ExecLoopbackWebSocketJsonClientSpecV1,
     ExecLaunchInputV1,
     ExecProcessHandleV1,
     ExecRunOptionsV1,
@@ -19,16 +27,23 @@ import type {
     FramedBytesClientV1,
     JsonRpcClientV1,
     JsonStreamClientV1,
+    LoopbackWebSocketJsonClientV1,
 } from '@happier-dev/plugin-sdk';
 
-import type { CatalogAgentLookupId } from '@/backends/types';
+import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
+import { ensureRuntimeInstallablesForLaunch } from '@/packagedRuntime/installables/ensureForLaunch';
+import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
 import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
 
 import { PluginExecClientError, sanitizeExecDiagnosticText } from '../exec/errors';
 import { createFramedBytesProcessClient } from '../exec/framedBytes';
 import { createJsonRpcProcessClient } from '../exec/jsonRpc';
 import { createJsonStreamProcessClient } from '../exec/jsonStream';
+import {
+    createLoopbackWebSocketProcessClient,
+    disposeLoopbackWebSocketProcess,
+} from '../exec/loopbackWebSocket';
 import { composeJsonRpcDiagnosticHooks, createExecClientRpcLogger } from '../exec/diagnostics/rpcLog';
 import type { PluginExecSystemToolDefinition } from './exec/system/tools/definitions';
 import {
@@ -48,7 +63,7 @@ type ResolvedPluginExecLaunch = Readonly<{
     cwd?: string;
     env?: Readonly<Record<string, string>>;
     stdin?: string | Uint8Array;
-    grantKind?: 'agent-cli';
+    grantKind?: 'agent-cli' | 'managed-installable';
 }>;
 
 type SpawnedPluginProcess = Readonly<{
@@ -89,6 +104,9 @@ export type CreatePluginExecServiceParams = Readonly<{
     systemToolGrantStore?: PluginExecSystemToolGrantStore;
     now?: () => number;
     rpcLogAllowedDirectories?: readonly string[];
+    installablesRegistry?: InstallablesRegistry;
+    getAccountSettings?: () => AccountSettings | null | undefined;
+    getMachineId?: () => string | null | undefined;
 }>;
 
 function createAbortError(): Error {
@@ -128,8 +146,13 @@ function resolveExecutableLaunch(input: ExecLaunchInputV1): ResolvedPluginExecLa
 function buildProviderCliProcessEnv(
     params: CreatePluginExecServiceParams,
     input: Extract<ExecLaunchInputV1, { kind: 'agent-cli' }>,
-): NodeJS.ProcessEnv {
-    const processEnv: NodeJS.ProcessEnv = { ...process.env };
+): Record<string, string> {
+    const processEnv: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+        if (typeof value === 'string') {
+            processEnv[key] = value;
+        }
+    }
     for (const source of [params.baseEnv, input.env]) {
         for (const [key, value] of Object.entries(source ?? {})) {
             if (typeof value === 'string') {
@@ -144,8 +167,9 @@ function resolveAgentCliLaunch(
     input: Extract<ExecLaunchInputV1, { kind: 'agent-cli' }>,
     params: CreatePluginExecServiceParams,
 ): ResolvedPluginExecLaunch {
+    const processEnv = buildProviderCliProcessEnv(params, input);
     const launch = requireProviderCliLaunchSpec(input.agentId as CatalogAgentLookupId, {
-        processEnv: buildProviderCliProcessEnv(params, input),
+        processEnv,
     });
     return {
         executablePath: launch.command,
@@ -154,21 +178,120 @@ function resolveAgentCliLaunch(
             ...(input.args ?? []),
         ],
         cwd: input.cwd,
-        env: input.env,
+        env: processEnv,
         stdin: input.stdin,
         grantKind: 'agent-cli',
     };
 }
 
-function resolveAllowedLaunch(
+function readManagedInstallableKey(input: Extract<ExecLaunchInputV1, { kind: 'managed-installable' }>): InstallableKey {
+    const trimmed = input.installableId.trim();
+    if (!trimmed) {
+        throw new PluginExecError(
+            'PLUGIN_EXEC_UNRESOLVED_LAUNCH',
+            'ctx.exec managed-installable launch requires an installableId',
+        );
+    }
+    return trimmed as InstallableKey;
+}
+
+function assertExpectedManagedExecutableName(params: Readonly<{
+    expectedName: string | undefined;
+    resolvedCommand: string;
+}>): void {
+    const expectedName = params.expectedName?.trim();
+    if (!expectedName) return;
+    const resolvedName = basename(params.resolvedCommand);
+    const acceptableNames = new Set([expectedName]);
+    if (!expectedName.endsWith('.exe')) {
+        acceptableNames.add(`${expectedName}.exe`);
+    }
+    if (!acceptableNames.has(resolvedName)) {
+        throw new PluginExecError(
+            'PLUGIN_EXEC_UNRESOLVED_LAUNCH',
+            `ctx.exec managed-installable resolved '${resolvedName}' instead of requested executable '${expectedName}'`,
+        );
+    }
+}
+
+async function resolveManagedInstallableLaunch(
+    input: Extract<ExecLaunchInputV1, { kind: 'managed-installable' }>,
+    params: CreatePluginExecServiceParams,
+): Promise<ResolvedPluginExecLaunch> {
+    const installableKey = readManagedInstallableKey(input);
+    const installablesRegistry = params.installablesRegistry ?? BUILT_IN_INSTALLABLES_REGISTRY;
+    const env = { ...(params.baseEnv ?? {}), ...(input.env ?? {}) };
+    const ensureResult = await ensureRuntimeInstallablesForLaunch({
+        installableKeys: [installableKey],
+        settings: params.getAccountSettings?.() ?? null,
+        machineId: params.getMachineId?.() ?? 'local',
+        env,
+        installablesRegistry,
+    });
+    if (!ensureResult.ok) {
+        throw new PluginExecError(
+            'PLUGIN_EXEC_UNRESOLVED_LAUNCH',
+            `ctx.exec managed-installable '${installableKey}' is unavailable: ${ensureResult.errorMessage}`,
+        );
+    }
+
+    const adapter = await getRuntimeInstallableAdapter(installableKey, { installablesRegistry });
+    const resolved = await adapter.resolveLaunchCommand?.({
+        env,
+        sourcePreference: input.sourcePreference ?? 'managed-first',
+    });
+    if (!resolved) {
+        throw new PluginExecError(
+            'PLUGIN_EXEC_UNSUPPORTED_LAUNCH',
+            `ctx.exec managed-installable '${installableKey}' does not expose executable launch resolution`,
+        );
+    }
+    if (!resolved.ok) {
+        throw new PluginExecError(
+            'PLUGIN_EXEC_UNRESOLVED_LAUNCH',
+            `ctx.exec managed-installable '${installableKey}' is unavailable: ${resolved.errorMessage}`,
+        );
+    }
+    if (resolved.source !== 'managed') {
+        throw new PluginExecError(
+            'PLUGIN_EXEC_PERMISSION_DENIED',
+            `ctx.exec managed-installable '${installableKey}' must resolve to a managed executable`,
+        );
+    }
+    assertExpectedManagedExecutableName({
+        expectedName: input.executableName,
+        resolvedCommand: resolved.command,
+    });
+    if (!isAbsolute(resolved.command)) {
+        throw new PluginExecError(
+            'PLUGIN_EXEC_UNRESOLVED_LAUNCH',
+            `ctx.exec managed-installable '${installableKey}' resolved a non-absolute executable path`,
+        );
+    }
+    return {
+        executablePath: resolved.command,
+        args: [
+            ...resolved.args,
+            ...(input.args ?? []),
+        ],
+        cwd: input.cwd,
+        env: input.env,
+        stdin: input.stdin,
+        grantKind: 'managed-installable',
+    };
+}
+
+async function resolveAllowedLaunch(
     input: ExecLaunchInputV1,
     params: CreatePluginExecServiceParams,
     systemToolGrantStore: PluginExecSystemToolGrantStore,
-): ResolvedPluginExecLaunch {
+): Promise<ResolvedPluginExecLaunch> {
     const launch = input.kind === 'agent-cli'
         ? resolveAgentCliLaunch(input, params)
+        : input.kind === 'managed-installable'
+            ? await resolveManagedInstallableLaunch(input, params)
         : resolveExecutableLaunch(input);
-    if (launch.grantKind === 'agent-cli') {
+    if (launch.grantKind === 'agent-cli' || launch.grantKind === 'managed-installable') {
         return launch;
     }
     const executableName = basename(launch.executablePath);
@@ -206,6 +329,15 @@ function isClientSpec(input: ExecLaunchInputV1 | ExecClientSpecV1): input is Exe
     return 'launch' in input && 'transport' in input && 'protocol' in input;
 }
 
+function closeStdinForOneShotRun(input: ExecLaunchInputV1): ExecLaunchInputV1 {
+    if (input.kind !== 'binary' && input.kind !== 'agent-cli' && input.kind !== 'managed-installable') {
+        return input;
+    }
+    return input.stdin === undefined
+        ? { ...input, stdin: '' }
+        : input;
+}
+
 function createExecClientDisposeError(reason: ExecClientDisposeReasonV1 | undefined, stderrPreview?: string): PluginExecClientError {
     const code = typeof reason?.code === 'string' && reason.code.trim().length > 0
         ? reason.code.trim()
@@ -216,14 +348,14 @@ function createExecClientDisposeError(reason: ExecClientDisposeReasonV1 | undefi
     return new PluginExecClientError(code, message, { stderrPreview });
 }
 
-function createSpawnedPluginProcess(
+async function createSpawnedPluginProcess(
     launch: ExecLaunchInputV1,
     options: ExecRunOptionsV1 | undefined,
     params: CreatePluginExecServiceParams,
     systemToolGrantStore: PluginExecSystemToolGrantStore,
     diagnosticSanitizer?: ExecClientDiagnosticSanitizerV1,
-): SpawnedPluginProcess {
-    const resolvedLaunch = resolveAllowedLaunch(launch, params, systemToolGrantStore);
+): Promise<SpawnedPluginProcess> {
+    const resolvedLaunch = await resolveAllowedLaunch(launch, params, systemToolGrantStore);
     if (options?.signal?.aborted || params.signal?.aborted) {
         throw createAbortError();
     }
@@ -250,14 +382,23 @@ function createSpawnedPluginProcess(
         terminationPromise ??= terminateProcessTree(child, signal);
         return terminationPromise;
     };
+    const outputTee = options?.outputTee;
+    const teeChunk = (stream: 'stdout' | 'stderr', chunk: Uint8Array): void => {
+        if (!outputTee) return;
+        try {
+            outputTee.onChunk(stream, chunk);
+        } catch {
+            // A tee sink (e.g. durable log) must never break the process pipeline.
+        }
+    };
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk: string | Buffer | Uint8Array) => {
-        const text = typeof chunk === 'string'
-            ? chunk
-            : Buffer.from(chunk).toString('utf8');
-        stdout = clipBuffer(stdout + text, options?.maxStdoutBytes);
+        const buffer = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : Buffer.from(chunk);
+        teeChunk('stdout', buffer);
+        stdout = clipBuffer(stdout + buffer.toString('utf8'), options?.maxStdoutBytes);
     });
     child.stderr.on('data', (chunk: string) => {
+        teeChunk('stderr', Buffer.from(chunk, 'utf8'));
         stderr = clipBuffer(stderr + chunk, options?.maxStderrBytes);
     });
     child.stdin.on('error', () => {
@@ -276,19 +417,31 @@ function createSpawnedPluginProcess(
     if (resolvedLaunch.stdin !== undefined) {
         child.stdin.end(resolvedLaunch.stdin);
     }
+    let observedExit: Readonly<{ exitCode: number | null; signal: string | null }> | null = null;
     const exit = new Promise<ExecRunResultV1>((resolve, reject) => {
         child.once('error', (error) => {
-            exited = true;
-            reject(error);
-        });
-        child.once('exit', (exitCode, signal) => {
             exited = true;
             if (timeout) {
                 clearTimeout(timeout);
             }
+            reject(error);
+        });
+        child.once('exit', (exitCode, signal) => {
+            exited = true;
+            observedExit = { exitCode, signal };
+            if (timeout) {
+                clearTimeout(timeout);
+            }
+        });
+        child.once('close', (exitCode, signal) => {
+            exited = true;
+            if (timeout) {
+                clearTimeout(timeout);
+            }
+            const status = observedExit ?? { exitCode, signal };
             resolve(Object.freeze({
-                exitCode,
-                signal,
+                exitCode: status.exitCode,
+                signal: status.signal,
                 stdout,
                 stderr,
             }));
@@ -360,6 +513,9 @@ async function terminateProcessTree(child: ChildProcessWithoutNullStreams, signa
 }
 
 function assertExecClientTransportSupported(input: ExecClientSpecV1): void {
+    if (isLoopbackWebSocketSpec(input)) {
+        return;
+    }
     if (input.transport.kind !== 'stdio') {
         throw new PluginExecClientError(
             'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
@@ -368,20 +524,36 @@ function assertExecClientTransportSupported(input: ExecClientSpecV1): void {
     }
 }
 
-function assertStrictLfJsonFraming(input: ExecClientSpecV1): void {
-    if (input.transport.framing.kind !== 'strict-lf-json') {
+function readStdioTransport(input: ExecClientSpecV1): ExecClientTransportV1 {
+    if (input.transport.kind !== 'stdio') {
         throw new PluginExecClientError(
             'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
-            `Unsupported exec client framing '${input.transport.framing.kind}'`,
+            `Unsupported exec client transport '${input.transport.kind}'`,
+        );
+    }
+    return input.transport;
+}
+
+function isLoopbackWebSocketSpec(input: ExecClientSpecV1): input is ExecLoopbackWebSocketJsonClientSpecV1 {
+    return input.protocol.kind === 'json-websocket' && input.transport.kind === 'spawned-loopback-websocket';
+}
+
+function assertStrictLfJsonFraming(input: ExecClientSpecV1): void {
+    const transport = readStdioTransport(input);
+    if (transport.framing.kind !== 'strict-lf-json') {
+        throw new PluginExecClientError(
+            'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+            `Unsupported exec client framing '${transport.framing.kind}'`,
         );
     }
 }
 
 function assertFramedBytesFraming(input: ExecClientSpecV1): void {
-    if (input.transport.framing.kind !== 'framed-bytes') {
+    const transport = readStdioTransport(input);
+    if (transport.framing.kind !== 'framed-bytes') {
         throw new PluginExecClientError(
             'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
-            `Unsupported exec client framing '${input.transport.framing.kind}'`,
+            `Unsupported exec client framing '${transport.framing.kind}'`,
         );
     }
 }
@@ -396,6 +568,14 @@ function validateExecClientSpec(input: ExecClientSpecV1): void {
         case 'framed-bytes':
             assertFramedBytesFraming(input);
             return;
+        case 'json-websocket':
+            if (!isLoopbackWebSocketSpec(input)) {
+                throw new PluginExecClientError(
+                    'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+                    `Unsupported exec client transport '${input.transport.kind}' for json-websocket protocol`,
+                );
+            }
+            return;
         default:
             throw new PluginExecClientError(
                 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
@@ -404,20 +584,22 @@ function validateExecClientSpec(input: ExecClientSpecV1): void {
     }
 }
 
-function createProtocolClientForSpec(
+async function createProtocolClientForSpec(
     input: ExecClientSpecV1,
     spawned: SpawnedPluginProcess,
     rpcLogger: ReturnType<typeof createExecClientRpcLogger>,
-): ExecProtocolProcessClient {
+    options?: ExecRunOptionsV1,
+): Promise<ExecProtocolProcessClient> {
     switch (input.protocol.kind) {
         case 'json-rpc-2.0':
             assertStrictLfJsonFraming(input);
+            const jsonRpcTransport = readStdioTransport(input);
             return createJsonRpcProcessClient({
                 process: spawned.handle,
                 stdout: spawned.child.stdout,
                 write: (chunk) => spawned.handle.writeStdin(chunk),
-                encoding: input.transport.encoding === undefined ? undefined : input.transport.encoding as BufferEncoding,
-                maxFrameBytes: input.transport.maxFrameBytes,
+                encoding: jsonRpcTransport.encoding === undefined ? undefined : jsonRpcTransport.encoding as BufferEncoding,
+                maxFrameBytes: jsonRpcTransport.maxFrameBytes,
                 requestTimeoutMs: input.lifecycle?.requestTimeoutMs,
                 handlers: input.handlers?.jsonRpc,
                 hooks: composeJsonRpcDiagnosticHooks(input.hooks?.jsonRpc, rpcLogger),
@@ -425,22 +607,36 @@ function createProtocolClientForSpec(
             });
         case 'json-stream':
             assertStrictLfJsonFraming(input);
+            const jsonStreamTransport = readStdioTransport(input);
             return createJsonStreamProcessClient({
                 process: spawned.handle,
                 stdout: spawned.child.stdout,
                 write: (chunk) => spawned.handle.writeStdin(chunk),
-                encoding: input.transport.encoding === undefined ? undefined : input.transport.encoding as BufferEncoding,
-                maxFrameBytes: input.transport.maxFrameBytes,
+                encoding: jsonStreamTransport.encoding === undefined ? undefined : jsonStreamTransport.encoding as BufferEncoding,
+                maxFrameBytes: jsonStreamTransport.maxFrameBytes,
                 readStderrPreview: spawned.readStderrPreview,
             });
         case 'framed-bytes':
             assertFramedBytesFraming(input);
+            const framedBytesTransport = readStdioTransport(input);
             return createFramedBytesProcessClient({
                 process: spawned.handle,
                 stdout: spawned.child.stdout,
                 write: (chunk) => spawned.handle.writeStdin(chunk),
-                maxFrameBytes: input.transport.maxFrameBytes,
+                maxFrameBytes: framedBytesTransport.maxFrameBytes,
                 readStderrPreview: spawned.readStderrPreview,
+            });
+        case 'json-websocket':
+            if (!isLoopbackWebSocketSpec(input)) {
+                throw new PluginExecClientError(
+                    'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+                    `Unsupported exec client transport '${input.transport.kind}' for json-websocket protocol`,
+                );
+            }
+            return await createLoopbackWebSocketProcessClient({
+                spec: input,
+                process: spawned,
+                optionsSignal: options?.signal,
             });
     }
 }
@@ -483,11 +679,12 @@ export function createPluginExecService(params: CreatePluginExecServiceParams = 
     });
 
     async function spawn(input: ExecLaunchInputV1, options?: ExecRunOptionsV1): Promise<ExecProcessHandleV1> {
-        return createSpawnedPluginProcess(input, options, params, systemToolGrantStore).handle;
+        return (await createSpawnedPluginProcess(input, options, params, systemToolGrantStore)).handle;
     }
 
     async function run(input: ExecLaunchInputV1, options?: ExecRunOptionsV1): Promise<ExecRunResultV1> {
-        const handle = await spawn(input, options);
+        const runInput = closeStdinForOneShotRun(input);
+        const handle = await spawn(runInput, options);
         try {
             return await handle.exit;
         } finally {
@@ -508,6 +705,10 @@ export function createPluginExecService(params: CreatePluginExecServiceParams = 
         options?: ExecRunOptionsV1,
     ): Promise<ExecClientHandleV1<FramedBytesClientV1>>;
     async function spawnClient(
+        input: ExecLoopbackWebSocketJsonClientSpecV1,
+        options?: ExecRunOptionsV1,
+    ): Promise<ExecClientHandleV1<LoopbackWebSocketJsonClientV1>>;
+    async function spawnClient(
         input: ExecClientSpecV1,
         options?: ExecRunOptionsV1,
     ): Promise<ExecClientHandleV1<ExecProtocolClientV1>> {
@@ -521,14 +722,21 @@ export function createPluginExecService(params: CreatePluginExecServiceParams = 
         const rpcLogger = createExecClientRpcLogger(input.lifecycle?.diagnostics, {
             allowedDirectories: params.rpcLogAllowedDirectories,
         });
-        const spawned = createSpawnedPluginProcess(input.launch, {
+        const spawned = await createSpawnedPluginProcess(input.launch, {
             ...options,
             maxStderrBytes: input.lifecycle?.maxStderrBytes ?? options?.maxStderrBytes,
         }, params, systemToolGrantStore, input.lifecycle?.diagnostics?.sanitizer);
         let status: 'running' | 'exited' | 'disposed' = 'running';
         let disposePromise: Promise<void> | null = null;
         const exitListeners = new Set<(result: ExecRunResultV1) => void>();
-        const protocolClient = createProtocolClientForSpec(input, spawned, rpcLogger);
+        let protocolClient: ExecProtocolProcessClient;
+        try {
+            protocolClient = await createProtocolClientForSpec(input, spawned, rpcLogger, options);
+        } catch (error) {
+            await spawned.handle.dispose();
+            await rpcLogger.flush();
+            throw error;
+        }
         spawned.handle.exit.then((result) => {
             if (status !== 'disposed') {
                 status = 'exited';
@@ -583,7 +791,11 @@ export function createPluginExecService(params: CreatePluginExecServiceParams = 
                 disposePromise = (async () => {
                     status = 'disposed';
                     protocolClient.dispose(createExecClientDisposeError(reason, spawned.readStderrPreview()));
-                    await spawned.handle.dispose();
+                    if (isLoopbackWebSocketSpec(input)) {
+                        await disposeLoopbackWebSocketProcess({ process: spawned, spec: input });
+                    } else {
+                        await spawned.handle.dispose();
+                    }
                     await rpcLogger.flush();
                 })();
                 await disposePromise;

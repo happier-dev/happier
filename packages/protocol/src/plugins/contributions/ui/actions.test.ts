@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { PluginUiActionDescriptorV1Schema } from './actions.js';
+import {
+  PluginUiActionDescriptorV1Schema,
+  isExecutablePluginUiFallbackRefV1,
+} from './actions.js';
 
 describe('plugin UI action descriptors', () => {
   it('accepts typed host-owned surface actions', () => {
@@ -38,5 +41,17 @@ describe('plugin UI action descriptors', () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it('distinguishes executable-tier fallbacks from unavailable markers', () => {
+    expect(isExecutablePluginUiFallbackRefV1({ kind: 'hostedWeb', contributionId: 'preview-web' })).toBe(true);
+    expect(isExecutablePluginUiFallbackRefV1({ kind: 'descriptor', descriptorId: 'preview-card' })).toBe(true);
+    expect(isExecutablePluginUiFallbackRefV1({
+      kind: 'structuredMessage',
+      descriptorId: 'preview-message',
+    })).toBe(true);
+    expect(isExecutablePluginUiFallbackRefV1({ kind: 'unavailable' })).toBe(false);
+    expect(isExecutablePluginUiFallbackRefV1({ kind: 'none' })).toBe(false);
+    expect(isExecutablePluginUiFallbackRefV1(undefined)).toBe(false);
   });
 });

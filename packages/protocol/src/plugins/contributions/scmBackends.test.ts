@@ -127,8 +127,8 @@ describe('SCM backend plugin contribution schema', () => {
       version: '1.0.0',
       displayName: 'Acme SCM Backend',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: ['scmBackends'] },
-      targets: { daemon: { entry: './daemon.js' } },
+      uses: ['scmBackends'],
+      entrypoints: { main: './daemon.js' },
       contributes: {
         scmBackends: [
           {
@@ -157,7 +157,7 @@ describe('SCM backend plugin contribution schema', () => {
           },
         ],
       },
-      capabilities: { permissions: [] },
+      permissions: { required: [] },
     });
 
     expect(parsed.contributes.scmBackends).toEqual([
@@ -170,7 +170,7 @@ describe('SCM backend plugin contribution schema', () => {
       }),
     ]);
     expect(parsed.contributes.agents).toEqual([]);
-    expect(parsed.contributes.backends).toEqual([]);
+    expect('backends' in parsed.contributes).toBe(false);
   });
 
   it('rejects stale sourceController vocabulary in public backend descriptors', () => {
@@ -183,8 +183,8 @@ describe('SCM backend plugin contribution schema', () => {
       version: '1.0.0',
       displayName: 'Acme SCM Backend',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: ['scmBackends'] },
-      targets: { daemon: { entry: './daemon.js' } },
+      uses: ['scmBackends'],
+      entrypoints: { main: './daemon.js' },
       contributes: {
         scmBackends: [
           {
@@ -197,7 +197,7 @@ describe('SCM backend plugin contribution schema', () => {
           },
         ],
       },
-      capabilities: { permissions: [] },
+      permissions: { required: [] },
     });
 
     expect(result.success).toBe(false);

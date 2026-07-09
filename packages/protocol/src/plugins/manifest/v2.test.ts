@@ -11,7 +11,153 @@ function readSchemaExport(name: string): z.ZodTypeAny | undefined {
     : undefined;
 }
 
+function agentOwnerContributions(agentId: string) {
+  return {
+    agents: [
+      {
+        kindVersion: 1,
+        id: agentId,
+        display: { name: `${agentId} Agent` },
+        ownedBackendIds: [`${agentId}.backend`],
+        runtime: { kind: 'custom' },
+      },
+    ],
+  } as const;
+}
+
+function managedDependencyContribution(id: string) {
+  return {
+    id,
+    key: id,
+    kind: 'dep',
+    version: '1',
+    capabilityId: `dep.${id}`,
+    display: { name: id },
+    description: `${id} dependency`,
+    source: { kind: 'manual_only', setupUrl: `https://example.com/${id}` },
+    binary: { commands: [id], systemFirst: true },
+    defaultPolicy: { autoInstallWhenNeeded: false, autoUpdateMode: 'notify' },
+    consent: { install: 'required', update: 'required' },
+  } as const;
+}
+
 describe('plugin manifest v2 contracts', () => {
+  it('parses the v1-final agent manifest vocabulary without legacy contribution families', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const parsed = manifestSchema!.parse({
+      schemaVersion: 2,
+      id: 'acme.agent-runtime',
+      version: '1.2.3',
+      displayName: 'Acme Agent Runtime',
+      engines: { happier: '^1.0.0' },
+      uses: ['agents', 'actions', 'tools', 'hooks', 'managedDependencies'],
+      entrypoints: {
+        main: './dist/activate.js',
+        dev: './src/activate.ts',
+      },
+      permissions: {
+        required: [{ capability: 'filesystem.read' }],
+        optional: [{ capability: 'network' }],
+      },
+      activationEvents: ['onAgent:acme.agent'],
+      contributes: {
+        agents: [
+          {
+            kindVersion: 1,
+            id: 'acme.agent',
+            display: { name: 'Acme Agent' },
+            ownedBackendIds: [],
+            runtime: { kind: 'custom' },
+            xFutureAgentContribution: { preserved: true },
+          },
+        ],
+        agentSettings: [
+          {
+            id: 'acme.agent.settings',
+            kind: 'agentSettings.v1',
+            agentId: 'acme.agent',
+            fields: [],
+          },
+        ],
+        actions: [
+          {
+            id: 'acme.agent.refresh',
+            title: 'Refresh Acme',
+            scopes: ['agent'],
+            surfaces: ['agent'],
+            placement: 'primary',
+            dangerLevel: 'safe',
+            handler: { target: 'plugin', exportName: 'refreshAcme' },
+            xFutureActionContribution: { preserved: true },
+          },
+        ],
+        tools: [
+          {
+            id: 'acme.agent.inspect',
+            name: 'inspect_acme',
+            title: 'Inspect Acme',
+            surfaces: ['agent', 'mcp'],
+            handler: { target: 'plugin', exportName: 'inspectAcme' },
+          },
+        ],
+        managedDependencies: [
+          managedDependencyContribution('acme-cli'),
+        ],
+        hooks: [
+          {
+            id: 'agent.resolvePrerequisites',
+            category: 'decision',
+            scope: 'agent',
+            executionKind: 'decide',
+            filters: { agentId: 'acme.agent' },
+            handler: { target: 'plugin', exportName: 'resolvePrerequisites' },
+            xFutureHookContribution: { preserved: true },
+          },
+        ],
+      },
+      xFutureManifestRoot: { preserved: true },
+    });
+
+    expect(parsed.uses).toEqual(['agents', 'actions', 'tools', 'hooks', 'managedDependencies']);
+    expect(parsed.entrypoints).toMatchObject({ main: './dist/activate.js', dev: './src/activate.ts' });
+    expect(parsed.permissions.required.map((permission) => permission.capability)).toEqual(['filesystem.read']);
+    expect(parsed.permissions.optional.map((permission) => permission.capability)).toEqual(['network']);
+    expect(parsed.activationEvents).toEqual(['onAgent:acme.agent']);
+    expect(parsed.contributes.agents[0]).toMatchObject({ id: 'acme.agent' });
+    expect('agentId' in parsed.contributes.agents[0]).toBe(false);
+    expect(parsed.contributes.agentSettings[0]).toMatchObject({
+      kind: 'agentSettings.v1',
+      agentId: 'acme.agent',
+    });
+    expect(parsed.contributes.tools[0]?.surfaces).toEqual(['agent', 'mcp']);
+    expect(parsed.contributes.managedDependencies[0]?.id).toBe('acme-cli');
+    expect((parsed as Readonly<Record<string, unknown>>).xFutureManifestRoot).toEqual({ preserved: true });
+    expect(parsed.contributes.agents[0] as Readonly<Record<string, unknown>>)
+      .toMatchObject({ xFutureAgentContribution: { preserved: true } });
+    expect(parsed.contributes.actions[0] as Readonly<Record<string, unknown>>)
+      .toMatchObject({ xFutureActionContribution: { preserved: true } });
+    expect(parsed.contributes.hooks[0] as Readonly<Record<string, unknown>>)
+      .toMatchObject({ xFutureHookContribution: { preserved: true } });
+    expect('backends' in parsed.contributes).toBe(false);
+    expect(`provider${'Settings'}` in parsed.contributes).toBe(false);
+    expect(`install${'ables'}` in parsed.contributes).toBe(false);
+
+    expect(manifestSchema!.safeParse({
+      ...parsed,
+      contributes: {
+        ...parsed.contributes,
+        agents: [
+          {
+            ...parsed.contributes.agents[0],
+            agentId: 'acme.agent',
+          },
+        ],
+      },
+    }).success).toBe(false);
+  });
+
   it('requires globally namespaced plugin owner ids while accepting first-party owner ids', () => {
     const manifestSchema = readSchemaExport('PluginManifestV2Schema');
     expect(manifestSchema).toBeDefined();
@@ -21,9 +167,10 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Owner Id Test',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: [] },
+      uses: [],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {},
-      capabilities: { permissions: [] },
+      permissions: { required: [] },
     };
     const firstPartyAgentPluginId = 'happier.agent.codex';
     const firstPartyScmPluginId = 'happier.scm.hosting.github';
@@ -57,17 +204,15 @@ describe('plugin manifest v2 contracts', () => {
       engines: {
         happier: '^1.0.0',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: ['actions', 'commands'],
-      },
+      uses: ['actions', 'commands'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         actions: [
           {
             id: 'acme.plugin.refresh',
             title: 'Refresh Acme',
             scopes: ['settings'],
-            surfaces: ['settings'],
+            surfaces: ['cli'],
             placement: 'primary',
             dangerLevel: 'safe',
             handler: {
@@ -87,11 +232,17 @@ describe('plugin manifest v2 contracts', () => {
           },
         ],
       },
-      capabilities: {
-        permissions: [
+      permissions: { required: [
+          {
+            capability: 'network',
+            reason: 'Calls the plugin service API',
+          },
+        ] },
+      declares: {
+        capabilities: [
           {
             capability: 'actions.execute',
-            reason: 'Run the plugin action when selected by the user',
+            reason: 'Defines executable action metadata',
           },
         ],
       },
@@ -99,7 +250,8 @@ describe('plugin manifest v2 contracts', () => {
 
     expect(parsed.contributes.actions).toHaveLength(1);
     expect(parsed.contributes.commands).toHaveLength(1);
-    expect(parsed.capabilities.permissions).toHaveLength(1);
+    expect(parsed.permissions.required).toHaveLength(1);
+    expect(parsed.declares.capabilities.map((capability) => capability.capability)).toEqual(['actions.execute']);
 
     const staleFlatManifest = {
       schemaVersion: 2,
@@ -107,9 +259,10 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Acme Plugin',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: ['actions'] },
+      uses: ['actions'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {},
-      capabilities: {},
+      permissions: {},
     } as Record<string, unknown>;
     staleFlatManifest.contributions = [];
     expect(manifestSchema!.safeParse(staleFlatManifest).success).toBe(false);
@@ -120,12 +273,59 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Acme Plugin',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: ['actions'] },
+      uses: ['actions'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {},
-      capabilities: {},
+      permissions: {},
     } as Record<string, unknown>;
     stalePermissionManifest.permissions = [];
     expect(manifestSchema!.safeParse(stalePermissionManifest).success).toBe(false);
+  });
+
+  it('rejects provider-shaped keys in plugin agent contributions', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const baseManifest = {
+      schemaVersion: 2,
+      id: 'acme.agent-vocabulary',
+      version: '1.0.0',
+      displayName: 'Acme Agent Vocabulary',
+      engines: { happier: '^1.0.0' },
+      uses: ['agents'],
+      entrypoints: { main: './dist/activate.js' },
+      permissions: { required: [] },
+    };
+
+    for (const legacyKey of ['agentId', 'providerAgentId', 'providerCliRuntime']) {
+      expect(manifestSchema!.safeParse({
+        ...baseManifest,
+        contributes: {
+          agents: [
+            {
+              id: 'acme.agent',
+              display: { name: 'Acme Agent' },
+              ownedBackendIds: [],
+              runtime: { kind: 'custom' },
+              [legacyKey]: legacyKey === 'providerAgentId'
+                ? 'claude'
+                : legacyKey === 'agentId'
+                  ? 'acme.agent'
+                : {
+                  id: 'acme.agent',
+                  title: 'Acme Agent',
+                  binaryName: 'acme-agent',
+                  sourcePreferenceDefault: 'system-first',
+                  managedInstall: null,
+                  manualInstallKind: 'none',
+                  manualInstallRecipes: null,
+                  acceptsJavaScriptFileOverride: false,
+                },
+            },
+          ],
+        },
+      }).success, legacyKey).toBe(false);
+    }
   });
 
   it('accepts final hierarchical permission names and optional runtime grants while rejecting stale event names', () => {
@@ -138,14 +338,15 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Acme Permissions',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: ['terminalHost'] },
+      uses: ['terminalHost'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {},
     };
 
     const parsed = manifestSchema!.parse({
       ...baseManifest,
-      capabilities: {
-        permissions: [
+      permissions: {
+        required: [
           { capability: 'events.runtime.subscribe' },
           { capability: 'events.lifecycle.subscribe' },
           { capability: 'events.session.subscribe' },
@@ -155,14 +356,20 @@ describe('plugin manifest v2 contracts', () => {
           { capability: 'reviews.comments.write.direct' },
           { capability: 'terminal.host.control' },
         ],
-        optionalPermissions: [
+        optional: [
+          { capability: 'process.spawn', scope: '/usr/bin/git' },
+          { capability: 'filesystem.write', scope: 'artifacts' },
+        ],
+      },
+      declares: {
+        capabilities: [
           { capability: 'secrets.read', reason: 'Read user-selected credentials at runtime' },
           { capability: 'storage.synced' },
         ],
       },
     });
 
-    expect(parsed.capabilities.permissions.map((permission) => permission.capability)).toEqual([
+    expect(parsed.permissions.required.map((permission) => permission.capability)).toEqual([
       'events.runtime.subscribe',
       'events.lifecycle.subscribe',
       'events.session.subscribe',
@@ -172,7 +379,11 @@ describe('plugin manifest v2 contracts', () => {
       'reviews.comments.write.direct',
       'terminal.host.control',
     ]);
-    expect(parsed.capabilities.optionalPermissions.map((permission) => permission.capability)).toEqual([
+    expect(parsed.permissions.optional.map((permission) => permission.capability)).toEqual([
+      'process.spawn',
+      'filesystem.write',
+    ]);
+    expect(parsed.declares.capabilities.map((capability) => capability.capability)).toEqual([
       'secrets.read',
       'storage.synced',
     ]);
@@ -186,11 +397,61 @@ describe('plugin manifest v2 contracts', () => {
     ]) {
       expect(manifestSchema!.safeParse({
         ...baseManifest,
-        capabilities: {
-          permissions: [{ capability: staleCapability }],
-        },
+        permissions: { required: [{ capability: staleCapability }] },
       }).success, staleCapability).toBe(false);
     }
+  });
+
+  it('classifies enforced permissions separately from declarative plugin capabilities', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const baseManifest = {
+      schemaVersion: 2,
+      id: 'acme.permission-classification',
+      version: '1.0.0',
+      displayName: 'Acme Permission Classification',
+      engines: { happier: '^1.0.0' },
+      uses: ['actions', 'reload'],
+      entrypoints: { main: './dist/activate.js' },
+      contributes: {},
+    };
+
+    expect(manifestSchema!.safeParse({
+      ...baseManifest,
+      permissions: {
+        required: [
+          { capability: 'storage.local', reason: 'Use plugin-local storage metadata' },
+        ],
+      },
+    }).success).toBe(false);
+
+    const parsed = manifestSchema!.parse({
+      ...baseManifest,
+      declares: {
+        capabilities: [
+          { capability: 'actions.execute', reason: 'Defines executable action metadata' },
+          { capability: 'storage.local', reason: 'Uses plugin-local storage' },
+          { capability: 'reload', reason: 'Participates in plugin reload flows' },
+        ],
+      },
+      permissions: {
+        required: [
+          { capability: 'network', scope: 'https://api.example.test' },
+        ],
+        optional: [
+          { capability: 'process.spawn', scope: '/usr/bin/git' },
+        ],
+      },
+    });
+
+    expect(parsed.permissions.required.map((permission) => permission.capability)).toEqual(['network']);
+    expect(parsed.permissions.optional.map((permission) => permission.capability)).toEqual(['process.spawn']);
+    expect(parsed.declares.capabilities.map((capability) => capability.capability)).toEqual([
+      'actions.execute',
+      'storage.local',
+      'reload',
+    ]);
   });
 
   it('accepts system-tool contributions with schema defaults and rejects unknown tool fields', () => {
@@ -203,8 +464,9 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Acme System Tools',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: [] },
-      capabilities: { permissions: [] },
+      uses: [],
+      entrypoints: { main: './dist/activate.js' },
+      permissions: { required: [] },
     };
 
     const parsed = manifestSchema!.parse({
@@ -244,6 +506,50 @@ describe('plugin manifest v2 contracts', () => {
     }).success).toBe(false);
   });
 
+  it('accepts agent tool prompt snippets and guidelines on tool contributions', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const parsed = manifestSchema!.parse({
+      schemaVersion: 2,
+      id: 'acme.tool-prompts',
+      version: '1.0.0',
+      displayName: 'Acme Tool Prompts',
+      engines: { happier: '^1.0.0' },
+      uses: [],
+      entrypoints: { main: './dist/activate.js' },
+      permissions: { required: [] },
+      contributes: {
+        tools: [
+          {
+            id: 'acme.audit',
+            name: 'acme_audit',
+            title: 'Acme Audit',
+            description: 'Audit the workspace',
+            surfaces: ['agent'],
+            handler: {
+              target: 'plugin',
+              exportName: 'audit',
+            },
+            promptSnippet: 'Use acme_audit when the user asks for an Acme compliance scan.',
+            promptGuidelines: [
+              'Do not call acme_audit for ordinary file search.',
+              'Summarize only stable findings returned by the tool.',
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(parsed.contributes.tools[0]).toMatchObject({
+      promptSnippet: 'Use acme_audit when the user asks for an Acme compliance scan.',
+      promptGuidelines: [
+        'Do not call acme_audit for ordinary file search.',
+        'Summarize only stable findings returned by the tool.',
+      ],
+    });
+  });
+
   it('types optional runtime permission grants as authoring-optional and parse-defaulted', () => {
     const manifestSchema = readSchemaExport('PluginManifestV2Schema');
     expect(manifestSchema).toBeDefined();
@@ -254,17 +560,16 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Acme Optional Permissions',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: [] },
-      capabilities: {
-        permissions: [],
-      },
+      uses: [],
+      entrypoints: { main: './dist/activate.js' },
+      permissions: { required: [] },
       contributes: {},
     } satisfies PluginManifestV2;
 
     const parsed = manifestSchema!.parse(authoredManifest) as ParsedPluginManifestV2;
 
-    expect(parsed.capabilities.optionalPermissions).toEqual([]);
-    expectTypeOf(parsed.capabilities.optionalPermissions).toEqualTypeOf<ParsedPluginManifestV2['capabilities']['optionalPermissions']>();
+    expect(parsed.permissions.optional).toEqual([]);
+    expectTypeOf(parsed.permissions.optional).toEqualTypeOf<ParsedPluginManifestV2['permissions']['optional']>();
   });
 
   it('accepts manifest-declared events with local slash ids and rejects stale event ids', () => {
@@ -277,8 +582,9 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Acme Events',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: [] },
-      capabilities: { permissions: [] },
+      uses: [],
+      entrypoints: { main: './dist/activate.js' },
+      permissions: { required: [] },
     };
 
     const parsed = manifestSchema!.parse({
@@ -344,35 +650,35 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Acme Hooks',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: ['hooks'] },
-      capabilities: { permissions: [{ capability: 'hooks.register' }] },
+      uses: ['hooks'],
+      entrypoints: { main: './dist/activate.js' },
     };
-    const providerResponseHook = {
-      id: 'provider.response.after',
+    const agentResponseHook = {
+      id: 'agent.response.after',
       category: 'lifecycle',
-      scope: 'provider',
+      scope: 'agent',
       executionKind: 'observe',
-      handler: { target: 'plugin', exportName: 'onProviderResponse' },
+      handler: { target: 'plugin', exportName: 'onAgentResponse' },
     };
     const parsed = manifestSchema!.parse({
       ...baseManifest,
       contributes: {
         hooks: [
-          providerResponseHook,
+          agentResponseHook,
           {
-            id: 'subagent.start',
+            id: 'subagent.started',
             category: 'lifecycle',
             scope: 'session',
             executionKind: 'observe',
-            handler: { target: 'plugin', exportName: 'onSubagentStart' },
+            handler: { target: 'plugin', exportName: 'onSubagentStarted' },
           },
         ],
       },
     });
 
     expect(parsed.contributes.hooks.map((hook) => hook.id)).toEqual([
-      'provider.response.after',
-      'subagent.start',
+      'agent.response.after',
+      'subagent.started',
     ]);
 
     for (const id of [
@@ -385,7 +691,7 @@ describe('plugin manifest v2 contracts', () => {
       expect(manifestSchema!.safeParse({
         ...baseManifest,
         contributes: {
-          hooks: [{ ...providerResponseHook, id }],
+          hooks: [{ ...agentResponseHook, id }],
         },
       }).success, id).toBe(false);
     }
@@ -403,10 +709,8 @@ describe('plugin manifest v2 contracts', () => {
       engines: {
         happier: '^1.0.0',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: [],
-      },
+      uses: [],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         requestInterceptors: [
           {
@@ -421,14 +725,12 @@ describe('plugin manifest v2 contracts', () => {
           },
         ],
       },
-      capabilities: {
-        permissions: [
+      permissions: { required: [
           {
             capability: 'network.intercept',
             reason: 'Mediate plugin and Happier server requests',
           },
-        ],
-      },
+        ] },
     });
 
     expect(parsed.contributes.requestInterceptors).toEqual([
@@ -443,7 +745,7 @@ describe('plugin manifest v2 contracts', () => {
         ],
       },
     ]);
-    expect(parsed.capabilities.permissions.map((entry: { capability: string }) => entry.capability))
+    expect(parsed.permissions.required.map((entry: { capability: string }) => entry.capability))
       .toContain('network.intercept');
   });
 
@@ -457,8 +759,9 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Acme Policy',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: [] },
-      capabilities: { permissions: [{ capability: 'network.intercept' }] },
+      uses: [],
+      entrypoints: { main: './dist/activate.js' },
+      permissions: { required: [{ capability: 'network.intercept' }] },
     };
 
     expect(manifestSchema!.safeParse({
@@ -515,39 +818,32 @@ describe('plugin manifest v2 contracts', () => {
     }
   });
 
-  it('normalizes backend execution-run capability support to the nested contract', () => {
+  it('normalizes agent execution-run capability support to the nested contract', () => {
     const manifestSchema = readSchemaExport('PluginManifestV2Schema');
     expect(manifestSchema).toBeDefined();
 
     const defaultSupported = manifestSchema!.parse({
       schemaVersion: 2,
-      id: 'acme.backend-default',
+      id: 'acme.agent-default',
       version: '1.0.0',
-      displayName: 'Acme Backend Default',
+      displayName: 'Acme Agent Default',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: ['backends'] },
+      uses: ['agents'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         agents: [
           {
             kindVersion: 1,
             id: 'acme.agent',
             display: { name: 'Acme Agent' },
-            ownedBackendIds: ['acme.backend'],
-          },
-        ],
-        backends: [
-          {
-            kindVersion: 1,
-            id: 'acme.backend',
-            agentId: 'acme.agent',
-            engine: { kind: 'custom' },
+            runtime: { kind: 'custom' },
           },
         ],
       },
-      capabilities: { permissions: [] },
+      permissions: { required: [] },
     });
 
-    expect(defaultSupported.contributes.backends[0]?.capabilities).toEqual({
+    expect(defaultSupported.contributes.agents[0]?.capabilities).toEqual({
       executionRun: { supported: true },
       session: {
         media: {
@@ -565,36 +861,29 @@ describe('plugin manifest v2 contracts', () => {
 
     const explicitOptOut = manifestSchema!.parse({
       schemaVersion: 2,
-      id: 'acme.backend-opt-out',
+      id: 'acme.agent-opt-out',
       version: '1.0.0',
-      displayName: 'Acme Backend Opt Out',
+      displayName: 'Acme Agent Opt Out',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: ['backends'] },
+      uses: ['agents'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         agents: [
           {
             kindVersion: 1,
             id: 'acme.agent',
             display: { name: 'Acme Agent' },
-            ownedBackendIds: ['acme.backend'],
-          },
-        ],
-        backends: [
-          {
-            kindVersion: 1,
-            id: 'acme.backend',
-            agentId: 'acme.agent',
-            engine: { kind: 'custom' },
+            runtime: { kind: 'custom' },
             capabilities: {
               executionRun: { supported: false },
             },
           },
         ],
       },
-      capabilities: { permissions: [] },
+      permissions: { required: [] },
     });
 
-    expect(explicitOptOut.contributes.backends[0]?.capabilities).toEqual({
+    expect(explicitOptOut.contributes.agents[0]?.capabilities).toEqual({
       executionRun: { supported: false },
       session: {
         media: {
@@ -609,6 +898,33 @@ describe('plugin manifest v2 contracts', () => {
         },
       },
     });
+
+    expect(() => manifestSchema!.parse({
+      schemaVersion: 2,
+      id: 'acme.agent-invalid-recovery',
+      version: '1.0.0',
+      displayName: 'Acme Agent Invalid Recovery',
+      engines: { happier: '^1.0.0' },
+      uses: ['agents'],
+      entrypoints: { main: './dist/activate.js' },
+      contributes: {
+        agents: [
+          {
+            kindVersion: 1,
+            id: 'acme.agent',
+            display: { name: 'Acme Agent' },
+            runtime: { kind: 'custom' },
+            capabilities: {
+              executionRun: {
+                supported: true,
+                structuredOutputRecovery: { plan: 'vendor-special' },
+              },
+            },
+          },
+        ],
+      },
+      permissions: { required: [] },
+    })).toThrow();
   });
 
   it('accepts notification contribution families while rejecting stale activity providers', () => {
@@ -623,10 +939,8 @@ describe('plugin manifest v2 contracts', () => {
       engines: {
         happier: '^1.0.0',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: ['notifications'],
-      },
+      uses: ['notifications'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         notifications: [
           {
@@ -651,17 +965,9 @@ describe('plugin manifest v2 contracts', () => {
           },
         ],
       },
-      capabilities: {
-        permissions: [
-          {
-            capability: 'notifications.register',
-            reason: 'Registers notification routing for Acme events',
-          },
-        ],
-      },
     });
 
-    expect(parsed.runtime.capabilities).toContain('notifications');
+    expect(parsed.uses).toContain('notifications');
     expect(parsed.contributes.notifications.map((definition: { id: string }) => definition.id)).toEqual([
       'acme.notifications.reviewReady',
       'acme.notifications.approvalNeeded',
@@ -677,7 +983,8 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Acme Notifications',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: ['notifications'] },
+      uses: ['notifications'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         [legacyActivityProviderFamily]: [
           {
@@ -685,7 +992,7 @@ describe('plugin manifest v2 contracts', () => {
           },
         ],
       },
-      capabilities: {},
+      permissions: {},
     };
 
     expect(manifestSchema!.safeParse(staleActivityProviderManifest).success).toBe(false);
@@ -703,10 +1010,8 @@ describe('plugin manifest v2 contracts', () => {
       engines: {
         happier: '^1.0.0',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: ['scmHostingProviders'],
-      },
+      uses: ['scmHostingProviders'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         scmHostingProviders: [
           {
@@ -717,9 +1022,7 @@ describe('plugin manifest v2 contracts', () => {
           },
         ],
       },
-      capabilities: {
-        permissions: [],
-      },
+      permissions: { required: [] },
     });
 
     expect(parsed.contributes.scmHostingProviders).toEqual([
@@ -732,7 +1035,7 @@ describe('plugin manifest v2 contracts', () => {
       }),
     ]);
     expect(parsed.contributes.agents).toEqual([]);
-    expect(parsed.contributes.backends).toEqual([]);
+    expect('backends' in parsed.contributes).toBe(false);
   });
 
   it('accepts connected-account descriptor contributions while rejecting secret-bearing descriptor metadata', () => {
@@ -747,10 +1050,8 @@ describe('plugin manifest v2 contracts', () => {
       engines: {
         happier: '^1.0.0',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: ['connectedAccountDescriptors'],
-      },
+      uses: ['connectedAccountDescriptors'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         connectedAccountDescriptors: [
           {
@@ -785,9 +1086,7 @@ describe('plugin manifest v2 contracts', () => {
           },
         ],
       },
-      capabilities: {
-        permissions: [],
-      },
+      permissions: { required: [] },
     });
 
     expect(parsed.contributes.connectedAccountDescriptors).toEqual([
@@ -806,7 +1105,8 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Acme Auth Secret',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: ['connectedAccountDescriptors'] },
+      uses: ['connectedAccountDescriptors'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         connectedAccountDescriptors: [
           {
@@ -830,7 +1130,7 @@ describe('plugin manifest v2 contracts', () => {
           },
         ],
       },
-      capabilities: { permissions: [] },
+      permissions: { required: [] },
     }).success).toBe(false);
   });
 
@@ -844,7 +1144,8 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Acme MCP',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: ['mcp'] },
+      uses: ['mcp'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         mcp: {
           servers: [
@@ -861,17 +1162,17 @@ describe('plugin manifest v2 contracts', () => {
               id: 'acme.discovery',
               kind: 'mcp.discoveryProvider',
               version: '1.0.0',
-              providerId: 'acme',
+              agentId: 'acme',
             },
           ],
         },
       },
-      capabilities: { permissions: [] },
+      permissions: { required: [] },
     });
 
     expect(parsed.contributes.mcp.servers.map((server: { name: string }) => server.name)).toEqual(['acme-hosted']);
-    expect(parsed.contributes.mcp.discoveryProviders.map((provider: { providerId: string }) => provider.providerId)).toEqual(['acme']);
-    expect(parsed.runtime.capabilities).toContain('mcp');
+    expect(parsed.contributes.mcp.discoveryProviders.map((provider: { agentId: string }) => provider.agentId)).toEqual(['acme']);
+    expect(parsed.uses).toContain('mcp');
 
     expect(manifestSchema!.safeParse({
       schemaVersion: 2,
@@ -879,7 +1180,8 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Acme Retired MCP',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: ['mcp'] },
+      uses: ['mcp'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         mcp: {
           tools: [
@@ -892,7 +1194,7 @@ describe('plugin manifest v2 contracts', () => {
           ],
         },
       },
-      capabilities: { permissions: [] },
+      permissions: { required: [] },
     }).success).toBe(false);
 
     const withRawCredential = {
@@ -901,7 +1203,8 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Acme MCP',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: [] },
+      uses: [],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         mcp: {
           servers: [
@@ -917,25 +1220,26 @@ describe('plugin manifest v2 contracts', () => {
           ],
         },
       },
-      capabilities: {},
+      permissions: {},
     };
 
     expect(manifestSchema!.safeParse(withRawCredential).success).toBe(false);
   });
 
-  it('validates non-agent installable contributions in nested contributes', () => {
+  it('validates non-agent managed dependency contributions in nested contributes', () => {
     const manifestSchema = readSchemaExport('PluginManifestV2Schema');
     expect(manifestSchema).toBeDefined();
 
     const parsed = manifestSchema!.parse({
       schemaVersion: 2,
-      id: 'acme.installables',
+      id: 'acme.managed-dependencies',
       version: '1.0.0',
-      displayName: 'Acme Installables',
+      displayName: 'Acme Managed Dependencies',
       engines: { happier: '^0.2.0' },
-      runtime: { apiVersion: 1, capabilities: [] },
+      uses: ['managedDependencies'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
-        installables: [
+        managedDependencies: [
           {
             id: 'acme-tool',
             key: 'acme-tool',
@@ -967,7 +1271,7 @@ describe('plugin manifest v2 contracts', () => {
       },
     });
 
-    expect(parsed.contributes.installables).toEqual([
+    expect(parsed.contributes.managedDependencies).toEqual([
       expect.objectContaining({
         key: 'acme-tool',
         capabilityId: 'dep.acme-tool',
@@ -977,13 +1281,14 @@ describe('plugin manifest v2 contracts', () => {
 
     expect(manifestSchema!.safeParse({
       schemaVersion: 2,
-      id: 'acme.invalid-installables',
+      id: 'acme.invalid-managed-dependencies',
       version: '1.0.0',
-      displayName: 'Invalid Installables',
+      displayName: 'Invalid Managed Dependencies',
       engines: { happier: '^0.2.0' },
-      runtime: { apiVersion: 1, capabilities: [] },
+      uses: ['managedDependencies'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
-        installables: [
+        managedDependencies: [
           {
             id: 'bad-tool',
             key: 'bad-tool',
@@ -1028,10 +1333,8 @@ describe('plugin manifest v2 contracts', () => {
       engines: {
         happier: '^1.0.0',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: ['settings'],
-      },
+      uses: ['settings'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         settings: [
           {
@@ -1061,9 +1364,7 @@ describe('plugin manifest v2 contracts', () => {
           },
         ],
       },
-      capabilities: {
-        permissions: [],
-      },
+      permissions: { required: [] },
     });
 
     const settings = (parsed.contributes as { settings?: Array<{ fields: Array<Record<string, unknown>> }> }).settings;
@@ -1084,7 +1385,8 @@ describe('plugin manifest v2 contracts', () => {
       version: '1.0.0',
       displayName: 'Acme Settings',
       engines: { happier: '^1.0.0' },
-      runtime: { apiVersion: 1, capabilities: ['settings'] },
+      uses: ['settings'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         settings: [
           {
@@ -1106,10 +1408,294 @@ describe('plugin manifest v2 contracts', () => {
           },
         ],
       },
-      capabilities: {},
+      permissions: {},
     };
 
     expect(manifestSchema!.safeParse(invalidSecretDescriptor).success).toBe(false);
+
+    expect(manifestSchema!.safeParse({
+      schemaVersion: 2,
+      id: 'acme.duplicate-settings-fields',
+      version: '1.0.0',
+      displayName: 'Duplicate Settings Fields',
+      engines: { happier: '^1.0.0' },
+      uses: ['settings'],
+      entrypoints: { main: './dist/activate.js' },
+      contributes: {
+        settings: [
+          {
+            id: 'acme.settings.main',
+            fields: [
+              {
+                id: 'endpoint',
+                kind: 'settings.field',
+                version: '1.0.0',
+                valueSchema: { type: 'string' },
+                control: 'text',
+                displayKey: 'plugins.acme.settings.endpoint.label',
+              },
+              {
+                id: 'endpoint',
+                kind: 'settings.field',
+                version: '1.0.0',
+                valueSchema: { type: 'string' },
+                control: 'text',
+                displayKey: 'plugins.acme.settings.endpointDuplicate.label',
+              },
+            ],
+          },
+        ],
+      },
+      permissions: {},
+    }).success).toBe(false);
+  });
+
+  it('accepts agent-account settings contributions separately from plugin-local settings', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const parsed = manifestSchema!.parse({
+      schemaVersion: 2,
+      id: 'acme.agent.settings',
+      version: '1.0.0',
+      displayName: 'Acme Agent Settings',
+      engines: { happier: '^1.0.0' },
+      uses: ['agents'],
+      entrypoints: { main: './dist/activate.js' },
+      contributes: {
+        ...agentOwnerContributions('acme'),
+        settings: [
+          {
+            id: 'acme.local.settings',
+            fields: [
+              {
+                id: 'localToggle',
+                kind: 'settings.field',
+                version: '1.0.0',
+                valueSchema: { type: 'boolean' },
+                control: 'switch',
+                displayKey: 'plugins.acme.settings.localToggle.label',
+                defaultBooleanValue: true,
+              },
+            ],
+          },
+        ],
+        agentSettings: [
+          {
+            id: 'acme.agentSettings.v1',
+            kind: 'agentSettings.v1',
+            agentId: 'acme',
+            version: 1,
+            storageScope: 'agentAccount',
+            fields: [
+              {
+                id: 'acmeBackendMode',
+                schema: { kind: 'enum', values: ['managed', 'external'] },
+                default: 'managed',
+                description: 'Preferred Acme backend mode',
+                storageScope: 'account',
+                ui: {
+                  kind: 'enum',
+                  title: { key: 'settingsProviders.plugins.acme.fields.acmeBackendMode.title' },
+                  subtitle: { key: 'settingsProviders.plugins.acme.fields.acmeBackendMode.subtitle' },
+                  enumOptions: [
+                    {
+                      id: 'managed',
+                      title: { key: 'settingsProviders.plugins.acme.fields.acmeBackendMode.options.managed.title' },
+                    },
+                    {
+                      id: 'external',
+                      title: { key: 'settingsProviders.plugins.acme.fields.acmeBackendMode.options.external.title' },
+                    },
+                  ],
+                },
+              },
+            ],
+            ui: {
+              title: { key: 'settingsProviders.plugins.acme.title' },
+              sections: [
+                {
+                  id: 'acmeRuntime',
+                  title: { key: 'settingsProviders.plugins.acme.sections.runtime.title' },
+                  fields: ['acmeBackendMode'],
+                },
+              ],
+            },
+          },
+        ],
+      },
+      permissions: { required: [] },
+    });
+
+    expect(parsed.contributes.settings).toHaveLength(1);
+    expect((parsed.contributes as { agentSettings?: readonly unknown[] }).agentSettings).toEqual([
+      expect.objectContaining({
+        id: 'acme.agentSettings.v1',
+        agentId: 'acme',
+        storageScope: 'agentAccount',
+        fields: [
+          expect.objectContaining({
+            id: 'acmeBackendMode',
+            schema: { kind: 'enum', values: ['managed', 'external'] },
+            default: 'managed',
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it('rejects unsafe agent-account settings descriptors', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const result = manifestSchema!.safeParse({
+      schemaVersion: 2,
+      id: 'acme.agent.settings',
+      version: '1.0.0',
+      displayName: 'Acme Agent Settings',
+      engines: { happier: '^1.0.0' },
+      uses: ['agents'],
+      entrypoints: { main: './dist/activate.js' },
+      contributes: {
+        ...agentOwnerContributions('acme'),
+        agentSettings: [
+          {
+            id: 'acme.agentSettings.v1',
+            kind: 'agentSettings.v1',
+            agentId: 'acme',
+            version: 1,
+            storageScope: 'agentAccount',
+            fields: [
+              {
+                id: 'apiSecret',
+                schema: { kind: 'secret' },
+                default: 'raw-secret-value',
+                description: 'Bad secret material',
+                storageScope: 'account',
+              },
+              {
+                id: 'apiSecret',
+                schema: { kind: 'boolean' },
+                default: false,
+                description: 'Duplicate key',
+                storageScope: 'account',
+              },
+            ],
+          },
+        ],
+      },
+      permissions: { required: [] },
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('allows non-secret token-budget and credential-reference agent settings while rejecting credential token keys', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const baseManifest = {
+      schemaVersion: 2,
+      id: 'acme.agent.settings',
+      version: '1.0.0',
+      displayName: 'Acme Agent Settings',
+      engines: { happier: '^1.0.0' },
+      uses: ['agents'],
+      entrypoints: { main: './dist/activate.js' },
+      permissions: { required: [] },
+    };
+
+    expect(manifestSchema!.safeParse({
+      ...baseManifest,
+      contributes: {
+        ...agentOwnerContributions('acme'),
+        agentSettings: [
+          {
+            id: 'acme.agentSettings.v1',
+            kind: 'agentSettings.v1',
+            agentId: 'acme',
+            fields: [
+              {
+                id: 'tokenBudget',
+                schema: { kind: 'positiveInteger', nullable: true },
+                default: null,
+                description: 'Maximum thinking token budget',
+              },
+              {
+                id: 'credentialRef',
+                schema: { kind: 'string' },
+                default: '',
+                description: 'Opaque credential reference, not credential material',
+              },
+            ],
+          },
+        ],
+      },
+    }).success).toBe(true);
+
+    expect(manifestSchema!.safeParse({
+      ...baseManifest,
+      contributes: {
+        ...agentOwnerContributions('acme'),
+        agentSettings: [
+          {
+            id: 'acme.agentSettings.v1',
+            kind: 'agentSettings.v1',
+            agentId: 'acme',
+            fields: [
+              {
+                id: 'apiToken',
+                schema: { kind: 'string' },
+                default: '',
+                description: 'Credential token',
+              },
+              {
+                id: 'credentialSecret',
+                schema: { kind: 'string' },
+                default: '',
+                description: 'Credential secret',
+              },
+            ],
+          },
+        ],
+      },
+    }).success).toBe(false);
+  });
+
+  it('rejects agent-account settings targeting agent ids not declared by the manifest', () => {
+    const manifestSchema = readSchemaExport('PluginManifestV2Schema');
+    expect(manifestSchema).toBeDefined();
+
+    const result = manifestSchema!.safeParse({
+      schemaVersion: 2,
+      id: 'acme.agent.settings',
+      version: '1.0.0',
+      displayName: 'Acme Agent Settings',
+      engines: { happier: '^1.0.0' },
+      uses: ['agents'],
+      entrypoints: { main: './dist/activate.js' },
+      permissions: { required: [] },
+      contributes: {
+        ...agentOwnerContributions('acme'),
+        agentSettings: [
+          {
+            id: 'claude.agentSettings.v1',
+            kind: 'agentSettings.v1',
+            agentId: 'claude',
+            fields: [
+              {
+                id: 'enabled',
+                schema: { kind: 'boolean' },
+                default: true,
+                description: 'Enabled',
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(result.success).toBe(false);
   });
 
   it('validates execution-run profile contributions through the shared descriptor base', () => {
@@ -1124,10 +1710,8 @@ describe('plugin manifest v2 contracts', () => {
       engines: {
         happier: '^1.0.0',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: ['executionRunProfiles'],
-      },
+      uses: ['executionRunProfiles'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         executionRunProfiles: [
           {
@@ -1141,9 +1725,7 @@ describe('plugin manifest v2 contracts', () => {
           },
         ],
       },
-      capabilities: {
-        permissions: [],
-      },
+      permissions: { required: [] },
     });
 
     expect(parsed.contributes.executionRunProfiles).toEqual([
@@ -1164,10 +1746,8 @@ describe('plugin manifest v2 contracts', () => {
       engines: {
         happier: '^1.0.0',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: ['executionRunProfiles'],
-      },
+      uses: ['executionRunProfiles'],
+      entrypoints: { main: './dist/activate.js' },
       contributes: {
         executionRunProfiles: [
           {
@@ -1182,9 +1762,7 @@ describe('plugin manifest v2 contracts', () => {
           },
         ],
       },
-      capabilities: {
-        permissions: [],
-      },
+      permissions: { required: [] },
     }).success).toBe(false);
   });
 });

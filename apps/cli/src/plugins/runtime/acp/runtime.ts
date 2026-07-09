@@ -19,6 +19,8 @@ import type {
 
 import { buildClientSpecFromAcpSpec } from './clientSpec';
 import { createAcpSessionRuntime, type AcpSessionRuntimeController } from './session';
+import { pickPermissionOutcome } from '@/agent/acp/permissions/permissionMapping';
+import { transformAgentRequestThroughPluginHooks } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 
 type PluginAcpRuntimeDisposable = Readonly<{
     dispose: () => void | Promise<void>;
@@ -50,6 +52,7 @@ export type CreatePluginAcpRuntimeServiceParams = Readonly<{
     signal?: AbortSignal;
     addDisposable?: (disposable: PluginAcpRuntimeDisposable) => unknown;
     readPluginContext?: () => PluginContextV1;
+    transformAgentRequestBeforeDispatch?: (payload: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown>;
 }>;
 
 type ExtensionHandlers = Readonly<{
@@ -211,7 +214,7 @@ function createExtensionContext(params: Readonly<{
         method: params.method,
         ...(params.requestId ? { requestId: params.requestId } : {}),
         sessionId: params.runtimeParams.sessionId,
-        backendId: params.spec.backendId,
+        agentId: params.spec.backendId,
         ...(agentName ? { agentName } : {}),
         signal: params.signal,
     });
@@ -330,11 +333,64 @@ function createExtensionHandlers(params: Readonly<{
 }
 
 function createSharedSessionHandlers(params: Readonly<{
+    backendId: string;
     readSessionRuntime: () => AcpSessionRuntimeController | null;
     queueSessionUpdate: (update: unknown) => void;
+    readPluginContext?: () => PluginContextV1 | undefined;
 }>): ExtensionHandlers {
     return Object.freeze({
-        requests: Object.freeze({}),
+        requests: Object.freeze({
+            'session/request_permission': async (
+                requestParams: unknown,
+                requestContext: Parameters<JsonRpcRequestHandlerV1>[1],
+            ) => {
+                const context = params.readPluginContext?.();
+                const requestDecision = context?.sessions?.current?.permissions?.requestDecision;
+                if (!requestDecision) {
+                    return Object.freeze({
+                        outcome: Object.freeze({ outcome: 'cancelled' as const }),
+                    });
+                }
+                const request = isObjectResult(requestParams) ? requestParams : {};
+                const toolCall = isObjectResult(request.toolCall) ? request.toolCall : {};
+                const toolCallId =
+                    typeof toolCall.toolCallId === 'string' && toolCall.toolCallId.trim().length > 0
+                        ? toolCall.toolCallId.trim()
+                        : typeof toolCall.id === 'string' && toolCall.id.trim().length > 0
+                            ? toolCall.id.trim()
+                            : undefined;
+                const toolName =
+                    typeof toolCall.toolName === 'string' && toolCall.toolName.trim().length > 0
+                        ? toolCall.toolName.trim()
+                        : typeof toolCall.kind === 'string' && toolCall.kind.trim().length > 0
+                            ? toolCall.kind.trim()
+                            : typeof request.kind === 'string' && request.kind.trim().length > 0
+                                ? request.kind.trim()
+                                : undefined;
+                const input = isObjectResult(toolCall.rawInput)
+                    ? toolCall.rawInput
+                    : isObjectResult(toolCall.input)
+                        ? toolCall.input
+                        : isObjectResult(request.input)
+                            ? request.input
+                            : undefined;
+                const result = await requestDecision({
+                    provider: params.backendId,
+                    requestId: requestContext.requestId,
+                    ...(toolCallId ? { toolCallId } : {}),
+                    ...(toolName ? { toolName } : {}),
+                    ...(input ? { input } : {}),
+                }, {
+                    signal: requestContext.signal,
+                });
+                const options = Array.isArray(request.options)
+                    ? request.options
+                    : [];
+                return Object.freeze({
+                    outcome: pickPermissionOutcome(options, result.decision),
+                });
+            },
+        }),
         notifications: Object.freeze({
             'session/update': async (notificationParams: unknown) => {
                 const sessionRuntime = params.readSessionRuntime();
@@ -464,10 +520,12 @@ export function createPluginAcpRuntimeService(
             let sessionRuntimeController: AcpSessionRuntimeController | null = null;
             const pendingSessionUpdates: unknown[] = [];
             const sharedHandlers = createSharedSessionHandlers({
+                backendId: spec.backendId,
                 readSessionRuntime: () => sessionRuntimeController,
                 queueSessionUpdate: (update) => {
                     pendingSessionUpdates.push(update);
                 },
+                readPluginContext: serviceParams.readPluginContext,
             });
             const extensionHandlers = createExtensionHandlers({
                 spec,
@@ -509,6 +567,8 @@ export function createPluginAcpRuntimeService(
                 initialize: runtimeParams.lifecycle?.initialize,
                 authenticate: runtimeParams.lifecycle?.authenticate,
                 turnAbort,
+                transformAgentRequestBeforeDispatch:
+                    serviceParams.transformAgentRequestBeforeDispatch ?? transformAgentRequestThroughPluginHooks,
                 createDisposedError,
                 createSessionNotStartedError,
                 createInvalidResultError: createInvalidSessionResultError,
@@ -534,7 +594,7 @@ export function createPluginAcpRuntimeService(
             };
             const handle: AcpRuntimeHandleV1 = Object.freeze({
                 runtime: Object.freeze({
-                    backendId: spec.backendId,
+                    agentId: spec.backendId,
                     sessionId: runtimeParams.sessionId,
                     client: clientHandle.client,
                     request: <TParams = unknown, TResult = unknown>(

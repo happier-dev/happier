@@ -4,9 +4,12 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 import { createPluginStateStore } from '@/plugins/store/state';
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
+import { resolvePluginHookHandlerRegistry } from '@/plugins/runtime/resolvePluginHookHandlerRegistry';
 
 import { dispatchPluginHookEvent } from './dispatchPluginHookEvent';
 
@@ -51,34 +54,29 @@ async function writeHookPluginFixture(params: Readonly<{
         engines: {
           happier: '^0.2.0',
         },
-        runtime: {
-          apiVersion: 1,
-          capabilities: ['hooks'],
+        uses: ['hooks'],
+        entrypoints: {
+          main: './daemon.mjs',
         },
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
-          },
+        contributes: {
+          hooks: [
+            {
+              hookApiVersion: 1,
+              id: hookId,
+              category: 'lifecycle',
+              scope: 'session',
+              executionKind: 'observe',
+              filters: {
+                sessionId: 'sess-1',
+                eventNames: [hookId],
+              },
+              handler: {
+                target: 'plugin',
+                exportName: 'recordHookInvocation',
+              },
+            },
+          ],
         },
-        permissions: [],
-        contributes: [
-          {
-            kind: 'hook',
-            hookApiVersion: 1,
-            id: hookId,
-            category: 'lifecycle',
-            scope: 'session',
-            executionKind: 'observe',
-            filters: {
-              sessionId: 'sess-1',
-              eventNames: [hookId],
-            },
-            handler: {
-              target: 'plugin',
-              exportName: 'recordHookInvocation',
-            },
-          },
-        ],
       }),
       null,
       2,
@@ -145,6 +143,22 @@ async function writeEnabledLocalPathPluginState(params: Readonly<{
   );
 }
 
+async function resolveFixtureRuntimeRegistry(happyHomeDir: string) {
+  const pluginContributes = await resolvePluginContributes({
+    happyHomeDir,
+    existingProviderIds: new Set(),
+    existingBackendIds: new Set(),
+  });
+  const contributes = createResolvedContributionRegistry(pluginContributes);
+  const hookHandlerRegistry = await resolvePluginHookHandlerRegistry({
+    registry: contributes,
+  });
+  return {
+    hookHandlersByHookId: hookHandlerRegistry.handlersByHookId,
+    readHookEventEnvelopeV1,
+  };
+}
+
 describe('dispatchPluginHookEvent (integration)', () => {
   it('executes a supported session.message.send hook from the product hook dispatch surface', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-hook-dispatch-home-'));
@@ -166,7 +180,7 @@ describe('dispatchPluginHookEvent (integration)', () => {
         pluginId: 'acme.session.hook',
       });
 
-      const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
+      const runtimeRegistry = await resolveFixtureRuntimeRegistry(happyHomeDir);
       const result = await dispatchPluginHookEvent({
         runtimeRegistry,
         event: {
@@ -180,9 +194,9 @@ describe('dispatchPluginHookEvent (integration)', () => {
           timestampMs: 1,
           payload: {
             sessionId: 'sess-1',
-            messageLength: 11,
-            wait: false,
-            timeoutSeconds: 30,
+            text: 'hello world',
+            source: 'user',
+            timestampMs: 1,
           },
         },
       });
@@ -217,7 +231,7 @@ describe('dispatchPluginHookEvent (integration)', () => {
         pluginId: 'acme.session.hook',
       });
 
-      const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
+      const runtimeRegistry = await resolveFixtureRuntimeRegistry(happyHomeDir);
       const result = await dispatchPluginHookEvent({
         runtimeRegistry,
         event: {
@@ -231,9 +245,9 @@ describe('dispatchPluginHookEvent (integration)', () => {
           timestampMs: 1,
           payload: {
             sessionId: 'sess-2',
-            messageLength: 11,
-            wait: false,
-            timeoutSeconds: 30,
+            text: 'hello world',
+            source: 'user',
+            timestampMs: 1,
           },
         },
       });
@@ -251,7 +265,7 @@ describe('dispatchPluginHookEvent (integration)', () => {
     }
   });
 
-  it('executes a supported session.spawn_new hook from the product hook dispatch surface', async () => {
+  it('executes a supported session.spawned hook from the product hook dispatch surface', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-hook-dispatch-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-hook-dispatch-root-'));
     const markerDir = await mkdtemp(join(tmpdir(), 'happier-hook-dispatch-marker-'));
@@ -262,8 +276,8 @@ describe('dispatchPluginHookEvent (integration)', () => {
 
       await writeHookPluginFixture({
         pluginRoot,
-        hookId: 'session.spawn_new',
-        description: 'Exercises product-owned hook dispatch through session.spawn_new',
+        hookId: 'session.spawned',
+        description: 'Exercises product-owned hook dispatch through session.spawned',
       });
       await writeEnabledLocalPathPluginState({
         happyHomeDir,
@@ -271,12 +285,12 @@ describe('dispatchPluginHookEvent (integration)', () => {
         pluginId: 'acme.session.hook',
       });
 
-      const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
+      const runtimeRegistry = await resolveFixtureRuntimeRegistry(happyHomeDir);
       const result = await dispatchPluginHookEvent({
         runtimeRegistry,
         event: {
           hookVersion: 1,
-          eventId: 'session.spawn_new',
+          eventId: 'session.spawned',
           category: 'lifecycle',
           scope: 'session',
           happySessionId: 'sess-1',
@@ -286,19 +300,22 @@ describe('dispatchPluginHookEvent (integration)', () => {
           timestampMs: 1,
           payload: {
             sessionId: 'sess-1',
+            agentId: 'claude',
+            runtimeTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
             path: '/repo',
             backendTargetKey: 'agent:claude',
             modelId: 'gpt-4o',
             title: 'My title',
+            timestampMs: 1,
           },
         },
       });
 
       expect(result).toEqual(expect.objectContaining({
-        eventId: 'session.spawn_new',
+        eventId: 'session.spawned',
         matchedHandlerCount: 1,
       }));
-      expect(await readFile(markerPath, 'utf8')).toContain('"eventId": "session.spawn_new"');
+      expect(await readFile(markerPath, 'utf8')).toContain('"eventId": "session.spawned"');
       expect(await readFile(markerPath, 'utf8')).toContain('"happySessionId": "sess-1"');
     } finally {
       delete process.env.HOOK_MARKER_PATH;

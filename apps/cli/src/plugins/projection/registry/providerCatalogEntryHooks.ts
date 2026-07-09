@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { join } from 'node:path';
-import { rm } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { readdir, rm } from 'node:fs/promises';
 
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import type {
@@ -32,12 +32,13 @@ import {
     isExactSameConnectedServiceSelection,
     isSameConnectedServiceAuthGroup,
     providerSessionStateUnavailableForResume,
-} from '@/backends/connectedServices/switchContinuityContext';
+} from '@/daemon/connectedServices/switchContinuityContext';
 import type {
     CatalogAgentId,
     ConnectedServiceSwitchContinuityParams,
     ConnectedServiceSwitchContinuityResult,
-} from '@/backends/types';
+} from '@/agent/catalog/types';
+import type { TerminalPromptSubmitVerificationPolicy } from '@/integrations/terminalHost/promptSubmitVerification';
 import {
     isCloudConnectAuthenticateResultV1,
     type CloudAuthCredentialWriteInputV1,
@@ -58,7 +59,7 @@ import { resolveConnectedServiceCredentials } from '@/cloud/connectedServices/re
 import { buildSafeOauthProviderFailureMessage } from '@/cloud/safeOauthProviderError';
 import { generatePkceCodes } from '@/cloud/pkce';
 import { parseOauthRedirectPaste } from '@/cloud/parseOauthRedirectPaste';
-import { createGlobalConnectedServiceFetchRuntime } from '@/daemon/connectedServices/shared/runtimeFetch';
+import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
 import {
     resolveConnectedServiceGroupHomeDir,
     resolveConnectedServiceHomeDir,
@@ -66,6 +67,7 @@ import {
 import { readConnectedServiceMaterializedEnvKeysFromEnv } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import {
     createRetainedConnectedServicesMaterialization,
+    type ConnectedServiceMaterializationCredentialRefreshFailureCategory,
     type ConnectedServicesMaterializationDiagnostic,
     type ConnectedServicesMaterializer,
 } from '@/daemon/connectedServices/materialization/materializer';
@@ -75,8 +77,10 @@ import type {
     ConnectedServiceProviderRuntimeAuthAdapter,
     ConnectedServiceRuntimeFailureClassification,
 } from '@/daemon/connectedServices/runtimeAuth/types';
+import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 import { sanitizeConnectedServiceDiagnosticString } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
-import { canResumeFromMaterializedState } from '@/daemon/connectedServices/stateSharing/canResumeFromMaterializedState';
+import { canResumeFromMaterializedStateCore } from '@/daemon/connectedServices/stateSharing/canResumeFromMaterializedStateCore';
+import { REACHABILITY_CHECK_NOT_IMPLEMENTED_REASON } from '@/daemon/connectedServices/verifyResumeReachableTypes';
 import { applyConnectedServiceStateSharingDescriptor } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
 import { withConnectedServiceStateSharingDestinationLock } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingLock';
 import {
@@ -85,18 +89,17 @@ import {
 } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingManifest';
 import type { ConnectedServiceRuntimeAuthSelectionMaterializer } from '@/daemon/connectedServices/sessionAuthSwitch/runtimeAuthSelectionMaterializerTypes';
 import type { SessionConnectedServiceRuntimeAuthSelectionMaterializerInput } from '@/daemon/connectedServices/sessionAuthSwitch/switchSessionConnectedServiceAuth';
+import { createMaterializedStateReachabilityDelegate } from '@/session/runtime/control/materializedStateReachability';
 import { createHostRuntimeControlService } from '@/session/runtime/control/service';
 import {
     createResolvedSessionRuntimeControlTransport,
     createSessionRuntimeControlTransport,
 } from '@/session/runtime/control/transport';
-import { createSessionRuntimeControlReachability } from '@/session/runtime/control/reachability';
 import { configuration } from '@/configuration';
+import { readDaemonState } from '@/persistence';
 import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
-import {
-    normalizePluginAcpDefinition,
-    type AcpRuntimeDefinitionBridgeV1,
-} from '@/agent/acp/runtime/definition';
+import type { AcpRuntimeDefinitionBridgeV1 } from '@/agent/acp/runtime/definition/_types';
+import { normalizePluginAcpDefinition } from '@/agent/acp/runtime/definition/plugin';
 import { createPluginExecService } from '@/plugins/runtime/context/exec';
 import {
     readManagedServerStateAtPathBestEffort,
@@ -113,17 +116,21 @@ import { openBrowser } from '@/ui/openBrowser';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { delay } from '@/utils/time';
 
+import {
+    createExternalSessionRuntimeHostAdapters,
+    readExternalSessionsContribution,
+} from './externalSessions';
 import type {
     ResolvedCatalogEntry,
-    ResolvedProviderContribution,
+    ResolvedAgentContribution,
 } from './types';
 import type {
     CliAuthContribution,
     CloudCustomAuthenticatorContextV1,
     CloudConnectContribution,
+    DaemonSpawnHooksContribution,
     ConnectedServiceStateSharingDescriptorResult,
     ConnectedServicesContribution,
-    ExternalSessionsContribution,
     ManagedServerContribution,
     PreflightSessionControlsContribution,
     ProviderCliSessionCommandContribution,
@@ -142,7 +149,7 @@ import type {
 } from './providerRuntimeContribution';
 
 type CredentialRecord = ConnectedServiceCredentialRecordV1;
-type ProviderCatalogHookFactory = () => Partial<NonNullable<ResolvedProviderContribution['catalogEntry']>>;
+type ProviderCatalogHookFactory = () => Partial<NonNullable<ResolvedAgentContribution['catalogEntry']>>;
 type CatalogCliCommandHandler = Awaited<ReturnType<NonNullable<ResolvedCatalogEntry['getCliCommandHandler']>>>;
 type RunBackendSessionCliCommand = typeof import('@/cli/runBackendSessionCliCommand')['runBackendSessionCliCommand'];
 type ResolveSessionCommandResumeDelegation =
@@ -176,8 +183,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * Best-effort read of the daemon MASTER control token from the daemon-state file (F2). This is
+ * Happier's own trusted host code (the same 0600 file the daemon writes); the token is passed to the
+ * connected-services materializer ONLY so it can DERIVE the scoped broker-refresh capability token.
+ * The master is never forwarded into the managed-server env. Returns null when unavailable (the
+ * materializer then omits the scoped token and the broker fails closed at request time).
+ */
+async function readDaemonControlTokenForBrokerMaterialization(): Promise<string | null> {
+    try {
+        const state = await readDaemonState();
+        const token = state?.controlToken;
+        return typeof token === 'string' && token.trim().length > 0 ? token.trim() : null;
+    } catch {
+        return null;
+    }
+}
+
 function readString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function sameResolvedPath(left: string | null | undefined, right: string | null | undefined): boolean {
+    const normalizedLeft = readString(left);
+    const normalizedRight = readString(right);
+    return Boolean(normalizedLeft && normalizedRight && resolve(normalizedLeft) === resolve(normalizedRight));
 }
 
 function readFunction<T>(value: unknown): T | null {
@@ -186,6 +216,45 @@ function readFunction<T>(value: unknown): T | null {
 
 function readPositiveNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function readProviderHttpStatus(value: unknown): number | null {
+    return typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599
+        ? value
+        : null;
+}
+
+function readMaterializationCredentialRefreshFailureCategory(
+    value: unknown,
+): ConnectedServiceMaterializationCredentialRefreshFailureCategory | null {
+    switch (value) {
+        case 'invalid_grant':
+        case 'invalid_client':
+        case 'provider_401':
+        case 'provider_403':
+        case 'network_error':
+        case 'malformed_response':
+        case 'missing_access_token':
+        case 'missing_refresh_token':
+        case 'unknown':
+            return value;
+        default:
+            return null;
+    }
+}
+
+function normalizeMaterializationCredentialRefreshFailure(value: unknown): ConnectedServicesMaterializationDiagnostic['credentialRefreshFailure'] {
+    const record = isRecord(value) ? value : null;
+    if (!record) return undefined;
+    const category = readMaterializationCredentialRefreshFailureCategory(record.category);
+    if (!category) return undefined;
+    const providerStatus = readProviderHttpStatus(record.providerStatus);
+    const providerErrorCode = readString(record.providerErrorCode);
+    return {
+        category,
+        ...(providerStatus !== null ? { providerStatus } : {}),
+        ...(providerErrorCode ? { providerErrorCode } : {}),
+    };
 }
 
 function readStringArray(value: unknown): readonly string[] {
@@ -197,6 +266,15 @@ function readNonEmptyStringArray(value: unknown): readonly string[] {
         ? value.flatMap((entry) => {
             const stringValue = readString(entry);
             return stringValue ? [stringValue] : [];
+        })
+        : [];
+}
+
+function readNonEmptyStringArrayArray(value: unknown): readonly (readonly string[])[] {
+    return Array.isArray(value)
+        ? value.flatMap((entry) => {
+            const stringArray = readNonEmptyStringArray(entry);
+            return stringArray.length > 0 ? [stringArray] : [];
         })
         : [];
 }
@@ -280,6 +358,22 @@ function readRuntimeAuthAdapter(value: unknown): ConnectedServicesContribution['
         : undefined;
 }
 
+function readQuotaFetcherDescriptor(value: unknown): ConnectedServicesContribution['quotaFetcherDescriptor'] {
+    if (!isRecord(value)) return undefined;
+    const id = readString(value.id);
+    const createFetcher = readFunction<
+        NonNullable<ConnectedServicesContribution['quotaFetcherDescriptor']>['createFetcher']
+    >(value.createFetcher);
+    const terminalAuthFailureProviderCodes = readNonEmptyStringArray(value.terminalAuthFailureProviderCodes);
+    return id && createFetcher
+        ? {
+            id,
+            createFetcher,
+            ...(terminalAuthFailureProviderCodes.length > 0 ? { terminalAuthFailureProviderCodes } : {}),
+        }
+        : undefined;
+}
+
 function readFailureCacheStrategy(value: unknown): 'cooldown' | 'retry' | undefined {
     return value === 'cooldown' || value === 'retry' ? value : undefined;
 }
@@ -339,22 +433,6 @@ function readSessionRuntimePreferencesContribution(value: unknown): SessionRunti
     return resolve ? { resolve } : null;
 }
 
-function readExternalSessionsContribution(value: unknown): ExternalSessionsContribution | null {
-    if (!isRecord(value)) return null;
-    const createTranscriptStoreAdapter = readFunction<ExternalSessionsContribution['createTranscriptStoreAdapter']>(
-        value.createTranscriptStoreAdapter,
-    );
-    const createCandidateHostAdapter = readFunction<ExternalSessionsContribution['createCandidateHostAdapter']>(
-        value.createCandidateHostAdapter,
-    );
-    return createTranscriptStoreAdapter || createCandidateHostAdapter
-        ? {
-            ...(createTranscriptStoreAdapter ? { createTranscriptStoreAdapter } : {}),
-            ...(createCandidateHostAdapter ? { createCandidateHostAdapter } : {}),
-        }
-        : null;
-}
-
 function readSessionHandoffContribution(value: unknown): SessionHandoffContribution | null {
     if (!isRecord(value)) return null;
     const surface = isRecord(value.surface)
@@ -377,6 +455,102 @@ function readCliAuthContribution(value: unknown): CliAuthContribution | null {
     return detectAuthStatus ? { detectAuthStatus } : null;
 }
 
+function resolveProjectedResumeReachability(
+    connectedServices: ConnectedServicesContribution | null,
+    runtimeControl: RuntimeControlContribution | null,
+): VerifyResumeReachable {
+    return runtimeControl?.connectedServices?.verifyResumeReachable
+        ?? connectedServices?.resolveResumeReachabilityUnsupported
+        ?? (async () => ({ ok: false, reason: REACHABILITY_CHECK_NOT_IMPLEMENTED_REASON }));
+}
+
+function createProjectedRuntimeControlReachability(
+    verifyResumeReachable: VerifyResumeReachable,
+) {
+    return createMaterializedStateReachabilityDelegate(async (input) => await canResumeFromMaterializedStateCore({
+        targetMaterializedRoot: input.targetMaterializedRoot,
+        targetMaterializedEnv: input.targetMaterializedEnv,
+        requestedStateMode: input.requestedStateMode,
+        effectiveStateMode: input.effectiveStateMode,
+        materializationIdentity: input.materializationIdentity,
+        vendorResumeId: input.vendorResumeId,
+        cwd: input.cwd,
+        candidatePersistedSessionFile: input.candidatePersistedSessionFile ?? null,
+        verifyResumeReachable,
+    }));
+}
+
+function readPredictiveSoftSwitchLiveSessionRequirement(value: unknown): NonNullable<
+    NonNullable<ConnectedServicesContribution['recoveryCapabilities']>['predictiveSoftSwitch']['liveSessionRequirement']
+> | null | undefined {
+    if (value === undefined || value === null) return undefined;
+    if (!isRecord(value)) return null;
+    if (value.kind === 'none') return { kind: 'none' };
+    if (value.kind !== 'shared_group_auth_surface') return null;
+    const serviceIds = readConnectedServiceIdArray(value.serviceIds);
+    const authEnvKey = typeof value.authEnvKey === 'string' ? value.authEnvKey.trim() : '';
+    if (serviceIds.length === 0 || !authEnvKey) return null;
+    const authEnvSubpath = readStringArray(value.authEnvSubpath);
+    return {
+        kind: 'shared_group_auth_surface',
+        serviceIds,
+        authEnvKey,
+        ...(authEnvSubpath.length > 0 ? { authEnvSubpath } : {}),
+    };
+}
+
+function readRuntimeAuthApplyCapability(value: unknown): NonNullable<
+    ConnectedServicesContribution['recoveryCapabilities']
+>['runtimeAuthApply'] | null | undefined {
+    if (value === undefined || value === null) return undefined;
+    if (!isRecord(value)) return null;
+    const directLiveHotAuth = value.directLiveHotAuth;
+    if (directLiveHotAuth === 'unsupported') return { directLiveHotAuth: 'unsupported' };
+    if (!isRecord(directLiveHotAuth)) return null;
+    if (typeof directLiveHotAuth.supportsInTurnApply !== 'boolean') return null;
+    if (typeof directLiveHotAuth.requiresExactRuntimeIdentity !== 'boolean') return null;
+    if (
+        directLiveHotAuth.refreshSelectionResync !== 'required'
+        && directLiveHotAuth.refreshSelectionResync !== 'not_applicable'
+    ) {
+        return null;
+    }
+    const authMode = readRuntimeAuthApplyAuthMode(directLiveHotAuth.authMode);
+    if (!authMode) return null;
+    return {
+        directLiveHotAuth: {
+            supportsInTurnApply: directLiveHotAuth.supportsInTurnApply,
+            requiresExactRuntimeIdentity: directLiveHotAuth.requiresExactRuntimeIdentity,
+            refreshSelectionResync: directLiveHotAuth.refreshSelectionResync,
+            authMode,
+        },
+    };
+}
+
+function readRuntimeAuthApplyAuthMode(
+    value: unknown,
+): NonNullable<
+    Exclude<
+        NonNullable<
+            NonNullable<ConnectedServicesContribution['recoveryCapabilities']>['runtimeAuthApply']
+        >['directLiveHotAuth'],
+        'unsupported'
+    >['authMode']
+> | null {
+    if (!isRecord(value)) return null;
+    if (value.kind === 'managed_provider_session') return { kind: 'managed_provider_session' };
+    if (value.kind === 'api_key') return { kind: 'api_key' };
+    if (value.kind === 'external_token_injection') {
+        const surface = typeof value.surface === 'string' ? value.surface.trim() : '';
+        return surface ? { kind: 'external_token_injection', surface } : null;
+    }
+    if (value.kind === 'provider_owned') {
+        const name = typeof value.name === 'string' ? value.name.trim() : '';
+        return name ? { kind: 'provider_owned', name } : null;
+    }
+    return null;
+}
+
 function readConnectedServiceRecoveryCapabilities(
     value: unknown,
 ): NonNullable<ConnectedServicesContribution['recoveryCapabilities']> | null {
@@ -384,13 +558,32 @@ function readConnectedServiceRecoveryCapabilities(
     const predictiveSoftSwitch = isRecord(value.predictiveSoftSwitch) ? value.predictiveSoftSwitch : null;
     const mode = predictiveSoftSwitch?.mode;
     if (mode !== 'supported' && mode !== 'unsupported') return null;
-    return { predictiveSoftSwitch: { mode } };
+    const liveSessionRequirement = readPredictiveSoftSwitchLiveSessionRequirement(
+        predictiveSoftSwitch?.liveSessionRequirement,
+    );
+    if (liveSessionRequirement === null) return null;
+    const runtimeAuthApply = readRuntimeAuthApplyCapability(value.runtimeAuthApply);
+    if (runtimeAuthApply === null) return null;
+    const sameAccountFanoutStrategy = value.sameAccountFanoutStrategy;
+    return {
+        predictiveSoftSwitch: {
+            mode,
+            ...(liveSessionRequirement === undefined ? {} : { liveSessionRequirement }),
+        },
+        ...(sameAccountFanoutStrategy === 'provider_account_id'
+            || sameAccountFanoutStrategy === 'shared_group_auth_surface'
+            || sameAccountFanoutStrategy === 'none'
+            ? { sameAccountFanoutStrategy }
+            : {}),
+        ...(runtimeAuthApply === undefined ? {} : { runtimeAuthApply }),
+    };
 }
 
 function readConnectedServicesContribution(value: unknown): ConnectedServicesContribution | null {
     if (!isRecord(value)) return null;
     const serviceIds = readConnectedServiceIdArray(value.serviceIds);
     const stateSharingServiceIds = readConnectedServiceIdArray(value.stateSharingServiceIds);
+    const noRestartRequiredServiceIds = readConnectedServiceIdArray(value.noRestartRequiredServiceIds);
     const materializedHomeCredentialEntries = readStringArray(value.materializedHomeCredentialEntries);
     const resolveStateSharingSourceRoot = readFunction<ConnectedServicesContribution['resolveStateSharingSourceRoot']>(
         value.resolveStateSharingSourceRoot,
@@ -416,6 +609,9 @@ function readConnectedServicesContribution(value: unknown): ConnectedServicesCon
     const materializeAuthEnvironment = readFunction<ConnectedServicesContribution['materializeAuthEnvironment']>(
         value.materializeAuthEnvironment,
     );
+    const isMaterializedHomeStale = readFunction<
+        NonNullable<ConnectedServicesContribution['materializedHomeFreshness']>['isMaterializedHomeStale']
+    >(value.isMaterializedHomeStale);
     const shouldRestartForServiceSwitch = readFunction<ConnectedServicesContribution['shouldRestartForServiceSwitch']>(
         value.shouldRestartForServiceSwitch,
     );
@@ -426,11 +622,16 @@ function readConnectedServicesContribution(value: unknown): ConnectedServicesCon
         value.classifyUsageLimitError,
     );
     const runtimeAuthAdapter = readRuntimeAuthAdapter(value.runtimeAuthAdapter);
+    const quotaFetcherDescriptor = readQuotaFetcherDescriptor(value.quotaFetcherDescriptor);
+    const daemonAuthBridge = isRecord(value.daemonAuthBridge) ? value.daemonAuthBridge : null;
+    const daemonAuthBridgeRefresh = readFunction<
+        NonNullable<ConnectedServicesContribution['daemonAuthBridge']>['refresh']
+    >(daemonAuthBridge?.refresh);
     const restartRematerializeRequiredReason = readString(value.restartRematerializeRequiredReason);
     const connectedSwitchSharedStateRequiredReason = readString(value.connectedSwitchSharedStateRequiredReason);
     const nativeSwitchSharedStateRequiredReason = readString(value.nativeSwitchSharedStateRequiredReason);
     const usageLimitRecovery = isRecord(value.usageLimitRecovery) ? value.usageLimitRecovery : null;
-    const providerId = readString(usageLimitRecovery?.providerId);
+    const usageLimitRecoveryOwnerId = readString(usageLimitRecovery?.agentId);
     const issueProviderFilter = readString(usageLimitRecovery?.issueProviderFilter);
     const parsedDefaultNativeServiceId = usageLimitRecovery?.defaultNativeServiceId === undefined
         ? null
@@ -454,6 +655,7 @@ function readConnectedServicesContribution(value: unknown): ConnectedServicesCon
     return {
         serviceIds,
         ...(stateSharingServiceIds.length > 0 ? { stateSharingServiceIds } : {}),
+        ...(noRestartRequiredServiceIds.length > 0 ? { noRestartRequiredServiceIds } : {}),
         ...(readString(value.materializedRootSubdir) ? { materializedRootSubdir: readString(value.materializedRootSubdir)! } : {}),
         ...(materializedHomeCredentialEntries.length > 0 ? { materializedHomeCredentialEntries } : {}),
         ...(resolveStateSharingSourceRoot ? { resolveStateSharingSourceRoot } : {}),
@@ -464,6 +666,13 @@ function readConnectedServicesContribution(value: unknown): ConnectedServicesCon
         readConnectedServiceId,
         createAuthMaterializationInput,
         materializeAuthEnvironment,
+        ...(isMaterializedHomeStale
+            ? {
+                materializedHomeFreshness: {
+                    isMaterializedHomeStale,
+                },
+            }
+            : {}),
         stateSharingDescriptor,
         ...(value.materializeRuntimeAuthSelection === false ? { materializeRuntimeAuthSelection: false } : {}),
         ...(shouldRestartForServiceSwitch ? { shouldRestartForServiceSwitch } : {}),
@@ -474,10 +683,18 @@ function readConnectedServicesContribution(value: unknown): ConnectedServicesCon
         ...(resolveResumeReachabilityUnsupported ? { resolveResumeReachabilityUnsupported } : {}),
         ...(classifyUsageLimitError ? { classifyUsageLimitError } : {}),
         ...(runtimeAuthAdapter !== undefined ? { runtimeAuthAdapter } : {}),
-        ...(providerId && fallbackBackoffEnvKey && maxAttemptsEnvKey && defaultFallbackBackoffMs && defaultMaxAttempts
+        ...(daemonAuthBridgeRefresh
+            ? {
+                daemonAuthBridge: {
+                    refresh: daemonAuthBridgeRefresh,
+                },
+            }
+            : {}),
+        ...(quotaFetcherDescriptor ? { quotaFetcherDescriptor } : {}),
+        ...(usageLimitRecoveryOwnerId && fallbackBackoffEnvKey && maxAttemptsEnvKey && defaultFallbackBackoffMs && defaultMaxAttempts
             ? {
                 usageLimitRecovery: {
-                    providerId,
+                    agentId: usageLimitRecoveryOwnerId,
                     ...(issueProviderFilter ? { issueProviderFilter } : {}),
                     ...(defaultNativeServiceId ? { defaultNativeServiceId } : {}),
                     fallbackBackoffEnvKey,
@@ -577,10 +794,53 @@ function readSessionControlsContribution(value: unknown): SessionControlsContrib
     return normalizePermissionMode ? { normalizePermissionMode } : null;
 }
 
+function readDaemonSpawnHooksContribution(value: unknown): DaemonSpawnHooksContribution | null {
+    if (!isRecord(value)) return null;
+    const resolveRuntimePrerequisites = readFunction<NonNullable<DaemonSpawnHooks['resolveRuntimePrerequisites']>>(
+        value.resolveRuntimePrerequisites,
+    );
+    const augmentEnv = readFunction<NonNullable<DaemonSpawnHooks['augmentEnv']>>(value.augmentEnv);
+    const contribution: DaemonSpawnHooksContribution = {
+        ...(resolveRuntimePrerequisites ? { resolveRuntimePrerequisites } : {}),
+        ...(augmentEnv ? { augmentEnv } : {}),
+    };
+    return Object.keys(contribution).length > 0 ? contribution : null;
+}
+
 function readTerminalContribution(value: unknown): TerminalContribution | null {
     if (!isRecord(value)) return null;
     const transformHeadlessTmuxArgv = readStringArrayFunction(value.transformHeadlessTmuxArgv);
-    return transformHeadlessTmuxArgv ? { transformHeadlessTmuxArgv } : null;
+    const promptSubmitVerification = readTerminalPromptSubmitVerificationPolicy(value.promptSubmitVerification);
+    const contribution: TerminalContribution = {
+        ...(transformHeadlessTmuxArgv ? { transformHeadlessTmuxArgv } : {}),
+        ...(promptSubmitVerification ? { promptSubmitVerification } : {}),
+    };
+    return Object.keys(contribution).length > 0 ? contribution : null;
+}
+
+function readTerminalPromptSubmitVerificationPolicy(value: unknown): TerminalPromptSubmitVerificationPolicy | null {
+    if (!isRecord(value)) return null;
+    const shouldVerifyBeforeSubmit = readFunction<TerminalPromptSubmitVerificationPolicy['shouldVerifyBeforeSubmit']>(
+        value.shouldVerifyBeforeSubmit,
+    );
+    const verifyBeforeSubmit = readFunction<TerminalPromptSubmitVerificationPolicy['verifyBeforeSubmit']>(
+        value.verifyBeforeSubmit,
+    );
+    const shouldVerifyAfterSubmit = readFunction<TerminalPromptSubmitVerificationPolicy['shouldVerifyAfterSubmit']>(
+        value.shouldVerifyAfterSubmit,
+    );
+    const verifyAfterSubmit = readFunction<TerminalPromptSubmitVerificationPolicy['verifyAfterSubmit']>(
+        value.verifyAfterSubmit,
+    );
+    if (!shouldVerifyBeforeSubmit || !verifyBeforeSubmit || !shouldVerifyAfterSubmit || !verifyAfterSubmit) {
+        return null;
+    }
+    return {
+        shouldVerifyBeforeSubmit,
+        verifyBeforeSubmit,
+        shouldVerifyAfterSubmit,
+        verifyAfterSubmit,
+    };
 }
 
 export function readCliSessionCommandContribution(
@@ -595,6 +855,7 @@ export function readCliSessionCommandContribution(
     const directoryFlags = readStringArray(value.directoryFlags);
     const yoloProviderArgs = readStringArray(value.yoloProviderArgs);
     const versionFlags = readStringArray(value.versionFlags);
+    const providerInfoCommandPrefixes = readNonEmptyStringArrayArray(value.providerInfoCommandPrefixes);
     const implicitResumeDelegation = isRecord(value.implicitResumeDelegation)
         ? {
             resumeFlags: readNonEmptyStringArray(value.implicitResumeDelegation.resumeFlags),
@@ -616,6 +877,7 @@ export function readCliSessionCommandContribution(
         ...(typeof value.forwardResumeFlag === 'boolean' ? { forwardResumeFlag: value.forwardResumeFlag } : {}),
         ...(yoloProviderArgs.length > 0 ? { yoloProviderArgs } : {}),
         ...(versionFlags.length > 0 ? { versionFlags } : {}),
+        ...(providerInfoCommandPrefixes.length > 0 ? { providerInfoCommandPrefixes } : {}),
         ...(buildSessionOptions ? { buildSessionOptions } : {}),
     };
 }
@@ -682,6 +944,9 @@ export function createCliSessionCommandHandler(
                     : {}),
                 ...(cliSessionCommand.yoloProviderArgs ? { yoloProviderArgs: cliSessionCommand.yoloProviderArgs } : {}),
                 ...(cliSessionCommand.versionFlags ? { versionFlags: cliSessionCommand.versionFlags } : {}),
+                ...(cliSessionCommand.providerInfoCommandPrefixes
+                    ? { providerInfoCommandPrefixes: cliSessionCommand.providerInfoCommandPrefixes }
+                    : {}),
                 ...(cliSessionCommand.buildSessionOptions
                     ? {
                         resolveExtraOptions: (args, parsed) => normalizeCliSessionCommandOptions(
@@ -832,6 +1097,14 @@ function readRuntimeControlContribution(value: unknown): RuntimeControlContribut
                                 usageLimitRecovery.checkNow,
                             )!,
                     } : {}),
+                    ...(readFunction<NonNullable<NonNullable<RuntimeControlContribution['usageLimitRecovery']>['consumeResetCredit']>>(
+                        usageLimitRecovery.consumeResetCredit,
+                    ) ? {
+                        consumeResetCredit:
+                            readFunction<NonNullable<NonNullable<RuntimeControlContribution['usageLimitRecovery']>['consumeResetCredit']>>(
+                                usageLimitRecovery.consumeResetCredit,
+                            )!,
+                    } : {}),
                 },
             }
             : {}),
@@ -844,6 +1117,7 @@ function createRuntimeControlForAuthSelectionMaterializer(
     runtimeControl: RuntimeControlContribution,
     params: Parameters<ConnectedServiceRuntimeAuthSelectionMaterializer>[0],
     exec: ExecRuntimeServiceV1,
+    verifyResumeReachable: VerifyResumeReachable,
 ) {
     const cwd = typeof params.input.tracked.spawnOptions?.directory === 'string'
         ? params.input.tracked.spawnOptions.directory.trim()
@@ -862,7 +1136,7 @@ function createRuntimeControlForAuthSelectionMaterializer(
             credentials: params.credentials,
             sessionId: params.input.sessionId,
         }),
-        reachability: createSessionRuntimeControlReachability(),
+        reachability: createProjectedRuntimeControlReachability(verifyResumeReachable),
     });
 }
 
@@ -878,6 +1152,7 @@ function createRuntimeControlForSessionControlParams(
         ctx: Parameters<typeof createResolvedSessionRuntimeControlTransport>[0]['ctx'];
         mode: Parameters<typeof createResolvedSessionRuntimeControlTransport>[0]['mode'];
     }>,
+    verifyResumeReachable: VerifyResumeReachable,
 ) {
     return createHostRuntimeControlService({
         agentId,
@@ -895,7 +1170,7 @@ function createRuntimeControlForSessionControlParams(
             ctx: params.ctx,
             mode: params.mode,
         }),
-        reachability: createSessionRuntimeControlReachability(),
+        reachability: createProjectedRuntimeControlReachability(verifyResumeReachable),
     });
 }
 
@@ -903,11 +1178,18 @@ function createRuntimeControlMaterializer(
     agentId: CatalogAgentId,
     runtimeControl: RuntimeControlContribution,
     exec: ExecRuntimeServiceV1,
+    verifyResumeReachable: VerifyResumeReachable,
 ): ConnectedServiceRuntimeAuthSelectionMaterializer | null {
     const materialize = runtimeControl.connectedServices?.materializeRuntimeAuthSelection;
     if (!materialize) return null;
     return async (params) => await materialize({
-        runtimeControl: createRuntimeControlForAuthSelectionMaterializer(agentId, runtimeControl, params, exec),
+        runtimeControl: createRuntimeControlForAuthSelectionMaterializer(
+            agentId,
+            runtimeControl,
+            params,
+            exec,
+            verifyResumeReachable,
+        ),
         params,
     });
 }
@@ -915,6 +1197,7 @@ function createRuntimeControlMaterializer(
 function createRuntimeControlSwitchContinuityResolver(
     agentId: CatalogAgentId,
     runtimeControl: RuntimeControlContribution,
+    verifyResumeReachable: VerifyResumeReachable,
 ) {
     const resolveSwitchContinuity = runtimeControl.connectedServices?.resolveSwitchContinuity;
     if (!resolveSwitchContinuity) return null;
@@ -928,7 +1211,7 @@ function createRuntimeControlSwitchContinuityResolver(
                 processEnv: process.env,
             },
             appServer: runtimeControl.appServer ?? null,
-            reachability: createSessionRuntimeControlReachability(),
+            reachability: createProjectedRuntimeControlReachability(verifyResumeReachable),
         }),
         params,
     });
@@ -938,25 +1221,44 @@ function createRuntimeControlGoalAdapter(
     agentId: CatalogAgentId,
     runtimeControl: RuntimeControlContribution,
     exec: ExecRuntimeServiceV1,
+    verifyResumeReachable: VerifyResumeReachable,
 ): SessionGoalControlAdapterResult {
     const goal = runtimeControl.goal;
     if (!goal) return null;
     return {
         ...(goal.getGoal ? {
             getGoal: async (params: RuntimeControlGoalGetParams) => await goal.getGoal!({
-                runtimeControl: createRuntimeControlForSessionControlParams(agentId, runtimeControl, exec, params),
+                runtimeControl: createRuntimeControlForSessionControlParams(
+                    agentId,
+                    runtimeControl,
+                    exec,
+                    params,
+                    verifyResumeReachable,
+                ),
                 params,
             }),
         } : {}),
         ...(goal.setGoal ? {
             setGoal: async (params: RuntimeControlGoalSetParams) => await goal.setGoal!({
-                runtimeControl: createRuntimeControlForSessionControlParams(agentId, runtimeControl, exec, params),
+                runtimeControl: createRuntimeControlForSessionControlParams(
+                    agentId,
+                    runtimeControl,
+                    exec,
+                    params,
+                    verifyResumeReachable,
+                ),
                 params,
             }),
         } : {}),
         ...(goal.clearGoal ? {
             clearGoal: async (params: RuntimeControlGoalClearParams) => await goal.clearGoal!({
-                runtimeControl: createRuntimeControlForSessionControlParams(agentId, runtimeControl, exec, params),
+                runtimeControl: createRuntimeControlForSessionControlParams(
+                    agentId,
+                    runtimeControl,
+                    exec,
+                    params,
+                    verifyResumeReachable,
+                ),
                 params,
             }),
         } : {}),
@@ -967,19 +1269,32 @@ function createRuntimeControlCatalogAdapter(
     agentId: CatalogAgentId,
     runtimeControl: RuntimeControlContribution,
     exec: ExecRuntimeServiceV1,
+    verifyResumeReachable: VerifyResumeReachable,
 ): SessionCatalogControlAdapterResult {
     const catalog = runtimeControl.catalog;
     if (!catalog) return null;
     return {
         ...(catalog.listVendorPlugins ? {
             listVendorPlugins: async (params: RuntimeControlCatalogVendorPluginsParams) => await catalog.listVendorPlugins!({
-                runtimeControl: createRuntimeControlForSessionControlParams(agentId, runtimeControl, exec, params),
+                runtimeControl: createRuntimeControlForSessionControlParams(
+                    agentId,
+                    runtimeControl,
+                    exec,
+                    params,
+                    verifyResumeReachable,
+                ),
                 params,
             }),
         } : {}),
         ...(catalog.listSkills ? {
             listSkills: async (params: RuntimeControlCatalogSkillsParams) => await catalog.listSkills!({
-                runtimeControl: createRuntimeControlForSessionControlParams(agentId, runtimeControl, exec, params),
+                runtimeControl: createRuntimeControlForSessionControlParams(
+                    agentId,
+                    runtimeControl,
+                    exec,
+                    params,
+                    verifyResumeReachable,
+                ),
                 params,
             }),
         } : {}),
@@ -990,13 +1305,32 @@ function createRuntimeControlUsageLimitRecoveryAdapter(
     agentId: CatalogAgentId,
     runtimeControl: RuntimeControlContribution,
     exec: ExecRuntimeServiceV1,
+    verifyResumeReachable: VerifyResumeReachable,
 ): SessionUsageLimitRecoveryControlAdapterResult {
     const usageLimitRecovery = runtimeControl.usageLimitRecovery;
     if (!usageLimitRecovery) return null;
     return {
         ...(usageLimitRecovery.checkNow ? {
             checkNow: async (params: RuntimeControlUsageLimitRecoveryCheckParams) => await usageLimitRecovery.checkNow!({
-                runtimeControl: createRuntimeControlForSessionControlParams(agentId, runtimeControl, exec, params),
+                runtimeControl: createRuntimeControlForSessionControlParams(
+                    agentId,
+                    runtimeControl,
+                    exec,
+                    params,
+                    verifyResumeReachable,
+                ),
+                params,
+            }),
+        } : {}),
+        ...(usageLimitRecovery.consumeResetCredit ? {
+            consumeResetCredit: async (params: RuntimeControlUsageLimitRecoveryCheckParams) => await usageLimitRecovery.consumeResetCredit!({
+                runtimeControl: createRuntimeControlForSessionControlParams(
+                    agentId,
+                    runtimeControl,
+                    exec,
+                    params,
+                    verifyResumeReachable,
+                ),
                 params,
             }),
         } : {}),
@@ -1052,6 +1386,7 @@ async function releaseManagedProviderServerForAuthSwitch(
         drainMs?: number;
         trackedClaimCount: number;
         allowCurrentSessionClaim?: boolean;
+        hasInFlightTurnForLaunchFingerprint?: () => Promise<boolean> | boolean;
         processEnv?: NodeJS.ProcessEnv;
     }>,
 ) {
@@ -1071,6 +1406,9 @@ async function releaseManagedProviderServerForAuthSwitch(
             ),
         trackedClaimCount: params.trackedClaimCount,
         allowCurrentSessionClaim: params.allowCurrentSessionClaim,
+        ...(params.hasInFlightTurnForLaunchFingerprint
+            ? { hasInFlightTurnForLaunchFingerprint: params.hasInFlightTurnForLaunchFingerprint }
+            : {}),
     });
 }
 
@@ -1111,6 +1449,83 @@ function materializedRootDirForStableRoot(
         : stableRootDir;
 }
 
+async function collectLiveMaterializedRootDirs(params: Readonly<{
+    activeServerDir: string;
+    serviceId: ConnectedServiceId;
+    agentId: CatalogAgentId;
+    connectedServices: ConnectedServicesContribution;
+    currentMaterializedRootDir: string;
+}>): Promise<readonly string[]> {
+    const roots = new Set<string>([params.currentMaterializedRootDir]);
+    const serviceHomesRoot = join(
+        params.activeServerDir,
+        'daemon',
+        'connected-services',
+        'homes',
+        params.serviceId,
+    );
+    try {
+        const entries = await readdir(serviceHomesRoot, { withFileTypes: true });
+        for (const entry of entries) {
+            if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+            if (entry.name === '__groups') continue;
+            roots.add(materializedRootDirForStableRoot(
+                params.connectedServices,
+                join(serviceHomesRoot, entry.name, params.agentId),
+            ));
+        }
+    } catch {
+        // Missing homes root is expected before the first materialization.
+    }
+    const groupHomesRoot = join(serviceHomesRoot, '__groups');
+    try {
+        const entries = await readdir(groupHomesRoot, { withFileTypes: true });
+        for (const entry of entries) {
+            if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+            roots.add(materializedRootDirForStableRoot(
+                params.connectedServices,
+                join(groupHomesRoot, entry.name, params.agentId),
+            ));
+        }
+    } catch {
+        // Missing group root is expected for profile-only users.
+    }
+    return [...roots];
+}
+
+function resolveSharedGroupAuthSurfacePreflightSelection(params: Readonly<{
+    agentId: CatalogAgentId;
+    connectedServices: ConnectedServicesContribution;
+    serviceId: ConnectedServiceId;
+    activeServerDir: string;
+    baseSelection: Parameters<ConnectedServiceRuntimeAuthSelectionMaterializer>[0]['baseSelection'];
+    trackedEnv?: NodeJS.ProcessEnv | null;
+    exec: ExecRuntimeServiceV1;
+}>): unknown | null {
+    const requirement = params.connectedServices.recoveryCapabilities?.predictiveSoftSwitch.liveSessionRequirement;
+    if (requirement?.kind !== 'shared_group_auth_surface') return null;
+    if (!requirement.serviceIds.includes(params.serviceId)) return null;
+    const groupId = readString(params.baseSelection.groupId);
+    if (!groupId) return null;
+    const groupHomeDir = resolveConnectedServiceGroupHomeDir({
+        activeServerDir: params.activeServerDir,
+        serviceId: params.serviceId,
+        groupId,
+        agentId: params.agentId,
+    });
+    const authSurfaceRoot = requirement.authEnvSubpath && requirement.authEnvSubpath.length > 0
+        ? resolve(groupHomeDir, ...requirement.authEnvSubpath)
+        : groupHomeDir;
+    if (!sameResolvedPath(params.trackedEnv?.[requirement.authEnvKey], authSurfaceRoot)) return null;
+    return {
+        ...params.baseSelection,
+        targetMaterializedEnv: { [requirement.authEnvKey]: authSurfaceRoot },
+        targetMaterializedRoot: authSurfaceRoot,
+        exec: params.exec,
+        materializationDiagnostics: [],
+    };
+}
+
 function normalizeMaterializationDiagnostics(value: readonly unknown[] | undefined): readonly {
     code: string;
     providerId?: string;
@@ -1120,25 +1535,29 @@ function normalizeMaterializationDiagnostics(value: readonly unknown[] | undefin
     effectiveStateMode?: string;
     reason?: string;
     entryName?: string;
+    credentialRefreshFailure?: ConnectedServicesMaterializationDiagnostic['credentialRefreshFailure'];
 }[] {
     if (!Array.isArray(value)) return [];
     return value.flatMap((entry) => {
         const record = isRecord(entry) ? entry : null;
         const code = readString(record?.code);
         if (!record || !code) return [];
+        const runtimeOwnerId = readString(record.agentId);
         const parsedServiceId = record.serviceId === undefined ? null : ConnectedServiceIdSchema.safeParse(record.serviceId);
         const severity = record.severity === 'info' || record.severity === 'warning' || record.severity === 'blocking'
             ? record.severity
             : undefined;
+        const credentialRefreshFailure = normalizeMaterializationCredentialRefreshFailure(record.credentialRefreshFailure);
         return [{
             code,
-            ...(readString(record.providerId) ? { providerId: readString(record.providerId)! } : {}),
+            ...(runtimeOwnerId ? { providerId: runtimeOwnerId } : {}),
             ...(parsedServiceId?.success ? { serviceId: parsedServiceId.data } : {}),
             ...(severity ? { severity } : {}),
             ...(readString(record.requestedStateMode) ? { requestedStateMode: readString(record.requestedStateMode)! } : {}),
             ...(readString(record.effectiveStateMode) ? { effectiveStateMode: readString(record.effectiveStateMode)! } : {}),
             ...(readString(record.reason) ? { reason: readString(record.reason)! } : {}),
             ...(readString(record.entryName) ? { entryName: readString(record.entryName)! } : {}),
+            ...(credentialRefreshFailure ? { credentialRefreshFailure } : {}),
         }];
     });
 }
@@ -1147,12 +1566,13 @@ function normalizeStateSharingDiagnostics(
     diagnostics: Awaited<ReturnType<typeof applyConnectedServiceStateSharingDescriptor>>['diagnostics'],
 ): readonly ConnectedServicesMaterializationDiagnostic[] {
     return diagnostics.map((diagnostic) => {
+        const runtimeOwnerId = diagnostic.providerId;
         const parsedServiceId = diagnostic.serviceId === undefined
             ? null
             : ConnectedServiceIdSchema.safeParse(diagnostic.serviceId);
         return {
             code: diagnostic.code,
-            providerId: diagnostic.providerId,
+            providerId: runtimeOwnerId,
             ...(parsedServiceId?.success ? { serviceId: parsedServiceId.data } : {}),
             ...(diagnostic.requestedStateMode ? { requestedStateMode: diagnostic.requestedStateMode } : {}),
             ...(diagnostic.effectiveStateMode ? { effectiveStateMode: diagnostic.effectiveStateMode } : {}),
@@ -1182,6 +1602,7 @@ async function applyConnectedServiceStateSharingForContribution(params: Readonly
     sessionDirectory?: string | null;
 }>): Promise<readonly ConnectedServicesMaterializationDiagnostic[]> {
     const resolveStateSharingSourceRoot = params.connectedServices.resolveStateSharingSourceRoot;
+    const providerLabel = String(params.agentId);
     if (!resolveStateSharingSourceRoot) return [];
     if (
         params.connectedServices.stateSharingServiceIds
@@ -1245,7 +1666,7 @@ async function applyConnectedServiceStateSharingForContribution(params: Readonly
             ...(params.connectedServices.resolveVendorResumeIdFromImportedFile
                 ? { resolveVendorResumeIdFromImportedFile: params.connectedServices.resolveVendorResumeIdFromImportedFile }
                 : {}),
-            providerLabel: String(params.agentId),
+            providerLabel,
         });
         await removeMaterializedHomeCredentialEntries(
             params.materializedRootDir,
@@ -1253,7 +1674,7 @@ async function applyConnectedServiceStateSharingForContribution(params: Readonly
         );
         await writeConnectedServiceStateSharingManifest(params.materializedRootDir, applyResult.manifest);
         return normalizeStateSharingDiagnostics(applyResult.diagnostics);
-    }, { providerId: params.agentId });
+    }, { providerId: providerLabel });
 }
 
 function createConnectedServicesMaterializer(
@@ -1262,6 +1683,16 @@ function createConnectedServicesMaterializer(
     managedServer: ManagedServerContribution | null,
     exec: ExecRuntimeServiceV1,
 ): ConnectedServicesMaterializer {
+    const mergeAuthMaterializationInput = (
+        target: Record<string, unknown>,
+        input: Readonly<Record<string, unknown>>,
+    ): void => {
+        for (const [key, value] of Object.entries(input)) {
+            if (value === null || value === undefined) continue;
+            target[key] = value;
+        }
+    };
+
     return async ({
         activeServerDir,
         recordsByServiceId,
@@ -1277,7 +1708,10 @@ function createConnectedServicesMaterializer(
         for (const serviceId of connectedServices.serviceIds) {
             const record = selectionsByServiceId?.get(serviceId)?.record ?? recordsByServiceId.get(serviceId) ?? null;
             if (!record) continue;
-            Object.assign(materializationInput, connectedServices.createAuthMaterializationInput(serviceId, record));
+            mergeAuthMaterializationInput(
+                materializationInput,
+                connectedServices.createAuthMaterializationInput(serviceId, record),
+            );
             primaryRecord ??= record;
             primaryServiceId ??= serviceId;
         }
@@ -1300,9 +1734,27 @@ function createConnectedServicesMaterializer(
         const materializedRootDir = materializedRootDirForStableRoot(connectedServices, stableRootDir);
 
         const env = processEnv ?? process.env;
+        // R4-4/F3: thread group-bound selections' groupIds to the plugin materializer so broker
+        // selection identities can be pool-scoped (WITHOUT generation) at the single mint owner.
+        const connectedServiceGroupIdsByServiceId = Object.fromEntries(
+            [...(selectionsByServiceId?.entries() ?? [])]
+                .flatMap(([serviceId, selection]) => selection.kind === 'group' ? [[serviceId, selection.groupId] as const] : []),
+        );
         const materializationContext = {
             ...materializationInput,
+            ...(Object.keys(connectedServiceGroupIdsByServiceId).length > 0
+                ? { connectedServiceGroupIdsByServiceId }
+                : {}),
             rootDir: materializedRootDir,
+            liveMaterializedRootDirs: await collectLiveMaterializedRootDirs({
+                activeServerDir,
+                serviceId: primaryServiceId,
+                agentId,
+                connectedServices,
+                currentMaterializedRootDir: materializedRootDir,
+            }),
+            daemonStateFilePath: configuration.daemonStateFile,
+            daemonControlToken: await readDaemonControlTokenForBrokerMaterialization(),
             processEnv: env,
             accountSettings: accountSettings ?? null,
             sessionDirectory: sessionDirectory ?? null,
@@ -1443,6 +1895,31 @@ function createRuntimeAuthSelectionMaterializationRoot(params: Readonly<{
     return materializedRootDirForStableRoot(params.connectedServices, stableRootDir);
 }
 
+function createConnectedServiceMaterializedHomeRootResolver(
+    agentId: CatalogAgentId,
+    connectedServices: ConnectedServicesContribution,
+): NonNullable<ResolvedCatalogEntry['resolveConnectedServiceMaterializedHomeRoot']> {
+    return (params) => {
+        const serviceId = connectedServices.readConnectedServiceId(params.serviceId);
+        if (!serviceId) return null;
+        const selection = params.selection;
+        const stableRootDir = selection?.kind === 'group'
+            ? resolveConnectedServiceGroupHomeDir({
+                activeServerDir: params.activeServerDir,
+                serviceId,
+                groupId: selection.groupId,
+                agentId,
+            })
+            : resolveConnectedServiceHomeDir({
+                activeServerDir: params.activeServerDir,
+                serviceId,
+                profileId: selection?.kind === 'profile' ? selection.profileId : params.profileId,
+                agentId,
+            });
+        return materializedRootDirForStableRoot(connectedServices, stableRootDir);
+    };
+}
+
 function createRetainedRuntimeAuthSelectionMaterializer(
     agentId: CatalogAgentId,
     connectedServices: ConnectedServicesContribution,
@@ -1462,6 +1939,19 @@ function createRetainedRuntimeAuthSelectionMaterializer(
             baseSelection: params.baseSelection,
             connectedServices,
         });
+        const sharedGroupAuthSurfaceSelection = resolveSharedGroupAuthSurfacePreflightSelection({
+            agentId,
+            connectedServices,
+            serviceId,
+            activeServerDir,
+            baseSelection: params.baseSelection,
+            trackedEnv: params.input.tracked.spawnOptions?.environmentVariables,
+            exec,
+        });
+        if (params.input.mode === 'preflight') {
+            return sharedGroupAuthSurfaceSelection ?? params.baseSelection;
+        }
+        if (sharedGroupAuthSurfaceSelection) return sharedGroupAuthSurfaceSelection;
         const env = params.processEnv ?? process.env;
         const stateSharingDiagnostics = await applyConnectedServiceStateSharingForContribution({
             agentId,
@@ -1479,6 +1969,8 @@ function createRetainedRuntimeAuthSelectionMaterializer(
         const materialized = await connectedServices.materializeAuthEnvironment({
             ...connectedServices.createAuthMaterializationInput(serviceId, record),
             rootDir: materializedRootDir,
+            daemonStateFilePath: configuration.daemonStateFile,
+            daemonControlToken: await readDaemonControlTokenForBrokerMaterialization(),
             processEnv: env,
             accountSettings: params.accountSettings ?? null,
             sessionDirectory: params.input.tracked.spawnOptions?.directory ?? null,
@@ -1488,6 +1980,7 @@ function createRetainedRuntimeAuthSelectionMaterializer(
             ...params.baseSelection,
             targetMaterializedEnv: materialized.env,
             targetMaterializedRoot: materializedRootDir,
+            exec,
             materializationDiagnostics: [
                 ...stateSharingDiagnostics,
                 ...normalizeMaterializationDiagnostics(materialized.diagnostics),
@@ -1537,16 +2030,24 @@ function createManagedServerRuntimeAuthSelectionMaterializer(
             ? async (input: Readonly<{
                 countTrackedClaimsForStatePath?: (statePath: string) => number;
                 hasUnknownTrackedClaims?: boolean;
+                hasInFlightTurnForStatePath?: (statePath: string) => boolean;
             }>) => {
                 const trackedClaimCount = typeof input.countTrackedClaimsForStatePath === 'function'
                     ? input.countTrackedClaimsForStatePath(previousContext.previousStatePath)
                     : 0;
                 if (input.hasUnknownTrackedClaims === true) return;
+                const hasInFlightTurnForStatePath = input.hasInFlightTurnForStatePath;
                 await releaseManagedProviderServerForAuthSwitch(managedServer, {
                     previousStatePath: previousContext.previousStatePath,
                     expectedOwnerToken: previousContext.previousOwnerToken,
                     trackedClaimCount,
                     allowCurrentSessionClaim: true,
+                    ...(hasInFlightTurnForStatePath
+                        ? {
+                            hasInFlightTurnForLaunchFingerprint: () =>
+                                hasInFlightTurnForStatePath(previousContext.previousStatePath),
+                        }
+                        : {}),
                 });
             }
             : undefined;
@@ -1574,10 +2075,28 @@ function createRuntimeAuthSelectionMaterializer(
 function createSwitchContinuityResolver(
     agentId: CatalogAgentId,
     connectedServices: ConnectedServicesContribution,
+    runtimeAuthAdapter: ConnectedServiceProviderRuntimeAuthAdapter | null,
+    verifyResumeReachable: VerifyResumeReachable,
 ) {
     return async (params: ConnectedServiceSwitchContinuityParams): Promise<ConnectedServiceSwitchContinuityResult> => {
         if (!connectedServices.shouldRestartForServiceSwitch?.(params.serviceId)) {
             return { mode: 'unsupported', reason: 'unsupported_service' };
+        }
+        if (
+            runtimeAuthAdapter
+            && isConnectedToConnectedServiceSwitch(params)
+            && params.runtimeAuthSelection !== null
+            && params.runtimeAuthSelection !== undefined
+        ) {
+            const hotApply = runtimeAuthAdapter.canHotApply({
+                target: { agentId },
+                selection: params.runtimeAuthSelection,
+                targetMaterializedEnv: params.targetMaterializedEnv ?? null,
+                materializedEnv: params.targetMaterializedEnv ?? null,
+            });
+            if (isRecord(hotApply) && hotApply.supported === true) {
+                return { mode: 'hot_apply' };
+            }
         }
         if (isConnectedToConnectedServiceSwitch(params)) {
             const restartContinuityCanBeProven = isExactSameConnectedServiceSelection(params)
@@ -1610,9 +2129,7 @@ function createSwitchContinuityResolver(
                 return providerSessionStateUnavailableForResume();
             }
 
-            const reachability = await canResumeFromMaterializedState({
-                agentId,
-                serviceId: params.serviceId,
+            const reachability = await canResumeFromMaterializedStateCore({
                 targetMaterializedRoot,
                 targetMaterializedEnv,
                 requestedStateMode: 'isolated',
@@ -1621,6 +2138,7 @@ function createSwitchContinuityResolver(
                 vendorResumeId: providerSessionId,
                 cwd,
                 candidatePersistedSessionFile: params.candidatePersistedSessionFile ?? null,
+                verifyResumeReachable,
             });
             return reachability.ok
                 ? { mode: 'restart_same_home' }
@@ -1851,7 +2369,7 @@ function createCloudCustomAuthenticatorContext(
 }> {
     const diagnostics: CloudAuthDiagnosticV1[] = [];
     const signal = opts.signal ?? new AbortController().signal;
-    const fetchRuntime = createGlobalConnectedServiceFetchRuntime();
+    const fetchRuntime = createGlobalFetchRuntime();
     const credentialWriter = opts.hostServices?.credentials?.write;
     const pushDiagnostic = (input: CloudAuthDiagnosticV1) => {
         const sanitized = sanitizeCloudAuthDiagnostic(input);
@@ -2002,7 +2520,7 @@ function createPreflightContributionProbeParams(
         ...params,
         probeKind,
         exec,
-        env: process.env,
+        env: params.env ?? process.env,
     };
 }
 
@@ -2095,6 +2613,10 @@ export function createProviderRuntimeCatalogEntryHooks(params: Readonly<{
     const sessionRuntimePreferences = readSessionRuntimePreferencesContribution(
         params.contribution.sessionRuntimePreferences,
     );
+    const codingPromptBehavior = readFunction<NonNullable<ResolvedCatalogEntry['resolveCodingPromptBehaviorBlocks']>>(
+        params.contribution.codingPromptBehavior?.resolve,
+    );
+    const daemonSpawnHooks = readDaemonSpawnHooksContribution(params.contribution.daemonSpawnHooks);
     const externalSessions = readExternalSessionsContribution(params.contribution.externalSessions);
     const sessionHandoff = readSessionHandoffContribution(params.contribution.sessionHandoff);
     const cliAuth = readCliAuthContribution(params.contribution.cliAuth);
@@ -2120,25 +2642,39 @@ export function createProviderRuntimeCatalogEntryHooks(params: Readonly<{
         : connectedServices
             ? createRuntimeAuthAdapter(params.agentId, connectedServices)
             : null;
-    const switchContinuityResolver = runtimeControl
-        ? createRuntimeControlSwitchContinuityResolver(params.agentId, runtimeControl)
-        : connectedServices?.shouldRestartForServiceSwitch
-            ? createSwitchContinuityResolver(params.agentId, connectedServices)
-            : null;
+    const projectedResumeReachability = resolveProjectedResumeReachability(connectedServices, runtimeControl);
+    const runtimeControlSwitchContinuityResolver = runtimeControl
+        ? createRuntimeControlSwitchContinuityResolver(params.agentId, runtimeControl, projectedResumeReachability)
+        : null;
+    const connectedServiceSwitchContinuityResolver = connectedServices?.shouldRestartForServiceSwitch
+        ? createSwitchContinuityResolver(
+            params.agentId,
+            connectedServices,
+            runtimeAuthAdapter,
+            projectedResumeReachability,
+        )
+        : null;
+    const switchContinuityResolver =
+        runtimeControlSwitchContinuityResolver ?? connectedServiceSwitchContinuityResolver;
 
     return () => {
         const exec = createProviderScopedExecService(params.systemTools);
         const runtimeControlMaterializer = runtimeControl
-            ? createRuntimeControlMaterializer(params.agentId, runtimeControl, exec)
+            ? createRuntimeControlMaterializer(params.agentId, runtimeControl, exec, projectedResumeReachability)
             : null;
         const runtimeControlGoalAdapter = runtimeControl
-            ? createRuntimeControlGoalAdapter(params.agentId, runtimeControl, exec)
+            ? createRuntimeControlGoalAdapter(params.agentId, runtimeControl, exec, projectedResumeReachability)
             : null;
         const runtimeControlCatalogAdapter = runtimeControl
-            ? createRuntimeControlCatalogAdapter(params.agentId, runtimeControl, exec)
+            ? createRuntimeControlCatalogAdapter(params.agentId, runtimeControl, exec, projectedResumeReachability)
             : null;
         const runtimeControlUsageLimitRecoveryAdapter = runtimeControl
-            ? createRuntimeControlUsageLimitRecoveryAdapter(params.agentId, runtimeControl, exec)
+            ? createRuntimeControlUsageLimitRecoveryAdapter(
+                params.agentId,
+                runtimeControl,
+                exec,
+                projectedResumeReachability,
+            )
             : null;
         const acpRuntimeDefinitionBridge = acpBackendContribution
             ? createAcpRuntimeDefinitionBridge({ contribution: acpBackendContribution, exec })
@@ -2172,6 +2708,17 @@ export function createProviderRuntimeCatalogEntryHooks(params: Readonly<{
             ? {
                 getConnectedServicesMaterializer: async () =>
                     createConnectedServicesMaterializer(params.agentId, connectedServices, managedServer, exec),
+                ...(connectedServices.noRestartRequiredServiceIds
+                    ? { connectedServiceNoRestartRequiredServiceIds: connectedServices.noRestartRequiredServiceIds }
+                    : {}),
+                resolveConnectedServiceMaterializedHomeRoot:
+                    createConnectedServiceMaterializedHomeRootResolver(params.agentId, connectedServices),
+                ...(connectedServices.materializedHomeFreshness
+                    ? {
+                        getConnectedServiceMaterializedHomeFreshness: async () =>
+                            connectedServices.materializedHomeFreshness ?? null,
+                    }
+                    : {}),
                 getConnectedServiceStateSharingDescriptor: async () =>
                     connectedServices.stateSharingDescriptor,
                 ...(connectedServices.recoveryCapabilities
@@ -2195,6 +2742,18 @@ export function createProviderRuntimeCatalogEntryHooks(params: Readonly<{
                         getConnectedServiceRuntimeAuthAdapter: async () => runtimeAuthAdapter,
                     }
                     : {}),
+                ...(connectedServices.daemonAuthBridge
+                    ? {
+                        getConnectedServiceDaemonAuthBridgeRefresh: async () =>
+                            connectedServices.daemonAuthBridge?.refresh ?? null,
+                    }
+                    : {}),
+                ...(connectedServices.quotaFetcherDescriptor
+                    ? {
+                        getConnectedServiceQuotaFetcherDescriptor: async () =>
+                            connectedServices.quotaFetcherDescriptor ?? null,
+                    }
+                    : {}),
                 ...(switchContinuityResolver
                     ? { resolveConnectedServiceSwitchContinuity: switchContinuityResolver }
                     : {}),
@@ -2208,34 +2767,38 @@ export function createProviderRuntimeCatalogEntryHooks(params: Readonly<{
                                 runtimeControlUsageLimitRecoveryAdapter,
                         }
                         : {
-                        getSessionUsageLimitRecoveryControlAdapter: async () =>
-                            createBackoffSessionUsageLimitRecoveryControlAdapter({
-                                providerId: connectedServices.usageLimitRecovery!.providerId,
-                                issueProviderFilter: connectedServices.usageLimitRecovery!.issueProviderFilter ?? null,
-                                defaultNativeServiceId: connectedServices.usageLimitRecovery!.defaultNativeServiceId ?? null,
-                                fallbackBackoffEnvKey: connectedServices.usageLimitRecovery!.fallbackBackoffEnvKey,
-                                maxAttemptsEnvKey: connectedServices.usageLimitRecovery!.maxAttemptsEnvKey,
-                                defaultFallbackBackoffMs: connectedServices.usageLimitRecovery!.defaultFallbackBackoffMs,
-                                defaultMaxAttempts: connectedServices.usageLimitRecovery!.defaultMaxAttempts,
-                            }),
+                        getSessionUsageLimitRecoveryControlAdapter: async () => {
+                            const usageLimitRecovery = connectedServices.usageLimitRecovery!;
+                            const runtimeOwnerId = usageLimitRecovery.agentId;
+                            return createBackoffSessionUsageLimitRecoveryControlAdapter({
+                                providerId: runtimeOwnerId,
+                                issueProviderFilter: usageLimitRecovery.issueProviderFilter ?? null,
+                                defaultNativeServiceId: usageLimitRecovery.defaultNativeServiceId ?? null,
+                                fallbackBackoffEnvKey: usageLimitRecovery.fallbackBackoffEnvKey,
+                                maxAttemptsEnvKey: usageLimitRecovery.maxAttemptsEnvKey,
+                                defaultFallbackBackoffMs: usageLimitRecovery.defaultFallbackBackoffMs,
+                                defaultMaxAttempts: usageLimitRecovery.defaultMaxAttempts,
+                            });
+                        },
                     })
                     : {}),
             }
             : {}),
         ...(externalSessions
             ? {
-                getExternalSessionRuntimeHostAdapters: async (adapterParams) => ({
-                    transcriptStores: externalSessions.createTranscriptStoreAdapter
-                        ? [externalSessions.createTranscriptStoreAdapter(adapterParams)]
-                        : [],
-                    candidateHosts: externalSessions.createCandidateHostAdapter
-                        ? [externalSessions.createCandidateHostAdapter(adapterParams)]
-                        : [],
-                }),
+                getExternalSessionRuntimeHostAdapters: async (adapterParams) =>
+                    await createExternalSessionRuntimeHostAdapters({
+                        externalSessions,
+                        adapterParams,
+                        exec,
+                    }),
             }
             : {}),
         ...(runtimeControl?.connectedServices?.verifyResumeReachable && !connectedServices?.resolveResumeReachabilityUnsupported
             ? { verifyResumeReachable: runtimeControl.connectedServices.verifyResumeReachable }
+            : {}),
+        ...(switchContinuityResolver
+            ? { resolveConnectedServiceSwitchContinuity: switchContinuityResolver }
             : {}),
         ...(runtimeControl?.connectedServices?.resolveCandidatePersistedSessionFile
             ? {
@@ -2263,8 +2826,11 @@ export function createProviderRuntimeCatalogEntryHooks(params: Readonly<{
         ...(sessionControls
             ? { normalizeSessionControlPermissionMode: sessionControls.normalizePermissionMode }
             : {}),
-        ...(terminal
-            ? { getHeadlessTmuxArgvTransform: async () => terminal.transformHeadlessTmuxArgv }
+        ...(terminal?.transformHeadlessTmuxArgv
+            ? { getHeadlessTmuxArgvTransform: async () => terminal.transformHeadlessTmuxArgv! }
+            : {}),
+        ...(terminal?.promptSubmitVerification
+            ? { getTerminalPromptSubmitVerificationPolicy: async () => terminal.promptSubmitVerification! }
             : {}),
         ...(cliSessionCommand
             ? { getCliCommandHandler: createCliSessionCommandHandler(cliSessionCommand, params.agentId) }
@@ -2277,6 +2843,12 @@ export function createProviderRuntimeCatalogEntryHooks(params: Readonly<{
             : {}),
         ...(sessionRuntimePreferences
             ? { resolveSessionRuntimePreferences: sessionRuntimePreferences.resolve }
+            : {}),
+        ...(codingPromptBehavior
+            ? { resolveCodingPromptBehaviorBlocks: codingPromptBehavior }
+            : {}),
+        ...(daemonSpawnHooks
+            ? { getDaemonSpawnHooks: async () => daemonSpawnHooks }
             : {}),
         ...(sessionHandoff?.providerBundleRecords
             ? {
@@ -2386,9 +2958,9 @@ export function createProviderRuntimeCatalogEntryHooks(params: Readonly<{
 }
 
 export function applyProviderCatalogEntryHooks(
-    contribution: ResolvedProviderContribution,
+    contribution: ResolvedAgentContribution,
     hooksByProviderId: Readonly<Record<string, ProviderCatalogHookFactory>>,
-): ResolvedProviderContribution {
+): ResolvedAgentContribution {
     const createHooks = hooksByProviderId[contribution.id];
     if (!createHooks || !contribution.catalogEntry) return contribution;
     return Object.freeze({

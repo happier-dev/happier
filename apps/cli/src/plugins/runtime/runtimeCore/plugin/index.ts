@@ -5,7 +5,7 @@ import type {
     CliRuntimeCoreParams,
 } from '@/agent/runtime/registry/engineRegistryTypes';
 import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
-import type { ResolvedBackendContribution, ResolvedProviderContribution } from '@/plugins/projection/registry/types';
+import type { ResolvedAgentRuntimeContribution, ResolvedAgentContribution } from '@/plugins/projection/registry/types';
 
 import { createPluginExecutionRunBackend } from './executionRun';
 import { createPluginSessionRuntimePlan } from './session';
@@ -16,8 +16,8 @@ import {
 import type { PluginSessionLaunchResultCandidate } from './sessionMetadata';
 
 function createPluginRuntimeCore(params: Readonly<{
-    backend: ResolvedBackendContribution;
-    provider: ResolvedProviderContribution;
+    backend: ResolvedAgentRuntimeContribution;
+    provider: ResolvedAgentContribution;
     executionSurfaces: BackendExecutionSurfaces;
 }>): CliRuntimeCore {
     const launch = params.executionSurfaces.terminalRuntime?.launch ?? null;
@@ -53,8 +53,8 @@ function createPluginRuntimeCore(params: Readonly<{
 }
 
 export function createPluginRuntimeCoreFactory(params: Readonly<{
-    backend: ResolvedBackendContribution;
-    provider: ResolvedProviderContribution;
+    backend: ResolvedAgentRuntimeContribution;
+    provider: ResolvedAgentContribution;
 }>): CliRuntimeCoreFactory {
     return (runtimeCoreParams: CliRuntimeCoreParams) => Object.freeze({
         runtimeCore: createPluginRuntimeCore({

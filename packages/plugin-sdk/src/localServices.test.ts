@@ -5,7 +5,7 @@ import {
     HAPPIER_LOCAL_SERVICE_ENV,
     type LocalServiceDeclarationV1,
     type LocalServicesRuntimeServiceV1,
-} from './localServices';
+} from './localServices.js';
 
 describe('defineLocalService', () => {
     it('preserves typed managed local-service declarations', () => {

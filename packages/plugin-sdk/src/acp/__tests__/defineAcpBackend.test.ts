@@ -9,11 +9,11 @@ import {
   defineAcpBackend,
   isAcpBackendEngine,
   readAcpBackendSpec,
-} from '../index';
-import type { AcpAuthoringServiceV1 } from '../../context';
-import type { PluginApiV1 } from '../../api';
-import type { PluginContextV1 } from '../../context';
-import type { AcpBackendSpecV1 } from '../types';
+} from '../index.js';
+import type { AcpAuthoringServiceV1 } from '../../context.js';
+import type { PluginApiV1 } from '../../api.js';
+import type { PluginContextV1 } from '../../context.js';
+import type { AcpBackendSpecV1 } from '../types.js';
 
 describe('defineAcpBackend', () => {
   it('marks the returned engine with the ACP backend spec', () => {
@@ -93,6 +93,8 @@ describe('defineAcpBackend', () => {
           support: 'manual_only',
           docsUrl: 'https://example.com/acp-auth',
         },
+        methodId: 'acme-api-key',
+        resolveMethodId: (_ctx, { env }) => env.ACME_VERTEX === '1' ? 'acme-vertex' : 'acme-api-key',
         detectAuthStatus: async () => 'logged_in',
         buildAuthEnv: () => ({ ACME_TOKEN: 'redacted' }),
       },
@@ -213,8 +215,8 @@ describe('defineAcpBackend', () => {
 
   it('does not expose a parallel ACP activate hook API', () => {
     const api = {
-      registerBackendEngine: vi.fn(),
-    } satisfies Pick<PluginApiV1, 'registerBackendEngine'>;
+      registerAgentRuntime: vi.fn(),
+    } satisfies Pick<PluginApiV1, 'registerAgentRuntime'>;
     const rejectedApiName = ['registerAcp', 'ActivateHook'].join('');
 
     expect(rejectedApiName in api).toBe(false);
@@ -240,7 +242,7 @@ describe('defineAcpBackend', () => {
     expect(spec.backendId).toBe('acme.sync-meta.acp');
   });
 
-  it('exposes the full ctx.acp service contract for Tier 3 composition callers', async () => {
+  it('exposes the full ctx.agentRuntime.acp service contract for Tier 3 composition callers', async () => {
     const spec = {
       backendId: 'acme.runtime.acp',
       transport: {
@@ -270,10 +272,10 @@ describe('defineAcpBackend', () => {
     })).resolves.toBe(handle);
   });
 
-  it('registers agent/acp.js definitions as backend engines that use ctx.acp', async () => {
-    const registerBackendEngine = vi.fn();
+  it('registers agent/acp.js definitions as agent runtimes that use ctx.agentRuntime.acp', async () => {
+    const registerAgentRuntime = vi.fn();
     const api = {
-      registerBackendEngine,
+      registerAgentRuntime,
     } as unknown as PluginApiV1;
     const spec = {
       backendId: 'acme.agent.acp',
@@ -301,29 +303,31 @@ describe('defineAcpBackend', () => {
       }),
     ).resolves.toBe(true);
 
-    expect(registerBackendEngine).toHaveBeenCalledWith({
-      backendId: 'acme.agent.acp',
+    expect(registerAgentRuntime).toHaveBeenCalledWith({
+      agentId: 'acme.agent.acp',
       create: expect.any(Function),
     });
 
-    const registration = registerBackendEngine.mock.calls[0]?.[0] as {
+    const registration = registerAgentRuntime.mock.calls[0]?.[0] as {
       create: (ctx: PluginContextV1) => unknown;
     };
     const expectedEngine = defineAcpBackend(spec);
     const ctx = {
-      acp: {
-        defineAcpBackend: vi.fn(() => expectedEngine),
+      agentRuntime: {
+        acp: {
+          defineAcpBackend: vi.fn(() => expectedEngine),
+        },
       },
     } as unknown as PluginContextV1;
 
     expect(registration.create(ctx)).toBe(expectedEngine);
-    expect(ctx.acp.defineAcpBackend).toHaveBeenCalledWith(spec);
+    expect(ctx.agentRuntime.acp.defineAcpBackend).toHaveBeenCalledWith(spec);
   });
 
   it('skips auto-registration without importing when agent/acp.js is absent', async () => {
     const importModule = vi.fn(async () => ({}));
     const api = {
-      registerBackendEngine: vi.fn(),
+      registerAgentRuntime: vi.fn(),
     } as unknown as PluginApiV1;
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-missing-'));
 
@@ -336,7 +340,7 @@ describe('defineAcpBackend', () => {
     }
 
     expect(importModule).not.toHaveBeenCalled();
-    expect(api.registerBackendEngine).not.toHaveBeenCalled();
+    expect(api.registerAgentRuntime).not.toHaveBeenCalled();
   });
 
   it('rethrows import failures when agent/acp.js exists but its dependencies fail', async () => {
@@ -347,7 +351,7 @@ describe('defineAcpBackend', () => {
       throw importFailure;
     });
     const api = {
-      registerBackendEngine: vi.fn(),
+      registerAgentRuntime: vi.fn(),
     } as unknown as PluginApiV1;
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-existing-'));
     writeFileSync(join(dir, 'agent-acp.js'), 'export {};');
@@ -363,6 +367,6 @@ describe('defineAcpBackend', () => {
       rmSync(dir, { recursive: true, force: true });
     }
 
-    expect(api.registerBackendEngine).not.toHaveBeenCalled();
+    expect(api.registerAgentRuntime).not.toHaveBeenCalled();
   });
 });

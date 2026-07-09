@@ -7,7 +7,9 @@ import { extractReleasePayloadRootFromArchive } from '@happier-dev/cli-common/fi
 import { createPluginStateStore, type PluginStateRecord } from '@/plugins/store/state';
 import { resolveInstalledPluginCurrentPath } from '@/plugins/store/installPaths';
 import { resolveLocalPathPluginSource } from '@/plugins/discovery/sources/localPath';
+import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { downloadRemoteArchiveToTempFile } from './archive/download';
+import { resolveLocalPluginInstallTrust } from './trustPolicy';
 
 export type PluginInstallKind = 'path' | 'archive';
 
@@ -58,12 +60,19 @@ function isRemoteArchiveLocator(locator: string): boolean {
   }
 }
 
-function createEnabledPluginState(pluginSource: PluginSourceSpecV1, installMode: PluginStateRecord['install']['mode'], manifestVersion: string, manifestDigest: string, installedPath: string | null): PluginStateRecord {
+function createEnabledPluginState(
+  pluginSource: PluginSourceSpecV1,
+  installMode: PluginStateRecord['install']['mode'],
+  manifestVersion: string,
+  manifestDigest: string,
+  installedPath: string | null,
+  diagnostics: readonly PluginCompatibilityDiagnostic[] = [],
+): PluginStateRecord {
   return {
     source: pluginSource as PluginStateRecord['source'],
     compatibility: {
       status: 'compatible',
-      diagnostics: [],
+      diagnostics: [...diagnostics],
     },
     install: {
       mode: installMode,
@@ -144,6 +153,8 @@ export async function installPluginFromSource(params: Readonly<{
   sourceSpecOverride?: PluginSourceSpecV1;
   skipIfInstalled?: boolean;
   dryRun?: boolean;
+  dev?: boolean;
+  workspaceRoot?: string;
   expectedManifestDigest?: string | null;
 }>): Promise<InstallPluginFromSourceResult> {
   const sourceKind = params.sourceKind ?? inferPluginInstallKind(params.locator);
@@ -181,23 +192,28 @@ export async function installPluginFromSource(params: Readonly<{
         };
       }
 
+      const trust = await resolveLocalPluginInstallTrust({
+        dev: params.dev,
+        pluginRootPath: resolvedSource.pluginRootPath,
+        workspaceRoot: params.workspaceRoot,
+        sourceSpecOverride: params.sourceSpecOverride,
+        defaultTrustPolicy: resolvedSource.sourceSpec.trustPolicy,
+        defaultInstallPolicy: resolvedSource.sourceSpec.installPolicy,
+      });
       const source: PluginSourceSpecV1 = {
         ...resolvedSource.sourceSpec,
         kind: 'path',
         locator: params.sourceSpecOverride?.kind === 'path' && params.sourceSpecOverride.locator.trim().length > 0
           ? params.sourceSpecOverride.locator.trim()
           : resolvedSource.sourceSpec.locator,
-        trustPolicy: params.sourceSpecOverride?.kind === 'path'
-          ? params.sourceSpecOverride.trustPolicy
-          : resolvedSource.sourceSpec.trustPolicy,
-        installPolicy: params.sourceSpecOverride?.kind === 'path'
-          ? params.sourceSpecOverride.installPolicy
-          : 'link',
+        trustPolicy: trust.trustPolicy,
+        installPolicy: trust.installPolicy,
         resolvedPath: resolvedSource.pluginRootPath,
         manifestPath: resolvedSource.manifestPath,
         resolvedVersion: resolvedSource.manifest.version,
         resolvedDigest: resolvedSource.manifestDigest,
         installedAt: Date.now(),
+        ...(trust.devWatch ? { devWatch: true } : {}),
       };
       verifyExpectedManifestDigest(resolvedSource.manifestDigest, params.expectedManifestDigest);
 
@@ -212,6 +228,7 @@ export async function installPluginFromSource(params: Readonly<{
               resolvedSource.manifest.version,
               resolvedSource.manifestDigest,
               null,
+              trust.diagnostics,
             ),
           },
         }));

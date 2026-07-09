@@ -1,9 +1,16 @@
 import {
+    hasPluginUiExecutableArtifactIntegrityV1,
     PluginUiExecutableArtifactManifestV1Schema,
-    type PluginUiExecutableArtifactManifestV1,
+    type PluginUiExecutableArtifactManifestWithIntegrityV1,
 } from '@happier-dev/protocol';
 
 import { deriveInstalledPluginUiArtifactCacheKey } from './cacheKeys';
+import {
+    createPluginUiArtifactRevocationState,
+    isPluginUiArtifactRevoked,
+    mergePluginUiArtifactRevocationStates,
+    type PluginUiArtifactRevocationState,
+} from './revocation';
 
 export type PluginUiArtifactInstallValidationCode =
     | 'invalid_manifest'
@@ -12,7 +19,7 @@ export type PluginUiArtifactInstallValidationCode =
     | 'artifact_revoked';
 
 export type PluginUiArtifactInstallValidationResult =
-    | Readonly<{ ok: true; artifact: PluginUiExecutableArtifactManifestV1; cacheKey: string }>
+    | Readonly<{ ok: true; artifact: PluginUiExecutableArtifactManifestWithIntegrityV1; cacheKey: string }>
     | Readonly<{ ok: false; code: PluginUiArtifactInstallValidationCode }>;
 
 export function validateInstalledPluginUiArtifactManifest(params: Readonly<{
@@ -20,6 +27,7 @@ export function validateInstalledPluginUiArtifactManifest(params: Readonly<{
     expectedPluginId: string;
     expectedContributionId: string;
     revokedDigests: ReadonlySet<string>;
+    revocationState?: PluginUiArtifactRevocationState;
 }>): PluginUiArtifactInstallValidationResult {
     const parsed = PluginUiExecutableArtifactManifestV1Schema.safeParse(params.artifact);
     if (!parsed.success) {
@@ -31,7 +39,20 @@ export function validateInstalledPluginUiArtifactManifest(params: Readonly<{
     if (parsed.data.contributionId !== params.expectedContributionId) {
         return Object.freeze({ ok: false, code: 'contribution_id_mismatch' });
     }
-    if (params.revokedDigests.has(parsed.data.integrity.digest)) {
+    if (!hasPluginUiExecutableArtifactIntegrityV1(parsed.data)) {
+        return Object.freeze({ ok: false, code: 'invalid_manifest' });
+    }
+    const revocationState = mergePluginUiArtifactRevocationStates(
+        createPluginUiArtifactRevocationState({ revokedDigests: params.revokedDigests }),
+        ...(params.revocationState ? [params.revocationState] : []),
+    );
+    if (isPluginUiArtifactRevoked({
+        pluginId: parsed.data.pluginId,
+        contributionId: parsed.data.contributionId,
+        digest: parsed.data.integrity.digest,
+        ...(parsed.data.integrity.signingKeyId ? { signingKeyId: parsed.data.integrity.signingKeyId } : {}),
+        ...(parsed.data.installSourceId ? { installSourceId: parsed.data.installSourceId } : {}),
+    }, revocationState)) {
         return Object.freeze({ ok: false, code: 'artifact_revoked' });
     }
     return Object.freeze({

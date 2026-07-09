@@ -16,6 +16,17 @@ export type ExecBinaryLaunchInputV1 = Readonly<{
     stdin?: string | Uint8Array;
 }>;
 
+export type ExecManagedInstallableLaunchInputV1 = Readonly<{
+    kind: 'managed-installable';
+    installableId: string;
+    executableName?: string;
+    args?: readonly string[];
+    cwd?: string;
+    env?: Readonly<Record<string, string>>;
+    stdin?: string | Uint8Array;
+    sourcePreference?: 'managed-first';
+}>;
+
 export type ExecIpcLaunchInputV1 = Readonly<{
     kind: 'ipc';
     endpoint: string;
@@ -24,13 +35,27 @@ export type ExecIpcLaunchInputV1 = Readonly<{
 export type ExecLaunchInputV1 =
     | ExecAgentCliLaunchInputV1
     | ExecBinaryLaunchInputV1
+    | ExecManagedInstallableLaunchInputV1
     | ExecIpcLaunchInputV1;
+
+export type ExecOutputStreamV1 = 'stdout' | 'stderr';
+
+/**
+ * Optional sink for raw process output chunks. The host invokes this for every stdout/stderr chunk
+ * observed after spawn, in addition to (not instead of) the buffered `ExecRunResultV1` tails. It is
+ * a generic tee — the consumer owns any persistence/format/redaction. Used by the managed-server
+ * host to tee a supervised server's output to a durable per-server log. Must never throw.
+ */
+export type ExecOutputTeeV1 = Readonly<{
+    onChunk: (stream: ExecOutputStreamV1, chunk: Uint8Array) => void;
+}>;
 
 export type ExecRunOptionsV1 = Readonly<{
     signal?: AbortSignal;
     timeoutMs?: number;
     maxStdoutBytes?: number;
     maxStderrBytes?: number;
+    outputTee?: ExecOutputTeeV1;
 }>;
 
 export type ExecRunResultV1 = Readonly<{
@@ -73,6 +98,8 @@ export type ExecFramedBytesFramingV1 = Readonly<{
     kind: 'framed-bytes';
 }>;
 
+export type ExecLengthPrefixedByteOrderV1 = 'big-endian' | 'little-endian';
+
 export type ExecClientFramingV1 =
     | ExecStrictLfJsonFramingV1
     | ExecFramedBytesFramingV1;
@@ -83,6 +110,47 @@ export type ExecClientTransportV1 = Readonly<{
     encoding?: string;
     maxFrameBytes?: number;
 }>;
+
+export type ExecLoopbackWebSocketHandshakeResponseV1 = Readonly<{
+    byteOrder?: ExecLengthPrefixedByteOrderV1;
+    maxFrameBytes?: number;
+    timeoutMs?: number;
+}>;
+
+export type ExecLoopbackWebSocketHandshakeV1 = Readonly<{
+    byteOrder: ExecLengthPrefixedByteOrderV1;
+    requestFrames: readonly (Uint8Array | string)[];
+    response?: ExecLoopbackWebSocketHandshakeResponseV1;
+}>;
+
+export type ExecLoopbackWebSocketConnectV1 = Readonly<{
+    timeoutMs?: number;
+    retryInitialDelayMs?: number;
+    retryMaxDelayMs?: number;
+}>;
+
+export type ExecLoopbackWebSocketShutdownV1 = Readonly<{
+    kind: 'close-stdin';
+    graceMs?: number;
+}>;
+
+export type ExecLoopbackWebSocketLimitsV1 = Readonly<{
+    maxMessageBytes?: number;
+    maxPendingMessages?: number;
+    maxBufferedBytes?: number;
+}>;
+
+export type ExecLoopbackWebSocketTransportV1 = Readonly<{
+    kind: 'spawned-loopback-websocket';
+    handshake: ExecLoopbackWebSocketHandshakeV1;
+    connect?: ExecLoopbackWebSocketConnectV1;
+    shutdown?: ExecLoopbackWebSocketShutdownV1;
+    limits?: ExecLoopbackWebSocketLimitsV1;
+}>;
+
+export type ExecClientAnyTransportV1 =
+    | ExecClientTransportV1
+    | ExecLoopbackWebSocketTransportV1;
 
 export type ExecJsonRpcClientProtocolV1 = Readonly<{ kind: 'json-rpc-2.0' }>;
 
@@ -96,10 +164,39 @@ export type ExecFramedBytesClientProtocolV1 = Readonly<{
     frameSchema?: unknown;
 }>;
 
+export type ExecLoopbackWebSocketEndpointV1 = Readonly<{
+    url?: string;
+    protocol?: string;
+    host?: string;
+    port?: number;
+    path?: string;
+} & Record<string, unknown>>;
+
+export type ExecLoopbackWebSocketHeaderV1 = Readonly<{
+    name: string;
+    value: string;
+    sensitive?: boolean;
+}>;
+
+export type ExecLoopbackWebSocketEndpointCodecV1<
+    TEndpoint extends ExecLoopbackWebSocketEndpointV1 = ExecLoopbackWebSocketEndpointV1,
+> = Readonly<{
+    decodeHandshakeResponse(response: Uint8Array): TEndpoint | Promise<TEndpoint>;
+    buildHeaders?: (endpoint: TEndpoint) => readonly ExecLoopbackWebSocketHeaderV1[];
+}>;
+
+export type ExecLoopbackWebSocketJsonProtocolV1<
+    TEndpoint extends ExecLoopbackWebSocketEndpointV1 = ExecLoopbackWebSocketEndpointV1,
+> = Readonly<{
+    kind: 'json-websocket';
+    endpoint: ExecLoopbackWebSocketEndpointCodecV1<TEndpoint>;
+}>;
+
 export type ExecClientProtocolV1 =
     | ExecJsonRpcClientProtocolV1
     | ExecJsonStreamClientProtocolV1
-    | ExecFramedBytesClientProtocolV1;
+    | ExecFramedBytesClientProtocolV1
+    | ExecLoopbackWebSocketJsonProtocolV1;
 
 export type ExecClientLifecycleV1 = Readonly<{
     requestTimeoutMs?: number;
@@ -202,10 +299,19 @@ export type FramedBytesClientV1 = Readonly<{
     writeFrame(frame: Uint8Array, options?: ExecStreamWriteOptionsV1): Promise<void>;
 }>;
 
+export type LoopbackWebSocketJsonMessageListenerV1 = (message: unknown) => void | Promise<void>;
+
+export type LoopbackWebSocketJsonClientV1 = Readonly<{
+    readonly closed: Promise<void>;
+    subscribe(listener: LoopbackWebSocketJsonMessageListenerV1): () => void;
+    sendJson(message: unknown, options?: ExecStreamWriteOptionsV1): Promise<void>;
+}>;
+
 export type ExecProtocolClientV1 =
     | JsonRpcClientV1
     | JsonStreamClientV1
-    | FramedBytesClientV1;
+    | FramedBytesClientV1
+    | LoopbackWebSocketJsonClientV1;
 
 export type ExecClientHandlersV1 = Readonly<{
     jsonRpc?: Readonly<{
@@ -247,10 +353,22 @@ export type ExecFramedBytesClientSpecV1 = Readonly<{
     lifecycle?: ExecClientLifecycleV1;
 }>;
 
+export type ExecLoopbackWebSocketJsonClientSpecV1<
+    TEndpoint extends ExecLoopbackWebSocketEndpointV1 = ExecLoopbackWebSocketEndpointV1,
+> = Readonly<{
+    launch: ExecLaunchInputV1;
+    transport: ExecLoopbackWebSocketTransportV1;
+    protocol: ExecLoopbackWebSocketJsonProtocolV1<TEndpoint>;
+    handlers?: ExecClientHandlersV1;
+    hooks?: ExecClientHooksV1;
+    lifecycle?: ExecClientLifecycleV1;
+}>;
+
 export type ExecClientSpecV1 =
     | ExecJsonRpcClientSpecV1
     | ExecJsonStreamClientSpecV1
-    | ExecFramedBytesClientSpecV1;
+    | ExecFramedBytesClientSpecV1
+    | ExecLoopbackWebSocketJsonClientSpecV1;
 
 export type ExecClientHandleV1<TClient = JsonRpcClientV1> = Readonly<{
     client: TClient;
@@ -295,5 +413,6 @@ export interface ExecRuntimeServiceV1 {
     spawnClient(spec: ExecJsonRpcClientSpecV1, options?: ExecRunOptionsV1): Promise<ExecClientHandleV1<JsonRpcClientV1>>;
     spawnClient(spec: ExecJsonStreamClientSpecV1, options?: ExecRunOptionsV1): Promise<ExecClientHandleV1<JsonStreamClientV1>>;
     spawnClient(spec: ExecFramedBytesClientSpecV1, options?: ExecRunOptionsV1): Promise<ExecClientHandleV1<FramedBytesClientV1>>;
+    spawnClient(spec: ExecLoopbackWebSocketJsonClientSpecV1, options?: ExecRunOptionsV1): Promise<ExecClientHandleV1<LoopbackWebSocketJsonClientV1>>;
     spawnClient(spec: ExecClientSpecV1, options?: ExecRunOptionsV1): Promise<ExecClientHandleV1<ExecProtocolClientV1>>;
 }

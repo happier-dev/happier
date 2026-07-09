@@ -51,6 +51,8 @@ export type TranscriptFileFollowStrategyV1 = 'poll';
 
 export type TranscriptFileFollowStartAtV1 = 'beginning' | 'end';
 
+export type TranscriptFileFollowResetReasonV1 = 'missing' | 'replaced' | 'truncated';
+
 export type TranscriptFileFollowLineV1 = Readonly<{
     line: string;
     sourcePath: string;
@@ -71,6 +73,7 @@ export type TranscriptFileFollowInputV1 = Readonly<{
     policy?: TranscriptFileFollowPolicyInputV1;
     signal?: AbortSignal;
     onLine(line: TranscriptFileFollowLineV1): void | Promise<void>;
+    onReset?(event: Readonly<{ reason: TranscriptFileFollowResetReasonV1 }>): void | Promise<void>;
     onError?(error: unknown): void | Promise<void>;
 }>;
 
@@ -93,8 +96,31 @@ export interface TranscriptFileFollowRuntimeServiceV1 {
     follow(input: TranscriptFileFollowInputV1): Promise<TranscriptFileFollowHandleV1>;
 }
 
+export type TranscriptAppendUserTextTurnV1 = Readonly<{
+    kind: 'userText';
+    text: string;
+    opts: Readonly<{
+        localId: string;
+        meta?: Readonly<Record<string, unknown>>;
+    }>;
+}>;
+
+export type TranscriptAppendAgentMessageTurnV1 = Readonly<{
+    kind: 'agentMessageCommitted' | 'agentMessageEphemeral';
+    provider: string;
+    body: Readonly<Record<string, unknown>>;
+    localId: string;
+    createdAt?: number;
+    updatedAt?: number;
+    meta?: Readonly<Record<string, unknown>>;
+}>;
+
+export type TranscriptAppendTurnV1 =
+    | TranscriptAppendUserTextTurnV1
+    | TranscriptAppendAgentMessageTurnV1;
+
 export interface TranscriptsRuntimeServiceV1 {
-    append(turn: unknown): Promise<void>;
+    append(turn: TranscriptAppendTurnV1): Promise<void>;
     defineSource<TItem = unknown>(definition: TranscriptSourceDefinitionV1<TItem>): Promise<TranscriptSourceHandleV1>;
     readonly fileFollow: TranscriptFileFollowRuntimeServiceV1;
 }

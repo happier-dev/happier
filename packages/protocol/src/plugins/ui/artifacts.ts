@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   PluginUiArtifactCompatibilityV1Schema,
   PluginUiArtifactContributionFamilyV1Schema,
+  PluginUiArtifactFileV1Schema,
   PluginUiArtifactKindV1Schema,
 } from '../contributions/ui/artifacts.js';
 import { PluginUiChannelV1Schema, PluginUiPlatformV1Schema } from '../contributions/ui/compatibility.js';
@@ -23,17 +24,31 @@ export const PluginUiExecutableArtifactManifestV1Schema = z.object({
     pluginId: true,
     contributionId: true,
     artifactKind: true,
-  }),
+  }).optional(),
   compatibility: PluginUiArtifactCompatibilityV1Schema,
   byteSize: z.number().int().positive(),
   contentType: z.string().trim().min(1),
   assetPath: z.string().trim().min(1).optional(),
+  files: z.array(PluginUiArtifactFileV1Schema).min(1).optional(),
   url: z.string().trim().url().optional(),
   sourceMapDigest: PluginUiArtifactDigestV1Schema.optional(),
   cacheKey: z.string().trim().min(1).optional(),
   installSourceId: z.string().trim().min(1).optional(),
   devUrl: z.string().trim().url().optional(),
 }).strict().superRefine((value, ctx) => {
+  const isDevelopmentDevUrlArtifact = value.channel === 'development'
+    && value.devUrl !== undefined
+    && value.assetPath === undefined
+    && value.url === undefined;
+
+  if (!value.integrity && !isDevelopmentDevUrlArtifact) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['integrity'],
+      message: 'Plugin UI artifact integrity is required except for development devUrl artifacts',
+    });
+  }
+
   if (value.channel !== 'development' && value.devUrl !== undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -61,9 +76,53 @@ export const PluginUiExecutableArtifactManifestV1Schema = z.object({
       message: 'hostedWebAsset artifacts must belong to hostedWeb contributions',
     });
   }
+
+  if (value.artifactKind === 'embeddedWebBundle') {
+    if (value.contributionFamily !== 'embeddedWebBundles') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['contributionFamily'],
+        message: 'embeddedWebBundle artifacts must belong to embeddedWebBundles contributions',
+      });
+    }
+    if (value.platform !== 'web') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['platform'],
+        message: 'embeddedWebBundle artifacts must target the web platform',
+      });
+    }
+    // A development-channel devUrl artifact (no assetPath, no url) is the local
+    // dev-hot-reload declaration — mirrors reactNativeBundle's identical carve-out.
+    // It has no installed asset yet, so it is exempt from the assetPath requirement.
+    if (!isDevelopmentDevUrlArtifact && !value.assetPath) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['assetPath'],
+        message: 'embeddedWebBundle artifacts must use installed assetPath bytes',
+      });
+    }
+    if (value.url !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['url'],
+        message: 'embeddedWebBundle artifacts must not declare remote URLs',
+      });
+    }
+  }
 });
 export type PluginUiExecutableArtifactManifestV1 =
   z.infer<typeof PluginUiExecutableArtifactManifestV1Schema>;
+export type PluginUiExecutableArtifactManifestWithIntegrityV1 =
+  PluginUiExecutableArtifactManifestV1 & Readonly<{
+    integrity: NonNullable<PluginUiExecutableArtifactManifestV1['integrity']>;
+  }>;
+
+export function hasPluginUiExecutableArtifactIntegrityV1(
+  artifact: PluginUiExecutableArtifactManifestV1,
+): artifact is PluginUiExecutableArtifactManifestWithIntegrityV1 {
+  return artifact.integrity !== undefined;
+}
 
 export function derivePluginUiArtifactCacheKeyV1(
   artifact: PluginUiExecutableArtifactManifestV1,
@@ -75,7 +134,7 @@ export function derivePluginUiArtifactCacheKeyV1(
     artifact.artifactKind,
     artifact.platform,
     artifact.channel,
-    artifact.integrity.digest,
+    artifact.integrity?.digest ?? `devUrl:${artifact.devUrl ?? ''}`,
     artifact.compatibility.hostAppVersion,
     artifact.compatibility.hostUiApiVersion,
     artifact.compatibility.reactVersion ?? '',

@@ -1,4 +1,15 @@
 export * from './artifactIntegrity.js';
 export * from './artifacts.js';
+export * from './bridgeClient.js';
+export * from './build/index.js';
+export * from './hostApiClient.js';
 export * from './hostedWeb.js';
+export * from './hostedWebBuild.js';
+export * from './hostedWebDevServer.js';
+export * from './hostedWebRuntime.js';
+export * from './hostRuntimeExternalsBuildPlugin.js';
+export * from './reactNativeBuild.js';
 export * from './reactNativeBundles.js';
+export * from './reactNativeDevServer.js';
+export * from './reactNativeWebBuild.js';
+export type { SettingDefinitionMap } from '../ui.js';

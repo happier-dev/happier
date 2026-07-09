@@ -52,7 +52,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
 
         const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
 
-        expect(runtimeRegistry.contributes.providerDefinitionsById.get(SAMPLE_PLUGIN_PROVIDER_ID)).toMatchObject({
+        expect(runtimeRegistry.contributes.agentDefinitionsById.get(SAMPLE_PLUGIN_PROVIDER_ID)).toMatchObject({
             id: SAMPLE_PLUGIN_PROVIDER_ID,
             provenance: 'external',
             source: { kind: 'path' },
@@ -60,9 +60,9 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                 id: SAMPLE_PLUGIN_PROVIDER_ID,
             },
         });
-        expect(runtimeRegistry.contributes.backendDefinitionsById.get(SAMPLE_PLUGIN_BACKEND_ID)).toMatchObject({
+        expect(runtimeRegistry.contributes.agentRuntimeDefinitionsById.get(SAMPLE_PLUGIN_BACKEND_ID)).toMatchObject({
             id: SAMPLE_PLUGIN_BACKEND_ID,
-            providerId: SAMPLE_PLUGIN_PROVIDER_ID,
+            agentId: SAMPLE_PLUGIN_BACKEND_ID,
             provenance: 'external',
             source: { kind: 'path' },
             runtimeKind: 'custom',
@@ -74,13 +74,6 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
                     backendId: SAMPLE_PLUGIN_BACKEND_ID,
                     definition: expect.objectContaining({
                         id: 'backend.terminalRuntime.launch',
-                        kind: 'terminalRuntime',
-                    }),
-                }),
-                expect.objectContaining({
-                    backendId: SAMPLE_PLUGIN_BACKEND_ID,
-                    definition: expect.objectContaining({
-                        id: 'backend.resolveRuntimePrerequisites',
                         kind: 'terminalRuntime',
                     }),
                 }),
@@ -106,7 +99,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
             payload: {},
         })).toBe(null);
 
-        const handlers = runtimeRegistry.hookHandlersByHookId.get('backend.resolveRuntimePrerequisites');
+        const handlers = runtimeRegistry.hookHandlersByHookId.get('agent.resolvePrerequisites');
         expect(handlers).toHaveLength(1);
         await expect(handlers?.[0]?.handler()).resolves.toBe('integration-bound');
         expect(runtimeRegistry.pluginDiagnosticsByPluginId['acme.sample']).toEqual([]);
@@ -150,7 +143,7 @@ describe('resolveExecutablePluginRuntimeRegistry (integration)', () => {
 
         const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
 
-        expect(runtimeRegistry.hookHandlersByHookId.get('backend.resolveRuntimePrerequisites')).toBeUndefined();
+        expect(runtimeRegistry.hookHandlersByHookId.get('agent.resolvePrerequisites')).toBeUndefined();
         expect(runtimeRegistry.pluginDiagnosticsByPluginId['acme.sample']).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({

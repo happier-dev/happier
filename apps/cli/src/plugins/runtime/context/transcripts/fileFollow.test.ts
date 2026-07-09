@@ -17,6 +17,17 @@ async function waitForTimerTick(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function createDeferred(): Readonly<{
+    promise: Promise<void>;
+    resolve: () => void;
+}> {
+    let resolve!: () => void;
+    const promise = new Promise<void>((resolvePromise) => {
+        resolve = resolvePromise;
+    });
+    return { promise, resolve };
+}
+
 describe('createPluginTranscriptFileFollowService', () => {
     it('fails closed for ungranted transcript paths', async () => {
         const root = await createTempRoot('happier-plugin-file-follow-denied-');
@@ -394,6 +405,44 @@ describe('createPluginTranscriptFileFollowService', () => {
         }
     });
 
+    it('notifies plugins when the followed transcript file resets', async () => {
+        const root = await createTempRoot('happier-plugin-file-follow-reset-');
+        const filePath = join(root, 'session.jsonl');
+        await writeFile(filePath, '{"old":true,"padding":"keeps initial file larger"}\n', 'utf8');
+        const received: string[] = [];
+        const resets: string[] = [];
+        const service = createPluginTranscriptFileFollowService({
+            allowedPathRoots: [root],
+            watchFile: () => () => undefined,
+            policy: {
+                activeBurstPollIntervalMs: 60_000,
+                activeFallbackPollIntervalMs: 60_000,
+                idleFallbackPollIntervalMs: 60_000,
+            },
+        });
+
+        try {
+            const handle = await service.follow({
+                path: filePath,
+                startAt: 'end',
+                onLine: (line) => {
+                    received.push(line.line);
+                },
+                onReset: (event) => {
+                    resets.push(event.reason);
+                },
+            });
+            await writeFile(filePath, '{"new":true}\n', 'utf8');
+            await handle.drainNow();
+            await handle.close();
+
+            expect(resets).toEqual(['truncated']);
+            expect(received).toEqual(['{"new":true}']);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('supports explicit close, abort, and runtime disposal cleanup', async () => {
         const root = await createTempRoot('happier-plugin-file-follow-lifecycle-');
         const explicitPath = join(root, 'explicit.jsonl');
@@ -521,6 +570,53 @@ describe('createPluginTranscriptFileFollowService', () => {
             await expect(handle.close()).resolves.toBeUndefined();
             expect(received).toEqual(['{"inside":true}']);
         } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('honors external final-drain close while a line handler is in flight', async () => {
+        const root = await createTempRoot('happier-plugin-file-follow-external-final-drain-');
+        const filePath = join(root, 'session.jsonl');
+        await writeFile(filePath, '', 'utf8');
+        const received: string[] = [];
+        const firstLineStarted = createDeferred();
+        const releaseFirstLine = createDeferred();
+        const service = createPluginTranscriptFileFollowService({
+            allowedPathRoots: [root],
+            watchFile: () => () => undefined,
+            policy: {
+                activeBurstPollIntervalMs: 60_000,
+                activeFallbackPollIntervalMs: 60_000,
+                idleFallbackPollIntervalMs: 60_000,
+                maxDrainRowsPerTick: 1,
+            },
+        });
+
+        try {
+            const handle = await service.follow({
+                path: filePath,
+                startAt: 'end',
+                onLine: async (line) => {
+                    received.push(line.line);
+                    if (line.line === '{"first":true}') {
+                        firstLineStarted.resolve();
+                        await releaseFirstLine.promise;
+                    }
+                },
+            });
+            await appendFile(filePath, '{"first":true}\n{"second":true}\n', 'utf8');
+            const drainPromise = handle.drainNow({ timeoutMs: 2_000 });
+            await firstLineStarted.promise;
+            const closePromise = handle.close({ finalDrain: true, drainTimeoutMs: 2_000 });
+
+            await waitForTimerTick(20);
+            expect(received).toEqual(['{"first":true}']);
+            releaseFirstLine.resolve();
+            await Promise.all([drainPromise, closePromise]);
+
+            expect(received).toEqual(['{"first":true}', '{"second":true}']);
+        } finally {
+            releaseFirstLine.resolve();
             await rm(root, { recursive: true, force: true });
         }
     });

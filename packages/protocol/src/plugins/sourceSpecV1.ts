@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const PluginSourceKindV1Schema = z.enum(['path', 'marketplace', 'package', 'archive']);
+export const PluginSourceKindV1Schema = z.enum(['bundled', 'path', 'marketplace', 'package', 'archive']);
 export type PluginSourceKindV1 = z.infer<typeof PluginSourceKindV1Schema>;
 
 export const PluginSourceTrustPolicyV1Schema = z.enum(['local_trusted', 'prompt', 'untrusted']);
@@ -17,5 +17,6 @@ export const PluginSourceSpecV1Schema = z.object({
   resolvedVersion: z.string().trim().min(1).optional(),
   resolvedDigest: z.string().trim().min(1).optional(),
   installedAt: z.number().int().nonnegative().optional(),
+  devWatch: z.boolean().optional(),
 }).passthrough();
 export type PluginSourceSpecV1 = z.infer<typeof PluginSourceSpecV1Schema>;

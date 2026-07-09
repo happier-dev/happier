@@ -1,4 +1,8 @@
-import type { TranscriptSourceDefinitionV1, TranscriptsRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type {
+    TranscriptAppendTurnV1,
+    TranscriptSourceDefinitionV1,
+    TranscriptsRuntimeServiceV1,
+} from '@happier-dev/plugin-sdk';
 
 import { createPluginTranscriptFileFollowService } from './transcripts/fileFollow';
 import type { TranscriptFileFollowPathGrantRegistry } from './transcripts/fileFollowGrants';
@@ -6,7 +10,7 @@ import type { TranscriptFileFollowPathGrantRegistry } from './transcripts/fileFo
 const DEFAULT_MAX_TRANSCRIPT_SOURCES = 32;
 
 export function createPluginTranscriptsService(params: Readonly<{
-    append: (turn: unknown) => Promise<void>;
+    append: (turn: TranscriptAppendTurnV1) => Promise<void>;
     maxSources?: number;
     addDisposable?: (disposable: Readonly<{ dispose: () => void | Promise<void> }>) => unknown;
     pluginId?: string;

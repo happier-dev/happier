@@ -27,6 +27,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function hasOwn(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
 function normalizeMcpDescriptorKey(key: string): string {
   return key.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 }
@@ -156,8 +160,15 @@ export type PluginMcpServerContributionV1 = z.infer<typeof PluginMcpServerContri
 
 export const PluginMcpDiscoveryProviderContributionV1Schema = PluginDescriptorBaseV1Schema.safeExtend({
   kind: z.literal('mcp.discoveryProvider'),
-  providerId: PluginOptionalStringSchema,
+  agentId: PluginOptionalStringSchema,
 }).passthrough().superRefine((value, ctx) => {
+  if (hasOwn(value, 'providerId')) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['providerId'],
+      message: 'MCP discovery-provider contributions must use agentId for executable-agent ownership.',
+    });
+  }
   rejectRawMcpSecretMaterial(value, ctx);
 });
 export type PluginMcpDiscoveryProviderContributionV1 = z.infer<typeof PluginMcpDiscoveryProviderContributionV1Schema>;

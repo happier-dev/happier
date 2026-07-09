@@ -1,11 +1,11 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import {
-    defineHostedWeb,
-    defineReactNativeBundle,
     defineSessionHeaderAction,
-    defineSessionSurface,
     defineStructuredMessage,
+    defineSurfaceContribution,
     defineUiArtifact,
     defineUiTranslations,
 } from './ui';
@@ -24,12 +24,15 @@ describe('plugin UI contribution helpers', () => {
             renderer: { kind: 'host', rendererId: 'summaryCard' },
             display,
         });
-        const surface = defineSessionSurface({
-            id: 'preview-pane',
-            surfaceKind: 'previewPane',
-            target: { kind: 'localService', idPath: '/previewId' },
-            renderer: { kind: 'host', rendererId: 'previewPlaceholder' },
-            display,
+        const surface = defineSurfaceContribution({
+            mode: 'surfacePlacement',
+            contribution: {
+                id: 'preview-pane',
+                placement: 'session.preview',
+                target: { kind: 'session', sessionIdPath: '/session/id' },
+                renderer: { kind: 'host', rendererId: 'previewPlaceholder' },
+                display,
+            },
         });
         const headerAction = defineSessionHeaderAction({
             id: 'open-preview',
@@ -49,33 +52,40 @@ describe('plugin UI contribution helpers', () => {
                 },
             },
         });
-        const hostedWeb = defineHostedWeb({
-            id: 'preview-web',
-            service: { kind: 'sessionEndpoint', endpointIdPath: '/endpointId' },
-            entry: { routeMode: 'hostOrigin', path: '/' },
-            bridge: { allowedMessages: ['ready'] },
-            sandbox: { scripts: true },
-            fallback: { kind: 'unavailable' },
-            display,
+        const hostedWeb = defineSurfaceContribution({
+            mode: 'hostedWeb',
+            contribution: {
+                id: 'preview-web',
+                service: { kind: 'sessionEndpoint', endpointIdPath: '/endpointId' },
+                entry: { routeMode: 'hostOrigin', path: '/' },
+                bridge: { allowedMessages: ['ready'] },
+                sandbox: { scripts: true },
+                security: {},
+                fallback: { kind: 'unavailable' },
+                display,
+            },
         });
-        const nativeBundle = defineReactNativeBundle({
-            id: 'native-preview',
-            bundle: {
-                platform: 'ios',
-                channel: 'internal',
-                integrity: { digest: 'sha256:bundle' },
+        const nativeBundle = defineSurfaceContribution({
+            mode: 'reactNative',
+            contribution: {
+                id: 'native-preview',
+                bundle: {
+                    platform: 'ios',
+                    channel: 'internal',
+                    integrity: { digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' },
+                },
+                entry: { exportName: 'renderSurface' },
+                compatibility: {
+                    hostUiApiVersion: '1.0.0',
+                    reactVersion: '19.0.0',
+                    reactNativeVersion: '0.79.0',
+                    supportedPlatforms: ['ios'],
+                    supportedChannels: ['internal'],
+                },
+                hostApi: { minVersion: '1.0.0' },
+                fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
+                display,
             },
-            entry: { exportName: 'renderSurface' },
-            compatibility: {
-                hostUiApiVersion: '1.0.0',
-                reactVersion: '19.0.0',
-                reactNativeVersion: '0.79.0',
-                supportedPlatforms: ['ios'],
-                supportedChannels: ['internal'],
-            },
-            hostApi: { minVersion: '1.0.0' },
-            fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
-            display,
         });
         const artifact = defineUiArtifact({
             id: 'native-preview-ios',
@@ -84,7 +94,7 @@ describe('plugin UI contribution helpers', () => {
             artifactKind: 'reactNativeBundle',
             platform: 'ios',
             channel: 'internal',
-            integrity: { digest: 'sha256:bundle' },
+            integrity: { digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' },
             compatibility: {
                 hostAppVersion: '2.0.0',
                 hostUiApiVersion: '1.0.0',
@@ -101,37 +111,80 @@ describe('plugin UI contribution helpers', () => {
         expect(translations.locales.en?.title).toBe('Preview');
         expect(hostedWeb.service.kind).toBe('sessionEndpoint');
         expect(nativeBundle.fallback).toEqual({ kind: 'hostedWeb', contributionId: 'preview-web' });
-        expect(artifact.integrity.digest).toBe('sha256:bundle');
+        expect(artifact.integrity.digest).toBe('sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
     });
 
     it('validates public helper inputs through the protocol schemas', () => {
-        expect(() => defineHostedWeb({
-            id: 'bad-web',
-            service: { kind: 'sessionEndpoint', endpointIdPath: '/endpointId' },
-            entry: { routeMode: 'hostOrigin' },
-            bridge: { allowedMessages: ['ready'] },
-            sandbox: { scripts: true },
-            display,
+        expect(() => defineSurfaceContribution({
+            mode: 'hostedWeb',
+            contribution: {
+                id: 'bad-web',
+                service: { kind: 'sessionEndpoint', endpointIdPath: '/endpointId' },
+                // Invalid routeMode value — schema rejects at authoring time.
+                entry: { routeMode: 'bogusMode' as 'hostOrigin' },
+                bridge: { allowedMessages: ['ready'] },
+                sandbox: { scripts: true },
+                security: {},
+                fallback: { kind: 'unavailable' },
+                display,
+            },
         })).toThrow();
 
-        expect(() => defineReactNativeBundle({
-            id: 'bad-native',
-            bundle: {
-                platform: 'ios',
-                channel: 'internal',
-                integrity: { digest: 'bundle' },
+        expect(() => defineSurfaceContribution({
+            mode: 'reactNative',
+            contribution: {
+                id: 'bad-native',
+                bundle: {
+                    platform: 'ios',
+                    channel: 'internal',
+                    integrity: { digest: 'bundle' },
+                },
+                entry: { exportName: 'renderSurface' },
+                compatibility: {
+                    hostUiApiVersion: '1.0.0',
+                    reactVersion: '19.0.0',
+                    reactNativeVersion: '0.79.0',
+                    supportedPlatforms: ['ios'],
+                    supportedChannels: ['internal'],
+                },
+                hostApi: { minVersion: '1.0.0' },
+                fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
+                display,
             },
-            entry: { exportName: 'renderSurface' },
-            compatibility: {
-                hostUiApiVersion: '1.0.0',
-                reactVersion: '19.0.0',
-                reactNativeVersion: '0.79.0',
-                supportedPlatforms: ['ios'],
-                supportedChannels: ['internal'],
-            },
-            hostApi: { minVersion: '1.0.0' },
-            fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
-            display,
         })).toThrow();
+    });
+
+    it('publishes React Native helper subpaths in the stable UI export tier', () => {
+        const packageJson = JSON.parse(
+            readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+        ) as { exports?: Record<string, unknown> };
+
+        expect(packageJson.exports).toHaveProperty('./ui/reactNativeBuild', {
+            types: './dist/ui/reactNativeBuild.d.ts',
+            default: './dist/ui/reactNativeBuild.js',
+        });
+        expect(packageJson.exports).toHaveProperty('./ui/reactNativeBundles', {
+            types: './dist/ui/reactNativeBundles.d.ts',
+            default: './dist/ui/reactNativeBundles.js',
+        });
+        expect(packageJson.exports).toHaveProperty('./ui/reactNativeDevServer', {
+            types: './dist/ui/reactNativeDevServer.d.ts',
+            default: './dist/ui/reactNativeDevServer.js',
+        });
+        expect(packageJson.exports).toHaveProperty('./ui/reactNativeWebBuild', {
+            types: './dist/ui/reactNativeWebBuild.d.ts',
+            default: './dist/ui/reactNativeWebBuild.js',
+        });
+        expect(packageJson.exports).toHaveProperty('./ui/hostRuntimeExternalsBuildPlugin', {
+            types: './dist/ui/hostRuntimeExternalsBuildPlugin.d.ts',
+            default: './dist/ui/hostRuntimeExternalsBuildPlugin.js',
+        });
+    });
+
+    it('routes UI subpath shared setting types through the canonical SDK UI aggregate', () => {
+        const uiSubpathSource = readFileSync(new URL('./ui/index.ts', import.meta.url), 'utf8');
+
+        expect(uiSubpathSource).toContain("export type { SettingDefinitionMap } from '../ui.js';");
+        expect(uiSubpathSource).not.toContain("SettingDefinitionMap } from '@happier-dev/protocol'");
     });
 });

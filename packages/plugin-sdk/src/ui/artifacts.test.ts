@@ -12,7 +12,7 @@ describe('plugin UI artifact SDK helpers', () => {
             artifactKind: 'reactNativeBundle',
             platform: 'ios',
             channel: 'internal',
-            integrity: { digest: 'sha256:bundle' },
+            integrity: { digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' },
             compatibility: {
                 hostAppVersion: '2.0.0',
                 hostUiApiVersion: '1.0.0',
@@ -24,6 +24,6 @@ describe('plugin UI artifact SDK helpers', () => {
             assetPath: 'ui/native/ios.bundle',
         });
 
-        expect(deriveUiArtifactCacheKey(artifact)).toContain('sha256:bundle');
+        expect(deriveUiArtifactCacheKey(artifact)).toContain('sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
     });
 });

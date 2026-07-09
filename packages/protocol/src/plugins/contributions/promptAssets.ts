@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { PromptAssetCapabilitiesV1Schema } from '../../promptLibrary/promptAssetsV1.js';
+import { PromptAssetCapabilitiesV1Schema } from '../../prompts/library/promptAssetsV1.js';
 
 export const PluginPromptAssetAdapterKindV1Schema = z.enum(['skillMd', 'markdownDoc']);
 export type PluginPromptAssetAdapterKindV1 = z.infer<typeof PluginPromptAssetAdapterKindV1Schema>;

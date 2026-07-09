@@ -9,7 +9,7 @@ import type {
     TerminalPromptInput,
 } from '@happier-dev/agents';
 
-import type { ExecAgentCliLaunchInputV1 } from './exec';
+import type { ExecAgentCliLaunchInputV1 } from './exec.js';
 
 export type TerminalHostResolutionReasonV1 =
     | 'tmux_available'
@@ -18,6 +18,10 @@ export type TerminalHostResolutionReasonV1 =
     | 'tmux_unsupported_on_windows'
     | 'zellij_forced'
     | 'zellij_unavailable'
+    | 'zellij_unavailable_tmux_fallback'
+    | 'windows_console_available'
+    | 'windows_console_forced'
+    | 'windows_console_unavailable'
     | 'windows_zellij_unvalidated'
     | 'windows_arm64_unsupported'
     | 'no_host_available';

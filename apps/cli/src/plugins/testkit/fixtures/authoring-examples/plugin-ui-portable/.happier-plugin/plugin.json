@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 2,
+  "id": "examples.plugin-ui-portable",
+  "version": "0.1.0",
+  "displayName": "Portable Plugin UI Example",
+  "description": "Portable authoring-kit example: a hosted-web UI surface built with happier-plugin-build-ui into dist/happier-plugin-ui.",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "uses": [
+    "uiDescriptors"
+  ],
+  "entrypoints": {
+    "main": "./daemon.mjs"
+  },
+  "permissions": {
+    "required": [],
+    "optional": []
+  },
+  "contributes": {
+    "hostedWeb": [
+      {
+        "id": "preview-web",
+        "service": {
+          "kind": "staticAssets",
+          "assetRootId": "hosted-web/preview-web"
+        },
+        "entry": {
+          "routeMode": "pathFallback",
+          "path": "/"
+        },
+        "display": {
+          "titleKey": "plugin.portable.title",
+          "developerFallback": "Portable preview web"
+        },
+        "bridge": {
+          "allowedMessages": [
+            "ready",
+            "heightChanged",
+            "requestHostAction"
+          ]
+        },
+        "sandbox": {
+          "scripts": true,
+          "sameOrigin": false,
+          "popups": false,
+          "topNavigation": false,
+          "mixedContent": false
+        },
+        "security": {
+          "allowedNavigationOrigins": [],
+          "allowedCallbackOrigins": [],
+          "allowedConnectOrigins": [],
+          "csp": {
+            "scriptSrc": "selfOnly",
+            "styleSrc": "selfOnly",
+            "imgSrc": "selfOnly",
+            "fontSrc": "selfOnly",
+            "connectSrc": "selfOnly",
+            "allowDataUrls": false,
+            "allowBlobUrls": false,
+            "allowInlineStyles": false,
+            "allowEval": false
+          },
+          "sourceMaps": "devOrInternalOnly",
+          "mixedContent": "deny"
+        },
+        "fallback": {
+          "kind": "none"
+        }
+      }
+    ]
+  }
+}

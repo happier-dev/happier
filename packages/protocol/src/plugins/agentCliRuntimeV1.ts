@@ -36,6 +36,9 @@ export const AgentCliManagedInstallSpecV1Schema = z.discriminatedUnion('kind', [
     kind: z.literal('managed_package'),
     packageName: z.string().trim().min(1),
     binaryName: z.string().trim().min(1),
+    packageBinarySetup: z.object({
+      kind: z.literal('opencode_platform_binary'),
+    }).passthrough().nullable().optional(),
   }).passthrough(),
 ]);
 export type AgentCliManagedInstallSpecV1 = z.infer<typeof AgentCliManagedInstallSpecV1Schema>;

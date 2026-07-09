@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createJsonlRequestCorrelator } from './jsonlRequestCorrelator';
+import { createJsonlRequestCorrelator } from './jsonlRequestCorrelator.js';
 
 describe('createJsonlRequestCorrelator', () => {
     it('rejects duplicate pending ids and makes disposers one-shot', () => {

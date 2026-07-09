@@ -7,21 +7,16 @@
   "engines": {
     "happier": "^0.2.0"
   },
-  "runtime": {
-    "apiVersion": 1,
-    "capabilities": [
-      "agents",
-      "backends",
-      "hooks"
-    ]
+  "uses": [
+    "agents",
+    "hooks"
+  ],
+  "entrypoints": {
+    "main": "./daemon.mjs"
   },
-  "targets": {
-    "daemon": {
-      "entry": "./daemon.mjs"
-    }
-  },
-  "capabilities": {
-    "permissions": []
+  "permissions": {
+    "required": [],
+    "optional": []
   },
   "contributes": {
     "agents": [
@@ -35,9 +30,12 @@
           ]
         },
         "ownedBackendIds": [
-          "acme.sample.backend"
+          "acme.sample.provider"
         ],
         "catalogAgentId": "claude",
+        "runtime": {
+          "kind": "custom"
+        },
         "agentCliRuntime": {
           "kindVersion": 1,
           "id": "acme.sample.provider",
@@ -52,18 +50,8 @@
           "manualInstallKind": "command",
           "manualInstallRecipes": null,
           "acceptsJavaScriptFileOverride": false
-        }
-      }
-    ],
-    "backends": [
-      {
-        "kindVersion": 1,
-        "id": "acme.sample.backend",
-        "engine": {
-          "kind": "custom"
         },
         "capabilities": {},
-        "agentId": "acme.sample.provider",
         "surfaceHandlers": [
           {
             "id": "backend.terminalRuntime.launch",
@@ -188,9 +176,9 @@
     "hooks": [
       {
         "hookApiVersion": 1,
-        "id": "backend.resolveRuntimePrerequisites",
+        "id": "agent.resolvePrerequisites",
         "category": "decision",
-        "scope": "backend",
+        "scope": "agent",
         "executionKind": "decide",
         "handler": {
           "target": "plugin"

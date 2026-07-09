@@ -7,24 +7,47 @@
   "engines": {
     "happier": "^0.2.0"
   },
-  "runtime": {
-    "apiVersion": 1,
-    "capabilities": [
-      "actions"
-    ]
+  "uses": [
+    "actions"
+  ],
+  "entrypoints": {
+    "main": "./agent/daemon.mjs"
   },
-  "targets": {
-    "daemon": {
-      "entry": "./agent/daemon.mjs"
-    }
+  "permissions": {
+    "required": [],
+    "optional": []
   },
-  "capabilities": {
-    "permissions": [
+  "contributes": {
+    "actions": [
       {
-        "capability": "actions.register",
-        "reason": "Register the reload-report action during local plugin authoring flows."
+        "id": "examples.reload.report",
+        "title": "Report Reload Timestamp",
+        "description": "Returns activation-time data so you can verify happier plugins reload.",
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "cli"
+        ],
+        "placement": "commandPalette",
+        "dangerLevel": "safe",
+        "resultSchema": {
+          "type": "object",
+          "required": [
+            "activatedAtMs"
+          ],
+          "properties": {
+            "activatedAtMs": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        },
+        "handler": {
+          "target": "daemon",
+          "registrationId": "examples.reload.report"
+        }
       }
     ]
-  },
-  "contributes": {}
+  }
 }

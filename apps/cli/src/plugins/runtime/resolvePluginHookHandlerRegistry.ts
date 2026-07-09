@@ -79,6 +79,7 @@ export async function resolvePluginHookHandlerRegistry(params: Readonly<{
     registry?: ResolvedContributionRegistry;
     hookRegistrations?: readonly ResolvedHookRegistration[];
     generation?: number;
+    pluginIds?: readonly string[];
     resolveActivationSource?: (
         registration: ResolvedHookRegistration,
     ) => PluginActivationSource<PluginDaemonModuleNamespace> | null;
@@ -86,9 +87,14 @@ export async function resolvePluginHookHandlerRegistry(params: Readonly<{
     const handlersByHookIdMutable = new Map<string, ResolvedPluginHookHandler[]>();
     const diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]> = {};
     const hookRegistrations = params.registry?.hookRegistrations ?? params.hookRegistrations ?? [];
+    const allowedPluginIds = params.pluginIds ? new Set(params.pluginIds) : null;
     let registrationIndex = 0;
 
     for (const registration of hookRegistrations) {
+        if (allowedPluginIds && !allowedPluginIds.has(registration.pluginId)) {
+            continue;
+        }
+
         const currentRegistrationIndex = registrationIndex++;
         ensureDiagnosticBucket(diagnosticsByPluginId, registration.pluginId);
 
@@ -124,6 +130,7 @@ export async function resolvePluginHookHandlerRegistry(params: Readonly<{
             const source = params.resolveActivationSource?.(registration) ?? {
                 kind: 'file_backed' as const,
                 entryPath: registration.daemonEntryPath,
+                devEntryPath: registration.devDaemonEntryPath,
                 trustPolicy: registration.sourceSpec.trustPolicy,
             };
             moduleNamespace = await loadPluginModule({
@@ -192,7 +199,7 @@ export async function resolvePluginHookHandlerRegistry(params: Readonly<{
     for (const [hookId, handlers] of handlersByHookIdMutable.entries()) {
         const orderedHandlers = [...handlers].sort((left, right) => {
             if (right.priority !== left.priority) {
-                return right.priority - left.priority;
+                return left.priority - right.priority;
             }
             if (left.pluginId !== right.pluginId) {
                 return left.pluginId.localeCompare(right.pluginId);

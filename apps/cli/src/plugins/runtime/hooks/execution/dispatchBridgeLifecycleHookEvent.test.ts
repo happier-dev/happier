@@ -11,7 +11,7 @@ describe('dispatchBridgeLifecycleHookEvent', () => {
       dispose,
     });
     const dispatchEvent = vi.fn().mockResolvedValue({
-      eventId: 'execution_run.start',
+      eventId: 'executionRun.started',
       matchedHandlerCount: 0,
       outcomes: [],
     });
@@ -19,9 +19,9 @@ describe('dispatchBridgeLifecycleHookEvent', () => {
     await dispatchBridgeLifecycleHookEvent({
       happyHomeDir: '/tmp/happy-home',
       event: {
-        eventId: 'execution_run.start',
+        eventId: 'executionRun.started',
         happySessionId: 'sess_1',
-        backendId: 'claude',
+        agentId: 'claude',
         payload: {
           runId: 'run_1',
           intent: 'review',
@@ -40,11 +40,11 @@ describe('dispatchBridgeLifecycleHookEvent', () => {
       }),
       event: expect.objectContaining({
         hookVersion: 1,
-        eventId: 'execution_run.start',
+        eventId: 'executionRun.started',
         category: 'lifecycle',
         scope: 'session',
         happySessionId: 'sess_1',
-        backendId: 'claude',
+        agentId: 'claude',
         timestampMs: 123,
         payload: expect.objectContaining({
           runId: 'run_1',
@@ -52,6 +52,9 @@ describe('dispatchBridgeLifecycleHookEvent', () => {
         }),
       }),
     });
+    const dispatchedEvent = dispatchEvent.mock.calls[0]?.[0]?.event;
+    expect(dispatchedEvent).not.toHaveProperty('providerId');
+    expect(dispatchedEvent).not.toHaveProperty('backendId');
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 });

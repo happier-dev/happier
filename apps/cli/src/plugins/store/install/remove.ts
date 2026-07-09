@@ -1,4 +1,3 @@
-import { dirname } from 'node:path';
 import { rm } from 'node:fs/promises';
 
 import { createPluginStateStore } from '@/plugins/store/state';
@@ -12,7 +11,7 @@ export type RemoveInstalledPluginResult =
     }>
   | Readonly<{
       ok: false;
-      errorCode: 'plugin_not_found';
+      errorCode: 'plugin_not_found' | 'plugin_not_uninstallable';
       errorMessage: string;
     }>;
 
@@ -28,6 +27,14 @@ export async function removeInstalledPlugin(params: Readonly<{
       ok: false,
       errorCode: 'plugin_not_found',
       errorMessage: `Unknown plugin id: ${params.pluginId}`,
+    };
+  }
+
+  if (record.source.kind === 'bundled') {
+    return {
+      ok: false,
+      errorCode: 'plugin_not_uninstallable',
+      errorMessage: `Bundled first-party plugin '${params.pluginId}' cannot be removed from the local installed plugin catalog`,
     };
   }
 

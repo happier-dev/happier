@@ -1,8 +1,11 @@
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import type { PluginSourceTrustPolicyV1 } from '@happier-dev/protocol';
+import { createJiti } from 'jiti';
+
+import { isTrustPolicyLocallyTrusted } from '@/plugins/install/ui/trustedSource';
 
 import type { PluginActivationSource } from './activationSources';
 
@@ -19,6 +22,19 @@ type PluginModuleLoadErrorCode =
 
 const moduleLoadCache = new Map<string, Promise<PluginModuleNamespace>>();
 const SUPPORTED_DAEMON_ENTRY_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
+const SUPPORTED_DEV_DAEMON_ENTRY_EXTENSIONS = new Set([
+    ...SUPPORTED_DAEMON_ENTRY_EXTENSIONS,
+    '.ts',
+    '.mts',
+    '.cts',
+    '.tsx',
+]);
+const TYPESCRIPT_DEV_DAEMON_ENTRY_EXTENSIONS = new Set(['.ts', '.mts', '.cts', '.tsx']);
+const tsDevEntryLoader = createJiti(import.meta.url, {
+    fsCache: false,
+    moduleCache: false,
+    interopDefault: false,
+});
 
 function createModuleLoadError(code: PluginModuleLoadErrorCode, message: string, cause?: unknown): Error {
     const error = new Error(message) as Error & { code?: PluginModuleLoadErrorCode; cause?: unknown };
@@ -62,35 +78,92 @@ function evictCacheByPrefix(prefix: string, preserveKey: string): void {
 }
 
 function assertTrusted(trustPolicy: PluginSourceTrustPolicyV1 | undefined): void {
-    if (trustPolicy !== 'local_trusted') {
+    if (!isTrustPolicyLocallyTrusted(trustPolicy)) {
         if (trustPolicy === 'untrusted') {
             throw createModuleLoadError(
                 'PLUGIN_DAEMON_TRUST_UNTRUSTED',
-                'Refusing to load executable plugin daemon entry from an untrusted source',
+                "Refusing to load executable plugin daemon entry because source trustPolicy:'untrusted' denies daemon code execution",
             );
         }
         throw createModuleLoadError(
             'PLUGIN_DAEMON_TRUST_APPROVAL_REQUIRED',
-            'Plugin executable load requires explicit trust approval before loading daemon code',
+            `Plugin executable load requires explicit trust approval before loading daemon code because source trustPolicy:'${trustPolicy ?? 'prompt'}' is not local_trusted`,
         );
     }
 }
 
+function resolveSelectedEntryPath(params: Readonly<{
+    entryPath: string;
+    devEntryPath?: string | null;
+    trustPolicy: PluginSourceTrustPolicyV1 | undefined;
+}>): Readonly<{ entryPath: string; isDevEntry: boolean }> {
+    const devEntryPath = params.devEntryPath?.trim();
+    if (devEntryPath && isTrustPolicyLocallyTrusted(params.trustPolicy)) {
+        return { entryPath: devEntryPath, isDevEntry: true };
+    }
+    return { entryPath: params.entryPath, isDevEntry: false };
+}
+
+function assertSupportedEntryExtension(params: Readonly<{
+    extension: string;
+    resolvedEntryPath: string;
+    isDevEntry: boolean;
+}>): void {
+    const supportedExtensions = params.isDevEntry
+        ? SUPPORTED_DEV_DAEMON_ENTRY_EXTENSIONS
+        : SUPPORTED_DAEMON_ENTRY_EXTENSIONS;
+    if (supportedExtensions.has(params.extension)) {
+        return;
+    }
+
+    throw createModuleLoadError(
+        'PLUGIN_DAEMON_ENTRY_KIND_UNSUPPORTED',
+        `Unsupported plugin daemon ${params.isDevEntry ? 'dev ' : ''}entry extension '${params.extension || '<none>'}' for '${params.resolvedEntryPath}'`,
+    );
+}
+
+async function importFileBackedModule(params: Readonly<{
+    resolvedEntryPath: string;
+    fingerprint: string;
+    cacheKey?: string;
+    isTypeScriptDevEntry: boolean;
+}>): Promise<PluginModuleNamespace> {
+    if (params.isTypeScriptDevEntry) {
+        const source = await readFile(params.resolvedEntryPath, 'utf8');
+        return await tsDevEntryLoader.evalModule(source, {
+            filename: params.resolvedEntryPath,
+            async: true,
+        }) as PluginModuleNamespace;
+    }
+
+    const moduleUrl = pathToFileURL(params.resolvedEntryPath);
+    moduleUrl.searchParams.set(
+        'happier_plugin_cache_key',
+        `${params.cacheKey ?? 'path'}:${params.fingerprint}`,
+    );
+    return await import(moduleUrl.href) as PluginModuleNamespace;
+}
+
 async function loadFileBackedModule(params: Readonly<{
     entryPath: string;
+    devEntryPath?: string | null;
     trustPolicy: PluginSourceTrustPolicyV1 | undefined;
     cacheKey?: string;
 }>): Promise<PluginModuleNamespace> {
     assertTrusted(params.trustPolicy);
 
-    const resolvedEntryPath = resolve(params.entryPath);
+    const selectedEntry = resolveSelectedEntryPath({
+        entryPath: params.entryPath,
+        devEntryPath: params.devEntryPath,
+        trustPolicy: params.trustPolicy,
+    });
+    const resolvedEntryPath = resolve(selectedEntry.entryPath);
     const extension = extname(resolvedEntryPath).toLowerCase();
-    if (!SUPPORTED_DAEMON_ENTRY_EXTENSIONS.has(extension)) {
-        throw createModuleLoadError(
-            'PLUGIN_DAEMON_ENTRY_KIND_UNSUPPORTED',
-            `Unsupported plugin daemon entry extension '${extension || '<none>'}' for '${resolvedEntryPath}'`,
-        );
-    }
+    assertSupportedEntryExtension({
+        extension,
+        resolvedEntryPath,
+        isDevEntry: selectedEntry.isDevEntry,
+    });
 
     let daemonEntryStats: Awaited<ReturnType<typeof stat>>;
     try {
@@ -130,12 +203,12 @@ async function loadFileBackedModule(params: Readonly<{
     }
 
     evictCacheByPrefix(`file:${resolvedEntryPath}::`, cacheEntryKey);
-    const moduleUrl = pathToFileURL(resolvedEntryPath);
-    moduleUrl.searchParams.set(
-        'happier_plugin_cache_key',
-        `${params.cacheKey ?? 'path'}:${fingerprint}`,
-    );
-    const modulePromise = import(moduleUrl.href) as Promise<PluginModuleNamespace>;
+    const modulePromise = importFileBackedModule({
+        resolvedEntryPath,
+        fingerprint,
+        cacheKey: params.cacheKey,
+        isTypeScriptDevEntry: selectedEntry.isDevEntry && TYPESCRIPT_DEV_DAEMON_ENTRY_EXTENSIONS.has(extension),
+    });
     moduleLoadCache.set(cacheEntryKey, modulePromise);
 
     try {
@@ -186,6 +259,7 @@ export async function loadPluginModule<TModule extends PluginModuleNamespace>(pa
     if (params.source.kind === 'file_backed') {
         return await loadFileBackedModule({
             entryPath: params.source.entryPath,
+            devEntryPath: params.source.devEntryPath,
             trustPolicy: params.source.trustPolicy,
             cacheKey: params.cacheKey,
         }) as TModule;

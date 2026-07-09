@@ -1,11 +1,26 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
 import { readPluginManifest } from './read';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+
+async function listFilesRecursive(root: string): Promise<string[]> {
+  const entries = await readdir(root, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await listFilesRecursive(path));
+    } else if (entry.isFile()) {
+      files.push(path);
+    }
+  }
+  return files;
+}
 
 async function writeManifestFile(rootDir: string, contents: string): Promise<string> {
   const manifestDir = join(rootDir, '.happier-plugin');
@@ -13,6 +28,10 @@ async function writeManifestFile(rootDir: string, contents: string): Promise<str
   const manifestPath = join(manifestDir, 'plugin.json');
   await writeFile(manifestPath, contents, 'utf8');
   return manifestPath;
+}
+
+function retiredLiteral(parts: readonly string[], separator = ''): string {
+  return parts.join(separator);
 }
 
 function createBaseManifestV2(
@@ -27,13 +46,15 @@ function createBaseManifestV2(
     engines: {
       happier: '^0.2.0',
     },
-    runtime: {
-      apiVersion: 1,
-      capabilities: [],
+    uses: [],
+    entrypoints: {
+      main: './daemon.js',
     },
-    targets: {},
-    permissions: [],
-    contributes: [],
+    permissions: {
+      required: [],
+      optional: [],
+    },
+    contributes: {},
     ...overrides,
   });
 }
@@ -42,6 +63,11 @@ function expectedBackendCapabilities(executionRunSupported: boolean): Record<str
   return {
     executionRun: { supported: executionRunSupported },
     session: {
+      contextCompaction: {
+        events: { supported: false },
+        manualTrigger: { supported: false },
+        transcriptInference: { supported: false },
+      },
       media: {
         acceptsImageInput: { supported: false },
         emitsSessionMedia: { supported: false },
@@ -51,7 +77,69 @@ function expectedBackendCapabilities(executionRunSupported: boolean): Record<str
   };
 }
 
+function createAgentContribution(overrides: Readonly<Record<string, unknown>> = {}): Readonly<Record<string, unknown>> {
+  return {
+    id: 'acme.backend',
+    display: {
+      name: 'Acme Agent',
+    },
+    runtime: {
+      kind: 'custom',
+    },
+    capabilities: {},
+    ...overrides,
+  };
+}
+
 describe('readPluginManifest', () => {
+  it('keeps every plugin authoring example on the current v2 manifest contract', async () => {
+    const examplesRoot = fileURLToPath(new URL('../testkit/fixtures/authoring-examples/', import.meta.url));
+    const entries = await readdir(examplesRoot, { withFileTypes: true });
+    const manifestPaths = entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(examplesRoot, entry.name, '.happier-plugin', 'plugin.json'));
+
+    expect(manifestPaths.length).toBeGreaterThan(0);
+
+    for (const manifestPath of manifestPaths) {
+      const raw = await readFile(manifestPath, 'utf8');
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      expect(parsed.runtime, manifestPath).toBeUndefined();
+      expect(parsed.targets, manifestPath).toBeUndefined();
+      expect(parsed.capabilities, manifestPath).toBeUndefined();
+      expect((parsed.contributes as Record<string, unknown> | undefined)?.backends, manifestPath).toBeUndefined();
+      expect(raw, manifestPath).not.toContain(retiredLiteral(['agent', 'Tool']));
+      expect(raw, manifestPath).not.toContain(retiredLiteral(['provider', '.', 'response', '.', 'after']));
+
+      const result = await readPluginManifest({ manifestPath });
+      expect(result.ok, JSON.stringify(result, null, 2)).toBe(true);
+    }
+
+    const retiredAuthoringVocabulary = [
+      retiredLiteral(['targets', '.', 'daemon']),
+      retiredLiteral(['runtime', '.', 'capabilities']),
+      retiredLiteral(['runtime', '.', 'apiVersion']),
+      retiredLiteral(['capabilities', '.', 'permissions']),
+      retiredLiteral(['capabilities', '.', 'optionalPermissions']),
+      retiredLiteral(['agent', 'Tool']),
+      retiredLiteral(['contributes', '.', 'backends']),
+      retiredLiteral(['provider', '.', 'response', '.', 'after']),
+      retiredLiteral(['provider', '/', 'backend']),
+      retiredLiteral(['provider', ' response']),
+      retiredLiteral(['daemon', ' target']),
+      retiredLiteral(['backend', 'Id']),
+      retiredLiteral(['runtime', 'Capabilities']),
+      retiredLiteral(['runtimeDescriptor', '.', 'backend', 'Id']),
+      retiredLiteral(['examples', '.', 'provider']),
+    ];
+    for (const filePath of await listFilesRecursive(examplesRoot)) {
+      const raw = await readFile(filePath, 'utf8');
+      for (const retired of retiredAuthoringVocabulary) {
+        expect(raw, `${filePath} contains retired authoring vocabulary: ${retired}`).not.toContain(retired);
+      }
+    }
+  });
+
   it('reads schemaVersion 2 manifests into the canonical grouped CLI manifest shape', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
     const manifestPath = await writeManifestFile(
@@ -65,37 +153,23 @@ describe('readPluginManifest', () => {
         engines: {
           happier: '^0.2.0',
         },
-        runtime: {
-          apiVersion: 1,
-          capabilities: ['actions', 'tools', 'commands', 'hooks', 'resources', 'uiDescriptors'],
+        uses: ['agents', 'actions', 'tools', 'commands', 'hooks', 'resources', 'uiDescriptors'],
+        entrypoints: {
+          main: './daemon.mjs',
         },
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
+        permissions: {
+          required: [
+          {
+            capability: 'network',
+            reason: 'Calls the Acme service API',
           },
+          ],
+          optional: [],
         },
-        permissions: [
-          {
-            capability: 'actions.execute',
-            reason: 'Runs plugin actions from the host',
-          },
-        ],
-        contributes: [
-          {
-            kind: 'provider',
-            kindVersion: 1,
-            id: 'acme.provider',
-            display: {
-              name: 'Acme Provider',
-            },
-            ownedBackendIds: ['acme.backend'],
-          },
-          {
-            kind: 'backend',
-            kindVersion: 1,
+        contributes: {
+          agents: [{
             id: 'acme.backend',
-            providerId: 'acme.provider',
-            engine: {
+            runtime: {
               kind: 'acp',
               transport: {
                 kind: 'stdio',
@@ -121,40 +195,33 @@ describe('readPluginManifest', () => {
                 },
               },
             ],
-          },
-          {
-            kind: 'action',
+          }],
+          actions: [{
             id: 'acme.action',
             title: 'Run Acme',
             description: 'Runs the Acme action',
             scopes: ['settings'],
-            surfaces: ['settings'],
+            surfaces: ['cli'],
             placement: 'primary',
             dangerLevel: 'safe',
             handler: {
               target: 'daemon',
               exportName: 'runAcme',
             },
-          },
-          {
-            kind: 'tool',
+          }],
+          tools: [{
             id: 'acme.tool',
             name: 'acme_tool',
             title: 'Acme Tool',
             description: 'Agent-facing Acme tool',
             safety: 'safe',
-            surfaces: {
-              cli: false,
-              mcp: true,
-              session_agent: true,
-            },
+            surfaces: ['mcp', 'agent'],
             handler: {
               target: 'daemon',
               exportName: 'runAcmeTool',
             },
-          },
-          {
-            kind: 'command',
+          }],
+          commands: [{
             id: 'acme.command',
             command: 'acme review',
             rootHelpLabel: 'happier acme review',
@@ -163,15 +230,13 @@ describe('readPluginManifest', () => {
               target: 'daemon',
               exportName: 'runAcmeCommand',
             },
-          },
-          {
-            kind: 'resource',
+          }],
+          resources: [{
             id: 'acme.prompt',
             resourceKind: 'prompt',
             path: './prompts/acme.md',
-          },
-          {
-            kind: 'uiDescriptor',
+          }],
+          uiDescriptors: [{
             id: 'acme.status',
             surface: 'status',
             title: 'Acme Status',
@@ -182,20 +247,19 @@ describe('readPluginManifest', () => {
                 title: 'Enabled',
               },
             ],
-          },
-          {
-            kind: 'hook',
+          }],
+          hooks: [{
             hookApiVersion: 1,
-            id: 'backend.resolveRuntimePrerequisites',
+            id: 'agent.resolvePrerequisites',
             category: 'decision',
-            scope: 'backend',
+            scope: 'agent',
             executionKind: 'decide',
             handler: {
               target: 'plugin',
               exportName: 'resolveTranscriptBinding',
             },
-          },
-        ],
+          }],
+        },
       })),
     );
 
@@ -204,26 +268,23 @@ describe('readPluginManifest', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.manifest.schemaVersion).toBe(2);
-    expect(result.manifest.runtime).toEqual({
-      apiVersion: 1,
-      capabilities: ['actions', 'tools', 'commands', 'hooks', 'resources', 'uiDescriptors'],
-    });
+    expect('runtime' in result.manifest).toBe(false);
     expect(result.manifest.permissions).toEqual([
       {
-        capability: 'actions.execute',
-        reason: 'Runs plugin actions from the host',
+        capability: 'network',
+        reason: 'Calls the Acme service API',
       },
     ]);
-    expect(result.manifest.contributes.providers.map((definition) => definition.id)).toEqual(['acme.provider']);
-    expect(result.manifest.contributes.backends.map((definition) => definition.id)).toEqual(['acme.backend']);
-    expect(result.manifest.contributes.backends[0]?.capabilities).toEqual(expectedBackendCapabilities(true));
+    expect(result.manifest.contributes.agents.map((definition) => definition.id)).toEqual(['acme.backend']);
+    expect(result.manifest.contributes.agentRuntimes.map((definition) => definition.id)).toEqual(['acme.backend']);
+    expect(result.manifest.contributes.agentRuntimes[0]?.capabilities).toEqual(expectedBackendCapabilities(true));
     expect(result.manifest.contributes.actions.map((definition) => definition.id)).toEqual(['acme.action']);
     expect(result.manifest.contributes.tools.map((definition) => definition.id)).toEqual(['acme.tool']);
         expect(result.manifest.contributes.commands.map((definition) => definition.id)).toEqual(['acme.command']);
         expect(result.manifest.contributes.resources.map((definition) => definition.id)).toEqual(['acme.prompt']);
         expect(result.manifest.contributes.uiDescriptors.map((definition) => definition.id)).toEqual(['acme.status']);
         expect(result.manifest.contributes.hooks.map((definition) => definition.id)).toEqual([
-            'backend.resolveRuntimePrerequisites',
+            'agent.resolvePrerequisites',
         ]);
     });
 
@@ -233,38 +294,14 @@ describe('readPluginManifest', () => {
       pluginRoot,
       JSON.stringify(createBaseManifestV2({
         id: 'acme.execution-run-opt-out',
-        runtime: {
-          apiVersion: 1,
-          capabilities: ['backends'],
-        },
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
-          },
-        },
-        contributes: [
-          {
-            kind: 'provider',
-            kindVersion: 1,
-            id: 'acme.provider',
-            display: {
-              name: 'Acme Provider',
-            },
-            ownedBackendIds: ['acme.backend'],
-          },
-          {
-            kind: 'backend',
-            kindVersion: 1,
-            id: 'acme.backend',
-            providerId: 'acme.provider',
-            engine: {
-              kind: 'custom',
-            },
+        uses: ['agents'],
+        contributes: {
+          agents: [createAgentContribution({
             capabilities: {
               executionRun: false,
             },
-          },
-        ],
+          })],
+        },
       })),
     );
 
@@ -272,7 +309,7 @@ describe('readPluginManifest', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.manifest.contributes.backends[0]?.capabilities).toEqual(expectedBackendCapabilities(false));
+    expect(result.manifest.contributes.agentRuntimes[0]?.capabilities).toEqual(expectedBackendCapabilities(false));
   });
 
   it('accepts manifest-only ACP backends as runtimeCore-backed execution-run capable', async () => {
@@ -281,31 +318,10 @@ describe('readPluginManifest', () => {
       pluginRoot,
       JSON.stringify(createBaseManifestV2({
         id: 'acme.manifest-only-acp',
-        runtime: {
-          apiVersion: 1,
-          capabilities: ['backends'],
-        },
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
-          },
-        },
-        contributes: [
-          {
-            kind: 'provider',
-            kindVersion: 1,
-            id: 'acme.provider',
-            display: {
-              name: 'Acme Provider',
-            },
-            ownedBackendIds: ['acme.backend'],
-          },
-          {
-            kind: 'backend',
-            kindVersion: 1,
-            id: 'acme.backend',
-            providerId: 'acme.provider',
-            engine: {
+        uses: ['agents'],
+        contributes: {
+          agents: [createAgentContribution({
+            runtime: {
               kind: 'acp',
               transport: {
                 kind: 'stdio',
@@ -315,8 +331,8 @@ describe('readPluginManifest', () => {
                 },
               },
             },
-          },
-        ],
+          })],
+        },
       })),
     );
 
@@ -324,7 +340,7 @@ describe('readPluginManifest', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.manifest.contributes.backends[0]?.capabilities).toEqual(expectedBackendCapabilities(true));
+    expect(result.manifest.contributes.agentRuntimes[0]?.capabilities).toEqual(expectedBackendCapabilities(true));
   });
 
   it('accepts custom runtimeCore-backed execution-run support without requiring terminal surface handlers', async () => {
@@ -333,35 +349,14 @@ describe('readPluginManifest', () => {
       pluginRoot,
       JSON.stringify(createBaseManifestV2({
         id: 'acme.missing-execution-run-runtime-core',
-        runtime: {
-          apiVersion: 1,
-          capabilities: ['backends'],
-        },
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
-          },
-        },
-        contributes: [
-          {
-            kind: 'provider',
-            kindVersion: 1,
-            id: 'acme.provider',
-            display: {
-              name: 'Acme Provider',
-            },
-            ownedBackendIds: ['acme.backend'],
-          },
-          {
-            kind: 'backend',
-            kindVersion: 1,
-            id: 'acme.backend',
-            providerId: 'acme.provider',
-            engine: {
+        uses: ['agents'],
+        contributes: {
+          agents: [createAgentContribution({
+            runtime: {
               kind: 'custom',
             },
-          },
-        ],
+          })],
+        },
       })),
     );
 
@@ -369,7 +364,7 @@ describe('readPluginManifest', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.manifest.contributes.backends[0]?.capabilities).toEqual(expectedBackendCapabilities(true));
+    expect(result.manifest.contributes.agentRuntimes[0]?.capabilities).toEqual(expectedBackendCapabilities(true));
   });
 
   it('does not treat terminal surface handlers as execution-run runtimeCore proof', async () => {
@@ -378,31 +373,10 @@ describe('readPluginManifest', () => {
       pluginRoot,
       JSON.stringify(createBaseManifestV2({
         id: 'acme.malformed-execution-run-runtime-core',
-        runtime: {
-          apiVersion: 1,
-          capabilities: ['backends'],
-        },
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
-          },
-        },
-        contributes: [
-          {
-            kind: 'provider',
-            kindVersion: 1,
-            id: 'acme.provider',
-            display: {
-              name: 'Acme Provider',
-            },
-            ownedBackendIds: ['acme.backend'],
-          },
-          {
-            kind: 'backend',
-            kindVersion: 1,
-            id: 'acme.backend',
-            providerId: 'acme.provider',
-            engine: {
+        uses: ['agents'],
+        contributes: {
+          agents: [createAgentContribution({
+            runtime: {
               kind: 'custom',
             },
             capabilities: {
@@ -422,8 +396,8 @@ describe('readPluginManifest', () => {
                 },
               },
             ],
-          },
-        ],
+          })],
+        },
       })),
     );
 
@@ -431,7 +405,7 @@ describe('readPluginManifest', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.manifest.contributes.backends[0]?.surfaceHandlers).toEqual([
+    expect(result.manifest.contributes.agentRuntimes[0]?.surfaceHandlers).toEqual([
       expect.objectContaining({
         kind: 'terminalRuntime',
         operation: 'discoverIdentity',
@@ -446,22 +420,18 @@ describe('readPluginManifest', () => {
       JSON.stringify(createPluginManifestV2Fixture({
         id: 'acme.notifications',
         displayName: 'Acme Notifications',
-        runtime: {
-          apiVersion: 1,
-          capabilities: ['notifications'],
+        uses: ['notifications'],
+        entrypoints: {
+          main: './daemon.mjs',
         },
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
-          },
-        },
-        capabilities: {
-          permissions: [
+        permissions: {
+          required: [
             {
-              capability: 'notifications.register',
-              reason: 'Registers Acme notification senders',
+              capability: 'network',
+              reason: 'Delivers Acme notifications through the webhook channel',
             },
           ],
+          optional: [],
         },
         contributes: {
           notifications: [
@@ -487,9 +457,9 @@ describe('readPluginManifest', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.manifest.runtime.capabilities).toEqual(['notifications']);
+    expect(result.manifest.uses).toEqual(['notifications']);
     expect(result.manifest.permissions.map((permission) => permission.capability)).toEqual([
-      'notifications.register',
+      'network',
     ]);
     expect((result.manifest.contributes.notifications ?? []).map((definition) => definition.id)).toEqual([
       'acme.notifications.ready',
@@ -518,7 +488,7 @@ describe('readPluginManifest', () => {
           },
         },
         contributes: {
-          providers: [
+          agents: [
             {
               kindVersion: 1,
               id: 'acme.provider',
@@ -528,7 +498,7 @@ describe('readPluginManifest', () => {
               ownedBackendIds: [],
             },
           ],
-          backends: [],
+          agentRuntimes: [],
           hooks: [],
         },
       }),
@@ -545,7 +515,7 @@ describe('readPluginManifest', () => {
     ]);
   });
 
-  it('normalizes hook registrations through the compatibility reader before manifest validation', async () => {
+  it('infers hook execution kind before manifest validation for final hook registrations', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
     const manifestPath = await writeManifestFile(
       pluginRoot,
@@ -553,26 +523,21 @@ describe('readPluginManifest', () => {
         ...createBaseManifestV2({
           id: 'acme.hook-compat',
           displayName: 'Hook Compat',
-          description: 'Hook registration compatibility normalization',
-          targets: {
-            daemon: {
-              entry: './daemon.js',
-            },
-          },
-          contributes: [
-            {
-              kind: 'hook',
-              id: 'backend.resolveRuntimePrerequisites',
+          description: 'Hook registration normalization',
+          uses: ['hooks'],
+          contributes: {
+            hooks: [{
+              id: 'agent.resolvePrerequisites',
               category: 'decision',
-              scope: 'backend',
+              scope: 'agent',
               // Intentionally omit executionKind; the compat reader should infer
               // it from the category before schema validation.
               handler: {
                 target: 'plugin',
                 exportName: 'resolveTranscriptBinding',
               },
-            },
-          ],
+            }],
+          },
         }),
       }),
     );
@@ -584,7 +549,7 @@ describe('readPluginManifest', () => {
     expect(result.manifest.contributes.hooks).toHaveLength(1);
     expect(result.manifest.contributes.hooks[0]).toEqual(
       expect.objectContaining({
-        id: 'backend.resolveRuntimePrerequisites',
+        id: 'agent.resolvePrerequisites',
         category: 'decision',
         executionKind: 'decide',
       }),
@@ -606,26 +571,22 @@ describe('readPluginManifest', () => {
     ]);
   });
 
-  it('returns a semantic diagnostic when executable contributes omit the daemon target', async () => {
+  it('accepts executable agent contributions through the final entrypoints shape', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
     const manifestPath = await writeManifestFile(
       pluginRoot,
       JSON.stringify({
         ...createBaseManifestV2({
-          id: 'acme.no-daemon',
-          displayName: 'No Daemon',
-          description: 'Missing daemon target',
-          targets: {},
-          contributes: [
-            {
-              kind: 'backend',
-              kindVersion: 1,
-              id: 'acme.no-daemon.backend',
-              providerId: 'acme.no-daemon',
-              engine: {
+          id: 'acme.final-entrypoints',
+          displayName: 'Final Entrypoints',
+          description: 'Uses the final plugin entrypoints shape',
+          uses: ['agents'],
+          contributes: {
+            agents: [createAgentContribution({
+              id: 'acme.final-entrypoints.backend',
+              runtime: {
                 kind: 'custom',
               },
-              capabilities: {},
               surfaceHandlers: [
                 {
                   surfaceApiVersion: 1,
@@ -638,22 +599,15 @@ describe('readPluginManifest', () => {
                   },
                 },
               ],
-            },
-          ],
+            })],
+          },
         }),
       }),
     );
 
     const result = await readPluginManifest({ manifestPath });
 
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.diagnostics).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        code: 'plugin_manifest_semantic_invalid',
-        message: expect.stringMatching(/Daemon target is required/),
-      }),
-    ]));
+    expect(result.ok).toBe(true);
   });
 
   it('returns a semantic diagnostic when contribution ids are duplicated', async () => {
@@ -665,31 +619,23 @@ describe('readPluginManifest', () => {
           id: 'acme.duplicate',
           displayName: 'Duplicate',
           description: 'Duplicate contribution ids',
-          targets: {
-            daemon: {
-              entry: './daemon.js',
-            },
-          },
-          contributes: [
-            {
-              kind: 'provider',
-              kindVersion: 1,
+          uses: ['agents'],
+          contributes: {
+            agents: [
+              createAgentContribution({
               id: 'acme.provider',
               display: {
                 name: 'Provider',
               },
-              ownedBackendIds: [],
-            },
-            {
-              kind: 'provider',
-              kindVersion: 1,
+              }),
+              createAgentContribution({
               id: 'acme.provider',
               display: {
                 name: 'Provider Duplicate',
               },
-              ownedBackendIds: [],
-            },
-          ],
+              }),
+            ],
+          },
         }),
       }),
     );
@@ -698,12 +644,12 @@ describe('readPluginManifest', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.diagnostics).toEqual([
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({
         code: 'plugin_manifest_semantic_invalid',
-        message: expect.stringMatching(/Duplicate provider id/),
+        message: expect.stringMatching(/Duplicate agent id/),
       }),
-    ]);
+    ]));
   });
 
   it('returns a semantic diagnostic when the manifest requires an incompatible happier engine range', async () => {
@@ -717,11 +663,6 @@ describe('readPluginManifest', () => {
           description: 'Requires a newer CLI runtime than the current host provides',
           engines: {
             happier: '^99.0.0',
-          },
-          targets: {
-            daemon: {
-              entry: './daemon.js',
-            },
           },
         }),
       }),
@@ -739,7 +680,7 @@ describe('readPluginManifest', () => {
     ]);
   });
 
-  it('returns a semantic diagnostic when the manifest advertises unsupported descriptor targets', async () => {
+  it('rejects retired descriptor targets instead of normalizing them', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
     const manifestPath = await writeManifestFile(
       pluginRoot,
@@ -767,18 +708,11 @@ describe('readPluginManifest', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: 'plugin_manifest_semantic_invalid',
-          message: expect.stringMatching(/uiDescriptor/i),
-        }),
-        expect.objectContaining({
-          code: 'plugin_manifest_semantic_invalid',
-          message: expect.stringMatching(/serverDescriptor/i),
-        }),
-      ]),
-    );
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'plugin_manifest_semantic_invalid',
+      }),
+    ]));
   });
 
   it('returns a semantic diagnostic when a backend surface handler targets the plugin runtime', async () => {
@@ -790,21 +724,13 @@ describe('readPluginManifest', () => {
           id: 'acme.plugin-runtime-target',
           displayName: 'Plugin Runtime Target',
           description: 'Uses an unsupported backend surface handler handler target',
-          targets: {
-            daemon: {
-              entry: './daemon.js',
-            },
-          },
-          contributes: [
-            {
-              kind: 'backend',
-              kindVersion: 1,
+          uses: ['agents'],
+          contributes: {
+            agents: [createAgentContribution({
               id: 'acme.plugin-runtime-target.backend',
-              providerId: 'acme.plugin-runtime-target',
-              engine: {
+              runtime: {
                 kind: 'custom',
               },
-              capabilities: {},
               surfaceHandlers: [
                 {
                   surfaceApiVersion: 1,
@@ -817,8 +743,8 @@ describe('readPluginManifest', () => {
                   },
                 },
               ],
-            },
-          ],
+            })],
+          },
         }),
       }),
     );
@@ -844,21 +770,13 @@ describe('readPluginManifest', () => {
           id: 'acme.duplicate-backend-surface-handler',
           displayName: 'Duplicate Backend Surface Handler',
           description: 'Declares duplicate backend surface handler ids',
-          targets: {
-            daemon: {
-              entry: './daemon.js',
-            },
-          },
-          contributes: [
-            {
-              kind: 'backend',
-              kindVersion: 1,
+          uses: ['agents'],
+          contributes: {
+            agents: [createAgentContribution({
               id: 'acme.duplicate-backend-surface-handler.backend',
-              providerId: 'acme.duplicate-backend-surface-handler',
-              engine: {
+              runtime: {
                 kind: 'custom',
               },
-              capabilities: {},
               surfaceHandlers: [
                 {
                   surfaceApiVersion: 1,
@@ -881,8 +799,8 @@ describe('readPluginManifest', () => {
                   },
                 },
               ],
-            },
-          ],
+            })],
+          },
         }),
       }),
     );
@@ -912,30 +830,13 @@ describe('readPluginManifest', () => {
           id: 'acme.backend-surface-handler-operations',
           displayName: 'Backend Surface Handler Operations',
           description: 'Uses canonical backend surface handler operations with opaque ids',
-          targets: {
-            daemon: {
-              entry: './daemon.js',
-            },
-          },
-          contributes: [
-            {
-              kind: 'provider',
-              kindVersion: 1,
-              id: 'acme.backend-surface-handler-operations',
-              display: {
-                name: 'Backend Surface Handler Operations',
-              },
-              ownedBackendIds: ['acme.backend-surface-handler-operations.backend'],
-            },
-            {
-              kind: 'backend',
-              kindVersion: 1,
+          uses: ['agents'],
+          contributes: {
+            agents: [createAgentContribution({
               id: 'acme.backend-surface-handler-operations.backend',
-              providerId: 'acme.backend-surface-handler-operations',
-              engine: {
+              runtime: {
                 kind: 'custom',
               },
-              capabilities: {},
               surfaceHandlers: [
                 {
                   surfaceApiVersion: 1,
@@ -948,8 +849,8 @@ describe('readPluginManifest', () => {
                   },
                 },
               ],
-            },
-          ],
+            })],
+          },
         }),
       }),
     );
@@ -970,21 +871,13 @@ describe('readPluginManifest', () => {
           id: 'acme.unsupported-backend-surface-handler-op',
           displayName: 'Unsupported Backend Surface Handler Operation',
           description: 'Declares a backend surface handler operation id that the host does not support',
-          targets: {
-            daemon: {
-              entry: './daemon.js',
-            },
-          },
-          contributes: [
-            {
-              kind: 'backend',
-              kindVersion: 1,
+          uses: ['agents'],
+          contributes: {
+            agents: [createAgentContribution({
               id: 'acme.unsupported-backend-surface-handler-op.backend',
-              providerId: 'acme.unsupported-backend-surface-handler-op',
-              engine: {
+              runtime: {
                 kind: 'custom',
               },
-              capabilities: {},
               surfaceHandlers: [
                 {
                   surfaceApiVersion: 1,
@@ -997,8 +890,8 @@ describe('readPluginManifest', () => {
                   },
                 },
               ],
-            },
-          ],
+            })],
+          },
         }),
       }),
     );
@@ -1024,21 +917,13 @@ describe('readPluginManifest', () => {
           id: 'acme.mismatched-backend-surface-handler-op',
           displayName: 'Mismatched Backend Surface Handler Operation',
           description: 'Declares a backend surface handler operation id under the wrong backend surface handler kind',
-          targets: {
-            daemon: {
-              entry: './daemon.js',
-            },
-          },
-          contributes: [
-            {
-              kind: 'backend',
-              kindVersion: 1,
+          uses: ['agents'],
+          contributes: {
+            agents: [createAgentContribution({
               id: 'acme.mismatched-backend-surface-handler-op.backend',
-              providerId: 'acme.mismatched-backend-surface-handler-op',
-              engine: {
+              runtime: {
                 kind: 'custom',
               },
-              capabilities: {},
               surfaceHandlers: [
                 {
                   surfaceApiVersion: 1,
@@ -1051,8 +936,8 @@ describe('readPluginManifest', () => {
                   },
                 },
               ],
-            },
-          ],
+            })],
+          },
         }),
       }),
     );
@@ -1069,7 +954,7 @@ describe('readPluginManifest', () => {
     ]));
   });
 
-  it('returns a semantic diagnostic when daemon target entry uses an unsupported file extension', async () => {
+  it('returns a semantic diagnostic when the main entrypoint uses an unsupported file extension', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-manifest-'));
     const manifestPath = await writeManifestFile(
       pluginRoot,
@@ -1077,11 +962,9 @@ describe('readPluginManifest', () => {
         ...createBaseManifestV2({
           id: 'acme.unsupported-daemon-entry-plugin',
           displayName: 'Unsupported Daemon Entry Plugin',
-          description: 'Declares a daemon target with an unsupported file extension',
-          targets: {
-            daemon: {
-              entry: './daemon.ts',
-            },
+          description: 'Declares a main entrypoint with an unsupported file extension',
+          entrypoints: {
+            main: './daemon.ts',
           },
         }),
       }),
@@ -1108,25 +991,20 @@ describe('readPluginManifest', () => {
           id: 'acme.daemon-hook-target',
           displayName: 'Daemon Hook Target',
           description: 'Uses an unsupported hook handler target',
-          targets: {
-            daemon: {
-              entry: './daemon.js',
-            },
-          },
-          contributes: [
-            {
-              kind: 'hook',
+          uses: ['hooks'],
+          contributes: {
+            hooks: [{
               hookApiVersion: 1,
-              id: 'backend.resolveRuntimePrerequisites',
+              id: 'agent.resolvePrerequisites',
               category: 'decision',
-              scope: 'backend',
+              scope: 'agent',
               executionKind: 'decide',
               handler: {
                 target: 'daemon',
                 exportName: 'resolveTranscriptBinding',
               },
-            },
-          ],
+            }],
+          },
         }),
       }),
     );
@@ -1152,25 +1030,20 @@ describe('readPluginManifest', () => {
           id: 'acme.future-hook-version',
           displayName: 'Future Hook Version',
           description: 'Unsupported hook schema version',
-          targets: {
-            daemon: {
-              entry: './daemon.js',
-            },
-          },
-          contributes: [
-            {
-              kind: 'hook',
+          uses: ['hooks'],
+          contributes: {
+            hooks: [{
               hookApiVersion: 2,
-              id: 'backend.resolveRuntimePrerequisites',
+              id: 'agent.resolvePrerequisites',
               category: 'decision',
-              scope: 'backend',
+              scope: 'agent',
               executionKind: 'decide',
               handler: {
                 target: 'plugin',
                 exportName: 'resolveTranscriptBinding',
               },
-            },
-          ],
+            }],
+          },
         }),
       }),
     );

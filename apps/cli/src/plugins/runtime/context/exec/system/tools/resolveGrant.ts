@@ -135,12 +135,12 @@ function normalizeLookupCandidates(
     if (typeof request.preferredPath === 'string' && request.preferredPath.trim().length > 0) {
         pushCandidate(request.preferredPath.trim());
     }
+    if (typeof definition.executablePath === 'string' && definition.executablePath.trim().length > 0) {
+        pushCandidate(definition.executablePath.trim());
+    }
     const preferredCommand = normalizePreferredCommand(request.preferredCommand);
     if (preferredCommand !== null) {
         pushLookupName(preferredCommand);
-    }
-    if (typeof definition.executablePath === 'string' && definition.executablePath.trim().length > 0) {
-        pushCandidate(definition.executablePath.trim());
     }
     for (const lookupName of definition.lookupNames ?? []) {
         pushLookupName(lookupName);

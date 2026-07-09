@@ -12,7 +12,7 @@ async function writeFileFixture(path: string, contents = 'export const ok = true
     await writeFile(path, contents, 'utf8');
 }
 
-function createManifestWithDaemonEntry(entry: string): CanonicalPluginManifest {
+function createManifestWithDaemonEntry(entry: string, devEntry?: string): CanonicalPluginManifest {
     return {
         schemaVersion: 2,
         id: 'acme.sample',
@@ -20,17 +20,16 @@ function createManifestWithDaemonEntry(entry: string): CanonicalPluginManifest {
         displayName: 'Acme Sample',
         description: 'Fixture plugin',
         engines: { happier: '^0.2.0' },
-        runtime: {
-            apiVersion: 1,
-            capabilities: [],
+        activationEvents: ['startup'],
+        uses: [],
+        entrypoints: {
+            main: entry,
+            ...(devEntry ? { dev: devEntry } : {}),
         },
         permissions: [],
-        targets: {
-            daemon: { entry },
-        },
         contributes: {
-            providers: [],
-            backends: [],
+            agents: [],
+            agentRuntimes: [],
             actions: [],
             tools: [],
             commands: [],
@@ -93,5 +92,22 @@ describe('resolvePluginDaemonEntryPath', () => {
         if (!result.ok) return;
         expect(typeof result.daemonEntryPath).toBe('string');
         expect(result.daemonEntryPath).toMatch(/daemon\.mjs$/);
+    });
+
+    it('resolves an in-root TypeScript dev daemon entry when dev entrypoints are requested', async () => {
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-root-'));
+        await writeFileFixture(join(pluginRoot, 'dist', 'daemon.mjs'));
+        await writeFileFixture(join(pluginRoot, 'src', 'daemon.ts'));
+
+        const result = await resolvePluginDaemonEntryPath({
+            pluginRootPath: pluginRoot,
+            manifest: createManifestWithDaemonEntry('./dist/daemon.mjs', './src/daemon.ts'),
+            resolveDevEntrypoint: true,
+        });
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.daemonEntryPath).toMatch(/dist\/daemon\.mjs$/);
+        expect(result.devDaemonEntryPath).toMatch(/src\/daemon\.ts$/);
     });
 });

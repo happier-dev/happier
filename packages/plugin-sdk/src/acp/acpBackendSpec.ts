@@ -23,4 +23,4 @@ export type {
     AcpToolNameResolverV1,
     AcpTransportLifecycleV1,
     AcpUxSpecV1,
-} from './types';
+} from './types.js';

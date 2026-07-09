@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 export const SAMPLE_PLUGIN_ID = 'acme.sample';
 export const SAMPLE_PLUGIN_PROVIDER_ID = 'acme.sample.provider';
-export const SAMPLE_PLUGIN_BACKEND_ID = 'acme.sample.backend';
+export const SAMPLE_PLUGIN_BACKEND_ID = SAMPLE_PLUGIN_PROVIDER_ID;
 export const SAMPLE_PLUGIN_PROVIDER_TITLE = 'Acme Sample CLI';
 
 export const SAMPLE_PLUGIN_FIXTURE_ROOT = fileURLToPath(

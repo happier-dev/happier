@@ -7,6 +7,7 @@ import { PLUGIN_MANIFEST_RELATIVE_PATH } from '@/plugins/store/paths';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { resolvePluginDaemonEntryPath } from '@/plugins/manifest/daemonEntry';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
+import { isTrustPolicyLocallyTrusted } from '@/plugins/install/ui/trustedSource';
 import {
   resolveLocalPathPluginSource,
   type ResolvedLocalPathPluginSourceSuccess,
@@ -18,6 +19,7 @@ export type LoadedPlugin = Readonly<{
   manifestPath: string;
   manifestDigest: string;
   daemonEntryPath: string | null;
+  devDaemonEntryPath: string | null;
   manifest: CanonicalPluginManifest;
   sourceSpec: PluginSourceSpecV1;
 }>;
@@ -43,6 +45,15 @@ function mergeLoadedPluginSourceSpec(params: Readonly<{
   };
 }
 
+function shouldResolveDevEntrypoint(record: Readonly<{
+  source: PluginStateSourceRecord;
+  install: Readonly<{ mode: string }>;
+}>): boolean {
+  return record.source.kind === 'path'
+    && record.install.mode === 'link'
+    && isTrustPolicyLocallyTrusted(record.source.trustPolicy);
+}
+
 export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: string }>): Promise<LoadInstalledPluginsResult> {
   const stateStore = createPluginStateStore({ happyHomeDir: params?.happyHomeDir });
   const state = await stateStore.read();
@@ -56,6 +67,16 @@ export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: st
 
   for (const [pluginId, record] of Object.entries(state.plugins)) {
     if (!record.state.enabled) {
+      continue;
+    }
+
+    if (record.source.kind === 'bundled') {
+      diagnosticsByPluginId[pluginId] = [
+        {
+          code: 'plugin_source_kind_unsupported',
+          message: `Plugin state source kind 'bundled' is host-derived bundled provenance and cannot be claimed by installed plugin state`,
+        },
+      ];
       continue;
     }
 
@@ -131,6 +152,7 @@ export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: st
     const daemonEntryResolution = await resolvePluginDaemonEntryPath({
       pluginRootPath: resolvedSource.pluginRootPath,
       manifest: resolvedSource.manifest,
+      resolveDevEntrypoint: shouldResolveDevEntrypoint(record),
     });
     if (!daemonEntryResolution.ok) {
       diagnosticsByPluginId[pluginId] = [daemonEntryResolution.diagnostic];
@@ -143,6 +165,7 @@ export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: st
       manifestPath: resolvedSource.manifestPath,
       manifestDigest: resolvedSource.manifestDigest,
       daemonEntryPath: daemonEntryResolution.daemonEntryPath,
+      devDaemonEntryPath: daemonEntryResolution.devDaemonEntryPath,
       manifest: resolvedSource.manifest,
       sourceSpec: mergeLoadedPluginSourceSpec({
         recordSource: record.source,

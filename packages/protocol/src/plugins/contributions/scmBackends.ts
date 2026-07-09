@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import { ScmRepoModeSchema } from '../../scm.js';
-import { ScmBackendCapabilitiesSchema } from '../../scmBackendCapabilities.js';
+import { ScmRepoModeSchema } from '../../scm/index.js';
+import { ScmBackendCapabilitiesSchema } from '../../scm/backendCapabilities.js';
 
 const DependencyCapabilityIdSchema = z.string().trim().regex(
   /^dep\.[A-Za-z0-9._-]+$/,

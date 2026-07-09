@@ -1,8 +1,14 @@
-import type { DaemonMcpServersDetectWarningV1 } from '@happier-dev/protocol';
+import {
+    DetectedMcpServerV1Schema,
+} from '@happier-dev/protocol';
+import type {
+    DaemonMcpServersDetectWarningV1,
+    DetectedMcpServerV1,
+} from '@happier-dev/protocol';
 
-import type { ClassifiedRuntimeErrorV1 } from './errors';
-import type { ExecClientHandleV1, ExecLaunchInputV1 } from './exec';
-import type { ManagedServerHandleV1, ManagedServerSpecV1 } from './managedServer';
+import type { ClassifiedRuntimeErrorV1 } from './errors.js';
+import type { ExecClientHandleV1, ExecLaunchInputV1 } from './exec.js';
+import type { ManagedServerHandleV1, ManagedServerSpecV1 } from './managedServer.js';
 
 export type McpHostedRuntimeExposureV1 =
     | Readonly<{ kind: 'registryOnly' }>
@@ -143,6 +149,15 @@ export type ResolvedMcpServerSpecV1 = Omit<McpServerSpecV1, 'transport'> & Reado
 }>;
 
 export type McpDiscoveryWarningV1 = DaemonMcpServersDetectWarningV1;
+export type {
+    DaemonMcpServersDetectWarningV1,
+    DetectedMcpServerV1,
+};
+
+export function normalizeDetectedMcpServerV1(value: unknown): DetectedMcpServerV1 | null {
+    const parsed = DetectedMcpServerV1Schema.safeParse(value);
+    return parsed.success ? parsed.data : null;
+}
 
 export type McpDiscoveryProviderResultV1 = Readonly<{
     servers: readonly McpServerSpecV1[];

@@ -26,6 +26,7 @@ export type BridgeLifecycleHookDispatchEvent = Readonly<{
   scope?: HookScopeV1;
   happySessionId?: string;
   providerSessionId?: string;
+  agentId?: string;
   providerId?: string;
   backendId?: string;
   backendTarget?: string;
@@ -75,8 +76,7 @@ export async function dispatchBridgeLifecycleHookEvent(
       scope: params.event.scope ?? 'session',
       ...(params.event.happySessionId ? { happySessionId: params.event.happySessionId } : {}),
       ...(params.event.providerSessionId ? { providerSessionId: params.event.providerSessionId } : {}),
-      ...(params.event.providerId ? { providerId: params.event.providerId } : {}),
-      ...(params.event.backendId ? { backendId: params.event.backendId } : {}),
+      ...(params.event.agentId ? { agentId: params.event.agentId } : {}),
       ...(params.event.backendTarget ? { backendTarget: params.event.backendTarget } : {}),
       ...(params.event.machineId ? { machineId: params.event.machineId } : {}),
       ...(params.event.workspaceId ? { workspaceId: params.event.workspaceId } : {}),

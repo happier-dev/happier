@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-import type { PluginApiV1 } from '../api';
-import type { RegisterBackendEngineV1 } from '../engine';
-import type { AcpBackendSpecV1 } from './types';
+import type { PluginApiV1 } from '../api.js';
+import type { RegisterAgentRuntimeV1 } from '../engine.js';
+import type { AcpBackendSpecV1 } from './types.js';
 
 type AcpModuleNamespace = Readonly<{
     ACP_BACKEND_DEFINITION?: AcpBackendSpecV1;
@@ -21,7 +21,7 @@ function defaultAcpModulePath(pluginPath: string): string {
 
 export async function autoRegisterAcpBackend(
     pluginPath: string,
-    api: Pick<PluginApiV1, 'registerBackendEngine'>,
+    api: Pick<PluginApiV1, 'registerAgentRuntime'>,
     options?: AutoRegisterAcpBackendOptionsV1,
 ): Promise<boolean> {
     const modulePath = options?.resolveModulePath?.(pluginPath) ?? defaultAcpModulePath(pluginPath);
@@ -37,10 +37,10 @@ export async function autoRegisterAcpBackend(
         return false;
     }
 
-    const registration: RegisterBackendEngineV1 = {
-        backendId: spec.backendId,
-        create: (ctx) => ctx.acp.defineAcpBackend(spec),
+    const registration: RegisterAgentRuntimeV1 = {
+        agentId: spec.backendId,
+        create: (ctx) => ctx.agentRuntime.acp.defineAcpBackend(spec),
     };
-    api.registerBackendEngine(registration);
+    api.registerAgentRuntime(registration);
     return true;
 }

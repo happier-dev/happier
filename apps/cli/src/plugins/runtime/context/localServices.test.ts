@@ -14,7 +14,7 @@ const declaration = {
 } as const;
 
 describe('plugin local services context', () => {
-    it('records declarations and fails closed until the local-services runtime substrate owns launch', async () => {
+    it('records declarations and fails closed with a daemon bridge blocker until launch is wired', async () => {
         const service = createPluginLocalServicesService();
 
         await service.declare(declaration);
@@ -30,8 +30,40 @@ describe('plugin local services context', () => {
             id: 'web',
             phase: 'failed',
             diagnostics: [
-                expect.objectContaining({ code: 'PLUGIN_LOCAL_SERVICE_SUBSTRATE_UNAVAILABLE' }),
+                expect.objectContaining({ code: 'PLUGIN_LOCAL_SERVICE_DAEMON_BRIDGE_UNAVAILABLE' }),
             ],
+        });
+    });
+
+    it('projects correlated daemon preview access URLs from managed local-service snapshots', async () => {
+        const service = createPluginLocalServicesService({
+            daemonBridge: {
+                start: async (serviceDeclaration) => ({
+                    id: serviceDeclaration.id,
+                    phase: 'running',
+                    inventoryId: 'machine-a:tcp:loopback:127.0.0.1:5173:pid-400',
+                    port: 5173,
+                    url: 'https://preview.happier.test/v1/local-services/preview/plugin-web/',
+                    diagnostics: [],
+                }),
+            },
+        });
+
+        await service.declare(declaration);
+
+        const handle = await service.start('web');
+
+        expect(handle.snapshot()).toEqual({
+            id: 'web',
+            phase: 'running',
+            inventoryId: 'machine-a:tcp:loopback:127.0.0.1:5173:pid-400',
+            port: 5173,
+            url: 'https://preview.happier.test/v1/local-services/preview/plugin-web/',
+            diagnostics: [],
+        });
+        await expect(service.get('web')).resolves.toMatchObject({
+            phase: 'running',
+            url: 'https://preview.happier.test/v1/local-services/preview/plugin-web/',
         });
     });
 });

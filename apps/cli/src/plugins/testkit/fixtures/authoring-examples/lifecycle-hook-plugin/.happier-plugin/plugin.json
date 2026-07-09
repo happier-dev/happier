@@ -7,32 +7,28 @@
   "engines": {
     "happier": "^0.2.0"
   },
-  "runtime": {
-    "apiVersion": 1,
-    "capabilities": [
-      "hooks"
-    ]
+  "uses": [
+    "hooks"
+  ],
+  "entrypoints": {
+    "main": "./agent/daemon.mjs"
   },
-  "targets": {
-    "daemon": {
-      "entry": "./agent/daemon.mjs"
-    }
-  },
-  "capabilities": {
-    "permissions": []
+  "permissions": {
+    "required": [],
+    "optional": []
   },
   "contributes": {
     "hooks": [
       {
         "hookApiVersion": 1,
-        "id": "provider.response.after",
+        "id": "agent.response.after",
         "category": "lifecycle",
         "scope": "agent",
         "executionKind": "observe",
         "priority": 50,
         "handler": {
           "target": "plugin",
-          "exportName": "observeProviderResponse"
+          "exportName": "observeAgentResponse"
         }
       }
     ]

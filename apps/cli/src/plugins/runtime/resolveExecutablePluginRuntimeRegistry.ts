@@ -1,7 +1,3 @@
-import { existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-
 import { readPluginReloadStateSnapshot } from './reload/state';
 import { BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES } from '../projection/registry/sources/generatedBundledPlugins';
 import type { PluginCompatibilityDiagnostic } from '../validation/diagnostics/types';
@@ -11,18 +7,21 @@ import type { ResolvedContributionRegistry } from '../projection/registry/types'
 import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import { activatePluginRuntimeRegistry } from './lifecycle/manager';
+import { createBundledActivationSourceResolver } from './bundledActivationSource';
 import {
     resolveTrustedOptionalPermissionGrantsFromServer,
     type ResolveTrustedOptionalPluginPermissionGrants,
 } from './permissions/grants';
 import { resolvePluginHookHandlerRegistry } from './resolvePluginHookHandlerRegistry';
-import { createPluginScmBackendRegistryFromRuntimeRegistry } from '../../scm/scmBackendCatalog';
+import {
+    activateScmProviderRuntimeEvents,
+    createPluginScmBackendRegistryFromRuntimeRegistry,
+} from '../../scm/pluginBackends/runtimeRegistry';
 import type {
     PluginActionHandler,
     PluginHookHandler,
     ResolvedPluginHookHandler,
     ResolvedPluginHookHandlerRegistry,
-    PluginDaemonModuleNamespace,
 } from './types';
 
 export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
@@ -33,7 +32,8 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     actionHandlersByActionId: ReadonlyMap<string, PluginActionHandler>;
     hookHandlersByHookId: ReadonlyMap<string, readonly ResolvedPluginHookHandler[]>;
     runtimeCoreHandlersByBackendId: ReadonlyMap<string, ReadonlyMap<string, PluginHookHandler>>;
-    backendEnginesByBackendId: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['backendEnginesByBackendId'];
+    agentRuntimesByAgentId: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['agentRuntimesByAgentId'];
+    daemonAuthBridgesByServiceId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['daemonAuthBridgesByServiceId'];
     notificationCategoriesById?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['notificationCategoriesById'];
     notificationChannelsById?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['notificationChannelsById'];
     scmHostingProvidersById: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['scmHostingProvidersById'];
@@ -60,9 +60,18 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     eventDeclarationsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['eventDeclarationsByPluginId'];
     eventSubscriptionPermissionsByPluginId?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['eventSubscriptionPermissionsByPluginId'];
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
+    activatedPluginIds: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['activatedPluginIds'];
+    activatePluginsByEvent: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['activatePluginsByEvent'];
     addRuntimeDisposable?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['addRuntimeDisposable'];
     readHookEventEnvelopeV1: typeof readHookEventEnvelopeV1;
-    dispose: () => Promise<void>;
+    dispose: (params?: Readonly<{
+        timeoutMs?: number;
+        onError?: (event: Readonly<{
+            pluginId: string;
+            phase: 'deactivating' | 'runtime_disposables' | 'registered_disposables' | 'deactivated';
+            error: unknown;
+        }>) => void;
+    }>) => Promise<void>;
 }>;
 
 function mergePluginDiagnostics(
@@ -82,7 +91,7 @@ function mergePluginDiagnostics(
         ]);
     }
 
-    return Object.freeze(merged);
+    return merged;
 }
 
 async function resolveRuntimeGeneration(happyHomeDir: string | undefined): Promise<number> {
@@ -99,37 +108,41 @@ function mergeActivatedContributes(
 ): ResolvedContributionRegistry {
     const baseActionIds = new Set(base.actions.map((action) => action.definition.id));
     const activatedActions = activated.actions.filter((action) => !baseActionIds.has(action.definition.id));
+    const baseToolIds = new Set((base.tools ?? []).map((tool) => tool.definition.id));
+    const activatedTools = activated.tools.filter((tool) => !baseToolIds.has(tool.definition.id));
+    const baseCommandIds = new Set((base.commands ?? []).map((command) => command.definition.id));
+    const activatedCommands = activated.commands.filter((command) => !baseCommandIds.has(command.definition.id));
     const baseLifecycleHandlerIds = new Set((base.lifecycleHandlers ?? []).map((handler) => handler.definition.id));
     const activatedLifecycleHandlers = activated.lifecycleHandlers.filter((handler) => !baseLifecycleHandlerIds.has(handler.definition.id));
 
     if (
         activatedActions.length === 0
-        && activated.tools.length === 0
-        && activated.commands.length === 0
+        && activatedTools.length === 0
+        && activatedCommands.length === 0
         && activatedLifecycleHandlers.length === 0
     ) {
         return base;
     }
 
     return createResolvedContributionRegistry({
-        providers: base.providers,
-        backends: base.backends,
+        agents: base.agents,
+        agentRuntimes: base.agentRuntimes,
         actions: Object.freeze([
             ...base.actions,
             ...activatedActions,
         ]),
         tools: Object.freeze([
             ...(base.tools ?? []),
-            ...activated.tools,
+            ...activatedTools,
         ]),
         commands: Object.freeze([
             ...(base.commands ?? []),
-            ...activated.commands,
+            ...activatedCommands,
         ]),
         resources: base.resources,
         uiDescriptors: base.uiDescriptors,
         executionRunProfiles: base.executionRunProfiles,
-        installables: base.installables,
+        managedDependencies: base.managedDependencies,
         settings: base.settings,
         scmHostingProviders: base.scmHostingProviders,
         scmBackends: base.scmBackends,
@@ -142,49 +155,6 @@ function mergeActivatedContributes(
         ]),
         pluginDiagnosticsByPluginId: base.pluginDiagnosticsByPluginId,
     });
-}
-
-function parseFirstPartyPluginIdFromPackageName(packageName: string): string | null {
-    const prefix = '@happier-dev/plugins-';
-    if (!packageName.startsWith(prefix)) {
-        return null;
-    }
-    const pluginId = packageName.slice(prefix.length).trim();
-    if (!pluginId) {
-        return null;
-    }
-    return pluginId;
-}
-
-async function loadBundledFirstPartyPluginDaemonModule(packageName: string): Promise<PluginDaemonModuleNamespace> {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const repoRootCandidate = resolve(here, '..', '..', '..', '..', '..');
-    const pluginId = parseFirstPartyPluginIdFromPackageName(packageName);
-    if (pluginId) {
-        const distCandidate = resolve(repoRootCandidate, 'packages', 'plugins', pluginId, 'dist', 'index.js');
-        const srcCandidate = resolve(repoRootCandidate, 'packages', 'plugins', pluginId, 'src', 'index.ts');
-
-        if (existsSync(srcCandidate)) {
-            // Dev/test local plugins must share the host's TS module graph; dist can carry a second SDK runtime context.
-            return await import(pathToFileURL(srcCandidate).href) as PluginDaemonModuleNamespace;
-        }
-        if (existsSync(distCandidate)) {
-            return await import(pathToFileURL(distCandidate).href) as PluginDaemonModuleNamespace;
-        }
-    }
-
-    return await import(packageName) as PluginDaemonModuleNamespace;
-}
-
-function resolveBundledActivationSource(target: Readonly<{ pluginId: string; daemonEntryPath: string }>) {
-    if (BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES.includes(target.daemonEntryPath)) {
-        return {
-            kind: 'bundled' as const,
-            moduleId: target.daemonEntryPath,
-            load: async () => await loadBundledFirstPartyPluginDaemonModule(target.daemonEntryPath),
-        };
-    }
-    return null;
 }
 
 export async function resolveExecutablePluginRuntimeRegistry(
@@ -204,16 +174,35 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const hookHandlerRegistry: ResolvedPluginHookHandlerRegistry = await resolvePluginHookHandlerRegistry({
         registry: contributes,
         generation,
+        pluginIds: params?.pluginIds,
+    });
+    const resolveBundledActivationSource = createBundledActivationSourceResolver({
+        bundledPackageNames: BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES,
     });
     const activatedRegistry = await activatePluginRuntimeRegistry({
         contributes,
         generation,
+        happyHomeDir: params?.happyHomeDir,
         pluginIds: params?.pluginIds,
         resolveActivationSource: resolveBundledActivationSource,
         resolveTrustedOptionalPermissionGrants: params?.resolveTrustedOptionalPermissionGrants
             ?? resolveTrustedOptionalPermissionGrantsFromServer,
     });
     const authoritativeContributes = mergeActivatedContributes(contributes, activatedRegistry);
+    // Event-gated SCM plugins (scm-git, scm-sapling, ...) declare
+    // `activationEvents: ['onScmProvider:<id>']` instead of `startup`, so
+    // `activatedRegistry` has no registration for them yet at this point.
+    // Fire their activation event first — via the SAME canonical helper the
+    // SCM catalog path uses — so `scmBackendsById`/`scmBackendRegistrations`
+    // (mutated in place by activation) are populated before diagnostics are
+    // computed below. Without this, every caller of this function (including
+    // the Settings→Plugins projection) would see a false
+    // `plugin_scm_backend_missing_activation` for correctly-wired,
+    // not-yet-activated SCM plugins.
+    await activateScmProviderRuntimeEvents({
+        contributes: authoritativeContributes,
+        activatePluginsByEvent: activatedRegistry.activatePluginsByEvent,
+    });
     const scmBackendRegistry = createPluginScmBackendRegistryFromRuntimeRegistry({
         contributes: authoritativeContributes,
         scmBackendsById: activatedRegistry.scmBackendsById,
@@ -228,7 +217,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         hookHandlersByHookId.set(
             hookId,
             Object.freeze([...existing, ...handlers].sort((left, right) => (
-                right.priority - left.priority
+                left.priority - right.priority
                 || left.pluginId.localeCompare(right.pluginId)
                 || left.registrationIndex - right.registrationIndex
                 || left.manifestPath.localeCompare(right.manifestPath)
@@ -237,13 +226,57 @@ export async function resolveExecutablePluginRuntimeRegistry(
             ))),
         );
     }
+    const pluginDiagnosticsByPluginId: Record<string, readonly PluginCompatibilityDiagnostic[]> = {
+        ...mergePluginDiagnostics(
+            mergePluginDiagnostics(
+                mergePluginDiagnostics(
+                    authoritativeContributes.pluginDiagnosticsByPluginId,
+                    hookHandlerRegistry.diagnosticsByPluginId,
+                ),
+                scmBackendRegistry.diagnosticsByPluginId,
+            ),
+            activatedRegistry.pluginDiagnosticsByPluginId,
+        ),
+    };
+
+    function mergeActivatedHookHandlers(): void {
+        for (const [hookId, handlers] of activatedRegistry.hookHandlersByHookId.entries()) {
+            const staticHandlers = hookHandlerRegistry.handlersByHookId.get(hookId) ?? [];
+            hookHandlersByHookId.set(
+                hookId,
+                Object.freeze([...staticHandlers, ...handlers].sort((left, right) => (
+                    left.priority - right.priority
+                    || left.pluginId.localeCompare(right.pluginId)
+                    || left.registrationIndex - right.registrationIndex
+                    || left.manifestPath.localeCompare(right.manifestPath)
+                    || left.exportName.localeCompare(right.exportName)
+                    || left.daemonEntryPath.localeCompare(right.daemonEntryPath)
+                ))),
+            );
+        }
+    }
+
+    async function activatePluginsByEvent(activationEvent: string): Promise<Awaited<ReturnType<typeof activatedRegistry.activatePluginsByEvent>>> {
+        const results = await activatedRegistry.activatePluginsByEvent(activationEvent);
+        mergeActivatedHookHandlers();
+        for (const result of results) {
+            pluginDiagnosticsByPluginId[result.pluginId] = Object.freeze([
+                ...(authoritativeContributes.pluginDiagnosticsByPluginId[result.pluginId] ?? []),
+                ...(hookHandlerRegistry.diagnosticsByPluginId[result.pluginId] ?? []),
+                ...(scmBackendRegistry.diagnosticsByPluginId[result.pluginId] ?? []),
+                ...result.diagnostics,
+            ]);
+        }
+        return results;
+    }
 
     return {
         contributes: authoritativeContributes,
         actionHandlersByActionId: activatedRegistry.actionHandlersByActionId,
         hookHandlersByHookId,
         runtimeCoreHandlersByBackendId: activatedRegistry.runtimeCoreHandlersByBackendId,
-        backendEnginesByBackendId: activatedRegistry.backendEnginesByBackendId ?? new Map(),
+        agentRuntimesByAgentId: activatedRegistry.agentRuntimesByAgentId ?? new Map(),
+        daemonAuthBridgesByServiceId: activatedRegistry.daemonAuthBridgesByServiceId ?? new Map(),
         notificationCategoriesById: activatedRegistry.notificationCategoriesById,
         notificationChannelsById: activatedRegistry.notificationChannelsById,
         scmHostingProvidersById: activatedRegistry.scmHostingProvidersById,
@@ -269,16 +302,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
         runtimeCapabilitiesByPluginId: activatedRegistry.runtimeCapabilitiesByPluginId,
         eventDeclarationsByPluginId: activatedRegistry.eventDeclarationsByPluginId,
         eventSubscriptionPermissionsByPluginId: activatedRegistry.eventSubscriptionPermissionsByPluginId,
-        pluginDiagnosticsByPluginId: mergePluginDiagnostics(
-            mergePluginDiagnostics(
-                mergePluginDiagnostics(
-                    authoritativeContributes.pluginDiagnosticsByPluginId,
-                    hookHandlerRegistry.diagnosticsByPluginId,
-                ),
-                scmBackendRegistry.diagnosticsByPluginId,
-            ),
-            activatedRegistry.pluginDiagnosticsByPluginId,
-        ),
+        pluginDiagnosticsByPluginId,
+        activatedPluginIds: activatedRegistry.activatedPluginIds,
+        activatePluginsByEvent,
         addRuntimeDisposable: activatedRegistry.addRuntimeDisposable,
         readHookEventEnvelopeV1,
         dispose: activatedRegistry.dispose,

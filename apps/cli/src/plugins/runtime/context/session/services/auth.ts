@@ -7,9 +7,10 @@ import type {
 import {
     CATALOG_AGENT_IDS,
     type CatalogAgentId,
-} from '@/backends/types';
-import { getConnectedServiceRuntimeAuthAdapter } from '@/backends/catalog';
+} from '@/agent/catalog/ids';
+import { getConnectedServiceRuntimeAuthAdapter } from '@/daemon/connectedServices/catalogHooks';
 import { reportConnectedServiceRuntimeAuthFailureToDaemon } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
+import { hasConnectedServiceRuntimeAuthRecoveryContext } from '@/agent/runtime/session/errors/connectedServiceRuntimeAuthRecoveryContext';
 import type {
     ConnectedServiceProviderRuntimeAuthAdapter,
     ConnectedServiceRuntimeAuthTargetInput,
@@ -99,7 +100,10 @@ async function reportRecoveryIfPossible(
     request: SessionRuntimeAuthRefreshRequestV1,
     signal: AbortSignal | undefined,
 ): Promise<unknown | undefined> {
-    if (!request.classification) {
+    if (
+        !request.classification
+        || !hasConnectedServiceRuntimeAuthRecoveryContext(request.classification)
+    ) {
         return undefined;
     }
     const sessionId = await params.readSessionId(signal);

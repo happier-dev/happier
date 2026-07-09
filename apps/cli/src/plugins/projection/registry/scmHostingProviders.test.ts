@@ -14,8 +14,8 @@ const sourceSpec = {
 
 function createEmptyRegistry(overrides: Partial<ResolvedContributionRegistry> = {}): ResolvedContributionRegistry {
     return {
-        providers: [],
-        backends: [],
+        agents: [],
+        agentRuntimes: [],
         actions: [],
         tools: [],
         commands: [],
@@ -32,8 +32,8 @@ function createEmptyRegistry(overrides: Partial<ResolvedContributionRegistry> = 
         lifecycleHandlersById: new Map(),
         surfaceHandlersByBackendId: new Map(),
         catalogEntriesById: {},
-        providerDefinitionsById: new Map(),
-        backendDefinitionsById: new Map(),
+        agentDefinitionsById: new Map(),
+        agentRuntimeDefinitionsById: new Map(),
         pluginDiagnosticsByPluginId: {},
         ...overrides,
     } as ResolvedContributionRegistry;
@@ -50,6 +50,7 @@ describe('SCM hosting-provider plugin contributions', () => {
                     manifestDigest: 'sha256:acme',
                     daemonEntryPath: null,
                     sourceSpec,
+                    devDaemonEntryPath: null,
                     manifest: {
                         schemaVersion: 2,
                         id: 'acme.scm',
@@ -58,15 +59,13 @@ describe('SCM hosting-provider plugin contributions', () => {
                         engines: {
                             happier: '^0.2.0',
                         },
-                        runtime: {
-                            apiVersion: 1,
-                            capabilities: ['scmHostingProviders'],
-                        },
-                        targets: {},
+                        activationEvents: [],
+                        uses: [],
+                        entrypoints: { main: './daemon.js' },
                         permissions: [],
                         contributes: {
-                            providers: [],
-                            backends: [],
+                            agents: [],
+                            agentRuntimes: [],
                             actions: [],
                             tools: [],
                             commands: [],
@@ -111,14 +110,14 @@ describe('SCM hosting-provider plugin contributions', () => {
                 }),
             }),
         ]);
-        expect(registry.providers).toEqual([]);
-        expect(registry.backends).toEqual([]);
+        expect(registry.agents).toEqual([]);
+        expect(registry.agentRuntimes).toEqual([]);
     });
 
     it('keeps first-party providers active when an external plugin declares a duplicate id', () => {
         const registry = createResolvedContributionRegistry({
-            providers: [],
-            backends: [],
+            agents: [],
+            agentRuntimes: [],
             scmHostingProviders: [
                 {
                     id: 'scm.github',
@@ -149,6 +148,7 @@ describe('SCM hosting-provider plugin contributions', () => {
                     manifestDigest: 'sha256:shadow',
                     daemonEntryPath: null,
                     sourceSpec,
+                    devDaemonEntryPath: null,
                     definition: {
                         id: 'scm.github',
                         kind: 'github',
@@ -189,6 +189,7 @@ describe('SCM hosting-provider plugin contributions', () => {
                     manifestDigest: 'sha256:acme',
                     daemonEntryPath: null,
                     sourceSpec,
+                    devDaemonEntryPath: null,
                     definition: {
                         id: 'acme.scm.github',
                         kind: 'github',
@@ -237,8 +238,8 @@ describe('SCM hosting-provider plugin contributions', () => {
 
     it('projects bundled first-party SCM hosting providers without agent or backend contributions', () => {
         const registry = createEmptyRegistry({
-            providers: [],
-            backends: [],
+            agents: [],
+            agentRuntimes: [],
             scmHostingProviders: [
                 {
                     id: 'scm.github',
@@ -269,8 +270,8 @@ describe('SCM hosting-provider plugin contributions', () => {
             generation: 4,
         });
 
-        expect(registry.providers).toEqual([]);
-        expect(registry.backends).toEqual([]);
+        expect(registry.agents).toEqual([]);
+        expect(registry.agentRuntimes).toEqual([]);
         expect(projection.familiesById.scmHostingProviders?.entriesById['scm.github']).toEqual({
             id: 'scm.github',
             pluginId: 'happier.scm.hosting.github',

@@ -7,19 +7,15 @@
   "engines": {
     "happier": "^0.2.0"
   },
-  "runtime": {
-    "apiVersion": 1,
-    "capabilities": [
-      "actions"
-    ]
+  "uses": [
+    "actions"
+  ],
+  "entrypoints": {
+    "main": "./agent/daemon.mjs"
   },
-  "targets": {
-    "daemon": {
-      "entry": "./agent/daemon.mjs"
-    }
-  },
-  "capabilities": {
-    "permissions": []
+  "permissions": {
+    "required": [],
+    "optional": []
   },
   "contributes": {
     "actions": [
@@ -32,7 +28,7 @@
         ],
         "surfaces": [
           "cli",
-          "agentTool"
+          "agent"
         ],
         "placement": "commandPalette",
         "dangerLevel": "safe",

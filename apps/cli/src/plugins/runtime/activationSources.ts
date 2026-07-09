@@ -3,6 +3,7 @@ import type { PluginSourceTrustPolicyV1 } from '@happier-dev/protocol';
 export type FileBackedPluginActivationSource = Readonly<{
     kind: 'file_backed';
     entryPath: string;
+    devEntryPath?: string | null;
     trustPolicy?: PluginSourceTrustPolicyV1;
 }>;
 

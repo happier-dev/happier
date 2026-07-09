@@ -18,21 +18,12 @@ export async function launch() {
             async updateSessionRuntimeConfig() {},
             async resetOrDisposeRuntime() {}
         },
-        runtimeDescriptor: {
-            backendId: 'examples.bundled.backend',
-            runtimeKind: 'native',
-            source: 'first_party'
-        },
-        runtimeCapabilities: {
-            executionRun: { supported: false },
-            sessions: { supported: true }
-        }
     };
 }
 
 export async function discoverIdentity() {
     return {
-        backendId: 'examples.bundled.backend',
+        agentId: 'examples.bundled.backend',
         identity: 'bundled-first-party'
     };
 }

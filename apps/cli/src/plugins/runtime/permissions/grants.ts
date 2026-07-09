@@ -1,4 +1,4 @@
-import axios, { type AxiosRequestConfig } from 'axios';
+import axios, { type AxiosRequestConfig, type AxiosResponse } from 'axios';
 
 import type {
     PluginPermissionGrantAuthoritySourceV1,
@@ -52,8 +52,18 @@ function authoritySourcesMatch(
         && left.installationId === right.installationId;
 }
 
+async function resolveNullableBestEffort<T>(
+    load: () => T | null | undefined | Promise<T | null | undefined>,
+): Promise<T | null> {
+    try {
+        return await load() ?? null;
+    } catch {
+        return null;
+    }
+}
+
 async function resolveLocalMachineInstallationGrantAuthoritySource(): Promise<PluginPermissionGrantAuthoritySourceV1 | null> {
-    const settings = await readSettings().catch(() => null);
+    const settings = await resolveNullableBestEffort(() => readSettings());
     const machineId = typeof settings?.machineId === 'string' ? settings.machineId.trim() : '';
     if (!machineId) {
         return null;
@@ -170,7 +180,7 @@ export async function resolveTrustedOptionalPermissionGrantsFromServer(
         return Object.freeze([]);
     }
 
-    const credentials = await readCredentials().catch(() => null);
+    const credentials = await resolveNullableBestEffort(() => readCredentials());
     if (!credentials) {
         return Object.freeze([]);
     }
@@ -189,11 +199,11 @@ export async function resolveTrustedOptionalPermissionGrantsFromServer(
         timeout: configuration.sessionControlHttpTimeoutMs,
         validateStatus: () => true,
     };
-    const response = await axios.post(
+    const response = await resolveNullableBestEffort<AxiosResponse<unknown>>(() => axios.post(
         `${resolveServerHttpBaseUrl()}/v1/plugins/permissions/grants/list`,
         body,
         config,
-    ).catch(() => null);
+    ));
     if (!response || response.status < 200 || response.status >= 300) {
         return Object.freeze([]);
     }

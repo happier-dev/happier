@@ -1,4 +1,5 @@
-import { normalize, relative, resolve } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { normalize, relative, resolve, sep } from 'node:path';
 
 export type ResolvedPluginResourcePath = Readonly<{
   absolutePath: string;
@@ -7,6 +8,11 @@ export type ResolvedPluginResourcePath = Readonly<{
 
 function normalizeRelativePath(value: string): string {
   return value.replace(/\\/g, '/');
+}
+
+function isInside(parent: string, child: string): boolean {
+  const normalizedParent = parent.endsWith(sep) ? parent : `${parent}${sep}`;
+  return child === parent || child.startsWith(normalizedParent);
 }
 
 export function resolvePluginResourcePath(params: Readonly<{
@@ -34,5 +40,30 @@ export function resolvePluginResourcePath(params: Readonly<{
   return {
     absolutePath,
     relativePath,
+  };
+}
+
+export async function resolveContainedPluginResourcePath(params: Readonly<{
+  pluginRootPath: string;
+  resourcePath: string;
+}>): Promise<ResolvedPluginResourcePath | null> {
+  const resolvedPath = resolvePluginResourcePath(params);
+  if (!resolvedPath) {
+    return null;
+  }
+
+  const pluginRootPath = params.pluginRootPath.trim();
+  const normalizedRoot = resolve(pluginRootPath);
+  const [pluginRootRealPath, resourceRealPath] = await Promise.all([
+    realpath(normalizedRoot).catch(() => null),
+    realpath(resolvedPath.absolutePath).catch(() => null),
+  ]);
+  if (!pluginRootRealPath || !resourceRealPath || !isInside(pluginRootRealPath, resourceRealPath)) {
+    return null;
+  }
+
+  return {
+    absolutePath: resourceRealPath,
+    relativePath: resolvedPath.relativePath,
   };
 }

@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 2,
+  "id": "examples.agent-runtime-plugin",
+  "version": "0.1.0",
+  "displayName": "Agent Runtime Example",
+  "description": "Agent-runtime example with daemon runtime adapter handlers.",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "uses": [
+    "agents"
+  ],
+  "entrypoints": {
+    "main": "./agent/daemon.mjs"
+  },
+  "permissions": {
+    "required": [],
+    "optional": []
+  },
+  "contributes": {
+    "agents": [
+      {
+        "kindVersion": 1,
+        "id": "examples.agent.runtime",
+        "display": {
+          "name": "Examples Agent",
+          "tags": [
+            "plugin"
+          ]
+        },
+        "ownedBackendIds": [
+          "examples.agent.runtime"
+        ],
+        "catalogAgentId": "claude",
+        "runtime": {
+          "kind": "custom"
+        },
+        "capabilities": {},
+        "surfaceHandlers": [
+          {
+            "id": "backend.terminalRuntime.launch",
+            "kind": "terminalRuntime",
+            "operation": "launch",
+            "handler": {
+              "target": "daemon",
+              "exportName": "launch"
+            }
+          },
+          {
+            "id": "backend.terminalRuntime.discoverIdentity",
+            "kind": "terminalRuntime",
+            "operation": "discoverIdentity",
+            "handler": {
+              "target": "daemon",
+              "exportName": "discoverIdentity"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

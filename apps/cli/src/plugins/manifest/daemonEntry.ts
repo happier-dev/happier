@@ -5,6 +5,13 @@ import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnos
 import type { CanonicalPluginManifest } from './types';
 
 const SUPPORTED_PLUGIN_DAEMON_ENTRY_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
+const SUPPORTED_PLUGIN_DEV_DAEMON_ENTRY_EXTENSIONS = new Set([
+  ...SUPPORTED_PLUGIN_DAEMON_ENTRY_EXTENSIONS,
+  '.ts',
+  '.mts',
+  '.cts',
+  '.tsx',
+]);
 
 function isPathInsideRoot(rootPath: string, candidatePath: string): boolean {
   const relativePath = relative(rootPath, candidatePath);
@@ -24,47 +31,36 @@ async function resolveCanonicalExistingPath(path: string): Promise<string | null
 }
 
 export type ResolvePluginDaemonEntryPathResult = Readonly<
-  | { ok: true; daemonEntryPath: string | null }
+  | { ok: true; daemonEntryPath: string | null; devDaemonEntryPath: string | null }
   | { ok: false; diagnostic: PluginCompatibilityDiagnostic }
 >;
 
-export async function resolvePluginDaemonEntryPath(params: Readonly<{
+async function resolveEntrypointPath(params: Readonly<{
   pluginRootPath: string;
-  manifest: CanonicalPluginManifest;
-}>): Promise<ResolvePluginDaemonEntryPathResult> {
-  // `realpath(...)` canonicalizes symlinks on macOS (e.g. `/var` -> `/private/var`).
-  // Canonicalize the root too so containment checks don't falsely fail due to
-  // non-canonical-but-equivalent root strings.
-  const canonicalPluginRootPath = await resolveCanonicalExistingPath(params.pluginRootPath) ?? params.pluginRootPath;
-
-  const daemonEntry = params.manifest.targets.daemon?.entry;
-  if (!daemonEntry) {
-    return {
-      ok: true,
-      daemonEntryPath: null,
-    };
-  }
-
-  const resolvedPath = resolve(canonicalPluginRootPath, daemonEntry);
+  entry: string;
+  label: 'daemon entry' | 'daemon dev entry';
+  supportedExtensions: ReadonlySet<string>;
+}>): Promise<Readonly<{ ok: true; entryPath: string } | { ok: false; diagnostic: PluginCompatibilityDiagnostic }>> {
+  const resolvedPath = resolve(params.pluginRootPath, params.entry);
   const extension = extname(resolvedPath).toLowerCase();
-  if (!SUPPORTED_PLUGIN_DAEMON_ENTRY_EXTENSIONS.has(extension)) {
+  if (!params.supportedExtensions.has(extension)) {
     return {
       ok: false,
       diagnostic: {
         code: 'plugin_source_kind_unsupported',
-        message: `Unsupported plugin daemon entry extension '${extension || '<none>'}' for '${daemonEntry}'`,
+        message: `Unsupported plugin ${params.label} extension '${extension || '<none>'}' for '${params.entry}'`,
       },
     };
   }
 
   const canonicalResolvedPath = await resolveCanonicalExistingPath(resolvedPath);
   const containmentPath = canonicalResolvedPath ?? resolvedPath;
-  if (!isPathInsideRoot(canonicalPluginRootPath, containmentPath)) {
+  if (!isPathInsideRoot(params.pluginRootPath, containmentPath)) {
     return {
       ok: false,
       diagnostic: {
         code: 'plugin_manifest_semantic_invalid',
-        message: `Plugin daemon entry '${daemonEntry}' escapes the plugin root`,
+        message: `Plugin ${params.label} '${params.entry}' escapes the plugin root`,
       },
     };
   }
@@ -79,7 +75,7 @@ export async function resolvePluginDaemonEntryPath(params: Readonly<{
         ok: false,
         diagnostic: {
           code: 'plugin_source_missing',
-          message: `Plugin daemon entry does not exist: ${containmentPath}`,
+          message: `Plugin ${params.label} does not exist: ${containmentPath}`,
         },
       };
     }
@@ -91,13 +87,61 @@ export async function resolvePluginDaemonEntryPath(params: Readonly<{
       ok: false,
       diagnostic: {
         code: 'plugin_source_kind_unsupported',
-        message: `Plugin daemon entry must resolve to a file: ${containmentPath}`,
+        message: `Plugin ${params.label} must resolve to a file: ${containmentPath}`,
       },
     };
   }
 
+  return { ok: true, entryPath: containmentPath };
+}
+
+export async function resolvePluginDaemonEntryPath(params: Readonly<{
+  pluginRootPath: string;
+  manifest: CanonicalPluginManifest;
+  resolveDevEntrypoint?: boolean;
+}>): Promise<ResolvePluginDaemonEntryPathResult> {
+  // `realpath(...)` canonicalizes symlinks on macOS (e.g. `/var` -> `/private/var`).
+  // Canonicalize the root too so containment checks don't falsely fail due to
+  // non-canonical-but-equivalent root strings.
+  const canonicalPluginRootPath = await resolveCanonicalExistingPath(params.pluginRootPath) ?? params.pluginRootPath;
+
+  const daemonEntry = params.manifest.entrypoints.main;
+  if (!daemonEntry) {
+    return {
+      ok: true,
+      daemonEntryPath: null,
+      devDaemonEntryPath: null,
+    };
+  }
+
+  const daemonEntryResolution = await resolveEntrypointPath({
+    pluginRootPath: canonicalPluginRootPath,
+    entry: daemonEntry,
+    label: 'daemon entry',
+    supportedExtensions: SUPPORTED_PLUGIN_DAEMON_ENTRY_EXTENSIONS,
+  });
+  if (!daemonEntryResolution.ok) {
+    return daemonEntryResolution;
+  }
+
+  let devDaemonEntryPath: string | null = null;
+  const devEntry = params.resolveDevEntrypoint ? params.manifest.entrypoints.dev?.trim() : '';
+  if (devEntry) {
+    const devEntryResolution = await resolveEntrypointPath({
+      pluginRootPath: canonicalPluginRootPath,
+      entry: devEntry,
+      label: 'daemon dev entry',
+      supportedExtensions: SUPPORTED_PLUGIN_DEV_DAEMON_ENTRY_EXTENSIONS,
+    });
+    if (!devEntryResolution.ok) {
+      return devEntryResolution;
+    }
+    devDaemonEntryPath = devEntryResolution.entryPath;
+  }
+
   return {
     ok: true,
-    daemonEntryPath: containmentPath,
+    daemonEntryPath: daemonEntryResolution.entryPath,
+    devDaemonEntryPath,
   };
 }

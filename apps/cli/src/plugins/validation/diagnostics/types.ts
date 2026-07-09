@@ -15,6 +15,10 @@ export const PluginDiagnosticCodeSchema = z.enum([
   'plugin_permission_missing',
   'plugin_backend_engine_undeclared_backend_id',
   'plugin_backend_engine_duplicate_backend_id',
+  'plugin_agent_runtime_undeclared_agent_id',
+  'plugin_agent_runtime_duplicate_agent_id',
+  'plugin_daemon_auth_bridge_invalid_service_id',
+  'plugin_daemon_auth_bridge_duplicate_service_id',
   'plugin_tool_undeclared_id',
   'plugin_command_undeclared_id',
   'plugin_hook_undeclared_id',
@@ -44,9 +48,16 @@ export const PluginDiagnosticCodeSchema = z.enum([
   'plugin_mcp_discovery_provider_undeclared_id',
   'installable_duplicate_key',
   'installable_duplicate_capability',
+  'installable_disallowed_source_provenance',
   'plugin_hook_handler_missing',
   'plugin_hook_handler_invalid',
   'plugin_action_undeclared_id',
+  'plugin_action_duplicate_id',
+  'plugin_action_metadata_drift',
+  'plugin_action_manifest_fields_redeclared',
+  'plugin_tool_manifest_fields_redeclared',
+  'plugin_command_manifest_fields_redeclared',
+  'plugin_manifest_engine_range_invalid',
 ]);
 export type PluginDiagnosticCode = z.infer<typeof PluginDiagnosticCodeSchema>;
 

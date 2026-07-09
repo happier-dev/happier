@@ -29,13 +29,28 @@ describe('MCP plugin contribution schemas', () => {
           id: 'acme.discovery',
           kind: 'mcp.discoveryProvider',
           version: '1.0.0',
-          providerId: 'acme',
+          agentId: 'acme',
         },
       ],
     });
 
     expect(parsed.servers.map((server) => server.name)).toEqual(['acme-hosted']);
-    expect(parsed.discoveryProviders.map((provider) => provider.providerId)).toEqual(['acme']);
+    expect(parsed.discoveryProviders.map((provider) => provider.agentId)).toEqual(['acme']);
+  });
+
+  it('rejects providerId on MCP discovery-provider descriptors', () => {
+    const result = PluginMcpContributesV1Schema.safeParse({
+      discoveryProviders: [
+        {
+          id: 'acme.discovery',
+          kind: 'mcp.discoveryProvider',
+          version: '1.0.0',
+          providerId: 'acme',
+        },
+      ],
+    });
+
+    expect(result.success).toBe(false);
   });
 
   it('rejects retired static MCP backend-client and direct-tool descriptors', () => {
@@ -193,7 +208,7 @@ describe('MCP plugin contribution schemas', () => {
           id: 'acme.discovery',
           kind: 'mcp.discoveryProvider',
           version: '1.0.0',
-          providerId: 'acme',
+          agentId: 'acme',
           headers: {
             Authorization: 'Bearer raw-value',
           },

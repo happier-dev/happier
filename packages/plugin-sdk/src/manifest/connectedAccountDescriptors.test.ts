@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PluginConnectedAccountDescriptorContributionV2Schema } from './connectedAccountDescriptors';
+import { PluginConnectedAccountDescriptorContributionV2Schema } from './connectedAccountDescriptors.js';
 
 describe('plugin SDK connected account descriptor manifest surface', () => {
   it('validates plugin connected account descriptor contributions without protocol-internal imports', () => {

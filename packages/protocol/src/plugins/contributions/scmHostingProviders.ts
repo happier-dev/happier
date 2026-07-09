@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   ScmHostingProviderKindSchema as BaseScmHostingProviderKindSchema,
   ScmHostingProviderCapabilitiesSchema,
-} from '../../scmPullRequests.js';
+} from '../../scm/pullRequests.js';
 
 export const ScmHostingProviderKindSchema = BaseScmHostingProviderKindSchema;
 export type ScmHostingProviderKind = z.infer<typeof ScmHostingProviderKindSchema>;

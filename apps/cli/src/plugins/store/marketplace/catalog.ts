@@ -87,6 +87,13 @@ export type InstallMarketplacePluginResult =
       diagnostics: readonly PluginCompatibilityDiagnostic[];
     }>;
 
+function buildMarketplaceTrustApprovalRequiredDiagnostic(entry: MarketplaceCatalogEntry): PluginCompatibilityDiagnostic {
+  return {
+    code: 'plugin_trust_approval_required',
+    message: `Marketplace plugin '${entry.pluginId}' requires explicit executable trust approval before managed install can record local_trusted policy.`,
+  };
+}
+
 function isHttpUrl(locator: string): boolean {
   try {
     const parsed = new URL(locator);
@@ -373,9 +380,20 @@ function buildProtocolMarketplaceEntry(
     source,
     manifestDigest: descriptor.digest ?? null,
     contributionIds: {
-      providers: [],
-      backends: [],
+      agents: [],
+      agentRuntimes: [],
+      actions: [],
+      tools: [],
+      commands: [],
+      resources: [],
+      uiDescriptors: [],
+      settings: [],
       hooks: [],
+      hostedWeb: [],
+      embeddedWebBundles: [],
+      reactNativeBundles: [],
+      uiArtifacts: [],
+      surfacePlacements: [],
     },
     installable: source !== null && diagnostics.length === 0,
     diagnostics,
@@ -639,6 +657,7 @@ export async function installMarketplacePlugin(params: Readonly<{
   happyHomeDir?: string;
   skipIfInstalled: boolean;
   dryRun?: boolean;
+  trustExecutable?: boolean;
 }>): Promise<InstallMarketplacePluginResult> {
   const result = await readRemoteMarketplaceCatalogEntry({
     sourceUrl: params.sourceUrl,
@@ -687,13 +706,48 @@ export async function installMarketplacePlugin(params: Readonly<{
     };
   }
 
+  const stateStore = createPluginStateStore({ happyHomeDir: params.happyHomeDir });
+  const existingRecord = params.skipIfInstalled
+    ? (await stateStore.read()).plugins[result.entry.pluginId] ?? null
+    : null;
+  const sourceForInstall = result.entry.source.trustPolicy === 'prompt' && params.trustExecutable
+    ? {
+        ...result.entry.source,
+        trustPolicy: 'local_trusted' as const,
+      }
+    : result.entry.source;
+  const requiresTrustApproval = !params.dryRun
+    && result.entry.source.trustPolicy === 'prompt'
+    && existingRecord?.source.trustPolicy !== 'local_trusted';
+  if (requiresTrustApproval && !params.trustExecutable) {
+    return {
+      ok: false,
+      diagnostics: [buildMarketplaceTrustApprovalRequiredDiagnostic(result.entry)],
+    };
+  }
+
+  if (result.entry.source.trustPolicy === 'untrusted') {
+    return {
+      ok: false,
+      diagnostics: [
+        {
+          code: 'plugin_untrusted',
+          message: `Marketplace plugin '${result.entry.pluginId}' is marked untrusted and cannot be installed as executable code.`,
+        },
+      ],
+    };
+  }
+
+  const skipIfInstalled = params.skipIfInstalled
+    && !(params.trustExecutable && result.entry.source.trustPolicy === 'prompt' && existingRecord?.source.trustPolicy !== 'local_trusted');
+
   if (result.entry.source.kind === 'path') {
     const installed = await installPluginFromSource({
-      happyHomeDir: createPluginStateStore({ happyHomeDir: params.happyHomeDir }).paths.happyHomeDir,
-      locator: result.entry.source.locator,
+      happyHomeDir: stateStore.paths.happyHomeDir,
+      locator: sourceForInstall.locator,
       sourceKind: 'path',
-      sourceSpecOverride: result.entry.source,
-      skipIfInstalled: params.skipIfInstalled,
+      sourceSpecOverride: sourceForInstall,
+      skipIfInstalled,
       dryRun: params.dryRun,
     });
     if (!installed.ok) {
@@ -716,12 +770,12 @@ export async function installMarketplacePlugin(params: Readonly<{
 
   if (result.entry.source.kind === 'archive') {
     const installed = await installPluginFromSource({
-      happyHomeDir: createPluginStateStore({ happyHomeDir: params.happyHomeDir }).paths.happyHomeDir,
-      locator: result.entry.source.locator,
+      happyHomeDir: stateStore.paths.happyHomeDir,
+      locator: sourceForInstall.locator,
       sourceKind: 'archive',
-      sourceSpecOverride: result.entry.source,
+      sourceSpecOverride: sourceForInstall,
       expectedManifestDigest: result.entry.manifestDigest,
-      skipIfInstalled: params.skipIfInstalled,
+      skipIfInstalled,
       dryRun: params.dryRun,
     });
     if (!installed.ok) {

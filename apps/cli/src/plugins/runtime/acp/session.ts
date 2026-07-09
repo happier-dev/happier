@@ -9,7 +9,8 @@ import type {
     AcpSessionStartParamsV1,
     JsonRpcClientV1,
 } from '@happier-dev/plugin-sdk';
-import { RuntimeEventV1Schema, type RuntimeEventV1 } from '@happier-dev/protocol';
+import { RuntimeEventV1Schema, validatePluginHookPayloadV1, type RuntimeEventV1 } from '@happier-dev/protocol';
+import { logger } from '@/ui/logger';
 
 type AcpSessionRuntimeErrorFactory = (message: string) => Error;
 
@@ -26,6 +27,7 @@ export type CreateAcpSessionRuntimeParams = Readonly<{
         cancelTurn(): void;
         settleTurn(): void;
     }>;
+    transformAgentRequestBeforeDispatch?: (payload: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown>;
     createDisposedError: () => Error;
     createSessionNotStartedError: () => Error;
     createInvalidResultError: AcpSessionRuntimeErrorFactory;
@@ -82,10 +84,35 @@ function assertRuntimeActive(params: CreateAcpSessionRuntimeParams): void {
     }
 }
 
-function buildNewSessionParams(params: CreateAcpSessionRuntimeParams): Readonly<Record<string, unknown>> {
+function normalizeMcpServers(value: unknown): readonly unknown[] | undefined {
+    return Array.isArray(value) ? Object.freeze([...value]) : undefined;
+}
+
+function buildMcpServersPayload(startParams: AcpSessionStartParamsV1): Readonly<Record<string, unknown>> {
+    const mcpServers = normalizeMcpServers(startParams.mcpServers);
+    return mcpServers === undefined ? Object.freeze({}) : Object.freeze({ mcpServers });
+}
+
+function buildNewSessionParams(
+    params: CreateAcpSessionRuntimeParams,
+    startParams: AcpSessionStartParamsV1,
+): Readonly<Record<string, unknown>> {
     return Object.freeze({
         cwd: params.cwd,
+        ...buildMcpServersPayload(startParams),
         ...(params.initializeMeta ? { _meta: params.initializeMeta } : {}),
+    });
+}
+
+function buildLoadSessionParams(
+    params: CreateAcpSessionRuntimeParams,
+    providerSessionId: string,
+    startParams: AcpSessionStartParamsV1,
+): Readonly<Record<string, unknown>> {
+    return Object.freeze({
+        sessionId: providerSessionId,
+        cwd: params.cwd,
+        ...buildMcpServersPayload(startParams),
     });
 }
 
@@ -110,6 +137,44 @@ function buildAuthenticateParams(params: CreateAcpSessionRuntimeParams): Readonl
         methodId: authenticate.methodId,
         ...(authenticate.meta ? { _meta: authenticate.meta } : {}),
     });
+}
+
+async function transformAcpAgentRequestBeforeDispatch(params: Readonly<{
+    transformAgentRequestBeforeDispatch?: CreateAcpSessionRuntimeParams['transformAgentRequestBeforeDispatch'];
+    happySessionId: string;
+    method: string;
+    request: Readonly<Record<string, unknown>>;
+}>): Promise<Readonly<Record<string, unknown>>> {
+    if (!params.transformAgentRequestBeforeDispatch) {
+        return params.request;
+    }
+    try {
+        const transformed = await params.transformAgentRequestBeforeDispatch({
+            sessionId: params.happySessionId,
+            runtimeFamily: 'acpSession',
+            method: params.method,
+            request: params.request,
+            timestampMs: Date.now(),
+        });
+        const validation = validatePluginHookPayloadV1({
+            hookId: 'agent.request.before',
+            payload: transformed,
+        });
+        if (!validation.success) {
+            logger.debug('[plugins] agent.request.before returned an invalid ACP request payload; using original request', {
+                error: validation.message,
+            });
+            return params.request;
+        }
+        const parsed = validation.payload as Record<string, unknown>;
+        const request = parsed.request;
+        return request && typeof request === 'object' && !Array.isArray(request)
+            ? request as Readonly<Record<string, unknown>>
+            : params.request;
+    } catch (error) {
+        logger.debug('[plugins] agent.request.before failed for ACP request; using original request', { error });
+        return params.request;
+    }
 }
 
 function readAdvertisedAuthMethodIds(result: unknown): readonly string[] {
@@ -179,6 +244,13 @@ function readSessionUpdateType(update: unknown): string | null {
         return null;
     }
     return readString(update.sessionUpdate) ?? readString(update.type);
+}
+
+function readPromptStopReason(update: unknown): string | null {
+    if (!isRecord(update)) {
+        return null;
+    }
+    return readString(update.stopReason);
 }
 
 function readAgentMessageDelta(update: unknown): unknown | null {
@@ -268,8 +340,8 @@ export function createAcpSessionRuntime(params: CreateAcpSessionRuntimeParams): 
         await ensureHandshake();
         const requestedSessionId = startParams.providerSessionId ?? null;
         const result = requestedSessionId
-            ? await params.client.request(ACP_SESSION_LOAD_METHOD, { sessionId: requestedSessionId })
-            : await params.client.request(ACP_SESSION_NEW_METHOD, buildNewSessionParams(params));
+            ? await params.client.request(ACP_SESSION_LOAD_METHOD, buildLoadSessionParams(params, requestedSessionId, startParams))
+            : await params.client.request(ACP_SESSION_NEW_METHOD, buildNewSessionParams(params, startParams));
         providerSessionId = readSessionId(result, params.createInvalidResultError);
         return providerSessionId;
     }
@@ -424,6 +496,10 @@ export function createAcpSessionRuntime(params: CreateAcpSessionRuntimeParams): 
         }
         if (sessionUpdateType && FAILED_SESSION_UPDATE_TYPES.has(sessionUpdateType)) {
             publishTurnFailed(update);
+            return;
+        }
+        if (readPromptStopReason(update) === 'end_turn') {
+            publishTurnComplete();
         }
     }
 
@@ -449,10 +525,19 @@ export function createAcpSessionRuntime(params: CreateAcpSessionRuntimeParams): 
         async sendTurnPrompt(prompt: string): Promise<void> {
             assertRuntimeActive(params);
             const sessionId = readActiveProviderSessionId();
-            await params.client.request(ACP_SESSION_PROMPT_METHOD, {
-                sessionId,
-                prompt,
+            const request = await transformAcpAgentRequestBeforeDispatch({
+                transformAgentRequestBeforeDispatch: params.transformAgentRequestBeforeDispatch,
+                happySessionId: params.sessionId,
+                method: ACP_SESSION_PROMPT_METHOD,
+                request: {
+                    sessionId,
+                    prompt: [Object.freeze({ type: 'text', text: prompt })],
+                },
             });
+            const result = await params.client.request(ACP_SESSION_PROMPT_METHOD, request);
+            for (const update of readSessionUpdates(result)) {
+                handleOneSessionUpdate(update);
+            }
         },
         async waitForTurnCompletion(opts?: AcpSessionRuntimeCompletionOptionsV1): Promise<void> {
             assertRuntimeActive(params);
@@ -487,6 +572,13 @@ export function createAcpSessionRuntime(params: CreateAcpSessionRuntimeParams): 
         },
         async updateSessionRuntimeConfig(update: AcpSessionRuntimeConfigUpdateV1): Promise<void> {
             assertRuntimeActive(params);
+            if (
+                update.modeId === undefined
+                && update.modelId === undefined
+                && update.configOption === undefined
+            ) {
+                return;
+            }
             const sessionId = readActiveProviderSessionId();
             if (update.modeId !== undefined) {
                 await params.client.request(ACP_SESSION_SET_MODE_METHOD, {
@@ -500,20 +592,11 @@ export function createAcpSessionRuntime(params: CreateAcpSessionRuntimeParams): 
                     modelId: update.modelId,
                 });
             }
-            // Canonical singular config-option update wins; the plural `configOptions` map is a
-            // legacy alias retained for plugins that have not migrated.
             if (update.configOption && typeof update.configOption.id === 'string') {
                 await params.client.request(ACP_SESSION_SET_CONFIG_OPTION_METHOD, {
                     sessionId,
                     configId: update.configOption.id,
                     value: update.configOption.value,
-                });
-            }
-            for (const [configId, value] of Object.entries(update.configOptions ?? {})) {
-                await params.client.request(ACP_SESSION_SET_CONFIG_OPTION_METHOD, {
-                    sessionId,
-                    configId,
-                    value,
                 });
             }
         },

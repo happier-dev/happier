@@ -1,9 +1,15 @@
-import type { PluginPermissionCapabilityV1, PluginRuntimeCapabilityFamilyV1 } from '@happier-dev/protocol';
+import type {
+    PluginHookIdV1,
+    PluginActionContributionV2,
+    PluginPermissionCapabilityV1,
+    PluginRuntimeCapabilityFamilyV1,
+} from '@happier-dev/protocol';
 import type {
     PluginApiV1,
     PluginApiActionRegistrationV1,
-    PluginApiBackendEngineRegistrationV1,
+    PluginApiAgentRuntimeRegistrationV1,
     PluginApiCommandRegistrationV1,
+    PluginApiDaemonAuthBridgeRegistrationV1,
     PluginApiHookRegistrationV1,
     PluginApiLifecycleHandlerRegistrationV1,
     PluginApiMcpDiscoveryProviderRegistrationV1,
@@ -37,8 +43,7 @@ export type PluginApiHostRegisterMethod = Readonly<{
 }>;
 
 export type PluginApiHostLifecycleHandlerDeclaration = Readonly<{
-    id?: string;
-    canonicalId?: string;
+    id: string;
     event: PluginApiLifecycleHandlerRegistrationV1['event'];
 }>;
 
@@ -46,8 +51,9 @@ export type PluginApiHostPolicy = Readonly<{
     pluginId?: string;
     runtimeCapabilities?: readonly (PluginRuntimeCapabilityFamilyV1 | string)[];
     permissions?: readonly PluginPermissionCapabilityV1[];
-    declaredBackendIds?: readonly string[];
+    declaredAgentIds?: readonly string[];
     declaredActionIds?: readonly string[];
+    declaredActions?: readonly PluginActionContributionV2[];
     declaredToolIds?: readonly string[];
     declaredCommandIds?: readonly string[];
     declaredHookIds?: readonly string[];
@@ -67,11 +73,13 @@ export type PluginApiHostRegisterMethodMap = Readonly<Record<string, PluginApiRe
 
 export type PluginApi = PluginApiV1<PluginApiHostRegisterMethodMap>;
 
-export type PluginApiBackendEngineRegistration = PluginApiBackendEngineRegistrationV1;
+export type PluginApiAgentRuntimeRegistration = PluginApiAgentRuntimeRegistrationV1;
+export type PluginApiDaemonAuthBridgeRegistration = PluginApiDaemonAuthBridgeRegistrationV1;
 export type PluginApiActionRegistration = PluginApiActionRegistrationV1;
 export type PluginApiToolRegistration = PluginApiToolRegistrationV1;
 export type PluginApiCommandRegistration = PluginApiCommandRegistrationV1;
-export type PluginApiHookRegistration = PluginApiHookRegistrationV1;
+export type PluginApiHookRegistration<THookId extends PluginHookIdV1 = PluginHookIdV1> =
+    THookId extends PluginHookIdV1 ? PluginApiHookRegistrationV1<THookId> : never;
 export type PluginApiLifecycleHandlerRegistration = PluginApiLifecycleHandlerRegistrationV1;
 export type PluginApiNotificationCategoryRegistration = PluginApiNotificationCategoryRegistrationV1;
 export type PluginApiNotificationChannelRegistration = PluginApiNotificationChannelRegistrationV1;
@@ -82,7 +90,8 @@ export type PluginApiMcpServerRegistration = PluginApiMcpServerRegistrationV1;
 export type PluginApiMcpDiscoveryProviderRegistration = PluginApiMcpDiscoveryProviderRegistrationV1;
 
 export type PluginApiRegistrations = Readonly<{
-    backendEngines: readonly PluginApiBackendEngineRegistration[];
+    agentRuntimes: readonly PluginApiAgentRuntimeRegistration[];
+    daemonAuthBridges: readonly PluginApiDaemonAuthBridgeRegistration[];
     actions: readonly PluginApiActionRegistration[];
     tools: readonly PluginApiToolRegistration[];
     commands: readonly PluginApiCommandRegistration[];

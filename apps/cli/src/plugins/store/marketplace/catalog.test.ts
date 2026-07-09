@@ -405,11 +405,30 @@ describe('readRemoteMarketplaceCatalog', () => {
         diagnostics: [],
       });
 
+      const unapprovedInstallResult = await installMarketplacePlugin({
+        sourceUrl: catalogUrl,
+        pluginId: SAMPLE_PLUGIN_ID,
+        happyHomeDir: home,
+        skipIfInstalled: true,
+      });
+
+      expect(unapprovedInstallResult.ok).toBe(false);
+      if (unapprovedInstallResult.ok) return;
+      expect(unapprovedInstallResult.diagnostics).toEqual([
+        expect.objectContaining({
+          code: 'plugin_trust_approval_required',
+        }),
+      ]);
+
+      const stateAfterUnapprovedInstall = await createPluginStateStore({ happyHomeDir: home }).read();
+      expect(stateAfterUnapprovedInstall.plugins[SAMPLE_PLUGIN_ID]).toBeUndefined();
+
       const installResult = await installMarketplacePlugin({
         sourceUrl: catalogUrl,
         pluginId: SAMPLE_PLUGIN_ID,
         happyHomeDir: home,
         skipIfInstalled: true,
+        trustExecutable: true,
       });
 
       expect(installResult.ok).toBe(true);
@@ -420,7 +439,7 @@ describe('readRemoteMarketplaceCatalog', () => {
         source: {
           kind: 'archive',
           locator: expectedArchiveUrl,
-          trustPolicy: 'prompt',
+          trustPolicy: 'local_trusted',
           installPolicy: 'managed_install',
         },
       });
@@ -491,6 +510,7 @@ describe('readRemoteMarketplaceCatalog', () => {
         pluginId: SAMPLE_PLUGIN_ID,
         happyHomeDir: home,
         skipIfInstalled: true,
+        trustExecutable: true,
       });
 
       expect(installResult.ok).toBe(false);
@@ -588,6 +608,7 @@ describe('readRemoteMarketplaceCatalog', () => {
         pluginId: SAMPLE_PLUGIN_ID,
         happyHomeDir: home,
         skipIfInstalled: true,
+        trustExecutable: true,
       });
 
       expect(installResult.ok).toBe(true);
@@ -598,7 +619,7 @@ describe('readRemoteMarketplaceCatalog', () => {
         source: {
           kind: 'archive',
           locator: expectedArchiveUrl,
-          trustPolicy: 'prompt',
+          trustPolicy: 'local_trusted',
           installPolicy: 'managed_install',
         },
       });

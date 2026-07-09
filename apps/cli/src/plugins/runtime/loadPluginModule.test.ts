@@ -1,4 +1,4 @@
-import { mkdtemp, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -50,6 +50,54 @@ describe('loadPluginModule', () => {
         await expect(loadPluginModule({
             source: { kind: 'file_backed', entryPath, trustPolicy: 'local_trusted' },
         })).rejects.toThrow(/Unsupported .* daemon entry extension/i);
+    });
+
+    it('loads a local trusted TypeScript dev entry instead of the compiled daemon entry', async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'happier-plugin-daemon-dev-module-'));
+        const entryPath = join(rootDir, 'dist', 'daemon.mjs');
+        const devEntryPath = join(rootDir, 'src', 'daemon.ts');
+        await mkdir(join(rootDir, 'dist'), { recursive: true });
+        await mkdir(join(rootDir, 'src'), { recursive: true });
+        await writeFile(entryPath, 'export const version = "compiled-main";\n', 'utf8');
+        await writeFile(
+            devEntryPath,
+            [
+                'const version: string = "typescript-dev";',
+                'export { version };',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+
+        const module = await loadPluginModule({
+            source: {
+                kind: 'file_backed',
+                entryPath,
+                devEntryPath,
+                trustPolicy: 'local_trusted',
+            },
+        });
+
+        expect((module as { version?: string }).version).toBe('typescript-dev');
+    });
+
+    it('does not load a TypeScript dev entry unless the file-backed source is locally trusted', async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'happier-plugin-daemon-dev-untrusted-'));
+        const entryPath = join(rootDir, 'dist', 'daemon.mjs');
+        const devEntryPath = join(rootDir, 'src', 'daemon.ts');
+        await mkdir(join(rootDir, 'dist'), { recursive: true });
+        await mkdir(join(rootDir, 'src'), { recursive: true });
+        await writeFile(entryPath, 'export const version = "compiled-main";\n', 'utf8');
+        await writeFile(devEntryPath, 'export const version: string = "typescript-dev";\n', 'utf8');
+
+        await expect(loadPluginModule({
+            source: {
+                kind: 'file_backed',
+                entryPath,
+                devEntryPath,
+                trustPolicy: 'prompt',
+            },
+        })).rejects.toThrow(/requires explicit trust approval/i);
     });
 
     it('fails closed when file-backed executable trust metadata is missing', async () => {

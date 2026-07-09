@@ -39,6 +39,14 @@ type ReleaseFromStateDeps = Readonly<{
     drainMs: number;
     trackedClaimCount: number;
     allowCurrentSessionClaim?: boolean;
+    /**
+     * Final defense-in-depth gate before the sole-claimant kill: when the server's sole remaining
+     * claimant has a turn in flight, refuse the kill and leave BOTH the process AND the state file
+     * intact (the orphan-reap collects it at quiescence). Fail-closed: any throw / non-`true` result
+     * proceeds with the kill, so a missing in-flight signal never pins a server. Generic across every
+     * managed-server provider (OpenCode serve, Codex app-server, …).
+     */
+    hasInFlightTurnForLaunchFingerprint?: () => Promise<boolean> | boolean;
 }>;
 
 export type ManagedServerSwitchReleaseResult = Readonly<{
@@ -52,7 +60,8 @@ export type ManagedServerSwitchReleaseResult = Readonly<{
         | 'active_server_dir_mismatch'
         | 'pid_dead'
         | 'process_identity_mismatch'
-        | 'tracked_session_claimed';
+        | 'tracked_session_claimed'
+        | 'in_flight_turn';
 }>;
 
 export type ManagedServerStatePathParams = Readonly<{
@@ -306,6 +315,15 @@ export async function releaseManagedServerForSwitchFromState(
         }
     }
 
+    if (deps.hasInFlightTurnForLaunchFingerprint) {
+        const turnInFlight = await Promise.resolve()
+            .then(() => deps.hasInFlightTurnForLaunchFingerprint?.())
+            .catch(() => false);
+        if (turnInFlight === true) {
+            return { released: false, reason: 'in_flight_turn' };
+        }
+    }
+
     await deps.killPid(state.pid, deps.drainMs);
     await deps.removeState().catch(() => {});
     return { released: true, reason: 'released' };
@@ -320,6 +338,7 @@ export async function releaseManagedServerForSwitch(params: ManagedServerStatePa
     drainMs: number;
     trackedClaimCount: number;
     allowCurrentSessionClaim?: boolean;
+    hasInFlightTurnForLaunchFingerprint?: () => Promise<boolean> | boolean;
 }>): Promise<ManagedServerSwitchReleaseResult> {
     const previousStatePath = readNonEmptyString(params.previousStatePath)
         ?? resolveManagedServerStatePath(params);
@@ -338,6 +357,9 @@ export async function releaseManagedServerForSwitch(params: ManagedServerStatePa
         drainMs: params.drainMs,
         trackedClaimCount: params.trackedClaimCount,
         allowCurrentSessionClaim: params.allowCurrentSessionClaim,
+        ...(params.hasInFlightTurnForLaunchFingerprint
+            ? { hasInFlightTurnForLaunchFingerprint: params.hasInFlightTurnForLaunchFingerprint }
+            : {}),
     });
 }
 

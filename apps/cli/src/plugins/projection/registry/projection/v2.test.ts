@@ -5,8 +5,8 @@ import type { ResolvedContributionRegistry } from '../types';
 
 function createEmptyResolvedContributionRegistry(): ResolvedContributionRegistry {
     return {
-        providers: [],
-        backends: [],
+        agents: [],
+        agentRuntimes: [],
         actions: [],
         tools: [],
         commands: [],
@@ -23,8 +23,8 @@ function createEmptyResolvedContributionRegistry(): ResolvedContributionRegistry
         lifecycleHandlersById: new Map(),
         surfaceHandlersByBackendId: new Map(),
         catalogEntriesById: {},
-        providerDefinitionsById: new Map(),
-        backendDefinitionsById: new Map(),
+        agentDefinitionsById: new Map(),
+        agentRuntimeDefinitionsById: new Map(),
         pluginDiagnosticsByPluginId: {},
     };
 }
@@ -87,7 +87,7 @@ describe('buildPluginProjectionV2', () => {
         const projection = buildPluginProjectionV2({
             registry: {
                 ...createEmptyResolvedContributionRegistry(),
-                providers: [
+                agents: [
                     {
                         id: 'acme.provider',
                         provenance: 'external',
@@ -100,17 +100,17 @@ describe('buildPluginProjectionV2', () => {
                         },
                     },
                 ],
-                backends: [
+                agentRuntimes: [
                     {
                         id: 'acme.backend',
-                        providerId: 'acme.provider',
+                        agentId: 'acme.provider',
                         provenance: 'external',
                         source: { kind: 'path' },
                         pluginId: 'acme.plugin',
                         definition: {
                             kindVersion: 1,
                             id: 'acme.backend',
-                            providerId: 'acme.provider',
+                            agentId: 'acme.provider',
                         },
                     },
                 ],
@@ -155,7 +155,7 @@ describe('buildPluginProjectionV2', () => {
                         id: 'acme.discovery',
                         kind: 'mcp.discoveryProvider',
                         version: '1.0.0',
-                        providerId: 'acme',
+                        agentId: 'acme',
                     },
                 },
             ],
@@ -177,7 +177,7 @@ describe('buildPluginProjectionV2', () => {
             id: 'discoveryProvider:acme.discovery',
             pluginId: 'acme.mcp',
             contributionKind: 'discoveryProvider',
-            providerId: 'acme',
+            agentId: 'acme',
         });
         expect(projection.familiesById.mcp?.entriesById['backendClient:acme.backendClient']).toBeUndefined();
         expect(projection.familiesById.mcp?.entriesById['tool:acme.tool']).toBeUndefined();
@@ -187,8 +187,8 @@ describe('buildPluginProjectionV2', () => {
 
     it('projects hook semantics from the canonical protocol hook catalog when normalized hook records omit raw v2 fields', () => {
         const registry: ResolvedContributionRegistry = {
-            providers: [],
-            backends: [],
+            agents: [],
+            agentRuntimes: [],
             actions: [],
             tools: [],
             commands: [],
@@ -230,8 +230,8 @@ describe('buildPluginProjectionV2', () => {
             lifecycleHandlersById: new Map(),
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
-            providerDefinitionsById: new Map(),
-            backendDefinitionsById: new Map(),
+            agentDefinitionsById: new Map(),
+            agentRuntimeDefinitionsById: new Map(),
             pluginDiagnosticsByPluginId: {},
         };
 
@@ -257,8 +257,8 @@ describe('buildPluginProjectionV2', () => {
 
     it('keeps multiple plugin registrations for the same hook event instead of overwriting them in projection output', () => {
         const registry: ResolvedContributionRegistry = {
-            providers: [],
-            backends: [],
+            agents: [],
+            agentRuntimes: [],
             actions: [],
             tools: [],
             commands: [],
@@ -324,8 +324,8 @@ describe('buildPluginProjectionV2', () => {
             lifecycleHandlersById: new Map(),
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
-            providerDefinitionsById: new Map(),
-            backendDefinitionsById: new Map(),
+            agentDefinitionsById: new Map(),
+            agentRuntimeDefinitionsById: new Map(),
             pluginDiagnosticsByPluginId: {},
         };
 
@@ -354,7 +354,7 @@ describe('buildPluginProjectionV2', () => {
 
     it("projects built-in contributes as bundled sources so first-party plugins don't look like external installs", () => {
         const registry: ResolvedContributionRegistry = {
-            providers: [{
+            agents: [{
                 id: 'happier.bundled',
                 provenance: 'first_party',
                 source: { kind: 'bundled' },
@@ -367,7 +367,7 @@ describe('buildPluginProjectionV2', () => {
                 // be projected as if they were installed from a path/archive.
                 pluginId: 'happier.bundled',
             }],
-            backends: [],
+            agentRuntimes: [],
             actions: [],
             tools: [],
             commands: [],
@@ -384,8 +384,8 @@ describe('buildPluginProjectionV2', () => {
             lifecycleHandlersById: new Map(),
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
-            providerDefinitionsById: new Map(),
-            backendDefinitionsById: new Map(),
+            agentDefinitionsById: new Map(),
+            agentRuntimeDefinitionsById: new Map(),
             pluginDiagnosticsByPluginId: {},
         };
 
@@ -406,10 +406,72 @@ describe('buildPluginProjectionV2', () => {
         });
     });
 
+    it('projects first-party provider settings backend ids for bundled multi-backend agents', () => {
+        const registry: ResolvedContributionRegistry = {
+            ...createEmptyResolvedContributionRegistry(),
+            agents: [{
+                id: 'antigravity',
+                provenance: 'first_party',
+                source: { kind: 'bundled' },
+                definition: {
+                    kindVersion: 1,
+                    id: 'antigravity',
+                    ownedBackendIds: ['antigravity-localharness', 'antigravity-terminal'],
+                    settingsBackendId: 'antigravity-localharness',
+                    catalogAgentId: 'antigravity',
+                    iconAgentId: 'antigravity',
+                },
+                pluginId: 'happier.agent.antigravity',
+            }],
+            agentRuntimes: [
+                {
+                    id: 'antigravity-localharness',
+                    agentId: 'antigravity',
+                    provenance: 'first_party',
+                    source: { kind: 'bundled' },
+                    definition: {
+                        kindVersion: 1,
+                        id: 'antigravity-localharness',
+                        agentId: 'antigravity',
+                    },
+                },
+                {
+                    id: 'antigravity-terminal',
+                    agentId: 'antigravity',
+                    provenance: 'first_party',
+                    source: { kind: 'bundled' },
+                    definition: {
+                        kindVersion: 1,
+                        id: 'antigravity-terminal',
+                        agentId: 'antigravity',
+                    },
+                },
+            ],
+        };
+
+        const projection = buildPluginProjectionV2({
+            registry,
+            generation: 1,
+            installedPackages: [],
+        });
+
+        expect(projection.providersById.antigravity).toEqual(expect.objectContaining({
+            settingsBackendId: 'antigravity-localharness',
+            providerAgentId: 'antigravity',
+            iconAgentId: 'antigravity',
+        }));
+        expect(projection.backendsById['antigravity-localharness']).toEqual(expect.objectContaining({
+            providerId: 'antigravity',
+        }));
+        expect(projection.backendsById['antigravity-terminal']).toEqual(expect.objectContaining({
+            providerId: 'antigravity',
+        }));
+    });
+
     it('includes bundled plugin UI descriptors in the projection output', () => {
         const registry: ResolvedContributionRegistry = {
-            providers: [],
-            backends: [],
+            agents: [],
+            agentRuntimes: [],
             actions: [],
             tools: [],
             commands: [],
@@ -438,8 +500,8 @@ describe('buildPluginProjectionV2', () => {
             lifecycleHandlersById: new Map(),
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
-            providerDefinitionsById: new Map(),
-            backendDefinitionsById: new Map(),
+            agentDefinitionsById: new Map(),
+            agentRuntimeDefinitionsById: new Map(),
             pluginDiagnosticsByPluginId: {},
         };
 
@@ -457,7 +519,140 @@ describe('buildPluginProjectionV2', () => {
         }));
     });
 
-    it('normalizes legacy provider settings descriptors to the plugin agent settings surface', () => {
+    it('projects generic plugin-local settings for a hook-only plugin without mixing them into UI descriptors', () => {
+        const registry: ResolvedContributionRegistry = {
+            ...createEmptyResolvedContributionRegistry(),
+            hookRegistrations: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'acme.hooks',
+                    manifestPath: '/tmp/acme/.happier-plugin/plugin.json',
+                    manifestDigest: 'sha256:hooks',
+                    daemonEntryPath: '/tmp/acme/daemon.mjs',
+                    sourceSpec: {
+                        kind: 'path',
+                        locator: '/tmp/acme',
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                    },
+                    definition: {
+                        hookApiVersion: 1,
+                        id: 'plugin.reload.before',
+                        category: 'lifecycle',
+                        scope: 'plugin',
+                        executionKind: 'observe',
+                        handler: {
+                            target: 'plugin',
+                        },
+                    },
+                },
+            ],
+            settings: [
+                {
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'acme.hooks',
+                    manifestPath: '/tmp/acme/.happier-plugin/plugin.json',
+                    manifestDigest: 'sha256:settings',
+                    daemonEntryPath: '/tmp/acme/daemon.mjs',
+                    sourceSpec: {
+                        kind: 'path',
+                        locator: '/tmp/acme',
+                        trustPolicy: 'local_trusted',
+                        installPolicy: 'link',
+                    },
+                    definition: {
+                        id: 'acme.hooks.settings',
+                        fields: [
+                            {
+                                id: 'apiToken',
+                                kind: 'settings.field',
+                                version: '1.0.0',
+                                valueSchema: {
+                                    type: 'string',
+                                    default: 'schema-secret-default',
+                                    enum: ['schema-secret-option'],
+                                },
+                                control: 'password',
+	                                displayKey: 'plugins.acme.apiToken.label',
+	                                descriptionKey: 'plugins.acme.apiToken.description',
+	                                capabilityGates: [],
+	                                permissionGates: [],
+	                                redaction: 'secret',
+	                                hidden: false,
+	                                defaultValue: 'super-secret-token',
+	                                clearWhenEmpty: 'omit',
+	                            },
+                            {
+                                id: 'enabled',
+                                kind: 'settings.field',
+                                version: '1.0.0',
+                                valueSchema: { type: 'boolean' },
+	                                control: 'switch',
+	                                displayKey: 'plugins.acme.enabled.label',
+	                                capabilityGates: [],
+	                                permissionGates: [],
+	                                redaction: 'none',
+	                                clearWhenEmpty: 'persist',
+	                                defaultBooleanValue: true,
+	                                hidden: false,
+	                            },
+                            {
+                                id: 'internalOnly',
+                                kind: 'settings.field',
+                                version: '1.0.0',
+	                                valueSchema: { type: 'string' },
+	                                control: 'text',
+	                                displayKey: 'plugins.acme.internalOnly.label',
+	                                capabilityGates: [],
+	                                permissionGates: [],
+	                                redaction: 'none',
+	                                clearWhenEmpty: 'persist',
+	                                hidden: true,
+	                            },
+                        ],
+                    },
+                },
+            ],
+        };
+
+        const projection = buildPluginProjectionV2({
+            registry,
+            generation: 9,
+            installedPackages: [],
+        });
+
+        expect(projection.settingsById['acme.hooks.settings']).toEqual({
+            id: 'acme.hooks.settings',
+            pluginId: 'acme.hooks',
+            storageScope: 'pluginLocal',
+            fields: [
+                expect.objectContaining({
+                    id: 'apiToken',
+                    control: 'password',
+                    redaction: 'secret',
+                    clearWhenEmpty: 'omit',
+                }),
+                expect.objectContaining({
+                    id: 'enabled',
+                    control: 'switch',
+                    defaultBooleanValue: true,
+                }),
+            ],
+        });
+        expect(projection.settingsById['acme.hooks.settings']?.fields.map((field) => field.id)).toEqual([
+            'apiToken',
+            'enabled',
+        ]);
+        expect(projection.settingsById['acme.hooks.settings']?.fields[0]?.valueSchema).toEqual({ type: 'string' });
+        expect(projection.uiDescriptorsById['acme.hooks.settings']).toBeUndefined();
+        expect(JSON.stringify(projection.settingsById)).not.toContain('super-secret-token');
+        expect(JSON.stringify(projection.settingsById)).not.toContain('schema-secret-default');
+        expect(JSON.stringify(projection.settingsById)).not.toContain('schema-secret-option');
+    });
+
+    it('normalizes agent settings descriptors to the plugin agent settings surface', () => {
         const registry = createEmptyResolvedContributionRegistry();
         const projection = buildPluginProjectionV2({
             registry: {
@@ -477,9 +672,9 @@ describe('buildPluginProjectionV2', () => {
                     },
                     definition: {
                         kindVersion: 1,
-                        id: 'acme.plugin.provider-settings',
-                        surface: 'providerSettings',
-                        title: 'Provider settings',
+                        id: 'acme.plugin.agent-settings',
+                        surface: 'agentSettings',
+                        title: 'Agent settings',
                         description: null,
                         fields: [],
                     },
@@ -488,13 +683,74 @@ describe('buildPluginProjectionV2', () => {
             generation: 1,
         });
 
-        expect(projection.uiDescriptorsById['acme.plugin.provider-settings']?.surface).toBe('agentSettings');
+        expect(projection.uiDescriptorsById['acme.plugin.agent-settings']?.surface).toBe('agentSettings');
+    });
+
+    it('fails closed for retired or unknown UI descriptor surfaces', () => {
+        const retiredBackendSurface = ('backend' + 'Settings') as 'agentSettings';
+        const unknownSurface = 'settings.plugin.' + 'details';
+        const registry = createEmptyResolvedContributionRegistry();
+        const projection = buildPluginProjectionV2({
+            registry: {
+                ...registry,
+                uiDescriptors: [
+                    {
+                        provenance: 'external',
+                        source: { kind: 'path' },
+                        pluginId: 'acme.plugin',
+                        manifestPath: '/tmp/acme/.happier-plugin/plugin.json',
+                        manifestDigest: 'sha256:manifest',
+                        daemonEntryPath: '/tmp/acme/daemon.mjs',
+                        sourceSpec: {
+                            kind: 'path',
+                            locator: '/tmp/acme',
+                            trustPolicy: 'local_trusted',
+                            installPolicy: 'link',
+                        },
+                        definition: {
+                            kindVersion: 1,
+                            id: 'acme.plugin.retired',
+                            surface: retiredBackendSurface,
+                            title: 'Retired',
+                            description: null,
+                            fields: [],
+                        },
+                    },
+                    {
+                        provenance: 'external',
+                        source: { kind: 'path' },
+                        pluginId: 'acme.plugin',
+                        manifestPath: '/tmp/acme/.happier-plugin/plugin.json',
+                        manifestDigest: 'sha256:manifest',
+                        daemonEntryPath: '/tmp/acme/daemon.mjs',
+                        sourceSpec: {
+                            kind: 'path',
+                            locator: '/tmp/acme',
+                            trustPolicy: 'local_trusted',
+                            installPolicy: 'link',
+                        },
+                        definition: {
+                            kindVersion: 1,
+                            id: 'acme.plugin.unknown',
+                            surface: unknownSurface as 'settings',
+                            title: 'Unknown',
+                            description: null,
+                            fields: [],
+                        },
+                    },
+                ],
+            },
+            generation: 1,
+        });
+
+        expect(projection.uiDescriptorsById['acme.plugin.retired']).toBeUndefined();
+        expect(projection.uiDescriptorsById['acme.plugin.unknown']).toBeUndefined();
     });
 
     it('projects UI descriptor fields without inventing unsupported optional metadata', () => {
         const registry: ResolvedContributionRegistry = {
-            providers: [],
-            backends: [],
+            agents: [],
+            agentRuntimes: [],
             actions: [
                 {
                     provenance: 'external',
@@ -522,7 +778,7 @@ describe('buildPluginProjectionV2', () => {
                         surfaces: {
                             ui: true,
                             voice: false,
-                            session_agent: false,
+                            agent: false,
                             mcp: false,
                             cli: false,
                             rpc: false,
@@ -579,8 +835,8 @@ describe('buildPluginProjectionV2', () => {
             lifecycleHandlersById: new Map(),
             surfaceHandlersByBackendId: new Map(),
             catalogEntriesById: {},
-            providerDefinitionsById: new Map(),
-            backendDefinitionsById: new Map(),
+            agentDefinitionsById: new Map(),
+            agentRuntimeDefinitionsById: new Map(),
             pluginDiagnosticsByPluginId: {},
         };
 

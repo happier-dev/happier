@@ -14,6 +14,10 @@ function readEnvelopeSessionIds(envelope: HookEventEnvelopeV1): readonly string[
   ].filter((value): value is string => Boolean(value));
 }
 
+function readEnvelopeAgentId(envelope: HookEventEnvelopeV1): string | null {
+  return normalizeNonEmpty((envelope as { agentId?: unknown }).agentId);
+}
+
 export function matchesHookRegistrationFilters(
   envelope: HookEventEnvelopeV1,
   registration: ResolvedHookRegistration,
@@ -25,15 +29,21 @@ export function matchesHookRegistrationFilters(
   const filters = definition.filters;
   if (!filters) return true;
 
-  if (normalizeNonEmpty(filters.providerId) && normalizeNonEmpty(filters.providerId) !== normalizeNonEmpty(envelope.providerId)) {
+  if (normalizeNonEmpty(filters.providerId) || normalizeNonEmpty(filters.backendId)) {
     return false;
   }
 
-  if (normalizeNonEmpty(filters.backendId) && normalizeNonEmpty(filters.backendId) !== normalizeNonEmpty(envelope.backendId)) {
+  if (normalizeNonEmpty((filters as { backendTargetId?: unknown }).backendTargetId)) {
     return false;
   }
 
-  if (normalizeNonEmpty(filters.backendTargetId) && normalizeNonEmpty(filters.backendTargetId) !== normalizeNonEmpty(envelope.backendTarget)) {
+  const agentIdFilter = normalizeNonEmpty((filters as { agentId?: unknown }).agentId);
+  if (agentIdFilter && agentIdFilter !== readEnvelopeAgentId(envelope)) {
+    return false;
+  }
+
+  const runtimeTargetIdFilter = normalizeNonEmpty((filters as { runtimeTargetId?: unknown }).runtimeTargetId);
+  if (runtimeTargetIdFilter && runtimeTargetIdFilter !== normalizeNonEmpty(envelope.backendTarget)) {
     return false;
   }
 

@@ -39,13 +39,13 @@ const pluginManifest: PluginManifestV2 = {
     engines: {
         happier: '^0.2.0',
     },
-    runtime: {
-        apiVersion: 1,
-        capabilities: ['scmHostingProviders'],
+    uses: ['scmHostingProviders'],
+    entrypoints: {
+        main: './daemon.mjs',
     },
-    targets: {},
-    capabilities: {
-        permissions: [],
+    permissions: {
+        required: [],
+        optional: [],
     },
     contributes: {
         scmHostingProviders: [
@@ -56,8 +56,8 @@ const pluginManifest: PluginManifestV2 = {
 
 function createContributes(): ResolvedContributionRegistry {
     return {
-        providers: [],
-        backends: [],
+        agents: [],
+        agentRuntimes: [],
         actions: [],
         tools: [],
         commands: [],
@@ -84,8 +84,8 @@ function createContributes(): ResolvedContributionRegistry {
         lifecycleHandlersById: new Map(),
         surfaceHandlersByBackendId: new Map(),
         catalogEntriesById: {},
-        providerDefinitionsById: new Map(),
-        backendDefinitionsById: new Map(),
+        agentDefinitionsById: new Map(),
+        agentRuntimeDefinitionsById: new Map(),
         scmHostingProviders: [
             {
                 id: 'acme.scm.github',

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { PluginUiFallbackRefV1Schema } from './actions.js';
 import { PluginUiCompatibilityV1Schema } from './compatibility.js';
+import { PluginHostedWebSecurityPolicyV1Schema } from './hostedWebSecurity.js';
 import { PluginUiDisplayV1Schema } from './tokens.js';
 
 export const PluginHostedWebServiceRefV1Schema = z.discriminatedUnion('kind', [
@@ -33,6 +34,7 @@ export const PluginHostedWebBridgeMessageKindV1Schema = z.enum([
   'heightChanged',
   'logDiagnostic',
   'openSurface',
+  'openExternal',
   'ready',
   'requestHostAction',
   'requestSessionResource',
@@ -62,6 +64,7 @@ export const PluginHostedWebContributionV1Schema = z.object({
   bridge: PluginHostedWebBridgePolicyV1Schema,
   display: PluginUiDisplayV1Schema,
   sandbox: PluginHostedWebSandboxPolicyV1Schema,
+  security: PluginHostedWebSecurityPolicyV1Schema,
   compatibility: PluginUiCompatibilityV1Schema.optional(),
   fallback: PluginUiFallbackRefV1Schema,
 }).strict();

@@ -4,6 +4,7 @@ import {
     type RuntimeTurnConfigUpdate,
     type RuntimeTurnMessageHandler,
     type RuntimeTurnOperations,
+    type RuntimeTurnPromptMeta,
     type RuntimeTurnSessionIdentity,
     type RuntimeTurnStartOrLoadOptions,
     type RuntimePublicationEvent,
@@ -15,7 +16,8 @@ import type {
 } from '@happier-dev/protocol';
 import { readRuntimeDescriptorV1 } from '@happier-dev/protocol';
 
-import type { ResolvedBackendContribution } from '@/plugins/projection/registry/types';
+import type { ResolvedAgentRuntimeContribution } from '@/plugins/projection/registry/types';
+import type { PluginRuntimeHookOperations } from './sessionRuntimeHooks';
 
 export type NormalizedPluginSessionLaunchResult = Readonly<{
     runtime: RuntimeTurnOperations;
@@ -38,13 +40,13 @@ function normalizeNonEmptyString(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
-function buildGenericPluginRuntimeDescriptor(backend: ResolvedBackendContribution): RuntimeDescriptorV1 | null {
+function buildGenericPluginRuntimeDescriptor(backend: ResolvedAgentRuntimeContribution): RuntimeDescriptorV1 | null {
     const runtimeKind = normalizeNonEmptyString(backend.runtimeKind);
     if (!runtimeKind) return null;
 
     return {
         v: 1,
-        providerId: backend.providerId,
+        providerId: backend.agentId,
         provider: {
             backendMode: runtimeKind,
             providerExtra: {
@@ -53,7 +55,7 @@ function buildGenericPluginRuntimeDescriptor(backend: ResolvedBackendContributio
                 v: 1,
                 runtimeHandle: {
                     backendId: backend.id,
-                    providerId: backend.providerId,
+                    providerId: backend.agentId,
                     provenance: backend.provenance,
                     source: backend.source,
                 },
@@ -73,7 +75,7 @@ function emitRuntimeMetadataEvent(handler: RuntimeTurnMessageHandler, name: Runt
 
 export function normalizePluginSessionLaunchResult(params: Readonly<{
     result: PluginSessionLaunchResultCandidate;
-    backend: ResolvedBackendContribution;
+    backend: ResolvedAgentRuntimeContribution;
 }>): NormalizedPluginSessionLaunchResult {
     if (isRuntimeTurnOperations(params.result)) {
         throw new Error('Plugin terminal runtime launch must return an object payload with RuntimeTurnOperations');
@@ -103,42 +105,104 @@ export function decorateRuntimeTurnOperationsWithMetadata(params: Readonly<{
     runtimeCapabilities: unknown;
     runtimeFacets: AgentRuntimeFacetsV1 | null;
 }>): RuntimeTurnOperations {
+    const runtime = params.runtime as PluginRuntimeHookOperations;
     return Object.freeze({
+        ...(runtime.permissionCapability ? { permissionCapability: runtime.permissionCapability } : {}),
         beginTurnLifecycle() {
-            params.runtime.beginTurnLifecycle();
+            runtime.beginTurnLifecycle();
         },
         async startOrLoadSession(opts?: RuntimeTurnStartOrLoadOptions) {
-            await params.runtime.startOrLoadSession(opts);
+            await runtime.startOrLoadSession(opts);
         },
-        async sendTurnPrompt(prompt: string) {
-            await params.runtime.sendTurnPrompt(prompt);
+        async sendTurnPrompt(prompt: string, meta?: RuntimeTurnPromptMeta) {
+            await runtime.sendTurnPrompt(prompt, meta);
         },
-        async steerInFlightTurn(message: string) {
-            await params.runtime.steerInFlightTurn(message);
+        ...(runtime.compactContext
+            ? {
+                async compactContext(command: string) {
+                    await runtime.compactContext?.(command);
+                },
+            }
+            : {}),
+        ...(runtime.supportsInFlightSteer
+            ? { supportsInFlightSteer: () => runtime.supportsInFlightSteer?.() ?? false }
+            : {}),
+        ...(runtime.isTurnInFlight
+            ? { isTurnInFlight: () => runtime.isTurnInFlight?.() ?? false }
+            : {}),
+        ...(runtime.canSteerPrompt
+            ? { canSteerPrompt: () => runtime.canSteerPrompt?.() ?? false }
+            : {}),
+        ...(runtime.steerPrompt
+            ? {
+                async steerPrompt(message: string, options?: RuntimeTurnPromptMeta) {
+                    await runtime.steerPrompt?.(message, options);
+                },
+            }
+            : {}),
+        ...(runtime.setOnPromptAcceptedByProvider
+            ? {
+                setOnPromptAcceptedByProvider(handler: Parameters<NonNullable<typeof runtime.setOnPromptAcceptedByProvider>>[0]) {
+                    runtime.setOnPromptAcceptedByProvider?.(handler);
+                },
+            }
+            : {}),
+        ...(runtime.setOnPromptTerminallyRejectedBeforeProvider
+            ? {
+                setOnPromptTerminallyRejectedBeforeProvider(
+                    handler: Parameters<NonNullable<typeof runtime.setOnPromptTerminallyRejectedBeforeProvider>>[0],
+                ) {
+                    runtime.setOnPromptTerminallyRejectedBeforeProvider?.(handler);
+                },
+            }
+            : {}),
+        ...(runtime.setOnUndeliverablePrompts
+            ? {
+                setOnUndeliverablePrompts(handler: Parameters<NonNullable<typeof runtime.setOnUndeliverablePrompts>>[0]) {
+                    runtime.setOnUndeliverablePrompts?.(handler);
+                },
+            }
+            : {}),
+        ...(runtime.clearTerminalComposer
+            ? {
+                clearTerminalComposer(request: Parameters<NonNullable<typeof runtime.clearTerminalComposer>>[0]) {
+                    return runtime.clearTerminalComposer?.(request);
+                },
+            }
+            : {}),
+        async steerInFlightTurn(message: string, meta?: RuntimeTurnPromptMeta) {
+            await runtime.steerInFlightTurn(message, meta);
         },
         async waitForTurnCompletion(opts?: RuntimeTurnCompletionOptions) {
-            await params.runtime.waitForTurnCompletion(opts);
+            await runtime.waitForTurnCompletion(opts);
         },
         subscribeRuntimeEvents(handler: RuntimeTurnMessageHandler) {
             emitRuntimeMetadataEvent(handler, 'runtime.descriptor', params.runtimeDescriptor);
             emitRuntimeMetadataEvent(handler, 'runtime.capabilities', params.runtimeCapabilities);
             emitRuntimeMetadataEvent(handler, 'runtime.facets', params.runtimeFacets);
-            return params.runtime.subscribeRuntimeEvents(handler);
+            return runtime.subscribeRuntimeEvents(handler);
         },
-        async respondToPermission(requestId: string, approved: boolean) {
-            await params.runtime.respondToPermission(requestId, approved);
-        },
+        ...(runtime.respondToPermission
+            ? {
+                async respondToPermission(requestId: string, approved: boolean) {
+                    return await runtime.respondToPermission?.(requestId, approved) ?? {
+                        delivered: false,
+                        reason: 'unknown_request',
+                    };
+                },
+            }
+            : {}),
         async cancelTurn() {
-            await params.runtime.cancelTurn();
+            await runtime.cancelTurn();
         },
         readSessionIdentity(): RuntimeTurnSessionIdentity {
-            return params.runtime.readSessionIdentity();
+            return runtime.readSessionIdentity();
         },
         async updateSessionRuntimeConfig(update: RuntimeTurnConfigUpdate) {
-            await params.runtime.updateSessionRuntimeConfig(update);
+            await runtime.updateSessionRuntimeConfig(update);
         },
         async resetOrDisposeRuntime() {
-            await params.runtime.resetOrDisposeRuntime();
+            await runtime.resetOrDisposeRuntime();
         },
     });
 }

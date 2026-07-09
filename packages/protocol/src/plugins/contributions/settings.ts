@@ -42,5 +42,18 @@ export type PluginSettingsFieldDescriptorV1 = z.infer<typeof PluginSettingsField
 export const PluginSettingsContributionV2Schema = z.object({
   id: z.string().trim().min(1),
   fields: z.array(PluginSettingsFieldDescriptorV1Schema).default([]),
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+  const seenFieldIds = new Set<string>();
+  value.fields.forEach((field, index) => {
+    if (seenFieldIds.has(field.id)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['fields', index, 'id'],
+        message: `Duplicate settings field id '${field.id}'.`,
+      });
+      return;
+    }
+    seenFieldIds.add(field.id);
+  });
+});
 export type PluginSettingsContributionV2 = z.infer<typeof PluginSettingsContributionV2Schema>;

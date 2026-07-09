@@ -1,15 +1,40 @@
-import { access, chmod, constants, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, constants, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ExecClientSpecV1, ExecJsonRpcClientSpecV1, ExecProcessHandleV1 } from '@happier-dev/plugin-sdk';
+import {
+    InstallableDependencyDescriptorSchema,
+    resolveInstallablesRegistry,
+    type InstallableKey,
+} from '@happier-dev/protocol';
 
 import { createPluginExecService } from '../context/exec';
 import { PluginExecClientError } from './errors';
 import { createJsonRpcProcessClient } from './jsonRpc';
+
+const { configurationState } = vi.hoisted(() => ({
+    configurationState: {
+        happyHomeDir: '',
+    },
+}));
+
+vi.mock('@/configuration', () => ({
+    configuration: {
+        get happyHomeDir() {
+            return configurationState.happyHomeDir;
+        },
+        get logsDir() {
+            return `${configurationState.happyHomeDir}/logs`;
+        },
+        installablesRuntimeAutoUpdateCheckIntervalMs: 60_000,
+    },
+}));
+
+const tempDirs = new Set<string>();
 
 async function firstExecutablePath(candidates: readonly string[]): Promise<string> {
     for (const candidate of candidates) {
@@ -21,6 +46,72 @@ async function firstExecutablePath(candidates: readonly string[]): Promise<strin
         }
     }
     throw new Error(`No executable candidate found: ${candidates.join(', ')}`);
+}
+
+function createManagedInstallableDescriptor() {
+    return InstallableDependencyDescriptorSchema.parse({
+        id: 'dep.acme.sidecar',
+        key: 'dep.acme.sidecar',
+        kind: 'dep',
+        version: '1',
+        capabilityId: 'dep.acme.sidecar',
+        display: {
+            name: 'Acme Sidecar',
+        },
+        description: 'Sidecar from a managed PyPI wheel asset',
+        source: {
+            kind: 'managed_pypi_wheel_asset',
+            distribution: 'acme-sidecar',
+            versionSpecifier: '>=1.0.0,<2.0.0',
+            assetPathByPlatform: {
+                'darwin-arm64': 'acme/bin/sidecar',
+                'linux-x64': 'acme/bin/sidecar',
+                'linux-arm64': 'acme/bin/sidecar',
+                'win32-x64': 'acme/bin/sidecar.exe',
+                'win32-arm64': 'acme/bin/sidecar.exe',
+            },
+            executable: true,
+            installConsent: 'host_managed_required',
+            autoUpdateMode: 'notify',
+        },
+        binary: {
+            commands: ['sidecar'],
+            systemFirst: false,
+            managedFallback: true,
+        },
+        defaultPolicy: {
+            autoInstallWhenNeeded: false,
+            autoUpdateMode: 'notify',
+        },
+        consent: {
+            install: 'required',
+            update: 'required',
+        },
+    });
+}
+
+async function writeManagedInstallableCurrent(params: Readonly<{
+    homeDir: string;
+    installableKey: string;
+    executablePath: string;
+}>): Promise<void> {
+    const platform = process.platform === 'win32'
+        ? 'win32-x64'
+        : process.platform === 'linux'
+            ? 'linux-x64'
+            : 'darwin-arm64';
+    await mkdir(join(params.homeDir, 'tools', params.installableKey), { recursive: true });
+    await writeFile(join(params.homeDir, 'tools', params.installableKey, 'current.json'), `${JSON.stringify({
+        sourceKind: 'managed_pypi_wheel_asset',
+        distribution: 'acme-sidecar',
+        version: '1.0.1',
+        wheelFilename: 'acme_sidecar-1.0.1-py3-none-test.whl',
+        wheelDigest: `sha256:${'a'.repeat(64)}`,
+        assetPath: process.platform === 'win32' ? 'acme/bin/sidecar.exe' : 'acme/bin/sidecar',
+        platform,
+        executablePath: params.executablePath,
+        compatibilityProbe: null,
+    }, null, 2)}\n`, 'utf8');
 }
 
 type JsonRpcMessageHookFixture = Readonly<{
@@ -59,6 +150,12 @@ function createInMemoryJsonRpcProcess(params?: Readonly<{
 }
 
 describe('A.13p spawned protocol client runtime', () => {
+    afterEach(async () => {
+        await Promise.all([...tempDirs].map((dir) => rm(dir, { recursive: true, force: true })));
+        tempDirs.clear();
+        configurationState.happyHomeDir = '';
+    });
+
     it('sends JSON-RPC requests through the object-shaped spawnClient spec', async () => {
         const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
         const exec = createPluginExecService({
@@ -121,8 +218,75 @@ describe('A.13p spawned protocol client runtime', () => {
         }
     });
 
+    it('resolves managed-installable spawnClient launches through packaged runtime installables', async () => {
+        const homeDir = await mkdtemp(join(tmpdir(), 'happier-managed-installable-exec-'));
+        tempDirs.add(homeDir);
+        configurationState.happyHomeDir = homeDir;
+        const fixturePath = join(homeDir, process.platform === 'win32' ? 'sidecar.cmd' : 'sidecar');
+        await writeFile(
+            fixturePath,
+            process.platform === 'win32'
+                ? '@echo off\r\nset /p line=\r\necho {"jsonrpc":"2.0","id":1,"result":{"source":"managed-installable","argv":"%*"}}\r\n'
+                : [
+                    '#!/bin/sh',
+                    'while IFS= read -r line; do',
+                    '  printf "%s\\n" "{\\"jsonrpc\\":\\"2.0\\",\\"id\\":1,\\"result\\":{\\"source\\":\\"managed-installable\\",\\"argv\\":\\"$*\\"}}"',
+                    'done',
+                    '',
+                ].join('\n'),
+            'utf8',
+        );
+        if (process.platform !== 'win32') {
+            await chmod(fixturePath, 0o755);
+        }
+        const descriptor = createManagedInstallableDescriptor();
+        await writeManagedInstallableCurrent({
+            homeDir,
+            installableKey: descriptor.key,
+            executablePath: fixturePath,
+        });
+        const installablesRegistry = resolveInstallablesRegistry({
+            bundledFirstPartyPlugins: [{
+                owner: {
+                    provenance: 'bundled_first_party_plugin',
+                    ownerId: 'happier.acme',
+                    pluginId: 'happier.acme',
+                },
+                descriptor,
+            }],
+        });
+        const exec = createPluginExecService({
+            installablesRegistry,
+        });
+
+        const handle = await exec.spawnClient({
+            launch: {
+                kind: 'managed-installable',
+                installableId: descriptor.key as InstallableKey,
+                executableName: 'sidecar',
+                args: ['--stdio'],
+                sourcePreference: 'managed-first',
+            },
+            transport: {
+                kind: 'stdio',
+                framing: { kind: 'strict-lf-json' },
+                encoding: 'utf8',
+            },
+            protocol: { kind: 'json-rpc-2.0' },
+        });
+        try {
+            await expect(handle.client.request('ping', {})).resolves.toEqual({
+                source: 'managed-installable',
+                argv: '--stdio',
+            });
+        } finally {
+            await handle.dispose();
+        }
+    });
+
     it('writes sanitized JSON-RPC diagnostics when lifecycle rpcLog is configured', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-spawn-client-rpc-log-'));
+        tempDirs.add(root);
         const logPath = join(root, 'rpc.log');
         const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
         const exec = createPluginExecService({
@@ -183,6 +347,7 @@ describe('A.13p spawned protocol client runtime', () => {
 
     it('rejects JSON-RPC diagnostics file paths outside host-approved directories', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-spawn-client-rpc-log-reject-'));
+        tempDirs.add(root);
         const logPath = join(root, 'plugin-controlled.log');
         const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
         const exec = createPluginExecService({
@@ -252,6 +417,7 @@ describe('A.13p spawned protocol client runtime', () => {
 
     it('rotates JSON-RPC diagnostics before appending beyond the configured cap', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-spawn-client-rpc-log-rotation-'));
+        tempDirs.add(root);
         const logPath = join(root, 'rpc.log');
         const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
         const exec = createPluginExecService({
@@ -296,6 +462,7 @@ describe('A.13p spawned protocol client runtime', () => {
 
     it('resolves agent-cli launches through the host provider CLI grant without manifest process scopes', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-agent-cli-spawn-'));
+        tempDirs.add(root);
         const cursorPath = join(root, 'cursor-agent');
         await writeFile(
             cursorPath,
@@ -336,6 +503,63 @@ describe('A.13p spawned protocol client runtime', () => {
                 delete process.env.HAPPIER_CURSOR_PATH;
             } else {
                 process.env.HAPPIER_CURSOR_PATH = previousCursorPath;
+            }
+        }
+    });
+
+    it('spawns agent-cli launches with the same merged environment used for provider CLI resolution', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-agent-cli-env-'));
+        tempDirs.add(root);
+        const agyPath = join(root, 'agy');
+        const homeDir = join(root, 'home');
+        const logPath = join(root, 'fake-agy.jsonl');
+        await mkdir(homeDir, { recursive: true });
+        await writeFile(
+            agyPath,
+            [
+                '#!/bin/sh',
+                'stdin=$(cat)',
+                'printf \'{"log":"%s","conversation":"%s","home":"%s","stdin":"%s"}\\n\' "$HAPPIER_E2E_FAKE_AGY_LOG" "$HAPPIER_E2E_FAKE_AGY_CONVERSATION_ID" "$HOME" "$stdin"',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+        await chmod(agyPath, 0o755);
+
+        const previousEnv = {
+            PATH: process.env.PATH,
+            HOME: process.env.HOME,
+            HAPPIER_E2E_FAKE_AGY_LOG: process.env.HAPPIER_E2E_FAKE_AGY_LOG,
+            HAPPIER_E2E_FAKE_AGY_CONVERSATION_ID: process.env.HAPPIER_E2E_FAKE_AGY_CONVERSATION_ID,
+        };
+        process.env.PATH = [root, previousEnv.PATH].filter(Boolean).join(delimiter);
+        process.env.HOME = homeDir;
+        process.env.HAPPIER_E2E_FAKE_AGY_LOG = logPath;
+        process.env.HAPPIER_E2E_FAKE_AGY_CONVERSATION_ID = 'fake-conversation';
+
+        const exec = createPluginExecService();
+        try {
+            const result = await exec.run({
+                kind: 'agent-cli',
+                agentId: 'antigravity',
+                args: ['-p'],
+                stdin: 'prompt text',
+            });
+
+            expect(result.exitCode).toBe(0);
+            expect(JSON.parse(result.stdout.trim())).toEqual({
+                log: logPath,
+                conversation: 'fake-conversation',
+                home: homeDir,
+                stdin: 'prompt text',
+            });
+        } finally {
+            for (const [key, value] of Object.entries(previousEnv)) {
+                if (value === undefined) {
+                    delete process.env[key];
+                } else {
+                    process.env[key] = value;
+                }
             }
         }
     });

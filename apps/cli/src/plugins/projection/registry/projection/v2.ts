@@ -1,65 +1,87 @@
 import type {
+    PluginHookIdV1,
     PluginProjectionDiagnosticV2,
     PluginProjectionInstalledPackageV2,
     PluginProjectionV2,
 } from '@happier-dev/protocol';
-import { getPluginHookDefinitionV1, normalizePluginBackendCapabilitiesV1 } from '@happier-dev/protocol';
+import { getPluginHookDefinitionV1, normalizePluginBackendCapabilitiesV1, PluginHookIdV1Schema } from '@happier-dev/protocol';
 
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import type {
     ResolvedActionContribution,
-    ResolvedBackendContribution,
+    ResolvedAgentRuntimeContribution,
     ResolvedContributionRegistry,
     ResolvedContributionProvenance,
     ResolvedContributionSource,
     ResolvedContributionSourceKind,
     ResolvedHookRegistration,
-    ResolvedProviderContribution,
+    ResolvedAgentContribution,
     ResolvedUiDescriptorContribution,
 } from '../types';
 import {
     buildPluginProjectionFamiliesByIdV2,
     type PluginProjectionFamilyDescriptorV2,
 } from '@/plugins/projection/families';
-import { installablesProjectionFamily } from '../installables';
+import { managedDependenciesProjectionFamily } from '../managedDependencies';
 import { mcpProjectionFamily } from '../mcp';
 import { scmBackendProjectionFamily } from '../scmBackends';
 import { scmHostingProviderProjectionFamily } from '../scmHostingProviders';
-import { pluginUiProjectionFamily } from '../ui/projection';
+import {
+    pluginUiProjectionFamily,
+    type PluginUiProjectionHostRuntimeContext,
+} from '../ui/projection';
+import { pluginBrowserProjectionFamily } from '@/plugins/browser/projection';
 
 function readOptionalString(value: unknown): string | undefined {
     const normalized = typeof value === 'string' ? value.trim() : '';
     return normalized.length > 0 ? normalized : undefined;
 }
 
-function readProviderTitle(provider: ResolvedProviderContribution): string | undefined {
+function readProjectedHookEventId(value: unknown): PluginHookIdV1 | null {
+    const parsed = PluginHookIdV1Schema.safeParse(value);
+    return parsed.success ? parsed.data : null;
+}
+
+function readAgentTitle(provider: ResolvedAgentContribution): string | undefined {
     const rich = provider.richDefinition;
     if (!rich || rich.provenance !== 'external') return undefined;
     return readOptionalString(rich.definition.display?.name);
 }
 
-function readProviderSubtitle(provider: ResolvedProviderContribution): string | undefined {
+function readAgentSubtitle(provider: ResolvedAgentContribution): string | undefined {
     const rich = provider.richDefinition;
     if (!rich || rich.provenance !== 'external') return undefined;
     return readOptionalString(rich.definition.display?.subtitle);
 }
 
+function readAgentProjectionDefinition(
+    provider: ResolvedAgentContribution,
+): Readonly<Record<string, unknown>> {
+    return (provider.richDefinition?.definition ?? provider.definition) as Readonly<Record<string, unknown>>;
+}
+
+function readAgentProjectionProviderAgentId(
+    definition: Readonly<Record<string, unknown>>,
+): string | undefined {
+    return readOptionalString(definition.providerAgentId) ?? readOptionalString(definition.catalogAgentId);
+}
+
 function resolveActionSurfaces(
     surfaces: Readonly<Record<string, unknown>>,
-): ('settings' | 'agentTool' | 'cli')[] {
-    const projected = new Set<'settings' | 'agentTool' | 'cli'>();
+): ('agent' | 'mcp' | 'cli')[] {
+    const projected = new Set<'agent' | 'mcp' | 'cli'>();
     if (surfaces.cli === true) {
         projected.add('cli');
     }
-    if (surfaces.mcp === true || surfaces.session_agent === true) {
-        projected.add('agentTool');
+    if (surfaces.mcp === true) {
+        projected.add('mcp');
     }
-    if (surfaces.ui === true || surfaces.voice === true) {
-        projected.add('settings');
+    if (surfaces.agent === true) {
+        projected.add('agent');
     }
     if (projected.size === 0) {
-        projected.add('settings');
+        projected.add('cli');
     }
     return [...projected];
 }
@@ -68,7 +90,7 @@ function resolveActionScopes(
     action: ResolvedActionContribution,
 ): ('global' | 'settings' | 'session')[] {
     const surfaces = action.definition.surfaces;
-    if (surfaces.mcp === true || surfaces.session_agent === true) {
+    if (surfaces.mcp === true || surfaces.agent === true) {
         return ['session'];
     }
     if (surfaces.ui === true || surfaces.voice === true) {
@@ -79,25 +101,18 @@ function resolveActionScopes(
 
 function resolveUiDescriptorSurface(
     surface: string,
-): 'settings' | 'setup' | 'status' | 'agentSettings' | 'backendSettings' {
+): 'settings' | 'setup' | 'status' | 'agentSettings' | null {
     switch (surface) {
         case 'setup':
             return 'setup';
         case 'status':
             return 'status';
-        case 'agent.settings':
         case 'agentSettings':
             return 'agentSettings';
-        case 'provider.settings':
-        case 'providerSettings':
-            return 'agentSettings';
-        case 'backend.settings':
-        case 'backendSettings':
-            return 'backendSettings';
         case 'settings':
-        case 'settings.plugin.details':
-        default:
             return 'settings';
+        default:
+            return null;
     }
 }
 
@@ -223,7 +238,7 @@ function collectPluginContributionMetadata(
         });
     }
 
-    for (const provider of registry.providers) {
+    for (const provider of registry.agents) {
         upsert({
             provenance: provider.provenance,
             source: provider.source,
@@ -231,10 +246,10 @@ function collectPluginContributionMetadata(
             manifestPath: provider.manifestPath,
             manifestDigest: provider.manifestDigest,
             sourceSpec: provider.sourceSpec,
-            displayName: readProviderTitle(provider),
+            displayName: readAgentTitle(provider),
         });
     }
-    for (const backend of registry.backends) {
+    for (const backend of registry.agentRuntimes) {
         upsert({
             provenance: backend.provenance,
             source: backend.source,
@@ -257,7 +272,15 @@ function collectPluginContributionMetadata(
         upsert(resource);
     }
     for (const descriptor of registry.uiDescriptors) {
-        upsert(descriptor);
+        if (resolveUiDescriptorSurface(descriptor.definition.surface)) {
+            upsert(descriptor);
+        }
+    }
+    for (const target of registry.browserTargets ?? []) {
+        upsert(target);
+    }
+    for (const action of registry.browserActions ?? []) {
+        upsert(action);
     }
     for (const hook of registry.hookRegistrations) {
         upsert(hook);
@@ -276,15 +299,15 @@ function collectPluginContributionMetadata(
             displayName: provider.definition.displayName,
         });
     }
-    for (const installable of registry.installables ?? []) {
+    for (const dependency of registry.managedDependencies ?? []) {
         upsert({
-            provenance: installable.provenance,
-            source: installable.source,
-            pluginId: installable.pluginId,
-            manifestPath: installable.manifestPath,
-            manifestDigest: installable.manifestDigest,
-            sourceSpec: installable.sourceSpec,
-            displayName: installable.definition.display.name,
+            provenance: dependency.provenance,
+            source: dependency.source,
+            pluginId: dependency.pluginId,
+            manifestPath: dependency.manifestPath,
+            manifestDigest: dependency.manifestDigest,
+            sourceSpec: dependency.sourceSpec,
+            displayName: dependency.definition.display.name,
         });
     }
     for (const server of registry.mcpServers ?? []) {
@@ -414,19 +437,17 @@ function buildProvidersById(
     registry: ResolvedContributionRegistry,
 ): PluginProjectionV2['providersById'] {
     const providersById: PluginProjectionV2['providersById'] = {};
-    for (const provider of registry.providers) {
-        const externalDefinition = provider.richDefinition && provider.richDefinition.provenance === 'external'
-            ? provider.richDefinition.definition
-            : null;
+    for (const provider of registry.agents) {
+        const projectionDefinition = readAgentProjectionDefinition(provider);
         providersById[provider.id] = {
             id: provider.id,
-            title: readProviderTitle(provider),
-            subtitle: readProviderSubtitle(provider),
+            title: readAgentTitle(provider),
+            subtitle: readAgentSubtitle(provider),
             channel: provider.provenance === 'external' ? 'plugin' : undefined,
             isBuiltIn: provider.provenance === 'first_party',
-            settingsBackendId: readOptionalString(externalDefinition?.settingsBackendId),
-            providerAgentId: readOptionalString(externalDefinition?.providerAgentId),
-            iconAgentId: readOptionalString(externalDefinition?.iconAgentId),
+            settingsBackendId: readOptionalString(projectionDefinition.settingsBackendId),
+            providerAgentId: readAgentProjectionProviderAgentId(projectionDefinition),
+            iconAgentId: readOptionalString(projectionDefinition.iconAgentId),
         };
     }
     return providersById;
@@ -436,11 +457,12 @@ function buildBackendsById(
     registry: ResolvedContributionRegistry,
 ): PluginProjectionV2['backendsById'] {
     const backendsById: PluginProjectionV2['backendsById'] = {};
-    for (const backend of registry.backends) {
+    for (const backend of registry.agentRuntimes) {
         const richDefinition = backend.richDefinition?.provenance === 'external' ? backend.richDefinition.definition : null;
+        const runtimeOwnerId = backend.agentId;
         backendsById[backend.id] = {
             id: backend.id,
-            providerId: backend.providerId,
+            providerId: runtimeOwnerId,
             title: readOptionalString(richDefinition?.title),
             subtitle: readOptionalString(richDefinition?.subtitle),
             providerAgentId: readOptionalString(richDefinition?.providerAgentId),
@@ -452,7 +474,7 @@ function buildBackendsById(
 }
 
 function cloneProjectedBackendCapabilities(
-    capabilities: ResolvedBackendContribution['capabilities'],
+    capabilities: ResolvedAgentRuntimeContribution['capabilities'],
 ): NonNullable<PluginProjectionV2['backendsById'][string]>['capabilities'] {
     return normalizePluginBackendCapabilitiesV1({
         ...(capabilities ?? {}),
@@ -481,6 +503,12 @@ function buildHooksById(
     for (const hook of sortedHookRegistrations) {
         const hookDefinition = getPluginHookDefinitionV1(hook.definition.id);
         const rawDefinition = hook.definition as Readonly<Record<string, unknown>>;
+        const eventId = readProjectedHookEventId(
+            hookDefinition?.id ?? readOptionalString(rawDefinition.eventId) ?? hook.definition.id,
+        );
+        if (!eventId) {
+            continue;
+        }
         const countKey = `${hook.pluginId}:${hook.definition.id}`;
         const ordinal = (hookRegistrationCountsByPluginAndEvent.get(countKey) ?? 0) + 1;
         hookRegistrationCountsByPluginAndEvent.set(countKey, ordinal);
@@ -488,7 +516,7 @@ function buildHooksById(
         hooksById[projectedHookId] = {
             id: projectedHookId,
             pluginId: hook.pluginId,
-            eventId: hookDefinition?.id ?? readOptionalString(rawDefinition.eventId) ?? hook.definition.id,
+            eventId,
             category: hookDefinition?.category ?? hook.definition.category,
             scope: hookDefinition?.scope ?? hook.definition.scope,
             executionKind: hookDefinition?.executionKind ?? resolveHookExecutionKind(hook.definition.executionKind),
@@ -536,7 +564,7 @@ function buildToolsById(
             pluginId: tool.pluginId,
             title: tool.definition.title,
             description: readOptionalString(tool.definition.description),
-            exposesToAgent: tool.definition.surfaces.mcp === true || tool.definition.surfaces.session_agent === true,
+            exposesToAgent: tool.definition.surfaces.mcp === true || tool.definition.surfaces.agent === true,
         };
     }
     return toolsById;
@@ -596,13 +624,17 @@ function buildUiDescriptorsById(
         if (!descriptor.pluginId) {
             continue;
         }
+        const surface = resolveUiDescriptorSurface(descriptor.definition.surface);
+        if (!surface) {
+            continue;
+        }
         const tone = resolveUiDescriptorTone(descriptor.definition.tone);
         uiDescriptorsById[descriptor.definition.id] = {
             id: descriptor.definition.id,
             pluginId: descriptor.pluginId,
             title: descriptor.definition.title,
             description: readOptionalString(descriptor.definition.description),
-            surface: resolveUiDescriptorSurface(descriptor.definition.surface),
+            surface,
             ...(typeof descriptor.definition.order === 'number' ? { order: descriptor.definition.order } : {}),
             ...(tone ? { tone } : {}),
             ...(descriptor.definition.featureGate !== undefined ? { featureGate: descriptor.definition.featureGate } : {}),
@@ -626,21 +658,60 @@ function buildUiDescriptorsById(
     return uiDescriptorsById;
 }
 
+function buildSettingsById(
+    registry: ResolvedContributionRegistry,
+): PluginProjectionV2['settingsById'] {
+    const settingsById: PluginProjectionV2['settingsById'] = {};
+    for (const settings of registry.settings ?? []) {
+        if (!settings.pluginId) {
+            continue;
+        }
+        settingsById[settings.definition.id] = {
+            id: settings.definition.id,
+            pluginId: settings.pluginId,
+            storageScope: 'pluginLocal',
+            fields: settings.definition.fields
+                .filter((field) => field.hidden !== true)
+                .map((field) => ({
+                    id: field.id,
+                    kind: 'settings.field',
+                    version: field.version,
+                    valueSchema: { type: field.valueSchema.type },
+                    control: field.control,
+                    displayKey: field.displayKey,
+                    ...(field.descriptionKey !== undefined ? { descriptionKey: field.descriptionKey } : {}),
+                    ...(field.groupId !== undefined ? { groupId: field.groupId } : {}),
+                    ...(typeof field.order === 'number' ? { order: field.order } : {}),
+                    capabilityGates: [...(field.capabilityGates ?? [])],
+                    permissionGates: [...(field.permissionGates ?? [])],
+                    redaction: field.redaction ?? 'none',
+                    clearWhenEmpty: field.clearWhenEmpty ?? 'persist',
+                    ...(field.defaultBooleanValue !== undefined
+                        ? { defaultBooleanValue: field.defaultBooleanValue }
+                        : {}),
+                })),
+        };
+    }
+    return settingsById;
+}
+
 export function buildPluginProjectionV2(params: Readonly<{
     registry: ResolvedContributionRegistry;
     generation: number;
     installedPackages?: readonly PluginCatalogEntry[];
     pluginDiagnosticsByPluginId?: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
     familyDescriptors?: readonly PluginProjectionFamilyDescriptorV2[];
+    pluginUiHostRuntime?: PluginUiProjectionHostRuntimeContext;
 }>): PluginProjectionV2 {
     const installedPackages = params.installedPackages ?? [];
     const pluginDiagnosticsByPluginId = params.pluginDiagnosticsByPluginId ?? params.registry.pluginDiagnosticsByPluginId;
     const familyDescriptors = [
         scmHostingProviderProjectionFamily,
         scmBackendProjectionFamily,
-        installablesProjectionFamily,
+        managedDependenciesProjectionFamily,
         mcpProjectionFamily,
         pluginUiProjectionFamily,
+        pluginBrowserProjectionFamily,
         ...(params.familyDescriptors ?? []),
     ];
 
@@ -660,9 +731,11 @@ export function buildPluginProjectionV2(params: Readonly<{
         hooksById: buildHooksById(params.registry),
         resourcesById: buildResourcesById(params.registry),
         uiDescriptorsById: buildUiDescriptorsById(params.registry),
+        settingsById: buildSettingsById(params.registry),
         familiesById: buildPluginProjectionFamiliesByIdV2({
             registry: params.registry,
             generation: params.generation,
+            pluginUiHostRuntime: params.pluginUiHostRuntime,
         }, familyDescriptors),
         diagnostics: buildDiagnostics({
             installedPackages,

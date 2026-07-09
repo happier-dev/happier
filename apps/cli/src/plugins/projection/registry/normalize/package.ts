@@ -1,11 +1,15 @@
 import type {
   ActionDefinitionV1,
+  AgentDefinitionV1,
+  PluginBrowserActionContributionV1,
+  PluginBrowserTargetContributionV1,
   PluginActionContributionV2,
   PluginCommandContributionV2,
   PluginExecutionRunProfileContributionV2,
   PluginEventContributionV1,
   PluginHookContributionV2,
   PluginHostedWebContributionV1,
+  PluginEmbeddedWebBundleContributionV1,
   PluginLifecycleHandlerContributionV2,
   PluginMcpDiscoveryProviderContributionV1,
   PluginMcpServerContributionV1,
@@ -15,7 +19,7 @@ import type {
   PluginRequestInterceptorContributionV1,
   PluginResourceContributionV2,
   PluginSessionHeaderActionDescriptorV1,
-  PluginSessionSurfaceDescriptorV1,
+  PluginSurfacePlacementDescriptorV1,
   PluginSettingsContributionV2,
   PluginStructuredMessageDescriptorV1,
   PluginUiArtifactContributionV1,
@@ -28,13 +32,12 @@ import type {
   HookRegistrationV1,
   InstallableDependencyDescriptor,
   ScmBackendContribution,
-  ProviderDefinitionV1,
 } from '@happier-dev/protocol';
 import { createPluginContributionIdentity, qualifyPluginEventIdV1 } from '@happier-dev/protocol';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
-import type { CanonicalPluginBackendDefinition } from '@/plugins/manifest/types';
+import type { CanonicalPluginAgentRuntimeDefinition } from '@/plugins/manifest/types';
 import { resolvePluginResourcePath } from '@/plugins/projection/resources/package/resolve';
 import type {
   ResolvedCommandDefinition,
@@ -52,13 +55,14 @@ export type PluginOwnedContribution<T> = Readonly<{
   manifestPath: string;
   manifestDigest: string;
   daemonEntryPath: string | null;
+  devDaemonEntryPath?: string | null;
   sourceSpec: PluginSourceSpecV1;
   definition: T;
 }>;
 
 export type PluginContributionRegistry = Readonly<{
-  providers: readonly PluginOwnedContribution<ProviderDefinitionV1>[];
-  backends: readonly PluginOwnedContribution<CanonicalPluginBackendDefinition>[];
+  agents: readonly PluginOwnedContribution<AgentDefinitionV1>[];
+  agentRuntimes: readonly PluginOwnedContribution<CanonicalPluginAgentRuntimeDefinition>[];
   actions: readonly PluginOwnedContribution<ActionDefinitionV1>[];
   tools: readonly PluginOwnedContribution<ResolvedToolDefinition>[];
   commands: readonly PluginOwnedContribution<ResolvedCommandDefinition>[];
@@ -67,11 +71,14 @@ export type PluginContributionRegistry = Readonly<{
   uiDescriptors: readonly PluginOwnedContribution<ResolvedUiDescriptorDefinition>[];
   uiTranslations: readonly PluginOwnedContribution<PluginUiTranslationsContributionV1>[];
   structuredMessages: readonly PluginOwnedContribution<PluginStructuredMessageDescriptorV1>[];
-  sessionSurfaces: readonly PluginOwnedContribution<PluginSessionSurfaceDescriptorV1>[];
   sessionHeaderActions: readonly PluginOwnedContribution<PluginSessionHeaderActionDescriptorV1>[];
+  surfacePlacements: readonly PluginOwnedContribution<PluginSurfacePlacementDescriptorV1>[];
   hostedWeb: readonly PluginOwnedContribution<PluginHostedWebContributionV1>[];
+  embeddedWebBundles: readonly PluginOwnedContribution<PluginEmbeddedWebBundleContributionV1>[];
   reactNativeBundles: readonly PluginOwnedContribution<PluginReactNativeBundleContributionV1>[];
   uiArtifacts: readonly PluginOwnedContribution<PluginUiArtifactContributionV1>[];
+  browserTargets: readonly PluginOwnedContribution<PluginBrowserTargetContributionV1>[];
+  browserActions: readonly PluginOwnedContribution<PluginBrowserActionContributionV1>[];
   settings: readonly PluginOwnedContribution<PluginSettingsContributionV2>[];
   notifications: readonly PluginOwnedContribution<PluginNotificationCategoryContributionV2>[];
   notificationChannels: readonly PluginOwnedContribution<PluginNotificationChannelContributionV2>[];
@@ -82,7 +89,7 @@ export type PluginContributionRegistry = Readonly<{
   scmHostingProviders: readonly PluginOwnedContribution<ScmHostingProviderContribution>[];
   scmBackends: readonly PluginOwnedContribution<ScmBackendContribution>[];
   connectedAccountDescriptors: readonly PluginOwnedContribution<PluginConnectedAccountDescriptorContributionV2>[];
-  installables: readonly PluginOwnedContribution<InstallableDependencyDescriptor>[];
+  managedDependencies: readonly PluginOwnedContribution<InstallableDependencyDescriptor>[];
   requestInterceptors: readonly PluginOwnedContribution<PluginRequestInterceptorContributionV1>[];
   lifecycleHandlers: readonly PluginOwnedContribution<ResolvedLifecycleHandlerDefinition>[];
 }>;
@@ -112,14 +119,11 @@ function toActionDefinition(definition: PluginActionContributionV2): ActionDefin
     examples: null,
     surfaces: {
       ui: definition.surfaces.some((surface) => (
-        surface === 'settings'
-        || surface === 'backendSettings'
-        || surface === 'sessionMenu'
-        || surface === 'executionRunMenu'
+        surface === 'cli'
       )),
       voice: false,
-      session_agent: definition.surfaces.includes('agentTool'),
-      mcp: false,
+      agent: definition.surfaces.includes('agent'),
+      mcp: definition.surfaces.includes('mcp'),
       cli: definition.surfaces.includes('cli'),
       rpc: false,
       sdk: false,
@@ -143,16 +147,22 @@ function toToolDefinition(definition: PluginToolContributionV2): ResolvedToolDef
     description: definition.description,
     safety: definition.safety,
     surfaces: {
-      cli: definition.surfaces.cli,
-      mcp: definition.surfaces.mcp,
-      session_agent: definition.surfaces.session_agent,
+      cli: definition.surfaces.includes('cli'),
+      mcp: definition.surfaces.includes('mcp'),
+      agent: definition.surfaces.includes('agent'),
     },
     inputSchema: definition.inputSchema ?? {},
     ...(definition.outputSchema ? { outputSchema: definition.outputSchema } : {}),
     ...(definition.inputHints ? { inputHints: definition.inputHints } : {}),
     ...(definition.compatibility ? { compatibility: definition.compatibility } : {}),
     ...(definition.examples ? { examples: definition.examples } : {}),
+    ...(definition.promptSnippet !== undefined ? { promptSnippet: definition.promptSnippet } : {}),
+    ...(definition.promptGuidelines ? { promptGuidelines: Object.freeze([...definition.promptGuidelines]) } : {}),
     actionId: definition.id,
+    execution: {
+      routing: 'daemon',
+      handler: definition.handler,
+    },
   });
 }
 
@@ -225,13 +235,14 @@ function toUiDescriptorDefinition(definition: PluginUiDescriptorContributionV2):
 }
 
 function toLifecycleHandlerDefinition(
-  pluginId: string,
-  index: number,
   definition: PluginLifecycleHandlerContributionV2,
 ): ResolvedLifecycleHandlerDefinition {
   const normalizedId = typeof definition.id === 'string' && definition.id.trim().length > 0
     ? definition.id.trim()
-    : `${pluginId}:${definition.event}:${index}`;
+    : null;
+  if (normalizedId === null) {
+    throw new Error(`Lifecycle handler for event '${definition.event}' must declare a stable lifecycle handler id`);
+  }
   return Object.freeze({
     kindVersion: 1,
     id: normalizedId,
@@ -249,11 +260,36 @@ function toEventDefinition(pluginId: string, definition: PluginEventContribution
   });
 }
 
+type CanonicalAgentCompatibilityDefinition = LoadedPlugin['manifest']['contributes']['agents'][number];
+
+function toAgentDefinitionProjection(definition: CanonicalAgentCompatibilityDefinition): AgentDefinitionV1 {
+  const raw = definition as CanonicalAgentCompatibilityDefinition & Readonly<{
+    agentCliRuntime?: AgentDefinitionV1['agentCliRuntime'];
+    catalogAgentId?: string | null;
+    providerAgentId?: string | null;
+    providerCliRuntime?: AgentDefinitionV1['agentCliRuntime'];
+  }>;
+  const {
+    providerAgentId: _providerAgentId,
+    providerCliRuntime: _providerCliRuntime,
+    ...base
+  } = raw;
+  return Object.freeze({
+    ...base,
+    catalogAgentId: raw.catalogAgentId ?? raw.providerAgentId ?? null,
+    ...(raw.agentCliRuntime !== undefined
+      ? { agentCliRuntime: raw.agentCliRuntime }
+      : raw.providerCliRuntime !== undefined
+        ? { agentCliRuntime: raw.providerCliRuntime }
+        : {}),
+  }) as AgentDefinitionV1;
+}
+
 export function buildPluginContributionRegistry(params: Readonly<{
   loadedPlugins: readonly LoadedPlugin[];
 }>): PluginContributionRegistry {
-  const providers: PluginOwnedContribution<ProviderDefinitionV1>[] = [];
-  const backends: PluginOwnedContribution<CanonicalPluginBackendDefinition>[] = [];
+  const agents: PluginOwnedContribution<AgentDefinitionV1>[] = [];
+  const agentRuntimes: PluginOwnedContribution<CanonicalPluginAgentRuntimeDefinition>[] = [];
   const actions: PluginOwnedContribution<ActionDefinitionV1>[] = [];
   const tools: PluginOwnedContribution<ResolvedToolDefinition>[] = [];
   const commands: PluginOwnedContribution<ResolvedCommandDefinition>[] = [];
@@ -262,11 +298,14 @@ export function buildPluginContributionRegistry(params: Readonly<{
   const uiDescriptors: PluginOwnedContribution<ResolvedUiDescriptorDefinition>[] = [];
   const uiTranslations: PluginOwnedContribution<PluginUiTranslationsContributionV1>[] = [];
   const structuredMessages: PluginOwnedContribution<PluginStructuredMessageDescriptorV1>[] = [];
-  const sessionSurfaces: PluginOwnedContribution<PluginSessionSurfaceDescriptorV1>[] = [];
   const sessionHeaderActions: PluginOwnedContribution<PluginSessionHeaderActionDescriptorV1>[] = [];
+  const surfacePlacements: PluginOwnedContribution<PluginSurfacePlacementDescriptorV1>[] = [];
   const hostedWeb: PluginOwnedContribution<PluginHostedWebContributionV1>[] = [];
+  const embeddedWebBundles: PluginOwnedContribution<PluginEmbeddedWebBundleContributionV1>[] = [];
   const reactNativeBundles: PluginOwnedContribution<PluginReactNativeBundleContributionV1>[] = [];
   const uiArtifacts: PluginOwnedContribution<PluginUiArtifactContributionV1>[] = [];
+  const browserTargets: PluginOwnedContribution<PluginBrowserTargetContributionV1>[] = [];
+  const browserActions: PluginOwnedContribution<PluginBrowserActionContributionV1>[] = [];
   const settings: PluginOwnedContribution<PluginSettingsContributionV2>[] = [];
   const notifications: PluginOwnedContribution<PluginNotificationCategoryContributionV2>[] = [];
   const notificationChannels: PluginOwnedContribution<PluginNotificationChannelContributionV2>[] = [];
@@ -277,30 +316,32 @@ export function buildPluginContributionRegistry(params: Readonly<{
   const scmHostingProviders: PluginOwnedContribution<ScmHostingProviderContribution>[] = [];
   const scmBackends: PluginOwnedContribution<ScmBackendContribution>[] = [];
   const connectedAccountDescriptors: PluginOwnedContribution<PluginConnectedAccountDescriptorContributionV2>[] = [];
-  const installables: PluginOwnedContribution<InstallableDependencyDescriptor>[] = [];
+  const managedDependencies: PluginOwnedContribution<InstallableDependencyDescriptor>[] = [];
   const requestInterceptors: PluginOwnedContribution<PluginRequestInterceptorContributionV1>[] = [];
   const lifecycleHandlers: PluginOwnedContribution<ResolvedLifecycleHandlerDefinition>[] = [];
 
   for (const plugin of params.loadedPlugins) {
-    for (const definition of plugin.manifest.contributes.providers) {
-      providers.push({
+    for (const definition of plugin.manifest.contributes.agents ?? []) {
+      agents.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
-        definition,
+        definition: toAgentDefinitionProjection(definition),
       });
     }
 
-    for (const definition of plugin.manifest.contributes.backends) {
-      backends.push({
+    for (const definition of plugin.manifest.contributes.agentRuntimes ?? []) {
+      agentRuntimes.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -313,6 +354,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition: toActionDefinition(definition),
       });
@@ -325,6 +367,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition: toToolDefinition(definition),
       });
@@ -337,6 +380,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition: toCommandDefinition(definition),
       });
@@ -349,6 +393,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition: toHookRegistration(definition),
       });
@@ -371,6 +416,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
           manifestPath: plugin.manifestPath,
           manifestDigest: plugin.manifestDigest,
           daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
           sourceSpec: plugin.sourceSpec,
           definition: Object.freeze({
             ...normalized,
@@ -385,6 +431,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition: normalized,
       });
@@ -398,6 +445,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition: normalized,
       });
@@ -410,6 +458,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -422,18 +471,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
-        sourceSpec: plugin.sourceSpec,
-        definition,
-      });
-    }
-
-    for (const definition of readContributionArray<PluginSessionSurfaceDescriptorV1>(plugin.manifest.contributes, 'sessionSurfaces')) {
-      sessionSurfaces.push({
-        pluginId: plugin.pluginId,
-        pluginRootPath: plugin.pluginRootPath,
-        manifestPath: plugin.manifestPath,
-        manifestDigest: plugin.manifestDigest,
-        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -446,6 +484,20 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginSurfacePlacementDescriptorV1>(plugin.manifest.contributes, 'surfacePlacements')) {
+      surfacePlacements.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -458,6 +510,23 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginEmbeddedWebBundleContributionV1>(
+      plugin.manifest.contributes,
+      'embeddedWebBundles',
+    )) {
+      embeddedWebBundles.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -470,6 +539,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -482,6 +552,33 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginBrowserTargetContributionV1>(plugin.manifest.contributes, 'browserTargets')) {
+      browserTargets.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readContributionArray<PluginBrowserActionContributionV1>(plugin.manifest.contributes, 'browserActions')) {
+      browserActions.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -494,6 +591,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -506,6 +604,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -518,6 +617,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -530,6 +630,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition: toEventDefinition(plugin.pluginId, definition),
       });
@@ -542,6 +643,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -555,6 +657,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -567,6 +670,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -585,6 +689,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -603,6 +708,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -615,18 +721,20 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
     }
 
-    for (const definition of readContributionArray<InstallableDependencyDescriptor>(plugin.manifest.contributes, 'installables')) {
-      installables.push({
+    for (const definition of readContributionArray<InstallableDependencyDescriptor>(plugin.manifest.contributes, 'managedDependencies')) {
+      managedDependencies.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
@@ -639,30 +747,32 @@ export function buildPluginContributionRegistry(params: Readonly<{
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
         definition,
       });
     }
 
-    for (const [index, definition] of readContributionArray<PluginLifecycleHandlerContributionV2>(
+    for (const definition of readContributionArray<PluginLifecycleHandlerContributionV2>(
       plugin.manifest.contributes,
       'lifecycleHandlers',
-    ).entries()) {
+    )) {
       lifecycleHandlers.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
-        definition: toLifecycleHandlerDefinition(plugin.pluginId, index, definition),
+        definition: toLifecycleHandlerDefinition(definition),
       });
     }
   }
 
   return Object.freeze({
-    providers: Object.freeze(providers),
-    backends: Object.freeze(backends),
+    agents: Object.freeze(agents),
+    agentRuntimes: Object.freeze(agentRuntimes),
     actions: Object.freeze(actions),
     tools: Object.freeze(tools),
     commands: Object.freeze(commands),
@@ -671,11 +781,14 @@ export function buildPluginContributionRegistry(params: Readonly<{
     uiDescriptors: Object.freeze(uiDescriptors),
     uiTranslations: Object.freeze(uiTranslations),
     structuredMessages: Object.freeze(structuredMessages),
-    sessionSurfaces: Object.freeze(sessionSurfaces),
     sessionHeaderActions: Object.freeze(sessionHeaderActions),
+    surfacePlacements: Object.freeze(surfacePlacements),
     hostedWeb: Object.freeze(hostedWeb),
+    embeddedWebBundles: Object.freeze(embeddedWebBundles),
     reactNativeBundles: Object.freeze(reactNativeBundles),
     uiArtifacts: Object.freeze(uiArtifacts),
+    browserTargets: Object.freeze(browserTargets),
+    browserActions: Object.freeze(browserActions),
     settings: Object.freeze(settings),
     notifications: Object.freeze(notifications),
     notificationChannels: Object.freeze(notificationChannels),
@@ -686,7 +799,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
     scmHostingProviders: Object.freeze(scmHostingProviders),
     scmBackends: Object.freeze(scmBackends),
     connectedAccountDescriptors: Object.freeze(connectedAccountDescriptors),
-    installables: Object.freeze(installables),
+    managedDependencies: Object.freeze(managedDependencies),
     requestInterceptors: Object.freeze(requestInterceptors),
     lifecycleHandlers: Object.freeze(lifecycleHandlers),
   });

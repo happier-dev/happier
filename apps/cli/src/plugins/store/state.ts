@@ -19,6 +19,7 @@ export type PluginInstallMode = z.infer<typeof PluginInstallModeSchema>;
 export const PluginStateSourceRecordSchema = PluginSourceSpecV1Schema.extend({
   resolvedPath: z.string().min(1),
   manifestPath: z.string().min(1),
+  devWatch: z.boolean().optional(),
 }).strict();
 export type PluginStateSourceRecord = z.infer<typeof PluginStateSourceRecordSchema>;
 

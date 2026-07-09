@@ -9,6 +9,7 @@ import type {
 
 import { createJsonlFollowController } from '@/api/session/fileBackedTranscripts/jsonl';
 import type {
+    JsonlFollowerMetricEvent,
     JsonlFollowPolicyInputV1,
 } from '@/api/session/fileBackedTranscripts/jsonl';
 
@@ -116,7 +117,7 @@ export function createPluginTranscriptFileFollowService(params?: Readonly<{
             const id = `transcript-file-follow:${randomUUID()}`;
             let sequence = 0;
             let closed = false;
-            let deliveringLine = false;
+            let lineHandlerCallDepth = 0;
             let allowFinalDrainDelivery = false;
             let closePromise: Promise<void> | null = null;
             let expiryTimer: NodeJS.Timeout | null = null;
@@ -136,19 +137,26 @@ export function createPluginTranscriptFileFollowService(params?: Readonly<{
                         return;
                     }
                     sequence += 1;
-                    deliveringLine = true;
+                    lineHandlerCallDepth += 1;
+                    let result: void | Promise<void>;
                     try {
-                        await input.onLine(Object.freeze({
+                        result = input.onLine(Object.freeze({
                             line,
                             sourcePath: followFilePath,
                             sequence,
                         }));
                     } finally {
-                        deliveringLine = false;
+                        lineHandlerCallDepth = Math.max(0, lineHandlerCallDepth - 1);
                     }
+                    await result;
                 },
                 onError: (error) => {
                     notifyPluginErrorHandler(input, error);
+                },
+                metrics: {
+                    onEvent: (event) => {
+                        notifyPluginResetHandler(input, event);
+                    },
                 },
             });
 
@@ -159,7 +167,7 @@ export function createPluginTranscriptFileFollowService(params?: Readonly<{
                 closed = true;
                 clearExpiryTimer();
                 input.signal?.removeEventListener('abort', abortListener);
-                const finalDrain = options?.finalDrain === true && !deliveringLine;
+                const finalDrain = options?.finalDrain === true && lineHandlerCallDepth === 0;
                 allowFinalDrainDelivery = finalDrain;
                 closePromise = withOptionalTimeout(
                     controller.dispose({ finalDrain }),
@@ -227,6 +235,13 @@ function notifyPluginErrorHandler(input: TranscriptFileFollowInputV1, error: unk
     Promise.resolve(input.onError(error)).catch(() => undefined);
 }
 
+function notifyPluginResetHandler(input: TranscriptFileFollowInputV1, event: JsonlFollowerMetricEvent): void {
+    if (event.type !== 'file_reset' || !input.onReset) {
+        return;
+    }
+    Promise.resolve(input.onReset({ reason: event.reason })).catch(() => undefined);
+}
+
 function normalizePluginFileFollowPolicy(
     input: TranscriptFileFollowPolicyInputV1 | undefined,
     base: JsonlFollowPolicyInputV1 | undefined,
@@ -252,7 +267,6 @@ function normalizePluginFileFollowPolicy(
     }
     return normalized;
 }
-
 function normalizeBoundedPollInterval(value: number, fieldName: string): number {
     const normalized = normalizePositiveInteger(value, fieldName);
     if (normalized < MIN_POLL_INTERVAL_MS || normalized > MAX_POLL_INTERVAL_MS) {

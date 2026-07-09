@@ -16,12 +16,12 @@ const DAEMON_SPAWN_HOOK_EMISSION_NOTES_BY_EVENT_ID_V1: Readonly<Record<DaemonSpa
   seam: string;
   notes: string;
 }>>> = Object.freeze({
-  'backend.resolveRuntimePrerequisites': {
+  'agent.resolvePrerequisites': {
     owner: 'resolveSpawnChildEnvironment',
     seam: 'readPluginSpawnDecision',
     notes: 'Evaluated after backend-owned prerequisite validation and fails closed on denial or handler rejection.',
   },
-  'spawn.augmentEnv': {
+  'agent.spawnEnv.augment': {
     owner: 'resolveSpawnChildEnvironment',
     seam: 'readPluginSpawnEnvAugmentation',
     notes: 'Evaluated before final child env publication so plugin env augmentation joins built-in daemon spawn env hooks.',

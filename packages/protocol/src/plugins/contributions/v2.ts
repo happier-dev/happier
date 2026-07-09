@@ -6,7 +6,6 @@ import {
 import {
   HookExecutionKindV1Schema,
 } from '../../hooks/hookExecutionSemantics.js';
-import { AgentDefinitionV1Schema } from '../agentDefinitionV1.js';
 import { PluginBackendDefinitionV1BaseSchema } from '../backendDefinitionV1.js';
 import { PluginLooseJsonObjectSchema, PluginOptionalStringSchema } from '../_shared.js';
 import {
@@ -28,8 +27,8 @@ import {
   PluginConnectedAccountDescriptorSchema,
 } from '../../connect/connectedAccountDescriptors.js';
 import {
-  PluginInstallableContributionV2Schema,
-} from './installables.js';
+  PluginManagedDependencyContributionV2Schema,
+} from './managedDependencies.js';
 import {
   PluginMcpContributesV1Schema,
 } from './mcp.js';
@@ -39,6 +38,9 @@ import {
 import {
   PluginSettingsContributionV2Schema,
 } from './settings.js';
+import {
+  PluginAgentSettingsContributionV1Schema,
+} from './agentSettings.js';
 import {
   PluginExecutionRunProfileContributionV2Schema,
 } from './executionRunProfiles.js';
@@ -63,20 +65,27 @@ import {
   PluginStructuredMessageDescriptorV1Schema,
 } from './ui/structuredMessages.js';
 import {
-  PluginSessionSurfaceDescriptorV1Schema,
-} from './ui/sessionSurfaces.js';
-import {
   PluginSessionHeaderActionDescriptorV1Schema,
 } from './ui/sessionHeaderActions.js';
 import {
+  PluginSurfacePlacementDescriptorV1Schema,
+} from './ui/surfacePlacements.js';
+import {
   PluginHostedWebContributionV1Schema,
 } from './ui/hostedWeb.js';
+import {
+  PluginEmbeddedWebBundleContributionV1Schema,
+} from './ui/embeddedWebBundles.js';
 import {
   PluginReactNativeBundleContributionV1Schema,
 } from './ui/reactNativeBundles.js';
 import {
   PluginUiArtifactContributionV1Schema,
 } from './ui/artifacts.js';
+import {
+  PluginBrowserActionContributionV1Schema,
+  PluginBrowserTargetContributionV1Schema,
+} from './browser/v1.js';
 import {
   buildPluginContributionFamilySchemaV2,
   definePluginContributionFamilyV2,
@@ -87,8 +96,7 @@ const LEGACY_ACTIVITY_PROVIDER_FAMILY = `activity${'Providers'}`;
 
 const PluginHookRegistrationFilterV1Schema = z.object({
   agentId: z.string().trim().min(1).optional(),
-  backendId: z.string().trim().min(1).optional(),
-  backendTargetId: z.string().trim().min(1).optional(),
+  runtimeTargetId: z.string().trim().min(1).optional(),
   sessionId: z.string().trim().min(1).optional(),
   workspaceId: z.string().trim().min(1).optional(),
   cwdPrefix: z.string().trim().min(1).optional(),
@@ -127,19 +135,16 @@ function rejectForbiddenKey(
   });
 }
 
-export const PluginBackendTargetSourceKindV2Schema = z.enum(['first_party', 'external', 'configured']);
-export type PluginBackendTargetSourceKindV2 = z.infer<typeof PluginBackendTargetSourceKindV2Schema>;
+export const PluginAgentRuntimeTargetSourceKindV2Schema = z.enum(['first_party', 'external', 'configured']);
+export type PluginAgentRuntimeTargetSourceKindV2 = z.infer<typeof PluginAgentRuntimeTargetSourceKindV2Schema>;
 
-export const PluginBackendTargetV2Schema = z.object({
-  sourceKind: PluginBackendTargetSourceKindV2Schema,
+export const PluginAgentRuntimeTargetV2Schema = z.object({
+  sourceKind: PluginAgentRuntimeTargetSourceKindV2Schema,
   id: z.string().trim().min(1),
-}).strict();
-export type PluginBackendTargetV2 = z.infer<typeof PluginBackendTargetV2Schema>;
+}).passthrough();
+export type PluginAgentRuntimeTargetV2 = z.infer<typeof PluginAgentRuntimeTargetV2Schema>;
 
-export const PluginAgentContributionV2Schema = AgentDefinitionV1Schema;
-export type PluginAgentContributionV2 = z.infer<typeof PluginAgentContributionV2Schema>;
-
-export const PluginBackendEngineLaunchV2Schema = z.discriminatedUnion('kind', [
+export const PluginAgentRuntimeLaunchV2Schema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('agent-cli'),
     agentId: z.string().trim().min(1),
@@ -153,9 +158,9 @@ export const PluginBackendEngineLaunchV2Schema = z.discriminatedUnion('kind', [
     env: z.record(z.string(), z.string()).optional(),
   }).passthrough(),
 ]);
-export type PluginBackendEngineLaunchV2 = z.infer<typeof PluginBackendEngineLaunchV2Schema>;
+export type PluginAgentRuntimeLaunchV2 = z.infer<typeof PluginAgentRuntimeLaunchV2Schema>;
 
-export const PluginBackendEngineAcpTimeoutsV2Schema = z.object({
+export const PluginAgentRuntimeAcpTimeoutsV2Schema = z.object({
   initMs: z.number().int().positive().optional(),
   initDelayMs: z.number().int().positive().optional(),
   idleMs: z.number().int().positive().optional(),
@@ -172,32 +177,32 @@ export const PluginBackendEngineAcpTimeoutsV2Schema = z.object({
     }
   }
 });
-export type PluginBackendEngineAcpTimeoutsV2 = z.infer<typeof PluginBackendEngineAcpTimeoutsV2Schema>;
+export type PluginAgentRuntimeAcpTimeoutsV2 = z.infer<typeof PluginAgentRuntimeAcpTimeoutsV2Schema>;
 
-export const PluginBackendEngineAcpTransportV2Schema = z.discriminatedUnion('kind', [
+export const PluginAgentRuntimeAcpTransportV2Schema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('stdio'),
-    launch: PluginBackendEngineLaunchV2Schema,
-    timeouts: PluginBackendEngineAcpTimeoutsV2Schema.optional(),
+    launch: PluginAgentRuntimeLaunchV2Schema,
+    timeouts: PluginAgentRuntimeAcpTimeoutsV2Schema.optional(),
   }).passthrough(),
   z.object({
     kind: z.literal('ws'),
     url: z.string().trim().min(1),
     headers: z.record(z.string(), z.string()).optional(),
-    timeouts: PluginBackendEngineAcpTimeoutsV2Schema.optional(),
+    timeouts: PluginAgentRuntimeAcpTimeoutsV2Schema.optional(),
   }).passthrough(),
   z.object({
     kind: z.literal('tcp'),
     host: z.string().trim().min(1),
     port: z.number().int().min(1).max(65535),
-    timeouts: PluginBackendEngineAcpTimeoutsV2Schema.optional(),
+    timeouts: PluginAgentRuntimeAcpTimeoutsV2Schema.optional(),
   }).passthrough(),
 ]);
-export type PluginBackendEngineAcpTransportV2 = z.infer<typeof PluginBackendEngineAcpTransportV2Schema>;
+export type PluginAgentRuntimeAcpTransportV2 = z.infer<typeof PluginAgentRuntimeAcpTransportV2Schema>;
 
-export const PluginBackendEngineAcpV2Schema = z.object({
+export const PluginAgentRuntimeAcpV2Schema = z.object({
   kind: z.literal('acp'),
-  transport: PluginBackendEngineAcpTransportV2Schema,
+  transport: PluginAgentRuntimeAcpTransportV2Schema,
   ux: z.object({
     name: PluginOptionalStringSchema,
     title: PluginOptionalStringSchema,
@@ -217,48 +222,57 @@ export const PluginBackendEngineAcpV2Schema = z.object({
     policy: z.enum(['pass_through', 'drop']),
   }).passthrough().optional(),
 }).passthrough();
-export type PluginBackendEngineAcpV2 = z.infer<typeof PluginBackendEngineAcpV2Schema>;
+export type PluginAgentRuntimeAcpV2 = z.infer<typeof PluginAgentRuntimeAcpV2Schema>;
 
-export const PluginBackendEngineCustomV2Schema = z.object({
+export const PluginAgentRuntimeCustomV2Schema = z.object({
   kind: z.literal('custom'),
-}).strict();
-export type PluginBackendEngineCustomV2 = z.infer<typeof PluginBackendEngineCustomV2Schema>;
+}).passthrough();
+export type PluginAgentRuntimeCustomV2 = z.infer<typeof PluginAgentRuntimeCustomV2Schema>;
 
-export const PluginBackendEngineV2Schema = z.discriminatedUnion('kind', [
-  PluginBackendEngineAcpV2Schema,
-  PluginBackendEngineCustomV2Schema,
+export const PluginAgentRuntimeV2Schema = z.discriminatedUnion('kind', [
+  PluginAgentRuntimeAcpV2Schema,
+  PluginAgentRuntimeCustomV2Schema,
 ]).superRefine((value, ctx) => {
   if (value.kind === 'acp' && hasOwn(value, 'timeouts')) {
-    rejectForbiddenKey(ctx, 'timeouts', 'Plugin ACP timeouts are transport-owned; use engine.transport.timeouts.');
+    rejectForbiddenKey(ctx, 'timeouts', 'Plugin ACP timeouts are transport-owned; use runtime.transport.timeouts.');
   }
 });
-export type PluginBackendEngineV2 = z.infer<typeof PluginBackendEngineV2Schema>;
+export type PluginAgentRuntimeV2 = z.infer<typeof PluginAgentRuntimeV2Schema>;
 
-export const PluginBackendContributionV2Schema = PluginBackendDefinitionV1BaseSchema.extend({
-  engine: PluginBackendEngineV2Schema,
-  target: PluginBackendTargetV2Schema.optional(),
+export const PluginAgentContributionV2Schema = PluginBackendDefinitionV1BaseSchema.extend({
+  runtime: PluginAgentRuntimeV2Schema,
+  target: PluginAgentRuntimeTargetV2Schema.optional(),
 }).passthrough().superRefine((value, ctx) => {
-  if (hasOwn(value, 'runtimeAdapters')) {
-    rejectForbiddenKey(ctx, 'runtimeAdapters', 'Backend surface declarations must use surfaceHandlers; runtimeAdapters is not final SDK vocabulary.');
-  }
-  if (hasOwn(value, 'runtimeCoreHooks')) {
-    rejectForbiddenKey(ctx, 'runtimeCoreHooks', 'Backend surface declarations must use surfaceHandlers; runtimeCoreHooks is not final SDK vocabulary.');
+  if (hasOwn(value, 'agentId')) {
+    rejectForbiddenKey(ctx, 'agentId', 'Plugin agent runtime manifests must use id.');
   }
   if (hasOwn(value, 'providerId')) {
-    rejectForbiddenKey(ctx, 'providerId', 'Plugin backend manifests must use agentId.');
+    rejectForbiddenKey(ctx, 'providerId', 'Plugin agent runtime manifests must use id.');
+  }
+  if (hasOwn(value, 'engine')) {
+    rejectForbiddenKey(ctx, 'engine', 'Plugin agent manifests must use runtime.');
+  }
+  if (hasOwn(value, 'runtimeAdapters')) {
+    rejectForbiddenKey(ctx, 'runtimeAdapters', 'Agent runtime surface declarations must use surfaceHandlers; runtimeAdapters is not final SDK vocabulary.');
+  }
+  if (hasOwn(value, 'runtimeCoreHooks')) {
+    rejectForbiddenKey(ctx, 'runtimeCoreHooks', 'Agent runtime surface declarations must use surfaceHandlers; runtimeCoreHooks is not final SDK vocabulary.');
   }
   if (hasOwn(value, 'providerAgentId')) {
-    rejectForbiddenKey(ctx, 'providerAgentId', 'Plugin backend manifests must use catalogAgentId.');
+    rejectForbiddenKey(ctx, 'providerAgentId', 'Plugin agent manifests must use catalogAgentId.');
+  }
+  if (hasOwn(value, 'providerCliRuntime')) {
+    rejectForbiddenKey(ctx, 'providerCliRuntime', 'Plugin agent manifests must use runtime.');
   }
   if (hasOwn(value, 'runtimeKind')) {
-    rejectForbiddenKey(ctx, 'runtimeKind', 'Plugin backend manifests must use backends[].engine.kind; top-level runtimeKind is not supported.');
+    rejectForbiddenKey(ctx, 'runtimeKind', 'Plugin agent manifests must use agents[].runtime.kind; top-level runtimeKind is not supported.');
   }
   if (hasOwn(value, 'acp')) {
-    rejectForbiddenKey(ctx, 'acp', 'Plugin backend manifests must use backends[].engine.kind = acp; loose .acp wire is not supported.');
+    rejectForbiddenKey(ctx, 'acp', 'Plugin agent manifests must use agents[].runtime.kind = acp; loose .acp wire is not supported.');
   }
 });
-export type PluginBackendContributionV2 = z.input<typeof PluginBackendContributionV2Schema>;
-export type ParsedPluginBackendContributionV2 = z.output<typeof PluginBackendContributionV2Schema>;
+export type PluginAgentContributionV2 = z.input<typeof PluginAgentContributionV2Schema>;
+export type ParsedPluginAgentContributionV2 = z.output<typeof PluginAgentContributionV2Schema>;
 
 export const PluginCommandVisibilityV2Schema = z.enum(['default', 'advanced', 'internal']);
 export type PluginCommandVisibilityV2 = z.infer<typeof PluginCommandVisibilityV2Schema>;
@@ -293,7 +307,6 @@ export const PluginUiDescriptorSurfaceV2Schema = z.enum([
   'setup',
   'status',
   'agentSettings',
-  'backendSettings',
 ]);
 export type PluginUiDescriptorSurfaceV2 = z.infer<typeof PluginUiDescriptorSurfaceV2Schema>;
 
@@ -316,7 +329,7 @@ export type PluginUiFieldTypeV2 = z.infer<typeof PluginUiFieldTypeV2Schema>;
 export const PluginUiFieldOptionV2Schema = z.object({
   value: z.string().trim().min(1),
   label: z.string().trim().min(1),
-}).strict();
+}).passthrough();
 export type PluginUiFieldOptionV2 = z.infer<typeof PluginUiFieldOptionV2Schema>;
 
 export const PluginUiFieldV2Schema = z.object({
@@ -350,7 +363,7 @@ export const PluginUiDescriptorContributionV2Schema = z.object({
   featureGate: NullableOptionalStringSchema,
   helpUrl: NullableOptionalStringSchema,
   fields: z.array(PluginUiFieldV2Schema).default([]),
-}).strict();
+}).passthrough();
 export type PluginUiDescriptorContributionV2 = z.infer<typeof PluginUiDescriptorContributionV2Schema>;
 
 export { PluginHookScopeV1Schema, type PluginHookScopeV1 };
@@ -365,10 +378,10 @@ export const PluginHookContributionV2Schema = z.object({
   handler: PluginHookHandlerRefV1Schema,
   priority: z.number().int().optional(),
   compatibility: z.record(z.string(), z.unknown()).optional(),
-}).strict();
+}).passthrough();
 export type PluginHookContributionV2 = z.infer<typeof PluginHookContributionV2Schema>;
 
-export const PluginLifecycleEventV2Schema = z.enum(['activated', 'deactivating']);
+export const PluginLifecycleEventV2Schema = z.enum(['activated', 'deactivating', 'deactivated']);
 export type PluginLifecycleEventV2 = z.infer<typeof PluginLifecycleEventV2Schema>;
 
 export const PluginLifecycleHandlerContributionV2Schema = z.object({
@@ -376,7 +389,7 @@ export const PluginLifecycleHandlerContributionV2Schema = z.object({
   event: PluginLifecycleEventV2Schema,
   priority: z.number().int().optional(),
   handler: PluginExecutableHandlerRefV1Schema,
-}).strict();
+}).passthrough();
 export type PluginLifecycleHandlerContributionV2 = z.infer<typeof PluginLifecycleHandlerContributionV2Schema>;
 
 export const PluginConnectedAccountDescriptorContributionV2Schema =
@@ -386,7 +399,6 @@ export type PluginConnectedAccountDescriptorContributionV2 =
 
 export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'agents', schema: PluginAgentContributionV2Schema }),
-  definePluginContributionFamilyV2({ family: 'backends', schema: PluginBackendContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'actions', schema: PluginActionContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'commands', schema: PluginCommandContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'tools', schema: PluginToolContributionV2Schema }),
@@ -394,12 +406,16 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'uiDescriptors', schema: PluginUiDescriptorContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'uiTranslations', schema: PluginUiTranslationsContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'structuredMessages', schema: PluginStructuredMessageDescriptorV1Schema }),
-  definePluginContributionFamilyV2({ family: 'sessionSurfaces', schema: PluginSessionSurfaceDescriptorV1Schema }),
   definePluginContributionFamilyV2({ family: 'sessionHeaderActions', schema: PluginSessionHeaderActionDescriptorV1Schema }),
+  definePluginContributionFamilyV2({ family: 'surfacePlacements', schema: PluginSurfacePlacementDescriptorV1Schema }),
   definePluginContributionFamilyV2({ family: 'hostedWeb', schema: PluginHostedWebContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'embeddedWebBundles', schema: PluginEmbeddedWebBundleContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'reactNativeBundles', schema: PluginReactNativeBundleContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'uiArtifacts', schema: PluginUiArtifactContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'browserTargets', schema: PluginBrowserTargetContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: 'browserActions', schema: PluginBrowserActionContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'settings', schema: PluginSettingsContributionV2Schema }),
+  definePluginContributionFamilyV2({ family: 'agentSettings', schema: PluginAgentSettingsContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'events', schema: PluginEventContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'executionRunProfiles', schema: PluginExecutionRunProfileContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'notifications', schema: PluginNotificationCategoryContributionV2Schema }),
@@ -407,7 +423,7 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: 'scmHostingProviders', schema: ScmHostingProviderContributionSchema }),
   definePluginContributionFamilyV2({ family: 'scmBackends', schema: ScmBackendContributionSchema }),
   definePluginContributionFamilyV2({ family: 'connectedAccountDescriptors', schema: PluginConnectedAccountDescriptorContributionV2Schema }),
-  definePluginContributionFamilyV2({ family: 'installables', schema: PluginInstallableContributionV2Schema }),
+  definePluginContributionFamilyV2({ family: 'managedDependencies', schema: PluginManagedDependencyContributionV2Schema }),
   definePluginContributionFamilyV2({ family: 'systemTools', schema: PluginSystemToolContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'promptAssets', schema: PluginPromptAssetContributionV1Schema }),
   definePluginContributionFamilyV2({ family: 'hooks', schema: PluginHookContributionV2Schema }),
@@ -419,14 +435,29 @@ const PluginContributesV2BaseSchema = buildPluginContributionFamilySchemaV2(
   PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2,
 );
 
-export const PluginContributesV2Schema = PluginContributesV2BaseSchema.extend({
+const PluginContributesV2SchemaWithoutDefault = PluginContributesV2BaseSchema.extend({
   mcp: PluginMcpContributesV1Schema,
 }).superRefine((value, ctx) => {
   if (hasOwn(value, LEGACY_ACTIVITY_PROVIDER_FAMILY)) {
     rejectForbiddenKey(ctx, LEGACY_ACTIVITY_PROVIDER_FAMILY, 'Activity providers were folded into contributes.notifications; use notification categories instead.');
   }
-}).default({});
+});
+
+export const PluginContributesV2Schema = PluginContributesV2SchemaWithoutDefault.default(
+  {} as z.output<typeof PluginContributesV2SchemaWithoutDefault>,
+);
 export type PluginContributesV2 = z.infer<typeof PluginContributesV2Schema>;
+
+export {
+  PluginAgentSettingsContributionV1Schema,
+  PluginAgentSettingsFieldSchemaV1Schema,
+  PluginAgentSettingsFieldV1Schema,
+  type PluginAgentSettingsAnalyticsV1,
+  type PluginAgentSettingsContributionV1,
+  type PluginAgentSettingsFieldSchemaV1,
+  type PluginAgentSettingsFieldV1,
+  type PluginAgentSettingsUiDescriptorV1,
+} from './agentSettings.js';
 
 export {
   PluginSystemToolContributionV1Schema,
@@ -451,17 +482,52 @@ export {
   type PluginStructuredMessageDescriptorV1,
 } from './ui/structuredMessages.js';
 export {
-  PluginSessionSurfaceDescriptorV1Schema,
-  type PluginSessionSurfaceDescriptorV1,
-} from './ui/sessionSurfaces.js';
-export {
   PluginSessionHeaderActionDescriptorV1Schema,
   type PluginSessionHeaderActionDescriptorV1,
 } from './ui/sessionHeaderActions.js';
 export {
+  PluginSurfaceBrowserHostActionEffectV1Schema,
+  PluginSurfaceBrowserHostActionPolicyOwnerV1Schema,
+  PluginSurfaceHostActionDescriptorV1Schema,
+  PluginSurfacePlacementDescriptorV1Schema,
+  PluginSurfacePlacementKindV1Schema,
+  PluginSurfaceRendererRefV1Schema,
+  type PluginSurfaceBrowserHostActionEffectV1,
+  type PluginSurfaceBrowserHostActionPolicyOwnerV1,
+  type PluginSurfaceHostActionDescriptorV1,
+  type PluginSurfacePlacementDescriptorV1,
+  type PluginSurfacePlacementKindV1,
+  type PluginSurfaceRendererRefV1,
+} from './ui/surfacePlacements.js';
+export {
+  PluginBrowserPanelHostActionScopeV1Schema,
+  PluginSurfaceAppTargetV1Schema,
+  PluginSurfaceBrowserTargetV1Schema,
+  PluginSurfaceProjectTargetV1Schema,
+  PluginSurfaceSessionTargetV1Schema,
+  PluginSurfaceTargetV1Schema,
+  PluginSurfaceWorkspaceTargetV1Schema,
+  type PluginBrowserPanelHostActionScopeV1,
+  type PluginSurfaceTargetV1,
+} from './ui/surfaceTargets.js';
+export {
   PluginHostedWebContributionV1Schema,
   type PluginHostedWebContributionV1,
 } from './ui/hostedWeb.js';
+export {
+  PluginEmbeddedWebBundleContributionV1Schema,
+  type PluginEmbeddedWebBundleContributionV1,
+} from './ui/embeddedWebBundles.js';
+export {
+  PluginHostedWebCspPolicyV1Schema,
+  PluginHostedWebOriginV1Schema,
+  PluginHostedWebSecurityPolicyV1Schema,
+  buildPluginHostedWebStaticAssetContentSecurityPolicyV1,
+  resolvePluginHostedWebSourceMapPolicyV1,
+  type PluginHostedWebCspPolicyV1,
+  type PluginHostedWebOriginV1,
+  type PluginHostedWebSecurityPolicyV1,
+} from './ui/hostedWebSecurity.js';
 export {
   PluginReactNativeBundleContributionV1Schema,
   type PluginReactNativeBundleContributionV1,
@@ -470,3 +536,15 @@ export {
   PluginUiArtifactContributionV1Schema,
   type PluginUiArtifactContributionV1,
 } from './ui/artifacts.js';
+export {
+  PluginBrowserActionContributionV1Schema,
+  PluginBrowserActionKindV1Schema,
+  PluginBrowserActionPolicyV1Schema,
+  PluginBrowserProfileModeV1Schema,
+  PluginBrowserTargetContributionV1Schema,
+  type PluginBrowserActionContributionV1,
+  type PluginBrowserActionKindV1,
+  type PluginBrowserActionPolicyV1,
+  type PluginBrowserProfileModeV1,
+  type PluginBrowserTargetContributionV1,
+} from './browser/v1.js';

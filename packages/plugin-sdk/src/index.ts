@@ -1,43 +1,92 @@
+export { unsupportedAccountUsage } from './accountUsage.js';
+export type { UnsupportedAccountUsage } from './accountUsage.js';
+
 export type {
-    ParsedPluginBackendContributionV2,
+    ParsedPluginAgentContributionV2,
     ParsedPluginEventContributionV1,
     ParsedPluginManifestV2,
     PluginActionContributionV2,
-    PluginBackendContributionV2,
+    PluginAgentContributionV2,
+    PluginBackendExternalSessionSourceDeclarationV1,
+    PluginBackendExternalSessionSourceKeySegmentV1,
+    PluginBackendExternalSessionSourceKeyV1,
+    PluginBackendExternalSessionSourceSchemaFieldV1,
+    PluginBackendExternalSessionSourceSchemaRefinementV1,
+    PluginBackendExternalSessionSourceSchemaV1,
+    PluginBackendExternalSessionSourceWhenV1,
+    PluginBackendExternalSessionSurfaceV1,
+    PluginBackendSurfacesV1,
+    PluginBrowserActionContributionV1,
+    PluginBrowserActionKindV1,
+    PluginBrowserActionPolicyV1,
+    PluginBrowserProfileModeV1,
+    PluginBrowserTargetContributionV1,
     PluginContributesV2,
     PluginEventContributionV1,
+    PluginHookContributionV2,
     PluginManifestV2,
     PluginMcpContributesV1,
+    PluginCapabilityDeclarationV1,
+    PluginDeclaredCapabilityV1,
     PluginPermissionCapabilityV1,
     PluginPermissionDeclarationV1,
+    PluginAgentSettingsAnalyticsV1,
+    PluginAgentSettingsContributionV1,
+    PluginAgentSettingsFieldSchemaV1,
+    PluginAgentSettingsFieldV1,
+    PluginAgentSettingsUiDescriptorV1,
     PluginRequestInterceptorContributionV1,
     PluginRequestInterceptorScopeV1,
     PluginRequestInterceptorTargetV1,
     PluginRequestInterceptorUrlOriginV1,
+    PluginSettingsContributionV2,
     PluginHostedWebContributionV1,
     PluginReactNativeBundleContributionV1,
     PluginSessionHeaderActionDescriptorV1,
-    PluginSessionSurfaceDescriptorV1,
+    PluginSurfacePlacementDescriptorV1,
     PluginStructuredMessageDescriptorV1,
     PluginSystemToolContributionV1,
     PluginToolContributionV2,
     PluginUiArtifactContributionV1,
     PluginUiTranslationsContributionV1,
-} from './manifest';
+} from './manifest.js';
 export {
-    defineHostedWeb,
-    defineReactNativeBundle,
     defineSessionHeaderAction,
-    defineSessionSurface,
     defineStructuredMessage,
+    defineSurfaceContribution,
     defineUiArtifact,
     defineUiTranslations,
 } from './ui.js';
+export type {
+    DefineSurfaceContributionInputV1,
+    DefineSurfaceContributionResultV1,
+} from './ui.js';
 export {
+    defineBrowserAction,
+    defineBrowserTarget,
+} from './browser/index.js';
+export {
+    booleanAgentSetting,
+    buildAgentSettingsDefaults,
     definePluginManifest,
+    definePluginSettingsContribution,
+    defineAgentSettingsContribution,
+    enumArrayAgentSetting,
+    enumAgentSetting,
+    jsonObjectStringAgentSetting,
+    positiveIntegerAgentSetting,
+    agentSettingsContributionToUiDescriptor,
+    stringRecordAgentSetting,
+    stringAgentSetting,
 } from './manifest.js';
 export {
     isCloudConnectAuthenticateResultV1,
+    ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1Schema,
+    ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1Schema,
+    ConnectedServiceQuotaRecoveryCreditKindV1Schema,
+    ConnectedServiceQuotaRecoveryCreditStatusV1Schema,
+    ConnectedServiceQuotaRecoveryCreditV1Schema,
+    ConnectedServiceQuotaRecoveryCreditsV1Schema,
 } from './cloud/auth.js';
 export type {
     CloudAuthCallbackCreateInputV1,
@@ -61,7 +110,25 @@ export type {
     CloudConnectAuthenticateResultV1,
     CloudCustomAuthenticatorContextV1,
     CloudCustomAuthenticatorV1,
-} from './cloud/auth';
+    ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,
+    ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
+    ConnectedServiceQuotaRecoveryCreditKindV1,
+    ConnectedServiceQuotaRecoveryCreditStatusV1,
+    ConnectedServiceQuotaRecoveryCreditV1,
+    ConnectedServiceQuotaRecoveryCreditsV1,
+} from './cloud/auth.js';
+export {
+    ConnectedServiceUsageSourceV1Schema,
+    ProviderAccountUsageSnapshotV1Schema,
+    buildProviderAccountUsageOpaqueLocalCredentialRef,
+    buildProviderAccountUsageRecordId,
+} from './cloud/usage.js';
+export type {
+    ConnectedServiceUsageSourceV1,
+    ProviderAccountUsageRecordId,
+    ProviderAccountUsageRecordKeyV1,
+    ProviderAccountUsageSnapshotV1,
+} from './cloud/usage.js';
 export type {
     AgentCliReadinessDiagnosticV1,
     AgentCliReadinessEntryV1,
@@ -90,7 +157,7 @@ export type {
     AcpSessionRuntimeConfigUpdateV1,
     AcpSessionRuntimeV1,
     AcpSessionStartParamsV1,
-    CapabilityInventoryServiceV1,
+    PluginPermissionsServiceV1,
     ConnectionPhaseV1,
     ConnectionRuntimeServiceV1,
     ConnectionStateListenerV1,
@@ -105,14 +172,17 @@ export type {
     AccountServiceV1,
     AccountSettingsChangeListenerV1,
     AccountSettingsServiceV1,
+    ProviderAccountUsageAdoptionProofV1,
     ProviderAccountUsageAdoptProvisionalRecordInputV1,
     ProviderAccountUsageAdoptProvisionalRecordResultV1,
-    ProviderAccountUsageAliasContextInputV1,
-    ProviderAccountUsageAliasContextV1,
+    ProviderAccountUsageSourceContextInputV1,
+    ProviderAccountUsageSourceContextV1,
     ProviderAccountUsageRecordSnapshotInputV1,
     ProviderAccountUsageRecordSnapshotResultV1,
     ProviderAccountUsageRuntimeServiceV1,
+    PluginAgentRuntimeContextV1,
     PluginContextV1,
+    PluginExperimentalContextV1,
     PluginReviewsServiceV1,
     PluginAuthChangeListenerV1,
     PluginAuthIdentityV1,
@@ -122,6 +192,7 @@ export type {
     PluginEventEmitInputV1,
     PluginEventListenerV1,
     PluginEventsServiceV1,
+    PluginHandlerServicesV1,
     PluginSecretListEntryV1,
     PluginSecretsServiceV1,
     PluginSettingsChangeListenerV1,
@@ -134,24 +205,25 @@ export type {
     ProjectsChangeListenerV1,
     ProjectsServiceV1,
     SubscriptionV1,
-} from './context';
+} from './context.js';
 export type {
     AgentCliReadinessDiagnosticV1 as PluginAgentCliReadinessDiagnosticV1,
     AgentCliReadinessEntryV1 as PluginAgentCliReadinessEntryV1,
     AgentCliLaunchableEntryV1 as PluginAgentCliLaunchableEntryV1,
     AgentCliReadinessQueryV1 as PluginAgentCliReadinessQueryV1,
     AgentCliReadinessResultV1 as PluginAgentCliReadinessResultV1,
-} from './agents';
+} from './agents.js';
 export type {
     SessionHookForwarderAssetsV1,
     SessionHookPluginDirCreateRequestV1,
+    SessionHookPluginDirLifecycleV1,
     SessionHookPluginFileV1,
     SessionHookProviderPayloadV1,
     SessionHooksRuntimeServiceV1,
     SessionHookServerHandleV1,
     SessionHookServerStartRequestV1,
     SessionProviderTranscriptPublishRequestV1,
-} from './sessionHooks';
+} from './sessionHooks.js';
 export type {
     PluginReviewCommentBulkTransitionRequestV1,
     PluginReviewCommentBulkTransitionResultV1,
@@ -181,7 +253,7 @@ export type {
     ReviewCommentFingerprintV1,
     ReviewCommentSnapshotV1,
     ReviewCommentV1,
-} from './reviews/comments';
+} from './reviews/comments.js';
 export {
     REVIEW_SCM_SCOPE_INPUT_KEY,
     ReviewScmScopeBaseRefSourceV1Schema,
@@ -207,8 +279,9 @@ export type {
     PluginHookDefinitionV1,
     PluginHookIdV1,
     PluginHookPayloadSchemaMapV1,
-    SubagentEndHookPayloadV1,
-    SubagentStartHookPayloadV1,
+    PluginHookSupportedRuntimeFamilyV1,
+    SubagentEndedHookPayloadV1,
+    SubagentStartedHookPayloadV1,
     TypedEventEnvelopeV1,
     TypedEventV1,
 } from '@happier-dev/protocol';
@@ -216,15 +289,15 @@ export type {
     AbortListenerV1,
     AbortServiceV1,
     AbortSubscriptionV1,
-} from './abort';
+} from './abort.js';
 export type {
     EnvRuntimeServiceV1,
-} from './env';
+} from './env.js';
 export type {
     ClassifiedRuntimeErrorV1,
     ErrorRuntimeServiceV1,
     RuntimeErrorKindV1,
-} from './errors';
+} from './errors.js';
 export type {
     ExecClientHandleV1,
     ExecClientDiagnosticsV1,
@@ -240,9 +313,22 @@ export type {
     ExecClientHooksV1,
     ExecClientDisposeReasonV1,
     ExecClientExitListenerV1,
+    ExecClientAnyTransportV1,
     ExecFramedBytesClientProtocolV1,
     ExecFramedBytesClientSpecV1,
     ExecFramedBytesFramingV1,
+    ExecLengthPrefixedByteOrderV1,
+    ExecLoopbackWebSocketConnectV1,
+    ExecLoopbackWebSocketEndpointCodecV1,
+    ExecLoopbackWebSocketEndpointV1,
+    ExecLoopbackWebSocketHandshakeResponseV1,
+    ExecLoopbackWebSocketHandshakeV1,
+    ExecLoopbackWebSocketHeaderV1,
+    ExecLoopbackWebSocketJsonClientSpecV1,
+    ExecLoopbackWebSocketJsonProtocolV1,
+    ExecLoopbackWebSocketLimitsV1,
+    ExecLoopbackWebSocketShutdownV1,
+    ExecLoopbackWebSocketTransportV1,
     ExecJsonRpcClientProtocolV1,
     ExecJsonRpcClientSpecV1,
     ExecJsonStreamClientProtocolV1,
@@ -253,8 +339,11 @@ export type {
     ExecStrictLfJsonFramingV1,
     ExecAgentCliLaunchInputV1,
     ExecBinaryLaunchInputV1,
+    ExecManagedInstallableLaunchInputV1,
     ExecIpcLaunchInputV1,
     ExecLaunchInputV1,
+    ExecOutputStreamV1,
+    ExecOutputTeeV1,
     ExecProcessHandleV1,
     ExecRunOptionsV1,
     ExecRunResultV1,
@@ -271,19 +360,23 @@ export type {
     JsonRpcRequestOptionsV1,
     JsonStreamClientV1,
     JsonStreamRecordListenerV1,
+    LoopbackWebSocketJsonClientV1,
+    LoopbackWebSocketJsonMessageListenerV1,
     SystemToolDiagnosticV1,
     SystemToolLaunchGrantV1,
     SystemToolResolveRequestV1,
     SystemToolSourceV1,
-} from './exec';
+} from './exec.js';
 export {
     createJsonlRequestCorrelator,
 } from './jsonlRequestCorrelator.js';
 export type {
     JsonlRequestCorrelator,
     JsonlRequestCorrelatorEntry,
-} from './jsonlRequestCorrelator';
+} from './jsonlRequestCorrelator.js';
 export type {
+    FsAtomicWriteJsonInputV1,
+    FsAtomicWriteTextInputV1,
     FsCreateTempDirectoryInputV1,
     FsEntryV1,
     FsPathInputV1,
@@ -296,15 +389,25 @@ export type {
     FsTempDirectoryV1,
     FsTempTextFileInputV1,
     FsWriteTextInputV1,
-} from './fs';
+} from './fs.js';
+export {
+    writeAtomicJsonFile,
+    writeAtomicTextFile,
+} from './fs.js';
 export type {
+    ManagedServerCredentialV1,
+    ManagedServerDiagnosticsV1,
+    ManagedServerDurableLogV1,
     ManagedServerHandleV1,
     ManagedServerHealthCheckV1,
+    ManagedServerHttpCredentialV1,
+    ManagedServerLaunchModeV1,
+    ManagedServerModeV1,
     ManagedServerRuntimeServiceV1,
     ManagedServerSnapshotV1,
     ManagedServerSpecV1,
     ManagedServerStateV1,
-} from './managedServer';
+} from './managedServer.js';
 export {
     HAPPIER_LOCAL_SERVICE_ENV,
     defineLocalService,
@@ -315,7 +418,7 @@ export type {
     LocalServiceOwnerScopedDeclarationV1,
     LocalServiceRuntimeSnapshotV1,
     LocalServicesRuntimeServiceV1,
-} from './localServices';
+} from './localServices.js';
 export type {
     McpClientHandleV1,
     McpClientSpecV1,
@@ -348,29 +451,34 @@ export type {
     McpServerTransportV1,
     McpStdioTransportV1,
     ResolvedMcpServerSpecV1,
-} from './mcp';
+} from './mcp.js';
 export type {
     ProgressHandleV1,
     ProgressRuntimeServiceV1,
     ProgressSnapshotV1,
     ProgressStateV1,
-} from './progress';
+} from './progress.js';
 export type {
     TerminalHostCreateOrAttachRequestV1,
     TerminalHostResolutionReasonV1,
     TerminalHostResolveRequestV1,
     TerminalHostResolveResultV1,
     TerminalHostRuntimeServiceV1,
-} from './terminalHost';
+} from './terminalHost.js';
 export type {
     RetryAttemptContextV1,
     RetryPolicyV1,
     RetryRuntimeServiceV1,
-} from './retry';
+} from './retry.js';
 export type {
+    RaceWithTimeoutResultV1,
     TimeoutBudgetV1,
     TimeoutRuntimeServiceV1,
-} from './timeout';
+} from './timeout.js';
+export {
+    raceWithTimeout,
+    sleep,
+} from './timeout.js';
 export type {
     TranscriptFileFollowCloseOptionsV1,
     TranscriptFileFollowDrainOptionsV1,
@@ -378,9 +486,13 @@ export type {
     TranscriptFileFollowInputV1,
     TranscriptFileFollowLineV1,
     TranscriptFileFollowPolicyInputV1,
+    TranscriptFileFollowResetReasonV1,
     TranscriptFileFollowRuntimeServiceV1,
     TranscriptFileFollowStartAtV1,
     TranscriptFileFollowStrategyV1,
+    TranscriptAppendAgentMessageTurnV1,
+    TranscriptAppendTurnV1,
+    TranscriptAppendUserTextTurnV1,
     TranscriptSourceDefinitionV1,
     TranscriptSourceFollowLeaseV1,
     TranscriptSourceFollowUpdateV1,
@@ -388,7 +500,7 @@ export type {
     TranscriptSourcePageV1,
     TranscriptSourceReadAfterV1,
     TranscriptsRuntimeServiceV1,
-} from './transcripts';
+} from './transcripts.js';
 export type {
     AccountSettings,
     PluginSettingsFieldDescriptorV1,
@@ -396,9 +508,10 @@ export type {
     WorkspaceRefV1,
 } from '@happier-dev/protocol';
 export type {
-    BackendEngineV1,
-    RegisterBackendEngineV1,
-} from './engine';
+    AgentMessageMetaEnricherV1,
+    AgentRuntimeV1,
+    RegisterAgentRuntimeV1,
+} from './engine.js';
 export type {
     AttachAvailabilityDepthV1,
     AttachAvailabilityRequestV1,
@@ -524,7 +637,7 @@ export type {
     RequestPolicyHandlerInputV1,
     RequestPolicyOperationContextV1,
     RequestPolicyResultV1,
-} from './fetch';
+} from './fetch.js';
 export type {
     PluginActionsServiceV1,
     PluginActionApprovalRequestInputV1,
@@ -532,12 +645,13 @@ export type {
     PluginActionApprovalsServiceV1,
     PluginActionsV1,
     PluginSdkActionMethodV1,
-} from './generated/actions';
+} from './generated/actions.js';
 
 export type {
     PluginApiV1,
     PluginApiActionRegistrationV1,
-    PluginApiBackendEngineRegistrationV1,
+    PluginApiAgentRuntimeRegistrationV1,
+    PluginApiDaemonAuthBridgeRegistrationV1,
     PluginApiCommandRegistrationV1,
     PluginApiCoreV1,
     PluginApiHookRegistrationV1,
@@ -553,15 +667,32 @@ export type {
     PluginNotificationChannelSendRequestV1,
     PluginNotificationChannelSendResultV1,
     PluginNotificationChannelSenderV1,
+    PluginActionDiagnosticV1,
+    PluginActionErrorV1,
     PluginActionHandler,
     PluginActionHandlerRequest,
+    PluginActionResultV1,
     PluginActionSurface,
+    PluginActionUiHintsV1,
     PluginDisposable,
     PluginHookHandler,
+    PluginHookHandlerContextV1,
+    PluginHookPayloadEnvelopeV1,
+    PluginHookPayloadMapV1,
+    PluginHookResultMapV1,
     PluginLifecycleEvent,
     PluginLifecycleHandler,
     PluginLifecycleHandlerRequest,
-} from './api';
+} from './api.js';
+export type {
+    DaemonAuthBridgeRefreshRequestV1,
+    DaemonAuthBridgeRefreshResultV1,
+    RegisterDaemonAuthBridgeV1,
+} from './agentRuntime/authBridge.js';
+export {
+    toPluginHookObjectContext,
+    toPluginHookPayloadEnvelope,
+} from './api.js';
 export type {
     ScmHostingProviderCompareUrlInput,
     ScmHostingProviderDefaultBranchInput,
@@ -599,7 +730,7 @@ export type {
     ScmHostingProviderRemoteDetectionResult,
     ScmHostingProviderCompareUrlResult,
     ScmHostingProviderUnresolvedRemote,
-} from './scm/hostingProvider';
+} from './scm/hostingProvider.js';
 export {
     readCurrentScmHostingProviderRuntimeServices,
     runWithScmHostingProviderRuntimeServices,
@@ -633,7 +764,7 @@ export type {
     ScmWorkspaceIntegrationWorkspaceTransferMetadata,
     ScmWorkspaceIntegrationWorkspaceTransferRequest,
     ScmWorkspaceIntegrationWorkspaceTransferResult,
-} from './scm/backend';
+} from './scm/backend.js';
 export {
     ConnectedAccountConnectModeDescriptorSchema,
     ConnectedAccountTokenKindSchema,
@@ -659,6 +790,9 @@ export type {
     ScmBackendContributionToolCommand,
     ScmBackendContributionTooling,
 } from './manifest/scmBackends.js';
+export {
+    createSessionRuntimeActivityPublisher,
+} from './sessions/index.js';
 export type {
     ExternalSessionAttachParamsV1,
     ExternalSessionAttachResultV1,
@@ -675,6 +809,19 @@ export type {
     ExternalSessionTranscriptReadAfterResultV1,
     ExternalSessionTranscriptUpdateV1,
     PluginExternalSessionsServiceV1,
+    ExternalSessionCandidateHostAdapterV1,
+    ExternalSessionCandidateHostListRequestV1,
+    ExternalSessionCandidateHostRuntimeServiceV1,
+    ExternalSessionFollowTranscriptPathResolutionV1,
+    ExternalSessionHostAdaptersContributionV1,
+    ExternalSessionProviderStoreKeyV1,
+    ExternalSessionRuntimeHostAdapterParamsV1,
+    ExternalSessionTranscriptRawMessageV1,
+    ExternalSessionTranscriptStoreAdapterV1,
+    ExternalSessionTranscriptStoreFollowRequestV1,
+    ExternalSessionTranscriptStorePageRequestV1,
+    ExternalSessionTranscriptStoreReadAfterRequestV1,
+    ExternalSessionTranscriptStoreRuntimeServiceV1,
     PluginSessionGetParamsV1,
     PluginSessionListParamsV1,
     PluginSessionRefV1,
@@ -682,6 +829,7 @@ export type {
     PluginSessionsPermissionsServiceV1,
     PluginSessionWatchEventV1,
     PluginSessionWatchParamsV1,
+    CreateSessionRuntimeActivityPublisherOptions,
     SessionAuthServiceV1,
     SessionAgentStateWriteRequestV1,
     SessionMcpElicitDecisionV1,
@@ -692,7 +840,11 @@ export type {
     SessionPermissionDecisionRequestV1,
     SessionPermissionDecisionResultV1,
     SessionPermissionDecisionV1,
+    SessionPermissionFollowUpPromptDeliveryV1,
+    SessionPermissionFollowUpPromptIntentV1,
     SessionPermissionModeV1,
+    SessionPermissionPersistAllowRuleScopeV1,
+    SessionPermissionPersistAllowRuleV1,
     SessionPermissionsServiceV1,
     SessionRuntimeAuthRefreshRequestV1,
     SessionRuntimeAuthRefreshResultV1,
@@ -707,7 +859,12 @@ export type {
     SessionScopedServicesV1,
     SessionScopedSubscribeRequestV1,
     SessionScopedSubscriptionEventV1,
+    SessionRuntimeActivityPublisher,
+    SessionRuntimeActivityPublisherSourceInput,
     SessionStateFieldWriteRequestV1,
+    SessionSystemRecordReadRequestV1,
+    SessionSystemRecordReadResultV1,
+    SessionSystemRecordWriteRequestV1,
     SubagentCompleteParamsV1,
     SubagentGetParamsV1,
     SubagentLifecycleDetailV1,
@@ -718,7 +875,7 @@ export type {
     SubagentStatusV1,
     SubagentWatchEventV1,
     SubagentWatchParamsV1,
-} from './sessions';
+} from './sessions/index.js';
 export type {
     CreateExecutionRunBackendParamsV1,
     CreateSessionRuntimeParamsV1,
@@ -729,16 +886,53 @@ export type {
     ExecutionRunInputV1,
     ExecutionRunResultV1,
     ExecutionRunStatusMessageV1,
+    RuntimeConfigUpdateOutcomeV1,
     RuntimeCancelRequestV1,
     RuntimeCancelResultV1,
     RuntimeCoreV1,
+    RuntimeDeliveryModeV1,
     RuntimeDisposeReasonV1,
+    RuntimeEventV1,
     RuntimeInputPayloadV1,
+    RuntimePermissionResponseDecisionV1,
+    RuntimePermissionResponseOutcomeV1,
+    RuntimePromptAcceptedCallbackV1,
+    RuntimePromptAcceptedInfoV1,
     RuntimeSendOptionsV1,
     RuntimeSendResultV1,
+    RuntimeUndeliverablePromptV1,
+    RuntimeUndeliverablePromptsCallbackV1,
+    SessionConnectedServiceAuthApplyGenerationAppliedViaV1,
+    SessionConnectedServiceAuthApplyGenerationReasonV1,
+    SessionConnectedServiceAuthApplyGenerationRequestV1,
+    SessionConnectedServiceAuthApplyGenerationResponseV1,
+    SessionConnectedServiceAuthReadRuntimeIdentityReasonV1,
+    SessionConnectedServiceAuthReadRuntimeIdentityRequestV1,
+    SessionConnectedServiceAuthReadRuntimeIdentityResponseV1,
+    SessionConnectedServiceAuthRuntimeIdentityProofStrengthV1,
+    SessionConnectedServiceAuthRuntimeIdentityStrategyV1,
+    SessionRuntimeConfigUpdateV1,
     SessionRuntimeCreateResultV1,
+    SessionRuntimeEventsV1,
+    SessionRuntimeIdentitySnapshotV1,
+    SessionRuntimeIdentityV1,
+    SessionRuntimeMcpServerConfigV1,
+    SessionRuntimePermissionsV1,
     SessionRuntimeV1,
-} from './runtime/session';
+} from './runtime/session.js';
+export {
+    isRuntimeConfigUpdateOutcomeApplied,
+} from './runtime/session.js';
+export {
+    createExecutionRunHostBackendFromSessionRuntime,
+} from './runtime/executionRunHostBackend.js';
+export type {
+    CreateExecutionRunHostBackendFromSessionRuntimeOptionsV1,
+    PublicExecutionRunActivityStateV1,
+    PublicExecutionRunSessionRuntimeFactoryParamsV1,
+    PublicExecutionRunSessionRuntimeFactoryV1,
+    PublicExecutionRunTurnLivenessV1,
+} from './runtime/executionRunHostBackend.js';
 export {
     createSingleShotExecutionRunHostBackend,
 } from './executionRuns/singleShot.js';
@@ -752,3 +946,7 @@ export type {
 } from './executionRuns/singleShot.js';
 export * from './acp/index.js';
 export * from './ui/index.js';
+export type { PluginApiV1 as PluginApi } from './api.js';
+export type { PluginContextV1 as PluginContext } from './context.js';
+export type { PluginManifestV2 as PluginManifest } from './manifest.js';
+export type { AgentRuntimeV1 as AgentRuntime } from './engine.js';

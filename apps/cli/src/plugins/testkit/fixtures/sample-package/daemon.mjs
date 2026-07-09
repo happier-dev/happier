@@ -66,35 +66,35 @@ export async function discoverIdentity() {
 }
 
 export async function validateSource() {
-    return { ok: true, source: 'codex' };
+    return { ok: true, value: { source: 'codex' } };
 }
 
 export async function listCandidates() {
-    return { candidates: [], nextCursor: null };
+    return { ok: true, value: { candidates: [], nextCursor: null } };
 }
 
 export async function getActivity() {
-    return { lastActivityAtMs: null, isRunning: false };
+    return { ok: true, value: { lastActivityAtMs: null, isRunning: false } };
 }
 
 export async function pageTranscript() {
-    return { items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false };
+    return { ok: true, value: { items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false } };
 }
 
 export async function readAfterTranscript() {
-    return { items: [], nextCursor: null, truncated: false };
+    return { ok: true, value: { items: [], nextCursor: null, truncated: false } };
 }
 
 export async function resolveTakeoverSpawnOptions() {
-    return null;
+    return { ok: true, value: null };
 }
 
 export async function evaluateAvailability() {
-    return { eligible: true, scope: 'local', metadata: { source: 'integration' } };
+    return { available: true };
 }
 
 export async function attach() {
-    return 0;
+    return { ok: true, value: { exitCode: 0 } };
 }
 
 export async function exportBundle() {

@@ -36,7 +36,6 @@ export const PluginActionScopeV2Schema = z.enum([
   'global',
   'settings',
   'agent',
-  'backend',
   'session',
   'message',
   'transcript',
@@ -48,14 +47,9 @@ export const PluginActionScopeV2Schema = z.enum([
 export type PluginActionScopeV2 = z.infer<typeof PluginActionScopeV2Schema>;
 
 export const PluginActionSurfaceV2Schema = z.enum([
-  'settings',
-  'agentSettings',
-  'backendSettings',
-  'sessionMenu',
-  'executionRunMenu',
-  'commandPalette',
-  'agentTool',
   'cli',
+  'mcp',
+  'agent',
 ]);
 export type PluginActionSurfaceV2 = z.infer<typeof PluginActionSurfaceV2Schema>;
 
@@ -99,10 +93,9 @@ export type PluginExecutableHandlerRefV1 = z.infer<typeof PluginExecutableHandle
 export const PluginActionAvailabilityV2Schema = z.object({
   features: z.array(z.string().trim().min(1)).default([]),
   agentIds: z.array(z.string().trim().min(1)).default([]),
-  backendIds: z.array(z.string().trim().min(1)).default([]),
   sessionStates: z.array(z.string().trim().min(1)).default([]),
   machineCapabilities: z.array(z.string().trim().min(1)).default([]),
-}).strict();
+}).passthrough();
 export type PluginActionAvailabilityV2 = z.infer<typeof PluginActionAvailabilityV2Schema>;
 
 export const PluginActionConfirmationV2Schema = z.object({
@@ -128,7 +121,7 @@ export const PluginActionContributionV2Schema = z.object({
   priority: z.number().int().optional(),
   dangerLevel: PluginActionDangerLevelV2Schema,
   confirmation: PluginActionConfirmationV2Schema.optional(),
-}).strict().superRefine((value, ctx) => {
+}).passthrough().superRefine((value, ctx) => {
   if (value.dangerLevel === 'safe' || value.confirmation) return;
 
   ctx.addIssue({
@@ -145,20 +138,14 @@ export const PluginToolContributionV2Schema = z.object({
   title: z.string().trim().min(1),
   description: PluginOptionalStringSchema,
   safety: ActionSafetySchema.default('safe'),
-  surfaces: z.object({
-    cli: z.boolean().default(false),
-    mcp: z.boolean().default(false),
-    session_agent: z.boolean().default(false),
-  }).strict().default({
-    cli: false,
-    mcp: false,
-    session_agent: false,
-  }),
+  surfaces: z.array(PluginActionSurfaceV2Schema).default([]),
   inputSchema: PluginLooseJsonObjectSchema.optional(),
   outputSchema: PluginLooseJsonObjectSchema.optional(),
   inputHints: ActionInputHintsSchema.nullable().optional(),
   compatibility: PluginLooseJsonObjectSchema.optional(),
   examples: PluginActionDefinitionExamplesV1Schema.nullable().optional(),
+  promptSnippet: PluginOptionalStringSchema,
+  promptGuidelines: z.array(z.string().trim().min(1)).optional(),
   handler: PluginExecutableHandlerRefV1Schema,
-}).strict();
+}).passthrough();
 export type PluginToolContributionV2 = z.infer<typeof PluginToolContributionV2Schema>;

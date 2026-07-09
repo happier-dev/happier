@@ -155,18 +155,20 @@ describe('SCM backend plugin contributions', () => {
                     manifestDigest: 'sha256:acme',
                     daemonEntryPath: '/plugins/acme-scm-backend/daemon.js',
                     sourceSpec,
+                    devDaemonEntryPath: null,
                     manifest: {
                         schemaVersion: 2,
                         id: 'acme.scm.backend',
                         version: '1.0.0',
                         displayName: 'Acme SCM Backend',
                         engines: { happier: '^0.2.0' },
-                        runtime: { apiVersion: 1, capabilities: ['scmBackends'] },
-                        targets: { daemon: { entry: './daemon.js' } },
+                        activationEvents: [],
+                        uses: [],
+                        entrypoints: { main: './daemon.js' },
                         permissions: [],
                         contributes: {
-                            providers: [],
-                            backends: [],
+                            agents: [],
+                            agentRuntimes: [],
                             actions: [],
                             tools: [],
                             commands: [],
@@ -204,14 +206,14 @@ describe('SCM backend plugin contributions', () => {
                 },
             }),
         ]);
-        expect(registry.providers).toEqual([]);
-        expect(registry.backends).toEqual([]);
+        expect(registry.agents).toEqual([]);
+        expect(registry.agentRuntimes).toEqual([]);
     });
 
     it('keeps first-party backend ids active when an external plugin declares a duplicate id', () => {
         const registry = createResolvedContributionRegistry({
-            providers: [],
-            backends: [],
+            agents: [],
+            agentRuntimes: [],
             scmBackends: [
                 {
                     id: 'git',
@@ -229,6 +231,7 @@ describe('SCM backend plugin contributions', () => {
                     manifestDigest: 'sha256:shadow',
                     daemonEntryPath: '/plugins/acme-shadow/daemon.js',
                     sourceSpec,
+                    devDaemonEntryPath: null,
                     definition: createScmBackendDefinition('git'),
                 },
             ],

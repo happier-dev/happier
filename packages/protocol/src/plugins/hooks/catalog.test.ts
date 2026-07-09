@@ -7,15 +7,19 @@ import {
 } from '../../index.js';
 
 const EXPECTED_PLUGIN_HOOK_IDS_V1 = [
-  'session.spawn_new',
+  'session.spawned',
   'session.message.send',
-  'execution_run.start',
-  'execution_run.send',
-  'execution_run.stop',
-  'execution_run.terminal',
-  'backend.resolveRuntimePrerequisites',
-  'spawn.augmentEnv',
-  'provider.response.after',
+  'session.input.transform',
+  'executionRun.started',
+  'executionRun.messageSent',
+  'executionRun.stopped',
+  'executionRun.completed',
+  'agent.resolvePrerequisites',
+  'agent.spawnEnv.augment',
+  'agent.response.after',
+  'agent.context.before',
+  'agent.request.before',
+  'agent.stream.token',
   'tool.call.before',
   'tool.result.after',
   'resource.discovery',
@@ -40,13 +44,13 @@ const EXPECTED_PLUGIN_HOOK_IDS_V1 = [
   'automation.run.failed',
   'automation.run.expired',
   'approval.decision.made',
-  'subagent.start',
-  'subagent.end',
+  'subagent.started',
+  'subagent.ended',
 ] as const;
 
 describe('plugin hook catalog v1', () => {
-  it('exposes the locked 35 public hook ids without stale provider request, sidechain, or connected-service materialization vocabulary', () => {
-    expect(EXPECTED_PLUGIN_HOOK_IDS_V1).toHaveLength(35);
+  it('exposes the locked 39 public hook ids without stale provider request, sidechain, or connected-service materialization vocabulary', () => {
+    expect(EXPECTED_PLUGIN_HOOK_IDS_V1).toHaveLength(39);
     expect(PLUGIN_HOOK_IDS_V1).toEqual([...EXPECTED_PLUGIN_HOOK_IDS_V1]);
 
     const definitions = EXPECTED_PLUGIN_HOOK_IDS_V1.map((hookId) => getPluginHookDefinitionV1(hookId));
@@ -59,12 +63,52 @@ describe('plugin hook catalog v1', () => {
     expect(getPluginHookDefinitionV1('sidechain.end')).toBe(null);
   });
 
+  it('declares supported runtime families for v1 turn interception hooks', () => {
+    const readSupportedRuntimes = (hookId: string): readonly string[] | undefined => {
+      const definition = getPluginHookDefinitionV1(hookId) as Readonly<{ supportedRuntimes?: readonly string[] }> | null;
+      return definition?.supportedRuntimes;
+    };
+
+    expect(getPluginHookDefinitionV1('session.input.transform')).toMatchObject({
+      category: 'augmentation',
+      scope: 'session',
+      aggregation: 'replace',
+      failureMode: 'bestEffort',
+    });
+    expect(readSupportedRuntimes('session.input.transform')).toEqual(['hostSession']);
+
+    expect(getPluginHookDefinitionV1('agent.context.before')).toMatchObject({
+      category: 'augmentation',
+      scope: 'agent',
+      aggregation: 'replace',
+      failureMode: 'bestEffort',
+    });
+    expect(readSupportedRuntimes('agent.context.before')).toEqual(['hostSession']);
+
+    expect(getPluginHookDefinitionV1('agent.request.before')).toMatchObject({
+      category: 'augmentation',
+      scope: 'agent',
+      aggregation: 'replace',
+      failureMode: 'bestEffort',
+    });
+    expect(readSupportedRuntimes('agent.request.before')).toEqual(['acpSession']);
+
+    expect(getPluginHookDefinitionV1('agent.stream.token')).toMatchObject({
+      category: 'lifecycle',
+      scope: 'agent',
+      purity: 'observer',
+      aggregation: 'orderedList',
+      failureMode: 'bestEffort',
+    });
+    expect(readSupportedRuntimes('agent.stream.token')).toEqual(['hostSession']);
+  });
+
   it('validates typed payloads for every locked public hook id', () => {
     const validPayloads = {
-      'session.spawn_new': {
+      'session.spawned': {
         sessionId: 'session-1',
-        backendId: 'codex',
-        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        agentId: 'codex',
+        runtimeTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         timestampMs: 1,
       },
       'session.message.send': {
@@ -73,47 +117,83 @@ describe('plugin hook catalog v1', () => {
         source: 'user',
         timestampMs: 1,
       },
-      'execution_run.start': {
+      'session.input.transform': {
+        sessionId: 'session-1',
+        localId: 'local-1',
+        text: 'hello',
+        meta: { source: 'ui' },
+        timestampMs: 1,
+      },
+      'executionRun.started': {
         runId: 'run-1',
         intent: 'review',
-        backendTargetKeys: ['agent:codex'],
+        runtimeTargetKeys: ['agent:codex'],
         retentionPolicy: 'ephemeral',
         runClass: 'bounded',
         ioMode: 'request_response',
         timestampMs: 1,
       },
-      'execution_run.send': {
+      'executionRun.messageSent': {
         runId: 'run-1',
         message: 'continue',
         timestampMs: 1,
       },
-      'execution_run.stop': {
+      'executionRun.stopped': {
         runId: 'run-1',
         reason: 'user',
         timestampMs: 1,
       },
-      'execution_run.terminal': {
+      'executionRun.completed': {
         runId: 'run-1',
         status: 'succeeded',
         timestampMs: 1,
       },
-      'backend.resolveRuntimePrerequisites': {
-        backendId: 'codex',
-        targetRef: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      'agent.resolvePrerequisites': {
+        agentId: 'codex',
+        runtimeTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         timestampMs: 1,
       },
-      'spawn.augmentEnv': {
-        backendId: 'codex',
+      'agent.spawnEnv.augment': {
         agentId: 'codex',
         timestampMs: 1,
       },
-      'provider.response.after': {
-        providerId: 'codex',
+      'agent.response.after': {
+        agentId: 'codex',
         sessionId: 'session-1',
         requestId: 'request-1',
         status: 'ok',
         durationMs: 1,
         byteCount: 1,
+        timestampMs: 1,
+      },
+      'agent.context.before': {
+        sessionId: 'session-1',
+        agentId: 'codex',
+        runtimeFamily: 'hostSession',
+        prompt: 'system\n\nhello',
+        messages: [
+          { role: 'user', content: 'hello' },
+        ],
+        timestampMs: 1,
+      },
+      'agent.request.before': {
+        sessionId: 'session-1',
+        agentId: 'codex',
+        runtimeFamily: 'acpSession',
+        method: 'session/prompt',
+        request: {
+          sessionId: 'provider-session-1',
+          prompt: [{ type: 'text', text: 'hello' }],
+        },
+        timestampMs: 1,
+      },
+      'agent.stream.token': {
+        sessionId: 'session-1',
+        agentId: 'codex',
+        runtimeFamily: 'hostSession',
+        turnId: 'turn-1',
+        tokenText: 'hel',
+        streamKind: 'assistant',
         timestampMs: 1,
       },
       'tool.call.before': {
@@ -278,7 +358,7 @@ describe('plugin hook catalog v1', () => {
         createdBy: { surface: 'cli' },
         timestampMs: 1,
       },
-      'subagent.start': {
+      'subagent.started': {
         subagentRef: {
           id: 'subagent-1',
           parentSessionId: 'session-1',
@@ -289,7 +369,7 @@ describe('plugin hook catalog v1', () => {
           runRef: { runId: 'run-1' },
         },
       },
-      'subagent.end': {
+      'subagent.ended': {
         subagentRef: {
           id: 'subagent-1',
           parentSessionId: 'session-1',

@@ -1,19 +1,20 @@
 import type {
     ActionDefinitionV1,
+    AgentDefinitionV1,
     BackendDefinitionV1,
     PluginBackendCapabilitiesV1,
     BackendSurfaceDeclarationV1,
-    ProviderDefinitionV1,
 } from '@happier-dev/protocol';
 import { BackendSurfaceOperationCatalogV1 } from '@happier-dev/protocol';
 import type {
     BackendDefinitionContractV1,
-    ProviderDefinitionContractV1,
+    ProviderDefinitionContractV1 as AgentDefinitionContractV1,
 } from '@happier-dev/agents';
 import type { ProviderCliRuntimeDescriptor } from '@happier-dev/cli-common/providers';
+import type { BackendRuntimeOwnerTakeoverMarker } from '@/agent/runtime/registry/engineRegistryTypes';
 
 import { loadInstalledPlugins } from '../../discovery/load/installed';
-import type { CanonicalPluginBackendDefinition } from '../../manifest/types';
+import type { CanonicalPluginAgentRuntimeDefinition } from '../../manifest/types';
 import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
 import { buildPluginContributionRegistry } from './normalize/package';
 import { createPluginRuntimeCoreFactory } from '../../runtime/runtimeCore/plugin';
@@ -24,10 +25,13 @@ import {
 
 import type {
     ResolvedActionContribution,
-    ResolvedBackendContribution,
+    ResolvedAgentRuntimeContribution,
+    ResolvedBrowserActionContribution,
+    ResolvedBrowserTargetContribution,
     ResolvedCatalogEntry,
     ResolvedCommandContribution,
     ResolvedConnectedAccountDescriptorContribution,
+    ResolvedEmbeddedWebBundleContribution,
     ResolvedContributionInputs,
     ResolvedExecutionRunProfileContribution,
     ResolvedEventContribution,
@@ -44,10 +48,10 @@ import type {
     ResolvedScmBackendContribution,
     ResolvedSettingsContribution,
     ResolvedScmHostingProviderContribution,
-    ResolvedProviderContribution,
+    ResolvedAgentContribution,
     ResolvedResourceContribution,
     ResolvedSessionHeaderActionContribution,
-    ResolvedSessionSurfaceContribution,
+    ResolvedSurfacePlacementContribution,
     ResolvedStructuredMessageContribution,
     ResolvedToolContribution,
     ResolvedUiArtifactContribution,
@@ -62,7 +66,7 @@ type ResolvePluginContributesParams = Readonly<{
     existingBackendIds?: ReadonlySet<string>;
 }>;
 
-type PluginResolvedProviderContribution = ResolvedProviderContribution & Readonly<{
+type PluginResolvedAgentContribution = ResolvedAgentContribution & Readonly<{
     provenance: 'external';
     pluginId: string;
     manifestPath: string;
@@ -70,7 +74,7 @@ type PluginResolvedProviderContribution = ResolvedProviderContribution & Readonl
     daemonEntryPath: string | null;
 }>;
 
-type PluginResolvedBackendContribution = ResolvedBackendContribution & Readonly<{
+type PluginResolvedAgentRuntimeContribution = ResolvedAgentRuntimeContribution & Readonly<{
     provenance: 'external';
     pluginId: string;
     manifestPath: string;
@@ -135,14 +139,6 @@ type PluginResolvedStructuredMessageContribution = ResolvedStructuredMessageCont
     daemonEntryPath: string | null;
 }>;
 
-type PluginResolvedSessionSurfaceContribution = ResolvedSessionSurfaceContribution & Readonly<{
-    provenance: 'external';
-    pluginId: string;
-    manifestPath: string;
-    manifestDigest: string;
-    daemonEntryPath: string | null;
-}>;
-
 type PluginResolvedSessionHeaderActionContribution = ResolvedSessionHeaderActionContribution & Readonly<{
     provenance: 'external';
     pluginId: string;
@@ -151,7 +147,23 @@ type PluginResolvedSessionHeaderActionContribution = ResolvedSessionHeaderAction
     daemonEntryPath: string | null;
 }>;
 
+type PluginResolvedSurfacePlacementContribution = ResolvedSurfacePlacementContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
 type PluginResolvedHostedWebContribution = ResolvedHostedWebContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedEmbeddedWebBundleContribution = ResolvedEmbeddedWebBundleContribution & Readonly<{
     provenance: 'external';
     pluginId: string;
     manifestPath: string;
@@ -168,6 +180,22 @@ type PluginResolvedReactNativeBundleContribution = ResolvedReactNativeBundleCont
 }>;
 
 type PluginResolvedUiArtifactContribution = ResolvedUiArtifactContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedBrowserTargetContribution = ResolvedBrowserTargetContribution & Readonly<{
+    provenance: 'external';
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedBrowserActionContribution = ResolvedBrowserActionContribution & Readonly<{
     provenance: 'external';
     pluginId: string;
     manifestPath: string;
@@ -377,8 +405,8 @@ function isProviderCliRuntimeDescriptor(value: unknown): value is ProviderCliRun
 
 function readPluginCatalogEntry(params: Readonly<{
     pluginId: string;
-    providerId: string;
-    definition: ProviderDefinitionV1;
+    agentId: string;
+    definition: AgentDefinitionV1;
     diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]>;
 }>): ResolvedCatalogEntry | null {
     // `catalogEntry` passthrough remains an internal host projection seam in this
@@ -392,7 +420,7 @@ function readPluginCatalogEntry(params: Readonly<{
     if (!isRecord(rawCatalogEntry)) {
         appendDiagnostic(params.diagnosticsByPluginId, params.pluginId, {
             code: 'plugin_manifest_semantic_invalid',
-            message: `Plugin provider '${params.providerId}' has a non-object catalogEntry`,
+            message: `Plugin provider '${params.agentId}' has a non-object catalogEntry`,
         });
         return null;
     }
@@ -402,14 +430,14 @@ function readPluginCatalogEntry(params: Readonly<{
     if (entryId.length === 0 || cliSubcommand.length === 0) {
         appendDiagnostic(params.diagnosticsByPluginId, params.pluginId, {
             code: 'plugin_manifest_semantic_invalid',
-            message: `Plugin provider '${params.providerId}' catalogEntry requires non-empty id and cliSubcommand`,
+            message: `Plugin provider '${params.agentId}' catalogEntry requires non-empty id and cliSubcommand`,
         });
         return null;
     }
-    if (entryId !== params.providerId || cliSubcommand !== params.providerId) {
+    if (entryId !== params.agentId || cliSubcommand !== params.agentId) {
         appendDiagnostic(params.diagnosticsByPluginId, params.pluginId, {
             code: 'plugin_manifest_semantic_invalid',
-            message: `Plugin provider '${params.providerId}' catalogEntry id/cliSubcommand must both match the provider id`,
+            message: `Plugin provider '${params.agentId}' catalogEntry id/cliSubcommand must both match the provider id`,
         });
         return null;
     }
@@ -428,10 +456,10 @@ function readPluginCatalogEntry(params: Readonly<{
     };
 }
 
-function readPluginProviderCliRuntime(
+function readPluginAgentCliRuntime(
     pluginId: string,
-    providerId: string,
-    definition: ProviderDefinitionV1,
+    agentId: string,
+    definition: AgentDefinitionV1,
     diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]>,
 ): ProviderCliRuntimeDescriptor | null {
     const runtime = readExternalPluginAgentCliRuntimeWithLegacyProviderFallback(definition);
@@ -441,14 +469,14 @@ function readPluginProviderCliRuntime(
     if (!isProviderCliRuntimeDescriptor(runtime)) {
         appendDiagnostic(diagnosticsByPluginId, pluginId, {
             code: 'plugin_manifest_semantic_invalid',
-            message: `Plugin provider '${providerId}' runtime descriptor must match the provider CLI runtime contract`,
+            message: `Plugin agent '${agentId}' runtime descriptor must match the provider CLI runtime contract`,
         });
         return null;
     }
-    if (runtime.id !== providerId) {
+    if (runtime.id !== agentId) {
         appendDiagnostic(diagnosticsByPluginId, pluginId, {
             code: 'plugin_manifest_semantic_invalid',
-            message: `Plugin provider '${providerId}' runtime descriptor id must match the provider id`,
+            message: `Plugin agent '${agentId}' runtime descriptor id must match the agent id`,
         });
         return null;
     }
@@ -459,18 +487,19 @@ function readPluginProviderCliRuntime(
 }
 
 function readExternalPluginAgentCliRuntimeWithLegacyProviderFallback(
-    definition: ProviderDefinitionV1,
+    definition: AgentDefinitionV1,
 ): unknown {
     if (definition.agentCliRuntime !== undefined) {
         return definition.agentCliRuntime;
     }
 
-    // External plugin manifests may still arrive with the legacy provider-era key.
-    // First-party bundled definitions are generated from plugin-owned source and must use agentCliRuntime.
-    return definition.providerCliRuntime;
+    const legacyDefinition = definition as AgentDefinitionV1 & Readonly<{
+        providerCliRuntime?: unknown;
+    }>;
+    return legacyDefinition.providerCliRuntime;
 }
 
-function clonePluginProviderDefinition(definition: ProviderDefinitionV1): ProviderDefinitionV1 {
+function clonePluginAgentDefinition(definition: AgentDefinitionV1): AgentDefinitionV1 {
     return {
         ...definition,
         ownedBackendIds: [...(definition.ownedBackendIds ?? [])],
@@ -478,7 +507,7 @@ function clonePluginProviderDefinition(definition: ProviderDefinitionV1): Provid
 }
 
 function clonePluginBackendDefinition(
-    definition: CanonicalPluginBackendDefinition,
+    definition: CanonicalPluginAgentRuntimeDefinition,
 ): Omit<BackendDefinitionV1, 'capabilities' | 'surfaceHandlers'> & Readonly<{
     capabilities: PluginBackendCapabilitiesV1;
     surfaceHandlers: readonly BackendSurfaceDeclarationV1[];
@@ -506,7 +535,7 @@ function readSurfaceHandlers(definition: Readonly<Record<string, unknown>>): rea
 }
 
 function sanitizeBuiltInCompatibilityAgentIds<TDefinition extends Readonly<Record<string, unknown>> & {
-    providerAgentId?: string;
+    catalogAgentId?: string | null;
     iconAgentId?: string;
 }>(params: Readonly<{
     pluginId: string;
@@ -515,14 +544,14 @@ function sanitizeBuiltInCompatibilityAgentIds<TDefinition extends Readonly<Recor
     diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]>;
 }>): TDefinition {
     const sanitized = { ...params.definition } as TDefinition;
-    if (!isValidBuiltInCompatibilityAgentId(sanitized.providerAgentId)) {
-        if (typeof sanitized.providerAgentId === 'string' && sanitized.providerAgentId.trim().length > 0) {
+    if (!isValidBuiltInCompatibilityAgentId(sanitized.catalogAgentId)) {
+        if (typeof sanitized.catalogAgentId === 'string' && sanitized.catalogAgentId.trim().length > 0) {
             appendDiagnostic(params.diagnosticsByPluginId, params.pluginId, {
                 code: 'plugin_manifest_semantic_invalid',
-                message: `${params.subjectLabel} providerAgentId must be an exact built-in agent id`,
+                message: `${params.subjectLabel} catalogAgentId must be an exact built-in agent id`,
             });
         }
-        delete sanitized.providerAgentId;
+        delete sanitized.catalogAgentId;
     }
     if (!isValidBuiltInCompatibilityAgentId(sanitized.iconAgentId)) {
         if (typeof sanitized.iconAgentId === 'string' && sanitized.iconAgentId.trim().length > 0) {
@@ -546,6 +575,21 @@ function readOptionalString(value: unknown): string | null {
     }
     const normalized = value.trim();
     return normalized.length > 0 ? normalized : null;
+}
+
+function readBackendRuntimeOwnerTakeoverMarker(value: unknown): BackendRuntimeOwnerTakeoverMarker | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return undefined;
+    }
+    const record = value as Readonly<Record<string, unknown>>;
+    return record.selectedOwner === 'plugin_engine'
+        && typeof record.acceptedBy === 'string'
+        && record.acceptedBy.trim().length > 0
+        ? {
+            selectedOwner: 'plugin_engine',
+            acceptedBy: record.acceptedBy.trim(),
+        }
+        : undefined;
 }
 
 function readRequiredString(value: unknown): string {
@@ -574,7 +618,7 @@ function buildSyntheticActionDefinitionFromTool(definition: PluginResolvedToolCo
         surfaces: {
             ui: false,
             voice: false,
-            session_agent: definition.surfaces.session_agent,
+            agent: definition.surfaces.agent,
             mcp: definition.surfaces.mcp,
             cli: definition.surfaces.cli,
             rpc: false,
@@ -584,6 +628,7 @@ function buildSyntheticActionDefinitionFromTool(definition: PluginResolvedToolCo
         inputSchema: definition.inputSchema ?? {},
         ...(definition.outputSchema ? { outputSchema: definition.outputSchema } : {}),
         ...(definition.compatibility ? { compatibility: definition.compatibility } : {}),
+        ...(definition.execution ? { execution: definition.execution } : {}),
     };
 }
 
@@ -601,7 +646,7 @@ function buildSyntheticActionDefinitionFromCommand(definition: PluginResolvedCom
         surfaces: {
             ui: false,
             voice: false,
-            session_agent: false,
+            agent: false,
             mcp: false,
             cli: true,
             rpc: false,
@@ -623,14 +668,14 @@ function buildSyntheticActionDefinitionFromCommand(definition: PluginResolvedCom
     };
 }
 
-function readProviderSettingsBackendId(definition: ProviderDefinitionV1): string | null {
+function readAgentSettingsBackendId(definition: AgentDefinitionV1): string | null {
     return readOptionalString(definition.settingsBackendId);
 }
 
-function withProviderSettingsBackendId(
-    provider: PluginResolvedProviderContribution,
+function withAgentSettingsBackendId(
+    provider: PluginResolvedAgentContribution,
     settingsBackendId: string | null,
-): PluginResolvedProviderContribution {
+): PluginResolvedAgentContribution {
     if (provider.richDefinition?.provenance !== 'external') {
         return provider;
     }
@@ -681,11 +726,11 @@ export async function resolvePluginContributes(
     const loadResult = await loadInstalledPlugins({ happyHomeDir: params.happyHomeDir });
     const pluginRegistry = buildPluginContributionRegistry({ loadedPlugins: loadResult.loadedPlugins });
     const diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]> = {};
-    const knownProviderIds = new Set(params.existingProviderIds ?? []);
+    const knownAgentIds = new Set(params.existingProviderIds ?? []);
     const knownBackendIds = new Set(params.existingBackendIds ?? []);
-    const pluginProviderOwnerById = new Map<string, string>();
-    const providerCandidates: PluginResolvedProviderContribution[] = [];
-    const backendCandidates: PluginResolvedBackendContribution[] = [];
+    const pluginAgentOwnerById = new Map<string, string>();
+    const agentCandidates: PluginResolvedAgentContribution[] = [];
+    const backendCandidates: PluginResolvedAgentRuntimeContribution[] = [];
     const actionCandidates: PluginResolvedActionContribution[] = [];
     const toolCandidates: PluginResolvedToolContribution[] = [];
     const commandCandidates: PluginResolvedCommandContribution[] = [];
@@ -693,11 +738,14 @@ export async function resolvePluginContributes(
     const uiDescriptorCandidates: PluginResolvedUiDescriptorContribution[] = [];
     const uiTranslationCandidates: PluginResolvedUiTranslationsContribution[] = [];
     const structuredMessageCandidates: PluginResolvedStructuredMessageContribution[] = [];
-    const sessionSurfaceCandidates: PluginResolvedSessionSurfaceContribution[] = [];
     const sessionHeaderActionCandidates: PluginResolvedSessionHeaderActionContribution[] = [];
+    const surfacePlacementCandidates: PluginResolvedSurfacePlacementContribution[] = [];
     const hostedWebCandidates: PluginResolvedHostedWebContribution[] = [];
+    const embeddedWebBundleCandidates: PluginResolvedEmbeddedWebBundleContribution[] = [];
     const reactNativeBundleCandidates: PluginResolvedReactNativeBundleContribution[] = [];
     const uiArtifactCandidates: PluginResolvedUiArtifactContribution[] = [];
+    const browserTargetCandidates: PluginResolvedBrowserTargetContribution[] = [];
+    const browserActionCandidates: PluginResolvedBrowserActionContribution[] = [];
     const settingsCandidates: PluginResolvedSettingsContribution[] = [];
     const notificationCandidates: PluginResolvedNotificationCategoryContribution[] = [];
     const notificationChannelCandidates: PluginResolvedNotificationChannelContribution[] = [];
@@ -708,7 +756,7 @@ export async function resolvePluginContributes(
     const scmHostingProviderCandidates: PluginResolvedScmHostingProviderContribution[] = [];
     const scmBackendCandidates: PluginResolvedScmBackendContribution[] = [];
     const connectedAccountDescriptorCandidates: PluginResolvedConnectedAccountDescriptorContribution[] = [];
-    const installableCandidates: PluginResolvedInstallableContribution[] = [];
+    const managedDependencyCandidates: PluginResolvedInstallableContribution[] = [];
     const requestInterceptorCandidates: PluginResolvedRequestInterceptorContribution[] = [];
     const lifecycleHandlerCandidates: PluginResolvedLifecycleHandlerContribution[] = [];
     const activationTargets: ResolvedActivationTarget[] = [];
@@ -729,49 +777,51 @@ export async function resolvePluginContributes(
             manifestPath: plugin.manifestPath,
             manifestDigest: plugin.manifestDigest,
             daemonEntryPath: plugin.daemonEntryPath,
+            devDaemonEntryPath: plugin.devDaemonEntryPath,
             sourceSpec: plugin.sourceSpec,
+            activationEvents: plugin.manifest.activationEvents,
         });
     }
 
-    for (const contribution of pluginRegistry.providers) {
-        const providerId = readRequiredString(contribution.definition.id);
-        if (knownProviderIds.has(providerId)) {
+    for (const contribution of pluginRegistry.agents) {
+        const agentId = readRequiredString(contribution.definition.id);
+        if (knownAgentIds.has(agentId)) {
             appendDiagnostic(diagnosticsByPluginId, contribution.pluginId, {
                 code: 'plugin_manifest_semantic_invalid',
-                message: `Plugin provider '${providerId}' collides with an existing provider id`,
+                message: `Plugin agent '${agentId}' collides with an existing agent id`,
             });
             continue;
         }
 
-        knownProviderIds.add(providerId);
-        pluginProviderOwnerById.set(providerId, contribution.pluginId);
+        knownAgentIds.add(agentId);
+        pluginAgentOwnerById.set(agentId, contribution.pluginId);
         const catalogEntry = readPluginCatalogEntry({
             pluginId: contribution.pluginId,
-            providerId,
+            agentId: agentId,
             definition: contribution.definition,
             diagnosticsByPluginId,
         });
-        const runtimeSpec = readPluginProviderCliRuntime(
+        const runtimeSpec = readPluginAgentCliRuntime(
             contribution.pluginId,
-            providerId,
+            agentId,
             contribution.definition,
             diagnosticsByPluginId,
         );
         const richDefinition = sanitizeBuiltInCompatibilityAgentIds({
             pluginId: contribution.pluginId,
-            subjectLabel: `Plugin provider '${providerId}'`,
-            definition: clonePluginProviderDefinition(contribution.definition),
+            subjectLabel: `Plugin agent '${agentId}'`,
+            definition: clonePluginAgentDefinition(contribution.definition),
             diagnosticsByPluginId,
         });
-        providerCandidates.push({
-            id: providerId,
+        agentCandidates.push({
+            id: agentId,
             provenance: 'external',
             source: { kind: contribution.sourceSpec.kind },
             definition: Object.freeze({
                 kindVersion: 1,
-                id: providerId,
+                id: agentId,
                 ownedBackendIds: Object.freeze(readStringArray(contribution.definition.ownedBackendIds)),
-            }) satisfies ProviderDefinitionContractV1,
+            }) satisfies AgentDefinitionContractV1,
             richDefinition: {
                 provenance: 'external',
                 definition: richDefinition,
@@ -783,21 +833,22 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
         });
     }
 
-    for (const contribution of pluginRegistry.backends) {
+    for (const contribution of pluginRegistry.agentRuntimes) {
         const backendId = readRequiredString(contribution.definition.id);
-        const providerId = readRequiredString(contribution.definition.providerId);
+        const agentId = readRequiredString(contribution.definition.agentId);
         if (knownBackendIds.has(backendId)) {
             appendDiagnostic(diagnosticsByPluginId, contribution.pluginId, {
                 code: 'plugin_manifest_semantic_invalid',
-                message: `Plugin backend '${backendId}' collides with an existing backend id`,
+                message: `Plugin agent runtime '${backendId}' collides with an existing agent runtime id`,
             });
             continue;
         }
 
-        const providerOwnerPluginId = pluginProviderOwnerById.get(providerId);
+        const providerOwnerPluginId = pluginAgentOwnerById.get(agentId);
         const surfaceHandlers = readSurfaceHandlers(contribution.definition);
         const providerlessReviewBackend = isProviderlessReviewExecutionRunBackend({
             capabilities: contribution.definition.capabilities,
@@ -806,15 +857,15 @@ export async function resolvePluginContributes(
         if (!providerlessReviewBackend && providerOwnerPluginId !== contribution.pluginId) {
             appendDiagnostic(diagnosticsByPluginId, contribution.pluginId, {
                 code: 'plugin_manifest_semantic_invalid',
-                message: `Plugin backend '${backendId}' references provider '${providerId}' not owned by the same plugin`,
+                message: `Plugin agent runtime '${backendId}' references agent '${agentId}' not owned by the same plugin`,
             });
             continue;
         }
 
-        if (!providerlessReviewBackend && !knownProviderIds.has(providerId)) {
+        if (!providerlessReviewBackend && !knownAgentIds.has(agentId)) {
             appendDiagnostic(diagnosticsByPluginId, contribution.pluginId, {
                 code: 'plugin_manifest_semantic_invalid',
-                message: `Plugin backend '${backendId}' references missing provider '${providerId}'`,
+                message: `Plugin agent runtime '${backendId}' references missing agent '${agentId}'`,
             });
             continue;
         }
@@ -828,14 +879,14 @@ export async function resolvePluginContributes(
         });
         backendCandidates.push({
             id: backendId,
-            providerId,
+            agentId,
             provenance: 'external',
             source: { kind: contribution.sourceSpec.kind },
             definition: Object.freeze({
                 kindVersion: 1,
                 id: backendId,
-                providerId,
-            }) satisfies BackendDefinitionContractV1,
+                agentId,
+            }) satisfies ResolvedAgentRuntimeContribution['definition'],
             richDefinition: {
                 provenance: 'external',
                 definition: richDefinition,
@@ -843,11 +894,13 @@ export async function resolvePluginContributes(
             runtimeKind: readOptionalString(contribution.definition.runtimeKind),
             capabilities: clonePluginBackendCapabilities(contribution.definition.capabilities),
             surfaceHandlers: Object.freeze([...surfaceHandlers]),
+            runtimeOwner: readBackendRuntimeOwnerTakeoverMarker(contribution.definition.runtimeOwner),
             sourceSpec: contribution.sourceSpec,
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
         });
     }
 
@@ -859,6 +912,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -872,6 +926,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -882,6 +937,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: buildSyntheticActionDefinitionFromTool(contribution.definition),
         });
@@ -895,6 +951,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -905,6 +962,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: buildSyntheticActionDefinitionFromCommand(contribution.definition),
         });
@@ -918,6 +976,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -931,6 +990,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -944,6 +1004,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -957,19 +1018,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
-            sourceSpec: contribution.sourceSpec,
-            definition: contribution.definition,
-        });
-    }
-
-    for (const contribution of pluginRegistry.sessionSurfaces) {
-        sessionSurfaceCandidates.push({
-            provenance: 'external',
-            source: { kind: contribution.sourceSpec.kind },
-            pluginId: contribution.pluginId,
-            manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
-            daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -983,6 +1032,21 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.surfacePlacements) {
+        surfacePlacementCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -996,6 +1060,21 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.embeddedWebBundles) {
+        embeddedWebBundleCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -1009,6 +1088,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -1022,6 +1102,35 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.browserTargets) {
+        browserTargetCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.browserActions) {
+        browserActionCandidates.push({
+            provenance: 'external',
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -1035,6 +1144,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -1048,6 +1158,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -1061,6 +1172,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -1074,6 +1186,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -1087,6 +1200,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -1100,6 +1214,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -1113,6 +1228,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -1127,6 +1243,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -1142,6 +1259,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -1155,19 +1273,21 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
     }
 
-    for (const contribution of pluginRegistry.installables) {
-        installableCandidates.push({
+    for (const contribution of pluginRegistry.managedDependencies) {
+        managedDependencyCandidates.push({
             provenance: 'external',
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -1181,6 +1301,7 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
@@ -1194,38 +1315,39 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
     }
 
-    const availableBackendProviderIds = new Map<string, string>();
+    const availableBackendAgentIds = new Map<string, string>();
     for (const backend of backendCandidates) {
-        availableBackendProviderIds.set(backend.id, backend.providerId);
+        availableBackendAgentIds.set(backend.id, backend.agentId);
     }
 
-    const normalizedProviderCandidates = providerCandidates.map((provider) => {
+    const normalizedAgentCandidates = agentCandidates.map((provider) => {
         const resolvedOwnedBackendIds = provider.definition.ownedBackendIds.filter((backendId) => (
-            availableBackendProviderIds.get(backendId) === provider.id
+            availableBackendAgentIds.get(backendId) === provider.id
         ));
         const declaredSettingsBackendId = provider.richDefinition?.provenance === 'external'
-            ? readProviderSettingsBackendId(provider.richDefinition.definition)
+            ? readAgentSettingsBackendId(provider.richDefinition.definition)
             : null;
 
         if (declaredSettingsBackendId) {
             if (resolvedOwnedBackendIds.includes(declaredSettingsBackendId)) {
-                return withProviderSettingsBackendId(provider, declaredSettingsBackendId);
+                return withAgentSettingsBackendId(provider, declaredSettingsBackendId);
             }
 
             appendDiagnostic(diagnosticsByPluginId, provider.pluginId ?? provider.id, {
                 code: 'plugin_manifest_semantic_invalid',
                 message: `Plugin provider '${provider.id}' settingsBackendId must resolve to one of its owned backends`,
             });
-            return withProviderSettingsBackendId(provider, null);
+            return withAgentSettingsBackendId(provider, null);
         }
 
         if (resolvedOwnedBackendIds.length === 1) {
-            return withProviderSettingsBackendId(provider, resolvedOwnedBackendIds[0] ?? null);
+            return withAgentSettingsBackendId(provider, resolvedOwnedBackendIds[0] ?? null);
         }
 
         if (resolvedOwnedBackendIds.length > 1) {
@@ -1235,14 +1357,14 @@ export async function resolvePluginContributes(
             });
         }
 
-        return withProviderSettingsBackendId(provider, null);
+        return withAgentSettingsBackendId(provider, null);
     });
 
-    const invalidProviderIds = new Set<string>();
-    for (const provider of normalizedProviderCandidates) {
+    const invalidAgentIds = new Set<string>();
+    for (const provider of normalizedAgentCandidates) {
         const ownedBackendIds = provider.definition.ownedBackendIds;
         const hasInvalidOwnedBackend = ownedBackendIds.some((backendId) => {
-            const ownerProviderId = availableBackendProviderIds.get(backendId);
+            const ownerProviderId = availableBackendAgentIds.get(backendId);
             return ownerProviderId === undefined || ownerProviderId !== provider.id;
         });
 
@@ -1250,26 +1372,26 @@ export async function resolvePluginContributes(
             continue;
         }
 
-        invalidProviderIds.add(provider.id);
+        invalidAgentIds.add(provider.id);
         appendDiagnostic(diagnosticsByPluginId, provider.pluginId ?? provider.id, {
             code: 'plugin_manifest_semantic_invalid',
             message: `Plugin provider '${provider.id}' declares owned backend ids that do not resolve to that provider`,
         });
     }
 
-    const providers = normalizedProviderCandidates.filter((provider) => !invalidProviderIds.has(provider.id));
-    const providerById = new Map(providers.map((provider) => [provider.id, provider] as const));
+    const agents = normalizedAgentCandidates.filter((provider) => !invalidAgentIds.has(provider.id));
+    const agentById = new Map(agents.map((provider) => [provider.id, provider] as const));
     const backends = backendCandidates.flatMap((backend) => {
         if (isProviderlessReviewExecutionRunBackend(backend)) {
             return [backend];
         }
 
-        if (!invalidProviderIds.has(backend.providerId)) {
-            const provider = providerById.get(backend.providerId);
+        if (!invalidAgentIds.has(backend.agentId)) {
+            const provider = agentById.get(backend.agentId);
             if (!provider) {
                 appendDiagnostic(diagnosticsByPluginId, backend.pluginId ?? backend.id, {
                     code: 'plugin_manifest_semantic_invalid',
-                    message: `Plugin backend '${backend.id}' is excluded because provider '${backend.providerId}' is missing after validation`,
+                    message: `Plugin agent runtime '${backend.id}' is excluded because agent '${backend.agentId}' is missing after validation`,
                 });
                 return [];
             }
@@ -1298,7 +1420,7 @@ export async function resolvePluginContributes(
 
         appendDiagnostic(diagnosticsByPluginId, backend.pluginId ?? backend.id, {
             code: 'plugin_manifest_semantic_invalid',
-            message: `Plugin backend '${backend.id}' is excluded because provider '${backend.providerId}' is invalid`,
+            message: `Plugin agent runtime '${backend.id}' is excluded because agent '${backend.agentId}' is invalid`,
         });
         return [];
     });
@@ -1319,14 +1441,15 @@ export async function resolvePluginContributes(
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
         });
     }
 
     return {
-        providers: Object.freeze(providers),
-        backends: Object.freeze(backends),
+        agents: Object.freeze(agents),
+        agentRuntimes: Object.freeze(backends),
         actions: Object.freeze(actionCandidates),
         tools: Object.freeze(toolCandidates),
         commands: Object.freeze(commandCandidates),
@@ -1334,11 +1457,14 @@ export async function resolvePluginContributes(
         uiDescriptors: Object.freeze(uiDescriptorCandidates),
         uiTranslations: Object.freeze(uiTranslationCandidates),
         structuredMessages: Object.freeze(structuredMessageCandidates),
-        sessionSurfaces: Object.freeze(sessionSurfaceCandidates),
         sessionHeaderActions: Object.freeze(sessionHeaderActionCandidates),
+        surfacePlacements: Object.freeze(surfacePlacementCandidates),
         hostedWeb: Object.freeze(hostedWebCandidates),
+        embeddedWebBundles: Object.freeze(embeddedWebBundleCandidates),
         reactNativeBundles: Object.freeze(reactNativeBundleCandidates),
         uiArtifacts: Object.freeze(uiArtifactCandidates),
+        browserTargets: Object.freeze(browserTargetCandidates),
+        browserActions: Object.freeze(browserActionCandidates),
         settings: Object.freeze(settingsCandidates),
         notifications: Object.freeze(notificationCandidates),
         notificationChannels: Object.freeze(notificationChannelCandidates),
@@ -1349,7 +1475,7 @@ export async function resolvePluginContributes(
         scmHostingProviders: Object.freeze(scmHostingProviderCandidates),
         scmBackends: Object.freeze(scmBackendCandidates),
         connectedAccountDescriptors: Object.freeze(connectedAccountDescriptorCandidates),
-        installables: Object.freeze(installableCandidates),
+        managedDependencies: Object.freeze(managedDependencyCandidates),
         requestInterceptors: Object.freeze(requestInterceptorCandidates),
         activationTargets: Object.freeze(activationTargets),
         hookRegistrations: Object.freeze(hookRegistrations),

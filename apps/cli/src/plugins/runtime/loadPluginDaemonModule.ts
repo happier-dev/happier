@@ -9,6 +9,7 @@ import type { PluginDaemonModuleNamespace } from './types';
  */
 export async function loadPluginDaemonModule(params: Readonly<{
     daemonEntryPath: string;
+    devDaemonEntryPath?: string | null;
     cacheKey?: string;
     trustPolicy?: PluginSourceTrustPolicyV1;
 }>): Promise<PluginDaemonModuleNamespace> {
@@ -16,6 +17,7 @@ export async function loadPluginDaemonModule(params: Readonly<{
         source: {
             kind: 'file_backed',
             entryPath: params.daemonEntryPath,
+            devEntryPath: params.devDaemonEntryPath,
             trustPolicy: params.trustPolicy,
         },
         cacheKey: params.cacheKey,
