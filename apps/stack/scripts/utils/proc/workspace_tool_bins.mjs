@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, extname, join, resolve } from 'node:path';
 
@@ -124,9 +124,7 @@ async function writeCommandShim({ binDir, commandName, targetPath }) {
       : `exec ${JSON.stringify(targetPath)} "$@"`,
     '',
   ].join('\n');
-  await rm(unixShimPath, { force: true });
-  await writeFile(unixShimPath, unixBody, { encoding: 'utf-8', mode: 0o755 });
-  await chmod(unixShimPath, 0o755);
+  await writeExecutableFileAtomically(unixShimPath, unixBody);
 
   if (process.platform === 'win32') {
     const cmdShimPath = join(binDir, `${commandName}.cmd`);
@@ -139,8 +137,46 @@ async function writeCommandShim({ binDir, commandName, targetPath }) {
         : `${JSON.stringify(targetPath)} %*`,
       '',
     ].join('\r\n');
-    await rm(cmdShimPath, { force: true });
-    await writeFile(cmdShimPath, cmdBody, 'utf-8');
+    await writeTextFileAtomically(cmdShimPath, cmdBody);
+  }
+}
+
+async function renameReplacing(sourcePath, targetPath) {
+  try {
+    await rename(sourcePath, targetPath);
+  } catch (error) {
+    if (error?.code !== 'EEXIST' && error?.code !== 'EPERM') {
+      throw error;
+    }
+    await rm(targetPath, { force: true });
+    await rename(sourcePath, targetPath);
+  }
+}
+
+function createTempSiblingPath(targetPath) {
+  return `${targetPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function writeExecutableFileAtomically(targetPath, contents) {
+  const tempPath = createTempSiblingPath(targetPath);
+  try {
+    await writeFile(tempPath, contents, { encoding: 'utf-8', mode: 0o755 });
+    await chmod(tempPath, 0o755);
+    await renameReplacing(tempPath, targetPath);
+  } catch (error) {
+    await rm(tempPath, { force: true });
+    throw error;
+  }
+}
+
+async function writeTextFileAtomically(targetPath, contents) {
+  const tempPath = createTempSiblingPath(targetPath);
+  try {
+    await writeFile(tempPath, contents, 'utf-8');
+    await renameReplacing(tempPath, targetPath);
+  } catch (error) {
+    await rm(tempPath, { force: true });
+    throw error;
   }
 }
 

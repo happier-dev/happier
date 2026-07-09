@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { isPidAlive } from './pids.mjs';
-import { killProcessGroupOwnedByStack } from './ownership.mjs';
+import { killPidOwnedByStack, killProcessGroupOwnedByStack } from './ownership.mjs';
 import { spawnDetachedTestProcess } from '../../testkit/core/spawn_test_process.mjs';
 
 function spawnOwnedGracefulExit({ env, exitFile, readyFile }) {
@@ -179,6 +179,7 @@ test('killProcessGroupOwnedByStack honors requested initial signal when provided
         ...process.env,
         HAPPIER_STACK_STACK: 't',
         HAPPIER_STACK_ENV_FILE: envPath,
+        HAPPIER_STACK_PROCESS_KIND: 'infra',
       },
       stdio: 'ignore',
     }
@@ -201,6 +202,103 @@ test('killProcessGroupOwnedByStack honors requested initial signal when provided
     const firstSignal = await waitForFileContent(signalFile, 1200);
     assert.ok(firstSignal, 'expected signal marker file to be written');
     assert.equal(firstSignal, 'SIGTERM');
+  } finally {
+    killGroup(child.pid);
+    try {
+      await rm(tmp, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }
+});
+
+test('killProcessGroupOwnedByStack refuses stack session process kind', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('POSIX process-group signaling semantics');
+    return;
+  }
+
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-kill-refuse-session-kind-'));
+  const envPath = join(tmp, 'env');
+  const exitFile = join(tmp, 'exited.txt');
+  const readyFile = join(tmp, 'ready.txt');
+
+  const child = spawnOwnedGracefulExit({
+    readyFile,
+    exitFile,
+    env: {
+      ...process.env,
+      HAPPIER_STACK_STACK: 't',
+      HAPPIER_STACK_ENV_FILE: envPath,
+      HAPPIER_STACK_PROCESS_KIND: 'session',
+    },
+  });
+
+  try {
+    assert.ok(Number(child.pid) > 1, 'expected child pid');
+    assert.ok(isPidAlive(child.pid), 'expected child alive before kill');
+
+    await waitForFile(readyFile, 1200);
+
+    const res = await killProcessGroupOwnedByStack(child.pid, {
+      stackName: 't',
+      envPath,
+      cliHomeDir: '',
+      json: true,
+      graceMs: 300,
+    });
+
+    assert.equal(res.killed, false);
+    assert.equal(res.reason, 'session_process_kind');
+    assert.equal(isPidAlive(child.pid), true, 'expected session-kind child to survive stack ownership kill');
+  } finally {
+    killGroup(child.pid);
+    try {
+      await rm(tmp, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  }
+});
+
+test('killPidOwnedByStack refuses stack session process kind', async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('POSIX process ownership inspection');
+    return;
+  }
+
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-kill-pid-refuse-session-kind-'));
+  const envPath = join(tmp, 'env');
+  const exitFile = join(tmp, 'exited.txt');
+  const readyFile = join(tmp, 'ready.txt');
+
+  const child = spawnOwnedGracefulExit({
+    readyFile,
+    exitFile,
+    env: {
+      ...process.env,
+      HAPPIER_STACK_STACK: 't',
+      HAPPIER_STACK_ENV_FILE: envPath,
+      HAPPIER_STACK_PROCESS_KIND: 'session',
+    },
+  });
+
+  try {
+    assert.ok(Number(child.pid) > 1, 'expected child pid');
+    assert.ok(isPidAlive(child.pid), 'expected child alive before kill');
+
+    await waitForFile(readyFile, 1200);
+
+    const res = await killPidOwnedByStack(child.pid, {
+      stackName: 't',
+      envPath,
+      cliHomeDir: '',
+      json: true,
+    });
+
+    assert.equal(res.killed, false);
+    assert.equal(res.reason, 'session_process_kind');
+    assert.equal(isPidAlive(child.pid), true, 'expected session-kind child to survive stack ownership kill');
   } finally {
     killGroup(child.pid);
     try {

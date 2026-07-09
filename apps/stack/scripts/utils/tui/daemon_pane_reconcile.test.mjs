@@ -43,3 +43,21 @@ test('reconcileDaemonPaneAfterDaemonStarts clears stale notice when caller knows
   assert.equal(out.title, 'daemon (RUNNING)');
   assert.deepEqual(out.lines, ['Daemon is running']);
 });
+
+test('reconcileDaemonPaneAfterDaemonStarts clears stale start-conflict output after daemon recovers', () => {
+  const out = reconcileDaemonPaneAfterDaemonStarts({
+    title: 'daemon (NOT RUNNING)',
+    lines: [
+      '[daemon] Current release channel: unknown',
+      '[daemon] Current CLI version: unknown',
+      '[daemon] Stop the current daemon before starting another one.',
+      '[daemon] exited (code=1, sig=null)',
+      '[daemon] Another running daemon is already using the selected relay.',
+      '[daemon] daemon start failed before the relay came up; keeping TUI running.',
+    ],
+    daemonPid: 10874,
+    daemonRunning: true,
+  });
+  assert.equal(out.title, 'daemon (RUNNING)');
+  assert.deepEqual(out.lines, ['Daemon is running', 'PID: 10874']);
+});

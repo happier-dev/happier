@@ -6,39 +6,30 @@ import { getComponentDir, resolveExplicitStackEnvFilePath } from '../paths/paths
 import { isPidAlive, killPid, readPidState } from '../expo/expo.mjs';
 import { stopLocalDaemon } from '../../daemon.mjs';
 import { stopHappyServerManagedInfra } from '../server/infra/happy_server_infra.mjs';
-import { deleteStackRuntimeStateFile, readStackRuntimeStateFile, recordStackRuntimeStopRequest } from './runtime_state.mjs';
-import { getProcessGroupId, getPsEnvLine, killPidOwnedByStack, killProcessGroupOwnedByStack, listPidsWithEnvNeedles } from '../proc/ownership.mjs';
+import {
+  deleteStackRuntimeStateFile,
+  getStackRuntimeProcessEntries,
+  readStackRuntimeStateFile,
+  recordStackRuntimeStopRequest,
+} from './runtime_state.mjs';
+import {
+  getProcessGroupId,
+  getPsEnvLine,
+  killPidOwnedByStack,
+  killProcessGroupOwnedByStack,
+  listPidsWithEnvNeedles,
+  listPidsWithEnvNeedlesAndEnvBindingNames,
+  readStackProcessKindFromEnvLine,
+} from '../proc/ownership.mjs';
 import { terminateProcessGroup } from '../proc/terminate.mjs';
 import { coercePort } from '../server/port.mjs';
 import { resolvePreferredStackDaemonStatePaths } from '../auth/credentials_paths.mjs';
+import { daemonControlPost } from './daemonControlClient.mjs';
 
 function resolveServerComponentFromStackEnv(env) {
   const v =
     (env.HAPPIER_STACK_SERVER_COMPONENT ?? '').toString().trim() || 'happier-server-light';
   return v === 'happier-server' ? 'happier-server' : 'happier-server-light';
-}
-
-async function daemonControlPost({ httpPort, path, body = {}, controlToken = '' }) {
-  const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), 1500);
-  try {
-    const headers = { 'content-type': 'application/json' };
-    const token = String(controlToken ?? '').trim();
-    if (token) headers['x-happier-daemon-token'] = token;
-    const res = await fetch(`http://127.0.0.1:${httpPort}${path}`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: ctl.signal,
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      throw new Error(`daemon control ${path} failed (http ${res.status}): ${text.trim()}`);
-    }
-    return text.trim() ? JSON.parse(text) : null;
-  } finally {
-    clearTimeout(t);
-  }
 }
 
 async function stopDaemonTrackedSessions({ cliHomeDir, serverUrl, json }) {
@@ -188,15 +179,17 @@ export async function stopStackWithEnv({
     }).catch(() => {});
   }
   const runnerPid = Number(runtimeState?.ownerPid);
-  const processes = runtimeState?.processes && typeof runtimeState.processes === 'object' ? runtimeState.processes : {};
+  const processEntries = getStackRuntimeProcessEntries(runtimeState);
 
   // Kill known child processes first (process groups), then stop daemon, then stop runner.
   const killedProcessPids = [];
-  for (const [key, rawPid] of Object.entries(processes)) {
-    if (preserveDaemon && key === 'daemonPid') {
+  const seenProcessPids = new Set();
+  for (const { key, pid } of processEntries) {
+    if (preserveDaemon && isDaemonRuntimeProcessKey(key)) {
       continue;
     }
-    const pid = Number(rawPid);
+    if (seenProcessPids.has(pid)) continue;
+    seenProcessPids.add(pid);
     if (!Number.isFinite(pid) || pid <= 1) continue;
     if (!isPidAlive(pid)) continue;
     // eslint-disable-next-line no-await-in-loop
@@ -280,7 +273,7 @@ export async function stopStackWithEnv({
   // This avoids losing the only reliable link between a stack and its infra pids.
   const runtimeTrackedPids = [
     runnerPid,
-    ...Object.values(processes).map((p) => Number(p)),
+    ...processEntries.map(({ pid }) => pid),
   ]
     .filter((p) => Number.isFinite(p) && p > 1);
   const anyRuntimePidAlive = runtimeTrackedPids.some((p) => isPidAlive(p));
@@ -340,17 +333,22 @@ export async function stopStackWithEnv({
     // Compatibility sweep for older stacks: some long-running infra (notably server dev loops)
     // may not have been started with HAPPIER_STACK_PROCESS_KIND=infra yet. We restrict this
     // fallback to npm/yarn managed server processes to avoid touching daemon-spawned sessions.
-    const legacyServer = await listPidsWithEnvNeedles([
+    const legacyServer = await listPidsWithEnvNeedlesAndEnvBindingNames([
       envNeedle,
-      'npm_lifecycle_event=',
       'npm_package_name=@happier-dev/server',
-    ]);
+    ], ['npm_lifecycle_event']);
 
     const pids = [...new Set([...infraTagged, ...legacyServer])]
       .filter((pid) => pid !== process.pid)
       .filter((pid) => Number.isFinite(pid) && pid > 1);
-    const daemonPid = Number(runtimeState?.processes?.daemonPid);
-    const preservedPids = preserveDaemon && Number.isFinite(daemonPid) && daemonPid > 1 ? new Set([daemonPid]) : null;
+    const preservedPids = preserveDaemon
+      ? new Set(
+          processEntries
+            .filter(({ key }) => isDaemonRuntimeProcessKey(key))
+            .map(({ pid }) => pid)
+            .filter((pid) => Number.isFinite(pid) && pid > 1),
+        )
+      : null;
 
     const swept = [];
     const sweepPidDirect = async (pid, reason) => {
@@ -382,24 +380,35 @@ export async function stopStackWithEnv({
       }
     }
 
-    // Repo-local fallback: older stackless runs may have omitted HAPPIER_STACK_ENV_FILE/HAPPIER_STACK_PROCESS_KIND markers.
-    // When runtime state is missing/stale, allow sweeping by the (stackName + repoDir) env needles for repo-local stacks.
-    // This is intentionally restricted to repo-local stack names to avoid killing unrelated long-lived processes.
+    // Repo-local fallback: older stackless infra runs may have omitted HAPPIER_STACK_ENV_FILE.
+    // Do not sweep by only (stackName + repoDir): daemon-spawned session runners inherit
+    // those repo-local markers and must survive stack/TUI restarts.
     const repoDir = String(env.HAPPIER_STACK_REPO_DIR ?? '').trim();
     const isRepoLocalStack = stackName && stackName !== 'main' && String(stackName).startsWith('repo-');
     if (autoSweepResolved && shouldAutoSweep && swept.length === 0 && isRepoLocalStack && repoDir) {
-      const repoLocal = await listPidsWithEnvNeedles([
+      const repoLocalNeedles = [
         `HAPPIER_STACK_STACK=${stackName}`,
         `HAPPIER_STACK_REPO_DIR=${repoDir}`,
+      ];
+      const repoLocalInfraTagged = await listPidsWithEnvNeedles([
+        ...repoLocalNeedles,
+        'HAPPIER_STACK_PROCESS_KIND=infra',
       ]);
-    const repoLocalPids = repoLocal
+      const repoLocalLegacyServer = await listPidsWithEnvNeedlesAndEnvBindingNames([
+        ...repoLocalNeedles,
+        'npm_package_name=@happier-dev/server',
+      ], ['npm_lifecycle_event']);
+      const repoLocalPids = [...new Set([...repoLocalInfraTagged, ...repoLocalLegacyServer])]
         .filter((pid) => pid !== process.pid)
         .filter((pid) => Number.isFinite(pid) && pid > 1);
-    for (const pid of Array.from(new Set(repoLocalPids))) {
-      if (preservedPids?.has(pid)) continue;
-      if (!isPidAlive(pid)) continue;
-      // eslint-disable-next-line no-await-in-loop
-      await sweepPidDirect(pid, 'killed_repo_local_stackless_sweep');
+      for (const pid of Array.from(new Set(repoLocalPids))) {
+        if (preservedPids?.has(pid)) continue;
+        if (!isPidAlive(pid)) continue;
+        // eslint-disable-next-line no-await-in-loop
+        const line = await getPsEnvLine(pid);
+        if (readStackProcessKindFromEnvLine(line) === 'session') continue;
+        // eslint-disable-next-line no-await-in-loop
+        await sweepPidDirect(pid, 'killed_repo_local_stackless_sweep');
       }
     }
 
@@ -414,4 +423,8 @@ function persistentReason(aggressive, sweepOwned, autoSweep) {
   if (sweepOwned) return 'explicit stack stop (sweep-owned)';
   if (autoSweep === false) return 'explicit stack stop (no-auto-sweep)';
   return 'explicit stack stop';
+}
+
+function isDaemonRuntimeProcessKey(key) {
+  return String(key) === 'daemonPid' || String(key) === 'daemonPids';
 }

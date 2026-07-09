@@ -14,6 +14,36 @@ test('resolveStackTauriDevUrl prefers the stack expo web port', () => {
   );
 });
 
+test('resolveStackTauriDevUrl does not trust stale Expo runtime metadata without a verified UI endpoint', () => {
+  assert.equal(
+    resolveStackTauriDevUrl({
+      runtimeState: {
+        expo: { webPort: 19364 },
+      },
+      verifiedUiEndpoint: {
+        running: false,
+        port: null,
+      },
+    }),
+    'http://localhost:8081',
+  );
+});
+
+test('resolveStackTauriDevUrl uses the verified UI endpoint over stale Expo runtime metadata', () => {
+  assert.equal(
+    resolveStackTauriDevUrl({
+      runtimeState: {
+        expo: { webPort: 19364 },
+      },
+      verifiedUiEndpoint: {
+        running: true,
+        port: 19000,
+      },
+    }),
+    'http://localhost:19000',
+  );
+});
+
 test('resolveStackTauriDevUrl prefers the stack server port when a runtime snapshot is active and Expo is absent', () => {
   assert.equal(
     resolveStackTauriDevUrl({

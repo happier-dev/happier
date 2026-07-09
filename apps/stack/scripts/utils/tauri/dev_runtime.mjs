@@ -36,10 +36,17 @@ function applyHtml5FileDragDropWindowPolicy(config) {
   return config;
 }
 
-export function resolveStackTauriDevUrl({ runtimeState, defaultPort = 8081 } = {}) {
+export function resolveStackTauriDevUrl({ runtimeState, defaultPort = 8081, verifiedUiEndpoint = null } = {}) {
+  if (verifiedUiEndpoint && typeof verifiedUiEndpoint === 'object') {
+    const verifiedPort = Number(verifiedUiEndpoint.port);
+    if (verifiedUiEndpoint.running === true && Number.isFinite(verifiedPort) && verifiedPort > 0) {
+      return `http://localhost:${Math.floor(verifiedPort)}`;
+    }
+  }
+
   const expo = runtimeState && typeof runtimeState === 'object' ? runtimeState.expo : null;
   const expoPort = Number(expo?.webPort ?? expo?.port ?? 0);
-  if (Number.isFinite(expoPort) && expoPort > 0) {
+  if (!verifiedUiEndpoint && Number.isFinite(expoPort) && expoPort > 0) {
     return `http://localhost:${Math.floor(expoPort)}`;
   }
 

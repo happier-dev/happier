@@ -8,7 +8,12 @@ import { preferStackLocalhostUrl } from '../paths/localhost_host.mjs';
 import { getComponentDir, resolveStackEnvPath } from '../paths/paths.mjs';
 import { getExpoStatePaths, isStateProcessRunning, looksLikeExpoMetro } from '../expo/expo.mjs';
 import { resolveLocalhostHost } from '../paths/localhost_host.mjs';
-import { getStackRuntimeStatePath, isPidAlive, readStackRuntimeStateFile } from '../stack/runtime_state.mjs';
+import {
+  getStackRuntimeStatePath,
+  isStackRuntimeProcessTrusted,
+  readStackRuntimeStateFile,
+  resolveTrustedStackRuntimeServerPort,
+} from '../stack/runtime_state.mjs';
 import { readEnvObjectFromFile } from '../env/read.mjs';
 import { getWebappUrlEnvOverride, resolveServerUrls } from '../server/urls.mjs';
 import { resolveStackRuntimeLaunchContext } from '../../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
@@ -26,9 +31,14 @@ async function resolveRuntimeExpoWebappUrlForAuth({ stackName }) {
     const runtimeStatePath = getStackRuntimeStatePath(stackName);
     const st = await readStackRuntimeStateFile(runtimeStatePath);
     const ownerPid = Number(st?.ownerPid);
-    if (!isPidAlive(ownerPid)) return '';
+    const ownerTrusted = await isStackRuntimeProcessTrusted(ownerPid, { key: 'ownerPid', stackName });
+    if (!ownerTrusted) return '';
     const expoPid = Number(st?.processes?.expoPid);
-    if (Number.isFinite(expoPid) && expoPid > 1 && !isPidAlive(expoPid)) return '';
+    if (
+      Number.isFinite(expoPid) &&
+      expoPid > 1 &&
+      !(await isStackRuntimeProcessTrusted(expoPid, { key: 'expoPid', stackName }))
+    ) return '';
     const port = Number(st?.expo?.port ?? st?.expo?.webPort ?? st?.expo?.mobilePort);
     if (!Number.isFinite(port) || port <= 0) return '';
     const live = await looksLikeExpoMetro({ port, timeoutMs: 900 });
@@ -431,7 +441,7 @@ function resolvePortFromUrl(urlRaw) {
   }
 }
 
-async function resolveServerPortForCoreAuth({ stackName, env = process.env }) {
+export async function resolveServerPortForCoreAuth({ stackName, env = process.env }) {
   const direct = Number((env.HAPPIER_STACK_SERVER_PORT ?? '').toString().trim());
   if (Number.isFinite(direct) && direct > 0) return direct;
 
@@ -444,8 +454,7 @@ async function resolveServerPortForCoreAuth({ stackName, env = process.env }) {
   try {
     const runtimeStatePath = getStackRuntimeStatePath(stackName);
     const st = await readStackRuntimeStateFile(runtimeStatePath);
-    const runtimePort = Number(st?.ports?.server);
-    if (Number.isFinite(runtimePort) && runtimePort > 0) return runtimePort;
+    return await resolveTrustedStackRuntimeServerPort(st, { stackName });
   } catch {
     // ignore
   }

@@ -6,6 +6,22 @@ import { join } from 'node:path';
 
 import { ensureWorkspacePackagesBuiltForComponent } from './pm.mjs';
 
+async function waitForFile(path, { timeoutMs = 5_000 } = {}) {
+  const startedAt = Date.now();
+  for (;;) {
+    try {
+      await readFile(path, 'utf-8');
+      return;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      if (Date.now() - startedAt > timeoutMs) {
+        throw new Error(`Timed out waiting for file: ${path}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+}
+
 async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf-8');
 }
@@ -31,37 +47,38 @@ async function writeYarnWorkspaceBuildStub({ binDir, outputPath, lockOutputPath 
       '',
       '# Simulate `yarn -s build` creating dist outputs for workspace packages.',
       'if [[ "${1:-}" == "-s" && "${2:-}" == "build" ]]; then',
+      '  out="${HAPPIER_WORKSPACE_DIST_OUTPUT_DIR:-dist}"',
       '  if [[ "$(pwd)" == */packages/protocol ]]; then',
       delayProtocol > 0 ? `    sleep ${delayProtocol}` : '    true',
-      '    mkdir -p dist',
-      "    printf '%s\\n' 'export const ok = true;' > dist/index.js",
-      "    printf '%s\\n' \"import './machineTransfer/transferStream.js';\" >> dist/index.js",
-      "    printf '%s\\n' 'export const ok = true;' > dist/rpcErrors.js",
-      "    printf '%s\\n' 'export declare const ok: boolean;' > dist/index.d.ts",
-      "    printf '%s\\n' 'export declare const ok: boolean;' > dist/rpcErrors.d.ts",
-      '    mkdir -p dist/machineTransfer',
-      "    printf '%s\\n' 'export const ok = true;' > dist/machineTransfer/transferStream.js",
-      "    printf '%s\\n' 'export declare const ok: boolean;' > dist/machineTransfer/transferStream.d.ts",
+      '    mkdir -p "$out"',
+      "    printf '%s\\n' 'export const ok = true;' > \"$out/index.js\"",
+      "    printf '%s\\n' \"import './machineTransfer/transferStream.js';\" >> \"$out/index.js\"",
+      "    printf '%s\\n' 'export const ok = true;' > \"$out/rpcErrors.js\"",
+      "    printf '%s\\n' 'export declare const ok: boolean;' > \"$out/index.d.ts\"",
+      "    printf '%s\\n' 'export declare const ok: boolean;' > \"$out/rpcErrors.d.ts\"",
+      '    mkdir -p "$out/machineTransfer"',
+      "    printf '%s\\n' 'export const ok = true;' > \"$out/machineTransfer/transferStream.js\"",
+      "    printf '%s\\n' 'export declare const ok: boolean;' > \"$out/machineTransfer/transferStream.d.ts\"",
       '    exit 0',
       '  fi',
       '  if [[ "$(pwd)" == */packages/agents ]]; then',
       delayAgents > 0 ? `    sleep ${delayAgents}` : '    true',
-      '    mkdir -p dist',
-      "    printf '%s\\n' 'export const ok = true;' > dist/index.js",
-      "    printf '%s\\n' 'export declare const ok: boolean;' > dist/index.d.ts",
+      '    mkdir -p "$out"',
+      "    printf '%s\\n' 'export const ok = true;' > \"$out/index.js\"",
+      "    printf '%s\\n' 'export declare const ok: boolean;' > \"$out/index.d.ts\"",
       '    exit 0',
       '  fi',
       '  if [[ "$(pwd)" == */packages/cli-common ]]; then',
       delayCliCommon > 0 ? `    sleep ${delayCliCommon}` : '    true',
-      '    mkdir -p dist',
-      "    printf '%s\\n' 'export const ok = true;' > dist/index.js",
-      "    printf '%s\\n' 'export declare const ok: boolean;' > dist/index.d.ts",
+      '    mkdir -p "$out"',
+      "    printf '%s\\n' 'export const ok = true;' > \"$out/index.js\"",
+      "    printf '%s\\n' 'export declare const ok: boolean;' > \"$out/index.d.ts\"",
       '    exit 0',
       '  fi',
       '  if [[ "$(pwd)" == */packages/plugins/claude ]]; then',
-      '    mkdir -p dist',
-      "    printf '%s\\n' 'export const ok = true;' > dist/index.js",
-      "    printf '%s\\n' 'export declare const ok: boolean;' > dist/index.d.ts",
+      '    mkdir -p "$out"',
+      "    printf '%s\\n' 'export const ok = true;' > \"$out/index.js\"",
+      "    printf '%s\\n' 'export declare const ok: boolean;' > \"$out/index.d.ts\"",
       '    exit 0',
       '  fi',
       'fi',
@@ -420,9 +437,10 @@ test('ensureWorkspacePackagesBuiltForComponent resolves TypeScript bin shims whe
       '#!/usr/bin/env node',
       "const { mkdirSync, writeFileSync } = require('node:fs');",
       "const { join } = require('node:path');",
-      'mkdirSync(join(process.cwd(), "dist"), { recursive: true });',
-      'writeFileSync(join(process.cwd(), "dist", "index.js"), "export const ok = true;\\n", "utf-8");',
-      'writeFileSync(join(process.cwd(), "dist", "index.d.ts"), "export declare const ok: boolean;\\n", "utf-8");',
+      'const out = process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR || join(process.cwd(), "dist");',
+      'mkdirSync(out, { recursive: true });',
+      'writeFileSync(join(out, "index.js"), "export const ok = true;\\n", "utf-8");',
+      'writeFileSync(join(out, "index.d.ts"), "export declare const ok: boolean;\\n", "utf-8");',
     ].join('\n') + '\n',
     'utf-8',
   );
@@ -644,4 +662,105 @@ test('ensureWorkspacePackagesBuiltForComponent tolerates transient missing local
   if (stderrChunks.length > 0) {
     assert.match(stderrChunks.join(''), /waiting for @happier-dev\/protocol dist build local imports to settle/);
   }
+});
+
+test('ensureWorkspacePackagesBuiltForComponent keeps previous dist readable while rebuilding a workspace package', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-ensure-workspaces-built-live-dist-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await writeJson(join(root, 'apps', 'cli', 'package.json'), {
+    name: '@happier-dev/cli',
+    private: true,
+    dependencies: {
+      '@happier-dev/protocol': '0.0.0',
+    },
+  });
+  await writeJson(join(root, 'apps', 'ui', 'package.json'), { name: '@happier-dev/app', private: true });
+  await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
+
+  const protocolDir = join(root, 'packages', 'protocol');
+  await mkdir(join(protocolDir, 'dist'), { recursive: true });
+  await writeJson(join(protocolDir, 'package.json'), {
+    name: '@happier-dev/protocol',
+    version: '0.0.0',
+    type: 'module',
+    exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    scripts: { build: 'tsc -p tsconfig.json' },
+  });
+  await writeJson(join(protocolDir, 'tsconfig.json'), { compilerOptions: { outDir: 'dist' } });
+  await writeFile(
+    join(protocolDir, 'dist', 'index.js'),
+    "export const stable = true;\nimport './missing.js';\n",
+    'utf-8',
+  );
+  await writeFile(join(protocolDir, 'dist', 'index.d.ts'), 'export declare const stable: boolean;\n', 'utf-8');
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  const markerPath = join(root, 'build-started');
+  const releasePath = join(root, 'release-build');
+  await mkdir(binDir, { recursive: true });
+  await writeFile(
+    join(binDir, 'yarn'),
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'echo "$(pwd) :: $* :: out=${HAPPIER_WORKSPACE_DIST_OUTPUT_DIR:-dist}" >> "${OUTPUT_PATH:?}"',
+      'if [[ "${1:-}" == "--version" ]]; then echo "1.22.22"; exit 0; fi',
+      'if [[ "${1:-}" == "-s" && "${2:-}" == "build" && "$(pwd)" == */packages/protocol ]]; then',
+      '  out="${HAPPIER_WORKSPACE_DIST_OUTPUT_DIR:-dist}"',
+      '  rm -rf "$out"',
+      `  printf started > ${JSON.stringify(markerPath)}`,
+      `  while [[ ! -f ${JSON.stringify(releasePath)} ]]; do sleep 0.02; done`,
+      '  mkdir -p "$out"',
+      "  printf '%s\\n' 'export const built = true;' > \"$out/index.js\"",
+      "  printf '%s\\n' 'export declare const built: boolean;' > \"$out/index.d.ts\"",
+      '  exit 0',
+      'fi',
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf-8',
+  );
+  await chmod(join(binDir, 'yarn'), 0o755);
+  await writeFile(outputPath, '', 'utf-8');
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  const buildPromise = ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'cli'), {
+    quiet: true,
+    env: process.env,
+  });
+
+  let assertionError = null;
+  try {
+    await waitForFile(markerPath, { timeoutMs: 12_000 });
+    assert.equal(
+      await readFile(join(protocolDir, 'dist', 'index.js'), 'utf-8'),
+      "export const stable = true;\nimport './missing.js';\n",
+    );
+  } catch (error) {
+    assertionError = error;
+  } finally {
+    await writeFile(releasePath, '1', 'utf-8');
+    await buildPromise.catch(() => {});
+  }
+  if (assertionError) throw assertionError;
+
+  await buildPromise;
+  assert.equal(await readFile(join(protocolDir, 'dist', 'index.js'), 'utf-8'), 'export const built = true;\n');
+  const buildLine = (await readFile(outputPath, 'utf-8'))
+    .split('\n')
+    .find((line) => line.includes('/packages/protocol :: -s build'));
+  assert.ok(buildLine, 'expected the protocol package build to run');
+  assert.match(buildLine, /out=.*\/packages\/protocol\/\.tmp\./);
+  assert.doesNotMatch(buildLine, /out=dist(?:\s|$)/);
 });

@@ -264,6 +264,205 @@ function repairParsedIosAppExtensionTargetIdentity(
   return changed;
 }
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function findMatchingBrace(text, openBraceIndex) {
+  let depth = 0;
+  for (let i = openBraceIndex; i < text.length; i += 1) {
+    const char = text[i];
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function findRawXcodeObject(text, id) {
+  const pattern = new RegExp(`(^|\\n)([\\t ]*)${escapeRegExp(id)}(?:\\s*/\\*[^*]*\\*/)?\\s*=\\s*\\{`, 'g');
+  const match = pattern.exec(text);
+  if (!match) {
+    return null;
+  }
+  const assignmentStart = match.index + match[1].length;
+  const openBraceIndex = match.index + match[0].lastIndexOf('{');
+  const closeBraceIndex = findMatchingBrace(text, openBraceIndex);
+  if (closeBraceIndex === -1) {
+    return null;
+  }
+  const semicolonIndex = text.indexOf(';', closeBraceIndex);
+  return {
+    id,
+    start: assignmentStart,
+    openBraceIndex,
+    closeBraceIndex,
+    end: semicolonIndex === -1 ? closeBraceIndex + 1 : semicolonIndex + 1,
+    block: text.slice(assignmentStart, semicolonIndex === -1 ? closeBraceIndex + 1 : semicolonIndex + 1),
+  };
+}
+
+function collectRawXcodeObjects(text) {
+  const objects = [];
+  const pattern = /(^|\n)([\t ]*)([A-Z0-9_]+)(?:\s*\/\*[^*]*\*\/)?\s*=\s*\{/g;
+  let match;
+  while ((match = pattern.exec(text))) {
+    const id = match[3];
+    const openBraceIndex = match.index + match[0].lastIndexOf('{');
+    const closeBraceIndex = findMatchingBrace(text, openBraceIndex);
+    if (closeBraceIndex === -1) {
+      continue;
+    }
+    const semicolonIndex = text.indexOf(';', closeBraceIndex);
+    const end = semicolonIndex === -1 ? closeBraceIndex + 1 : semicolonIndex + 1;
+    const start = match.index + match[1].length;
+    const block = text.slice(start, end);
+    if (/\bisa\s*=/.test(block)) {
+      objects.push({ id, start, end, block });
+    }
+    pattern.lastIndex = end;
+  }
+  return objects;
+}
+
+function rawObjectHasValue(block, key, value) {
+  const quoted = `"${escapeRegExp(value)}"`;
+  return new RegExp(`\\b${escapeRegExp(key)}\\s*=\\s*(?:${escapeRegExp(value)}|${quoted})\\s*;`).test(block);
+}
+
+function rawObjectNameMatches(block, targetName) {
+  return rawObjectHasValue(block, 'name', targetName) || rawObjectHasValue(block, 'productName', targetName);
+}
+
+function rawConfigurationListBuildConfigurationIds(text, configurationListId) {
+  const configurationList = findRawXcodeObject(text, configurationListId);
+  const match = configurationList?.block.match(/\bbuildConfigurations\s*=\s*\(([\s\S]*?)\)\s*;/);
+  if (!match) {
+    return [];
+  }
+
+  return [...match[1].matchAll(/\b([A-Za-z0-9_]+)\b(?:\s*\/\*[^*]*\*\/)?\s*,?/g)].map((entry) => entry[1]);
+}
+
+function collectRawTargetBuildConfigurationIds(text, { productType, targetName } = {}) {
+  const ids = [];
+  for (const object of collectRawXcodeObjects(text)) {
+    if (!/\bisa\s*=\s*PBXNativeTarget\s*;/.test(object.block)) continue;
+    if (!rawObjectHasValue(object.block, 'productType', productType)) continue;
+    if (targetName && !rawObjectNameMatches(object.block, targetName)) continue;
+    const configurationListId = object.block.match(/\bbuildConfigurationList\s*=\s*([A-Za-z0-9_]+)\b/)?.[1];
+    if (!configurationListId) continue;
+    ids.push(...rawConfigurationListBuildConfigurationIds(text, configurationListId));
+  }
+  return uniqueStrings(ids);
+}
+
+function rawBuildSettingsRange(block) {
+  const match = /\bbuildSettings\s*=\s*\{/.exec(block);
+  if (!match) {
+    return null;
+  }
+  const openBraceIndex = match.index + match[0].lastIndexOf('{');
+  const closeBraceIndex = findMatchingBrace(block, openBraceIndex);
+  if (closeBraceIndex === -1) {
+    return null;
+  }
+  return {
+    start: openBraceIndex + 1,
+    end: closeBraceIndex,
+  };
+}
+
+function readRawBuildSetting(block, key) {
+  const range = rawBuildSettingsRange(block);
+  if (!range) {
+    return '';
+  }
+  const settings = block.slice(range.start, range.end);
+  return settings.match(new RegExp(`\\b${escapeRegExp(key)}\\s*=\\s*([^;]+);`))?.[1]?.trim() ?? '';
+}
+
+function setRawBuildSettingInBlock(block, key, value) {
+  const range = rawBuildSettingsRange(block);
+  if (!range) {
+    return block;
+  }
+
+  const settings = block.slice(range.start, range.end);
+  const pattern = new RegExp(`(\\b${escapeRegExp(key)}\\s*=\\s*)[^;]+;`);
+  let nextSettings;
+  if (pattern.test(settings)) {
+    nextSettings = settings.replace(pattern, `$1${value};`);
+  } else {
+    const prefix = settings.includes('\n') ? '\n\t\t\t\t' : ' ';
+    nextSettings = `${prefix}${key} = ${value};${settings}`;
+  }
+  return `${block.slice(0, range.start)}${nextSettings}${block.slice(range.end)}`;
+}
+
+function setRawBuildSetting(text, configurationId, key, value) {
+  const object = findRawXcodeObject(text, configurationId);
+  if (!object) {
+    return text;
+  }
+  const nextBlock = setRawBuildSettingInBlock(object.block, key, value);
+  if (nextBlock === object.block) {
+    return text;
+  }
+  return `${text.slice(0, object.start)}${nextBlock}${text.slice(object.end)}`;
+}
+
+function collectRawBuildSettingValues(text, configurationIds, key) {
+  const values = new Set();
+  for (const configurationId of configurationIds) {
+    const value = unquoteXcodeValue(readRawBuildSetting(findRawXcodeObject(text, configurationId)?.block ?? '', key));
+    if (value) values.add(value);
+  }
+  return values;
+}
+
+function patchRawIosTargetIdentity(text, { bundleId, productName, patchProductName, targetName = 'ExpoWidgetsTarget' } = {}) {
+  const appConfigurationIds = collectRawTargetBuildConfigurationIds(text, {
+    productType: 'com.apple.product-type.application',
+  });
+  if (appConfigurationIds.length === 0) {
+    return { handled: false, text };
+  }
+
+  const priorAppBundleIds = collectRawBuildSettingValues(text, appConfigurationIds, 'PRODUCT_BUNDLE_IDENTIFIER');
+  const priorAppProductNames = collectRawBuildSettingValues(text, appConfigurationIds, 'PRODUCT_NAME');
+  let next = text;
+  for (const configurationId of appConfigurationIds) {
+    next = setRawBuildSetting(next, configurationId, 'PRODUCT_BUNDLE_IDENTIFIER', bundleId);
+    if (patchProductName) {
+      next = setRawBuildSetting(next, configurationId, 'PRODUCT_NAME', productName);
+    }
+  }
+
+  const suspiciousBundleIds = new Set([bundleId, ...priorAppBundleIds].filter(Boolean));
+  const suspiciousProductNames = new Set([productName, ...priorAppProductNames].filter(Boolean));
+  const widgetConfigurationIds = collectRawTargetBuildConfigurationIds(next, {
+    productType: 'com.apple.product-type.app-extension',
+    targetName,
+  });
+  for (const configurationId of widgetConfigurationIds) {
+    const object = findRawXcodeObject(next, configurationId);
+    if (!object) continue;
+    const bundleIdentifier = unquoteXcodeValue(readRawBuildSetting(object.block, 'PRODUCT_BUNDLE_IDENTIFIER'));
+    const widgetProductName = unquoteXcodeValue(readRawBuildSetting(object.block, 'PRODUCT_NAME'));
+    if (suspiciousBundleIds.has(bundleIdentifier)) {
+      next = setRawBuildSetting(next, configurationId, 'PRODUCT_BUNDLE_IDENTIFIER', `"${bundleId}.${targetName}"`);
+    }
+    if (patchProductName && suspiciousProductNames.has(widgetProductName)) {
+      next = setRawBuildSetting(next, configurationId, 'PRODUCT_NAME', '"$(TARGET_NAME)"');
+    }
+  }
+
+  return { handled: true, text: next };
+}
+
 export function repairDuplicateNamedIosTargetsInParsedXcodeProject(project, { targetName = 'ExpoWidgetsTarget' } = {}) {
   const objects = project?.hash?.project?.objects;
   if (!objects) {
@@ -543,12 +742,22 @@ export async function patchIosXcodeProjectsForSigningAndIdentity({
         next = next.replaceAll(/^\s*CODE_SIGN_IDENTITY\s*=\s*[^;]+;\s*$/gm, '');
         next = next.replaceAll(/^\s*"CODE_SIGN_IDENTITY\\[sdk=iphoneos\\*\\]"\s*=\s*[^;]+;\s*$/gm, '');
 
-        next = next.replaceAll(/PRODUCT_BUNDLE_IDENTIFIER = [^;]+;/g, `PRODUCT_BUNDLE_IDENTIFIER = ${bundleId};`);
+        const targetIdentityPatch = patchRawIosTargetIdentity(next, {
+          bundleId,
+          productName,
+          patchProductName: !!appName,
+          targetName: 'ExpoWidgetsTarget',
+        });
+        if (targetIdentityPatch.handled) {
+          next = targetIdentityPatch.text;
+        } else {
+          next = next.replaceAll(/PRODUCT_BUNDLE_IDENTIFIER = [^;]+;/g, `PRODUCT_BUNDLE_IDENTIFIER = ${bundleId};`);
 
-        if (appName) {
-          // Expo CLI appears to treat some escaped build paths as literal (e.g. "Happy\\ (stack).app"),
-          // so keep PRODUCT_NAME free of spaces to avoid breaking post-build Info.plist parsing.
-          next = next.replaceAll(/PRODUCT_NAME = [^;]+;/g, `PRODUCT_NAME = ${productName};`);
+          if (appName) {
+            // Expo CLI appears to treat some escaped build paths as literal (e.g. "Happy\\ (stack).app"),
+            // so keep PRODUCT_NAME free of spaces to avoid breaking post-build Info.plist parsing.
+            next = next.replaceAll(/PRODUCT_NAME = [^;]+;/g, `PRODUCT_NAME = ${productName};`);
+          }
         }
 
         if (next !== raw) {

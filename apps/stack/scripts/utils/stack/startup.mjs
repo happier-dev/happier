@@ -8,7 +8,7 @@ import { resolvePrismaClientImportForDbProvider, resolvePrismaClientImportForSer
 import { findAnyCredentialPathInCliHome } from '../auth/credentials_paths.mjs';
 import {
   renderPrismaCompatibleSqliteDatabaseUrl,
-  resolvePrismaSqliteDatabaseUrlOptionsFromEnv,
+  resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
 } from '@happier-dev/cli-common/firstPartyRuntime';
 
 function looksLikeMissingTableError(msg) {
@@ -34,7 +34,7 @@ function resolveSqliteDatabaseUrlForDataDir({ dataDir, env }) {
   return renderPrismaCompatibleSqliteDatabaseUrl({
     dbPath: join(dataDir, 'happier-server-light.sqlite'),
     platform: process.platform,
-    sqlite: resolvePrismaSqliteDatabaseUrlOptionsFromEnv(env ?? {}),
+    sqlite: resolveServerLightSqliteDatabaseUrlOptionsFromEnv(env ?? {}),
   });
 }
 
@@ -227,6 +227,21 @@ export function resolveAuthSeedFromEnv(env) {
   return seed || 'main';
 }
 
+function resolveAuthSeedChildEnv({ env, authEnv, stackName }) {
+  const childEnv = {
+    ...(authEnv && typeof authEnv === 'object' ? authEnv : env),
+  };
+  const stackEnvFile = String(env?.HAPPIER_STACK_ENV_FILE ?? childEnv.HAPPIER_STACK_ENV_FILE ?? '').trim();
+  if (stackEnvFile) {
+    childEnv.HAPPIER_STACK_ENV_FILE = stackEnvFile;
+    delete childEnv.HAPPIER_STACK_REPO_DIR;
+  }
+  if (stackName) {
+    childEnv.HAPPIER_STACK_STACK = stackName;
+  }
+  return childEnv;
+}
+
 export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort = false }) {
   await ensureWorkspacePackagesBuiltForComponent(serverDir, { env });
   await ensureDepsInstalled(serverDir, 'happier-server-light', { env });
@@ -391,11 +406,12 @@ export async function maybeAutoCopyAuthFromMainIfNeeded({
         fromStackName,
         '--offline-ok',
         '--json',
+        ...(fromStackName === 'main' ? ['--allow-main'] : []),
         ...(linkAuth ? ['--link'] : []),
       ],
       {
-      cwd: rootDir,
-      env: authEnv && typeof authEnv === 'object' ? authEnv : env,
+        cwd: rootDir,
+        env: resolveAuthSeedChildEnv({ env, authEnv, stackName }),
       }
     );
     return { ok: true, skipped: false, reason, out: out.trim() ? JSON.parse(out) : null };

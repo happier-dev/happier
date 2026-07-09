@@ -192,6 +192,61 @@ export async function readPidState(statePath) {
   }
 }
 
+async function readProcessIdentityLine(pid) {
+  const n = Number(pid);
+  if (!Number.isFinite(n) || n <= 1) return null;
+  if (process.platform === 'win32') return null;
+  if (process.platform === 'linux') {
+    const [cmdline, environ] = await Promise.all([
+      readFile(`/proc/${n}/cmdline`, 'utf-8')
+        .then((raw) => String(raw ?? '').replaceAll('\0', ' ').trim())
+        .catch(() => ''),
+      readFile(`/proc/${n}/environ`, 'utf-8')
+        .then((raw) => String(raw ?? '').replaceAll('\0', ' ').trim())
+        .catch(() => ''),
+    ]);
+    const line = `${cmdline} ${environ}`.trim();
+    return line || null;
+  }
+  try {
+    const out = await runCapture('ps', ['eww', '-p', String(n)]);
+    const lines = out.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length >= 2) return lines[1];
+    if (lines.length === 1) return lines[0];
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function verifyStatePidIdentity({ pid, state, statePath }) {
+  const line = await readProcessIdentityLine(pid);
+  if (!line) {
+    return { ok: process.platform === 'win32', reason: 'pid_unverified' };
+  }
+
+  const expectedExpoHomeDir = join(dirname(statePath), 'expo-home');
+  const expectedExpoHomeDirs = new Set([expectedExpoHomeDir, resolve(expectedExpoHomeDir)]);
+  const expoHomeNeedle = '__UNSAFE_EXPO_HOME_DIRECTORY=';
+  if (line.includes(expoHomeNeedle)) {
+    for (const candidate of expectedExpoHomeDirs) {
+      if (line.includes(`${expoHomeNeedle}${candidate}`)) {
+        return { ok: true, reason: 'pid' };
+      }
+    }
+    return { ok: false, reason: 'pid_identity_mismatch' };
+  }
+
+  const projectDir = String(state?.projectDir ?? state?.uiDir ?? '').trim();
+  if (projectDir && line.includes(resolve(projectDir))) {
+    return { ok: true, reason: 'pid' };
+  }
+  if (projectDir) {
+    return { ok: false, reason: 'pid_identity_mismatch' };
+  }
+  return { ok: true, reason: 'pid' };
+}
+
 export async function isStateProcessRunning(statePath) {
   const state = await readPidState(statePath);
   if (!state) return { running: false, state: null };
@@ -217,6 +272,10 @@ export async function isStateProcessRunning(statePath) {
   const hasPort = Number.isFinite(port) && port > 0;
 
   if (isPidAlive(pid)) {
+    const identity = await verifyStatePidIdentity({ pid, state, statePath });
+    if (!identity.ok) {
+      return { running: false, state, reason: identity.reason };
+    }
     if (hasPort) {
       const ok = await looksLikeExpoMetro({ port });
       if (!ok) {
@@ -230,7 +289,7 @@ export async function isStateProcessRunning(statePath) {
         }
       }
     }
-    return { running: true, state, reason: 'pid' };
+    return { running: true, state, reason: identity.reason };
   }
 
   // Expo/Metro can sometimes be “up” even if the original wrapper pid exited (pm/yarn layers).

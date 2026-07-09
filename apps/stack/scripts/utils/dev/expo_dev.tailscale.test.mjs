@@ -83,6 +83,7 @@ process.exit(1);
       autostart: { baseDir: tmp },
       baseEnv: {
         ...process.env,
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
         HAPPIER_TAILSCALE_BIN: tailscaleBin,
         HAPPIER_STACK_EXPO_DEV_PORT: String(metroPort),
         HAPPIER_STACK_EXPO_HOST: 'localhost',
@@ -120,6 +121,7 @@ process.exit(1);
 });
 
 test('ensureDevExpoServer keeps existing Expo when requested Tailscale is unavailable', async () => {
+  const { spawn } = await import('node:child_process');
   const { mkdtemp, mkdir, rm, writeFile, chmod, access } = await import('node:fs/promises');
   const { constants } = await import('node:fs');
   const { tmpdir } = await import('node:os');
@@ -165,11 +167,19 @@ process.exit(1);
       stateFileName: 'expo.state.json',
     });
     await mkdir(dirname(paths.statePath), { recursive: true });
+    const existingExpo = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], {
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        __UNSAFE_EXPO_HOME_DIRECTORY: join(dirname(paths.statePath), 'expo-home'),
+      },
+    });
+    children.push(existingExpo);
     await writeFile(
       paths.statePath,
       JSON.stringify(
         {
-          pid: process.pid,
+          pid: existingExpo.pid,
           uiDir,
           projectDir: uiDir,
           startedAt: new Date().toISOString(),
@@ -193,6 +203,8 @@ process.exit(1);
       autostart: { baseDir: tmp },
       baseEnv: {
         ...process.env,
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
         HAPPIER_TAILSCALE_BIN: tailscaleBin,
         HAPPIER_STACK_EXPO_HOST: 'localhost',
         HAPPIER_STACK_LAN_IP: '10.10.10.10',
@@ -261,6 +273,8 @@ process.exit(1);
       autostart: { baseDir: tmp },
       baseEnv: {
         ...process.env,
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
         HAPPIER_TAILSCALE_BIN: tailscaleBin,
         HAPPIER_STACK_EXPO_HOST: 'localhost',
       },
@@ -378,6 +392,8 @@ process.exit(1);
       autostart: { baseDir: tmp },
       baseEnv: {
         ...process.env,
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
         HAPPIER_TAILSCALE_BIN: tailscaleBin,
         HAPPIER_STACK_EXPO_HOST: 'localhost',
         TEST_EXPO_SPAWN_OUT: spawnOut,

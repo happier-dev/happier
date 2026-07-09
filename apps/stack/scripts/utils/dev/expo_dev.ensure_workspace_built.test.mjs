@@ -42,7 +42,7 @@ test('ensureDevExpoServer runs the UI workspace build preflight before starting 
       startMobile: false,
       uiDir,
       autostart: { baseDir: tmp },
-      baseEnv: { ...process.env, HAPPIER_STACK_VERBOSE: '1' },
+      baseEnv: { ...process.env, HAPPIER_STACK_VERBOSE: '1', HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0' },
       apiServerUrl: 'http://127.0.0.1:1',
       restart: true,
       stackMode: false,
@@ -71,4 +71,3 @@ test('ensureDevExpoServer runs the UI workspace build preflight before starting 
     await rm(tmp, { recursive: true, force: true });
   }
 });
-

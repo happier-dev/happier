@@ -1,11 +1,20 @@
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { open, readFile, unlink } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { isPidAlive } from './proc/pids.mjs';
 import { getPidStartTime } from './proc/ownership.mjs';
 
-function lockPathForDbDir(dbDir) {
-  return join(dirname(dbDir), '.happier.pglite.lock');
+const PGLITE_LOCK_FILENAME = '.happier.pglite.lock';
+
+export function getPgliteDirLockPath(dbDir) {
+  const resolvedDbDir = resolve(String(dbDir ?? ''));
+  const short = createHash('sha256').update(resolvedDbDir).digest('hex').slice(0, 12);
+  return join(dirname(resolvedDbDir), `${PGLITE_LOCK_FILENAME}.${short}`);
+}
+
+function legacyAdjacentLockPathForDbDir(dbDir) {
+  return join(dirname(dbDir), PGLITE_LOCK_FILENAME);
 }
 
 function safeParseJson(raw) {
@@ -36,10 +45,43 @@ async function removeLock(lockPath) {
   }
 }
 
+async function assertNoLiveLegacyAdjacentLock(resolvedDbDir) {
+  const legacyLockPath = legacyAdjacentLockPathForDbDir(resolvedDbDir);
+  const hashedLockPath = getPgliteDirLockPath(resolvedDbDir);
+  if (legacyLockPath === hashedLockPath) return;
+
+  const existing = await readLock(legacyLockPath);
+  if (!existing) return;
+  if (existing.invalid) {
+    throw new Error(`pglite legacy lock is invalid: ${legacyLockPath}`);
+  }
+
+  const existingPid = Number(existing?.pid);
+  const existingDbDir = existing?.dbDir ? resolve(String(existing.dbDir)) : '';
+  const sameDbDir = existingDbDir ? existingDbDir === resolvedDbDir : true;
+  if (!sameDbDir) return;
+
+  if (Number.isFinite(existingPid) && isPidAlive(existingPid)) {
+    const meta = [
+      existing?.purpose ? `purpose=${existing.purpose}` : '',
+      existing?.createdAt ? `createdAt=${existing.createdAt}` : '',
+      existingDbDir ? `dbDir=${existingDbDir}` : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    throw new Error(`pglite db dir is in use by pid=${existingPid}${meta ? ` (${meta})` : ''}`);
+  }
+
+  await removeLock(legacyLockPath);
+}
+
 export async function acquirePgliteDirLock(dbDir, { purpose = 'unknown' } = {}) {
   const resolvedDbDir = resolve(String(dbDir ?? ''));
   if (!resolvedDbDir) throw new Error('Missing dbDir');
-  const lockPath = lockPathForDbDir(resolvedDbDir);
+  await assertNoLiveLegacyAdjacentLock(resolvedDbDir);
+  const legacyInsideDbDir = join(resolvedDbDir, PGLITE_LOCK_FILENAME);
+  await removeLock(legacyInsideDbDir);
+  const lockPath = getPgliteDirLockPath(resolvedDbDir);
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -104,4 +146,43 @@ export async function acquirePgliteDirLock(dbDir, { purpose = 'unknown' } = {}) 
   }
 
   throw new Error('Failed to acquire pglite lock after retries');
+}
+
+export async function waitForPgliteDirLockRelease(
+  dbDir,
+  { timeoutMs = 5_000, intervalMs = 100, sleep = (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms)) } = {}
+) {
+  const resolvedDbDir = resolve(String(dbDir ?? ''));
+  if (!resolvedDbDir) return true;
+  const lockPaths = [getPgliteDirLockPath(resolvedDbDir), legacyAdjacentLockPathForDbDir(resolvedDbDir)];
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    let held = false;
+    for (const lockPath of lockPaths) {
+      // eslint-disable-next-line no-await-in-loop
+      const existing = await readLock(lockPath);
+      if (!existing) continue;
+      if (existing.invalid) {
+        held = true;
+        continue;
+      }
+      const existingDbDir = existing?.dbDir ? resolve(String(existing.dbDir)) : '';
+      if (lockPath === legacyAdjacentLockPathForDbDir(resolvedDbDir) && existingDbDir && existingDbDir !== resolvedDbDir) {
+        continue;
+      }
+      const existingPid = Number(existing?.pid);
+      if (Number.isFinite(existingPid) && isPidAlive(existingPid)) {
+        held = true;
+        continue;
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await removeLock(lockPath);
+    }
+    if (!held) return true;
+    // eslint-disable-next-line no-await-in-loop
+    await sleep(intervalMs);
+  }
+
+  return false;
 }

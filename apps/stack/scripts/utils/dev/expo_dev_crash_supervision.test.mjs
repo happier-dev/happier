@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import { ensureDevExpoServer } from './expo_dev.mjs';
 import { getExpoStatePaths } from '../expo/expo.mjs';
+import { readStackRuntimeStateFile } from '../stack/runtime_state.mjs';
 
 function killProcessTreeByPid(pid) {
   const n = Number(pid);
@@ -122,6 +123,162 @@ test('ensureDevExpoServer restarts Expo after a Node heap OOM abort', async () =
     });
     const state = JSON.parse(await readFile(paths.statePath, 'utf-8'));
     assert.equal(state.pid, children[1].pid);
+  } finally {
+    for (const child of children) {
+      killProcessTreeByPid(child?.pid);
+    }
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
+test('ensureDevExpoServer restarts Expo after an unexpected SIGKILL while the stack owner is alive', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-sigkill-supervision-'));
+  const children = [];
+  try {
+    const uiDir = join(tmp, 'ui');
+    await mkdir(join(uiDir, 'node_modules', '.bin'), { recursive: true });
+    await mkdir(join(uiDir, 'node_modules'), { recursive: true });
+    await writeFile(join(uiDir, 'package.json'), JSON.stringify({ name: 'fake-ui', private: true }) + '\n', 'utf-8');
+
+    const runCountPath = join(tmp, 'expo-runs.txt');
+    const expoBin = join(uiDir, 'node_modules', '.bin', 'expo');
+    await writeFile(
+      expoBin,
+      [
+        '#!/usr/bin/env node',
+        "const fs = require('fs');",
+        "const runCountPath = process.env.FAKE_EXPO_RUN_COUNT_PATH;",
+        "const current = Number(fs.existsSync(runCountPath) ? fs.readFileSync(runCountPath, 'utf8').trim() : '0') + 1;",
+        "fs.writeFileSync(runCountPath, String(current));",
+        "if (current === 1) {",
+        "  process.kill(process.pid, 'SIGKILL');",
+        '}',
+        'setInterval(() => {}, 1000);',
+      ].join('\n') + '\n',
+      'utf-8'
+    );
+    await chmod(expoBin, 0o755);
+
+    const runtimeStatePath = join(tmp, 'stack.runtime.json');
+    const envPath = join(tmp, 'stack.env');
+    const result = await ensureDevExpoServer({
+      startUi: true,
+      startMobile: false,
+      uiDir,
+      autostart: { baseDir: tmp },
+      baseEnv: {
+        ...process.env,
+        FAKE_EXPO_RUN_COUNT_PATH: runCountPath,
+        HAPPIER_STACK_EXPO_DEV_PORT: '45679',
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'stable',
+        HAPPIER_STACK_EXPO_RESTART_BASE_DELAY_MS: '10',
+        HAPPIER_STACK_EXPO_RESTART_MAX_DELAY_MS: '10',
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '1',
+      },
+      apiServerUrl: 'http://127.0.0.1:1',
+      restart: false,
+      stackMode: true,
+      runtimeStatePath,
+      stackName: 'qa-expo-sigkill-supervision',
+      envPath,
+      children,
+      spawnOptions: {
+        silent: true,
+      },
+      quiet: true,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.port, 45679);
+
+    await waitForCondition(async () => (await readRunCount(runCountPath)) >= 2);
+    assert.equal(children.length, 2);
+    assert.equal(children[0].signalCode, 'SIGKILL');
+    assert.equal(children[1].exitCode, null);
+
+    const runtime = await readStackRuntimeStateFile(runtimeStatePath);
+    assert.equal(runtime?.processes?.expoPid, children[1].pid);
+    assert.equal(runtime?.expo?.webPort, 45679);
+  } finally {
+    for (const child of children) {
+      killProcessTreeByPid(child?.pid);
+    }
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+});
+
+test('ensureDevExpoServer clears published UI runtime metadata without restarting during stack shutdown', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-shutdown-supervision-'));
+  const children = [];
+  let shuttingDown = false;
+  try {
+    const uiDir = join(tmp, 'ui');
+    await mkdir(join(uiDir, 'node_modules', '.bin'), { recursive: true });
+    await mkdir(join(uiDir, 'node_modules'), { recursive: true });
+    await writeFile(join(uiDir, 'package.json'), JSON.stringify({ name: 'fake-ui', private: true }) + '\n', 'utf-8');
+
+    const runCountPath = join(tmp, 'expo-runs.txt');
+    const expoBin = join(uiDir, 'node_modules', '.bin', 'expo');
+    await writeFile(
+      expoBin,
+      [
+        '#!/usr/bin/env node',
+        "const fs = require('fs');",
+        "const runCountPath = process.env.FAKE_EXPO_RUN_COUNT_PATH;",
+        "const current = Number(fs.existsSync(runCountPath) ? fs.readFileSync(runCountPath, 'utf8').trim() : '0') + 1;",
+        "fs.writeFileSync(runCountPath, String(current));",
+        'setInterval(() => {}, 1000);',
+      ].join('\n') + '\n',
+      'utf-8'
+    );
+    await chmod(expoBin, 0o755);
+
+    const runtimeStatePath = join(tmp, 'stack.runtime.json');
+    const envPath = join(tmp, 'stack.env');
+    const result = await ensureDevExpoServer({
+      startUi: true,
+      startMobile: false,
+      uiDir,
+      autostart: { baseDir: tmp },
+      baseEnv: {
+        ...process.env,
+        FAKE_EXPO_RUN_COUNT_PATH: runCountPath,
+        HAPPIER_STACK_EXPO_DEV_PORT: '45680',
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'stable',
+        HAPPIER_STACK_EXPO_RESTART_BASE_DELAY_MS: '10',
+        HAPPIER_STACK_EXPO_RESTART_MAX_DELAY_MS: '10',
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '1',
+      },
+      apiServerUrl: 'http://127.0.0.1:1',
+      restart: false,
+      stackMode: true,
+      runtimeStatePath,
+      stackName: 'qa-expo-shutdown-supervision',
+      envPath,
+      children,
+      spawnOptions: {
+        silent: true,
+      },
+      isShuttingDown: () => shuttingDown,
+      quiet: true,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.port, 45680);
+    await waitForCondition(async () => (await readRunCount(runCountPath)) === 1);
+
+    shuttingDown = true;
+    process.kill(children[0].pid, 'SIGTERM');
+
+    await waitForCondition(async () => children[0].signalCode === 'SIGTERM');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    assert.equal(await readRunCount(runCountPath), 1);
+    const runtime = await readStackRuntimeStateFile(runtimeStatePath);
+    assert.equal(runtime?.processes?.expoPid, null);
+    assert.equal(runtime?.expo?.port, null);
+    assert.equal(runtime?.expo?.webPort, null);
+    assert.equal(runtime?.expo?.mobilePort, null);
   } finally {
     for (const child of children) {
       killProcessTreeByPid(child?.pid);

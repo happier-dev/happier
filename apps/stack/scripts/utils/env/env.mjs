@@ -1,10 +1,17 @@
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expandHome, getCanonicalHomeEnvPathFromEnv } from '../paths/canonical_home.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './sandbox.mjs';
 import { loadEnvFile, loadEnvFileIgnoringPrefixes } from './load_env_file.mjs';
+import { parseDotenv } from './dotenv.mjs';
+import {
+  STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS,
+  STACK_WRAPPER_PRESERVE_KEYS,
+  scrubHappierStackEnv,
+} from './scrub_env.mjs';
 
 // Load stack env (optional). This is intentionally lightweight and does not require extra deps.
 // This file lives under scripts/utils/env, so repo root is three directories up.
@@ -33,6 +40,65 @@ if (!(process.env.HAPPIER_STACK_HOME_DIR ?? '').trim() && existsSync(canonicalEn
 
 const __homeDir = resolveHomeDir();
 process.env.HAPPIER_STACK_HOME_DIR = process.env.HAPPIER_STACK_HOME_DIR ?? __homeDir;
+
+const STALE_STACK_ENV_KEYS_FOR_EXPLICIT_REPO = [
+  'HAPPIER_STACK_ENV_FILE',
+  'HAPPIER_STACK_STACK',
+  'HAPPIER_STACK_RUNTIME_MODE',
+  'HAPPIER_STACK_RUNTIME_STATE_PATH',
+  'HAPPIER_STACK_CLI_HOME_DIR',
+  'HAPPIER_STACK_CLI_IDENTITY',
+];
+
+function normalizeEnvPathForCompare(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  try {
+    return resolve(expandHome(raw));
+  } catch {
+    return '';
+  }
+}
+
+async function readEnvFileValue(envPath, key) {
+  const path = String(envPath ?? '').trim();
+  const name = String(key ?? '').trim();
+  if (!path || !name) return { status: 'missing', value: '' };
+  if (!existsSync(path)) {
+    return { status: 'missing', value: '' };
+  }
+  try {
+    return {
+      status: 'ok',
+      value: parseDotenv(await readFile(path, 'utf-8')).get(name) ?? '',
+    };
+  } catch {
+    return { status: 'unreadable', value: '' };
+  }
+}
+
+async function detachStaleStackEnvForExplicitRepo(stacksEnv) {
+  const stackEnvPath = String(stacksEnv ?? '').trim();
+  const explicitRepo = normalizeEnvPathForCompare(process.env.HAPPIER_STACK_REPO_DIR);
+  if (!stackEnvPath || !explicitRepo) return stackEnvPath;
+
+  const envFileRepoResult = await readEnvFileValue(stackEnvPath, 'HAPPIER_STACK_REPO_DIR');
+  if (envFileRepoResult.status === 'missing') {
+    return stackEnvPath;
+  }
+  if (envFileRepoResult.status === 'ok') {
+    const envFileRepo = normalizeEnvPathForCompare(envFileRepoResult.value);
+    if (!envFileRepo || envFileRepo === explicitRepo) return stackEnvPath;
+  }
+
+  for (const key of STALE_STACK_ENV_KEYS_FOR_EXPLICIT_REPO) {
+    delete process.env[key];
+  }
+  for (const key of STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS) {
+    delete process.env[key];
+  }
+  return '';
+}
 
 // Prefer canonical home config:
 //   ~/.happier-stack/.env
@@ -98,11 +164,32 @@ if (hasHomeConfig) {
 // Stack env files intentionally include some non-prefixed keys (e.g. DATABASE_URL, HAPPIER_SERVER_LIGHT_DATA_DIR)
 // that must apply for true per-stack isolation. Do not filter by prefix here.
 {
-  const stacksEnv = process.env.HAPPIER_STACK_ENV_FILE?.trim() ? process.env.HAPPIER_STACK_ENV_FILE.trim() : '';
+  const initialStacksEnv = process.env.HAPPIER_STACK_ENV_FILE?.trim() ? process.env.HAPPIER_STACK_ENV_FILE.trim() : '';
+  const stacksEnv = await detachStaleStackEnvForExplicitRepo(initialStacksEnv);
+  const explicitCliIdentity = String(process.env.HAPPIER_STACK_CLI_IDENTITY ?? '').trim();
+  const explicitCliHomeDir = String(process.env.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim();
+  if (stacksEnv) {
+    const scrubbed = scrubHappierStackEnv(process.env, {
+      keepHappierStackKeys: STACK_WRAPPER_PRESERVE_KEYS,
+      clearUnprefixedKeys: STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS,
+    });
+    for (const key of Object.keys(process.env)) {
+      if (!(key in scrubbed)) delete process.env[key];
+    }
+    for (const [key, value] of Object.entries(scrubbed)) {
+      process.env[key] = value;
+    }
+  }
   const unique = Array.from(new Set([stacksEnv].filter(Boolean)));
   for (const p of unique) {
     // eslint-disable-next-line no-await-in-loop
     await loadEnvFile(p, { override: true });
+  }
+  if (explicitCliIdentity && explicitCliIdentity !== 'default') {
+    process.env.HAPPIER_STACK_CLI_IDENTITY = explicitCliIdentity;
+    if (explicitCliHomeDir) {
+      process.env.HAPPIER_STACK_CLI_HOME_DIR = explicitCliHomeDir;
+    }
   }
 }
 

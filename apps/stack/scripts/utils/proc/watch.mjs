@@ -1,12 +1,12 @@
 import { watch } from 'node:fs';
 
-function safeWatch(path, handler) {
+function safeWatch(path, handler, watchImpl = watch) {
   try {
     // Node supports recursive watching on macOS and Windows. On Linux this may throw; we fail closed by returning null.
-    return watch(path, { recursive: true }, handler);
+    return watchImpl(path, { recursive: true }, handler);
   } catch {
     try {
-      return watch(path, {}, handler);
+      return watchImpl(path, {}, handler);
     } catch {
       return null;
     }
@@ -17,7 +17,16 @@ function safeWatch(path, handler) {
  * Very small, dependency-free debounced watcher.
  * Intended for dev ergonomics (rebuild/restart), not for correctness-critical logic.
  */
-export function watchDebounced({ paths, debounceMs = 500, onChange } = {}) {
+export function watchDebounced({
+  paths,
+  debounceMs = 500,
+  onChange,
+  readSignature = null,
+  pollIntervalMs = 0,
+  watchImpl = watch,
+  setIntervalImpl = setInterval,
+  clearIntervalImpl = clearInterval,
+} = {}) {
   const list = Array.isArray(paths) ? paths.filter(Boolean) : [];
   if (!list.length) return null;
   if (typeof onChange !== 'function') return null;
@@ -25,6 +34,14 @@ export function watchDebounced({ paths, debounceMs = 500, onChange } = {}) {
   let closed = false;
   let t = null;
   const watchers = [];
+  let lastSignature = null;
+  if (typeof readSignature === 'function') {
+    try {
+      lastSignature = readSignature();
+    } catch {
+      lastSignature = null;
+    }
+  }
 
   const trigger = (eventType, filename) => {
     if (closed) return;
@@ -40,11 +57,34 @@ export function watchDebounced({ paths, debounceMs = 500, onChange } = {}) {
   };
 
   for (const p of list) {
-    const w = safeWatch(p, trigger);
+    const w = safeWatch(p, trigger, watchImpl);
     if (w) watchers.push(w);
   }
 
-  if (!watchers.length) return null;
+  const pollMs = Number(pollIntervalMs);
+  let pollTimer = null;
+  let polling = false;
+  if (typeof readSignature === 'function' && Number.isFinite(pollMs) && pollMs > 0 && typeof setIntervalImpl === 'function') {
+    const pollForSignatureChange = async () => {
+      if (closed || polling) return;
+      polling = true;
+      try {
+        const nextSignature = readSignature();
+        if (nextSignature !== lastSignature) {
+          lastSignature = nextSignature;
+          trigger('poll', null);
+        }
+      } catch {
+        // ignore; fs.watch remains the fast path and the next poll can recover
+      } finally {
+        polling = false;
+      }
+    };
+    pollTimer = setIntervalImpl(pollForSignatureChange, pollMs);
+    pollTimer?.unref?.();
+  }
+
+  if (!watchers.length && !pollTimer) return null;
 
   return {
     close() {
@@ -57,7 +97,13 @@ export function watchDebounced({ paths, debounceMs = 500, onChange } = {}) {
           // ignore
         }
       }
+      if (pollTimer && typeof clearIntervalImpl === 'function') {
+        try {
+          clearIntervalImpl(pollTimer);
+        } catch {
+          // ignore
+        }
+      }
     },
   };
 }
-

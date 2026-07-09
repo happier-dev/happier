@@ -3,8 +3,14 @@ import { join } from 'node:path';
 import { createStepPrinter } from '../cli/progress.mjs';
 import { createFileLogForwarder } from '../cli/log_forwarder.mjs';
 import { resolveStackEnvPath } from '../paths/paths.mjs';
-import { getStackRuntimeStatePath, isPidAlive, readStackRuntimeStateFile } from '../stack/runtime_state.mjs';
+import {
+  getStackRuntimeStatePath,
+  isPidAlive,
+  readStackRuntimeStateFile,
+  resolveTrustedStackRuntimeServerPort,
+} from '../stack/runtime_state.mjs';
 import { readEnvObjectFromFile } from '../env/read.mjs';
+import { readPinnedServerPortFromEnvFile } from '../server/port.mjs';
 import { getWebappUrlEnvOverride, resolveServerUrls } from '../server/urls.mjs';
 import { readLastLines } from '../fs/tail.mjs';
 import { run } from '../proc/proc.mjs';
@@ -15,7 +21,7 @@ import {
   resolveStackWebappTargetForAuth,
   resolveStackAuthCliExecutable,
 } from './stack_guided_login.mjs';
-import { checkDaemonState, startLocalDaemonWithAuth } from '../../daemon.mjs';
+import { checkDaemonStatePingAware, startLocalDaemonWithAuth } from '../../daemon.mjs';
 import { isTty } from '../cli/wizard.mjs';
 import { resolveStackRuntimeLaunchContext } from '../../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 
@@ -93,13 +99,13 @@ function resolveAuthUiStartTimeoutMs(env = process.env) {
   return timeoutMs;
 }
 
-function resolveAuthExpoProgressIntervalMs(env = process.env) {
+function resolveAuthExpoProgressInterval(env = process.env) {
   const raw = String(env?.HAPPIER_STACK_AUTH_EXPO_PROGRESS_INTERVAL_MS ?? '').trim();
-  if (!raw) return 20_000;
+  if (!raw) return { intervalMs: 20_000, explicit: false };
   const n = Number(raw);
-  if (!Number.isFinite(n)) return 20_000;
-  if (n <= 0) return 0;
-  return n;
+  if (!Number.isFinite(n)) return { intervalMs: 20_000, explicit: true };
+  if (n <= 0) return { intervalMs: 0, explicit: true };
+  return { intervalMs: n, explicit: true };
 }
 
 function resolveAuthExpoBundleReadyTimeoutMs(env = process.env) {
@@ -184,8 +190,9 @@ export async function prepareGuidedLoginWebapp({ rootDir, stackName, env, steps 
   const printer = steps && typeof steps.start === 'function' && typeof steps.stop === 'function' ? steps : null;
 
   if (printer) printer.start(label);
-  const progressIntervalMs = resolveAuthExpoProgressIntervalMs(env ?? process.env);
-  const progressEnabled = Boolean(isTty() && progressIntervalMs > 0);
+  const progress = resolveAuthExpoProgressInterval(env ?? process.env);
+  const progressIntervalMs = progress.intervalMs;
+  const progressEnabled = Boolean(progressIntervalMs > 0 && (isTty() || progress.explicit));
   const startedAt = Date.now();
   let stopProgress = null;
   if (progressEnabled) {
@@ -331,10 +338,8 @@ export async function resolveServerPortForPostAuthDaemonStart({ stackName, env =
   const name = String(stackName ?? '').trim() || 'main';
   const runtimeStatePath = getStackRuntimeStatePath(name);
   const st = await readStackRuntimeStateFile(runtimeStatePath);
-  const runtimePort = Number(st?.ports?.server);
-  const ownerPid = Number(st?.ownerPid);
-  const runtimeOwnerAlive = !Number.isFinite(ownerPid) || ownerPid <= 1 || isPidAlive(ownerPid);
-  if (runtimeOwnerAlive && Number.isFinite(runtimePort) && runtimePort > 0) {
+  const runtimePort = await resolveTrustedStackRuntimeServerPort(st, { stackName: name });
+  if (runtimePort !== null) {
     return runtimePort;
   }
 
@@ -343,7 +348,13 @@ export async function resolveServerPortForPostAuthDaemonStart({ stackName, env =
     return envPort;
   }
 
-  throw new Error('[auth] post-auth daemon start failed: could not resolve server port from stack.runtime.json');
+  const { envPath } = resolveStackEnvPath(name, env);
+  const envFilePort = await readPinnedServerPortFromEnvFile(envPath);
+  if (envFilePort) {
+    return envFilePort;
+  }
+
+  throw new Error('[auth] post-auth daemon start failed: could not resolve server port from stack.runtime.json or stack env');
 }
 
 export async function startDaemonPostAuth({
@@ -389,7 +400,7 @@ export async function startDaemonPostAuth({
   // Verify (best-effort): daemon wrote state.
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    const s = checkDaemonState(cliHomeDir, { serverUrl: internalServerUrl, env: mergedEnv });
+    const s = await checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env: mergedEnv });
     if (s.status === 'running') {
       return {
         ok: true,

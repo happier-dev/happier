@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+const plannedExitMarker = Symbol('happier.stack.plannedExit');
+
 export function resolveDefaultShellForCommand(cmd, { platform = process.platform } = {}) {
   if (platform !== 'win32') return false;
   const raw = String(cmd ?? '').trim();
@@ -13,6 +15,62 @@ export function resolveDefaultShellForCommand(cmd, { platform = process.platform
     return true;
   }
   return normalized.endsWith('.cmd') || normalized.endsWith('.bat') || normalized.endsWith('.ps1');
+}
+
+function normalizePlannedExitReason(reason) {
+  const cleaned = String(reason ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return cleaned || 'planned';
+}
+
+export function markSpawnedProcessPlannedExit(child, reason = 'planned') {
+  if (!child || (typeof child !== 'object' && typeof child !== 'function')) {
+    return () => {};
+  }
+
+  const marker = { reason: normalizePlannedExitReason(reason) };
+  try {
+    Object.defineProperty(child, plannedExitMarker, {
+      value: marker,
+      writable: true,
+      configurable: true,
+      enumerable: false,
+    });
+  } catch {
+    try {
+      child[plannedExitMarker] = marker;
+    } catch {
+      return () => {};
+    }
+  }
+
+  return () => {
+    try {
+      if (child[plannedExitMarker] === marker) {
+        delete child[plannedExitMarker];
+      }
+    } catch {
+      // ignore cleanup failures; the marker only affects best-effort log wording
+    }
+  };
+}
+
+export function getSpawnedProcessPlannedExitReason(child) {
+  const reason = child?.[plannedExitMarker]?.reason;
+  return typeof reason === 'string' && reason ? reason : null;
+}
+
+function formatSpawnedProcessExitLine(prefix, code, sig, child) {
+  const plannedReason = getSpawnedProcessPlannedExitReason(child);
+  const trimmedPrefix = String(prefix ?? '').trimEnd();
+  if (plannedReason) {
+    return `${trimmedPrefix} planned ${plannedReason} exit (code=${code}, sig=${sig})\n`;
+  }
+  return `${trimmedPrefix} exited (code=${code}, sig=${sig})\n`;
 }
 
 function nextLineBreakIndex(s) {
@@ -159,12 +217,13 @@ export function spawnProc(label, cmd, args, env, options = {}) {
   });
   child.on('exit', (code, sig) => {
     if (code !== 0) {
+      const streamLine = formatSpawnedProcessExitLine(`[${label}]`, code, sig, child);
       if (!silent) {
-        process.stderr.write(`[${label}] exited (code=${code}, sig=${sig})\n`);
+        process.stderr.write(streamLine);
       }
       if (teeStream) {
         try {
-          teeStream.write(`${teePrefix.trimEnd()} exited (code=${code}, sig=${sig})\n`);
+          teeStream.write(formatSpawnedProcessExitLine(teePrefix, code, sig, child));
         } catch {
           // ignore
         }

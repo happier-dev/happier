@@ -18,6 +18,46 @@ function splitPathEntries(pathValue) {
     .filter(Boolean);
 }
 
+test('buildTuiChildArgs forces watch for dev forwarded commands', () => {
+  assert.deepEqual(tauriMode.buildTuiChildArgs({ forwardedArgs: ['dev'], withTauri: false }), [
+    'dev',
+    '--watch',
+  ]);
+});
+
+test('buildTuiChildArgs forces watch for Tauri dev commands while preserving no-browser', () => {
+  assert.deepEqual(tauriMode.buildTuiChildArgs({ forwardedArgs: ['dev'], withTauri: true }), [
+    'dev',
+    '--watch',
+    '--no-browser',
+  ]);
+});
+
+test('buildTuiChildArgs preserves explicit no-watch for dev commands', () => {
+  assert.deepEqual(tauriMode.buildTuiChildArgs({ forwardedArgs: ['dev', '--no-watch'], withTauri: false }), [
+    'dev',
+    '--no-watch',
+  ]);
+});
+
+test('buildTuiChildArgs forces watch for stack dev forwarded commands', () => {
+  assert.deepEqual(tauriMode.buildTuiChildArgs({ forwardedArgs: ['stack', 'dev', 'exp1'], withTauri: false }), [
+    'stack',
+    'dev',
+    'exp1',
+    '--watch',
+  ]);
+});
+
+test('buildTuiChildArgs does not force watch for start forwarded commands', () => {
+  assert.deepEqual(tauriMode.buildTuiChildArgs({ forwardedArgs: ['start'], withTauri: false }), ['start']);
+  assert.deepEqual(tauriMode.buildTuiChildArgs({ forwardedArgs: ['stack', 'start', 'exp1'], withTauri: false }), [
+    'stack',
+    'start',
+    'exp1',
+  ]);
+});
+
 test('resolveTauriPaneSpawnConfig builds a Tauri env with cargo available even when HOME is stack-isolated', async () => {
   const realHome = await mkdir(`${tmpdir()}/happier-tauri-pane-realhome-${Date.now()}`, { recursive: true });
   const isolatedHome = await mkdir(`${tmpdir()}/happier-tauri-pane-isolatedhome-${Date.now()}`, { recursive: true });

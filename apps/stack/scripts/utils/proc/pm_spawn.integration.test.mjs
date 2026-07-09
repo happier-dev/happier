@@ -198,6 +198,38 @@ test('pmSpawnScript marks stack-owned infra processes with HAPPIER_STACK_PROCESS
   assert.equal(kind, 'infra');
 });
 
+test('pmSpawnScript treats stack-owned package-manager children as infra even when caller inherited a session kind', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-spawn-kind-session-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const componentDir = join(root, 'component');
+  await mkdir(componentDir, { recursive: true });
+  await writeJson(join(componentDir, 'package.json'), { name: 'component', version: '0.0.0' });
+  await writeFile(join(componentDir, 'yarn.lock'), '# yarn\n', 'utf-8');
+
+  const outFile = join(root, 'kind.txt');
+
+  const binDir = join(root, 'bin');
+  await writeStubYarnCaptureKind({ binDir });
+
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    TEST_OUT_FILE: outFile,
+    HAPPIER_STACK_STACK: 'k',
+    HAPPIER_STACK_ENV_FILE: join(root, 'stack-env'),
+    HAPPIER_STACK_PROCESS_KIND: 'session',
+  };
+  const child = await pmSpawnScript({ dir: componentDir, label: 'spawn-test', script: 'noop', env, quiet: true, options: { silent: true } });
+  const res = await waitExit(child);
+  assert.equal(res.code, 0);
+
+  const kind = (await readFile(outFile, 'utf-8')).trim();
+  assert.equal(kind, 'infra');
+});
+
 test('pmSpawnScript scopes TSX_TSCONFIG_PATH to the component tsconfig', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-pm-spawn-tsx-tsconfig-'));
   t.after(async () => {

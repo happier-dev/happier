@@ -42,6 +42,26 @@ function killProcessTreeByPid(pid) {
   }
 }
 
+function isPidAliveForTest(pid) {
+  const n = Number(pid);
+  if (!Number.isFinite(n) || n <= 1) return false;
+  try {
+    process.kill(n, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForPidExitForTest(pid, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAliveForTest(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return !isPidAliveForTest(pid);
+}
+
 function listenMetroStatusServer() {
   return new Promise((resolve, reject) => {
     const server = net.createServer((socket) => {
@@ -66,6 +86,52 @@ function listenMetroStatusServer() {
       resolve({ server, port: Number(addr.port) });
     });
   });
+}
+
+async function spawnOwnedMetroLikeExpoProcess({ port, projectDir, expoHomeDir, stackName = '', envPath = '', cliHomeDir = '' }) {
+  const script = [
+    "const net = require('net');",
+    'const port = Number(process.env.TEST_PORT);',
+    'const projectDir = process.argv[2] || "";',
+    'const server = net.createServer((socket) => {',
+    "  socket.once('data', () => {",
+    '    socket.write(',
+    "      'HTTP/1.1 200 OK\\r\\n' +",
+    "      'Content-Type: text/plain\\r\\n' +",
+    "      'Content-Length: 23\\r\\n' +",
+    "      '\\r\\n' +",
+    "      'packager-status:running'",
+    '    );',
+    '    socket.end();',
+    '  });',
+    '});',
+    "server.listen(port, '127.0.0.1', () => console.log(JSON.stringify({ port, pid: process.pid, projectDir })));",
+    'setInterval(() => {}, 1000);',
+  ].join('');
+  const child = spawnDetachedTestProcess(process.execPath, ['-e', script, projectDir], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+    env: {
+      ...process.env,
+      TEST_PORT: String(port),
+      __UNSAFE_EXPO_HOME_DIRECTORY: expoHomeDir,
+      // The test runner may itself be a session process; this child models stack-owned Expo.
+      HAPPIER_STACK_PROCESS_KIND: 'expo',
+      ...(stackName ? { HAPPIER_STACK_STACK: stackName } : {}),
+      ...(envPath ? { HAPPIER_STACK_ENV_FILE: envPath } : {}),
+      ...(cliHomeDir ? { HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir } : {}),
+    },
+  });
+  await new Promise((resolve, reject) => {
+    let buffer = '';
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const index = buffer.indexOf('\n');
+      if (index >= 0) resolve(buffer.slice(0, index));
+    });
+    child.on('error', reject);
+    child.on('exit', (code) => reject(new Error(`[test] owned Metro-like Expo exited before listening (code=${code ?? 'unknown'})`)));
+  });
+  return child;
 }
 
 test('ensureDevExpoServer does not reserve prior metro port when restart cannot kill previous pid but the port is free', async () => {
@@ -120,7 +186,9 @@ test('ensureDevExpoServer does not reserve prior metro port when restart cannot 
       autostart: { baseDir: tmp },
       baseEnv: {
         ...process.env,
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
         HAPPIER_STACK_EXPO_DEV_PORT: String(priorPort),
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
       },
       apiServerUrl: 'http://127.0.0.1:1',
       restart: true,
@@ -194,7 +262,9 @@ test('ensureDevExpoServer restarts when running Expo state targets a different A
       autostart: { baseDir: tmp },
       baseEnv: {
         ...process.env,
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
         HAPPIER_STACK_EXPO_DEV_PORT: String(priorPort),
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
       },
       apiServerUrl: 'http://localhost:3014',
       restart: false,
@@ -217,6 +287,97 @@ test('ensureDevExpoServer restarts when running Expo state targets a different A
       killProcessTreeByPid(child?.pid);
     }
     await new Promise((resolve) => metro?.close(() => resolve())).catch(() => {});
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('ensureDevExpoServer restarts mobile dev-client when running Expo state targets a different API server URL', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-restart-mobile-api-url-'));
+  const children = [];
+  let previousExpoPid = null;
+  try {
+    const uiDir = join(tmp, 'ui');
+    await mkdir(join(uiDir, 'node_modules', '.bin'), { recursive: true });
+    await mkdir(join(uiDir, 'node_modules'), { recursive: true });
+    await writeFile(join(uiDir, 'package.json'), JSON.stringify({ name: 'fake-ui', private: true }) + '\n', 'utf-8');
+
+    const expoBin = join(uiDir, 'node_modules', '.bin', 'expo');
+    await writeFile(
+      expoBin,
+      [
+        '#!/usr/bin/env node',
+        "setInterval(() => {}, 1000);",
+      ].join('\n') + '\n',
+      'utf-8'
+    );
+    await chmod(expoBin, 0o755);
+
+    const projectDir = uiDir;
+    const paths = getExpoStatePaths({
+      baseDir: tmp,
+      kind: 'expo-dev',
+      projectDir,
+      stateFileName: 'expo.state.json',
+    });
+    const priorPort = await listenEphemeralPort();
+    const stackName = 'qa-agent-mobile-api-url';
+    const envPath = join(tmp, 'stack.env');
+    const previousExpo = await spawnOwnedMetroLikeExpoProcess({
+      port: priorPort,
+      projectDir,
+      expoHomeDir: paths.expoHomeDir,
+      stackName,
+      envPath,
+    });
+    previousExpoPid = previousExpo.pid;
+    await writePidState(paths.statePath, {
+      pid: previousExpoPid,
+      port: priorPort,
+      uiDir,
+      projectDir,
+      startedAt: new Date().toISOString(),
+      webEnabled: false,
+      devClientEnabled: true,
+      host: 'lan',
+      apiServerUrl: 'http://192.168.1.20:3012',
+    });
+
+    const result = await ensureDevExpoServer({
+      startUi: false,
+      startMobile: true,
+      uiDir,
+      autostart: { baseDir: tmp },
+      baseEnv: {
+        ...process.env,
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+        HAPPIER_STACK_EXPO_DEV_PORT: String(priorPort),
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
+        HAPPIER_STACK_MOBILE_SCHEME: 'happier-dev',
+        HAPPIER_STACK_STACK: stackName,
+        HAPPIER_STACK_ENV_FILE: envPath,
+      },
+      apiServerUrl: 'http://192.168.1.20:3014',
+      restart: false,
+      stackMode: true,
+      runtimeStatePath: null,
+      stackName,
+      envPath,
+      children,
+      quiet: true,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.skipped, false);
+
+    const nextState = JSON.parse(await readFile(paths.statePath, 'utf-8'));
+    assert.equal(nextState.apiServerUrl, 'http://192.168.1.20:3014');
+    assert.equal(nextState.devClientEnabled, true);
+    assert.equal(await waitForPidExitForTest(previousExpoPid), true, 'expected automatic API mismatch replacement to stop prior stack-owned Expo process');
+  } finally {
+    for (const child of children) {
+      killProcessTreeByPid(child?.pid);
+    }
+    killProcessTreeByPid(previousExpoPid);
     await rm(tmp, { recursive: true, force: true });
   }
 });
@@ -272,7 +433,9 @@ test('ensureDevExpoServer in stack mode does not adopt port-only fallback as alr
       autostart: { baseDir: tmp },
       baseEnv: {
         ...process.env,
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
         HAPPIER_STACK_EXPO_DEV_PORT: String(priorPort),
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
       },
       apiServerUrl: 'http://localhost:3014',
       restart: false,
@@ -330,6 +493,7 @@ test('ensureDevExpoServer fails closed in stable port mode when forced expo port
           autostart: { baseDir: tmp },
           baseEnv: {
             ...process.env,
+            HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
             HAPPIER_STACK_EXPO_DEV_PORT: String(occupiedPort),
             HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'stable',
             HAPPIER_STACK_EXPO_DEV_PORT_BASE: '51000',
@@ -423,6 +587,7 @@ test('ensureDevExpoServer in stable port mode stops stack-owned leftover Expo pr
       autostart: { baseDir: tmp },
       baseEnv: {
         ...process.env,
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
         HAPPIER_STACK_EXPO_DEV_PORT: String(occupiedPort),
         HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'stable',
         HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,

@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   patchIosXcodeProjectsForSigningAndIdentity,
@@ -10,12 +11,14 @@ import {
   repairDuplicateNamedIosTargetsInParsedXcodeProject,
 } from './ios_xcodeproj_patch.mjs';
 
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..');
+
 async function withTempUiDir(t) {
   const uiDir = await mkdtemp(join(tmpdir(), 'hstack-mobile-'));
   await mkdir(join(uiDir, 'node_modules'), { recursive: true });
   try {
     await symlink(
-      join(process.cwd(), 'apps', 'ui', 'node_modules', 'xcode'),
+      join(repoRoot, 'apps', 'ui', 'node_modules', 'xcode'),
       join(uiDir, 'node_modules', 'xcode'),
       'dir',
     );
@@ -258,6 +261,8 @@ test('patchIosXcodeProjectsForSigningAndIdentity repairs a widget target identit
   assert.match(pbxproj, /APP_DEBUG[\s\S]*PRODUCT_NAME = Happier-next-dev;/);
   assert.match(pbxproj, /WIDGET_DEBUG[\s\S]*PRODUCT_BUNDLE_IDENTIFIER = "dev\.happier\.app\.dev\.internal\.devclient\.ExpoWidgetsTarget";/);
   assert.match(pbxproj, /WIDGET_DEBUG[\s\S]*PRODUCT_NAME = "\$\(TARGET_NAME\)";/);
+  assert.match(pbxproj, /WIDGET_RELEASE[\s\S]*PRODUCT_BUNDLE_IDENTIFIER = "dev\.happier\.app\.dev\.internal\.devclient\.ExpoWidgetsTarget";/);
+  assert.match(pbxproj, /WIDGET_RELEASE[\s\S]*PRODUCT_NAME = "\$\(TARGET_NAME\)";/);
 });
 
 test('patchIosXcodeProjectsForSigningAndIdentity preserves an already distinct widget target identity', async (t) => {
@@ -279,6 +284,8 @@ test('patchIosXcodeProjectsForSigningAndIdentity preserves an already distinct w
   assert.match(pbxproj, /APP_DEBUG[\s\S]*PRODUCT_NAME = Happier-next-dev;/);
   assert.match(pbxproj, /WIDGET_DEBUG[\s\S]*PRODUCT_BUNDLE_IDENTIFIER = custom\.widgets\.bundle;/);
   assert.match(pbxproj, /WIDGET_DEBUG[\s\S]*PRODUCT_NAME = CustomWidgets;/);
+  assert.match(pbxproj, /WIDGET_RELEASE[\s\S]*PRODUCT_BUNDLE_IDENTIFIER = custom\.widgets\.bundle;/);
+  assert.match(pbxproj, /WIDGET_RELEASE[\s\S]*PRODUCT_NAME = CustomWidgets;/);
 });
 
 test('patchIosXcodeProjectsForSigningAndIdentity tolerates missing Info.plist and leaves pre-patched pbxproj unchanged', async (t) => {

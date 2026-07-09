@@ -48,6 +48,32 @@ async function writeLog(message) {
   await appendFile(logFile, line, 'utf-8').catch(() => {});
 }
 
+async function writeStructuredLog(payload) {
+  if (!logFile) return;
+  const line = `[owner-watchdog-json] ${JSON.stringify(payload)}\n`;
+  try {
+    await mkdir(dirname(logFile), { recursive: true });
+  } catch {
+    // ignore
+  }
+  await appendFile(logFile, line, 'utf-8').catch(() => {});
+}
+
+function summarizeStopActions(actions) {
+  return {
+    runner: actions?.runner ?? null,
+    daemonSessionsStopped: actions?.daemonSessionsStopped ?? null,
+    daemonStopped: actions?.daemonStopped === true,
+    processes: actions?.processes ?? null,
+    sweep: actions?.sweep ?? null,
+    expoDev: Array.isArray(actions?.expoDev) ? actions.expoDev : [],
+    uiDev: Array.isArray(actions?.uiDev) ? actions.uiDev : [],
+    mobile: Array.isArray(actions?.mobile) ? actions.mobile : [],
+    infra: actions?.infra ?? null,
+    errors: Array.isArray(actions?.errors) ? actions.errors : [],
+  };
+}
+
 function finalize(code = 0) {
   if (pollTimer) {
     clearInterval(pollTimer);
@@ -87,9 +113,28 @@ async function sweepOwnedRuntime(runtimeState = null) {
     });
     const killedCount = countKilledProcesses(actions);
     const errorCount = Array.isArray(actions?.errors) ? actions.errors.length : 0;
+    await writeStructuredLog({
+      event: 'owner_death_sweep_complete',
+      timestamp: new Date().toISOString(),
+      stackName,
+      baseDir,
+      ownerPid,
+      killedCount,
+      errorCount,
+      preserveDaemon,
+      actions: summarizeStopActions(actions),
+    });
     await writeLog(`sweep complete (killed=${killedCount}, errors=${errorCount})`);
     finalize(errorCount > 0 ? 1 : 0);
   } catch (error) {
+    await writeStructuredLog({
+      event: 'owner_death_sweep_failed',
+      timestamp: new Date().toISOString(),
+      stackName,
+      baseDir,
+      ownerPid,
+      error: error instanceof Error ? error.message : String(error),
+    });
     await writeLog(`sweep failed: ${error instanceof Error ? error.message : String(error)}`);
     finalize(1);
   }

@@ -1,20 +1,25 @@
 import { homedir } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 
 import { pathExists } from '../fs/fs.mjs';
+import { buildIntoTempThenReplace } from '../fs/atomic_dir_swap.mjs';
 import { readJsonIfExists, writeJsonAtomic } from '../fs/json.mjs';
 import { run, runCapture, spawnProc } from './proc.mjs';
-import { commandExists } from './commands.mjs';
+import { resolveCommandPath } from './commands.mjs';
 import { coerceHappyMonorepoRootFromPath, getDefaultAutostartPaths, getHappyStacksHomeDir } from '../paths/paths.mjs';
 import { resolveInstalledPath, resolveInstalledCliRoot } from '../paths/runtime.mjs';
 import { expandHome } from '../paths/canonical_home.mjs';
 import { withCliDistBuildLock } from './cliDistBuildLock.mjs';
 import { resolveWorkspaceToolBinDirs } from './workspace_tool_bins.mjs';
 import { collectWorkspacePackageJsonPaths } from './workspace_package_manifests.mjs';
+import { probeCliDistRuntimeImport, readCliDistIntegrity } from '../cli/cliDistIntegrity.mjs';
+import { assertNoMissingLocalImports } from '../../../../../scripts/workspaces/distLocalImports.mjs';
 export { isCliDistBuildLockActive } from './cliDistBuildLock.mjs';
+
+const DEPENDENCY_REFRESH_STAMP_FILE = '.happier-deps-refresh-stamp';
 
 function sha256Hex(s) {
   return createHash('sha256').update(String(s ?? ''), 'utf-8').digest('hex');
@@ -22,6 +27,19 @@ function sha256Hex(s) {
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, 'utf-8'));
+}
+
+async function writeDependencyRefreshStamp(nodeModulesDir) {
+  try {
+    await mkdir(nodeModulesDir, { recursive: true });
+    await writeFile(
+      join(nodeModulesDir, DEPENDENCY_REFRESH_STAMP_FILE),
+      JSON.stringify({ version: 1, refreshedAt: new Date().toISOString() }, null, 2) + '\n',
+      'utf-8',
+    );
+  } catch {
+    // Best-effort cache marker only; dependency install success remains the source of truth.
+  }
 }
 
 async function collectWorkspacePackageDirsByName(monorepoRoot) {
@@ -128,89 +146,6 @@ function createWorkspaceBuildWaitNotifier({ env = process.env, label, kind }) {
   };
 }
 
-function extractLocalImportSpecifiersFromJs(text) {
-  const src = String(text ?? '');
-  const out = new Set();
-
-  // import './x.mjs'
-  const reBareImport = /^\s*import\s+["'](\.\/[^"']+|\.\.\/[^"']+)["']/gm;
-  for (;;) {
-    const match = reBareImport.exec(src);
-    if (!match) break;
-    const spec = String(match[1] ?? '').trim();
-    if (!spec) continue;
-    out.add(spec);
-  }
-
-  // import x from './x.mjs'
-  // export * from './x.mjs'
-  const reFromImport = /^\s*(?:import|export)\b[\s\w{},*]*?\bfrom\s+["'](\.\/[^"']+|\.\.\/[^"']+)["']/gm;
-  for (;;) {
-    const match = reFromImport.exec(src);
-    if (!match) break;
-    const spec = String(match[1] ?? '').trim();
-    if (!spec) continue;
-    out.add(spec);
-  }
-
-  return Array.from(out);
-}
-
-async function assertNoMissingLocalImports({ distDir, entryPath, label = 'dist build' }) {
-  const root = resolve(distDir);
-  const entry = resolve(entryPath);
-
-  const visited = new Set();
-  const queue = [entry];
-  const missing = [];
-
-  while (queue.length) {
-    const current = queue.shift();
-    if (!current) continue;
-    const abs = resolve(current);
-    if (visited.has(abs)) continue;
-    visited.add(abs);
-
-    let contents = '';
-    try {
-      contents = await readFile(abs, 'utf-8');
-    } catch {
-      // If we can't read a file that exists, something is deeply wrong; surface it as missing.
-      missing.push({ from: abs, spec: '(unreadable)' });
-      continue;
-    }
-
-    for (const spec of extractLocalImportSpecifiersFromJs(contents)) {
-      const resolvedImport = resolve(dirname(abs), spec);
-      if (!(await pathExists(resolvedImport))) {
-        missing.push({ from: abs, spec });
-        continue;
-      }
-      // Only traverse within dist/ to avoid reading arbitrary local files.
-      if (resolvedImport === root || resolvedImport.startsWith(root + sep)) {
-        if (!visited.has(resolvedImport)) queue.push(resolvedImport);
-      }
-    }
-
-    // Keep this bounded: if dist explodes unexpectedly, fail-fast rather than hanging dev/watch.
-    if (visited.size > 5_000) {
-      throw new Error(`[local] dist import graph too large while validating ${entryPath} (visited=${visited.size})`);
-    }
-  }
-
-  if (missing.length) {
-    const preview = missing
-      .slice(0, 8)
-      .map((m) => `- ${m.spec} (from ${m.from})`)
-      .join('\n');
-    throw new Error(
-      `[local] ${label} looks partial (missing local imports).\n` +
-        `Entrypoint: ${entryPath}\n` +
-        `Missing (${missing.length}):\n${preview}`,
-    );
-  }
-}
-
 function resolveWorkspaceDistImportValidationRetryAttempts(env = process.env) {
   const raw = Number.parseInt(String(env.HAPPIER_WORKSPACE_DIST_IMPORT_VALIDATION_RETRY_ATTEMPTS ?? ''), 10);
   return Number.isFinite(raw) && raw > 0 ? raw : 24;
@@ -271,17 +206,74 @@ async function computeGitWorktreeSignature(dir) {
     const inside = (await runCapture('git', ['-C', dir, 'rev-parse', '--is-inside-work-tree'])).trim();
     if (inside !== 'true') return null;
     const head = (await runCapture('git', ['-C', dir, 'rev-parse', 'HEAD'])).trim();
-    // Includes staged + unstaged + untracked changes; captures “dirty” vs “clean”.
-    const status = await runCapture('git', ['-C', dir, 'status', '--porcelain=v1']);
+    // Includes staged + unstaged + untracked changes; hashes dirty file content so repeated
+    // edits to an already-dirty file still invalidate the dev build cache.
+    const status = await runCapture('git', ['-C', dir, 'status', '--porcelain=v1', '-z', '--untracked-files=all']);
+    const dirtySignature = await computeGitDirtySignature(dir, status);
     return {
       kind: 'git',
       head,
-      statusHash: sha256Hex(status),
-      signature: sha256Hex(`${head}\n${status}`),
+      statusHash: sha256Hex(dirtySignature),
+      signature: sha256Hex(`${head}\n${dirtySignature}`),
     };
   } catch {
     return null;
   }
+}
+
+async function computeGitDirtySignature(dir, porcelainStatus) {
+  const hash = createHash('sha256');
+  const records = String(porcelainStatus ?? '').split('\0').filter(Boolean);
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (record.length < 4) continue;
+    const statusCode = record.slice(0, 2);
+    const relativePath = record.slice(3);
+    if (isCliBuildOutputStatusPath(relativePath)) continue;
+    hash.update(statusCode);
+    hash.update('\0');
+    hash.update(relativePath);
+    hash.update('\0');
+    if (statusCode.includes('R') || statusCode.includes('C')) {
+      index += 1;
+      hash.update(records[index] ?? '');
+      hash.update('\0');
+    }
+    if (statusCode.includes('D')) {
+      hash.update('<deleted>');
+      hash.update('\0');
+      continue;
+    }
+    try {
+      const filePath = resolve(dir, relativePath);
+      const fileStats = await stat(filePath);
+      if (!fileStats.isFile()) {
+        hash.update(`<non-file:${fileStats.size}>`);
+        hash.update('\0');
+        continue;
+      }
+      hash.update(await readFile(filePath));
+      hash.update('\0');
+    } catch {
+      hash.update('<missing>');
+      hash.update('\0');
+    }
+  }
+  return hash.digest('hex');
+}
+
+function isCliBuildOutputStatusPath(relativePath) {
+  const normalized = String(relativePath ?? '').replace(/\\/g, '/').replace(/^\.\/+/, '');
+  return (
+    normalized === 'dist' ||
+    normalized.startsWith('dist/') ||
+    normalized === 'package-dist' ||
+    normalized.startsWith('package-dist/') ||
+    normalized.startsWith('dist.staging.') ||
+    normalized.startsWith('.runner-snapshots/') ||
+    normalized === '.dist.hstack-build.lock' ||
+    normalized.startsWith('.project/tmp/cli-dist-build.lock')
+  );
 }
 
 async function getComponentPm(dir, env = process.env) {
@@ -295,14 +287,26 @@ async function getComponentPm(dir, env = process.env) {
   void happyMonorepoRoot;
 
   // IMPORTANT: probe yarn with cwd=componentDir; yarn can be blocked depending on Corepack context.
-  if (await commandExists('yarn', { cwd: dir, env })) {
-    return { name: 'yarn', cmd: 'yarn' };
+  const yarnPath = await resolveCommandPath('yarn', { cwd: dir, env });
+  if (yarnPath) {
+    const preferredNodeBinDir = await resolvePreferredNodeBinDir(dir, env);
+    prioritizePackageManagerRuntimePath(env, {
+      commandPath: yarnPath,
+      nodeBinDir: preferredNodeBinDir ?? dirname(process.execPath),
+    });
+    return { name: 'yarn', cmd: yarnPath };
   }
 
   const binaryMode = String(env.HAPPIER_STACK_BINARY_MODE ?? '').trim() === '1'
     || String(env.HAPPIER_STACK_INSTALL_SOURCE ?? '').trim() === 'binary';
-  if (binaryMode && (await commandExists('npm', { cwd: dir, env }))) {
-    return { name: 'npm', cmd: 'npm' };
+  const npmPath = binaryMode ? await resolveCommandPath('npm', { cwd: dir, env }) : '';
+  if (npmPath) {
+    const preferredNodeBinDir = await resolvePreferredNodeBinDir(dir, env);
+    prioritizePackageManagerRuntimePath(env, {
+      commandPath: npmPath,
+      nodeBinDir: preferredNodeBinDir ?? dirname(process.execPath),
+    });
+    return { name: 'npm', cmd: npmPath };
   }
 
   throw new Error(`[local] yarn is required for component at ${dir}. Install it via Corepack: \`corepack enable\``);
@@ -386,6 +390,21 @@ function appendPathEntry(env, entry) {
     .map((value) => String(value ?? '').trim())
     .filter(Boolean);
   env.PATH = [...current.filter((value) => value !== candidate), candidate].join(delimiter);
+  return env;
+}
+
+function prioritizePackageManagerRuntimePath(env, { commandPath, nodeBinDir }) {
+  const commandDir = dirname(String(commandPath ?? '').trim());
+  const nodeDir = String(nodeBinDir ?? '').trim();
+  const delimiter = process.platform === 'win32' ? ';' : ':';
+  const current = String(env.PATH ?? '')
+    .split(delimiter)
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean);
+
+  const prefix = [commandDir, nodeDir].filter(Boolean);
+  const prefixSet = new Set(prefix);
+  env.PATH = [...prefix, ...current.filter((value) => !prefixSet.has(value))].join(delimiter);
   return env;
 }
 
@@ -508,7 +527,7 @@ async function ensureYarnReady({ dir, env, quiet = false }) {
   const key = `${resolve(dir)}|${String(e.HOME ?? '')}|${String(e.XDG_CACHE_HOME ?? '')}`;
   if (_yarnReadyKeys.has(key)) return;
 
-  const stdio = quiet ? 'ignore' : 'inherit';
+  const stdio = quiet ? 'ignore' : ['pipe', 'ignore', 'inherit'];
   // Corepack sometimes prompts on first use:
   //   "Corepack is about to download ... Do you want to continue? [Y/n]"
   //
@@ -673,6 +692,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
     // (because apps/* typically has no yarn.lock, and node_modules is often nohoisted).
     const yarnLock = join(installDir, 'yarn.lock');
     const yarnIntegrity = join(nodeModules, '.yarn-integrity');
+    const dependencyRefreshStamp = join(nodeModules, DEPENDENCY_REFRESH_STAMP_FILE);
 
     // If dependencies changed since the last install, re-run install even if node_modules exists.
     const mtimeMs = async (p) => {
@@ -726,13 +746,15 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
       const workspacePkgM = await workspacePkgMtimeMs();
       const intM = await mtimeMs(yarnIntegrity);
       const patchM = await patchesMtimeMs();
-      const nodeModulesM = intM || await mtimeMs(nodeModules);
+      const stampM = await mtimeMs(dependencyRefreshStamp);
+      const nodeModulesM = Math.max(intM, stampM) || await mtimeMs(nodeModules);
       if (!nodeModulesM || lockM > nodeModulesM || pkgM > nodeModulesM || workspacePkgM > nodeModulesM || patchM > nodeModulesM) {
         if (!quiet) {
           // eslint-disable-next-line no-console
           console.log(`[local] refreshing ${label} dependencies (yarn.lock/package.json/workspace package.json/patches changed)...`);
         }
         await run(pm.cmd, installArgs, { cwd: installDir, stdio, env });
+        await writeDependencyRefreshStamp(nodeModules);
       }
     }
 
@@ -745,6 +767,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
     console.log(`[local] installing ${label} dependencies (first run)...`);
   }
   await run(pm.cmd, installArgs, { cwd: installDir, stdio, env });
+  await writeDependencyRefreshStamp(nodeModules);
   await ensureServerGeneratedProviderOutputs(componentDir, installDir, { quiet, env, pm });
 }
 
@@ -778,6 +801,16 @@ function collectExpectedPackageFilesFromPackageJson(pkgJson) {
 
   // Only relative file targets are meaningful on disk.
   return [...new Set(candidates)].filter((p) => typeof p === 'string' && (p.startsWith('./') || p.startsWith('dist/')));
+}
+
+function remapDistPathToDir(path, { pkgDir, distDir }) {
+  const abs = resolve(path);
+  const realDistRoot = resolve(join(pkgDir, 'dist'));
+  if (abs === realDistRoot) return resolve(distDir);
+  if (abs.startsWith(realDistRoot + sep)) {
+    return join(resolve(distDir), relative(realDistRoot, abs));
+  }
+  return abs;
 }
 
 function workspacePackageLockSlug(pkgDir, pkgJson) {
@@ -883,8 +916,12 @@ async function ensureWorkspacePackageBuiltUnderLock({
 
   const pm = await getComponentPm(pkgDir, env);
 
-  const buildEnv = { ...env, HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: lockPath };
-  const runBuild = async () => {
+  const runBuild = async (tmpDistDir) => {
+    const buildEnv = {
+      ...env,
+      HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: lockPath,
+      HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: tmpDistDir,
+    };
     if (pm.name === 'yarn') {
       await ensureYarnReady({ dir: pkgDir, env, quiet });
       await run(pm.cmd, ['-s', 'build'], { cwd: pkgDir, stdio, env: buildEnv });
@@ -921,7 +958,31 @@ async function ensureWorkspacePackageBuiltUnderLock({
   }
 
   if (!res) {
-    await runBuild();
+    await buildIntoTempThenReplace(distDir, async (tmpDistDir) => {
+      await runBuild(tmpDistDir);
+
+      const stagedExpectedFiles = expectedFiles.map((p) => remapDistPathToDir(p, { pkgDir, distDir: tmpDistDir }));
+      const missingStaged = stagedExpectedFiles.filter((p) => !existsSync(p));
+      if (missingStaged.length > 0) {
+        throw new Error(
+          `[local] build completed but expected staged outputs are still missing for ${pkgJson?.name ?? pkgDir}:\n` +
+            missingStaged.map((p) => `- ${p}`).join('\n') +
+            '\nFix: ensure the package build honors HAPPIER_WORKSPACE_DIST_OUTPUT_DIR or generates the files referenced by package.json exports/main/types.',
+        );
+      }
+
+      if (distEntrypoints.length > 0) {
+        for (const entryPath of distEntrypoints) {
+          await assertNoMissingLocalImportsWithRetry({
+            distDir: tmpDistDir,
+            entryPath: remapDistPathToDir(entryPath, { pkgDir, distDir: tmpDistDir }),
+            label,
+            env,
+            onRetry: reportImportRetry,
+          });
+        }
+      }
+    });
     res = { built: true, reason: 'rebuilt' };
   }
 
@@ -1041,22 +1102,20 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
     const mode = modeRaw === 'always' || modeRaw === 'auto' || modeRaw === 'never' ? modeRaw : 'auto';
     const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
     const distDir = join(cliDir, 'dist');
-    const distBackupDir = join(cliDir, '.dist.hstack-backup');
+    const legacyDistBackupDir = join(cliDir, '.dist.hstack-backup');
     const buildStatePath = resolveBuildStatePath({ label: 'happier-cli', dir: cliDir });
     const gitSig = await computeGitWorktreeSignature(cliDir);
     const prev = await readJsonIfExists(buildStatePath);
 
-    // Recovery: if a previous build was interrupted after moving dist/ aside, we can be left with
-    // dist/ missing but .dist.hstack-backup/ present. Restore it so the stack remains runnable
-    // (and so subsequent "auto" mode checks can correctly treat the CLI as already built).
-    if (!(await pathExists(distDir)) && (await pathExists(distBackupDir))) {
-      await rename(distBackupDir, distDir);
-    }
+    await rm(legacyDistBackupDir, { recursive: true, force: true }).catch(() => {});
 
     if (waited && mode === 'always' && (await pathExists(distEntrypoint))) {
       const latestBuildState = await readJsonIfExists(buildStatePath);
       if (buildStateMatchesGitSignature(latestBuildState, gitSig)) {
-        await assertNoMissingLocalImports({ distDir, entryPath: distEntrypoint });
+        const integrity = readCliDistIntegrity(distEntrypoint);
+        if (!integrity.ok) {
+          throw new Error(`[local] happier-cli dist build manifest is not usable: ${integrity.reason}`);
+        }
         return { built: false, reason: 'concurrent_build_already_completed' };
       }
     }
@@ -1089,41 +1148,25 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
     const env = await preparePmEnv(cliDir, envIn);
     await repairCorruptedCliPkgrollInstallIfNeeded(cliDir, { quiet, env });
     const pm = await getComponentPm(cliDir, env);
-    const hadDistBeforeBuild = await pathExists(distDir);
-    if (hadDistBeforeBuild) {
-      await rm(distBackupDir, { recursive: true, force: true });
-      await rename(distDir, distBackupDir);
+    await run(pm.cmd, ['build'], { cwd: cliDir, env, stdio: quiet ? 'ignore' : 'inherit' });
+
+    // Sanity check: happier-cli daemon entrypoint must exist after a successful build.
+    // Without this, watch-based rebuilds can restart the daemon into a MODULE_NOT_FOUND crash,
+    // which looks like the UI "dies out of nowhere" even though the root cause is missing build output.
+    if (!(await pathExists(distEntrypoint))) {
+      throw new Error(
+        `[local] happier-cli build finished but did not produce expected entrypoint.\n` +
+          `Expected: ${distEntrypoint}\n` +
+          `Fix: run the component build directly and inspect its output:\n` +
+          `  cd "${cliDir}" && ${pm.cmd} build`
+      );
     }
 
-    try {
-      await run(pm.cmd, ['build'], { cwd: cliDir, env, stdio: quiet ? 'ignore' : 'inherit' });
-
-      // Sanity check: happier-cli daemon entrypoint must exist after a successful build.
-      // Without this, watch-based rebuilds can restart the daemon into a MODULE_NOT_FOUND crash,
-      // which looks like the UI "dies out of nowhere" even though the root cause is missing build output.
-      if (!(await pathExists(distEntrypoint))) {
-        throw new Error(
-          `[local] happier-cli build finished but did not produce expected entrypoint.\n` +
-            `Expected: ${distEntrypoint}\n` +
-            `Fix: run the component build directly and inspect its output:\n` +
-            `  cd "${cliDir}" && ${pm.cmd} build`
-        );
-      }
-
-      // Dist integrity: ensure that local import specifiers reachable from the daemon entrypoint exist.
-      // This prevents restarting the daemon into a runtime MODULE_NOT_FOUND crash if the build is partial.
-      await assertNoMissingLocalImports({ distDir, entryPath: distEntrypoint });
-
-      if (hadDistBeforeBuild) {
-        await rm(distBackupDir, { recursive: true, force: true });
-      }
-    } catch (error) {
-      if (hadDistBeforeBuild && (await pathExists(distBackupDir))) {
-        await rm(distDir, { recursive: true, force: true });
-        await rename(distBackupDir, distDir);
-      }
-      throw error;
+    const integrity = readCliDistIntegrity(distEntrypoint);
+    if (!integrity.ok) {
+      throw new Error(`[local] happier-cli dist build manifest is not usable: ${integrity.reason}`);
     }
+    await probeCliDistRuntimeImport(distEntrypoint, { cwd: cliDir, env });
 
     // Persist new build state (best-effort).
     const nowSig = gitSig ?? (await computeGitWorktreeSignature(cliDir));
@@ -1242,6 +1285,13 @@ export async function pmExecBin(dirOrOpts, binArg, argsArg, optsArg) {
   await run(pm.cmd, ['run', bin, ...args], { cwd: dir, env, stdio });
 }
 
+export function applyStackInfraProcessKind(env) {
+  if (!(env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim()) {
+    return env;
+  }
+  return { ...env, HAPPIER_STACK_PROCESS_KIND: 'infra' };
+}
+
 export async function pmSpawnBin(dir, label, bin, args, { env = process.env } = {}) {
   const usesObjectStyle = typeof dir === 'object' && dir !== null;
   const componentDir = usesObjectStyle ? dir.dir : dir;
@@ -1257,11 +1307,7 @@ export async function pmSpawnBin(dir, label, bin, args, { env = process.env } = 
   if (pm.name === 'yarn') {
     await ensureYarnReady({ dir: componentDir, env: effectiveEnv, quiet });
   }
-  const kind = (effectiveEnv.HAPPIER_STACK_PROCESS_KIND ?? '').toString().trim();
-  const envForChild =
-    kind || !(effectiveEnv.HAPPIER_STACK_ENV_FILE ?? '').toString().trim()
-      ? effectiveEnv
-      : { ...effectiveEnv, HAPPIER_STACK_PROCESS_KIND: 'infra' };
+  const envForChild = applyStackInfraProcessKind(effectiveEnv);
   return spawnProc(componentLabel, pm.cmd, ['run', componentBin, ...componentArgs], envForChild, { cwd: componentDir, ...options });
 }
 
@@ -1280,10 +1326,6 @@ export async function pmSpawnScript(dir, label, script, args, { env = process.en
   if (pm.name === 'yarn') {
     await ensureYarnReady({ dir: componentDir, env: effectiveEnv, quiet });
   }
-  const kind = (effectiveEnv.HAPPIER_STACK_PROCESS_KIND ?? '').toString().trim();
-  const envForChild =
-    kind || !(effectiveEnv.HAPPIER_STACK_ENV_FILE ?? '').toString().trim()
-      ? effectiveEnv
-      : { ...effectiveEnv, HAPPIER_STACK_PROCESS_KIND: 'infra' };
+  const envForChild = applyStackInfraProcessKind(effectiveEnv);
   return spawnProc(componentLabel, pm.cmd, ['run', componentScript, ...componentArgs], envForChild, { cwd: componentDir, ...options });
 }

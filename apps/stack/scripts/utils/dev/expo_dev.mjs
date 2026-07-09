@@ -24,7 +24,6 @@ import {
   computeExpoRestartDelayMs,
   createExpoCrashOutputTracker,
   describeExpoTermination,
-  isIntentionalExpoTermination,
   resolveExpoRestartPolicy,
 } from './expo_dev_supervision.mjs';
 
@@ -177,6 +176,7 @@ export async function ensureDevExpoServer({
   children,
   spawnOptions = {},
   expoTailscale = false,
+  isShuttingDown = () => false,
   quiet = false,
 } = {}) {
   const wantWeb = Boolean(startUi);
@@ -257,7 +257,7 @@ export async function ensureDevExpoServer({
     alreadyRunning &&
     !restart &&
     stackMode &&
-    wantWeb &&
+    (wantWeb || wantDevClient) &&
     desiredApiServerUrl &&
     runningStateApiServerUrl !== desiredApiServerUrl;
   // In stack mode, never adopt "running by port probe only" state. It may belong to a
@@ -283,14 +283,16 @@ export async function ensureDevExpoServer({
     Boolean(expoTailscaleIp) &&
     Boolean(running.state?.tailscaleEnabled) &&
     (!hasRecordedTailscaleForwarder || !isPidAlive(tailscaleForwarderPid));
+  const shouldReplaceRunningExpo =
+    restart ||
+    shouldRestartForApiServerMismatch ||
+    shouldRestartForPortFallbackInStackMode ||
+    shouldRestartForTailscaleMismatch ||
+    shouldRestartForDeadTailscaleForwarder;
 
   if (
     alreadyRunning &&
-    !restart &&
-    !shouldRestartForApiServerMismatch &&
-    !shouldRestartForPortFallbackInStackMode &&
-    !shouldRestartForTailscaleMismatch &&
-    !shouldRestartForDeadTailscaleForwarder
+    !shouldReplaceRunningExpo
   ) {
     const statePid = Number(running.state?.pid);
     const pid = Number.isFinite(statePid) && statePid > 1 && isPidAlive(statePid) ? statePid : null;
@@ -346,7 +348,7 @@ export async function ensureDevExpoServer({
 
   const reservedMetroPorts = new Set();
 
-  if (restart && running.state?.pid) {
+  if (shouldReplaceRunningExpo && running.state?.pid) {
     const prevPid = Number(running.state.pid);
     const prevPort = Number(running.state?.port);
     const prevPidAlive = Number.isFinite(prevPid) && prevPid > 1 && isPidAlive(prevPid);
@@ -511,7 +513,7 @@ export async function ensureDevExpoServer({
     }
   };
 
-  const clearRuntimePidIfCurrent = async (pid) => {
+  const clearRuntimeIfCurrent = async (pid) => {
     if (!stackMode || !runtimeStatePath) return;
     const runtimeState = await readStackRuntimeStateFile(runtimeStatePath).catch(() => null);
     if (!runtimeState) return;
@@ -522,6 +524,14 @@ export async function ensureDevExpoServer({
     await recordStackRuntimeUpdate(runtimeStatePath, {
       processes: {
         expoPid: null,
+        expoTailscaleForwarderPid: null,
+      },
+      expo: {
+        port: null,
+        webPort: null,
+        mobilePort: null,
+        tailscaleEnabled: false,
+        tailscaleIp: null,
       },
     }).catch(() => {});
   };
@@ -548,10 +558,10 @@ export async function ensureDevExpoServer({
 
     proc.once('exit', (code, signal) => {
       void (async () => {
-        if (isIntentionalExpoTermination({ code, signal })) {
+        await clearRuntimeIfCurrent(proc.pid);
+        if (isShuttingDown?.() === true) {
           return;
         }
-        await clearRuntimePidIfCurrent(proc.pid);
         if (!restartPolicy.enabled || restartPolicy.maxAttempts <= 0) {
           return;
         }

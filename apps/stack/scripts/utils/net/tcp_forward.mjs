@@ -12,6 +12,8 @@
 
 import net from 'node:net';
 
+const stopPromises = new WeakMap();
+
 /**
  * Create a TCP forwarding server.
  *
@@ -24,12 +26,23 @@ import net from 'node:net';
  * @returns {net.Server}
  */
 export function createTcpForwarder({ listenHost, listenPort, targetHost, targetPort, label = 'tcp-forward' }) {
+  let upstream = normalizeUpstream({ targetHost, targetPort });
+  const activePairs = new Set();
+
   const server = net.createServer((clientSocket) => {
-    const targetSocket = net.createConnection({ host: targetHost, port: targetPort }, () => {
+    const target = upstream;
+    const targetSocket = net.createConnection({ host: target.targetHost, port: target.targetPort }, () => {
       // Connection established, pipe data both ways
       clientSocket.pipe(targetSocket);
       targetSocket.pipe(clientSocket);
     });
+    const pair = { clientSocket, targetSocket, target };
+    activePairs.add(pair);
+    const cleanupPair = () => {
+      activePairs.delete(pair);
+      clientSocket.unpipe(targetSocket);
+      targetSocket.unpipe(clientSocket);
+    };
 
     // Handle errors on both sockets
     clientSocket.on('error', (err) => {
@@ -47,15 +60,78 @@ export function createTcpForwarder({ listenHost, listenPort, targetHost, targetP
     });
 
     // Clean up on close
-    clientSocket.on('close', () => targetSocket.destroy());
-    targetSocket.on('close', () => clientSocket.destroy());
+    clientSocket.on('close', () => {
+      cleanupPair();
+      targetSocket.destroy();
+    });
+    targetSocket.on('close', () => {
+      cleanupPair();
+      clientSocket.destroy();
+    });
   });
+
+  server.setUpstream = (nextTarget) => {
+    upstream = normalizeUpstream({
+      targetHost: nextTarget?.targetHost || upstream.targetHost,
+      targetPort: nextTarget?.targetPort || upstream.targetPort,
+    });
+    return { ...upstream };
+  };
+
+  server.getUpstream = () => ({ ...upstream });
+
+  server.getActiveConnectionCount = () => activePairs.size;
+
+  server.closeConnectionsAfterGrace = async ({ graceMs = 0, target = null } = {}) => {
+    const delayMs = Math.max(0, Number(graceMs) || 0);
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+
+    const normalizedTarget = target ? normalizeUpstream(target) : null;
+    const pairsToClose = [...activePairs].filter((pair) => (
+      !normalizedTarget || upstreamsEqual(pair.target, normalizedTarget)
+    ));
+    const closing = [];
+    for (const pair of pairsToClose) {
+      const waitClient = waitForSocketClose(pair.clientSocket);
+      const waitTarget = waitForSocketClose(pair.targetSocket);
+      pair.clientSocket.destroy();
+      pair.targetSocket.destroy();
+      closing.push(waitClient, waitTarget);
+    }
+    if (closing.length === 0) return;
+    await Promise.race([
+      Promise.allSettled(closing),
+      new Promise((resolve) => setTimeout(resolve, 250)),
+    ]);
+  };
+  server.closeIdleOrAllConnectionsAfterGrace = server.closeConnectionsAfterGrace;
 
   server.on('error', (err) => {
     process.stderr.write(`[${label}] server error: ${err.message}\n`);
   });
 
   return server;
+}
+
+function normalizeUpstream({ targetHost, targetPort }) {
+  const host = String(targetHost || '').trim();
+  const port = Number(targetPort);
+  if (!host) throw new Error('targetHost is required');
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error(`targetPort must be a valid TCP port, got ${targetPort}`);
+  }
+  return { targetHost: host, targetPort: port };
+}
+
+function upstreamsEqual(left, right) {
+  return left.targetHost === right.targetHost && left.targetPort === right.targetPort;
+}
+
+function waitForSocketClose(socket) {
+  if (!socket || socket.destroyed || socket.closed) return Promise.resolve();
+  return new Promise((resolve) => socket.once('close', resolve));
 }
 
 /**
@@ -100,16 +176,45 @@ function trySendIpc(msg) {
  */
 export async function stopTcpForwarder(server, label = 'tcp-forward') {
   if (!server) return;
-  return new Promise((resolve) => {
-    server.close(() => {
+  const existingStop = stopPromises.get(server);
+  if (existingStop) return existingStop;
+
+  const stopPromise = new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
       process.stdout.write(`[${label}] stopped\n`);
       resolve();
+    };
+
+    const closeActive = typeof server.closeConnectionsAfterGrace === 'function'
+      ? server.closeConnectionsAfterGrace({ graceMs: 0 })
+      : typeof server.closeIdleOrAllConnectionsAfterGrace === 'function'
+        ? server.closeIdleOrAllConnectionsAfterGrace({ graceMs: 0 })
+        : Promise.resolve();
+
+    closeActive.then(() => {
+      if (!server.listening) finish();
+    }, finish);
+
+    try {
+      server.close(() => {
+        closeActive.finally(finish);
+      });
+    } catch (err) {
+      if (err && typeof err === 'object' && err.code === 'ERR_SERVER_NOT_RUNNING') {
+        closeActive.finally(finish);
+        return;
+      }
+      throw err;
+    }
+
+    // Force-close after timeout.
+    setTimeout(finish, 2000);
     });
-    // Force-close after timeout
-    setTimeout(() => {
-      resolve();
-    }, 2000);
-  });
+  stopPromises.set(server, stopPromise);
+  return stopPromise;
 }
 
 // Standalone CLI mode

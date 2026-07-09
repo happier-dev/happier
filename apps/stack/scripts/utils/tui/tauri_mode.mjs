@@ -6,13 +6,32 @@ import { getRepoDir, resolveStackEnvPath } from '../paths/paths.mjs';
 import { readStackRuntimeStateFile } from '../stack/runtime_state.mjs';
 import { looksLikeExpoMetro } from '../expo/expo.mjs';
 
+function isTuiDevForwardedArgs(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+  if (!args.length) return false;
+
+  const first = String(args[0] ?? '').trim();
+  if (first === 'dev') return true;
+
+  const stackIdx = args.indexOf('stack');
+  if (stackIdx < 0) return false;
+  return String(args[stackIdx + 1] ?? '').trim() === 'dev';
+}
+
+function ensureTuiWatchArg(args) {
+  if (!isTuiDevForwardedArgs(args) || args.includes('--watch') || args.includes('--no-watch')) {
+    return args;
+  }
+  return [...args, '--watch'];
+}
+
 export function buildTuiChildArgs({ forwardedArgs, withTauri } = {}) {
   const args = Array.isArray(forwardedArgs) ? forwardedArgs.map((arg) => String(arg ?? '')).filter(Boolean) : [];
+  const childArgs = ensureTuiWatchArg(args.length > 0 ? args : ['dev']);
   if (!withTauri) {
-    return args.length > 0 ? args : ['dev'];
+    return childArgs;
   }
 
-  const childArgs = args.length > 0 ? args : ['dev'];
   if (childArgs.includes('--no-browser')) {
     return childArgs;
   }

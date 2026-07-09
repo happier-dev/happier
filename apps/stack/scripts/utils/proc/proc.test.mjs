@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { runCaptureResult, spawnProc } from './proc.mjs';
+import { markSpawnedProcessPlannedExit, runCaptureResult, spawnProc } from './proc.mjs';
 import { resolveDefaultShellForCommand } from './proc.mjs';
 
 async function withTempRoot(t) {
@@ -129,6 +129,28 @@ test('spawnProc reports complete stdout and stderr lines to onLine', async () =>
     { stream: 'stdout', line: 'part' },
     { stream: 'stderr', line: 'err' },
   ]);
+});
+
+test('spawnProc labels planned dev-reload exits without hiding the exit code', async (t) => {
+  const stderrWrites = [];
+  t.mock.method(process.stderr, 'write', (chunk) => {
+    stderrWrites.push(String(chunk));
+    return true;
+  });
+
+  const child = spawnProc(
+    'server',
+    process.execPath,
+    ['-e', 'setTimeout(() => process.exit(1), 20);'],
+    process.env,
+  );
+  markSpawnedProcessPlannedExit(child, 'dev-reload');
+
+  await new Promise((resolve) => child.on('exit', resolve));
+
+  const streamedErr = stderrWrites.join('');
+  assert.match(streamedErr, /\[server\] planned dev-reload exit \(code=1, sig=null\)/);
+  assert.doesNotMatch(streamedErr, /\[server\] exited \(code=1, sig=null\)/);
 });
 
 test('resolveDefaultShellForCommand enables a shell for Yarn shims on Windows', () => {

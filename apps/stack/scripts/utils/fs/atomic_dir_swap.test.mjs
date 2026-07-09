@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -24,6 +24,50 @@ test('buildIntoTempThenReplace preserves existing dir when build fails', async (
     async () => {
       await buildIntoTempThenReplace(outDir, async (tmp) => {
         await writeFile(join(tmp, 'marker.txt'), 'new\n', 'utf-8');
+        throw new Error('boom');
+      });
+    },
+    /boom/
+  );
+
+  const after = await readFile(join(outDir, 'marker.txt'), 'utf-8');
+  assert.equal(after, 'old\n');
+});
+
+test('buildIntoTempThenReplace leaves the live dir in place when staged build fails', async (t) => {
+  const root = await withTempRoot(t);
+  const outDir = join(root, 'ui');
+  await mkdir(outDir, { recursive: true });
+  await writeFile(join(outDir, 'marker.txt'), 'old\n', 'utf-8');
+  const before = await stat(outDir);
+
+  await assert.rejects(
+    async () => {
+      await buildIntoTempThenReplace(outDir, async (tmp) => {
+        await writeFile(join(tmp, 'marker.txt'), 'new\n', 'utf-8');
+        throw new Error('boom');
+      });
+    },
+    /boom/
+  );
+
+  const after = await stat(outDir);
+  assert.equal(after.dev, before.dev);
+  assert.equal(after.ino, before.ino);
+  assert.equal(await readFile(join(outDir, 'marker.txt'), 'utf-8'), 'old\n');
+});
+
+test('buildIntoTempThenReplace restores existing dir when a failed build deletes it', async (t) => {
+  const root = await withTempRoot(t);
+  const outDir = join(root, 'ui');
+  await mkdir(outDir, { recursive: true });
+  await writeFile(join(outDir, 'marker.txt'), 'old\n', 'utf-8');
+
+  await assert.rejects(
+    async () => {
+      await buildIntoTempThenReplace(outDir, async (tmp) => {
+        await writeFile(join(tmp, 'marker.txt'), 'new\n', 'utf-8');
+        await rm(outDir, { recursive: true, force: true });
         throw new Error('boom');
       });
     },

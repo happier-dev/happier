@@ -173,6 +173,22 @@ export async function isTcpPortFree(port, { host = '127.0.0.1', timeoutMs = 250 
   });
 }
 
+export async function waitForTcpPortFree(
+  port,
+  { host = '127.0.0.1', timeoutMs = 5_000, intervalMs = 100, isTcpPortFreeImpl = isTcpPortFree } = {}
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await isTcpPortFreeImpl(port, { host, timeoutMs: Math.min(intervalMs, 250) })) {
+      return true;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await delay(intervalMs);
+  }
+  return false;
+}
+
 export async function pickNextFreeTcpPort(startPort, { reservedPorts = new Set(), host = '127.0.0.1', tries = 200 } = {}) {
   let port = startPort;
   for (let i = 0; i < tries; i++) {

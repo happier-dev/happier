@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   SANDBOX_PRESERVE_KEYS,
+  STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS,
   STACK_WRAPPER_PRESERVE_KEYS,
   scrubHappierStackEnv,
 } from './scrub_env.mjs';
@@ -99,4 +100,63 @@ test('scrubHappierStackEnv preserves HAPPIER_STACK_TUI in stack wrapper mode', (
   assert.equal(scrubbed.HAPPIER_STACK_TUI, '1');
   assert.equal(scrubbed.HAPPIER_STACK_VERBOSE, '1');
   assert.equal(scrubbed.HAPPIER_STACK_SECRET, undefined);
+});
+
+test('scrubHappierStackEnv preserves stack wrapper routing and runtime selection keys', () => {
+  const env = {
+    HAPPIER_STACK_ENV_FILE: '/tmp/stack/env',
+    HAPPIER_STACK_STACK: 'dev',
+    HAPPIER_STACK_OWNER: 'alice',
+    HAPPIER_STACK_REPO_DIR: '/tmp/repo',
+    HAPPIER_STACK_RUNTIME_MODE: 'require',
+    HAPPIER_STACK_RUNTIME_STATE_PATH: '/tmp/stack/stack.runtime.json',
+    HAPPIER_STACK_CLI_HOME_DIR: '/tmp/stack/cli',
+    HAPPIER_STACK_CLI_IDENTITY: 'default',
+    HAPPIER_STACK_SECRET: 'drop-me',
+  };
+
+  const scrubbed = scrubHappierStackEnv(env, {
+    keepHappierStackKeys: STACK_WRAPPER_PRESERVE_KEYS,
+    clearUnprefixedKeys: [],
+  });
+
+  assert.equal(scrubbed.HAPPIER_STACK_ENV_FILE, '/tmp/stack/env');
+  assert.equal(scrubbed.HAPPIER_STACK_STACK, 'dev');
+  assert.equal(scrubbed.HAPPIER_STACK_OWNER, 'alice');
+  assert.equal(scrubbed.HAPPIER_STACK_REPO_DIR, '/tmp/repo');
+  assert.equal(scrubbed.HAPPIER_STACK_RUNTIME_MODE, 'require');
+  assert.equal(scrubbed.HAPPIER_STACK_RUNTIME_STATE_PATH, '/tmp/stack/stack.runtime.json');
+  assert.equal(scrubbed.HAPPIER_STACK_CLI_HOME_DIR, '/tmp/stack/cli');
+  assert.equal(scrubbed.HAPPIER_STACK_CLI_IDENTITY, 'default');
+  assert.equal(scrubbed.HAPPIER_STACK_SECRET, undefined);
+});
+
+test('STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS covers stale cross-stack runtime and server context', () => {
+  for (const key of [
+    'HAPPIER_HOME_DIR',
+    'HAPPIER_SERVER_URL',
+    'HAPPIER_PUBLIC_SERVER_URL',
+    'HAPPIER_LOCAL_SERVER_URL',
+    'HAPPIER_WEBAPP_URL',
+    'HAPPIER_ACTIVE_SERVER_ID',
+    'HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT',
+    'TSX_TSCONFIG_PATH',
+  ]) {
+    assert.ok(
+      STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS.includes(key),
+      `expected ${key} to be cleared for stack-wrapper invocations`,
+    );
+  }
+
+  const scrubbed = scrubHappierStackEnv(
+    Object.fromEntries(STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS.map((key) => [key, `stale-${key}`])),
+    {
+      keepHappierStackKeys: STACK_WRAPPER_PRESERVE_KEYS,
+      clearUnprefixedKeys: STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS,
+    },
+  );
+
+  for (const key of STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS) {
+    assert.equal(scrubbed[key], undefined, `expected ${key} to be scrubbed`);
+  }
 });

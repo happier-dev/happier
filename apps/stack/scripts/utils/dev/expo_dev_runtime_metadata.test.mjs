@@ -95,7 +95,12 @@ test('ensureDevExpoServer in stack mode starts managed Expo instead of adopting 
       uiDir,
       expoProjectDir: projectDir,
       autostart: { baseDir: tmp },
-      baseEnv: { ...process.env },
+      baseEnv: {
+        ...process.env,
+        HAPPIER_STACK_EXPO_DEV_PORT: '',
+        HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY: 'ephemeral',
+        HAPPIER_STACK_EXPO_RESTART_MAX_ATTEMPTS: '0',
+      },
       apiServerUrl: 'http://127.0.0.1:3009',
       restart: false,
       stackMode: true,
@@ -121,6 +126,6 @@ test('ensureDevExpoServer in stack mode starts managed Expo instead of adopting 
       killProcessTreeByPid(child?.pid);
     }
     await close(metro).catch(() => {});
-    await rm(tmp, { recursive: true, force: true });
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 });

@@ -71,11 +71,6 @@ export function createExpoCrashOutputTracker({ maxLines = MAX_RECENT_OUTPUT_LINE
   };
 }
 
-export function isIntentionalExpoTermination({ code, signal } = {}) {
-  if (code === 0) return true;
-  return signal === 'SIGINT' || signal === 'SIGTERM' || signal === 'SIGKILL';
-}
-
 export function describeExpoTermination({ code, signal, outputTracker } = {}) {
   if (outputTracker?.sawHeapOutOfMemory?.()) {
     return 'probable Node heap out-of-memory';

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -138,6 +138,51 @@ test('isStateProcessRunning does not treat an unrelated Metro on the same port a
     assert.equal(res.running, false);
   } finally {
     await metro.kill().catch(() => {});
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('isStateProcessRunning does not trust a live pid whose Expo isolation belongs to another state dir', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-state-pid-identity-'));
+  let child = null;
+  try {
+    const expectedStateDir = join(tmp, 'expected');
+    const foreignStateDir = join(tmp, 'foreign');
+    await mkdir(join(expectedStateDir, 'expo-home'), { recursive: true });
+    await mkdir(join(foreignStateDir, 'expo-home'), { recursive: true });
+
+    child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], {
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        __UNSAFE_EXPO_HOME_DIRECTORY: join(foreignStateDir, 'expo-home'),
+      },
+    });
+
+    const statePath = join(expectedStateDir, 'expo.state.json');
+    await writeFile(
+      statePath,
+      JSON.stringify(
+        {
+          pid: child.pid,
+          port: 19000,
+          projectDir: join(tmp, 'expected-project'),
+        },
+        null,
+        2
+      ) + '\n',
+      'utf-8'
+    );
+
+    const res = await isStateProcessRunning(statePath);
+    assert.equal(res.running, false);
+    assert.equal(res.reason, 'pid_identity_mismatch');
+  } finally {
+    try {
+      child?.kill('SIGKILL');
+    } catch {
+      // ignore
+    }
     await rm(tmp, { recursive: true, force: true });
   }
 });
