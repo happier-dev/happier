@@ -1,19 +1,24 @@
-import { storage } from '@/sync/domains/state/storage';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import {
+    storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import { resolveDaemonVoiceAgentModelIds } from '@/voice/agent/resolveDaemonVoiceAgentModels';
 import { ensureVoiceAgentInstallablesBackground } from '@/voice/agent/ensureVoiceAgentInstallablesBackground';
 import { resolveVoiceAgentInitialContexts } from '@/voice/agent/resolveVoiceAgentInitialContexts';
-import type { VoiceAgentClient, VoiceAgentHandle, VoiceAgentStartParams } from '@/voice/agent/types';
+import type { VoiceAgentClient,
+    VoiceAgentHandle,
+    VoiceAgentStartParams } from '@/voice/agent/types';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { ensureVoiceConversationSessionId } from '@/voice/persistence/voiceConversationSession';
 import {
     doesVoiceAgentRunMetadataMatchBackendTarget,
     readVoiceAgentRunMetadataFromSession,
-} from '@/voice/persistence/voiceAgentRunMetadata';
+    } from '@/voice/persistence/voiceAgentRunMetadata';
 import { backendTargetsMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { resolveDisabledVoiceActionIdsFromState } from '@/voice/tools/resolveDisabledVoiceActionIds';
-import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID,
+} from '@/agents/catalog/catalog';
 import { sessionExecutionRunGet, sessionExecutionRunList, sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
 import { resolveVoiceAgentBootstrapTimeoutMs } from '@/voice/agent/resolveVoiceAgentBootstrapTimeoutMs';
 import { assertDaemonVoiceAgentRuntimeSupported } from '@/voice/agent/assertDaemonVoiceAgentRuntimeSupported';
@@ -318,7 +323,7 @@ export async function initializeVoiceAgentHandle({
             return explicit.length > 0 ? explicit : DEFAULT_AGENT_ID;
         }
         const session = resolveDaemonSessionFromState(daemonSessionId);
-        return resolveAgentIdFromFlavor((session?.metadata as any)?.flavor) ?? DEFAULT_AGENT_ID;
+        return resolveAgentIdFromSessionMetadata(session?.metadata) ?? DEFAULT_AGENT_ID;
     };
     let chatModelId = '';
     let commitModelId = '';
@@ -495,7 +500,6 @@ export async function initializeVoiceAgentHandle({
             startResumeHandle = shouldUseProviderResume() ? adoptedResumeHandle : null;
             await persistVoiceAgentRunMetadata(runMetadataSessionId, {
                 runId: adoptedRun.runId,
-                backendId: resolvedAgentId,
                 backendTarget: resolvedBackendTarget ?? { kind: 'builtInAgent', agentId: resolvedAgentId },
                 resumeHandle: adoptedResumeHandle,
             });
@@ -602,7 +606,6 @@ export async function initializeVoiceAgentHandle({
             const resumeHandle = getRes?.run?.resumeHandle ?? null;
             await persistVoiceAgentRunMetadata(runMetadataSessionId, {
                 runId: started.voiceAgentId,
-                backendId: resolvedAgentId,
                 backendTarget: resolvedBackendTarget ?? { kind: 'builtInAgent', agentId: resolvedAgentId },
                 resumeHandle,
             });

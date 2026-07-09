@@ -11,12 +11,59 @@ import {
   sherpaStreamingFinish,
   sherpaStreamingPushFrame,
   sendMessage,
+  setPlatformOs,
 } from './localVoiceEngine.testHarness';
 
 describe('local voice engine local neural STT (streaming)', () => {
   registerLocalVoiceEngineHarnessHooks();
 
-  it('surfaces mic permission denial as an error instead of entering recording', async () => {
+  it('does not start the native sherpa stream for web daemon local-neural capture', async () => {
+    setPlatformOs('web');
+    const storage = await getStorage();
+    storage.__setState({
+      settings: {
+        ...storage.getState().settings,
+        voice: {
+          ...storage.getState().settings.voice,
+          providerId: 'local_direct',
+          adapters: {
+            ...storage.getState().settings.voice.adapters,
+            local_direct: {
+              ...storage.getState().settings.voice.adapters.local_direct,
+              stt: {
+                provider: 'local_neural',
+                openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
+                googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
+                localNeural: { assetId: 'dummy-pack', language: 'en', execution: 'auto' },
+              },
+              tts: {
+                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                autoSpeakReplies: false,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
+
+    await toggleLocalVoiceTurn('s-web-daemon');
+    const stateAfterStart = getLocalVoiceState();
+    if (stateAfterStart.status === 'recording' || stateAfterStart.status === 'listening') {
+      await toggleLocalVoiceTurn('s-web-daemon');
+    }
+
+    expect(audioStreamStart).not.toHaveBeenCalled();
+    expect(sherpaStreamingCreate).not.toHaveBeenCalled();
+    expect(getLocalVoiceState()).toMatchObject({
+      status: 'idle',
+      sessionId: 's-web-daemon',
+      error: 'daemon_streaming_stt_start_failed',
+    });
+  });
+
+  it('surfaces mic permission denial as a recoverable idle error instead of entering recording', async () => {
     const { requestMicrophonePermission } = await import('@/utils/platform/microphonePermissions');
     vi.mocked(requestMicrophonePermission).mockResolvedValueOnce({ granted: false, canAskAgain: false });
 
@@ -52,7 +99,7 @@ describe('local voice engine local neural STT (streaming)', () => {
 
     expect(audioStreamStart).not.toHaveBeenCalled();
     expect(getLocalVoiceState()).toMatchObject({
-      status: 'error',
+      status: 'idle',
       sessionId: 's1',
       error: 'mic_permission_denied',
     });
@@ -111,7 +158,9 @@ describe('local voice engine local neural STT (streaming)', () => {
     const stopPromise = toggleLocalVoiceTurn('s1');
     await stopPromise;
 
-    expect(sendMessage).toHaveBeenCalledWith('s1', 'hello sherpa');
+    expect(sendMessage).toHaveBeenCalledWith('s1', 'hello sherpa', undefined, undefined, {
+      bypassPendingQueueReason: 'voice_turn',
+    });
   });
 
   it('hands-free mode auto-sends endpointed local-neural turns and restarts listening', async () => {
@@ -162,7 +211,9 @@ describe('local voice engine local neural STT (streaming)', () => {
     });
 
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith('s1', 'hands free sherpa');
+      expect(sendMessage).toHaveBeenCalledWith('s1', 'hands free sherpa', undefined, undefined, {
+        bypassPendingQueueReason: 'voice_turn',
+      });
     });
     await vi.waitFor(() => {
       expect(audioStreamStart).toHaveBeenCalledTimes(2);

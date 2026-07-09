@@ -116,7 +116,7 @@ describe('local voice engine stop', () => {
     await vi.waitFor(() => {
       expect(getVoiceConversationRuntimeSnapshot()).toMatchObject({
         controlSessionId: 's1',
-        state: 'sending',
+        state: 'thinking',
         error: null,
       });
     });

@@ -1,4 +1,5 @@
-import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import { sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
 import { supportsEffectiveLocalControlForSession } from '@/sync/domains/session/control/effectiveRuntimeControlSurface';
@@ -36,7 +37,7 @@ export function assertActiveDaemonTargetSession(sessionId: string): void {
     const state = storage.getState();
     const session: any = resolvePreferredVoiceAgentSessionFromState(sessionId);
     if (!session) return;
-    const agentId = resolveAgentIdFromFlavor(session?.metadata?.flavor) ?? DEFAULT_AGENT_ID;
+    const agentId = resolveAgentIdFromSessionMetadata(session?.metadata) ?? DEFAULT_AGENT_ID;
     if (!supportsEffectiveLocalControlForSession({
         agentId,
         metadata: session?.metadata,
@@ -120,10 +121,8 @@ export async function persistVoiceAgentRunMetadata(
     metadataSessionId: string | null,
     params: Readonly<{
         runId: string;
-        backendId: string;
         backendTarget: BackendTargetRefV1;
         resumeHandle: VoiceAgentStartParams['resumeHandle'];
-        streamId?: string | null;
         welcomedEpoch?: number;
     }>,
 ): Promise<void> {
@@ -131,10 +130,8 @@ export async function persistVoiceAgentRunMetadata(
     await writeVoiceAgentRunMetadataToSession({
         sessionId: metadataSessionId,
         runId: params.runId,
-        backendId: params.backendId,
         backendTarget: params.backendTarget,
         resumeHandle: params.resumeHandle ?? null,
-        ...(Object.prototype.hasOwnProperty.call(params, 'streamId') ? { streamId: params.streamId ?? null } : {}),
         updatedAtMs: Date.now(),
         ...(typeof params.welcomedEpoch === 'number' ? { welcomedEpoch: params.welcomedEpoch } : {}),
     });
@@ -150,31 +147,10 @@ export async function persistVoiceAgentWelcomedEpoch(
     await writeVoiceAgentRunMetadataToSession({
         sessionId: metadataSessionId,
         runId: existing.runId,
-        backendId: existing.backendId,
         backendTarget: existing.backendTarget,
         resumeHandle: existing.resumeHandle ?? null,
-        streamId: existing.streamId ?? null,
         updatedAtMs: Date.now(),
         welcomedEpoch,
-    });
-}
-
-export async function persistVoiceAgentTurnStreamId(
-    metadataSessionId: string | null,
-    streamId: string | null,
-): Promise<void> {
-    if (!metadataSessionId) return;
-    const existing = readVoiceAgentRunMetadataFromSession({ sessionId: metadataSessionId });
-    if (!existing?.backendTarget) return;
-    await writeVoiceAgentRunMetadataToSession({
-        sessionId: metadataSessionId,
-        runId: existing.runId,
-        backendId: existing.backendId,
-        backendTarget: existing.backendTarget,
-        resumeHandle: existing.resumeHandle ?? null,
-        streamId,
-        updatedAtMs: Date.now(),
-        welcomedEpoch: existing.welcomedEpoch,
     });
 }
 

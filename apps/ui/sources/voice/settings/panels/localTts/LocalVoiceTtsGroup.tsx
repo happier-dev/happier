@@ -13,6 +13,7 @@ import { t } from '@/text';
 import { formatVoiceTestFailureMessage } from '@/voice/local/formatVoiceTestFailureMessage';
 import { primeWebAudioPlayback } from '@/voice/output/webAudioContext';
 import { getLocalTtsProviderSpec, localTtsProviderSpecs } from '@/voice/settings/panels/localTts/providers/registry';
+import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export function LocalVoiceTtsGroup(props: {
@@ -20,6 +21,7 @@ export function LocalVoiceTtsGroup(props: {
   setTts: (next: VoiceLocalTtsSettings) => void;
   networkTimeoutMs: number;
   popoverBoundaryRef?: React.RefObject<any> | null;
+  daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 }) {
   const { theme } = useUnistyles();
   const [openMenu, setOpenMenu] = React.useState<null | 'ttsProvider'>(null);
@@ -72,6 +74,7 @@ export function LocalVoiceTtsGroup(props: {
         setTts={props.setTts}
         networkTimeoutMs={props.networkTimeoutMs}
         popoverBoundaryRef={props.popoverBoundaryRef}
+        daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
       />
 
       <Item

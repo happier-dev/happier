@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import {
   getStorage,
@@ -172,7 +173,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 's1',
-        method: 'permission',
+        method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
         payload: { id: 'perm_voice_1', approved: true },
       }),
     );
@@ -258,7 +259,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 's1',
-        method: 'permission',
+        method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
         payload: {
           id: 'req_question',
           approved: false,
@@ -400,7 +401,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 's1',
-        method: 'permission',
+        method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
         payload: { id: 'perm_voice_target', approved: true },
       }),
     );

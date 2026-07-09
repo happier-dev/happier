@@ -33,8 +33,8 @@ import {
 } from '@/sync/domains/models/dynamicModelProbeCache';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import { parsePreflightModelListFromProbeModelsResult } from '@/sync/domains/models/parsePreflightModelListFromProbeModelsResult';
-import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
-import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { createUnavailablePreflightModelList, type PreflightModelList } from '@/sync/domains/models/modelOptions';
+import { buildProviderCliCapabilityId } from '@/capabilities/cliCapabilityId';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -69,6 +69,60 @@ function getAgentLookupStaticModels(agentId: AgentId): ReadonlyArray<Readonly<{
   description?: string;
 }>> {
   return getAgentStaticModels(agentId);
+}
+
+function buildVoiceToolPreflightModelResult(params: Readonly<{
+  shouldExposeAgentId: boolean;
+  agentId: AgentId;
+  machineId: string;
+  list: PreflightModelList;
+  limit: number | null;
+}>): Readonly<{
+  agentId?: AgentId;
+  machineId: string;
+  items: ReadonlyArray<Readonly<{
+    modelId: string;
+    label: string;
+    description?: string;
+  }>>;
+  supportsFreeform: boolean;
+  source: 'preflight' | 'unavailable';
+  unavailable?: true;
+}> {
+  if (params.list.unavailable === true) {
+    return {
+      ...(params.shouldExposeAgentId ? { agentId: params.agentId } : {}),
+      machineId: params.machineId,
+      items: [],
+      supportsFreeform: false,
+      source: 'unavailable',
+      unavailable: true,
+    };
+  }
+
+  const dynamic = params.list.availableModels.map((m) => ({
+    modelId: String(m.id),
+    label: String(m.name),
+    ...(typeof m.description === 'string' ? { description: m.description } : {}),
+  }));
+
+  const withDefault = [{ modelId: 'default', label: 'Default' }, ...dynamic.filter((m) => m.modelId !== 'default')];
+  const seen = new Set<string>();
+  const items = withDefault.filter((m) => {
+    const id = String(m.modelId ?? '').trim();
+    if (!id) return false;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+
+  return {
+    ...(params.shouldExposeAgentId ? { agentId: params.agentId } : {}),
+    machineId: params.machineId,
+    items: params.limit ? items.slice(0, params.limit) : items,
+    supportsFreeform: params.list.supportsFreeform === true,
+    source: 'preflight',
+  };
 }
 
 type VoiceToolConnectedService = ReturnType<typeof getAgentCore>['uiConnectedService'];
@@ -284,29 +338,13 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
     const cached = cacheEntry?.kind === 'success' ? cacheEntry.value : null;
     const cachedCanPersist = cacheEntry?.kind === 'success' && cacheEntry.cacheable !== false;
     if (cached && nowMs >= 0 && nowMs < cacheEntry!.expiresAt) {
-      const dynamic = cached.availableModels.map((m) => ({
-        modelId: String(m.id),
-        label: String(m.name),
-        ...(typeof m.description === 'string' ? { description: m.description } : {}),
-      }));
-
-      const withDefault = [{ modelId: 'default', label: 'Default' }, ...dynamic.filter((m) => m.modelId !== 'default')];
-      const seen = new Set<string>();
-      const items = withDefault.filter((m) => {
-        const id = String(m.modelId ?? '').trim();
-        if (!id) return false;
-        if (seen.has(id)) return false;
-        seen.add(id);
-        return true;
+      return buildVoiceToolPreflightModelResult({
+        shouldExposeAgentId,
+        agentId,
+        machineId,
+        list: cached,
+        limit,
       });
-
-        return {
-          ...(shouldExposeAgentId ? { agentId } : {}),
-          machineId,
-          items: limit ? items.slice(0, limit) : items,
-          supportsFreeform: cached.supportsFreeform === true,
-        source: 'preflight' as const,
-      };
     }
 
     if (cacheKey) {
@@ -318,7 +356,7 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
           backendTarget?.kind === 'configuredAcpBackend'
             ? CONFIGURED_ACP_CLI_CAPABILITY_ID
             : agentId;
-        const capabilityId: CapabilityId = `cli.${capabilityIdSuffix}`;
+        const capabilityId = buildProviderCliCapabilityId(capabilityIdSuffix);
         const res = await machineCapabilitiesInvoke(
           machineId,
           {
@@ -332,16 +370,22 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
           { ...(serverId ? { serverId } : {}) },
         );
 
-        if (!res.supported) return null;
-        if (!res.response.ok) return null;
+        if (!res.supported) {
+          return { list: createUnavailablePreflightModelList(), cacheable: false };
+        }
+        if (!res.response.ok) {
+          return { list: createUnavailablePreflightModelList(), cacheable: false };
+        }
 
         const list = parsePreflightModelListFromProbeModelsResult(res.response.result);
-        if (!list) return null;
+        if (!list) {
+          return { list: createUnavailablePreflightModelList(), cacheable: false };
+        }
         const result = res.response.result;
         const source = result && typeof result === 'object' && !Array.isArray(result)
           ? (typeof (result as Record<string, unknown>).source === 'string' ? (result as Record<string, unknown>).source : null)
           : null;
-        const cacheable = source !== 'static';
+        const cacheable = source !== 'static' && source !== 'unavailable';
         return { list, cacheable };
       });
 
@@ -349,84 +393,38 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
       const list = attempt?.list ?? null;
       if (list && attempt?.cacheable !== false) {
         writeDynamicModelProbeCacheSuccess(cacheKey, list, commitNowMs);
-        const dynamic = list.availableModels.map((m) => ({
-          modelId: String(m.id),
-          label: String(m.name),
-          ...(typeof m.description === 'string' ? { description: m.description } : {}),
-        }));
-
-        const withDefault = [{ modelId: 'default', label: 'Default' }, ...dynamic.filter((m) => m.modelId !== 'default')];
-        const seen = new Set<string>();
-        const items = withDefault.filter((m) => {
-          const id = String(m.modelId ?? '').trim();
-          if (!id) return false;
-          if (seen.has(id)) return false;
-          seen.add(id);
-          return true;
-        });
-
-        return {
-          ...(shouldExposeAgentId ? { agentId } : {}),
+        return buildVoiceToolPreflightModelResult({
+          shouldExposeAgentId,
+          agentId,
           machineId,
-          items: limit ? items.slice(0, limit) : items,
-          supportsFreeform: list.supportsFreeform === true,
-          source: 'preflight' as const,
-        };
+          list,
+          limit,
+        });
       }
 
       if (list && attempt?.cacheable === false && !cached) {
         writeDynamicModelProbeCacheTransientSuccess(cacheKey, list, commitNowMs);
         writeDynamicModelProbeCacheError(cacheKey, commitNowMs);
-        const dynamic = list.availableModels.map((m) => ({
-          modelId: String(m.id),
-          label: String(m.name),
-          ...(typeof m.description === 'string' ? { description: m.description } : {}),
-        }));
-        const withDefault = [{ modelId: 'default', label: 'Default' }, ...dynamic.filter((m) => m.modelId !== 'default')];
-        const seen = new Set<string>();
-        const items = withDefault.filter((m) => {
-          const id = String(m.modelId ?? '').trim();
-          if (!id) return false;
-          if (seen.has(id)) return false;
-          seen.add(id);
-          return true;
-        });
-
-        return {
-          ...(shouldExposeAgentId ? { agentId } : {}),
+        return buildVoiceToolPreflightModelResult({
+          shouldExposeAgentId,
+          agentId,
           machineId,
-          items: limit ? items.slice(0, limit) : items,
-          supportsFreeform: list.supportsFreeform === true,
-          source: 'preflight' as const,
-        };
+          list,
+          limit,
+        });
       }
 
       if (cached) {
         if (cachedCanPersist) {
           writeDynamicModelProbeCacheSuccess(cacheKey, cached, commitNowMs);
         }
-        const dynamic = cached.availableModels.map((m) => ({
-          modelId: String(m.id),
-          label: String(m.name),
-          ...(typeof m.description === 'string' ? { description: m.description } : {}),
-        }));
-        const withDefault = [{ modelId: 'default', label: 'Default' }, ...dynamic.filter((m) => m.modelId !== 'default')];
-        const seen = new Set<string>();
-        const items = withDefault.filter((m) => {
-          const id = String(m.modelId ?? '').trim();
-          if (!id) return false;
-          if (seen.has(id)) return false;
-          seen.add(id);
-          return true;
-        });
-
-        return {
-          ...(shouldExposeAgentId ? { agentId } : {}),
+        return buildVoiceToolPreflightModelResult({
+          shouldExposeAgentId,
+          agentId,
           machineId,
-          items: limit ? items.slice(0, limit) : items,
-          supportsFreeform: cached.supportsFreeform === true,
-          source: 'preflight' as const,
-        };
+          list: cached,
+          limit,
+        });
       }
 
       writeDynamicModelProbeCacheError(cacheKey, commitNowMs);

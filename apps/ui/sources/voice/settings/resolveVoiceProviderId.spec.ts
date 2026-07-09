@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-    resolveContinuousVoiceProviderId,
     resolveStoredVoiceProviderId,
     resolveVoiceProviderId,
 } from './resolveVoiceProviderId';
@@ -12,14 +11,13 @@ describe('resolveVoiceProviderId', () => {
         expect(resolveVoiceProviderId(' local_conversation ')).toBe('local_conversation');
     });
 
-    it('maps local web providers to realtime for continuous-mode resolution', () => {
-        expect(resolveContinuousVoiceProviderId('local_direct', { platformOs: 'web' })).toBe('realtime_elevenlabs');
-        expect(resolveContinuousVoiceProviderId(' local_conversation ', { platformOs: 'web' })).toBe('realtime_elevenlabs');
+    it('preserves local providers instead of applying platform fallback rewrites', () => {
+        expect(resolveVoiceProviderId('local_direct')).toBe('local_direct');
+        expect(resolveVoiceProviderId(' local_conversation ')).toBe('local_conversation');
     });
 
-    it('keeps non-web continuous provider resolution unchanged', () => {
-        expect(resolveContinuousVoiceProviderId('local_conversation', { platformOs: 'ios' })).toBe('local_conversation');
-        expect(resolveContinuousVoiceProviderId('realtime_elevenlabs', { platformOs: 'web' })).toBe('realtime_elevenlabs');
-        expect(resolveContinuousVoiceProviderId('off', { platformOs: 'web' })).toBe('off');
+    it('keeps realtime and off provider resolution unchanged', () => {
+        expect(resolveVoiceProviderId('realtime_elevenlabs')).toBe('realtime_elevenlabs');
+        expect(resolveVoiceProviderId('off')).toBe('off');
     });
 });

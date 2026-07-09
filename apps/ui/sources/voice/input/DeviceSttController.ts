@@ -1,20 +1,17 @@
 import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
 import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/sync/domains/settings/voiceSettings';
-import { normalizeTurnEndpointPolicy } from '@/voice/input/TurnEndpointDetector';
+import { normalizeTurnEndpointPolicy } from '@/voice/runtime/input/TurnEndpointDetector';
 import {
   createTurnEndpointController, type TurnEndpointController, type TurnEndpointSignal, } from '@/voice/runtime/input/TurnEndpointController';
 import {
   createNativeVadController, type NativeVadController, } from '@/voice/runtime/input/NativeVadController';
 import {
   createWebVadController, type WebVadController, } from '@/voice/runtime/input/WebVadController';
-import type { MicSession } from '@/voice/runtime/mic/MicSession';
+import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { Platform } from 'react-native';
 
-type DeviceSttStatePatch = {
-  controlSessionId: string;
-  reason: string;
-};
+import type { SttController, SttStartParams } from './sttController';
 
 type DeviceSttHandle = {
   sessionId: string;
@@ -23,26 +20,62 @@ type DeviceSttHandle = {
   resolveEnd: () => void;
   endPromise: Promise<void>;
   subscriptions: { remove(): void }[];
+  audioStarted: boolean;
+  /** Detaches the D8 abort listener; idempotent and safe after teardown. */
+  abortCleanup: () => void;
+  recognizerStopRequested: boolean;
 };
 
-export type DeviceSttController = Readonly<{
-  start: (sessionId: string, micSession: MicSession) => Promise<void>;
-  stop: (sessionId: string) => Promise<string>;
-}>;
+export type DeviceSttController = SttController;
 
-export function createDeviceSttController(deps: {
-  onCaptureStarted: (controlSessionId: string) => void;
-  onCaptureError: (patch: DeviceSttStatePatch) => void;
+export type CreateDeviceSttControllerDeps = {
   getSettings: () => any;
   onEndpointSignal?: (signal: TurnEndpointSignal) => void;
   endpointController?: TurnEndpointController;
   nativeVadController?: NativeVadController;
   webVadController?: WebVadController;
-}): DeviceSttController {
+  /** Stop wait before forcing finalize; defaults to the recognizer end timeout. */
+  stopTimeoutMs?: number;
+};
+
+const DEFAULT_STOP_TIMEOUT_MS = 5_000;
+
+/**
+ * Resolve whether to request continuous recognition for this platform/turn.
+ *
+ * - Web / any DOM runtime: false — Web Speech is single-utterance; turn
+ *   continuity is driven by the long-lived {@link WebMicSession} stream + WebVAD
+ *   endpointing rather than recognizer-level continuity.
+ * - Android < 13 (API 33): false — `SpeechRecognizer` has no reliable continuous
+ *   mode; the recognizer auto-stops and hands-free rearm restarts it.
+ * - iOS / Android >= 13: true — iOS non-continuous recognition auto-stops after
+ *   ~3s of silence, so continuous is requested to let a hands-free turn outlive
+ *   natural pauses.
+ */
+function resolveDeviceContinuousRecognition(args: Readonly<{
+  platformOs: string;
+  isDomRuntime: boolean;
+}>): boolean {
+  if (args.isDomRuntime || args.platformOs === 'web') {
+    return false;
+  }
+  if (args.platformOs === 'android') {
+    const apiLevel = typeof Platform.Version === 'number' ? Platform.Version : Number(Platform.Version);
+    if (!Number.isFinite(apiLevel) || apiLevel < 33) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function createDeviceSttController(deps: CreateDeviceSttControllerDeps): DeviceSttController {
   let handle: DeviceSttHandle | null = null;
 
   const isDomRuntime = (): boolean => typeof window !== 'undefined' && typeof document !== 'undefined';
   const normalizeSessionId = (sessionId: string | null | undefined): string | null => normalizeNonEmptyString(sessionId);
+  const stopTimeoutMs = typeof deps.stopTimeoutMs === 'number' && deps.stopTimeoutMs >= 0
+    ? deps.stopTimeoutMs
+    : DEFAULT_STOP_TIMEOUT_MS;
 
   const resolveAdapterSettings = () => {
     const settings = deps.getSettings();
@@ -86,9 +119,10 @@ export function createDeviceSttController(deps: {
     }
   };
 
-  const start = async (sessionId: string, micSession: MicSession) => {
-    const normalizedSessionId = normalizeSessionId(sessionId);
-    if (!normalizedSessionId) return;
+  const start = async ({ micSession, sink, signal }: SttStartParams) => {
+    if (signal?.aborted) {
+      return;
+    }
     if (!micSession) {
       throw new Error('mic_session_required');
     }
@@ -102,7 +136,7 @@ export function createDeviceSttController(deps: {
     const { ExpoSpeechRecognitionModule } = await import('expo-speech-recognition');
 
     if (typeof ExpoSpeechRecognitionModule?.isRecognitionAvailable === 'function' && !ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
-      deps.onCaptureError({ controlSessionId: normalizedSessionId, reason: 'device_stt_unavailable' });
+      sink.onError(createVoiceMachineError({ kind: 'provider_error', reason: 'device_stt_unavailable' }));
       return;
     }
 
@@ -114,11 +148,16 @@ export function createDeviceSttController(deps: {
         if (permissionsResponse && permissionsResponse.granted === false) {
           throw new Error('mic_permission_denied');
         }
-      } catch {
-        // Permission request best-effort.
+      } catch (error) {
+        if (error instanceof Error && error.message === 'mic_permission_denied') {
+          throw error;
+        }
+        // Permission request best-effort otherwise.
       }
     }
 
+    // Single canonical acquisition for the turn: the recognizer reuses the
+    // already-active capture session (WebVAD also consumes this same stream).
     await micSession.ensureActive();
 
     cleanupListeners();
@@ -131,46 +170,89 @@ export function createDeviceSttController(deps: {
       resolveEnd = resolve;
     });
 
+    // Capture a stable session key for guards; the runtime owner correlates the
+    // active capture, so the controller keys its own handle off a synthetic id.
+    const sessionKey = normalizeSessionId(`device-${Date.now()}-${Math.random()}`) ?? 'device-capture';
+
     const nextHandle: DeviceSttHandle = {
-      sessionId: normalizedSessionId,
+      sessionId: sessionKey,
       transcript: '',
       module: ExpoSpeechRecognitionModule,
       resolveEnd: () => resolveEnd?.(),
       endPromise,
       subscriptions: [],
+      audioStarted: false,
+      abortCleanup: () => {},
+      recognizerStopRequested: false,
     };
 
     handle = nextHandle;
-    endpointController.startSession(normalizedSessionId);
+    endpointController.startSession(sessionKey);
     const handsFreeTurnEndpointPolicy = resolveHandsFreeTurnEndpointPolicy();
-    const usesFallbackTurnCapture = Platform.OS === 'web' || isDomRuntime();
+    const platformOs = Platform.OS;
+    const dom = isDomRuntime();
+    const usesFallbackTurnCapture = platformOs === 'web' || dom;
     const usesNativeVad = usesFallbackTurnCapture
       ? false
       : await nativeVadController.startSession({
-        sessionId: normalizedSessionId,
+        sessionId: sessionKey,
         minSpeechMs: handsFreeTurnEndpointPolicy.minSpeechMs,
         redemptionMs: handsFreeTurnEndpointPolicy.silenceMs,
       });
-    const usesWebVad = Platform.OS === 'web' && await webVadController.startSession({
-      sessionId: normalizedSessionId,
+    const usesWebVad = platformOs === 'web' && await webVadController.startSession({
+      sessionId: sessionKey,
       minSpeechMs: handsFreeTurnEndpointPolicy.minSpeechMs,
       redemptionMs: handsFreeTurnEndpointPolicy.silenceMs,
+      // Drive WebVAD off the canonical capture stream + shared AudioContext so
+      // web hands-free runs on one mic acquisition instead of a self-opened one.
+      micSession,
     });
     const usesVad = usesNativeVad || usesWebVad;
+
+    const markAudioStarted = () => {
+      if (!handle || handle.sessionId !== sessionKey || handle.audioStarted) {
+        return;
+      }
+      handle.audioStarted = true;
+      sink.onAudioStarted();
+    };
+
+    const stopRecognizerOnce = () => {
+      if (nextHandle.recognizerStopRequested) {
+        return;
+      }
+      nextHandle.recognizerStopRequested = true;
+      try {
+        nextHandle.module?.stop?.();
+      } catch {
+        // ignore
+      }
+    };
+
+    nextHandle.subscriptions.push(
+      ExpoSpeechRecognitionModule.addListener('audiostart', () => {
+        markAudioStarted();
+      })
+    );
 
     nextHandle.subscriptions.push(
       ExpoSpeechRecognitionModule.addListener('result', (event: any) => {
         const results = Array.isArray(event?.results) ? event.results : [];
         const transcript = typeof results?.[0]?.transcript === 'string' ? results[0].transcript.trim() : '';
+        markAudioStarted();
         if (!transcript) return;
 
         nextHandle.transcript = transcript;
-        if (event?.isFinal && !usesVad) {
+        if (event?.isFinal) {
+          sink.onFinal(transcript);
+          sink.onEndpoint('silence');
           endpointController.signalHeuristicTranscriptFinalized({
-            sessionId: normalizedSessionId,
+            sessionId: sessionKey,
             transcript,
             policy: handsFreeTurnEndpointPolicy,
           });
+        } else {
+          sink.onPartial(transcript);
         }
       })
     );
@@ -182,10 +264,51 @@ export function createDeviceSttController(deps: {
     );
 
     nextHandle.subscriptions.push(
-      ExpoSpeechRecognitionModule.addListener('error', () => {
+      ExpoSpeechRecognitionModule.addListener('error', (event: any) => {
+        const reason = normalizeNonEmptyString(event?.error) ?? 'device_stt_error';
+        sink.onError(createVoiceMachineError({ kind: 'provider_error', reason }));
         nextHandle.resolveEnd();
       })
     );
+
+    // Honor the D8 abort signal mid-flight. The entry guard only covers
+    // pre-start abort; once `ExpoSpeechRecognitionModule.start()` is running,
+    // firing the signal must stop the recognizer promptly. Mirrors the
+    // AbortController bridge in SherpaStreamingSttController; the listener is
+    // detached on stop()/abort so it does not leak on the (possibly long-lived)
+    // signal.
+    const onAbort = () => {
+      stopRecognizerOnce();
+      nextHandle.resolveEnd();
+    };
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+      nextHandle.abortCleanup = () => {
+        try {
+          signal.removeEventListener('abort', onAbort);
+        } catch {
+          // ignore
+        }
+      };
+    }
+
+    // The signal may have aborted during async setup (permissions, ensureActive,
+    // VAD start) before the listener attached above; do not start a recognizer we
+    // were already told to abort.
+    if (signal?.aborted) {
+      nextHandle.abortCleanup();
+      try {
+        nextHandle.subscriptions.forEach((subscription) => subscription.remove());
+      } catch {
+        // ignore
+      }
+      handle = null;
+      endpointController.clearSession(sessionKey);
+      await nativeVadController.stopSession(sessionKey);
+      await webVadController.stopSession(sessionKey);
+      nextHandle.resolveEnd();
+      return;
+    }
 
     const settings = deps.getSettings();
     const language = typeof settings?.voice?.assistantLanguage === 'string' && settings.voice.assistantLanguage.trim()
@@ -197,41 +320,45 @@ export function createDeviceSttController(deps: {
         ...(language ? { lang: language } : {}),
         interimResults: true,
         maxAlternatives: 1,
-        continuous: !usesFallbackTurnCapture,
+        continuous: resolveDeviceContinuousRecognition({ platformOs, isDomRuntime: dom }),
       } as any);
     } catch (error) {
+      nextHandle.abortCleanup();
       handle = null;
-      endpointController.clearSession(normalizedSessionId);
-      await nativeVadController.stopSession(normalizedSessionId);
-      await webVadController.stopSession(normalizedSessionId);
-      deps.onCaptureError({ controlSessionId: normalizedSessionId, reason: 'device_stt_start_failed' });
+      endpointController.clearSession(sessionKey);
+      await nativeVadController.stopSession(sessionKey);
+      await webVadController.stopSession(sessionKey);
+      sink.onError(createVoiceMachineError({ kind: 'provider_error', reason: 'device_stt_start_failed' }));
       throw error;
     }
-
-    deps.onCaptureStarted(normalizedSessionId);
   };
 
-  const stop = async (sessionId: string): Promise<string> => {
-    const normalizedSessionId = normalizeSessionId(sessionId);
-    if (!handle || !normalizedSessionId || handle.sessionId !== normalizedSessionId) {
-      return '';
+  const stop = async () => {
+    const current = handle;
+    if (!current) {
+      return { finalText: '' };
+    }
+    const sessionKey = current.sessionId;
+
+    endpointController.clearSession(sessionKey);
+    const stopNativeVad = nativeVadController.stopSession(sessionKey);
+    const stopWebVad = webVadController.stopSession(sessionKey);
+
+    if (!current.recognizerStopRequested) {
+      current.recognizerStopRequested = true;
+      try {
+        current.module?.stop?.();
+      } catch {
+        // ignore
+      }
     }
 
-    endpointController.clearSession(normalizedSessionId);
-    const stopNativeVad = nativeVadController.stopSession(normalizedSessionId);
-    const stopWebVad = webVadController.stopSession(normalizedSessionId);
+    await Promise.race([current.endPromise, new Promise<void>((resolve) => setTimeout(resolve, stopTimeoutMs))]);
 
-    try {
-      handle.module?.stop?.();
-    } catch {
-      // ignore
-    }
-
-    await Promise.race([handle.endPromise, new Promise<void>((resolve) => setTimeout(resolve, 5_000))]);
-
-    const text = handle.transcript.trim();
-    const subscriptions = handle.subscriptions;
+    const text = current.transcript.trim();
+    const subscriptions = current.subscriptions;
     handle = null;
+    current.abortCleanup();
 
     try {
       subscriptions.forEach((subscription) => subscription.remove());
@@ -241,7 +368,7 @@ export function createDeviceSttController(deps: {
     await stopNativeVad;
     await stopWebVad;
 
-    return text;
+    return { finalText: text };
   };
 
   return {

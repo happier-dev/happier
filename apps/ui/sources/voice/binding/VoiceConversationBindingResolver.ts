@@ -2,8 +2,12 @@ import { storage } from '@/sync/domains/state/storage';
 import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
-import { voiceSessionBindingStore } from './voiceConversationBindingStore';
-import { readPreferredVoiceConversationBindingMetadata, readVoiceConversationBindingMetadata } from './voiceConversationBindingMetadata';
+import {
+    listPersistedVoiceBindingsFromState,
+    pickNewerVoiceBinding,
+    voiceSessionBindingStore,
+} from './voiceConversationBindingStore';
+import { readPreferredVoiceConversationBindingMetadata } from './voiceConversationBindingMetadata';
 import type { VoiceSessionBinding } from './voiceConversationBindingTypes';
 
 type VoiceConversationBindingStoreLike = typeof voiceSessionBindingStore;
@@ -11,38 +15,6 @@ type VoiceConversationBindingStoreLike = typeof voiceSessionBindingStore;
 type ResolverState = Readonly<{
     sessions?: Record<string, any>;
 }>;
-
-function pickNewerBinding(
-    current: VoiceSessionBinding | null,
-    candidate: VoiceSessionBinding | null,
-): VoiceSessionBinding | null {
-    if (!candidate) return current;
-    if (!current) return candidate;
-    if (candidate.updatedAt !== current.updatedAt) {
-        return candidate.updatedAt > current.updatedAt ? candidate : current;
-    }
-    if (candidate.conversationSessionId !== current.conversationSessionId) {
-        return candidate.conversationSessionId < current.conversationSessionId ? candidate : current;
-    }
-    return current;
-}
-
-function listPersistedBindings(state: ResolverState): ReadonlyArray<VoiceSessionBinding> {
-    const bindings: VoiceSessionBinding[] = [];
-    for (const session of Object.values(state.sessions ?? {})) {
-        if (!session || typeof session?.id !== 'string') continue;
-        const preferredMetadata = resolveSessionListPreferredSessionMetadataFromState(state as any, session.id);
-        const binding = readPreferredVoiceConversationBindingMetadata({
-            conversationSessionId: session.id,
-            preferredMetadata,
-            directMetadata: session.metadata ?? null,
-        });
-        if (binding) {
-            bindings.push(binding);
-        }
-    }
-    return bindings;
-}
 
 export function createVoiceConversationBindingResolver(params?: Readonly<{
     getState?: () => ResolverState;
@@ -60,15 +32,15 @@ export function createVoiceConversationBindingResolver(params?: Readonly<{
         const state = getState();
         const storeBinding = store.getState().getByConversationSessionId(conversationSessionId);
         const preferredMetadata = resolveSessionListPreferredSessionMetadataFromState(state as any, conversationSessionId);
-        const persistedBinding =
-            readPreferredVoiceConversationBindingMetadata({
-                conversationSessionId,
-                preferredMetadata,
-                directMetadata: state.sessions?.[conversationSessionId]?.metadata ?? null,
-            })
-            ?? readVoiceConversationBindingMetadata(conversationSessionId, input.sessionMetadata)
-            ?? readVoiceConversationBindingMetadata(conversationSessionId, state.sessions?.[conversationSessionId]?.metadata ?? null);
-        return pickNewerBinding(storeBinding, persistedBinding);
+        // Single guarded read path: caller-supplied `sessionMetadata` is funneled
+        // through the same `isVoiceConversationSystemSessionMetadata` guard as every
+        // other persisted read (audit F2) instead of an unguarded fallback.
+        const persistedBinding = readPreferredVoiceConversationBindingMetadata({
+            conversationSessionId,
+            preferredMetadata,
+            directMetadata: input.sessionMetadata ?? state.sessions?.[conversationSessionId]?.metadata ?? null,
+        });
+        return pickNewerVoiceBinding(storeBinding, persistedBinding);
     };
 
     const resolveByControlSessionId = (input: Readonly<{
@@ -79,18 +51,22 @@ export function createVoiceConversationBindingResolver(params?: Readonly<{
         if (!controlSessionId) return null;
         const requestedAdapterId = normalizeNonEmptyString(input.adapterId);
         const state = getState();
-        const storeBinding = store.getState().getByControlSessionId(controlSessionId);
-        let resolved =
-            !requestedAdapterId || storeBinding?.adapterId === requestedAdapterId
-                ? storeBinding
-                : null;
-
-        for (const persistedBinding of listPersistedBindings(state)) {
-            if (persistedBinding.controlSessionId !== controlSessionId) continue;
-            if (requestedAdapterId && persistedBinding.adapterId !== requestedAdapterId) continue;
-            resolved = pickNewerBinding(resolved, persistedBinding);
+        // Single read+merge algorithm (audit F1/F7): merge the store's runtime view with
+        // persisted bindings derived from `getState()` through the SAME shared persisted
+        // reader and the SAME `pickNewerVoiceBinding` tie-break the store uses. The store
+        // merge already dedupes its own persisted layer, so this no longer applies a
+        // divergent tie-break, and it still honors a getState snapshot the store has not
+        // yet ingested.
+        let resolved: VoiceSessionBinding | null = null;
+        const candidates = [
+            ...store.getState().list(),
+            ...listPersistedVoiceBindingsFromState(state as any),
+        ];
+        for (const candidate of candidates) {
+            if (candidate.controlSessionId !== controlSessionId) continue;
+            if (requestedAdapterId && candidate.adapterId !== requestedAdapterId) continue;
+            resolved = pickNewerVoiceBinding(resolved, candidate);
         }
-
         return resolved;
     };
 
@@ -108,12 +84,12 @@ export function createVoiceConversationBindingResolver(params?: Readonly<{
         const state = getState();
         const candidates = [
             ...store.getState().list(),
-            ...listPersistedBindings(state),
+            ...listPersistedVoiceBindingsFromState(state as any),
         ];
         for (const candidate of candidates) {
             if (requestedAdapterId && candidate.adapterId !== requestedAdapterId) continue;
             if (requestedControlSessionIds.size > 0 && !requestedControlSessionIds.has(candidate.controlSessionId)) continue;
-            resolved = pickNewerBinding(resolved, candidate);
+            resolved = pickNewerVoiceBinding(resolved, candidate);
         }
         return resolved;
     };

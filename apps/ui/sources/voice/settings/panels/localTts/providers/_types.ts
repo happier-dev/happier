@@ -1,6 +1,7 @@
 import type * as React from 'react';
 
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
+import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 
 export type LocalTtsProviderId = VoiceLocalTtsSettings['provider'];
 
@@ -9,6 +10,7 @@ export type LocalTtsProviderSettingsProps = {
   setTts: (next: VoiceLocalTtsSettings) => void;
   networkTimeoutMs: number;
   popoverBoundaryRef?: React.RefObject<any> | null;
+  daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 };
 
 export type LocalTtsProviderTestContext = {
@@ -26,4 +28,3 @@ export type LocalTtsProviderSpec = {
   Settings: React.ComponentType<LocalTtsProviderSettingsProps>;
   test: (ctx: LocalTtsProviderTestContext) => Promise<void>;
 };
-

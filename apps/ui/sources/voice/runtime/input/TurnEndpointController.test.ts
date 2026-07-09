@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { normalizeTurnEndpointPolicy } from '@/voice/input/TurnEndpointDetector';
+import { normalizeTurnEndpointPolicy } from './TurnEndpointDetector';
 
 import { createTurnEndpointController } from './TurnEndpointController';
 
@@ -65,6 +65,31 @@ describe('createTurnEndpointController', () => {
             sessionId: 'session-2',
             source: 'native_stream',
             transcript: 'fresh',
+        }));
+    });
+
+    it('emits at most one endpoint for a capture session', () => {
+        const onSignal = vi.fn();
+        const controller = createTurnEndpointController({
+            onSignal,
+            now: () => 1_000,
+        });
+
+        controller.startSession('session-1');
+        controller.signalEndpointDetected({
+            sessionId: 'session-1',
+            source: 'native_stream',
+            transcript: 'first',
+        });
+        controller.signalEndpointDetected({
+            sessionId: 'session-1',
+            source: 'native_stream',
+            transcript: 'duplicate',
+        });
+
+        expect(onSignal).toHaveBeenCalledTimes(1);
+        expect(onSignal).toHaveBeenCalledWith(expect.objectContaining({
+            transcript: 'first',
         }));
     });
 });

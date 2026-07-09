@@ -8,6 +8,10 @@ describe('modelPacks manifests', () => {
   it('uses static process.env access so Expo can inline EXPO_PUBLIC_* vars', () => {
     const source = fs.readFileSync(new URL('./manifests.ts', import.meta.url), 'utf8');
     expect(source).toContain('process.env.EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS');
+    expect(source).toContain('@happier-dev/voice-modelpacks');
+    expect(source).not.toContain('DEFAULT_HAPPIER_ASSETS_OWNER_REPO');
+    expect(source).not.toContain('DEFAULT_HAPPIER_ASSETS_RELEASE_TAG');
+    expect(source).not.toContain('ManifestMapSchema');
     expect(source).not.toContain('process.env.EXPO_PUBLIC_KOKORO_NATIVE_MANIFESTS');
     expect(source).not.toContain('process.env.EXPO_PUBLIC_KOKORO_NATIVE_MANIFEST_URL');
   });

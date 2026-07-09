@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { useSetting } from '@/sync/domains/state/storage';
 import { createBuiltinVoiceAdapters } from '@/voice/adapters/registerBuiltinVoiceAdapters';
-import { resolveContinuousVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
+import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
 import { createVoiceSessionLifecycleController } from './voiceSessionLifecycleController';
 import { setVoiceSessionLifecycleController } from './voiceSessionLifecycleControllerStore';
@@ -11,7 +11,7 @@ import { setVoiceSessionSnapshot } from './voiceSessionStore';
 
 export function VoiceSessionRuntime(): React.ReactElement | null {
   const voice = useSetting('voice') as any;
-  const providerId = resolveContinuousVoiceProviderId(voice?.providerId);
+  const providerId = resolveVoiceProviderId(voice?.providerId);
   const controllerRef = React.useRef<ReturnType<typeof createVoiceSessionLifecycleController> | null>(null);
 
   // Ensure adapters are registered before the user can interact with voice controls.

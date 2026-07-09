@@ -485,7 +485,7 @@ describe('VoiceSessionRuntime', () => {
     expect(getVoiceSessionSnapshot()).toEqual(snapB);
   });
 
-  it('prefers realtime as the continuous-mode owner on web when local fallback is configured', async () => {
+  it('keeps the stored local provider as the continuous-mode owner on web', async () => {
     platformOsMock.value = 'web';
     useSetting.mockImplementation((key: string) => {
       if (key === 'voice') return { providerId: 'local_conversation' };
@@ -537,7 +537,7 @@ describe('VoiceSessionRuntime', () => {
 
     await renderScreen(React.createElement(VoiceSessionRuntime));
 
-    expect(getVoiceSessionSnapshot()).toEqual(realtimeSnapshot);
+    expect(getVoiceSessionSnapshot()).toEqual(localSnapshot);
   });
 
   it('fails closed when the configured provider id is unsupported', async () => {

@@ -20,12 +20,19 @@ vi.mock('@/voice/agent/voiceAgentRecoveryReplayState', () => ({
   readVoiceAgentRecoveryReplaySource: vi.fn(),
 }));
 
+import { registerVoiceAdapters, resetVoiceAdapterRegistryForTests } from '@/voice/session/voiceAdapterRegistry';
+import { createBuiltinVoiceAdapters } from '@/voice/adapters/registerBuiltinVoiceAdapters';
+
 describe('ensureVoiceConversationBindingResolution', () => {
   beforeEach(() => {
     ensureVoiceConversationSessionForVoiceHome.mockReset();
     ensureVoiceConversationSessionForSessionRoot.mockReset();
     recoverUnavailableGlobalVoiceAutoMachine.mockReset();
     setVoiceAgentRecoveryReplaySource.mockReset();
+    // The resolver reads transcript-mode via the provider registry capability
+    // rather than branching on provider ids, so register the builtin adapters.
+    resetVoiceAdapterRegistryForTests();
+    registerVoiceAdapters(createBuiltinVoiceAdapters());
   });
 
   it('binds realtime voice to the target session root when a target session exists', async () => {
@@ -234,6 +241,40 @@ describe('ensureVoiceConversationBindingResolution', () => {
     expect(resolution?.conversationSessionId).toBe('voice-root-s2');
     expect(ensureVoiceConversationSessionForSessionRoot).toHaveBeenCalledWith({ sessionId: 's2' });
     expect(ensureVoiceConversationSessionForVoiceHome).not.toHaveBeenCalled();
+  });
+
+  it('resolves a registry-driven provider via its transcript-mode capability without editing the resolver', async () => {
+    ensureVoiceConversationSessionForSessionRoot.mockResolvedValue('voice-root-custom');
+    // A third provider, contributed only through the registry capability.
+    registerVoiceAdapters([
+      ...createBuiltinVoiceAdapters(),
+      {
+        id: 'custom_provider',
+        start: vi.fn(),
+        stop: vi.fn(),
+        toggle: vi.fn(),
+        interrupt: vi.fn(),
+        setMuted: vi.fn(),
+        sendContextUpdate: vi.fn(),
+        getSnapshot: vi.fn(),
+        resolveBindingTranscriptMode: () => 'synthetic',
+      },
+    ]);
+
+    const { ensureVoiceConversationBindingResolution } = await import('./resolveVoiceConversationBindingResolution');
+    const resolution = await ensureVoiceConversationBindingResolution({
+      providerId: 'custom_provider',
+      controlSessionId: 's9',
+      requestedTargetSessionId: 's9',
+      settings: {},
+    });
+
+    expect(resolution).toEqual({
+      conversationSessionId: 'voice-root-custom',
+      controlSessionId: 's9',
+      transcriptMode: 'synthetic',
+      targetSessionId: 's9',
+    });
   });
 
   it('returns null for providers that do not expose a hidden voice conversation session', async () => {

@@ -88,4 +88,57 @@ describe('playAudioBytesWithStopper (native)', () => {
     await waitForFileDeleteCall();
     expect(fileDelete).toHaveBeenCalledTimes(1);
   });
+
+  it('rejects rather than hanging when playback status reports an error', async () => {
+    playbackState.playbackStatusListener = null;
+    fileDelete.mockClear();
+    const onPlaybackStarted = vi.fn();
+
+    const promise = playAudioBytesWithStopper({
+      bytes: new Uint8Array([1, 2, 3]).buffer,
+      format: 'mp3',
+      registerPlaybackStopper: () => () => {},
+      onPlaybackStarted,
+    });
+
+    await waitForPlaybackStatusListener();
+    const notify: (status: any) => void = playbackState.playbackStatusListener ?? (() => {
+      throw new Error('Expected playback status listener to be registered');
+    });
+
+    // A post-play() failure surfaced via status must settle the promise.
+    notify({ didJustFinish: false, error: 'decode_failed' });
+
+    await expect(promise).rejects.toThrow('audio_playback_failed');
+    expect(onPlaybackStarted).not.toHaveBeenCalled();
+    await waitForFileDeleteCall();
+  });
+
+  it('calls onPlaybackStarted after native playback status proves playback started', async () => {
+    playbackState.playbackStatusListener = null;
+    fileDelete.mockClear();
+    const onPlaybackStarted = vi.fn();
+
+    const promise = playAudioBytesWithStopper({
+      bytes: new Uint8Array([1, 2, 3]).buffer,
+      format: 'mp3',
+      registerPlaybackStopper: () => () => {},
+      onPlaybackStarted,
+    });
+
+    await waitForPlaybackStatusListener();
+    expect(onPlaybackStarted).not.toHaveBeenCalled();
+    const notifyPlaybackFinished = playbackState.playbackStatusListener as
+      | ((status: any) => void)
+      | null;
+    if (!notifyPlaybackFinished) {
+      throw new Error('Expected playback status listener to be registered');
+    }
+    notifyPlaybackFinished({ didJustFinish: false, playing: true });
+    expect(onPlaybackStarted).toHaveBeenCalledTimes(1);
+    notifyPlaybackFinished({ didJustFinish: false, timeControlStatus: 'playing' });
+    expect(onPlaybackStarted).toHaveBeenCalledTimes(1);
+    notifyPlaybackFinished({ didJustFinish: true });
+    await promise;
+  });
 });

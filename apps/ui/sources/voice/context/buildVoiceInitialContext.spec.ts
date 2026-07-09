@@ -352,6 +352,135 @@ describe('buildVoiceInitialContext', () => {
     expect(out).toContain('Reply with answerUserActionRequest');
   });
 
+  it('omits completed transcript requests while exposing live pending permission and user-action requests', () => {
+    storage.setState((state: any) => ({
+      ...state,
+      sessions: {
+        hidden_voice: {
+          ...createSession('Hidden voice session summary'),
+          id: 'hidden_voice',
+          metadata: {
+            ...createSession('Hidden voice session summary').metadata,
+            path: '/tmp/voice',
+          },
+        },
+        s1: {
+          ...createSession('Target session summary'),
+          agentState: null,
+        },
+      },
+      sessionMessages: {
+        hidden_voice: { messages: [createUserMessage('Hidden transcript')] },
+        s1: {
+          messages: [
+            createUserMessage('Target transcript'),
+            {
+              kind: 'tool-call',
+              id: 'tool_completed_pending_first',
+              localId: null,
+              createdAt: 2,
+              children: [],
+              tool: {
+                id: 'tool_completed_pending_first',
+                name: 'Bash',
+                description: 'Run a shell command',
+                state: 'running',
+                input: { command: 'touch completed-request.txt' },
+                createdAt: 2,
+                startedAt: 2,
+                completedAt: null,
+                result: null,
+                permission: {
+                  id: 'req_completed_transcript',
+                  kind: 'permission',
+                  status: 'pending',
+                },
+              },
+            } as any,
+            {
+              kind: 'tool-call',
+              id: 'tool_completed_terminal',
+              localId: null,
+              createdAt: 3,
+              children: [],
+              tool: {
+                id: 'tool_completed_terminal',
+                name: 'Bash',
+                description: 'Run a shell command',
+                state: 'completed',
+                input: { command: 'touch completed-request.txt' },
+                createdAt: 3,
+                startedAt: 3,
+                completedAt: 4,
+                result: { status: 'approved' },
+                permission: {
+                  id: 'req_completed_transcript',
+                  kind: 'permission',
+                  status: 'approved',
+                },
+              },
+            } as any,
+            {
+              kind: 'tool-call',
+              id: 'tool_live_permission',
+              localId: null,
+              createdAt: 5,
+              children: [],
+              tool: {
+                id: 'tool_live_permission',
+                name: 'Bash',
+                description: 'Run a shell command',
+                state: 'running',
+                input: { command: 'touch live-request.txt' },
+                createdAt: 5,
+                startedAt: 5,
+                completedAt: null,
+                result: null,
+                permission: {
+                  id: 'req_live_permission',
+                  kind: 'permission',
+                  status: 'pending',
+                },
+              },
+            } as any,
+            {
+              kind: 'tool-call',
+              id: 'tool_live_question',
+              localId: null,
+              createdAt: 6,
+              children: [],
+              tool: {
+                id: 'tool_live_question',
+                name: 'AskUserQuestion',
+                description: 'Ask the user a question',
+                state: 'running',
+                input: { questions: [{ question: 'Continue with the live request?' }] },
+                createdAt: 6,
+                startedAt: 6,
+                completedAt: null,
+                result: null,
+                permission: {
+                  id: 'req_live_question',
+                  kind: 'user_action',
+                  status: 'pending',
+                },
+              },
+            } as any,
+          ],
+        },
+      },
+    }));
+    useVoiceTargetStore.getState().setTrackedSessionIds(['s1']);
+
+    const out = buildVoiceInitialContext('hidden_voice', { targetSessionId: 's1' });
+
+    expect(out).toContain('## Pending Requests');
+    expect(out).not.toContain('<request_id>req_completed_transcript</request_id>');
+    expect(out).toContain('<request_id>req_live_permission</request_id>');
+    expect(out).toContain('<request_id>req_live_question</request_id>');
+    expect(out).toContain('Continue with the live request?');
+  });
+
   it('omits pending requests entirely when the target session is inactive', () => {
     storage.setState((state: any) => ({
       ...state,

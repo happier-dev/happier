@@ -7,9 +7,9 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
-import type { SecretString } from '@/sync/encryption/secretSettings';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { normalizeSecretStringPromptInput } from '@/utils/secrets/normalizeSecretStringPromptInput';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import {
@@ -19,13 +19,8 @@ import {
 } from '@/realtime/elevenlabs/autoprovision';
 import { listElevenLabsVoices, type ElevenLabsVoiceSummary } from '@/realtime/elevenlabs/elevenLabsVoices';
 import { showElevenLabsAgentReuseDialog } from '@/voice/settings/modals/showElevenLabsAgentReuseDialog';
-import { resolveContinuousVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
+import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
-function normalizeSecretStringPromptInput(value: string | null): SecretString | null {
-  if (value === null) return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? { _isSecretValue: true, value: trimmed } : null;
-}
 
 const ELEVENLABS_TTS_MODEL_OPTIONS = [
   { id: 'eleven_multilingual_v2', subtitleKey: 'settingsVoice.byo.realtime.modelPicker.options.multilingualV2Subtitle' },
@@ -40,7 +35,7 @@ export function RealtimeElevenLabsSection(props: {
 }) {
   const { theme } = useUnistyles();
   const cfg = props.voice.adapters.realtime_elevenlabs;
-  const enabled = resolveContinuousVoiceProviderId(props.voice.providerId) === 'realtime_elevenlabs';
+  const enabled = resolveVoiceProviderId(props.voice.providerId) === 'realtime_elevenlabs';
   const isByo = enabled && cfg.billingMode === 'byo';
   const [busy, setBusy] = React.useState<null | 'autoprovCreate' | 'autoprovUpdate'>(null);
   const [openMenu, setOpenMenu] = React.useState<null | 'voiceId' | 'modelId' | 'speakerBoost' | 'welcomeMode'>(null);

@@ -291,10 +291,13 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
         ],
     },
     {
+        // The engine no longer consults the realtime transport directly: the
+        // runtime machine is the single lifecycle source, so the engine derives
+        // the realtime session snapshot from it (the transport's private
+        // snapshot member was retired). The forbidden guard still keeps the
+        // engine off the retired @/realtime/RealtimeSession legacy facade.
         filePath: 'sources/voice/local/localVoiceEngine.ts',
-        requiredImports: [
-            '@/voice/runtime/realtime/RealtimeTransport',
-        ],
+        requiredImports: [],
         forbiddenImports: [
             '@/realtime/RealtimeSession',
         ],

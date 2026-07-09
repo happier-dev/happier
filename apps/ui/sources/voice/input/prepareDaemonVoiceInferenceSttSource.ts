@@ -3,15 +3,8 @@ import { Platform } from 'react-native';
 
 import type { LocalUploadSource } from '@/sync/runtime/files/localUploadSourceReader';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { guessAudioMimeType } from '@/voice/input/guessAudioMimeType';
 import { encodeWavPcm16 } from '@/voice/kokoro/audio/encodeWavPcm16';
-
-function guessMimeType(uri: string): string {
-    const lower = uri.toLowerCase();
-    if (lower.endsWith('.webm')) return 'audio/webm';
-    if (lower.endsWith('.wav')) return 'audio/wav';
-    if (lower.endsWith('.mp3')) return 'audio/mpeg';
-    return 'audio/mp4';
-}
 
 function createFallbackNormalizationDecision(): DaemonVoiceInferenceNormalizationDecision {
     return {
@@ -109,7 +102,7 @@ export async function prepareDaemonVoiceInferenceSttSource(params: Readonly<{
         };
     }
 
-    const inputMimeType = guessMimeType(params.uri);
+    const inputMimeType = guessAudioMimeType(params.uri);
     return {
         source: {
             kind: 'native',

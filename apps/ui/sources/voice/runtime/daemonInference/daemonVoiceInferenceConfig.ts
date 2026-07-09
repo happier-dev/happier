@@ -1,3 +1,9 @@
+import {
+    VOICE_RUNTIME_TTS_DEFAULTS,
+    VOICE_RUNTIME_TTS_LATENCY_BUDGET_BOUNDS,
+    VOICE_RUNTIME_TTS_LATENCY_DEMOTION_THRESHOLD_BOUNDS,
+} from '@happier-dev/protocol';
+
 function parseBoundedInt(
     rawValue: string | undefined,
     fallback: number,
@@ -14,17 +20,17 @@ function parseBoundedInt(
 export function resolveDaemonVoiceInferenceTtsLatencyBudgetMs(): number {
     return parseBoundedInt(
         process.env.EXPO_PUBLIC_HAPPIER_VOICE_DAEMON_TTS_LATENCY_BUDGET_MS,
-        2_000,
-        250,
-        60_000,
+        VOICE_RUNTIME_TTS_DEFAULTS.latencyBudgetMs,
+        VOICE_RUNTIME_TTS_LATENCY_BUDGET_BOUNDS.min,
+        VOICE_RUNTIME_TTS_LATENCY_BUDGET_BOUNDS.max,
     );
 }
 
 export function resolveDaemonVoiceInferenceTtsLatencyDemotionThreshold(): number {
     return parseBoundedInt(
         process.env.EXPO_PUBLIC_HAPPIER_VOICE_DAEMON_TTS_LATENCY_DEMOTION_THRESHOLD,
-        2,
-        1,
-        10,
+        VOICE_RUNTIME_TTS_DEFAULTS.consecutiveSlowCallsBeforeDemotion,
+        VOICE_RUNTIME_TTS_LATENCY_DEMOTION_THRESHOLD_BOUNDS.min,
+        VOICE_RUNTIME_TTS_LATENCY_DEMOTION_THRESHOLD_BOUNDS.max,
     );
 }

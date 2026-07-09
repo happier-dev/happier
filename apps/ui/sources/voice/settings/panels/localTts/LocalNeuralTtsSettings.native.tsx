@@ -8,8 +8,10 @@ import { Item } from '@/components/ui/lists/Item';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { KOKORO_DEFAULT_TTS_PACK_ID } from '@happier-dev/protocol';
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { getKokoroAssetSetOptions } from '@/voice/kokoro/assets/kokoroAssetSets';
+import { resolveKokoroDaemonTtsPackId } from '@/voice/kokoro/assets/resolveKokoroDaemonTtsPackId';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
 import { isKokoroRuntimeSupported } from '@/voice/kokoro/runtime/kokoroSupport';
 import { speakKokoroText } from '@/voice/output/KokoroTtsController';
@@ -19,6 +21,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
 import { DaemonVoiceInferenceModelSection } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceModelSection';
+import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 
 import { useLocalNeuralKokoroVoiceCatalog } from './useLocalNeuralKokoroVoiceCatalog.native';
 import { useLocalNeuralModelPackState } from './useLocalNeuralModelPackState.native';
@@ -28,17 +31,17 @@ export function LocalNeuralTtsSettings(props: {
   setKokoro: (next: VoiceLocalTtsSettings['localNeural']) => void;
   networkTimeoutMs: number;
   popoverBoundaryRef?: React.RefObject<any> | null;
+  daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 }) {
   const { theme } = useUnistyles();
   const [openMenu, setOpenMenu] = React.useState<null | 'assetSet' | 'voiceId' | 'speed'>(null);
-  const DEFAULT_KOKORO_ASSET_SET_ID = 'kokoro-82m-v1.0-onnx-q8-wasm';
   const executionPolicy = React.useMemo(() => resolveLocalNeuralExecutionPolicy({
     requestedExecution: props.cfgKokoro.execution,
   }), [props.cfgKokoro.execution]);
 
   const effectiveVoiceId = props.cfgKokoro.voiceId ?? 'af_heart';
   const effectiveSpeed = props.cfgKokoro.speed ?? 1;
-  const effectiveAssetSetId = props.cfgKokoro.assetId ?? DEFAULT_KOKORO_ASSET_SET_ID;
+  const effectiveAssetSetId = resolveKokoroDaemonTtsPackId(props.cfgKokoro.assetId ?? KOKORO_DEFAULT_TTS_PACK_ID);
   const usesDaemonExecution = executionPolicy.preferredExecution === 'daemon';
   const assetSets = React.useMemo(() => getKokoroAssetSetOptions().filter((s) => s.id), []);
   const runtimeSupported = React.useMemo(() => isKokoroRuntimeSupported(), []);
@@ -176,7 +179,11 @@ export function LocalNeuralTtsSettings(props: {
       />
 
       {usesDaemonExecution ? (
-        <DaemonVoiceInferenceModelSection packId={effectiveAssetSetId} kind="tts" />
+        <DaemonVoiceInferenceModelSection
+          packId={effectiveAssetSetId}
+          kind="tts"
+          daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+        />
       ) : (
         <>
           <Item

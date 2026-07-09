@@ -318,12 +318,14 @@ describe('agent catalog voice tools', () => {
       'backend:claude': false,
       'backend:codex': false,
       'backend:opencode': false,
+      'backend:antigravity': false,
       'backend:gemini': false,
       'backend:auggie': false,
       'backend:qwen': false,
       'backend:kimi': false,
       'backend:kilo': false,
       'backend:kiro': false,
+      'backend:cursor': false,
       'backend:ohMyPi': false,
       'backend:pi': false,
       'backend:copilot': false,
@@ -468,6 +470,89 @@ describe('agent catalog voice tools', () => {
         }],
       },
     ]);
+  });
+
+  it('does not expose a selectable Default model when machine preflight reports unavailable', async () => {
+    machineCapabilitiesInvoke.mockResolvedValue({
+      supported: true,
+      response: {
+        ok: true,
+        result: {
+          availableModels: [],
+          supportsFreeform: false,
+          source: 'unavailable',
+        },
+      },
+    });
+
+    const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
+    const res: any = await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' });
+
+    expect(machineCapabilitiesInvoke).toHaveBeenCalled();
+    expect(res).toMatchObject({
+      agentId: 'claude',
+      machineId: 'm1',
+      source: 'unavailable',
+      supportsFreeform: false,
+      items: [],
+      unavailable: true,
+    });
+
+    const cacheKey = buildDynamicModelProbeCacheKey({
+      machineId: 'm1',
+      targetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' }),
+      serverId: 'server-a',
+      cwd: null,
+    });
+    expect(cacheKey).toBeTruthy();
+    const cacheEntry = cacheKey ? readDynamicModelProbeCache(cacheKey) : null;
+    expect(cacheEntry?.kind).toBe('success');
+    expect(cacheEntry?.kind === 'success' ? cacheEntry.cacheable : true).toBe(false);
+    expect(cacheEntry?.kind === 'success' ? cacheEntry.value.unavailable : false).toBe(true);
+  });
+
+  it('returns an unavailable empty model list when the dynamic model probe is unsupported', async () => {
+    machineCapabilitiesInvoke.mockResolvedValue({
+      supported: false,
+      reason: 'not-supported',
+    } as any);
+
+    const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
+    const res: any = await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' });
+
+    expect(machineCapabilitiesInvoke).toHaveBeenCalled();
+    expect(res).toMatchObject({
+      agentId: 'claude',
+      machineId: 'm1',
+      source: 'unavailable',
+      supportsFreeform: false,
+      items: [],
+      unavailable: true,
+    });
+  });
+
+  it('returns an unavailable empty model list when the dynamic model probe returns non-ok', async () => {
+    machineCapabilitiesInvoke.mockResolvedValue({
+      supported: true,
+      response: {
+        ok: false,
+        errorCode: 'provider_unavailable',
+        errorMessage: 'provider_unavailable',
+      },
+    } as any);
+
+    const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
+    const res: any = await listAgentModelsForVoiceTool({ agentId: 'claude', machineId: 'm1' });
+
+    expect(machineCapabilitiesInvoke).toHaveBeenCalled();
+    expect(res).toMatchObject({
+      agentId: 'claude',
+      machineId: 'm1',
+      source: 'unavailable',
+      supportsFreeform: false,
+      items: [],
+      unavailable: true,
+    });
   });
 
   it('caches dynamic model probes per machine/agent so repeated calls do not re-invoke the probe', async () => {

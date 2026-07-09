@@ -7,38 +7,20 @@ import type { DaemonVoiceInferenceModelStatus } from '@happier-dev/protocol';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
-vi.mock('@/voice/runtime/voiceRuntimeConfigDefaults', () => ({
-    VOICE_RUNTIME_CONFIG_DEFAULTS: {
-        listeningStartTimeoutMs: 5_000,
-        realtimeWatchdogPollMs: 3_000,
-        realtimeWatchdogPlateauMs: 10_000,
-        daemonInference: {
-            warmIdleEvictMs: 5 * 60 * 1000,
-            warmOnVoiceHomeAttach: true,
-            perModelConcurrency: 1,
-            tts: {
-                defaultCodec: {
-                    codec: 'wav',
-                    mimeType: 'audio/wav',
-                },
-                latencyBudgetMs: 2_000,
-                consecutiveSlowCallsBeforeDemotion: 2,
+vi.mock('@/voice/runtime/voiceRuntimeConfigDefaults', async (importActual) => {
+    const actual = await importActual<typeof import('@/voice/runtime/voiceRuntimeConfigDefaults')>();
+    return {
+        VOICE_RUNTIME_CONFIG_DEFAULTS: {
+            ...actual.VOICE_RUNTIME_CONFIG_DEFAULTS,
+            daemonInference: {
+                ...actual.VOICE_RUNTIME_CONFIG_DEFAULTS.daemonInference,
+                // Only the poll interval is exercised here; spread the real config
+                // so the fixture cannot drift from the canonical owner.
+                statusPollMs: 123,
             },
-            stt: {
-                maxUploadBytes: 25 * 1024 * 1024,
-                acceptedInputFormats: [
-                    'audio/wav',
-                    'audio/wave',
-                    'audio/x-wav',
-                    'audio/mp4',
-                    'audio/x-m4a',
-                    'audio/webm',
-                ],
-            },
-            statusPollMs: 123,
         },
-    },
-}));
+    };
+});
 
 import { useDaemonVoiceInferenceModelState } from './useDaemonVoiceInferenceModelState';
 

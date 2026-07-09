@@ -25,6 +25,7 @@ const LocalNeuralProviderSettings: LocalTtsProviderSpec['Settings'] = (props) =>
         })}
       networkTimeoutMs={props.networkTimeoutMs}
       popoverBoundaryRef={props.popoverBoundaryRef}
+      daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
     />
   );
 };

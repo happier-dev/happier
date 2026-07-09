@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
 
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
@@ -16,12 +15,17 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Modal } from '@/modal';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
-import type { SecretString } from '@/sync/encryption/secretSettings';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { parseLocalVoiceSttSettings } from '@/voice/local/localVoiceSettings';
+import { normalizeSecretStringPromptInput } from '@/utils/secrets/normalizeSecretStringPromptInput';
+import { parseLocalVoiceSttSettings, parseLocalVoiceTtsSettings } from '@/voice/local/localVoiceSettings';
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
 import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceTtsGroup';
+import {
+  DaemonVoiceModelCatalogSection,
+  type DaemonVoiceModelCatalogController,
+} from '@/voice/settings/panels/modelCatalog/DaemonVoiceModelCatalogSection';
+import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 import { resetGlobalVoiceAgentPersistence } from '@/voice/agent/resetGlobalVoiceAgentPersistence';
 import { canAgentResume } from '@/agents/runtime/resumeCapabilities';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -30,21 +34,15 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useAllMachines } from '@/sync/store/hooks';
 import { useSetting, useSettings } from '@/sync/domains/state/storage';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
-import {
-  resolveContinuousVoiceProviderId,
-  resolveStoredVoiceProviderId,
-} from '@/voice/settings/resolveVoiceProviderId';
+import { resolveStoredVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 
-function normalizeSecretStringPromptInput(value: string | null): SecretString | null {
-  if (value === null) return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? { _isSecretValue: true, value: trimmed } : null;
-}
 
 export function LocalConversationSection(props: {
   voice: VoiceSettings;
   setVoice: (next: VoiceSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
+  daemonModelCatalog?: DaemonVoiceModelCatalogController;
+  daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 }) {
   const { theme } = useUnistyles();
   const voiceAgentEnabled = useFeatureEnabled('voice.agent');
@@ -72,9 +70,7 @@ export function LocalConversationSection(props: {
 
   const cfg = props.voice.adapters.local_conversation;
   const storedProviderId = resolveStoredVoiceProviderId(props.voice.providerId);
-  const effectiveProviderId = resolveContinuousVoiceProviderId(props.voice.providerId);
-  const enabled = storedProviderId === 'local_conversation'
-    || (Platform.OS === 'web' && effectiveProviderId === 'realtime_elevenlabs');
+  const enabled = storedProviderId === 'local_conversation';
   const machines = useAllMachines();
   const recentMachinePaths = useSetting('recentMachinePaths') as any[] | undefined;
 
@@ -226,7 +222,23 @@ export function LocalConversationSection(props: {
   const setAgent = (patch: Partial<typeof cfg.agent>) => setCfg({ agent: { ...cfg.agent, ...patch } });
   const setStreaming = (patch: Partial<typeof cfg.streaming>) => setCfg({ streaming: { ...cfg.streaming, ...patch } });
 
-  const sttProvider = parseLocalVoiceSttSettings(cfg.stt).provider;
+  const parsedStt = parseLocalVoiceSttSettings(cfg.stt);
+  const parsedTts = parseLocalVoiceTtsSettings(cfg.tts);
+  const sttProvider = parsedStt.provider;
+
+  // Canonical per-kind default pack id. The daemon-local model catalog reuses the
+  // existing local-neural `assetId` field as the selected-default selector rather
+  // than introducing a parallel settings key.
+  const selectedSttPackId = parsedStt.localNeural?.assetId ?? null;
+  const selectedTtsPackId = parsedTts.localNeural?.assetId ?? null;
+
+  const selectModelDefault = (kind: 'stt_sherpa' | 'tts_sherpa', packId: string) => {
+    if (kind === 'stt_sherpa') {
+      setCfg({ stt: { ...parsedStt, localNeural: { ...parsedStt.localNeural, assetId: packId } } });
+      return;
+    }
+    setCfg({ tts: { ...parsedTts, localNeural: { ...parsedTts.localNeural, assetId: packId } } });
+  };
 
   return (
     <>
@@ -270,6 +282,7 @@ export function LocalConversationSection(props: {
         cfgStt={cfg.stt}
         setStt={(next) => setCfg({ stt: next })}
         popoverBoundaryRef={props.popoverBoundaryRef}
+        daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
       />
 
       {sttProvider === 'device' ? (
@@ -339,6 +352,14 @@ export function LocalConversationSection(props: {
         setTts={(next) => setCfg({ tts: next })}
         networkTimeoutMs={cfg.networkTimeoutMs}
         popoverBoundaryRef={props.popoverBoundaryRef}
+        daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+      />
+
+      <DaemonVoiceModelCatalogSection
+        selectedSttPackId={selectedSttPackId}
+        selectedTtsPackId={selectedTtsPackId}
+        onSelectDefault={selectModelDefault}
+        catalogController={props.daemonModelCatalog}
       />
 
       {cfg.conversationMode === 'agent' ? (

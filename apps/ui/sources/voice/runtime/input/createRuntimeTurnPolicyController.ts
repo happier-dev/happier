@@ -1,6 +1,6 @@
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
-import type { AdaptiveInterruptionConfig } from './resolveAdaptiveInterruptionDecision';
+import { resolveBackchannelDecision, type AdaptiveInterruptionConfig } from './resolveBackchannelDecision';
 import type { TurnEndpointSignal } from './TurnEndpointController';
 
 export type RuntimeTurnCaptureProvider = 'recorded_audio' | 'device' | 'local_neural';
@@ -89,6 +89,10 @@ export type RuntimeTurnPolicyController = Readonly<{
         provider: EndpointDrivenRuntimeTurnCaptureProvider;
         sessionId: string;
         transcript?: string | null;
+        /** Spoken duration of the captured utterance, if measured. */
+        durationMs?: number | null;
+        /** STT confidence of the captured utterance, if available. */
+        confidence?: number | null;
     }>) => RuntimeStoppedCaptureAction;
     setHandsFreeCaptureSession: (args: Readonly<{
         provider: EndpointDrivenRuntimeTurnCaptureProvider;
@@ -98,19 +102,6 @@ export type RuntimeTurnPolicyController = Readonly<{
 
 function normalizeSessionId(sessionId: string | null | undefined): string | null {
     return normalizeNonEmptyString(sessionId);
-}
-
-function normalizeInterruptionTranscript(value: string | null | undefined): string {
-    const normalized = normalizeNonEmptyString(value) ?? '';
-    if (!normalized) {
-        return '';
-    }
-
-    return normalized
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, ' ')
-        .trim()
-        .replace(/\s+/g, ' ');
 }
 
 function resolveStoppedCaptureFollowUp(args: Readonly<{
@@ -191,7 +182,7 @@ export function createRuntimeTurnPolicyController(): RuntimeTurnPolicyController
                 sessionId: normalizedSignalSessionId,
             } as const;
         },
-        resolveStoppedCaptureAction: ({ adaptiveConfig, continueHandsFree, provider, sessionId, transcript }) => {
+        resolveStoppedCaptureAction: ({ adaptiveConfig, continueHandsFree, provider, sessionId, transcript, durationMs, confidence }) => {
             const normalizedTranscript = normalizeNonEmptyString(transcript) ?? '';
             const followUp = resolveStoppedCaptureFollowUp({
                 continueHandsFree,
@@ -199,24 +190,17 @@ export function createRuntimeTurnPolicyController(): RuntimeTurnPolicyController
                 sessionId,
             });
 
-            if (!normalizedTranscript) {
+            const backchannel = resolveBackchannelDecision({
+                config: adaptiveConfig,
+                transcript: normalizedTranscript,
+                durationMs,
+                confidence,
+            });
+            if (backchannel.isBackchannel) {
                 return {
                     followUp,
                     kind: 'ignore',
-                    reason: 'empty_transcript',
-                } as const;
-            }
-
-            const ignoredPhrases = new Set(
-                adaptiveConfig.ignoredPhrases
-                    .map((phrase) => normalizeInterruptionTranscript(phrase))
-                    .filter((phrase) => phrase.length > 0),
-            );
-            if (ignoredPhrases.has(normalizeInterruptionTranscript(normalizedTranscript))) {
-                return {
-                    followUp,
-                    kind: 'ignore',
-                    reason: 'backchannel',
+                    reason: backchannel.reason === 'empty_transcript' ? 'empty_transcript' : 'backchannel',
                 } as const;
             }
 

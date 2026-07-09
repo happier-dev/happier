@@ -5,8 +5,6 @@ type PersistedVoiceConversationBindingV1 = Readonly<{
     v: 1;
     adapterId: string;
     controlSessionId: string;
-    runId?: string | null;
-    streamId?: string | null;
     transcriptMode: VoiceSessionBinding['transcriptMode'];
     targetSessionId: string | null;
     updatedAt: number;
@@ -41,8 +39,6 @@ export function readVoiceConversationBindingMetadata(
 
     const adapterId = normalizeId(raw.adapterId);
     const controlSessionId = normalizeId(raw.controlSessionId);
-    const runId = normalizeId(raw.runId);
-    const streamId = normalizeId(raw.streamId);
     const transcriptMode =
         raw.transcriptMode === 'native_session'
             ? 'native_session'
@@ -56,8 +52,6 @@ export function readVoiceConversationBindingMetadata(
         adapterId,
         controlSessionId,
         conversationSessionId: resolvedConversationSessionId,
-        ...(runId ? { runId } : {}),
-        ...(streamId ? { streamId } : {}),
         transcriptMode,
         targetSessionId: normalizeId(raw.targetSessionId),
         updatedAt,
@@ -99,8 +93,6 @@ export function writeVoiceConversationBindingMetadata(
     const base = metadata && typeof metadata === 'object' ? { ...(metadata as Record<string, unknown>) } : {};
     const adapterId = requireNormalizedId(binding.adapterId, 'voice conversation adapter id');
     const controlSessionId = requireNormalizedId(binding.controlSessionId, 'voice conversation control session id');
-    const runId = normalizeId(binding.runId);
-    const streamId = normalizeId(binding.streamId);
     const targetSessionId = normalizeId(binding.targetSessionId);
     return {
         ...base,
@@ -108,8 +100,6 @@ export function writeVoiceConversationBindingMetadata(
             v: 1,
             adapterId,
             controlSessionId,
-            ...(runId ? { runId } : {}),
-            ...(streamId ? { streamId } : {}),
             transcriptMode: binding.transcriptMode,
             targetSessionId,
             updatedAt: Number.isFinite(binding.updatedAt) ? Number(binding.updatedAt) : 0,

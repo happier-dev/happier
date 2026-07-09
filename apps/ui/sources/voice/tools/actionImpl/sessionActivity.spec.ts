@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Message } from '@/sync/domains/messages/messageTypes';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { createReducer } from '@/sync/reducer/reducer';
@@ -90,9 +91,65 @@ describe('getSessionActivityForVoiceTool', () => {
         vi.restoreAllMocks();
         storage.setState((current) => ({
             ...current,
+            settings: settingsDefaults,
             sessions: {},
             sessionMessages: {},
         }));
+    });
+
+    it('suppresses pending-request state when sharePermissionRequests is disabled', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(10_000);
+        const { getSessionActivityForVoiceTool } = await import('./sessionActivity');
+
+        storage.setState((current) => ({
+            ...current,
+            settings: {
+                ...settingsDefaults,
+                voice: {
+                    ...settingsDefaults.voice,
+                    privacy: {
+                        ...settingsDefaults.voice.privacy,
+                        sharePermissionRequests: false,
+                    },
+                },
+            },
+            sessions: {
+                s_blocked: {
+                    ...createTestSession('s_blocked'),
+                    thinking: false,
+                    latestTurnStatus: 'in_progress',
+                    latestTurnStatusObservedAt: 9_500,
+                    pendingPermissionRequestCount: 1,
+                    pendingUserActionRequestCount: 1,
+                    pendingRequestObservedAt: 9_800,
+                    agentState: {
+                        requests: {
+                            req_secret: { tool: 'write', arguments: {} },
+                        },
+                    },
+                } as Session,
+            },
+            sessionListIndexByServerId: {
+                'server-a': [
+                    { type: 'session', sessionId: 's_blocked', serverId: 'server-a', serverName: 'Server A' },
+                ],
+            },
+            concurrentSessionListCacheByServerId: {},
+            sessionMessages: {
+                s_blocked: createTestSessionMessages([]),
+            },
+        }));
+
+        const result = await getSessionActivityForVoiceTool({ sessionId: 's_blocked' });
+        expect(result).toMatchObject({
+            ok: true,
+            sessionId: 's_blocked',
+            blocked: false,
+            permissionRequired: false,
+            actionRequired: false,
+            permissionRequestIds: [],
+        });
+        expect(JSON.stringify(result)).not.toContain('req_secret');
     });
 
     it('counts activity from normalized transcript state', async () => {
@@ -115,6 +172,71 @@ describe('getSessionActivityForVoiceTool', () => {
                 assistant: 2,
                 user: 1,
             },
+        });
+    });
+
+    it('omits covered permission ids while exposing live pending permission and user-action activity', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(10_000);
+        const { getSessionActivityForVoiceTool } = await import('./sessionActivity');
+
+        storage.setState((current) => ({
+            ...current,
+            sessions: {
+                s_activity: {
+                    ...createTestSession('s_activity'),
+                    latestTurnStatus: 'in_progress',
+                    latestTurnStatusObservedAt: 9_500,
+                    agentState: {
+                        requests: {
+                            req_permission_done: {
+                                tool: 'Bash',
+                                kind: 'permission',
+                                arguments: { command: 'pwd' },
+                                createdAt: 9_600,
+                            },
+                            req_permission_live: {
+                                tool: 'Bash',
+                                kind: 'permission',
+                                arguments: { command: 'git status' },
+                                createdAt: 9_800,
+                            },
+                            req_question_live: {
+                                tool: 'AskUserQuestion',
+                                kind: 'user_action',
+                                arguments: { questions: [{ question: 'Continue?' }] },
+                                createdAt: 9_900,
+                            },
+                        },
+                        completedRequests: {
+                            req_permission_done: {
+                                tool: 'Bash',
+                                kind: 'permission',
+                                arguments: { command: 'pwd' },
+                                completedAt: 9_700,
+                                status: 'approved',
+                            },
+                        },
+                    },
+                },
+            },
+            sessionListIndexByServerId: {
+                'server-a': [
+                    { type: 'session', sessionId: 's_activity', serverId: 'server-a', serverName: 'Server A' },
+                ],
+            },
+            concurrentSessionListCacheByServerId: {},
+            sessionMessages: {
+                s_activity: createTestSessionMessages([]),
+            },
+        }));
+
+        await expect(getSessionActivityForVoiceTool({ sessionId: 's_activity' })).resolves.toMatchObject({
+            ok: true,
+            sessionId: 's_activity',
+            blocked: true,
+            permissionRequired: true,
+            actionRequired: true,
+            permissionRequestIds: ['req_permission_live'],
         });
     });
 
@@ -180,7 +302,7 @@ describe('getSessionActivityForVoiceTool', () => {
             permissionRequired: false,
             actionRequired: false,
             updatedAt: 456,
-            permissionRequestIds: ['req_cached'],
+            permissionRequestIds: [],
             messageCounts: {
                 total: 2,
                 assistant: 1,

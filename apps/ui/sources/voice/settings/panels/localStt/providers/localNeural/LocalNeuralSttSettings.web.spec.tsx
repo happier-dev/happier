@@ -46,6 +46,30 @@ describe('LocalNeuralSttSettings (web)', () => {
         expect(daemonModelSection[0]?.props.kind).toBe('stt');
     });
 
+    it('passes daemon relay diagnostics to the daemon model section', async () => {
+        const { LocalNeuralSttSettings } = await import('./LocalNeuralSttSettings.web');
+
+        const { tree } = await renderScreen(
+            <LocalNeuralSttSettings
+                cfg={{
+                    provider: 'local_neural',
+                    openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
+                    googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
+                    localNeural: {
+                        assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
+                        language: 'en',
+                        execution: 'auto',
+                    },
+                }}
+                setCfg={vi.fn()}
+                popoverBoundaryRef={null}
+                daemonRouteDiagnosticReason="daemon_relay_capped"
+            />,
+        );
+
+        expect(tree.root.findByType('DaemonModelSection').props.daemonRouteDiagnosticReason).toBe('daemon_relay_capped');
+    });
+
     it('clamps stored web device execution to daemon inference controls', async () => {
         const { LocalNeuralSttSettings } = await import('./LocalNeuralSttSettings.web');
 

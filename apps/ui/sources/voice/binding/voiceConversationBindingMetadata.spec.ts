@@ -3,12 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { readVoiceConversationBindingMetadata } from './voiceConversationBindingMetadata';
 
 describe('readVoiceConversationBindingMetadata', () => {
-  it('parses numeric updatedAt values stored as strings', () => {
+  it('parses numeric updatedAt values stored as strings and ignores legacy runId/streamId', () => {
     const binding = readVoiceConversationBindingMetadata('  carrier-s1  ', {
       voiceConversationBindingV1: {
         v: 1,
         adapterId: ' local_conversation ',
         controlSessionId: ' voice-global ',
+        // Legacy fields that are no longer part of binding identity; must be dropped.
         runId: ' run_1 ',
         streamId: ' stream_1 ',
         transcriptMode: 'native_session',
@@ -21,8 +22,6 @@ describe('readVoiceConversationBindingMetadata', () => {
             adapterId: 'local_conversation',
             controlSessionId: 'voice-global',
             conversationSessionId: 'carrier-s1',
-            runId: 'run_1',
-            streamId: 'stream_1',
             transcriptMode: 'native_session',
             targetSessionId: 's1',
             updatedAt: 123,
@@ -39,8 +38,6 @@ describe('readVoiceConversationBindingMetadata', () => {
           adapterId: ' local_conversation ',
           controlSessionId: ' voice-global ',
           conversationSessionId: ' carrier-s1 ',
-          runId: ' run_2 ',
-          streamId: ' stream_2 ',
           transcriptMode: 'synthetic',
           targetSessionId: ' s1 ',
           updatedAt: 123,
@@ -52,8 +49,6 @@ describe('readVoiceConversationBindingMetadata', () => {
           v: 1,
           adapterId: 'local_conversation',
           controlSessionId: 'voice-global',
-          runId: 'run_2',
-          streamId: 'stream_2',
           transcriptMode: 'synthetic',
           targetSessionId: 's1',
           updatedAt: 123,
@@ -71,8 +66,6 @@ describe('readVoiceConversationBindingMetadata', () => {
           adapterId: '   ',
           controlSessionId: ' voice-global ',
           conversationSessionId: ' carrier-s1 ',
-          runId: ' run_2 ',
-          streamId: ' stream_2 ',
           transcriptMode: 'synthetic',
           targetSessionId: ' s1 ',
           updatedAt: 123,

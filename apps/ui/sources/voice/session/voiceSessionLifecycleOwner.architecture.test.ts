@@ -16,6 +16,7 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
         ],
         forbiddenSnippets: [
             'getVoiceAdapterRegistry',
+            'resolveContinuousVoiceProviderId',
         ],
     },
     {

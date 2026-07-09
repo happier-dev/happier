@@ -25,10 +25,14 @@ describe('createNativeVadController', () => {
         const startVadSession = vi.fn(async () => {});
         const stopVadSession = vi.fn(async () => {});
         let vadSpeechEndListener: ((event: unknown) => void) | null = null;
+        let vadSpeechStartListener: ((event: unknown) => void) | null = null;
         sherpaNativeMock.nativeModule = {
             addListener: vi.fn((eventName, listener) => {
                 if (eventName === 'vadSpeechEnd') {
                     vadSpeechEndListener = listener;
+                }
+                if (eventName === 'vadSpeechStart') {
+                    vadSpeechStartListener = listener;
                 }
                 return { remove };
             }),
@@ -53,6 +57,9 @@ describe('createNativeVadController', () => {
         });
 
         expect(typeof vadSpeechEndListener).toBe('function');
+        // The bridge also subscribes the optional speech-START edge so the
+        // two-stage hysteresis machine can debounce false starts.
+        expect(typeof vadSpeechStartListener).toBe('function');
         if (!vadSpeechEndListener) {
             throw new Error('expected native VAD speech-end listener');
         }
@@ -64,12 +71,89 @@ describe('createNativeVadController', () => {
             sessionId: 'native-silero',
             source: 'native_vad',
             transcript: '',
+            // VAD-only edge (no observed speech-start) → duration is unknown.
+            durationMs: null,
         });
 
         await controller.stopSession('native-silero');
 
-        expect(remove).toHaveBeenCalledTimes(1);
+        // Both the speech-end and speech-start subscriptions are torn down.
+        expect(remove).toHaveBeenCalledTimes(2);
         expect(stopVadSession).toHaveBeenCalledWith({ sessionId: 'native-silero' });
+    });
+
+    it('carries the latest partial transcript on the native_vad signal when a provider is supplied', async () => {
+        const onEndpointSignal = vi.fn();
+        const stop = vi.fn();
+        let onSpeechEnd: (() => void) | null = null;
+        let partial = 'open the';
+        const bridge: NativeVadBridge = {
+            startSession: vi.fn(async (args) => {
+                onSpeechEnd = args.onSpeechEnd;
+                return { stop };
+            }),
+        };
+        const controller = createNativeVadController({
+            bridge,
+            now: () => 7_000,
+            onEndpointSignal,
+            getLatestPartialTranscript: () => partial,
+        });
+
+        await controller.startSession({ minSpeechMs: 10, redemptionMs: 30, sessionId: 'session-native' });
+        partial = 'open the most recent notes';
+        (onSpeechEnd as null | (() => void))?.();
+
+        expect(onEndpointSignal).toHaveBeenCalledWith({
+            detectedAt: 7_000,
+            sessionId: 'session-native',
+            source: 'native_vad',
+            transcript: 'open the most recent notes',
+            // VAD-only edge (no observed speech-start) → duration is unknown.
+            durationMs: null,
+        });
+    });
+
+    it('applies the two-stage confirmMs false-start debounce when the bridge surfaces speech-start edges', async () => {
+        const onEndpointSignal = vi.fn();
+        const stop = vi.fn();
+        let clock = 0;
+        let onSpeechStart: (() => void) | null = null;
+        let onSpeechEnd: (() => void) | null = null;
+        const bridge: NativeVadBridge = {
+            startSession: vi.fn(async (args) => {
+                onSpeechStart = args.onSpeechStart ?? null;
+                onSpeechEnd = args.onSpeechEnd;
+                return { stop };
+            }),
+        };
+        const controller = createNativeVadController({
+            bridge,
+            now: () => clock,
+            onEndpointSignal,
+            turnPolicy: { confirmMs: 800, silenceMs: 700 },
+        });
+
+        await controller.startSession({ minSpeechMs: 0, redemptionMs: 0, sessionId: 'session-native' });
+
+        // Sub-confirmMs segment → suppressed.
+        clock = 0;
+        (onSpeechStart as null | (() => void))?.();
+        clock = 300;
+        (onSpeechEnd as null | (() => void))?.();
+        expect(onEndpointSignal).not.toHaveBeenCalled();
+
+        // Sustained segment → emits, carrying the measured speech-start → endpoint
+        // span (1000 → 2000) so the downstream barge-in duration gate sees it.
+        clock = 1_000;
+        (onSpeechStart as null | (() => void))?.();
+        clock = 2_000;
+        (onSpeechEnd as null | (() => void))?.();
+        expect(onEndpointSignal).toHaveBeenCalledTimes(1);
+        expect(onEndpointSignal).toHaveBeenCalledWith(expect.objectContaining({
+            source: 'native_vad',
+            durationMs: 1_000,
+        }));
     });
 
     it('returns false without a native bridge so provider endpoint fallbacks remain active', async () => {
@@ -143,6 +227,8 @@ describe('createNativeVadController', () => {
             sessionId: 'session-native',
             source: 'native_vad',
             transcript: '',
+            // VAD-only edge (no observed speech-start) → duration is unknown.
+            durationMs: null,
         });
 
         await controller.stopSession('session-native');

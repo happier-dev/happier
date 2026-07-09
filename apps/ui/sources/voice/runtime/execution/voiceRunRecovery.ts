@@ -3,6 +3,7 @@ import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { VoiceAssistantAction } from '@happier-dev/protocol';
 import type { VoiceAgentHandle } from '@/voice/agent/types';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import { isVoiceAgentNotFoundError } from '@/voice/agent/voiceAgentErrorGuards';
 import { readPersistedVoiceConversationRuntimeState } from '@/voice/binding/voiceConversationBindingPersistence';
 import { readVoiceAgentRunMetadataFromSession } from '@/voice/persistence/voiceAgentRunMetadata';
 import { sessionExecutionRunGet, sessionExecutionRunList, sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
@@ -145,7 +146,6 @@ export function createVoiceRunRecovery(args: Readonly<{
                         if (backendId && backendTarget) {
                             await persistVoiceAgentRunMetadata(metadataSessionId, {
                                 runId: handle.voiceAgentId,
-                                backendId,
                                 backendTarget,
                                 resumeHandle,
                             });
@@ -161,7 +161,7 @@ export function createVoiceRunRecovery(args: Readonly<{
         try {
             return await commitWithHandle();
         } catch (error) {
-            if (!(error instanceof Error) || error.message !== 'Voice agent not found') {
+            if (!isVoiceAgentNotFoundError(error)) {
                 throw error;
             }
             args.voiceAgentBySessionId.delete(sessionId);

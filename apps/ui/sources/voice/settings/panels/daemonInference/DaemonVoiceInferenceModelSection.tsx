@@ -5,13 +5,21 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { formatDownloadProgressDetail } from '@/voice/downloads/downloadProgress';
 import { DaemonVoiceInferenceClient } from '@/voice/runtime/daemonInference/DaemonVoiceInferenceClient';
+import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 
 import { useDaemonVoiceInferenceModelState } from './useDaemonVoiceInferenceModelState';
 
 function resolveServiceDetail(
     serviceState: ReturnType<typeof useDaemonVoiceInferenceModelState>['state']['serviceState'],
     errorCode: ReturnType<typeof useDaemonVoiceInferenceModelState>['state']['errorCode'],
+    daemonRouteDiagnosticReason: VoiceDaemonRouteDiagnosticReason | null | undefined,
 ): string {
+    if (daemonRouteDiagnosticReason === 'daemon_relay_disabled') {
+        return t('settingsVoice.local.daemonInference.states.relayDisabled');
+    }
+    if (daemonRouteDiagnosticReason === 'daemon_relay_capped') {
+        return t('settingsVoice.local.daemonInference.states.relayCapped');
+    }
     if (errorCode === 'machine_unreachable') {
         return t('settingsVoice.local.daemonInference.states.machineUnreachable');
     }
@@ -60,6 +68,7 @@ export function DaemonVoiceInferenceModelSection(props: Readonly<{
     packId: string | null;
     kind: 'tts' | 'stt';
     client?: Pick<DaemonVoiceInferenceClient, 'getStatus' | 'getModelsStatus' | 'installModel' | 'removeModel'>;
+    daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 }>): React.ReactElement {
     const { state, refresh, install, remove } = useDaemonVoiceInferenceModelState({
         packId: props.packId,
@@ -71,7 +80,7 @@ export function DaemonVoiceInferenceModelSection(props: Readonly<{
             <Item
                 title={t('settingsVoice.local.daemonInference.service.title')}
                 subtitle={t('settingsVoice.local.daemonInference.service.subtitle')}
-                detail={resolveServiceDetail(state.serviceState, state.errorCode)}
+                detail={resolveServiceDetail(state.serviceState, state.errorCode, props.daemonRouteDiagnosticReason)}
                 onPress={() => {
                     fireAndForget(refresh(), { tag: 'DaemonVoiceInferenceModelSection.refreshService' });
                 }}

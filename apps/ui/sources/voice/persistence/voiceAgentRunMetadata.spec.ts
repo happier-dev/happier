@@ -100,9 +100,7 @@ describe('voiceAgentRunMetadata', () => {
       sessionId: 'sys_voice',
       runId: 'run_2',
       backendTarget: codexTarget,
-      backendId: 'codex',
       resumeHandle: { kind: 'provider_session.v1', backendTarget: codexBackendTarget, providerSessionId: 'vs_2' },
-      streamId: 'stream_2',
       updatedAtMs: 999,
       welcomedEpoch: 4,
     });
@@ -113,13 +111,12 @@ describe('voiceAgentRunMetadata', () => {
       runId: 'run_2',
       backendTarget: codexTarget,
       backendId: 'codex',
-      streamId: 'stream_2',
       updatedAtMs: 999,
       welcomedEpoch: 4,
     });
   });
 
-  it('clears a stale persisted streamId when a different runId is written without a stream handoff', async () => {
+  it('never persists a streamId field, even when legacy metadata carried one', async () => {
     stateRef.current.sessions.sys_voice.metadata.voiceAgentRunV1 = {
       v: 1,
       runId: 'run_prev',
@@ -149,7 +146,6 @@ describe('voiceAgentRunMetadata', () => {
       sessionId: 'sys_voice',
       runId: 'run_fresh',
       backendTarget: claudeTarget,
-      backendId: 'claude',
       resumeHandle: { kind: 'provider_session.v1', backendTarget: claudeBackendTarget, providerSessionId: 'vs_fresh' },
       updatedAtMs: 20,
     });
@@ -157,7 +153,7 @@ describe('voiceAgentRunMetadata', () => {
     expect(stateRef.current.sessions.sys_voice.metadata.voiceAgentRunV1).toMatchObject({
       runId: 'run_fresh',
     });
-    expect((stateRef.current.sessions.sys_voice.metadata.voiceAgentRunV1 as any).streamId).toBeNull();
+    expect('streamId' in (stateRef.current.sessions.sys_voice.metadata.voiceAgentRunV1 as any)).toBe(false);
   });
 
 	  it('clears voiceAgentRunV1 by setting it to null', async () => {
@@ -217,7 +213,6 @@ describe('voiceAgentRunMetadata', () => {
       sessionId: 's1',
       runId: 'run_session',
       backendTarget: claudeTarget,
-      backendId: 'claude',
       resumeHandle: { kind: 'provider_session.v1', backendTarget: claudeBackendTarget, providerSessionId: 'vs_session' },
       updatedAtMs: 456,
       welcomedEpoch: 3,

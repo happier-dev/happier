@@ -12,6 +12,7 @@ type VoiceConversationRuntimeStoreState = Readonly<{
 }>;
 
 export const DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT: VoiceConversationRuntimeSnapshot = {
+    adapterId: null,
     controlSessionId: null,
     state: 'disconnected',
     micMuted: false,
@@ -36,7 +37,8 @@ function areVoiceConversationRuntimeSnapshotsEqual(
     b: VoiceConversationRuntimeSnapshot,
 ): boolean {
     return (
-        a.controlSessionId === b.controlSessionId
+        a.adapterId === b.adapterId
+        && a.controlSessionId === b.controlSessionId
         && a.state === b.state
         && a.micMuted === b.micMuted
         && areVoiceMachineErrorsEqual(a.error, b.error)

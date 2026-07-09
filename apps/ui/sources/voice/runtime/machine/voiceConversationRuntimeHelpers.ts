@@ -1,6 +1,7 @@
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
-import { createVoiceMachineError, voiceConversationRuntimeMachine } from './VoiceConversationRuntimeMachine';
+import { voiceConversationRuntimeMachine } from './VoiceConversationRuntimeMachine';
+import { createVoiceMachineError } from './voiceMachineError';
 
 import type { VoiceMachineErrorKind } from './voiceConversationRuntimeTypes';
 
@@ -34,6 +35,8 @@ export function transitionVoiceRuntimeToIdle(params: Readonly<{
     }
 
     if (!reason) {
+        // Settle to the idle, mic-off `connected` state (turn-based / push-to-talk
+        // between turns); not `listening`, which would imply a hot mic.
         voiceConversationRuntimeMachine.transitionToConnected({
             controlSessionId,
         });

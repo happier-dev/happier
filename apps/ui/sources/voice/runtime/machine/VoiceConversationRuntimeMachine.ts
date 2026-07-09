@@ -1,15 +1,20 @@
+import { createAttemptGuard } from '@/utils/timing/attemptGuard';
+import type { VoiceAdapterId } from '@/voice/session/types';
+
 import {
     DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT,
     getVoiceConversationRuntimeSnapshot,
     setVoiceConversationRuntimeSnapshot,
 } from './voiceConversationRuntimeStore';
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
+import { createVoiceMachineError } from './voiceMachineError';
 import type {
     VoiceConversationRuntimeSnapshot,
+    VoiceConversationRuntimeState,
     VoiceMachineError,
 } from './voiceConversationRuntimeTypes';
 
-type StartListeningFn = () => Promise<void>;
+type StartListeningFn = (signal?: AbortSignal) => Promise<void>;
 
 type RearmListeningArgs = Readonly<{
     controlSessionId: string;
@@ -18,6 +23,13 @@ type RearmListeningArgs = Readonly<{
 
 type TransitionArgs = Readonly<{
     controlSessionId: string;
+    /**
+     * Owning adapter for an entry transition. Local engine adapters leave this
+     * undefined (they share one ownerless machine slot, modeled as `null`);
+     * non-local adapters (e.g. realtime) pass their id so a non-owning adapter
+     * projects a disconnected snapshot.
+     */
+    adapterId?: VoiceAdapterId | null;
 }>;
 
 export type VoiceConversationRuntimeMachine = Readonly<{
@@ -32,7 +44,7 @@ export type VoiceConversationRuntimeMachine = Readonly<{
     transitionToConnected: (args: TransitionArgs) => void;
     transitionToListening: (args: TransitionArgs) => void;
     transitionToTranscribing: (args: TransitionArgs) => void;
-    transitionToSending: (args: TransitionArgs) => void;
+    transitionToThinking: (args: TransitionArgs) => void;
     transitionToSpeaking: (args: TransitionArgs) => void;
     transitionToDisconnected: (args: TransitionArgs & { error?: VoiceMachineError | null }) => void;
     setMuted: (muted: boolean) => void;
@@ -44,24 +56,87 @@ type CreateVoiceConversationRuntimeMachineOptions = Readonly<{
     listeningStartTimeoutMs?: number;
 }>;
 
-export function createVoiceMachineError(params: Readonly<{
-    kind: VoiceMachineError['kind'];
-    reason: string;
-    recoverable: boolean;
-}>): VoiceMachineError {
-    return {
-        kind: params.kind,
-        reason: params.reason,
-        recoverable: params.recoverable,
-    };
+/**
+ * Source-state -> legal target-state map. A transition issued from a live
+ * (non-`disconnected`) state is rejected (no-op + dev warning) when the target
+ * is not reachable from the current state, so the single machine can never be
+ * driven into an illegal lifecycle jump (e.g. `ending` -> `speaking`).
+ * `disconnected` is the idle/entry state and intentionally permits any
+ * transition (fresh starts, including typed-turn `thinking`).
+ */
+const LEGAL_TRANSITIONS: Record<VoiceConversationRuntimeState, ReadonlySet<VoiceConversationRuntimeState>> = {
+    disconnected: new Set([
+        'connecting', 'connected', 'acquiring_mic', 'listening', 'transcribing', 'thinking',
+        'speaking', 'interrupted', 'ending', 'mic_error', 'error', 'disconnected',
+    ]),
+    connecting: new Set(['connecting', 'connected', 'acquiring_mic', 'listening', 'speaking', 'ending', 'disconnected', 'error', 'mic_error']),
+    connected: new Set(['connected', 'acquiring_mic', 'listening', 'transcribing', 'thinking', 'speaking', 'interrupted', 'ending', 'disconnected', 'error', 'mic_error']),
+    acquiring_mic: new Set(['acquiring_mic', 'connecting', 'connected', 'listening', 'transcribing', 'thinking', 'speaking', 'interrupted', 'ending', 'disconnected', 'error', 'mic_error']),
+    listening: new Set(['listening', 'connected', 'acquiring_mic', 'transcribing', 'thinking', 'speaking', 'interrupted', 'ending', 'disconnected', 'error', 'mic_error']),
+    transcribing: new Set(['transcribing', 'thinking', 'speaking', 'listening', 'connected', 'ending', 'disconnected', 'error', 'mic_error']),
+    thinking: new Set(['thinking', 'speaking', 'transcribing', 'listening', 'connected', 'ending', 'disconnected', 'error', 'mic_error']),
+    speaking: new Set(['speaking', 'interrupted', 'listening', 'connected', 'acquiring_mic', 'thinking', 'ending', 'disconnected', 'error', 'mic_error']),
+    interrupted: new Set(['interrupted', 'acquiring_mic', 'listening', 'connected', 'ending', 'disconnected', 'error', 'mic_error']),
+    ending: new Set(['ending', 'disconnected', 'connected', 'listening', 'error']),
+    mic_error: new Set(['mic_error', 'acquiring_mic', 'listening', 'connected', 'ending', 'disconnected', 'error']),
+    error: new Set(['error', 'disconnected', 'connected', 'acquiring_mic', 'connecting', 'listening', 'ending']),
+};
+
+/**
+ * Entry transitions can start a fresh session or retarget the single machine
+ * slot to a different control session, so they bypass the owner guard. Every
+ * other transition must come from the session that currently owns the machine.
+ */
+const ENTRY_STATES: ReadonlySet<VoiceConversationRuntimeState> = new Set(['acquiring_mic', 'connecting']);
+
+function warnIllegalTransition(
+    from: VoiceConversationRuntimeState,
+    to: VoiceConversationRuntimeState,
+    reason: string,
+): void {
+    if (__DEV__) {
+        // eslint-disable-next-line no-console
+        console.warn(`[voiceConversationRuntimeMachine] rejected illegal transition ${from} -> ${to} (${reason})`);
+    }
+}
+
+function isTransitionAllowed(
+    current: VoiceConversationRuntimeSnapshot,
+    controlSessionId: string,
+    toState: VoiceConversationRuntimeState,
+): boolean {
+    // From the idle state any transition is legal (fresh starts).
+    if (current.state === 'disconnected') {
+        return true;
+    }
+
+    // Entry transitions start (or retarget) a session and may run from any
+    // state, so they bypass both the owner guard and the source-state table.
+    if (ENTRY_STATES.has(toState)) {
+        return true;
+    }
+
+    const ownerMismatch =
+        current.controlSessionId !== null && current.controlSessionId !== controlSessionId;
+    if (ownerMismatch) {
+        warnIllegalTransition(current.state, toState, 'owner_mismatch');
+        return false;
+    }
+
+    if (!LEGAL_TRANSITIONS[current.state].has(toState)) {
+        warnIllegalTransition(current.state, toState, 'illegal_source_state');
+        return false;
+    }
+
+    return true;
 }
 
 function createSttTimeoutError(): VoiceMachineError {
-    return {
+    return createVoiceMachineError({
         kind: 'stt_timeout',
         reason: 'listening_start_timeout',
         recoverable: true,
-    };
+    });
 }
 
 function createProviderError(reason: string): VoiceMachineError {
@@ -80,6 +155,11 @@ export function createVoiceConversationRuntimeMachine(
         options.listeningStartTimeoutMs ?? VOICE_RUNTIME_CONFIG_DEFAULTS.listeningStartTimeoutMs,
     );
 
+    // Latest-wins guard over the rearm lifecycle: a newer rearm (or a `cancel`)
+    // invalidates any in-flight start so its late completion can't write a stale
+    // `mic_error`/`stt_timeout` onto whatever owns the snapshot now.
+    const listeningAttemptGuard = createAttemptGuard();
+
     const patchSnapshot = (
         updater: (current: VoiceConversationRuntimeSnapshot) => VoiceConversationRuntimeSnapshot,
     ): VoiceConversationRuntimeSnapshot => {
@@ -91,16 +171,42 @@ export function createVoiceConversationRuntimeMachine(
         return nextSnapshot;
     };
 
-    const setForSession = (
-        controlSessionId: string,
-        updater: (current: VoiceConversationRuntimeSnapshot) => VoiceConversationRuntimeSnapshot,
-    ): VoiceConversationRuntimeSnapshot =>
-        patchSnapshot((current) =>
-            updater({
+    type StateTransition = Readonly<{
+        controlSessionId: string;
+        toState: VoiceConversationRuntimeState;
+        /** `undefined` preserves the current error; otherwise the error is set. */
+        error?: VoiceMachineError | null;
+        clearError?: boolean;
+        /** Owning adapter for entry transitions; `undefined` preserves the owner. */
+        adapterId?: VoiceAdapterId | null;
+    }>;
+
+    const applyStateTransition = (transition: StateTransition): void => {
+        patchSnapshot((current) => {
+            if (!isTransitionAllowed(current, transition.controlSessionId, transition.toState)) {
+                return current;
+            }
+
+            const nextAdapterId =
+                transition.toState === 'disconnected'
+                    ? (transition.adapterId ?? null)
+                    : (transition.adapterId ?? current.adapterId);
+
+            const nextError = transition.clearError
+                ? null
+                : transition.error !== undefined
+                    ? transition.error
+                    : current.error;
+
+            return {
                 ...current,
-                controlSessionId,
-            }),
-        );
+                adapterId: nextAdapterId,
+                controlSessionId: transition.controlSessionId,
+                state: transition.toState,
+                error: nextError,
+            };
+        });
+    };
 
     const confirmListeningStarted = ({ controlSessionId }: TransitionArgs): void => {
         patchSnapshot((current) => {
@@ -119,35 +225,65 @@ export function createVoiceConversationRuntimeMachine(
         });
     };
 
-    const rearmListening = async ({ controlSessionId, startListening }: RearmListeningArgs): Promise<void> => {
-        setForSession(controlSessionId, (current) => ({
-            ...current,
-            controlSessionId,
-            state: 'acquiring_mic',
-            error: null,
-        }));
+    /**
+     * Write a `mic_error` for a rearm failure only when this attempt still owns
+     * the snapshot: the attempt token is current AND the snapshot is still the
+     * `acquiring_mic` state for the same control session. A slow start that
+     * resolves/rejects after the user disconnected, switched sessions, or began a
+     * newer rearm must not stomp `mic_error` onto the live snapshot.
+     */
+    const failRearmIfStillOwner = (
+        token: number,
+        controlSessionId: string,
+        error: VoiceMachineError,
+    ): void => {
+        if (!listeningAttemptGuard.isCurrent(token)) {
+            return;
+        }
+        patchSnapshot((current) => {
+            const isCurrentRearmOwner =
+                current.controlSessionId === controlSessionId
+                && current.state === 'acquiring_mic';
+            if (!isCurrentRearmOwner) {
+                return current;
+            }
+            return {
+                ...current,
+                controlSessionId,
+                state: 'mic_error',
+                error,
+            };
+        });
+    };
 
+    const rearmListening = async ({ controlSessionId, startListening }: RearmListeningArgs): Promise<void> => {
+        const token = listeningAttemptGuard.next();
+        applyStateTransition({
+            controlSessionId,
+            toState: 'acquiring_mic',
+            clearError: true,
+        });
+
+        // Thread an abort signal into the capture start so the timeout can cancel
+        // the in-flight capture instead of leaving an orphaned recorder running.
+        const abortController = new AbortController();
         let timeoutId: ReturnType<typeof setTimeout> | null = null;
         let timedOut = false;
 
         try {
             await Promise.race([
-                startListening(),
+                startListening(abortController.signal),
                 new Promise<void>((resolve) => {
                     timeoutId = setTimeout(() => {
                         timedOut = true;
+                        abortController.abort();
                         resolve();
                     }, listeningStartTimeoutMs);
                 }),
             ]);
         } catch (error) {
             const reason = error instanceof Error ? error.message : 'listening_start_failed';
-            setForSession(controlSessionId, (current) => ({
-                ...current,
-                controlSessionId,
-                state: 'mic_error',
-                error: createProviderError(reason),
-            }));
+            failRearmIfStillOwner(token, controlSessionId, createProviderError(reason));
             return;
         } finally {
             if (timeoutId) {
@@ -156,107 +292,53 @@ export function createVoiceConversationRuntimeMachine(
         }
 
         if (timedOut) {
-            setForSession(controlSessionId, (current) => ({
-                ...current,
-                controlSessionId,
-                state: 'mic_error',
-                error: createSttTimeoutError(),
-            }));
+            failRearmIfStillOwner(token, controlSessionId, createSttTimeoutError());
             return;
         }
 
+        if (!listeningAttemptGuard.isCurrent(token)) {
+            return;
+        }
         confirmListeningStarted({ controlSessionId });
     };
 
     return {
         getSnapshot: () => getVoiceConversationRuntimeSnapshot(),
-        transitionToAcquiringMic: ({ controlSessionId }) => {
-            setForSession(controlSessionId, (current) => ({
-                ...current,
-                controlSessionId,
-                state: 'acquiring_mic',
-                error: null,
-            }));
+        transitionToAcquiringMic: ({ controlSessionId, adapterId }) => {
+            applyStateTransition({ controlSessionId, toState: 'acquiring_mic', clearError: true, adapterId });
         },
-        transitionToConnecting: ({ controlSessionId }) => {
-            setForSession(controlSessionId, (current) => ({
-                ...current,
-                controlSessionId,
-                state: 'connecting',
-                error: null,
-            }));
+        transitionToConnecting: ({ controlSessionId, adapterId }) => {
+            applyStateTransition({ controlSessionId, toState: 'connecting', clearError: true, adapterId });
         },
-        transitionToInterrupted: ({ controlSessionId }) => {
-            setForSession(controlSessionId, (current) => ({
-                ...current,
-                controlSessionId,
-                state: 'interrupted',
-            }));
+        transitionToInterrupted: ({ controlSessionId, adapterId }) => {
+            applyStateTransition({ controlSessionId, toState: 'interrupted', adapterId });
         },
-        transitionToEnding: ({ controlSessionId }) => {
-            setForSession(controlSessionId, (current) => ({
-                ...current,
-                controlSessionId,
-                state: 'ending',
-            }));
+        transitionToEnding: ({ controlSessionId, adapterId }) => {
+            applyStateTransition({ controlSessionId, toState: 'ending', adapterId });
         },
         rearmListening,
         interruptAndRearmListening: async (args) => {
-            setForSession(args.controlSessionId, (current) => ({
-                ...current,
-                controlSessionId: args.controlSessionId,
-                state: 'interrupted',
-            }));
+            applyStateTransition({ controlSessionId: args.controlSessionId, toState: 'interrupted' });
             await rearmListening(args);
         },
         confirmListeningStarted,
-        transitionToConnected: ({ controlSessionId }) => {
-            setForSession(controlSessionId, (current) => ({
-                ...current,
-                controlSessionId,
-                state: 'connected',
-                error: null,
-            }));
+        transitionToConnected: ({ controlSessionId, adapterId }) => {
+            applyStateTransition({ controlSessionId, toState: 'connected', clearError: true, adapterId });
         },
-        transitionToListening: ({ controlSessionId }) => {
-            setForSession(controlSessionId, (current) => ({
-                ...current,
-                controlSessionId,
-                state: 'listening',
-                error: null,
-            }));
+        transitionToListening: ({ controlSessionId, adapterId }) => {
+            applyStateTransition({ controlSessionId, toState: 'listening', clearError: true, adapterId });
         },
-        transitionToTranscribing: ({ controlSessionId }) => {
-            setForSession(controlSessionId, (current) => ({
-                ...current,
-                controlSessionId,
-                state: 'transcribing',
-                error: null,
-            }));
+        transitionToTranscribing: ({ controlSessionId, adapterId }) => {
+            applyStateTransition({ controlSessionId, toState: 'transcribing', clearError: true, adapterId });
         },
-        transitionToSending: ({ controlSessionId }) => {
-            setForSession(controlSessionId, (current) => ({
-                ...current,
-                controlSessionId,
-                state: 'sending',
-                error: null,
-            }));
+        transitionToThinking: ({ controlSessionId, adapterId }) => {
+            applyStateTransition({ controlSessionId, toState: 'thinking', clearError: true, adapterId });
         },
-        transitionToSpeaking: ({ controlSessionId }) => {
-            setForSession(controlSessionId, (current) => ({
-                ...current,
-                controlSessionId,
-                state: 'speaking',
-                error: null,
-            }));
+        transitionToSpeaking: ({ controlSessionId, adapterId }) => {
+            applyStateTransition({ controlSessionId, toState: 'speaking', clearError: true, adapterId });
         },
-        transitionToDisconnected: ({ controlSessionId, error = null }) => {
-            setForSession(controlSessionId, (current) => ({
-                ...current,
-                controlSessionId,
-                state: 'disconnected',
-                error,
-            }));
+        transitionToDisconnected: ({ controlSessionId, adapterId, error = null }) => {
+            applyStateTransition({ controlSessionId, toState: 'disconnected', error, adapterId: adapterId ?? null });
         },
         setMuted: (micMuted) => {
             patchSnapshot((current) => ({
@@ -264,15 +346,13 @@ export function createVoiceConversationRuntimeMachine(
                 micMuted,
             }));
         },
-        setError: ({ controlSessionId, error }) => {
-            setForSession(controlSessionId, (current) => ({
-                ...current,
-                controlSessionId,
-                state: 'error',
-                error,
-            }));
+        setError: ({ controlSessionId, adapterId, error }) => {
+            applyStateTransition({ controlSessionId, toState: 'error', error, adapterId });
         },
         reset: () => {
+            // Invalidate any in-flight rearm so a late completion cannot revive a
+            // stale listening/error state after the runtime has been reset.
+            listeningAttemptGuard.cancel();
             setVoiceConversationRuntimeSnapshot(DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT);
         },
     };

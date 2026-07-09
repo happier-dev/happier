@@ -1,6 +1,5 @@
 import {
     buildSystemSessionMetadataV1,
-    SPAWN_SESSION_ERROR_CODES,
     type BackendTargetRefV2,
 } from '@happier-dev/protocol';
 import { type AgentId } from '@happier-dev/agents';
@@ -12,6 +11,7 @@ import { listPreferredMachineIds } from '@/components/settings/pickers/resolvePr
 import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { createSpawnAttemptKey } from '@/sync/domains/session/spawn/spawnAttemptKey';
 import { storage } from '@/sync/domains/state/storage';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { machineSpawnNewSession } from '@/sync/ops/machines';
@@ -49,8 +49,6 @@ export {
 
 const VOICE_HOME_SPAWN_TARGET_WAIT_TIMEOUT_MS = 5_000;
 const VOICE_HOME_SPAWN_TARGET_WAIT_INTERVAL_MS = 100;
-const VOICE_CONVERSATION_LATE_SPAWN_RECOVERY_TIMEOUT_MS = 5_000;
-const VOICE_CONVERSATION_LATE_SPAWN_RECOVERY_POLL_INTERVAL_MS = 100;
 
 function buildVoiceConversationSystemSessionMetadata() {
     return buildSystemSessionMetadataV1({ key: VOICE_CONVERSATION_SYSTEM_SESSION_KEY, hidden: true });
@@ -218,6 +216,10 @@ function resolveVoiceHomeSpawnTarget(state: any): { machineId: string; directory
     return null;
 }
 
+export function resolveVoiceHomeDaemonMachineId(state: any = storage.getState()): string | null {
+    return resolveVoiceHomeSpawnTarget(state)?.machineId ?? null;
+}
+
 async function resolveVoiceConversationBackendTarget(state: any, machineId: string): Promise<BackendTargetRefV2> {
     const settings = state?.settings ?? {};
     const agentCfg = settings?.voice?.adapters?.local_conversation?.agent ?? {};
@@ -274,94 +276,6 @@ function assertTargetMachineReadyForSpawn(machineId: string): void {
         new Error('Target machine daemon is offline. Start or reconnect the daemon before starting local voice.'),
         { code: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE' },
     );
-}
-
-function isSpawnWebhookTimeout(spawned: unknown): boolean {
-    const errorCode = normalizeNonEmptyString((spawned as any)?.errorCode)?.toLowerCase();
-    return errorCode === String(SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT).toLowerCase();
-}
-
-function matchesLateSpawnedVoiceConversationTarget(
-    state: any,
-    session: any,
-    params: Readonly<{ machineId: string; directory: string }>,
-): boolean {
-    const metadata = resolveVoiceConversationSessionMetadataFromState(
-        state,
-        typeof session?.id === 'string' ? session.id : '',
-    ) as any;
-    return (
-        normalizeNonEmptyString(metadata?.machineId) === params.machineId
-        && normalizeNonEmptyString(metadata?.path) === params.directory
-    );
-}
-
-function findLateSpawnedVoiceConversationSessionId(params: Readonly<{
-    machineId: string;
-    directory: string;
-    knownSessionIds: ReadonlySet<string>;
-}>): string | null {
-    const sessions = Object.values((storage.getState() as any)?.sessions ?? {}) as any[];
-    let best: { id: string; updatedAt: number } | null = null;
-
-    for (const session of sessions) {
-        if (!session || typeof session.id !== 'string') continue;
-        if (params.knownSessionIds.has(session.id)) continue;
-        if (session.active !== true) continue;
-        if (!matchesLateSpawnedVoiceConversationTarget(storage.getState(), session, params)) continue;
-
-        const updatedAt = typeof session.updatedAt === 'number' && Number.isFinite(session.updatedAt) ? session.updatedAt : 0;
-        if (!best || updatedAt > best.updatedAt || (updatedAt === best.updatedAt && session.id < best.id)) {
-            best = { id: session.id, updatedAt };
-        }
-    }
-
-    return best?.id ?? null;
-}
-
-function listLateSpawnedVoiceConversationCandidateIds(params: Readonly<{
-    knownSessionIds: ReadonlySet<string>;
-}>): string[] {
-    return (Object.values((storage.getState() as any)?.sessions ?? {}) as any[])
-        .filter((session) =>
-            session
-            && typeof session.id === 'string'
-            && !params.knownSessionIds.has(session.id)
-            && session.active === true,
-        )
-        .sort((left: any, right: any) => {
-            const leftUpdatedAt = typeof left?.updatedAt === 'number' && Number.isFinite(left.updatedAt) ? left.updatedAt : 0;
-            const rightUpdatedAt = typeof right?.updatedAt === 'number' && Number.isFinite(right.updatedAt) ? right.updatedAt : 0;
-            if (rightUpdatedAt !== leftUpdatedAt) return rightUpdatedAt - leftUpdatedAt;
-            return String(left?.id ?? '').localeCompare(String(right?.id ?? ''));
-        })
-        .map((session) => String(session.id));
-}
-
-async function recoverLateSpawnedVoiceConversationSessionId(params: Readonly<{
-    machineId: string;
-    directory: string;
-    knownSessionIds: ReadonlySet<string>;
-}>): Promise<string | null> {
-    const startedAt = Date.now();
-
-    while ((Date.now() - startedAt) < VOICE_CONVERSATION_LATE_SPAWN_RECOVERY_TIMEOUT_MS) {
-        await sync.refreshSessions().catch(() => {});
-        const recoveredSessionId = findLateSpawnedVoiceConversationSessionId(params);
-        if (recoveredSessionId) return recoveredSessionId;
-
-        for (const candidateSessionId of listLateSpawnedVoiceConversationCandidateIds(params)) {
-            await Promise.resolve(sync.ensureSessionVisibleForMessageRoute(candidateSessionId, { forceRefresh: true } as any)).catch(() => {});
-            const candidateSession = (storage.getState() as any)?.sessions?.[candidateSessionId] ?? null;
-            if (matchesLateSpawnedVoiceConversationTarget(storage.getState(), candidateSession, params)) {
-                return candidateSessionId;
-            }
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, VOICE_CONVERSATION_LATE_SPAWN_RECOVERY_POLL_INTERVAL_MS));
-    }
-
-    return null;
 }
 
 async function waitForSessionMetadata(sessionId: string, timeoutMs: number): Promise<void> {
@@ -502,10 +416,16 @@ export async function ensureVoiceConversationSessionForVoiceHome(): Promise<stri
 
     const backendTarget = await resolveVoiceConversationBackendTarget(state, target.machineId);
     const serverId = getActiveServerSnapshot().serverId;
-    const knownSessionIds = new Set(Object.keys(state.sessions ?? {}));
     const spawned = await machineSpawnNewSession({
         machineId: target.machineId,
         directory: target.directory,
+        spawnAttemptKey: createSpawnAttemptKey('voice.conversation.home', {
+            machineId: target.machineId,
+            directory: target.directory,
+            backendTarget,
+            serverId,
+            scope: { kind: 'voice_home' },
+        }),
         transcriptStorage: 'persisted',
         approvedNewDirectoryCreation: true,
         backendTarget,
@@ -513,18 +433,6 @@ export async function ensureVoiceConversationSessionForVoiceHome(): Promise<stri
     });
 
     if (!spawned || spawned.type !== 'success' || typeof spawned.sessionId !== 'string') {
-        if (isSpawnWebhookTimeout(spawned)) {
-            const recoveredSessionId = await recoverLateSpawnedVoiceConversationSessionId({
-                machineId: target.machineId,
-                directory: target.directory,
-                knownSessionIds,
-            });
-            if (recoveredSessionId) {
-                await touchVoiceConversationSessionWithScope(recoveredSessionId, { kind: 'voice_home' }).catch(() => {});
-                await applyVoiceConversationRetentionPolicy({ keepSessionId: recoveredSessionId }).catch(() => {});
-                return recoveredSessionId;
-            }
-        }
         throw toVoiceConversationSpawnError(spawned);
     }
 
@@ -596,28 +504,22 @@ export async function ensureVoiceConversationSessionForSessionRoot(params: Reado
 
     const backendTarget = await resolveVoiceConversationBackendTarget(state, machineId);
     const serverId = getActiveServerSnapshot().serverId;
-    const knownSessionIds = new Set(Object.keys(state.sessions ?? {}));
     const spawned = await machineSpawnNewSession({
         machineId,
         directory,
+        spawnAttemptKey: createSpawnAttemptKey('voice.conversation.session-root', {
+            machineId,
+            directory,
+            backendTarget,
+            serverId,
+            scope: { kind: 'session_root', sessionRootId: sessionId },
+        }),
         transcriptStorage: 'persisted',
         backendTarget,
         serverId,
     });
 
     if (!spawned || spawned.type !== 'success' || typeof spawned.sessionId !== 'string') {
-        if (isSpawnWebhookTimeout(spawned)) {
-            const recoveredSessionId = await recoverLateSpawnedVoiceConversationSessionId({
-                machineId,
-                directory,
-                knownSessionIds,
-            });
-            if (recoveredSessionId) {
-                await touchVoiceConversationSessionWithScope(recoveredSessionId, { kind: 'session_root', sessionRootId: sessionId }).catch(() => {});
-                await applyVoiceConversationRetentionPolicy({ keepSessionId: recoveredSessionId }).catch(() => {});
-                return recoveredSessionId;
-            }
-        }
         throw toVoiceConversationSpawnError(spawned);
     }
 

@@ -21,6 +21,7 @@ export const sessionExecutionRunList = vi.fn();
 export const sessionExecutionRunGet = vi.fn();
 export const sessionExecutionRunSend = vi.fn();
 export const sessionExecutionRunStop = vi.fn();
+export const sendSessionMessageWithServerScope = vi.fn();
 export const sessionRpcWithServerScope = vi.fn();
 export const createdAudioPlayers: any[] = [];
 export const fileDelete = vi.fn(async () => {});
@@ -323,6 +324,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', (
     sessionRpcWithServerScope: (args: any) => sessionRpcWithServerScope(args),
 }));
 
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage', () => ({
+    sendSessionMessageWithServerScope: (args: any) => sendSessionMessageWithServerScope(args),
+}));
+
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     setActiveServerAndSwitch: (params: any) => setActiveServerAndSwitch(params),
 }));
@@ -514,6 +519,12 @@ vi.mock('@/sync/domains/state/storage', () => {
         },
         sessions: {},
         sessionMessages: {},
+        // Realtime status mirror sink: the realtime transport singleton subscribes
+        // to the runtime machine and mirrors realtime-owned snapshots into these
+        // store setters. They are storage-boundary no-ops for the local engine.
+        setRealtimeStatus: () => {},
+        setRealtimeMode: () => {},
+        clearRealtimeModeDebounce: () => {},
     };
 
     const storage = {
@@ -587,6 +598,7 @@ export function registerLocalVoiceEngineHarnessHooks() {
         daemonVoiceAgentCancelTurnStream.mockReset();
         daemonVoiceAgentCommit.mockReset();
         daemonVoiceAgentStop.mockReset();
+        sendSessionMessageWithServerScope.mockReset();
         sessionRpcWithServerScope.mockReset();
         platformOs = 'ios';
         createdAudioPlayers.length = 0;
@@ -724,6 +736,8 @@ export function registerLocalVoiceEngineHarnessHooks() {
             id: 'machine-1',
             active: true,
             createdAt: Date.now(),
+            activeAt: Date.now(),
+            spawnReadinessStatus: 'ready',
             metadata: {
                 host: 'test',
                 happyHomeDir: '/Users/test/.happier',

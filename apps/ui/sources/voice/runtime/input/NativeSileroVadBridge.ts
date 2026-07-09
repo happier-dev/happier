@@ -3,14 +3,19 @@ import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString'
 import type { NativeVadBridge } from './NativeVadController';
 
 const NATIVE_SILERO_VAD_SPEECH_END_EVENT = 'vadSpeechEnd';
+const NATIVE_SILERO_VAD_SPEECH_START_EVENT = 'vadSpeechStart';
 
 type NativeSileroVadSubscription = Readonly<{
     remove: () => void;
 }>;
 
+type NativeSileroVadEventName =
+    | typeof NATIVE_SILERO_VAD_SPEECH_END_EVENT
+    | typeof NATIVE_SILERO_VAD_SPEECH_START_EVENT;
+
 type NativeSileroVadNativeModule = Readonly<{
     addListener: (
-        eventName: typeof NATIVE_SILERO_VAD_SPEECH_END_EVENT,
+        eventName: NativeSileroVadEventName,
         listener: (event: unknown) => void,
     ) => NativeSileroVadSubscription;
     startVadSession: (params: Readonly<{
@@ -77,8 +82,9 @@ export async function resolveNativeSileroVadBridge(
     }
 
     return {
-        startSession: async ({ minSpeechMs, onSpeechEnd, redemptionMs, sessionId }) => {
-            const subscription = resolvedNativeModule.addListener(
+        startSession: async ({ minSpeechMs, onSpeechEnd, onSpeechStart, redemptionMs, sessionId }) => {
+            const subscriptions: NativeSileroVadSubscription[] = [];
+            subscriptions.push(resolvedNativeModule.addListener(
                 NATIVE_SILERO_VAD_SPEECH_END_EVENT,
                 (event) => {
                     if (normalizeSpeechEndEventSessionId(event) !== sessionId) {
@@ -87,7 +93,24 @@ export async function resolveNativeSileroVadBridge(
 
                     onSpeechEnd();
                 },
-            );
+            ));
+            if (onSpeechStart) {
+                // Optional speech-START edge for the two-stage hysteresis machine.
+                // Native modules that do not emit it simply never fire this listener.
+                subscriptions.push(resolvedNativeModule.addListener(
+                    NATIVE_SILERO_VAD_SPEECH_START_EVENT,
+                    (event) => {
+                        if (normalizeSpeechEndEventSessionId(event) !== sessionId) {
+                            return;
+                        }
+
+                        onSpeechStart();
+                    },
+                ));
+            }
+            const removeSubscriptions = () => {
+                subscriptions.forEach((subscription) => subscription.remove());
+            };
             let nativeSessionStarted = false;
 
             try {
@@ -98,7 +121,7 @@ export async function resolveNativeSileroVadBridge(
                 });
                 nativeSessionStarted = true;
             } catch (error) {
-                subscription.remove();
+                removeSubscriptions();
                 throw error;
             }
 
@@ -109,7 +132,7 @@ export async function resolveNativeSileroVadBridge(
                         return;
                     }
                     stopped = true;
-                    subscription.remove();
+                    removeSubscriptions();
 
                     if (nativeSessionStarted) {
                         await resolvedNativeModule.stopVadSession({ sessionId });

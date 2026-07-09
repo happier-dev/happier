@@ -7,17 +7,27 @@ import {
     DaemonVoiceInferenceTtsAbortResponseSchema,
     DaemonVoiceInferenceTtsChunkResponseSchema,
     DaemonVoiceInferenceTtsFinalizeResponseSchema,
+    DaemonVoiceInferenceTtsStreamAckResponseSchema,
+    DaemonVoiceInferenceTtsStreamCancelResponseSchema,
+    DaemonVoiceInferenceTtsStreamNextResponseSchema,
+    DaemonVoiceInferenceTtsStreamStartResponseSchema,
     DaemonVoiceInferenceTtsSynthesizeResponseSchema,
     DaemonVoiceInferenceSttUploadAbortResponseSchema,
     DaemonVoiceInferenceSttUploadChunkResponseSchema,
     DaemonVoiceInferenceSttUploadFinalizeResponseSchema,
     DaemonVoiceInferenceSttUploadInitResponseSchema,
+    DaemonVoiceInferenceSttStreamCancelResponseSchema,
+    DaemonVoiceInferenceSttStreamChunkResponseSchema,
+    DaemonVoiceInferenceSttStreamFinishResponseSchema,
+    DaemonVoiceInferenceSttStreamStartResponseSchema,
     DaemonVoiceInferenceSttTranscribeResponseSchema,
     type DaemonVoiceInferenceAudioOutput,
     type DaemonVoiceInferenceModelStatus,
     type DaemonVoiceInferenceStatusResponse,
     type DaemonVoiceInferenceTtsSynthesizeResponse,
+    type DaemonVoiceInferenceTtsStreamEvent,
     type DaemonVoiceInferenceSttTranscribeResponse,
+    type DaemonVoiceInferenceSttStreamChunkResponse,
     type DaemonVoiceInferenceNormalizationDecision,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -31,6 +41,17 @@ import { randomUUID } from '@/platform/randomUUID';
 import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { ensureVoiceConversationSessionForVoiceHome } from '@/voice/persistence/voiceConversationSession';
 
+import {
+    createDaemonSpeechStreamRpcCompatibilityCarrierAdapter,
+    type DaemonSpeechStreamCarrierAdapter,
+} from './DaemonSpeechStreamCarrier';
+import {
+    createDaemonSpeechStreamSender,
+    type DaemonSpeechStreamSender,
+    type DaemonSpeechStreamTransport,
+    type DaemonSpeechStreamTransportChunkRequest,
+} from './DaemonSpeechStreamSender';
+import { createProductionDaemonSpeechStreamingSttTransport } from './DaemonSpeechStreamProductionTunnelTransport';
 import { createDaemonVoiceInferenceClientError } from './daemonVoiceInferenceErrors';
 
 function parseSchema<T>(schema: Readonly<{ parse: (input: unknown) => T }>, value: unknown): T {
@@ -67,6 +88,21 @@ function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
     return merged;
 }
 
+function decodeBase64Bytes(value: string): Uint8Array {
+    const bufferCtor = (globalThis as typeof globalThis & {
+        Buffer?: { from: (value: string, encoding: 'base64') => Uint8Array };
+    }).Buffer;
+    if (bufferCtor) {
+        return new Uint8Array(bufferCtor.from(value, 'base64'));
+    }
+    const binary = globalThis.atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+}
+
 export type DaemonVoiceInferenceMachineTarget = Readonly<{
     sessionId: string;
     machineId: string;
@@ -80,6 +116,47 @@ export type DaemonVoiceInferenceClientDeps = Readonly<{
     isRuntimeFeatureEnabled: typeof isRuntimeFeatureEnabled;
     openLocalUploadSourceReader: typeof openLocalUploadSourceReader;
     createRequestId: () => string;
+    createStreamingSttTransport: (
+        input: DaemonVoiceInferenceStreamingSttTransportFactoryInput,
+    ) => Promise<DaemonVoiceInferenceStreamingSttTransportSelection | null> | DaemonVoiceInferenceStreamingSttTransportSelection | null;
+}>;
+
+export type DaemonVoiceInferenceStreamingSttTransportSelection = Readonly<{
+    carrierAdapter: DaemonSpeechStreamCarrierAdapter;
+    transport: DaemonSpeechStreamTransport;
+}>;
+
+export type DaemonVoiceInferenceStreamingSttTransportFactoryInput = Readonly<{
+    machineTarget: DaemonVoiceInferenceMachineTarget;
+    requestId: string;
+    signal: AbortSignal | null;
+    compatibilityTransport: DaemonSpeechStreamTransport;
+}>;
+
+export type DaemonSegmentedTtsSegment = Readonly<{
+    type: 'segment';
+    streamId: string;
+    generation: number;
+    segmentId: string;
+    segmentIndex: number;
+    segmentCount: number;
+    text: string;
+    bytes: Uint8Array;
+    output: DaemonVoiceInferenceAudioOutput;
+    isLastSegment: boolean;
+}>;
+
+export type DaemonSegmentedTtsEvent =
+    | DaemonSegmentedTtsSegment
+    | Extract<DaemonVoiceInferenceTtsStreamEvent, { type: 'done' | 'error' }>;
+
+export type DaemonSegmentedTtsSession = Readonly<{
+    streamId: string;
+    generation: number;
+    segmentCount: number;
+    next: () => Promise<DaemonSegmentedTtsEvent>;
+    ackSegment: (segment: DaemonSegmentedTtsSegment) => Promise<void>;
+    cancel: () => Promise<void>;
 }>;
 
 export class DaemonVoiceInferenceClient {
@@ -93,6 +170,7 @@ export class DaemonVoiceInferenceClient {
             isRuntimeFeatureEnabled,
             openLocalUploadSourceReader,
             createRequestId: randomUUID,
+            createStreamingSttTransport: createProductionDaemonSpeechStreamingSttTransport,
             ...deps,
         };
     }
@@ -232,6 +310,10 @@ export class DaemonVoiceInferenceClient {
                         speed: params.speed,
                         output: params.output,
                     },
+                    // Thread the D12 abort signal so barge-in/cancel terminates the in-flight
+                    // synthesis RPC immediately; the explicit tts.cancel above remains the
+                    // daemon-side terminator.
+                    ...(params.signal ? { signal: params.signal } : {}),
                 }),
             );
             throwIfErrorResponse(synthesizeResponse);
@@ -288,6 +370,141 @@ export class DaemonVoiceInferenceClient {
         } finally {
             params.signal?.removeEventListener('abort', abortListener);
         }
+    }
+
+    async startSegmentedTts(params: Readonly<{
+        sessionId?: string | null;
+        text: string;
+        packId: string | null;
+        voiceId: string | null;
+        speed: number | null;
+        output: DaemonVoiceInferenceAudioOutput;
+        signal?: AbortSignal | null;
+    }>): Promise<DaemonSegmentedTtsSession> {
+        const machineTarget = await this.resolveMachineTarget();
+        const requestId = this.deps.createRequestId();
+        const rpcSignal = params.signal ?? null;
+        const started = parseSchema(
+            DaemonVoiceInferenceTtsStreamStartResponseSchema,
+            await this.deps.machineRpcWithServerScope({
+                machineId: machineTarget.machineId,
+                method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_START,
+                payload: {
+                    requestId,
+                    text: params.text,
+                    packId: params.packId,
+                    voiceId: params.voiceId,
+                    speed: params.speed,
+                    output: params.output,
+                    prefetchDepth: 2,
+                },
+                ...(rpcSignal ? { signal: rpcSignal } : {}),
+            }),
+        );
+        throwIfErrorResponse(started);
+
+        let abortListener: (() => void) | null = null;
+        let streamClosed = false;
+        const detachAbortListener = () => {
+            if (!abortListener) {
+                return;
+            }
+            rpcSignal?.removeEventListener('abort', abortListener);
+            abortListener = null;
+        };
+
+        const cancel = async () => {
+            if (streamClosed) {
+                return;
+            }
+            streamClosed = true;
+            detachAbortListener();
+            try {
+                const response = parseSchema(
+                    DaemonVoiceInferenceTtsStreamCancelResponseSchema,
+                    await this.deps.machineRpcWithServerScope({
+                        machineId: machineTarget.machineId,
+                        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_CANCEL,
+                        payload: {
+                            streamId: started.streamId,
+                            generation: started.generation,
+                            reason: 'client_abort',
+                        },
+                    }),
+                );
+                throwIfErrorResponse(response);
+            } catch {
+                // best effort
+            }
+        };
+
+        abortListener = () => {
+            void cancel();
+        };
+        rpcSignal?.addEventListener('abort', abortListener, { once: true });
+
+        const session: DaemonSegmentedTtsSession = {
+            streamId: started.streamId,
+            generation: started.generation,
+            segmentCount: started.segmentCount,
+            next: async () => {
+                const response = parseSchema(
+                    DaemonVoiceInferenceTtsStreamNextResponseSchema,
+                    await this.deps.machineRpcWithServerScope({
+                        machineId: machineTarget.machineId,
+                        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_NEXT,
+                        payload: {
+                            streamId: started.streamId,
+                            generation: started.generation,
+                        },
+                        ...(rpcSignal ? { signal: rpcSignal } : {}),
+                    }),
+                );
+                throwIfErrorResponse(response);
+                const event = response.event;
+                if (event.type === 'done') {
+                    streamClosed = true;
+                    detachAbortListener();
+                }
+                if (event.type !== 'segment') {
+                    return event;
+                }
+                return {
+                    type: 'segment',
+                    streamId: event.streamId,
+                    generation: event.generation,
+                    segmentId: event.segmentId,
+                    segmentIndex: event.segmentIndex,
+                    segmentCount: event.segmentCount,
+                    text: event.text,
+                    bytes: decodeBase64Bytes(event.audio.contentBase64),
+                    output: event.output,
+                    isLastSegment: event.isLastSegment,
+                };
+            },
+            ackSegment: async (segment) => {
+                const response = parseSchema(
+                    DaemonVoiceInferenceTtsStreamAckResponseSchema,
+                    await this.deps.machineRpcWithServerScope({
+                        machineId: machineTarget.machineId,
+                        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_ACK,
+                        payload: {
+                            streamId: segment.streamId,
+                            generation: segment.generation,
+                            segmentId: segment.segmentId,
+                            segmentIndex: segment.segmentIndex,
+                        },
+                    }),
+                );
+                throwIfErrorResponse(response);
+                if (response.complete) {
+                    streamClosed = true;
+                    detachAbortListener();
+                }
+            },
+            cancel,
+        };
+        return session;
     }
 
     async transcribeRecordedAudio(params: Readonly<{
@@ -396,6 +613,9 @@ export class DaemonVoiceInferenceClient {
                             systemFfmpegAllowed: false,
                         },
                     },
+                    // Thread the D12 abort signal so cancel terminates the in-flight transcription
+                    // RPC immediately; the explicit stt.cancel above remains the daemon-side terminator.
+                    ...(params.signal ? { signal: params.signal } : {}),
                 }),
             );
             throwIfErrorResponse(transcribeResponse);
@@ -408,5 +628,88 @@ export class DaemonVoiceInferenceClient {
             params.signal?.removeEventListener('abort', abortListener);
             await reader.close();
         }
+    }
+
+    async createStreamingSttSender(params: Readonly<{
+        packId: string | null;
+        language: string | null;
+        signal?: AbortSignal | null;
+    }>): Promise<DaemonSpeechStreamSender> {
+        const machineTarget = await this.resolveMachineTarget();
+        const requestId = this.deps.createRequestId();
+        const rpcSignal = params.signal ?? null;
+        const compatibilityTransport: DaemonSpeechStreamTransport = {
+            start: async (payload) =>
+                parseSchema(
+                    DaemonVoiceInferenceSttStreamStartResponseSchema,
+                    await this.deps.machineRpcWithServerScope({
+                        machineId: machineTarget.machineId,
+                        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START,
+                        payload,
+                        ...(rpcSignal ? { signal: rpcSignal } : {}),
+                    }),
+                ),
+            chunk: async (payload) =>
+                this.sendCompatibilityStreamingSttChunk(machineTarget.machineId, payload, rpcSignal),
+            finish: async (payload) =>
+                parseSchema(
+                    DaemonVoiceInferenceSttStreamFinishResponseSchema,
+                    await this.deps.machineRpcWithServerScope({
+                        machineId: machineTarget.machineId,
+                        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_FINISH,
+                        payload,
+                        ...(rpcSignal ? { signal: rpcSignal } : {}),
+                    }),
+                ),
+            cancel: async (payload) =>
+                parseSchema(
+                    DaemonVoiceInferenceSttStreamCancelResponseSchema,
+                    await this.deps.machineRpcWithServerScope({
+                        machineId: machineTarget.machineId,
+                        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CANCEL,
+                        payload,
+                    }),
+                ),
+        };
+        const selectedTransport = await this.deps.createStreamingSttTransport({
+            machineTarget,
+            requestId,
+            signal: rpcSignal,
+            compatibilityTransport,
+        });
+        return createDaemonSpeechStreamSender({
+            requestId,
+            packId: params.packId,
+            language: params.language,
+            carrierAdapter: selectedTransport?.carrierAdapter ?? createDaemonSpeechStreamRpcCompatibilityCarrierAdapter(),
+            transport: selectedTransport?.transport ?? compatibilityTransport,
+        });
+    }
+
+    private async sendCompatibilityStreamingSttChunk(
+        machineId: string,
+        payload: DaemonSpeechStreamTransportChunkRequest,
+        signal: AbortSignal | null,
+    ): Promise<DaemonVoiceInferenceSttStreamChunkResponse> {
+        if (payload.carrierFrame.kind !== 'json_base64_v1_fallback') {
+            throw createDaemonVoiceInferenceClientError(
+                'internal_error',
+                'daemon_voice_inference_binary_stream_consumer_unavailable',
+            );
+        }
+        return parseSchema(
+            DaemonVoiceInferenceSttStreamChunkResponseSchema,
+            await this.deps.machineRpcWithServerScope({
+                machineId,
+                method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK,
+                payload: {
+                    streamId: payload.streamId,
+                    generation: payload.generation,
+                    seq: payload.seq,
+                    pcm16Base64: payload.carrierFrame.jsonBase64Envelope.pcm16Base64,
+                },
+                ...(signal ? { signal } : {}),
+            }),
+        );
     }
 }

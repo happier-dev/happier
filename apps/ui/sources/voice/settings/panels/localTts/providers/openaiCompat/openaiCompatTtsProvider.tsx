@@ -10,15 +10,10 @@ import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { speakOpenAiCompatText } from '@/voice/output/TtsController';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { normalizeSecretStringPromptInput } from '@/utils/secrets/normalizeSecretStringPromptInput';
 
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import type { LocalTtsProviderSpec } from '../_types';
-
-function normalizeSecretStringPromptInput(value: string | null): VoiceLocalTtsSettings['openaiCompat']['apiKey'] {
-  if (value === null) return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? { _isSecretValue: true, value: trimmed } : null;
-}
 
 const MP3_FORMAT_TITLE = 'MP3';
 const WAV_FORMAT_TITLE = 'WAV';

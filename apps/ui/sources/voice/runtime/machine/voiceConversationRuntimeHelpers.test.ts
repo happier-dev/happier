@@ -41,7 +41,7 @@ describe('voiceConversationRuntimeHelpers', () => {
         });
     });
 
-    it('maps idle-without-error transitions onto an explicit connected-ready runtime state', async () => {
+    it('maps idle-without-error transitions onto the idle, mic-off connected runtime state', async () => {
         const { transitionVoiceRuntimeToIdle } = await import('./voiceConversationRuntimeHelpers');
 
         transitionVoiceRuntimeToIdle({

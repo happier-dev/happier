@@ -118,7 +118,11 @@ describe('speakAssistantText', () => {
       onSpeaking,
     });
 
-    expect(speakDeviceTextSpy).toHaveBeenCalledWith('hello', onSpeaking);
+    expect(speakDeviceTextSpy).toHaveBeenCalledWith(
+      'hello',
+      onSpeaking,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(speakOpenAiCompatTextSpy).not.toHaveBeenCalled();
   });
 
@@ -153,7 +157,11 @@ describe('speakAssistantText', () => {
       onSpeaking,
     });
 
-    expect(speakDeviceTextSpy).toHaveBeenCalledWith('hello', onSpeaking);
+    expect(speakDeviceTextSpy).toHaveBeenCalledWith(
+      'hello',
+      onSpeaking,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(typeof stopper).toBe('function');
   });
 
@@ -449,7 +457,11 @@ describe('speakAssistantText', () => {
       voiceId: 'af_heart',
     }));
     expect(speakKokoroTextSpy).not.toHaveBeenCalled();
-    expect(speakDeviceTextSpy).toHaveBeenCalledWith('hello from web fallback', onSpeaking);
+    expect(speakDeviceTextSpy).toHaveBeenCalledWith(
+      'hello from web fallback',
+      onSpeaking,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it('routes Google Cloud provider to speakGoogleCloudText', async () => {
@@ -525,6 +537,10 @@ describe('speakAssistantText', () => {
       onSpeaking,
     });
 
-    expect(speakDeviceTextSpy).toHaveBeenCalledWith('hello', onSpeaking);
+    expect(speakDeviceTextSpy).toHaveBeenCalledWith(
+      'hello',
+      onSpeaking,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 });

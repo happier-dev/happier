@@ -13,6 +13,7 @@ const LocalNeuralProviderSettings: LocalSttProviderSpec['Settings'] = (props) =>
       cfg={cfg}
       setCfg={props.setStt as any}
       popoverBoundaryRef={props.popoverBoundaryRef}
+      daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
     />
   );
 };

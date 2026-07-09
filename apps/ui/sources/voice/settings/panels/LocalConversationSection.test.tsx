@@ -27,7 +27,6 @@ vi.mock('react-native', async () => {
     },
   });
 });
-vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
   LinearGradient: 'LinearGradient',
 }));
@@ -216,14 +215,25 @@ describe('LocalConversationSection', () => {
     }).not.toThrow();
   });
 
-  it('renders the local fallback section on web when realtime remains the active mode', async () => {
+  it('renders the local section on web only when local remains the stored provider', async () => {
     platformOsMock.value = 'web';
     const LocalConversationSection = await loadLocalConversationSection();
-    const voice = withProvider(createLocalConversationVoice(), 'realtime_elevenlabs');
+    const localVoice = createLocalConversationVoice();
 
-    const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={() => {}} />);
+    const screen = await renderSettingsView(<LocalConversationSection voice={localVoice} setVoice={() => {}} />);
 
     expect(findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversationMode'))).toBeTruthy();
+
+    act(() => {
+      screen.tree.update(
+        <LocalConversationSection
+          voice={withProvider(localVoice, 'realtime_elevenlabs')}
+          setVoice={() => {}}
+        />,
+      );
+    });
+
+    expect(findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.conversationMode'))).toBeFalsy();
   });
 
   it('renders a backend dropdown for the voice agent when agentSource=agent', async () => {

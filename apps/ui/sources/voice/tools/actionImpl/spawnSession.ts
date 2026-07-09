@@ -3,6 +3,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
+import { createSpawnAttemptKey } from '@/sync/domains/session/spawn/spawnAttemptKey';
 import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { buildSafeWorkspaceLabel } from '@/utils/worktree/workspaceHandles';
@@ -14,7 +15,11 @@ import {
 } from '@/sync/ops/sessionMachineTarget';
 
 import { normalizeNonEmptyString, resolveVoiceMachineLabel } from './shared';
-import { postprocessSpawnedSession } from './spawnSessionPostProcess';
+import {
+  didSpawnUseDaemonInitialPrompt,
+  postprocessSpawnedSession,
+} from './spawnSessionPostProcess';
+import { resolveVoiceInitialMessageCustody } from './spawnSessionInitialMessage';
 import { resolveVoiceToolSpawnBackendTarget } from './spawnSessionAgent';
 import { resolveVoiceSessionRef } from './sessionReference';
 
@@ -128,6 +133,12 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
   const requestedModelId = normalizeNonEmptyString(params.modelId);
   const modelId = requestedModelId && requestedModelId !== 'default' ? requestedModelId : null;
   const modelUpdatedAt = modelId ? Date.now() : null;
+  const initialMessageCustody = resolveVoiceInitialMessageCustody({
+    initialMessage: params.initialMessage,
+    agentId: params.agentId,
+    backendTarget,
+    modelId,
+  });
   const machineMetadata = (state?.machines?.[machineId] ?? Object.values(state?.machines ?? {}).find((entry: any) => entry?.id === machineId) ?? null)?.metadata ?? null;
   const windowsRemoteSessionLaunchMode = resolveEffectiveWindowsRemoteSessionLaunchMode({
     machineMetadata,
@@ -143,8 +154,21 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
     directory,
     backendTarget,
     serverId,
+    spawnAttemptKey: createSpawnAttemptKey('voice.tool.spawn-session', {
+      machineId,
+      directory,
+      backendTarget,
+      serverId,
+      tag: normalizeNonEmptyString(params.tag),
+      modelId,
+      initialMessage: initialMessageCustody.initialMessage,
+      daemonInitialPrompt: initialMessageCustody.daemonInitialPrompt,
+      initialMessageMetaOverrides: initialMessageCustody.initialMessageMetaOverrides,
+      windowsRemoteSessionLaunchMode,
+    }),
     ...(windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode } : {}),
     ...(modelId ? { modelId, modelUpdatedAt: modelUpdatedAt ?? Date.now() } : {}),
+    ...(initialMessageCustody.daemonInitialPrompt ? { initialPrompt: initialMessageCustody.daemonInitialPrompt } : {}),
   });
 
   const spawnedSessionId =
@@ -153,8 +177,15 @@ export async function spawnSessionForVoiceTool(params: Readonly<{
       : null;
 
   const tag = normalizeNonEmptyString(params.tag);
-  const initialMessage = normalizeNonEmptyString(params.initialMessage);
-  await postprocessSpawnedSession({ sessionId: spawnedSessionId, tag, initialMessage });
+  const daemonInitialPromptUsed = didSpawnUseDaemonInitialPrompt(spawned);
+  await postprocessSpawnedSession({
+    sessionId: spawnedSessionId,
+    serverId,
+    tag,
+    initialMessage: initialMessageCustody.initialMessage,
+    initialMessageMetaOverrides: initialMessageCustody.initialMessageMetaOverrides,
+    daemonInitialPromptUsed,
+  });
 
   if (!spawned || typeof spawned !== 'object' || Array.isArray(spawned)) {
     return spawned;

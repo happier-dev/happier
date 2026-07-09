@@ -7,8 +7,25 @@ export async function playAudioBytesWithStopper(opts: {
   bytes: ArrayBuffer;
   format: 'mp3' | 'wav';
   registerPlaybackStopper: VoicePlaybackStopperRegistrar;
+  onPlaybackStarted?: () => void;
 }): Promise<void> {
   const mimeType = opts.format === 'wav' ? 'audio/wav' : 'audio/mpeg';
+  const nativeStatusShowsPlaybackStarted = (status: any) =>
+    status?.playing === true
+    || status?.timeControlStatus === 'playing'
+    || status?.didJustFinish === true;
+  let playbackStartedNotified = false;
+  const notifyPlaybackStarted = () => {
+    if (playbackStartedNotified) {
+      return;
+    }
+    playbackStartedNotified = true;
+    try {
+      opts.onPlaybackStarted?.();
+    } catch {
+      // State notification must not break already-started playback.
+    }
+  };
 
   if (Platform.OS === 'web') {
     const ctx = getOrCreateWebAudioContext();
@@ -69,6 +86,7 @@ export async function playAudioBytesWithStopper(opts: {
               safeResolve();
             };
             s.start(0);
+            notifyPlaybackStarted();
           } catch (error) {
             cleanup();
             safeReject(error);
@@ -127,10 +145,14 @@ export async function playAudioBytesWithStopper(opts: {
 
       try {
         const result = audio.play();
-        Promise.resolve(result).catch((error) => {
-          cleanup();
-          safeReject(error);
-        });
+        Promise.resolve(result)
+          .then(() => {
+            notifyPlaybackStarted();
+          })
+          .catch((error) => {
+            cleanup();
+            safeReject(error);
+          });
       } catch (error) {
         cleanup();
         safeReject(error);
@@ -194,6 +216,20 @@ export async function playAudioBytesWithStopper(opts: {
     clearStopper = opts.registerPlaybackStopper(stopPlayback);
 
     subscription = player.addListener('playbackStatusUpdate', (status: any) => {
+      // Settle on a post-play() failure surfaced via status (corrupt bytes,
+      // decode error, failed load) instead of leaving the promise unsettled.
+      // Because the streaming chunk queue is serial, a hung chunk would block
+      // every subsequent chunk until an interrupt (audit Finding 4).
+      const failed =
+        status?.error != null
+        || status?.reasonForWaitingToPlay === 'error';
+      if (failed) {
+        safeReject(new Error('audio_playback_failed'));
+        return;
+      }
+      if (nativeStatusShowsPlaybackStarted(status)) {
+        notifyPlaybackStarted();
+      }
       if (!status?.didJustFinish) return;
       safeResolve();
     });

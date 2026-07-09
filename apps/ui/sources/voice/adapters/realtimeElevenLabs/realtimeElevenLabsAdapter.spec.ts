@@ -1,16 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE,
+  HAPPIER_VOICE_LEASE_ID_DYNAMIC_VARIABLE,
+} from '@happier-dev/protocol';
+
+import {
+  DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT,
+  setVoiceConversationRuntimeSnapshot,
+} from '@/voice/runtime/machine/voiceConversationRuntimeStore';
 
 const startRealtimeSession = vi.fn(async () => {});
 const stopRealtimeSession = vi.fn(async () => {});
 const setRealtimeMicMuted = vi.fn();
-const getRealtimeSessionSnapshot = vi.fn(() => ({
-  adapterId: 'realtime_elevenlabs',
-  sessionId: null,
-  status: 'disconnected',
-  mode: 'idle',
-  canStop: false,
-}));
-const subscribeRealtimeSessionSnapshot = vi.fn(() => () => {});
 const sendTextMessage = vi.fn();
 const sendContextualUpdate = vi.fn();
 const getVoiceSession = vi.fn(() => ({ sendTextMessage, sendContextualUpdate }));
@@ -29,8 +30,6 @@ vi.mock('@/voice/runtime/realtime/RealtimeTransport', () => ({
     startRealtimeSession,
     stopRealtimeSession,
     setMicMuted: setRealtimeMicMuted,
-    getSessionSnapshot: getRealtimeSessionSnapshot,
-    subscribe: subscribeRealtimeSessionSnapshot,
     getVoiceSession,
     isVoiceSessionStarted,
   },
@@ -53,30 +52,36 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 
 describe('realtime elevenlabs voice adapter', () => {
-  it('does not expose a per-session id in the snapshot', async () => {
-    getRealtimeSessionSnapshot.mockReturnValueOnce({
+  beforeEach(() => {
+    // The machine is the single lifecycle source; reset its slot per test.
+    setVoiceConversationRuntimeSnapshot(DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT);
+  });
+
+  it('does not expose a per-session control id in the machine-derived snapshot', async () => {
+    // The realtime control session id is internal carrier state, not a UI
+    // session id; the projected snapshot keeps sessionId null even when connected.
+    setVoiceConversationRuntimeSnapshot({
+      ...DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT,
       adapterId: 'realtime_elevenlabs',
-      sessionId: null,
-      status: 'connected',
-      mode: 'idle',
-      canStop: true,
+      controlSessionId: 'voice-global',
+      state: 'connected',
     });
     const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
     const adapter = createRealtimeElevenLabsVoiceAdapter();
 
     const snap = adapter.getSnapshot();
-    expect(snap.sessionId).toBe(null);
+    expect(snap.sessionId).toBe('voice-global');
+    expect(snap.status).toBe('connected');
   });
 
-  it('reads transport-owned realtime snapshot instead of storage realtime state', async () => {
+  it('derives its snapshot from the runtime machine, not storage realtime state', async () => {
     state.realtimeStatus = 'disconnected';
     state.realtimeMode = 'idle';
-    getRealtimeSessionSnapshot.mockReturnValueOnce({
+    setVoiceConversationRuntimeSnapshot({
+      ...DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT,
       adapterId: 'realtime_elevenlabs',
-      sessionId: null,
-      status: 'connected',
-      mode: 'speaking',
-      canStop: true,
+      controlSessionId: 'voice-global',
+      state: 'speaking',
     });
 
     const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
@@ -89,18 +94,74 @@ describe('realtime elevenlabs voice adapter', () => {
     });
   });
 
-  it('subscribes through the transport-owned realtime snapshot channel', async () => {
-    const unsubscribe = vi.fn();
-    subscribeRealtimeSessionSnapshot.mockReturnValueOnce(unsubscribe);
+  it('projects a recoverable machine error as a disconnected end carrying the error code', async () => {
+    // Recoverable provider/mic failures must read as "call ended, retry":
+    // disconnected with the error code surfaced, not a hard error.
+    setVoiceConversationRuntimeSnapshot({
+      ...DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT,
+      adapterId: 'realtime_elevenlabs',
+      controlSessionId: 'voice-global',
+      state: 'error',
+      error: { kind: 'provider_error', reason: 'realtime_provider_error', recoverable: true },
+    });
 
+    const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
+    const adapter = createRealtimeElevenLabsVoiceAdapter();
+
+    // The adapter snapshot must equal the canonical machine-derived projection.
+    const { deriveLocalVoiceSessionSnapshot } = await import(
+      '@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot'
+    );
+    const { getVoiceConversationRuntimeSnapshot } = await import(
+      '@/voice/runtime/machine/voiceConversationRuntimeStore'
+    );
+    expect(adapter.getSnapshot()).toEqual(
+      deriveLocalVoiceSessionSnapshot('realtime_elevenlabs', getVoiceConversationRuntimeSnapshot()),
+    );
+    expect(adapter.getSnapshot()).toMatchObject({
+      status: 'disconnected',
+      canStop: false,
+      errorCode: 'provider_error',
+      errorMessage: 'realtime_provider_error',
+    });
+  });
+
+  it('projects a non-recoverable machine error as a hard error that must be dismissed', async () => {
+    setVoiceConversationRuntimeSnapshot({
+      ...DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT,
+      adapterId: 'realtime_elevenlabs',
+      controlSessionId: 'voice-global',
+      state: 'error',
+      error: { kind: 'mic_permission_denied', reason: 'mic_permission_denied', recoverable: false },
+    });
+
+    const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
+    const adapter = createRealtimeElevenLabsVoiceAdapter();
+
+    expect(adapter.getSnapshot()).toMatchObject({
+      status: 'error',
+      canStop: true,
+      errorCode: 'mic_permission_denied',
+    });
+  });
+
+  it('subscribes through the runtime machine store', async () => {
     const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
     const adapter = createRealtimeElevenLabsVoiceAdapter();
     const listener = vi.fn();
 
     const stop = adapter.subscribe?.(listener);
 
-    expect(subscribeRealtimeSessionSnapshot).toHaveBeenCalledWith(listener);
-    expect(stop).toBe(unsubscribe);
+    // A machine transition must notify the adapter subscriber.
+    setVoiceConversationRuntimeSnapshot({
+      ...DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT,
+      adapterId: 'realtime_elevenlabs',
+      controlSessionId: 'voice-global',
+      state: 'connected',
+    });
+    expect(listener).toHaveBeenCalled();
+    expect(typeof stop).toBe('function');
+    stop?.();
   });
 
   it('starts when disconnected', async () => {
@@ -120,12 +181,11 @@ describe('realtime elevenlabs voice adapter', () => {
   });
 
   it('delegates toggle to the start path even when already connected', async () => {
-    getRealtimeSessionSnapshot.mockReturnValueOnce({
+    setVoiceConversationRuntimeSnapshot({
+      ...DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT,
       adapterId: 'realtime_elevenlabs',
-      sessionId: null,
-      status: 'connected',
-      mode: 'idle',
-      canStop: true,
+      controlSessionId: 'voice-global',
+      state: 'connected',
     });
     startRealtimeSession.mockReset();
     onVoiceStarted.mockReset();
@@ -186,5 +246,42 @@ describe('realtime elevenlabs voice adapter', () => {
     await adapter.setMuted({ sessionId: 's1', muted: true });
 
     expect(setRealtimeMicMuted).toHaveBeenCalledWith(true);
+  });
+
+  it('forwards the server-minted lease binding into ElevenLabs dynamic variables', async () => {
+    const { createRealtimeElevenLabsTransportProvider } = await import('./realtimeElevenLabsTransportProvider');
+    const provider = createRealtimeElevenLabsTransportProvider();
+
+    const config = provider.buildConversationStartConfig({
+      config: {
+        sessionId: 'voice-global',
+        initialContext: 'context',
+        token: 'conv_token',
+        leaseId: 'lease_1',
+        bindingNonce: 'nonce_lease_1',
+        textOnly: false,
+      },
+      settings: {
+        voice: {
+          providerId: 'realtime_elevenlabs',
+          assistantLanguage: null,
+          adapters: {
+            realtime_elevenlabs: {
+              assistantLanguage: null,
+              billingMode: 'happier',
+              welcome: { enabled: false, mode: 'immediate', templateId: null },
+            },
+          },
+        },
+      },
+    }) as Record<string, any>;
+
+    expect(config.conversationToken).toBe('conv_token');
+    expect(config.dynamicVariables).toMatchObject({
+      sessionId: 'voice-global',
+      initialConversationContext: 'context',
+      [HAPPIER_VOICE_LEASE_ID_DYNAMIC_VARIABLE]: 'lease_1',
+      [HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE]: 'nonce_lease_1',
+    });
   });
 });

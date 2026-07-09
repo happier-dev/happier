@@ -153,7 +153,6 @@ describe('voiceConversationBindingPersistence', () => {
             metadataSessionId: 's1',
             runMetadata: expect.objectContaining({
                 runId: 'run_session',
-                streamId: null,
                 transcriptContractVersion: 2,
             }),
             runtimePublication: {
@@ -197,7 +196,6 @@ describe('voiceConversationBindingPersistence', () => {
             runMetadata: expect.objectContaining({
                 runId: 'run_1',
                 backendId: 'claude',
-                streamId: 'stream_1',
                 transcriptContractVersion: 2,
             }),
             runtimePublication: {

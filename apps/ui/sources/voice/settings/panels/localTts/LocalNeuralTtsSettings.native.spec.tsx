@@ -9,6 +9,7 @@ import { installLocalTtsCommonModuleMocks } from './localTtsTestHelpers';
 
 const modalAlertSpy = vi.fn();
 const prepareModelSpy = vi.fn(async (..._args: any[]) => {});
+const modelPackStateParamsSpy = vi.hoisted(() => vi.fn());
 installLocalTtsCommonModuleMocks({
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -42,11 +43,13 @@ vi.mock('@/voice/kokoro/runtime/kokoroSupport', () => ({
 }));
 
 vi.mock('@/voice/modelPacks/manifests', () => ({
-  resolveModelPackManifestUrl: () => 'https://example.com/manifest.json',
+  resolveModelPackManifestUrl: (params: any) => `https://example.com/${params.packId}.json`,
 }));
 
 vi.mock('./useLocalNeuralModelPackState.native', () => ({
-  useLocalNeuralModelPackState: () => ({
+  useLocalNeuralModelPackState: (params: any) => {
+    modelPackStateParamsSpy(params);
+    return {
     modelStatus: 'idle',
     downloadProgress: null,
     downloadDetail: null,
@@ -58,7 +61,12 @@ vi.mock('./useLocalNeuralModelPackState.native', () => ({
     cancelPrepare: vi.fn(),
     clearAssets: vi.fn(),
     checkForUpdates: vi.fn(),
-  }),
+    };
+  },
+}));
+
+vi.mock('@/voice/settings/panels/daemonInference/DaemonVoiceInferenceModelSection', () => ({
+  DaemonVoiceInferenceModelSection: (props: any) => React.createElement('DaemonModelSection', props),
 }));
 
 vi.mock('./useLocalNeuralKokoroVoiceCatalog.native', () => ({
@@ -81,6 +89,7 @@ describe('LocalNeuralTtsSettings (native)', () => {
   beforeEach(() => {
     modalAlertSpy.mockClear();
     prepareModelSpy.mockClear();
+    modelPackStateParamsSpy.mockClear();
   });
 
   it('blocks model download when runtime is unsupported and surfaces a clear error', async () => {
@@ -108,5 +117,44 @@ describe('LocalNeuralTtsSettings (native)', () => {
     expect(prepareModelSpy).not.toHaveBeenCalled();
     expect(modalAlertSpy).toHaveBeenCalled();
     expect(modalAlertSpy.mock.calls[0]?.[1]).toBe('settingsVoice.local.kokoro.alerts.runtimeUnsupported.body');
+  });
+
+  it('uses the canonical Kokoro model-pack id for native model state when no asset id is stored', async () => {
+    const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.native');
+
+    await renderScreen(React.createElement(LocalNeuralTtsSettings, {
+      cfgKokoro: { model: 'kokoro', assetId: null, voiceId: null, speed: null, execution: 'auto' },
+      setKokoro: vi.fn(),
+      networkTimeoutMs: 1000,
+      popoverBoundaryRef: null,
+    }));
+
+    expect(modelPackStateParamsSpy).toHaveBeenCalledWith(expect.objectContaining({
+      packId: 'kokoro-tts-en-v1',
+      manifestUrl: 'https://example.com/kokoro-tts-en-v1.json',
+    }));
+  });
+
+  it('normalizes legacy Kokoro ids before rendering the daemon model section', async () => {
+    const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.native');
+
+    const tree = (await renderScreen(React.createElement(LocalNeuralTtsSettings, {
+      cfgKokoro: {
+        model: 'kokoro',
+        assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+        voiceId: 'af_heart',
+        speed: 1,
+        execution: 'daemon',
+      },
+      setKokoro: vi.fn(),
+      networkTimeoutMs: 1000,
+      popoverBoundaryRef: null,
+    }))).tree;
+
+    const daemonModelSection = tree.root.findByType('DaemonModelSection');
+    expect(daemonModelSection.props.packId).toBe('kokoro-tts-en-v1');
+    expect(modelPackStateParamsSpy).toHaveBeenCalledWith(expect.objectContaining({
+      packId: 'kokoro-tts-en-v1',
+    }));
   });
 });

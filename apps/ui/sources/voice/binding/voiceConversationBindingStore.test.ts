@@ -35,6 +35,57 @@ describe('createVoiceSessionBindingStore', () => {
     expect(store.getState().list()).toHaveLength(1);
   });
 
+  it('returns the newest matching binding from getByControlSessionId when several share a control session id', async () => {
+    const store = createVoiceSessionBindingStore();
+    const { writeVoiceConversationBindingMetadata } = await import('./voiceConversationBindingMetadata');
+    const { syncPersistedVoiceConversationBindings } = await import('./voiceConversationBindingStore');
+
+    // Two persisted bindings on distinct conversation sessions share one control
+    // session id (e.g. the global voice control session bound to two conversations
+    // across reconnects). The newest by updatedAt must win.
+    syncPersistedVoiceConversationBindings({
+      store,
+      state: {
+        sessions: {
+          'carrier-old': {
+            metadata: writeVoiceConversationBindingMetadata(
+              { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
+              {
+                adapterId: 'local_conversation',
+                controlSessionId: '__voice_agent__',
+                conversationSessionId: 'carrier-old',
+                transcriptMode: 'synthetic',
+                targetSessionId: 's-old',
+                updatedAt: 100,
+              },
+            ),
+          },
+          'carrier-new': {
+            metadata: writeVoiceConversationBindingMetadata(
+              { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
+              {
+                adapterId: 'local_conversation',
+                controlSessionId: '__voice_agent__',
+                conversationSessionId: 'carrier-new',
+                transcriptMode: 'synthetic',
+                targetSessionId: 's-new',
+                updatedAt: 200,
+              },
+            ),
+          },
+        },
+      } as any,
+    });
+
+    expect(store.getState().getByControlSessionId('__voice_agent__')).toEqual(
+      expect.objectContaining({
+        conversationSessionId: 'carrier-new',
+        targetSessionId: 's-new',
+        updatedAt: 200,
+      }),
+    );
+  });
+
   it('canonicalizes binding ids when storing and looking up bindings', () => {
     const store = createVoiceSessionBindingStore();
 

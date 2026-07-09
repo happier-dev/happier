@@ -2,12 +2,17 @@ import { machineSpawnNewSession } from '@/sync/ops/machines';
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
+import { createSpawnAttemptKey } from '@/sync/domains/session/spawn/spawnAttemptKey';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
 
 import { openVoiceSessionSpawnPicker } from '@/voice/pickers/openVoiceSessionSpawnPicker';
 import { resolveVoiceToolSpawnBackendTarget } from './spawnSessionAgent';
-import { postprocessSpawnedSession } from './spawnSessionPostProcess';
+import {
+  didSpawnUseDaemonInitialPrompt,
+  postprocessSpawnedSession,
+} from './spawnSessionPostProcess';
+import { resolveVoiceInitialMessageCustody } from './spawnSessionInitialMessage';
 import { normalizeNonEmptyString } from './shared';
 
 export async function spawnSessionWithPickerForVoiceTool(params: Readonly<{ tag?: string; agentId?: string; modelId?: string; backendTargetKey?: string; initialMessage?: string }>): Promise<unknown> {
@@ -48,6 +53,12 @@ export async function spawnSessionWithPickerForVoiceTool(params: Readonly<{ tag?
   const requestedModelId = normalizeNonEmptyString(params.modelId);
   const modelId = requestedModelId && requestedModelId !== 'default' ? requestedModelId : null;
   const modelUpdatedAt = modelId ? Date.now() : null;
+  const initialMessageCustody = resolveVoiceInitialMessageCustody({
+    initialMessage: params.initialMessage,
+    agentId: params.agentId,
+    backendTarget,
+    modelId,
+  });
   const machineMetadata = pickedMachine?.metadata ?? null;
   const windowsRemoteSessionLaunchMode = resolveEffectiveWindowsRemoteSessionLaunchMode({
     machineMetadata,
@@ -59,8 +70,21 @@ export async function spawnSessionWithPickerForVoiceTool(params: Readonly<{ tag?
     directory: picked.directory,
     backendTarget,
     serverId,
+    spawnAttemptKey: createSpawnAttemptKey('voice.tool.spawn-session-picker', {
+      machineId: picked.machineId,
+      directory: picked.directory,
+      backendTarget,
+      serverId,
+      tag: normalizeNonEmptyString(params.tag),
+      modelId,
+      initialMessage: initialMessageCustody.initialMessage,
+      daemonInitialPrompt: initialMessageCustody.daemonInitialPrompt,
+      initialMessageMetaOverrides: initialMessageCustody.initialMessageMetaOverrides,
+      windowsRemoteSessionLaunchMode,
+    }),
     ...(windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode } : {}),
     ...(modelId ? { modelId, modelUpdatedAt: modelUpdatedAt ?? Date.now() } : {}),
+    ...(initialMessageCustody.daemonInitialPrompt ? { initialPrompt: initialMessageCustody.daemonInitialPrompt } : {}),
   });
 
   const spawnedSessionId =
@@ -68,10 +92,14 @@ export async function spawnSessionWithPickerForVoiceTool(params: Readonly<{ tag?
       ? String((spawned as any).sessionId)
       : null;
 
+  const daemonInitialPromptUsed = didSpawnUseDaemonInitialPrompt(spawned);
   await postprocessSpawnedSession({
     sessionId: spawnedSessionId,
+    serverId,
     tag: normalizeNonEmptyString(params.tag),
-    initialMessage: normalizeNonEmptyString(params.initialMessage),
+    initialMessage: initialMessageCustody.initialMessage,
+    initialMessageMetaOverrides: initialMessageCustody.initialMessageMetaOverrides,
+    daemonInitialPromptUsed,
   });
 
   return spawned;

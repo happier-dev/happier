@@ -8,6 +8,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { Modal } from '@/modal';
 import type { VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
+import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { formatDownloadProgressDetail } from '@/voice/downloads/downloadProgress';
@@ -25,6 +26,7 @@ export function LocalNeuralSttSettings(props: {
   cfg: VoiceLocalSttSettings;
   setCfg: (next: VoiceLocalSttSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
+  daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 }) {
   const { theme } = useUnistyles();
   const [openMenu, setOpenMenu] = React.useState<null | 'packId' | 'language'>(null);
@@ -292,7 +294,11 @@ export function LocalNeuralSttSettings(props: {
       />
 
       {usesDaemonExecution ? (
-        <DaemonVoiceInferenceModelSection packId={effectivePackId} kind="stt" />
+        <DaemonVoiceInferenceModelSection
+          packId={effectivePackId}
+          kind="stt"
+          daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+        />
       ) : (
         <>
           <Item

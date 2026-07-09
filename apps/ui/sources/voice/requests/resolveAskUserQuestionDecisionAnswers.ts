@@ -1,3 +1,5 @@
+import { isAskUserQuestionToolName } from '@happier-dev/protocol';
+
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 
 type DirectPermissionDecision = 'allow' | 'deny';
@@ -58,7 +60,7 @@ export function resolveAskUserQuestionDecisionAnswers(
     request: PendingPermissionRequest | null | undefined,
     decision: DirectPermissionDecision,
 ): ReadonlyArray<Readonly<{ question: string; answer: string }>> | null {
-    if (!request || request.tool !== 'AskUserQuestion') return null;
+    if (!request || typeof request.tool !== 'string' || !isAskUserQuestionToolName(request.tool)) return null;
 
     const questions = Array.isArray((request.arguments as { questions?: unknown })?.questions)
         ? ((request.arguments as { questions: readonly AskUserQuestionLike[] }).questions ?? [])

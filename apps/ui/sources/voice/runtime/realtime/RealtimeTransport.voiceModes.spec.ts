@@ -24,9 +24,11 @@ vi.mock('@/utils/platform/microphonePermissions', () => ({
 }));
 
 const fetchHappierVoiceToken = vi.fn();
+const bindHappierVoiceSessionStart = vi.fn(async () => {});
 const completeHappierVoiceSession = vi.fn(async () => {});
 vi.mock('@/sync/api/voice/apiVoice', () => ({
   fetchHappierVoiceToken,
+  bindHappierVoiceSessionStart,
   completeHappierVoiceSession,
 }));
 const fetchElevenLabsConversationTokenByo = vi.fn();
@@ -212,6 +214,7 @@ describe('Realtime voice modes', () => {
     requestMicrophonePermission.mockResolvedValue({ granted: true, canAskAgain: true });
     installFetchMock();
     fetchHappierVoiceToken.mockReset();
+    bindHappierVoiceSessionStart.mockReset();
     completeHappierVoiceSession.mockReset();
     fetchElevenLabsConversationTokenByo.mockReset();
     fetchElevenLabsConversationSignedUrlByo.mockReset();
@@ -271,45 +274,53 @@ describe('Realtime voice modes', () => {
 
   describe('happier voice lifecycle', () => {
     it('records the session limit and announces when the server-minted lease is near expiry', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-29T00:00:00.000Z'));
       fetchHappierVoiceToken.mockResolvedValueOnce({
         allowed: true,
         token: 'conv_token',
         leaseId: 'lease_1',
+        bindingNonce: 'nonce_lease_1',
         expiresAtMs: Date.now() + 40,
       });
 
-      const realtimeTransport = await loadRealtimeTransport();
-      const { session } = makeVoiceSession('conv_0');
-      realtimeTransport.registerVoiceSession(session);
+      try {
+        const realtimeTransport = await loadRealtimeTransport();
+        const { session } = makeVoiceSession('conv_0');
+        realtimeTransport.registerVoiceSession(session);
 
-      await realtimeTransport.startRealtimeSession('s1', 'BASE_CTX');
+        await realtimeTransport.startRealtimeSession('s1', 'BASE_CTX');
 
-      expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
-        expect.objectContaining({
-          conversationSessionId: 'voice-conversation-1',
-          text: 'errors.voiceSessionLimitStarted',
-        }),
-      );
+        expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
+          expect.objectContaining({
+            conversationSessionId: 'voice-conversation-1',
+            text: 'errors.voiceSessionLimitStarted',
+          }),
+        );
 
-      await sleep(20);
+        await vi.advanceTimersByTimeAsync(20);
 
-      expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
-        expect.objectContaining({
-          conversationSessionId: 'voice-conversation-1',
-          text: 'errors.voiceSessionLimitExpiring',
-        }),
-      );
+        expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
+          expect.objectContaining({
+            conversationSessionId: 'voice-conversation-1',
+            text: 'errors.voiceSessionLimitExpiring',
+          }),
+        );
 
-      await sleep(50);
+        await vi.advanceTimersByTimeAsync(50);
 
-      expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
-        expect.objectContaining({
-          conversationSessionId: 'voice-conversation-1',
-          text: 'errors.voiceSessionLimitExpired',
-        }),
-      );
+        expect(appendVoiceConversationNoteText).toHaveBeenCalledWith(
+          expect.objectContaining({
+            conversationSessionId: 'voice-conversation-1',
+            text: 'errors.voiceSessionLimitExpired',
+          }),
+        );
 
-      await realtimeTransport.stopRealtimeSession();
+        await realtimeTransport.stopRealtimeSession();
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
     });
 
     it('appends welcome instructions to the initial context when enabled (immediate)', async () => {
@@ -317,6 +328,7 @@ describe('Realtime voice modes', () => {
         allowed: true,
         token: 'conv_token',
         leaseId: 'lease_1',
+        bindingNonce: 'nonce_lease_1',
         expiresAtMs: Date.now() + 60_000,
       });
 
@@ -341,6 +353,7 @@ describe('Realtime voice modes', () => {
         allowed: true,
         token: 'conv_token',
         leaseId: 'lease_1',
+        bindingNonce: 'nonce_lease_1',
         expiresAtMs: Date.now() + 60_000,
       });
 
@@ -350,7 +363,11 @@ describe('Realtime voice modes', () => {
 
       await realtimeTransport.startRealtimeSession('s1', 'hi');
 
-      expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ token: 'conv_token' }));
+      expect(startSession).toHaveBeenCalledWith(expect.objectContaining({
+        token: 'conv_token',
+        leaseId: 'lease_1',
+        bindingNonce: 'nonce_lease_1',
+      }));
       expect(ensureVoiceBinding).toHaveBeenCalledWith({
         adapterId: 'realtime_elevenlabs',
         controlSessionId: 's1',
@@ -364,6 +381,7 @@ describe('Realtime voice modes', () => {
         allowed: true,
         token: 'conv_token',
         leaseId: 'lease_1',
+        bindingNonce: 'nonce_lease_1',
         expiresAtMs: Date.now() + 60_000,
       });
 
@@ -406,6 +424,7 @@ describe('Realtime voice modes', () => {
         allowed: true,
         token: 'conv_token',
         leaseId: 'lease_1',
+        bindingNonce: 'nonce_lease_1',
         expiresAtMs: Date.now() + 60_000,
       });
 
@@ -432,6 +451,7 @@ describe('Realtime voice modes', () => {
         allowed: true,
         token: 'conv_token',
         leaseId: 'lease_1',
+        bindingNonce: 'nonce_lease_1',
         expiresAtMs: Date.now() + 60_000,
       });
 
@@ -452,6 +472,7 @@ describe('Realtime voice modes', () => {
         allowed: true,
         token: 'conv_token',
         leaseId: 'lease_1',
+        bindingNonce: 'nonce_lease_1',
         expiresAtMs: Date.now() + 60_000,
       });
 
@@ -464,9 +485,43 @@ describe('Realtime voice modes', () => {
 
       expect(endSession).toHaveBeenCalledTimes(1);
       expect(setAudioModeAsync).toHaveBeenCalledWith(expect.objectContaining({ shouldPlayInBackground: false }));
+      expect(bindHappierVoiceSessionStart).toHaveBeenCalledWith(
+        expect.objectContaining({ token: 't' }),
+        { leaseId: 'lease_1', providerConversationId: 'conv_1' },
+      );
       expect(completeHappierVoiceSession).toHaveBeenCalledWith(
         expect.objectContaining({ token: 't' }),
         { leaseId: 'lease_1', providerConversationId: 'conv_1' },
+      );
+      expect(bindHappierVoiceSessionStart.mock.invocationCallOrder[0]).toBeLessThan(
+        completeHappierVoiceSession.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+      );
+    });
+
+    it('retries a failed Happier Voice session-start binding before completing usage', async () => {
+      fetchHappierVoiceToken.mockResolvedValueOnce({
+        allowed: true,
+        token: 'conv_token',
+        leaseId: 'lease_retry',
+        bindingNonce: 'nonce_lease_retry',
+        expiresAtMs: Date.now() + 60_000,
+      });
+      bindHappierVoiceSessionStart
+        .mockRejectedValueOnce(new Error('transient_start_bind_failure'))
+        .mockResolvedValueOnce(undefined);
+
+      const realtimeTransport = await loadRealtimeTransport();
+      const { session } = makeVoiceSession('conv_retry');
+      realtimeTransport.registerVoiceSession(session);
+
+      await realtimeTransport.startRealtimeSession('s1', 'hi');
+      await sleep(0);
+      await realtimeTransport.stopRealtimeSession();
+
+      expect(bindHappierVoiceSessionStart).toHaveBeenCalledTimes(2);
+      expect(completeHappierVoiceSession).toHaveBeenCalledWith(
+        expect.objectContaining({ token: 't' }),
+        { leaseId: 'lease_retry', providerConversationId: 'conv_retry' },
       );
     });
 
@@ -477,7 +532,8 @@ describe('Realtime voice modes', () => {
           allowed: true,
           token: 'conv_token',
           leaseId: 'lease_1',
-          expiresAtMs: Date.now() + 40,
+          bindingNonce: 'nonce_lease_1',
+          expiresAtMs: Date.now() + 60_000,
         });
 
       const realtimeTransport = await loadRealtimeTransport();
@@ -503,6 +559,7 @@ describe('Realtime voice modes', () => {
         allowed: true,
         token: 'conv_token',
         leaseId: 'lease_1',
+        bindingNonce: 'nonce_lease_1',
         expiresAtMs: Date.now() + 60_000,
       });
 
@@ -555,6 +612,7 @@ describe('Realtime voice modes', () => {
         allowed: true,
         token: 'conv_token',
         leaseId: 'lease_1',
+        bindingNonce: 'nonce_lease_1',
         expiresAtMs: Date.now() + 60_000,
       });
       await p2;

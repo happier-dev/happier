@@ -86,7 +86,17 @@ export type VoiceAgentHandle = Readonly<{
 export interface VoiceAgentClient {
   start(params: VoiceAgentStartParams): Promise<VoiceAgentStartResult>;
   sendTurn(
-    params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; displayUserText?: string }>,
+    params: Readonly<{
+      sessionId: string;
+      voiceAgentId: string;
+      userText: string;
+      displayUserText?: string;
+      /**
+       * Aborts the in-flight non-streaming daemon turn so barge-in / user cancel actually terminates
+       * the read loop and cancels the daemon turn stream, instead of letting it poll to timeout.
+       */
+      signal?: AbortSignal;
+    }>,
   ): Promise<{ assistantText: string; actions?: VoiceAssistantAction[] }>;
   welcome(
     params: Readonly<{ sessionId: string; voiceAgentId: string; welcomeText?: string }>,

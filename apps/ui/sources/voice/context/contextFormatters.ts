@@ -3,9 +3,8 @@ import { Session } from "@/sync/domains/state/storageTypes";
 import { Message } from "@/sync/domains/messages/messageTypes";
 import { storage } from '@/sync/domains/state/storage';
 import { resolveSessionListPreferredSessionMetadataFromState } from '@/sync/domains/session/listing/sessionListLookupState';
+import { listPendingSessionRequests } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { trimIdent } from "@/utils/strings/trimIdent";
-import { listPendingPermissionRequests, listPendingUserActionRequests } from "@/utils/sessions/sessionUtils";
-import { resolveAgentRequestKind, type AgentRequestKind } from "@/utils/sessions/permissions/permissionPromptPolicy";
 import { redactVoicePathLikeData, redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 import { resolveVoiceSessionLabel } from "@/voice/context/resolveVoiceSessionLabel";
 import { resolveVoiceToolResultHumanSummary } from "@/voice/context/resolveVoiceToolResultHumanSummary";
@@ -35,13 +34,6 @@ interface AskUserQuestionLike {
     header?: unknown;
     question?: unknown;
     options?: unknown;
-}
-
-interface VoicePendingRequestLike {
-    id: string;
-    toolName: string;
-    requestKind: AgentRequestKind;
-    toolArgs: unknown;
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -178,66 +170,6 @@ function resolveToolResultVoiceSummary(
     }
 
     return summary;
-}
-
-function listPendingTranscriptRequests(messages: Message[]): VoicePendingRequestLike[] {
-    const requests: VoicePendingRequestLike[] = [];
-
-    for (const message of messages) {
-        if (!message || message.kind !== 'tool-call') continue;
-        const tool = message.tool;
-        const permission = tool?.permission;
-        const toolName = typeof tool?.name === 'string' ? tool.name.trim() : '';
-        const requestId = typeof permission?.id === 'string'
-            ? permission.id.trim()
-            : typeof tool?.id === 'string'
-                ? tool.id.trim()
-                : '';
-
-        if (!toolName || !requestId || permission?.status !== 'pending') continue;
-
-        requests.push({
-            id: requestId,
-            toolName,
-            requestKind: resolveAgentRequestKind({ toolName, requestKind: permission.kind }),
-            toolArgs: tool?.input ?? null,
-        });
-    }
-
-    return requests;
-}
-
-function listPendingRequestsForVoice(session: Session, messages: Message[]): VoicePendingRequestLike[] {
-    if (session.active !== true) {
-        return [];
-    }
-    const merged = new Map<string, VoicePendingRequestLike>();
-
-    for (const request of listPendingUserActionRequests(session)) {
-        merged.set(request.id, {
-            id: request.id,
-            toolName: request.tool,
-            requestKind: request.kind,
-            toolArgs: request.arguments,
-        });
-    }
-
-    for (const request of listPendingPermissionRequests(session)) {
-        merged.set(request.id, {
-            id: request.id,
-            toolName: request.tool,
-            requestKind: request.kind,
-            toolArgs: request.arguments,
-        });
-    }
-
-    for (const request of listPendingTranscriptRequests(messages)) {
-        if (!merged.has(request.id)) {
-            merged.set(request.id, request);
-        }
-    }
-
-    return Array.from(merged.values());
 }
 
 export function summarizeAgentRequestForVoiceHuman(
@@ -486,14 +418,14 @@ export function formatSessionFull(session: Session, messages: Message[], prefs?:
     }
 
     const pendingRequestSections: string[] = [];
-    for (const request of listPendingRequestsForVoice(session, messages)) {
-        if (request.requestKind === 'user_action') {
+    for (const request of listPendingSessionRequests(session, messages)) {
+        if (request.kind === 'user_action') {
             pendingRequestSections.push(
                 formatUserActionRequest(
                     session.id,
                     request.id,
-                    request.toolName,
-                    request.toolArgs,
+                    request.tool,
+                    request.arguments,
                     prefs,
                 ),
             );
@@ -504,8 +436,8 @@ export function formatSessionFull(session: Session, messages: Message[], prefs?:
             formatPermissionRequest(
                 session.id,
                 request.id,
-                request.toolName,
-                request.toolArgs,
+                request.tool,
+                request.arguments,
                 prefs,
             ),
         );

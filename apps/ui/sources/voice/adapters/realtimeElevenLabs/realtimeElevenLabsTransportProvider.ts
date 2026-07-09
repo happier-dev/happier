@@ -1,4 +1,12 @@
-import { completeHappierVoiceSession, fetchHappierVoiceToken } from '@/sync/api/voice/apiVoice';
+import {
+    HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE,
+    HAPPIER_VOICE_LEASE_ID_DYNAMIC_VARIABLE,
+} from '@happier-dev/protocol';
+import {
+    bindHappierVoiceSessionStart,
+    completeHappierVoiceSession,
+    fetchHappierVoiceToken,
+} from '@/sync/api/voice/apiVoice';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getElevenLabsCodeFromPreference } from '@/constants/Languages';
 import { Modal } from '@/modal';
@@ -50,6 +58,7 @@ type ActiveRealtimeElevenLabsSessionState = Readonly<{
     controlSessionId: string;
     conversationId: string;
     sessionState: RealtimeTransportProviderSessionState;
+    startBinding: Promise<'bound' | 'failed'> | null;
 }>;
 
 function buildElevenLabsWelcomeContext(welcomeCfg: RealtimeElevenLabsWelcomeConfig | null | undefined): string {
@@ -143,13 +152,23 @@ class RealtimeElevenLabsTransportProviderImpl implements RealtimeTransportProvid
             throw new Error('Missing conversation token');
         }
 
+        const dynamicVariables: Record<string, unknown> = {
+            sessionId: args.config.sessionId,
+            initialConversationContext: args.config.initialContext ?? '',
+        };
+        const leaseId = typeof args.config.leaseId === 'string' ? args.config.leaseId.trim() : '';
+        if (leaseId) {
+            dynamicVariables[HAPPIER_VOICE_LEASE_ID_DYNAMIC_VARIABLE] = leaseId;
+        }
+        const bindingNonce = typeof args.config.bindingNonce === 'string' ? args.config.bindingNonce.trim() : '';
+        if (bindingNonce) {
+            dynamicVariables[HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE] = bindingNonce;
+        }
+
         const sessionConfig: Record<string, unknown> = {
             connectionType: useSignedWebsocket ? 'websocket' : 'webrtc',
             textOnly: args.config.textOnly === true,
-            dynamicVariables: {
-                sessionId: args.config.sessionId,
-                initialConversationContext: args.config.initialContext ?? '',
-            },
+            dynamicVariables,
             overrides: {
                 conversation: {
                     textOnly: args.config.textOnly === true,
@@ -245,6 +264,8 @@ class RealtimeElevenLabsTransportProviderImpl implements RealtimeTransportProvid
                     sessionConfig: {
                         sessionId: args.controlSessionId,
                         initialContext,
+                        leaseId: response.leaseId,
+                        bindingNonce: response.bindingNonce,
                         token: response.token,
                         textOnly: args.textOnly,
                     },
@@ -279,13 +300,25 @@ class RealtimeElevenLabsTransportProviderImpl implements RealtimeTransportProvid
         conversationId: string;
         preparedStart: PreparedRealtimeSessionStart;
     }>): void {
+        const sessionState = args.preparedStart.sessionState;
+        const startBinding =
+            sessionState.billingMode === 'happier' && sessionState.leaseId
+                ? this.bindProviderConversationToLease({
+                    conversationId: args.conversationId,
+                    leaseId: sessionState.leaseId,
+                }).then(
+                    () => 'bound' as const,
+                    () => 'failed' as const,
+                )
+                : null;
         this.activeSession = {
             controlSessionId: args.controlSessionId,
             conversationId: args.conversationId,
-            sessionState: args.preparedStart.sessionState,
+            sessionState,
+            startBinding,
         };
-        const expiresAtMs = args.preparedStart.sessionState.expiresAtMs;
-        if (args.preparedStart.sessionState.billingMode === 'happier' && typeof expiresAtMs === 'number') {
+        const expiresAtMs = sessionState.expiresAtMs;
+        if (sessionState.billingMode === 'happier' && typeof expiresAtMs === 'number') {
             this.scheduleRealtimeLeaseAnnouncements(args.controlSessionId, expiresAtMs);
         }
     }
@@ -302,6 +335,19 @@ class RealtimeElevenLabsTransportProviderImpl implements RealtimeTransportProvid
         const credentials = await TokenStorage.getCredentials();
         if (!credentials) {
             return;
+        }
+        if (activeSession.startBinding) {
+            const bindingResult = await activeSession.startBinding;
+            if (bindingResult !== 'bound') {
+                try {
+                    await bindHappierVoiceSessionStart(credentials, {
+                        leaseId: activeSession.sessionState.leaseId,
+                        providerConversationId: activeSession.conversationId,
+                    });
+                } catch {
+                    return;
+                }
+            }
         }
         try {
             await completeHappierVoiceSession(credentials, {
@@ -323,6 +369,20 @@ class RealtimeElevenLabsTransportProviderImpl implements RealtimeTransportProvid
             this.leaseExpiryTimer = null;
         }
         this.activeSession = null;
+    }
+
+    private async bindProviderConversationToLease(params: Readonly<{
+        conversationId: string;
+        leaseId: string;
+    }>): Promise<void> {
+        const credentials = await TokenStorage.getCredentials();
+        if (!credentials) {
+            throw new Error('voice_session_start_missing_credentials');
+        }
+        await bindHappierVoiceSessionStart(credentials, {
+            leaseId: params.leaseId,
+            providerConversationId: params.conversationId,
+        });
     }
 
     handleProviderMessage(args: Readonly<{

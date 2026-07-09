@@ -15,15 +15,10 @@ import { speakGoogleCloudText } from '@/voice/output/GoogleCloudTtsController';
 import { fetchGoogleCloudTtsVoiceCatalog, type GoogleCloudTtsVoice } from '@/voice/output/googleCloudTtsApi';
 import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { normalizeSecretStringPromptInput } from '@/utils/secrets/normalizeSecretStringPromptInput';
 
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import type { LocalTtsProviderSpec } from '../_types';
-
-function normalizeSecretStringPromptInput(value: string | null): VoiceLocalTtsSettings['googleCloud']['apiKey'] {
-  if (value === null) return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? { _isSecretValue: true, value: trimmed } : null;
-}
 
 const AUDIO_FORMAT_TITLES = {
   mp3: 'MP3',

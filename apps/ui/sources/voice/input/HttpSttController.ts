@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import { sync } from '@/sync/sync';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { fetchWithTimeout, resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
+import { guessAudioMimeType } from '@/voice/input/guessAudioMimeType';
 import { buildOpenAiTranscriptionRequest } from '@/voice/local/openaiCompat';
 import { RecordingPresets } from 'expo-audio';
 
@@ -17,8 +18,13 @@ export async function transcribeRecordedAudioWithHttpStt(params: {
   uri: string;
   settings: any;
   decryptSecretValue?: (value: unknown) => string | null;
+  /** Aborts in-flight transcription work (D8 `SttController` contract). */
+  signal?: AbortSignal;
 }): Promise<string | null> {
-  const { uri, settings } = params;
+  const { uri, settings, signal } = params;
+  if (signal?.aborted) {
+    return null;
+  }
   const voice = settings?.voice ?? null;
   const providerId = typeof voice?.providerId === 'string' ? voice.providerId.trim() : voice?.providerId;
   const adapter =
@@ -59,11 +65,21 @@ export async function transcribeRecordedAudioWithHttpStt(params: {
       baseUrl: sttBaseUrl,
       apiKey: sttApiKey,
       model: sttModel,
-      file: { kind: 'native', uri, name: fileName, mimeType: guessMimeType(fileName) },
+      file: { kind: 'native', uri, name: fileName, mimeType: guessAudioMimeType(fileName) },
     });
   })();
 
-  const response = await fetchWithTimeout(transcriptionReq.url, transcriptionReq.init, networkTimeoutMs, 'stt_timeout');
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(transcriptionReq.url, transcriptionReq.init, networkTimeoutMs, 'stt_timeout', signal);
+  } catch (error) {
+    // A caller-driven abort cancels the turn gracefully (no transcript); other
+    // failures (timeout, network) keep propagating as before.
+    if (signal?.aborted) {
+      return null;
+    }
+    throw error;
+  }
   if (!response.ok) {
     return null;
   }
@@ -71,12 +87,4 @@ export async function transcribeRecordedAudioWithHttpStt(params: {
   const json = await response.json().catch(() => null);
   const text = json && typeof json.text === 'string' ? json.text.trim() : '';
   return text || null;
-}
-
-function guessMimeType(uri: string): string {
-  const lower = uri.toLowerCase();
-  if (lower.endsWith('.webm')) return 'audio/webm';
-  if (lower.endsWith('.wav')) return 'audio/wav';
-  if (lower.endsWith('.mp3')) return 'audio/mpeg';
-  return 'audio/mp4';
 }

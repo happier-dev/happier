@@ -18,7 +18,9 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
         ],
     },
     {
-        filePath: 'sources/voice/adapters/localConversation/localConversationAdapter.ts',
+        // Both public local adapters are thin wrappers over the single internal
+        // factory; the factory is the canonical local-runtime seam.
+        filePath: 'sources/voice/adapters/local/createLocalVoiceAdapter.ts',
         requiredImports: [
             "@/voice/local/localVoiceRuntimeController",
         ],
@@ -30,9 +32,21 @@ const sourceExpectations: ReadonlyArray<SourceExpectation> = [
         ],
     },
     {
+        filePath: 'sources/voice/adapters/localConversation/localConversationAdapter.ts',
+        requiredImports: [
+            "@/voice/adapters/local/createLocalVoiceAdapter",
+        ],
+        forbiddenImports: [
+            "@/voice/local/localVoiceEngine",
+            "@/voice/binding/voiceConversationBindingRuntime",
+            "@/sync/domains/state/storage",
+            "@/voice/agent/voiceAgentGlobalSessionId",
+        ],
+    },
+    {
         filePath: 'sources/voice/adapters/localDirect/localDirectAdapter.ts',
         requiredImports: [
-            "@/voice/local/localVoiceRuntimeController",
+            "@/voice/adapters/local/createLocalVoiceAdapter",
         ],
         forbiddenImports: [
             "@/voice/local/localVoiceEngine",

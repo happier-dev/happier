@@ -1,6 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { vi } from 'vitest';
-import type { VoiceSessionSnapshot } from '@/voice/session/types';
 
 import {
     getStorage,
@@ -8,20 +6,6 @@ import {
     registerLocalVoiceEngineHarnessHooks,
     sendMessage,
 } from './localVoiceEngine.testHarness';
-
-const getRealtimeSessionSnapshot = vi.fn<() => VoiceSessionSnapshot>(() => ({
-    adapterId: 'realtime_elevenlabs',
-    sessionId: null,
-    status: 'disconnected',
-    mode: 'idle',
-    canStop: false,
-}));
-
-vi.mock('@/voice/runtime/realtime/RealtimeTransport', () => ({
-    realtimeTransport: {
-        getSessionSnapshot: () => getRealtimeSessionSnapshot(),
-    },
-}));
 
 describe('local voice engine (turn-based) smoke', () => {
     registerLocalVoiceEngineHarnessHooks();
@@ -39,26 +23,34 @@ describe('local voice engine (turn-based) smoke', () => {
 
         await toggleLocalVoiceTurn('s1');
         expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-        expect(sendMessage).toHaveBeenCalledWith('s1', 'hello world');
+        expect(sendMessage).toHaveBeenCalledWith('s1', 'hello world', undefined, undefined, {
+            bypassPendingQueueReason: 'voice_turn',
+        });
         // After a turn completes, the local voice session remains active (ready for another turn)
         // until the user explicitly hangs up.
         expect(getLocalVoiceState()).toMatchObject({ status: 'idle', sessionId: 's1' });
     }, 120_000);
 
     it('does not start a local voice turn while realtime voice is connected', async () => {
-        getRealtimeSessionSnapshot.mockReturnValueOnce({
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
+
+        // The runtime machine is the single lifecycle source. Drive it into a
+        // realtime-owned connected state (the same instance production reads via
+        // `getVoiceConversationRuntimeSnapshot()`); the dynamic import resolves to
+        // the post-`resetModules` module graph used by the engine under test.
+        const { voiceConversationRuntimeMachine } = await import(
+            '@/voice/runtime/machine/VoiceConversationRuntimeMachine'
+        );
+        voiceConversationRuntimeMachine.transitionToConnected({
+            controlSessionId: 's-realtime',
             adapterId: 'realtime_elevenlabs',
-            sessionId: null,
-            status: 'connected',
-            mode: 'idle',
-            canStop: true,
         });
 
-        const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
         await toggleLocalVoiceTurn('s1');
 
         // Local voice should not start recording while a realtime call is active.
         expect(getLocalVoiceState().status).toBe('idle');
+        expect(sendMessage).not.toHaveBeenCalled();
     });
 
     it('does not start a local voice turn when realtime is the selected voice provider', async () => {

@@ -143,9 +143,15 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
             return createDisconnectedSnapshot();
         }
 
-        const preferred = snapshots.find((snapshot) => snapshot.adapterId === configuredProviderId && snapshot.status !== 'disconnected');
-        const active = preferred ?? snapshots.find((snapshot) => snapshot.status !== 'disconnected') ?? null;
-        return active ?? createDisconnectedSnapshot();
+        // Only the configured provider may surface as active. The machine now
+        // carries its owning adapterId, so non-owning adapters already project a
+        // disconnected snapshot; a blind `find(status !== 'disconnected')`
+        // fallback would let a stale/non-configured adapter snapshot (or a
+        // lingering error) hijack the published session — so it is removed.
+        const preferred = snapshots.find(
+            (snapshot) => snapshot.adapterId === configuredProviderId && snapshot.status !== 'disconnected',
+        );
+        return preferred ?? createDisconnectedSnapshot();
     };
 
     const reconcilePendingSwitch = () => {
@@ -187,14 +193,34 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
                 return;
             }
 
-            pendingAdapterSwitch = {
+            const startedSwitch: PendingAdapterSwitch = {
                 ...pending,
                 targetAdapterId,
                 startRequested: true,
             };
-            void targetAdapter.start({ sessionId: pending.sessionId }).finally(() => {
-                publishSnapshot();
-            });
+            pendingAdapterSwitch = startedSwitch;
+            void targetAdapter
+                .start({ sessionId: pending.sessionId })
+                .catch(() => {
+                    // A failed target start must not leave a dangling pending
+                    // switch pinning the published snapshot to `disconnected`
+                    // forever; clear it if it is still ours.
+                    if (pendingAdapterSwitch === startedSwitch) {
+                        pendingAdapterSwitch = null;
+                    }
+                })
+                .finally(() => {
+                    publishSnapshot();
+                    // If the target start settled without ever reaching a
+                    // connected snapshot (rejected, or resolved without
+                    // connecting), drop the dangling switch and republish a
+                    // clean disconnected snapshot. A successful connect already
+                    // cleared `pendingAdapterSwitch` via reconcilePendingSwitch.
+                    if (pendingAdapterSwitch === startedSwitch && publishedSnapshot.status === 'disconnected') {
+                        pendingAdapterSwitch = null;
+                        publishSnapshot();
+                    }
+                });
             return;
         }
 

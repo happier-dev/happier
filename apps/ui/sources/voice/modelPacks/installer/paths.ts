@@ -1,53 +1,44 @@
-import type { ModelPackManifest } from '@happier-dev/protocol';
+import {
+  assertManifestPathsSafe as assertProtocolManifestPathsSafe,
+  assertPackIdFilesystemSafe,
+  filePathParts,
+  type ModelPackManifest,
+} from '@happier-dev/protocol';
 
-import type { InstallerFs } from './types';
+import type { ExpoFsDirectory, ExpoFsFile, InstallerFs } from './types';
 
-export function filePathParts(path: string): string[] {
-  const raw = path.trim();
-  if (!raw) throw new Error('model_pack_invalid_path');
-  if (raw.startsWith('/') || raw.startsWith('\\')) throw new Error('model_pack_invalid_path');
-  if (raw.includes('\\')) throw new Error('model_pack_invalid_path');
-  if (raw.includes('\0')) throw new Error('model_pack_invalid_path');
-
-  const parts = raw
-    .split('/')
-    .map((p) => p.trim())
-    .filter(Boolean);
-  if (parts.length === 0) throw new Error('model_pack_invalid_path');
-  for (const p of parts) {
-    if (p === '.' || p === '..') throw new Error('model_pack_invalid_path');
-  }
-  return parts;
-}
-
-const PACK_ID_FILESYSTEM_SAFE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
-const PACK_ID_MAX_LENGTH = 256;
+export { filePathParts };
 
 export function normalizePackId(packId: string | null): string {
-  const normalized = packId && packId.trim().length > 0 ? packId.trim() : 'default';
-  if (
-    normalized.length === 0
-    || normalized.length > PACK_ID_MAX_LENGTH
-    || normalized === '.'
-    || normalized === '..'
-    || !PACK_ID_FILESYSTEM_SAFE_RE.test(normalized)
-  ) {
-    throw new Error('model_pack_invalid_pack_id');
-  }
-  return normalized;
+  const candidate = packId && packId.trim().length > 0 ? packId.trim() : 'default';
+  return assertPackIdFilesystemSafe(candidate, () => new Error('model_pack_invalid_pack_id'));
 }
 
-export function getPackRootDir(fs: InstallerFs, packId: string): any {
-  return new fs.Directory(fs.Paths.document, 'happier', 'voice', 'modelPacks', packId);
+const PACKS_ROOT_SEGMENTS = ['happier', 'voice', 'modelPacks'] as const;
+
+export function getPackRootDir(fs: InstallerFs, packId: string): ExpoFsDirectory {
+  return new fs.Directory(fs.Paths.document, ...PACKS_ROOT_SEGMENTS, packId);
 }
 
-export function getMetaFile(fs: InstallerFs, rootDir: any): any {
+/**
+ * A sibling directory of the live pack used as scratch space (staging or
+ * backup) during an atomic install. Keeping it a sibling — not a child of the
+ * live pack — means the live pack is never touched until the swap, and a
+ * `move`/`rename` into place stays on the same filesystem.
+ */
+export function getPackSiblingDir(fs: InstallerFs, packId: string, suffix: string): ExpoFsDirectory {
+  return new fs.Directory(fs.Paths.document, ...PACKS_ROOT_SEGMENTS, `.${packId}${suffix}`);
+}
+
+/** A sibling FILE of the live pack (e.g. the durable promote-intent marker). */
+export function getPackSiblingFile(fs: InstallerFs, packId: string, suffix: string): ExpoFsFile {
+  return new fs.File(fs.Paths.document, ...PACKS_ROOT_SEGMENTS, `.${packId}${suffix}`);
+}
+
+export function getMetaFile(fs: InstallerFs, rootDir: ExpoFsDirectory): ExpoFsFile {
   return new fs.File(rootDir, 'pack.json');
 }
 
 export function assertManifestPathsSafe(manifest: ModelPackManifest): void {
-  for (const f of manifest.files) {
-    // This will throw model_pack_invalid_path on invalid paths.
-    filePathParts(f.path);
-  }
+  assertProtocolManifestPathsSafe(manifest);
 }

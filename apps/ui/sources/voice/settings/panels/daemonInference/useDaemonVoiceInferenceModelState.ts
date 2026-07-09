@@ -7,6 +7,7 @@ import type {
 
 import { VOICE_RUNTIME_CONFIG_DEFAULTS } from '@/voice/runtime/voiceRuntimeConfigDefaults';
 import { DaemonVoiceInferenceClient } from '@/voice/runtime/daemonInference/DaemonVoiceInferenceClient';
+import { readDaemonErrorCode } from '../readDaemonErrorCode';
 
 type DaemonVoiceInferenceModelStateErrorCode =
     | 'feature_disabled'
@@ -46,14 +47,31 @@ function createIdleState(): DaemonVoiceInferenceModelState {
     };
 }
 
+/**
+ * Daemon failure codes this panel renders an explicit state for. Anything
+ * outside this set (or a missing code) collapses to `internal_error` so an
+ * unrecognized failure can never leak through as a non-union string and read as
+ * a healthy/"ready" status. Keep in sync with {@link DaemonVoiceInferenceModelStateErrorCode}.
+ */
+const KNOWN_ERROR_CODES: ReadonlySet<Exclude<DaemonVoiceInferenceModelStateErrorCode, null>> = new Set<
+    Exclude<DaemonVoiceInferenceModelStateErrorCode, null>
+>([
+    'feature_disabled',
+    'machine_unreachable',
+    'runtime_unavailable',
+    'model_not_installed',
+    'request_timeout',
+    'invalid_audio_input',
+    'unsupported_codec',
+    'cancelled',
+    'upload_size_unavailable',
+    'upload_failed',
+    'download_failed',
+    'internal_error',
+]);
+
 function readErrorCode(error: unknown): DaemonVoiceInferenceModelStateErrorCode {
-    const code = error && typeof error === 'object' && 'code' in error
-        ? String((error as { code?: unknown }).code ?? '')
-        : '';
-    if (!code) {
-        return 'internal_error';
-    }
-    return code as DaemonVoiceInferenceModelStateErrorCode;
+    return readDaemonErrorCode(error, KNOWN_ERROR_CODES, 'internal_error');
 }
 
 export function useDaemonVoiceInferenceModelState(params: Readonly<{

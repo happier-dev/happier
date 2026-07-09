@@ -276,4 +276,89 @@ describe('resolveVoiceToolResultHumanSummary', () => {
         expect(summary).toContain('<path_redacted>');
         expect(summary).not.toContain('runVoiceAgentTurnWithTools.ts');
     });
+
+    it('suppresses session summary titles in listSessions when shareSessionSummary is false', () => {
+        const summary = resolveVoiceToolResultHumanSummary({
+            toolName: 'listSessions',
+            toolInput: {},
+            toolResult: {
+                ok: true,
+                sessions: [
+                    { id: 'sess_a', title: 'Refactor the payments billing flow', serverName: 'Server A' },
+                    { id: 'sess_b', title: 'Investigate the flaky auth test', serverName: 'Server B' },
+                ],
+                nextCursor: null,
+            },
+            shareFilePaths: true,
+            shareSessionSummary: false,
+        });
+
+        expect(summary ?? '').not.toContain('Refactor the payments billing flow');
+        expect(summary ?? '').not.toContain('Investigate the flaky auth test');
+    });
+
+    it('suppresses the opened session summary title when shareSessionSummary is false', () => {
+        const summary = resolveVoiceToolResultHumanSummary({
+            toolName: 'openSession',
+            toolInput: {},
+            toolResult: {
+                ok: true,
+                sessionId: 'sess_123',
+                session: {
+                    id: 'sess_123',
+                    title: 'Secret roadmap planning',
+                    serverName: 'Server B',
+                },
+            },
+            shareFilePaths: true,
+            shareSessionSummary: false,
+        });
+
+        expect(summary ?? '').not.toContain('Secret roadmap planning');
+    });
+
+    it('still surfaces session titles when shareSessionSummary defaults to enabled', () => {
+        const summary = resolveVoiceToolResultHumanSummary({
+            toolName: 'listSessions',
+            toolInput: {},
+            toolResult: {
+                ok: true,
+                sessions: [{ id: 'sess_a', title: 'Payments bugfix' }],
+                nextCursor: null,
+            },
+            shareFilePaths: true,
+        });
+
+        expect(summary).toContain('Payments bugfix');
+    });
+
+    it('gates an explicit result.summary on shareSessionSummary, not just shareFilePaths (X-L1)', () => {
+        const summary = resolveVoiceToolResultHumanSummary({
+            toolName: 'listSessions',
+            toolInput: {},
+            toolResult: {
+                ok: true,
+                summary: 'Working on the secret roadmap planning session',
+            },
+            shareFilePaths: true,
+            shareSessionSummary: false,
+        });
+
+        expect(summary).toBeNull();
+    });
+
+    it('still surfaces an explicit result.summary when shareSessionSummary is enabled', () => {
+        const summary = resolveVoiceToolResultHumanSummary({
+            toolName: 'listSessions',
+            toolInput: {},
+            toolResult: {
+                ok: true,
+                summary: 'Done working on the payments session',
+            },
+            shareFilePaths: true,
+            shareSessionSummary: true,
+        });
+
+        expect(summary).toBe('Done working on the payments session');
+    });
 });

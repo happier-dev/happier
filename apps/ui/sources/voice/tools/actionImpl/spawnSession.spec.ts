@@ -12,7 +12,16 @@ const {
   ),
 }));
 
-const machineSpawnNewSession = vi.fn(async (_params: any) => ({ type: 'success', sessionId: 's_new' }));
+type MachineSpawnNewSessionMockResult = {
+  type: string;
+  sessionId: string;
+  usedInitialPrompt?: boolean;
+};
+
+const machineSpawnNewSession = vi.fn(async (_params: unknown): Promise<MachineSpawnNewSessionMockResult> => ({
+  type: 'success',
+  sessionId: 's_new',
+}));
 const getActiveServerSnapshot = vi.fn(() => ({ serverId: 'server-a' }));
 const resolveEffectiveWindowsRemoteSessionLaunchMode = vi.fn((_params: any) => ({ mode: null }));
 const postprocessSpawnedSession = vi.fn(async (_params: any) => {});
@@ -87,6 +96,9 @@ vi.mock('@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode', () => ({
 
 vi.mock('./spawnSessionPostProcess', () => ({
   postprocessSpawnedSession: (params: any) => postprocessSpawnedSession(params),
+  didSpawnUseDaemonInitialPrompt: (spawned: unknown) =>
+    !!spawned && typeof spawned === 'object' && !Array.isArray(spawned)
+    && (spawned as { usedInitialPrompt?: unknown }).usedInitialPrompt === true,
 }));
 
 describe('spawnSessionForVoiceTool', () => {
@@ -124,6 +136,128 @@ describe('spawnSessionForVoiceTool', () => {
       target: {
         label: 'happier — Leeroy MacBook Pro',
       },
+    });
+  });
+
+  it('uses the same spawn attempt key when retrying the same voice spawn request', async () => {
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({
+      path: '/Users/leeroy/projects/happier',
+      tag: 'voice-qa',
+      initialMessage: 'Start here',
+    });
+    await spawnSessionForVoiceTool({
+      path: '/Users/leeroy/projects/happier',
+      tag: 'voice-qa',
+      initialMessage: 'Start here',
+    });
+
+    const firstSpawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as { spawnAttemptKey?: string };
+    const secondSpawnOptions = machineSpawnNewSession.mock.calls[1]?.[0] as { spawnAttemptKey?: string };
+    expect(firstSpawnOptions.spawnAttemptKey).toEqual(expect.stringMatching(/^voice\.tool\.spawn-session:/));
+    expect(secondSpawnOptions.spawnAttemptKey).toBe(firstSpawnOptions.spawnAttemptKey);
+  });
+
+  it('confirms a voice daemon initialPrompt through the post-spawn send path', async () => {
+    machineSpawnNewSession.mockResolvedValueOnce({
+      type: 'success',
+      sessionId: 's_new',
+      usedInitialPrompt: true,
+    });
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({
+      path: '/Users/leeroy/projects/happier',
+      initialMessage: '  Start here  ',
+    });
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      initialPrompt: 'Start here',
+    }));
+    expect(postprocessSpawnedSession).toHaveBeenCalledWith({
+      sessionId: 's_new',
+      serverId: 'server-a',
+      tag: null,
+      initialMessage: 'Start here',
+      initialMessageMetaOverrides: null,
+      daemonInitialPromptUsed: true,
+    });
+  });
+
+  it('keeps slash-prefixed voice initial messages on the post-spawn fallback path', async () => {
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({
+      path: '/Users/leeroy/projects/happier',
+      initialMessage: '  /h.runs  ',
+    });
+
+    const spawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(spawnOptions).not.toHaveProperty('initialPrompt');
+    expect(postprocessSpawnedSession).toHaveBeenCalledWith({
+      sessionId: 's_new',
+      serverId: 'server-a',
+      tag: null,
+      initialMessage: '/h.runs',
+      initialMessageMetaOverrides: null,
+      daemonInitialPromptUsed: false,
+    });
+  });
+
+  it('keeps next-prompt model first turns on the post-spawn fallback path with model metadata', async () => {
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({
+      agentId: 'opencode',
+      path: '/Users/leeroy/projects/happier',
+      modelId: 'gpt-5',
+      initialMessage: 'Use the selected model for this first turn',
+    });
+
+    const spawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(spawnOptions).toMatchObject({
+      modelId: 'gpt-5',
+      modelUpdatedAt: expect.any(Number),
+    });
+    expect(spawnOptions).not.toHaveProperty('initialPrompt');
+    expect(postprocessSpawnedSession).toHaveBeenCalledWith({
+      sessionId: 's_new',
+      serverId: 'server-a',
+      tag: null,
+      initialMessage: 'Use the selected model for this first turn',
+      initialMessageMetaOverrides: { model: 'gpt-5' },
+      daemonInitialPromptUsed: false,
+    });
+  });
+
+  it('keeps selected model in the spawn payload while daemon owns the initial prompt', async () => {
+    machineSpawnNewSession.mockResolvedValueOnce({
+      type: 'success',
+      sessionId: 's_new',
+      usedInitialPrompt: true,
+    });
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    await spawnSessionForVoiceTool({
+      agentId: 'codex',
+      path: '/Users/leeroy/projects/happier',
+      modelId: 'gpt-5.4',
+      initialMessage: 'Use the selected model for this first turn',
+    });
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      initialPrompt: 'Use the selected model for this first turn',
+      modelId: 'gpt-5.4',
+      modelUpdatedAt: expect.any(Number),
+    }));
+    expect(postprocessSpawnedSession).toHaveBeenCalledWith({
+      sessionId: 's_new',
+      serverId: 'server-a',
+      tag: null,
+      initialMessage: 'Use the selected model for this first turn',
+      initialMessageMetaOverrides: null,
+      daemonInitialPromptUsed: true,
     });
   });
 

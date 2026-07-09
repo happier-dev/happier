@@ -3,7 +3,12 @@ import { getActionSpec, listActionSpecs } from '@happier-dev/protocol';
 
 import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
+import type { Session } from '@/sync/domains/state/storageTypes';
 import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
+import {
+  listPendingSessionRequests,
+  type SessionPendingRequest,
+} from '@/sync/domains/session/pending/listPendingSessionRequests';
 import {
   resolveSessionListLookupSessionServerScopeFromState,
 } from '@/sync/domains/session/listing/sessionListLookupState';
@@ -12,9 +17,14 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
-import { resolveAgentRequestKind, type AgentRequestKind } from '@/utils/sessions/permissions/permissionPromptPolicy';
-import { listPendingPermissionRequests, listPendingUserActionRequests } from '@/utils/sessions/sessionUtils';
 import { resolveAskUserQuestionDecisionAnswers } from '@/voice/requests/resolveAskUserQuestionDecisionAnswers';
+
+type AgentRequestKind = SessionPendingRequest['kind'];
+type PendingVoiceRequest = Readonly<{
+  requestId: string;
+  toolName: string;
+  requestKind: AgentRequestKind;
+}>;
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -60,79 +70,28 @@ function getNestedActionFailure(value: unknown): { errorCode: string; errorMessa
   };
 }
 
-function getPendingSessionRequests(session: unknown): Array<Readonly<{
-  requestId: string;
-  toolName: string;
-  requestKind: AgentRequestKind;
-}>> {
-  if ((session as any)?.active !== true) {
-    return [];
-  }
-  const requests = (session as any)?.agentState?.requests as Record<string, unknown> | undefined;
-  if (!requests || typeof requests !== 'object') return [];
-  const out: Array<Readonly<{ requestId: string; toolName: string; requestKind: AgentRequestKind }>> = [];
-  for (const [requestId, raw] of Object.entries(requests)) {
-    const normalizedId = normalizeId(requestId);
-    const toolName = typeof (raw as any)?.tool === 'string' ? String((raw as any).tool).trim() : '';
-    if (!normalizedId || !toolName) continue;
-    out.push({
-      requestId: normalizedId,
-      toolName,
-      requestKind: resolveAgentRequestKind({ toolName, requestKind: (raw as any)?.kind }),
-    });
-  }
-  return out;
+function asSession(value: unknown): Session | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Session
+    : null;
 }
 
-function getPendingRequestsForSession(sessionId: string, session: unknown): Array<Readonly<{
-  requestId: string;
-  toolName: string;
-  requestKind: AgentRequestKind;
-}>> {
-  const messages = readStoredSessionMessages(storage.getState() as any, sessionId);
-  const candidateSession = session && typeof session === 'object'
-    ? (session as Parameters<typeof listPendingPermissionRequests>[0])
-    : null;
-  if (!candidateSession) {
-    return getPendingSessionRequests(session);
-  }
+function toPendingVoiceRequest(request: SessionPendingRequest): PendingVoiceRequest {
+  return {
+    requestId: request.id,
+    toolName: request.tool,
+    requestKind: request.kind,
+  };
+}
 
-  if ((candidateSession as any).active !== true) {
+function getPendingRequestsForSession(sessionId: string, session: unknown): PendingVoiceRequest[] {
+  const messages = readStoredSessionMessages(storage.getState() as any, sessionId);
+  const candidateSession = asSession(session);
+  if (!candidateSession) {
     return [];
   }
 
-  const permissionRequests = (() => {
-    try {
-      return listPendingPermissionRequests(candidateSession, messages);
-    } catch {
-      return [];
-    }
-  })();
-  const userActionRequests = (() => {
-    try {
-      return listPendingUserActionRequests(candidateSession, messages);
-    } catch {
-      return [];
-    }
-  })();
-  const resolved = [
-    ...permissionRequests.map((request) => ({
-      requestId: request.id,
-      toolName: request.tool,
-      requestKind: request.kind,
-    })),
-    ...userActionRequests.map((request) => ({
-      requestId: request.id,
-      toolName: request.tool,
-      requestKind: request.kind,
-    })),
-  ];
-
-  if (resolved.length > 0) {
-    return resolved;
-  }
-
-  return getPendingSessionRequests(session);
+  return listPendingSessionRequests(candidateSession, messages).map(toPendingVoiceRequest);
 }
 
 function listMatchingPendingRequestsAcrossSessions(
@@ -213,15 +172,11 @@ export function createVoiceToolHandlers(
     kind: AgentRequestKind,
     requestId: string,
   ) => {
-    const candidateSession = session && typeof session === 'object'
-      ? session as Parameters<typeof listPendingPermissionRequests>[0]
-      : null;
+    const candidateSession = asSession(session);
     if (!candidateSession) return null;
     const messages = readStoredSessionMessages(storage.getState() as any, sessionId);
-    const requests = kind === 'user_action'
-      ? listPendingUserActionRequests(candidateSession, messages)
-      : listPendingPermissionRequests(candidateSession, messages);
-    return requests.find((request) => request.id === requestId) ?? null;
+    return listPendingSessionRequests(candidateSession, messages)
+      .find((request) => request.kind === kind && request.id === requestId) ?? null;
   };
 
   const resolvePendingRequestSession = async (
@@ -409,7 +364,11 @@ export function createVoiceToolHandlers(
     );
 
     if (!res.ok) {
-      return jsonError('permission_update_failed', 'permission_update_failed', { sessionId, requestId });
+      return jsonError(
+        res.errorCode ?? 'permission_update_failed',
+        res.error ?? res.errorCode ?? 'permission_update_failed',
+        { sessionId, requestId },
+      );
     }
     const nestedFailure = getNestedActionFailure((res as any).result);
     if (nestedFailure) {

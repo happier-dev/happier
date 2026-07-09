@@ -10,12 +10,43 @@ type DerivedLocalVoiceRuntimeProjection = Readonly<{
     canStop: boolean;
 }>;
 
-function resolveDisconnectedStatus(snapshot: VoiceConversationRuntimeSnapshot): VoiceSessionStatus {
-    return snapshot.error ? 'error' : 'disconnected';
+/**
+ * A recoverable failure means "the call ended, you can retry" — the session
+ * gracefully reads as `disconnected` and carries the error code/message for the
+ * UI to surface, without a stop affordance. Only a non-recoverable failure is a
+ * hard `error` state the user must dismiss.
+ */
+function isRecoverableFailure(snapshot: VoiceConversationRuntimeSnapshot): boolean {
+    return snapshot.error?.recoverable === true;
 }
 
-function resolveDisconnectedCanStop(snapshot: VoiceConversationRuntimeSnapshot): boolean {
-    return snapshot.error !== null;
+/**
+ * Project a failed/terminal runtime state through the single recoverability
+ * rule. A recoverable failure reads as a graceful `disconnected` end (no stop
+ * affordance, error code surfaced for the UI); a non-recoverable failure is a
+ * hard `error` the user must dismiss (stop affordance kept).
+ *
+ * This is the single owner of the recoverable→disconnected / non-recoverable→
+ * error decision, shared by the machine `error`/`mic_error` states and the
+ * `disconnected` state so a terminal error projects identically regardless of
+ * which machine state it lands in.
+ */
+function resolveFailureProjection(
+    snapshot: VoiceConversationRuntimeSnapshot,
+): Pick<DerivedLocalVoiceRuntimeProjection, 'compatStatus' | 'sessionStatus' | 'canStop'> {
+    if (isRecoverableFailure(snapshot)) {
+        return { compatStatus: 'idle', sessionStatus: 'disconnected', canStop: false };
+    }
+    return { compatStatus: 'error', sessionStatus: 'error', canStop: true };
+}
+
+function resolveDisconnectedProjection(
+    snapshot: VoiceConversationRuntimeSnapshot,
+): Pick<DerivedLocalVoiceRuntimeProjection, 'compatStatus' | 'sessionStatus' | 'canStop'> {
+    if (!snapshot.error) {
+        return { compatStatus: 'idle', sessionStatus: 'disconnected', canStop: false };
+    }
+    return resolveFailureProjection(snapshot);
 }
 
 export function deriveLocalVoiceRuntimeProjection(
@@ -57,7 +88,7 @@ export function deriveLocalVoiceRuntimeProjection(
                 sessionMode: 'transcribing',
                 canStop: true,
             };
-        case 'sending':
+        case 'thinking':
             return {
                 compatStatus: 'sending',
                 sessionStatus: 'connected',
@@ -86,28 +117,60 @@ export function deriveLocalVoiceRuntimeProjection(
                 canStop: true,
             };
         case 'mic_error':
-        case 'error':
+        case 'error': {
+            const failure = resolveFailureProjection(snapshot);
             return {
-                compatStatus: 'error',
-                sessionStatus: 'error',
+                compatStatus: failure.compatStatus,
+                sessionStatus: failure.sessionStatus,
                 sessionMode: 'idle',
-                canStop: true,
+                canStop: failure.canStop,
             };
+        }
         case 'disconnected':
-        default:
+        default: {
+            const disconnected = resolveDisconnectedProjection(snapshot);
             return {
-                compatStatus: 'idle',
-                sessionStatus: resolveDisconnectedStatus(snapshot),
+                compatStatus: disconnected.compatStatus,
+                sessionStatus: disconnected.sessionStatus,
                 sessionMode: 'idle',
-                canStop: resolveDisconnectedCanStop(snapshot),
+                canStop: disconnected.canStop,
             };
+        }
     }
+}
+
+/**
+ * Project the runtime machine snapshot into a session snapshot for `adapterId`.
+ *
+ * The machine is a single global slot; only one adapter owns it at a time
+ * (`snapshot.adapterId`). When the machine is owned by a different adapter, this
+ * adapter must report `disconnected` so a non-owning adapter never mirrors
+ * another adapter's live state. A `null` owner means a local engine adapter owns
+ * the machine (local_direct/local_conversation share one engine), so any local
+ * adapter projects it.
+ */
+function machineOwnedByAdapter(adapterId: VoiceAdapterId, snapshot: VoiceConversationRuntimeSnapshot): boolean {
+    return snapshot.adapterId === null || snapshot.adapterId === adapterId;
+}
+
+function createDisconnectedSessionSnapshot(adapterId: VoiceAdapterId): VoiceSessionSnapshot {
+    return {
+        adapterId,
+        sessionId: null,
+        status: 'disconnected',
+        mode: 'idle',
+        canStop: false,
+    };
 }
 
 export function deriveLocalVoiceSessionSnapshot(
     adapterId: VoiceAdapterId,
     snapshot: VoiceConversationRuntimeSnapshot,
 ): VoiceSessionSnapshot {
+    if (!machineOwnedByAdapter(adapterId, snapshot)) {
+        return createDisconnectedSessionSnapshot(adapterId);
+    }
+
     const projection = deriveLocalVoiceRuntimeProjection(snapshot);
 
     return {

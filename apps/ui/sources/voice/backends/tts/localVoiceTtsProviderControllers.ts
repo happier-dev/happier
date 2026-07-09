@@ -2,7 +2,7 @@ import { sync } from '@/sync/sync';
 import type { VoiceLocalTtsSettings } from '@/sync/domains/settings/voiceLocalTtsSettings';
 import { resolveKokoroDaemonTtsPackId } from '@/voice/kokoro/assets/resolveKokoroDaemonTtsPackId';
 import { resolveKokoroOperationTimeoutMs } from '@/voice/kokoro/config/kokoroConfig';
-import { speakDeviceText, stopDeviceSpeech } from '@/voice/local/speakDeviceText';
+import { speakDeviceText } from '@/voice/local/speakDeviceText';
 import { speakGoogleCloudText } from '@/voice/output/GoogleCloudTtsController';
 import { speakKokoroText } from '@/voice/output/KokoroTtsController';
 import { speakOpenAiCompatText } from '@/voice/output/TtsController';
@@ -11,6 +11,8 @@ import {
     resolveDaemonVoiceInferenceExecution,
     resolveLocalNeuralExecutionPolicy,
 } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
+import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import type { VoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/playback/VoicePlaybackController';
 
 export type LocalVoiceTtsRequest = Readonly<{
@@ -21,7 +23,36 @@ export type LocalVoiceTtsRequest = Readonly<{
     networkTimeoutMs: number;
     registerPlaybackStopper: VoicePlaybackStopperRegistrar;
     onSpeaking: () => void;
+    /**
+     * Surface a non-fallback TTS synthesis/playback failure to the runtime as a
+     * recoverable `tts_failed` machine error (audit Finding 7). Optional so
+     * callers that treat TTS as pure best-effort can omit it.
+     */
+    onTtsFailed?: (error: VoiceMachineError) => void;
 }>;
+
+/** True when an error is an abort/interrupt rather than a genuine synth failure. */
+function isTtsAbortError(error: unknown): boolean {
+    const candidate = error as { name?: unknown; message?: unknown } | null;
+    if (candidate?.name === 'AbortError') return true;
+    const message = typeof candidate?.message === 'string'
+        ? candidate.message
+        : typeof error === 'string'
+            ? error
+            : '';
+    return message.includes('aborted') || message.includes('turn_aborted');
+}
+
+/** Report a genuine (non-abort) TTS failure as a recoverable `tts_failed` error. */
+function reportTtsFailure(ctx: LocalVoiceTtsRequest, error: unknown): void {
+    if (isTtsAbortError(error)) {
+        return;
+    }
+    ctx.onTtsFailed?.(createVoiceMachineError({
+        kind: 'tts_failed',
+        reason: error instanceof Error && error.message ? error.message : 'tts_failed',
+    }));
+}
 
 export type LocalVoiceTtsProviderId = VoiceLocalTtsSettings['provider'];
 
@@ -51,10 +82,25 @@ function normalizeLocalNeuralTtsSettings(tts: VoiceLocalTtsSettings): Readonly<{
 }
 
 async function speakWithDeviceSpeech(ctx: LocalVoiceTtsRequest): Promise<void> {
+    // Bridge the playback stopper to an AbortController. `speakDeviceText` is the
+    // single owner of the device speech stop call: it checks the signal before
+    // invoking `ExpoSpeech.speak()` and stops the live engine when the signal
+    // aborts mid-speech. Keeping the provider stopper signal-only avoids a
+    // duplicate ExpoSpeech.stop() call on explicit stop/barge-in.
+    const abortController = new AbortController();
     let clearStopper = () => {};
     try {
-        clearStopper = ctx.registerPlaybackStopper(() => stopDeviceSpeech());
-        await speakDeviceText(ctx.text, ctx.onSpeaking).catch(() => {});
+        clearStopper = ctx.registerPlaybackStopper(() => {
+            abortController.abort();
+        });
+        try {
+            // `onSpeaking` fires inside speakDeviceText only after we commit to
+            // speaking (and not when the signal is already aborted), so the
+            // `speaking` transition happens only once audio actually starts.
+            await speakDeviceText(ctx.text, ctx.onSpeaking, { signal: abortController.signal });
+        } catch (error) {
+            reportTtsFailure(ctx, error);
+        }
     } finally {
         clearStopper();
     }
@@ -211,7 +257,7 @@ async function speakWithGoogleCloudTts(ctx: LocalVoiceTtsRequest): Promise<void>
         pitch,
         timeoutMs: ctx.networkTimeoutMs,
         registerPlaybackStopper: ctx.registerPlaybackStopper,
-    }).catch(() => {});
+    }).catch((error) => reportTtsFailure(ctx, error));
 }
 
 async function speakWithOpenAiCompatTts(ctx: LocalVoiceTtsRequest): Promise<void> {
@@ -234,7 +280,7 @@ async function speakWithOpenAiCompatTts(ctx: LocalVoiceTtsRequest): Promise<void
         input: ctx.text,
         timeoutMs: ctx.networkTimeoutMs,
         registerPlaybackStopper: ctx.registerPlaybackStopper,
-    }).catch(() => {});
+    }).catch((error) => reportTtsFailure(ctx, error));
 }
 
 export function createDefaultLocalVoiceTtsProviderControllers(): Record<LocalVoiceTtsProviderId, LocalVoiceTtsProviderController> {

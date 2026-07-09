@@ -13,9 +13,9 @@ import {
 } from '@happier-dev/protocol';
 import type { VoiceAssistantAction } from '@happier-dev/protocol';
 
-import type { VoiceAgentClient, VoiceAgentStartParams, VoiceAgentStartResult, VoiceAgentTurnStreamEvent } from './types';
+import type { VoiceAgentClient, VoiceAgentHandle, VoiceAgentStartParams, VoiceAgentStartResult, VoiceAgentTurnStreamEvent } from './types';
 import { resolveVoiceAgentBootstrapTimeoutMs } from './resolveVoiceAgentBootstrapTimeoutMs';
-import { resolveVoiceTurnStreamReadConfig, type VoiceTurnStreamReadConfig } from './resolveVoiceTurnStreamReadConfig';
+import { streamVoiceAgentTurn } from './streamVoiceAgentTurn';
 
 type SafeParseSuccess<T> = { success: true; data: T };
 type SafeParseFailure = { success: false; error: unknown };
@@ -62,12 +62,6 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
         ? Math.floor(explicitBootstrapTimeoutMs)
         : resolveVoiceAgentBootstrapTimeoutMs(localConversationSettings);
     return Math.max(networkTimeoutMs, bootstrapTimeoutMs, 30_000);
-  }
-
-  private resolveTurnStreamReadConfig(): VoiceTurnStreamReadConfig {
-    const settings: any = storage.getState().settings;
-    const voiceCfg = settings?.voice?.adapters?.local_conversation ?? null;
-    return resolveVoiceTurnStreamReadConfig(voiceCfg);
   }
 
   async start(params: VoiceAgentStartParams): Promise<VoiceAgentStartResult> {
@@ -126,46 +120,26 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
   }
 
   async sendTurn(
-    params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; displayUserText?: string }>,
+    params: Readonly<{ sessionId: string; voiceAgentId: string; userText: string; displayUserText?: string; signal?: AbortSignal }>,
   ): Promise<{ assistantText: string; actions?: VoiceAssistantAction[] }> {
-    const readCfg = this.resolveTurnStreamReadConfig();
-    const started = await this.startTurnStream({
-      sessionId: params.sessionId,
+    // The non-streaming daemon turn shares the single canonical turn read-loop. We omit
+    // `onTextDelta` (no incremental UI deltas in the non-streaming path) but reuse the same
+    // poll / timeout / abort / cancel semantics from streamVoiceAgentTurn so there is exactly
+    // one parser and one abort path for daemon turns.
+    const handle: VoiceAgentHandle = {
+      client: this,
       voiceAgentId: params.voiceAgentId,
+      backend: 'daemon',
+      rpcSessionId: params.sessionId,
+      agentBackendId: null,
+    };
+    return await streamVoiceAgentTurn({
+      sessionId: params.sessionId,
+      handle,
       userText: params.userText,
-      ...(typeof params.displayUserText === 'string' ? { displayUserText: params.displayUserText } : {}),
+      displayUserText: typeof params.displayUserText === 'string' ? params.displayUserText : params.userText,
+      ...(params.signal ? { options: { signal: params.signal } } : {}),
     });
-    let cursor = 0;
-    const startedAt = Date.now();
-    let merged = '';
-
-    for (;;) {
-      const read = await this.readTurnStream({
-        sessionId: params.sessionId,
-        voiceAgentId: params.voiceAgentId,
-        streamId: started.streamId,
-        cursor,
-        maxEvents: readCfg.maxEvents,
-      });
-      cursor = read.nextCursor;
-      for (const event of read.events) {
-        if (event.t === 'delta') merged += event.textDelta;
-        if (event.t === 'done') {
-          return { assistantText: event.assistantText, actions: event.actions ?? [] };
-        }
-        if (event.t === 'error') {
-          throw createRpcCallError({ error: event.error, errorCode: event.errorCode });
-        }
-      }
-      if (read.done) {
-        return { assistantText: merged.trim(), actions: [] };
-      }
-      if (readCfg.streamTimeoutMs !== null && Date.now() - startedAt > readCfg.streamTimeoutMs) {
-        await this.cancelTurnStream({ sessionId: params.sessionId, voiceAgentId: params.voiceAgentId, streamId: started.streamId }).catch(() => {});
-        throw new Error('stream_timeout');
-      }
-      await new Promise((r) => setTimeout(r, readCfg.pollIntervalMs));
-    }
   }
 
   async welcome(params: Readonly<{ sessionId: string; voiceAgentId: string; welcomeText?: string }>): Promise<{ assistantText: string }> {

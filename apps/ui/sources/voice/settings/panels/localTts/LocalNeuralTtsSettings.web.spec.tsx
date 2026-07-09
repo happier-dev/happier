@@ -70,6 +70,20 @@ describe('LocalNeuralTtsSettings (web)', () => {
         expect(tree.root.findAll((node) => node.props?.title === 'settingsVoice.local.kokoro.assetPack.title')).toHaveLength(0);
     });
 
+    it('passes daemon relay diagnostics to the daemon model section', async () => {
+        const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.web');
+
+        const { tree } = await renderScreen(React.createElement(LocalNeuralTtsSettings, {
+            cfgKokoro: { model: 'kokoro', assetId: 'kokoro-82m-v1.0-onnx-q8-wasm', voiceId: 'af_heart', speed: 1, execution: 'auto' },
+            setKokoro: vi.fn(),
+            networkTimeoutMs: 15_000,
+            popoverBoundaryRef: null,
+            daemonRouteDiagnosticReason: 'daemon_relay_disabled',
+        }));
+
+        expect(tree.root.findByType('DaemonModelSection').props.daemonRouteDiagnosticReason).toBe('daemon_relay_disabled');
+    });
+
     it('keeps only daemon-relevant voice controls on web after browser Kokoro deletion', async () => {
         const { LocalNeuralTtsSettings } = await import('./LocalNeuralTtsSettings.web');
 

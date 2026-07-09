@@ -1,4 +1,4 @@
-import { computeTurnEndpointDelayMs, type TurnEndpointPolicy } from '@/voice/input/TurnEndpointDetector';
+import { computeTurnEndpointDelayMs, type TurnEndpointPolicy } from './TurnEndpointDetector';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 
 export type TurnEndpointSignalSource = 'heuristic' | 'native_stream' | 'native_vad' | 'web_vad';
@@ -8,6 +8,19 @@ export type TurnEndpointSignal = Readonly<{
     sessionId: string;
     source: TurnEndpointSignalSource;
     transcript: string;
+    /**
+     * Measured spoken duration of the candidate utterance, in ms, when the
+     * producer can supply it (the two-stage endpoint gate tracks the
+     * speech-start → endpoint span). Absent when genuinely unknown — the
+     * downstream backchannel duration gate treats unknown as "not a short
+     * acknowledgement" so a real barge-in is never suppressed for lack of data.
+     */
+    durationMs?: number | null;
+    /**
+     * STT confidence of the candidate utterance, in [0,1], when the recognizer
+     * exposes it. Absent when the producer has no confidence signal.
+     */
+    confidence?: number | null;
 }>;
 
 type ActiveTurnEndpointSession = Readonly<{
@@ -31,6 +44,8 @@ export type TurnEndpointController = Readonly<{
         sessionId: string;
         source: Exclude<TurnEndpointSignalSource, 'heuristic'>;
         transcript?: string | null;
+        durationMs?: number | null;
+        confidence?: number | null;
     }>) => void;
     signalHeuristicTranscriptFinalized: (args: Readonly<{
         policy: TurnEndpointPolicy;
@@ -66,17 +81,29 @@ export function createTurnEndpointController(deps: TurnEndpointControllerDeps): 
         sessionId: string;
         source: TurnEndpointSignalSource;
         transcript?: string | null;
+        durationMs?: number | null;
+        confidence?: number | null;
     }>) => {
         const transcript = normalizeNonEmptyString(args.transcript) ?? '';
         if (!activeSession || activeSession.token !== args.expectedToken || activeSession.sessionId !== args.sessionId) {
             return;
         }
 
+        const durationMs = typeof args.durationMs === 'number' && Number.isFinite(args.durationMs)
+            ? Math.max(0, args.durationMs)
+            : null;
+        const confidence = typeof args.confidence === 'number' && Number.isFinite(args.confidence)
+            ? args.confidence
+            : null;
+
+        replaceActiveSession(null);
         deps.onSignal({
             detectedAt: now(),
             sessionId: args.sessionId,
             source: args.source,
             transcript,
+            durationMs,
+            confidence,
         });
     };
 
@@ -160,7 +187,7 @@ export function createTurnEndpointController(deps: TurnEndpointControllerDeps): 
 
             clearTimer(timer);
         },
-        signalEndpointDetected: ({ sessionId, source, transcript }) => {
+        signalEndpointDetected: ({ sessionId, source, transcript, durationMs, confidence }) => {
             const normalizedSessionId = normalizeSessionId(sessionId);
             if (!activeSession || !normalizedSessionId || activeSession.sessionId !== normalizedSessionId) {
                 return;
@@ -177,6 +204,8 @@ export function createTurnEndpointController(deps: TurnEndpointControllerDeps): 
                 sessionId: normalizedSessionId,
                 source,
                 transcript,
+                durationMs,
+                confidence,
             });
         },
     };

@@ -2,6 +2,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import type { IModal } from '@/modal';
+import { deriveLocalVoiceSessionSnapshot } from '@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot';
+import {
+    DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT,
+    getVoiceConversationRuntimeSnapshot,
+    setVoiceConversationRuntimeSnapshot,
+} from '@/voice/runtime/machine/voiceConversationRuntimeStore';
+
+/**
+ * The realtime adapter's machine-derived session snapshot. The transport no
+ * longer keeps a private snapshot; the single lifecycle source is the runtime
+ * machine, and the adapter (and these assertions) derive the session snapshot
+ * from it.
+ */
+function realtimeMachineDerivedSnapshot() {
+    return deriveLocalVoiceSessionSnapshot('realtime_elevenlabs', getVoiceConversationRuntimeSnapshot());
+}
 
 const setRealtimeStatus = vi.fn();
 const setRealtimeMode = vi.fn();
@@ -14,8 +30,10 @@ const machineSetError = vi.fn();
 const machineTransitionToAcquiringMic = vi.fn();
 const machineTransitionToConnecting = vi.fn();
 const machineTransitionToConnected = vi.fn();
+const machineTransitionToSpeaking = vi.fn();
 const machineTransitionToEnding = vi.fn();
 const machineTransitionToDisconnected = vi.fn();
+const machineSetMuted = vi.fn();
 const micEnsureActive = vi.fn(async () => {});
 const micTeardown = vi.fn(async () => {});
 const micSetMuted = vi.fn();
@@ -32,6 +50,7 @@ let micFailureListener: null | ((failure: { kind: 'mic_ended' | 'audio_context_s
 const fetchHappierVoiceToken = vi.fn(async () => ({
     allowed: true,
     expiresAtMs: Date.now() + 60_000,
+    bindingNonce: 'nonce-lease-1',
     leaseId: 'lease-1',
     token: 'token-1',
 }));
@@ -66,6 +85,8 @@ const providerPrepareSessionStart = vi.fn(async (args: {
     sessionConfig: {
         sessionId: args.controlSessionId,
         initialContext: args.initialContext,
+        leaseId: 'lease-1',
+        bindingNonce: 'nonce-lease-1',
         token: 'token-1',
         textOnly: args.textOnly,
     },
@@ -176,16 +197,85 @@ vi.mock('@/voice/binding/VoiceConversationBindingResolver', () => ({
     },
 }));
 
-vi.mock('@/voice/runtime/machine/VoiceConversationRuntimeMachine', () => ({
-    createVoiceMachineError: (params: any) => params,
-    voiceConversationRuntimeMachine: {
-        setError: (params: any) => machineSetError(params),
-        transitionToAcquiringMic: (params: any) => machineTransitionToAcquiringMic(params),
-        transitionToConnecting: (params: any) => machineTransitionToConnecting(params),
-        transitionToConnected: (params: any) => machineTransitionToConnected(params),
-        transitionToEnding: (params: any) => machineTransitionToEnding(params),
-        transitionToDisconnected: (params: any) => machineTransitionToDisconnected(params),
-    },
+// The transport drives the runtime machine, which is the single lifecycle
+// source the adapter/transport derive their session snapshot from. The mock
+// spies each transition for contract assertions AND updates the real runtime
+// store so the machine-derived snapshot reflects the lifecycle the transport
+// drove (used by the snapshot assertions below).
+vi.mock('@/voice/runtime/machine/VoiceConversationRuntimeMachine', async () => {
+    const { setVoiceConversationRuntimeSnapshot, getVoiceConversationRuntimeSnapshot } = await import(
+        '@/voice/runtime/machine/voiceConversationRuntimeStore'
+    );
+    const driveState = (
+        params: { controlSessionId: string; adapterId?: string | null },
+        state: string,
+    ) => {
+        setVoiceConversationRuntimeSnapshot({
+            ...getVoiceConversationRuntimeSnapshot(),
+            controlSessionId: params.controlSessionId,
+            adapterId: (params.adapterId ?? null) as any,
+            state: state as any,
+            error: null,
+        });
+    };
+    return {
+        voiceConversationRuntimeMachine: {
+            setError: (params: any) => {
+                machineSetError(params);
+                setVoiceConversationRuntimeSnapshot({
+                    ...getVoiceConversationRuntimeSnapshot(),
+                    controlSessionId: params.controlSessionId,
+                    adapterId: (params.adapterId ?? null) as any,
+                    state: 'error' as any,
+                    error: params.error,
+                });
+            },
+            transitionToAcquiringMic: (params: any) => {
+                machineTransitionToAcquiringMic(params);
+                driveState(params, 'acquiring_mic');
+            },
+            transitionToConnecting: (params: any) => {
+                machineTransitionToConnecting(params);
+                driveState(params, 'connecting');
+            },
+            transitionToConnected: (params: any) => {
+                machineTransitionToConnected(params);
+                driveState(params, 'connected');
+            },
+            transitionToSpeaking: (params: any) => {
+                machineTransitionToSpeaking(params);
+                driveState(params, 'speaking');
+            },
+            transitionToEnding: (params: any) => {
+                machineTransitionToEnding(params);
+                driveState(params, 'ending');
+            },
+            transitionToDisconnected: (params: any) => {
+                machineTransitionToDisconnected(params);
+                setVoiceConversationRuntimeSnapshot({
+                    ...getVoiceConversationRuntimeSnapshot(),
+                    controlSessionId: params.controlSessionId,
+                    state: 'disconnected' as any,
+                    error: null,
+                });
+            },
+            setMuted: (muted: boolean) => {
+                machineSetMuted(muted);
+                setVoiceConversationRuntimeSnapshot({
+                    ...getVoiceConversationRuntimeSnapshot(),
+                    micMuted: muted,
+                });
+            },
+        },
+    };
+});
+
+vi.mock('@/voice/runtime/machine/voiceMachineError', () => ({
+    createVoiceMachineError: (params: any) => ({
+        kind: params.kind,
+        reason: params.reason,
+        recoverable: params.recoverable ?? true,
+    }),
 }));
 
 vi.mock('@/voice/transcript/voiceConversationTranscript', () => ({
@@ -207,6 +297,8 @@ describe('RealtimeTransport provider event ownership', () => {
         vi.clearAllMocks();
         vi.useRealTimers();
         vi.spyOn(console, 'warn').mockImplementation(() => {});
+        // Reset the single runtime machine slot so each test starts disconnected.
+        setVoiceConversationRuntimeSnapshot(DEFAULT_VOICE_CONVERSATION_RUNTIME_SNAPSHOT);
         micFailureListener = null;
         providerHandleProviderMessage.mockClear();
         providerHandleProviderConnected.mockClear();
@@ -241,17 +333,16 @@ describe('RealtimeTransport provider event ownership', () => {
         expect(clearRealtimeModeDebounce).toHaveBeenCalledTimes(1);
     });
 
-    it('mirrors disconnected snapshots as idle even if a stale speaking mode is present', async () => {
+    it('mirrors disconnected machine snapshots as idle even after a stale speaking mode', async () => {
         const { RealtimeTransport } = await import('./RealtimeTransport');
         const transport = new RealtimeTransport();
 
-        transport.publishSessionSnapshot({
-            adapterId: 'realtime_elevenlabs',
-            sessionId: null,
-            status: 'disconnected',
-            mode: 'speaking',
-            canStop: false,
-        });
+        // Drive the single machine source into a speaking state, then disconnect;
+        // the storage mirror (the only writer) must reset the mode to idle.
+        transport.setCurrentRealtimeControlSessionId('s1');
+        transport.handleProviderConnected();
+        transport.handleProviderModeChange('speaking');
+        transport.handleProviderDisconnected();
 
         expect(setRealtimeStatus).toHaveBeenLastCalledWith('disconnected');
         expect(setRealtimeMode).toHaveBeenLastCalledWith('idle', true);
@@ -422,6 +513,7 @@ describe('RealtimeTransport provider event ownership', () => {
         expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ textOnly: true }));
         expect(machineTransitionToConnecting).toHaveBeenCalledWith({
             controlSessionId: 's1',
+            adapterId: 'realtime_elevenlabs',
         });
     });
 
@@ -443,9 +535,11 @@ describe('RealtimeTransport provider event ownership', () => {
 
         expect(machineTransitionToAcquiringMic).toHaveBeenCalledWith({
             controlSessionId: 's1',
+            adapterId: 'realtime_elevenlabs',
         });
         expect(machineTransitionToConnecting).toHaveBeenCalledWith({
             controlSessionId: 's1',
+            adapterId: 'realtime_elevenlabs',
         });
         expect(machineTransitionToAcquiringMic.mock.invocationCallOrder[0]).toBeLessThan(
             machineTransitionToConnecting.mock.invocationCallOrder[0],
@@ -545,17 +639,23 @@ describe('RealtimeTransport provider event ownership', () => {
         expect(setRealtimeStatus).toHaveBeenLastCalledWith('disconnected');
     });
 
-    it('publishes a transport-owned session snapshot for subscribers', async () => {
-        const { realtimeTransport } = await import('./RealtimeTransport');
+    it('drives a machine-derived session snapshot that notifies runtime-store subscribers', async () => {
+        const { RealtimeTransport } = await import('./RealtimeTransport');
+        const { useVoiceConversationRuntimeStore } = await import(
+            '@/voice/runtime/machine/voiceConversationRuntimeStore'
+        );
+        const transport = new RealtimeTransport();
         const listener = vi.fn();
-        const unsubscribe = realtimeTransport.subscribe(listener);
+        const unsubscribe = useVoiceConversationRuntimeStore.subscribe(() => listener());
 
-        realtimeTransport.handleProviderConnected();
-        realtimeTransport.handleProviderModeChange('speaking');
+        transport.setCurrentRealtimeControlSessionId('s1');
+        transport.handleProviderConnected();
+        transport.handleProviderModeChange('speaking');
 
-        expect(realtimeTransport.getSessionSnapshot()).toMatchObject({
+        // The machine is the single lifecycle source; the adapter projects this.
+        expect(realtimeMachineDerivedSnapshot()).toMatchObject({
             adapterId: 'realtime_elevenlabs',
-            sessionId: null,
+            sessionId: 's1',
             status: 'connected',
             mode: 'speaking',
             canStop: true,
@@ -573,7 +673,7 @@ describe('RealtimeTransport provider event ownership', () => {
         transport.handleProviderConnected();
         transport.handleProviderModeChange('speaking');
 
-        expect(transport.getSessionSnapshot()).toMatchObject({
+        expect(realtimeMachineDerivedSnapshot()).toMatchObject({
             adapterId: 'realtime_elevenlabs',
             sessionId: 's1',
             status: 'connected',
@@ -609,12 +709,15 @@ describe('RealtimeTransport provider event ownership', () => {
 
         expect(machineTransitionToConnecting).toHaveBeenCalledWith({
             controlSessionId: 's1',
+            adapterId: 'realtime_elevenlabs',
         });
         expect(machineTransitionToConnected).toHaveBeenCalledWith({
             controlSessionId: 's1',
+            adapterId: 'realtime_elevenlabs',
         });
         expect(machineTransitionToEnding).toHaveBeenCalledWith({
             controlSessionId: 's1',
+            adapterId: 'realtime_elevenlabs',
         });
         expect(machineTransitionToDisconnected).toHaveBeenCalledWith({
             controlSessionId: 's1',
@@ -679,6 +782,76 @@ describe('RealtimeTransport provider event ownership', () => {
         );
         expect(setRealtimeStatus).toHaveBeenLastCalledWith('disconnected');
         expect(setRealtimeMode).toHaveBeenLastCalledWith('idle', true);
+    });
+
+    it('keeps a durable mic_plateau errorCode on the published snapshot after a watchdog plateau', async () => {
+        vi.useFakeTimers();
+        const endSession = vi.fn(async () => {});
+        const statsHandle = {
+            connection: {
+                getStats: vi.fn(async () => [
+                    { type: 'outbound-rtp', kind: 'audio', bytesSent: 128 },
+                ]),
+            },
+        };
+
+        const { RealtimeTransport } = await import('./RealtimeTransport');
+        const transport = new RealtimeTransport();
+        transport.registerVoiceSession({
+            startSession: vi.fn(async () => 'conv_1'),
+            endSession,
+            sendTextMessage: vi.fn(),
+            sendContextualUpdate: vi.fn(),
+        });
+        transport.setActiveConversationHandle(statsHandle as any);
+        transport.setCurrentRealtimeControlSessionId('s1');
+
+        transport.handleProviderConnected();
+        await vi.advanceTimersByTimeAsync(15_000);
+
+        // The plateau must end the live conversation + lease AND leave a durable,
+        // user-visible recoverable error on the consumed snapshot — not a clean
+        // disconnected snapshot that wipes the notice.
+        expect(endSession).toHaveBeenCalledTimes(1);
+        expect(providerHandleSessionEnded).toHaveBeenCalledTimes(1);
+        expect(realtimeMachineDerivedSnapshot()).toMatchObject({
+            status: 'disconnected',
+            errorCode: 'mic_plateau',
+            errorMessage: 'realtime_outbound_audio_plateau',
+        });
+        expect(setRealtimeStatus).toHaveBeenLastCalledWith('disconnected');
+    });
+
+    it('ends the conversation and finalizes the lease when a recoverable mic failure is surfaced', async () => {
+        const { RealtimeTransport } = await import('./RealtimeTransport');
+        const transport = new RealtimeTransport();
+        const endSession = vi.fn(async () => {});
+        transport.registerVoiceSession({
+            startSession: vi.fn(async () => 'conv_1'),
+            endSession,
+            sendTextMessage: vi.fn(),
+            sendContextualUpdate: vi.fn(),
+        });
+
+        transport.setCurrentRealtimeControlSessionId('s1');
+        transport.handleProviderConnected();
+        micFailureListener?.({
+            kind: 'mic_ended',
+            reason: 'web_mic_track_ended',
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // The recoverable-failure path must tear down the provider session + lease
+        // (like the clean-stop path) so the ElevenLabs conversation + happier lease
+        // do not leak.
+        expect(endSession).toHaveBeenCalledTimes(1);
+        expect(providerHandleSessionEnded).toHaveBeenCalledTimes(1);
+        expect(realtimeMachineDerivedSnapshot()).toMatchObject({
+            status: 'disconnected',
+            errorCode: 'mic_ended',
+            errorMessage: 'web_mic_track_ended',
+        });
     });
 
     it('does not surface transport_disconnect when the transport initiated a clean stop', async () => {
@@ -746,7 +919,7 @@ describe('RealtimeTransport provider event ownership', () => {
 
         expect(micSetMuted).toHaveBeenCalledWith(true);
         expect(setConversationMicMuted).toHaveBeenCalledWith(true);
-        expect(transport.getSessionSnapshot()).toMatchObject({
+        expect(realtimeMachineDerivedSnapshot()).toMatchObject({
             micMuted: true,
         });
     });

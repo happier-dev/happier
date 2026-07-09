@@ -33,8 +33,6 @@ function normalizeBinding(binding: VoiceSessionBinding): VoiceSessionBinding | n
     const adapterId = normalizeId(binding.adapterId);
     const controlSessionId = normalizeId(binding.controlSessionId);
     const conversationSessionId = normalizeId(binding.conversationSessionId);
-    const runId = normalizeId(binding.runId);
-    const streamId = normalizeId(binding.streamId);
     const transcriptMode = binding.transcriptMode === 'native_session' || binding.transcriptMode === 'synthetic'
         ? binding.transcriptMode
         : null;
@@ -44,8 +42,6 @@ function normalizeBinding(binding: VoiceSessionBinding): VoiceSessionBinding | n
         adapterId,
         controlSessionId,
         conversationSessionId,
-        ...(runId ? { runId } : {}),
-        ...(streamId ? { streamId } : {}),
         transcriptMode,
         targetSessionId: normalizeId(binding.targetSessionId),
         updatedAt: Number.isFinite(binding.updatedAt) ? Number(binding.updatedAt) : 0,
@@ -80,6 +76,27 @@ function buildBindingsByConversationSessionId(
     return nextBindings;
 }
 
+/**
+ * Canonical "which binding wins" comparator. Newest `updatedAt` wins; on an
+ * equal-`updatedAt` tie the larger `conversationSessionId` wins. This is the
+ * single tie-break used by both the store merge and the resolver so the two read
+ * paths cannot diverge (see audit F1/F7).
+ */
+export function pickNewerVoiceBinding(
+    current: VoiceSessionBinding | null,
+    candidate: VoiceSessionBinding | null,
+): VoiceSessionBinding | null {
+    if (!candidate) return current;
+    if (!current) return candidate;
+    if (candidate.updatedAt !== current.updatedAt) {
+        return candidate.updatedAt > current.updatedAt ? candidate : current;
+    }
+    if (candidate.conversationSessionId !== current.conversationSessionId) {
+        return candidate.conversationSessionId > current.conversationSessionId ? candidate : current;
+    }
+    return candidate;
+}
+
 function buildMergedBindings(
     runtimeBindingsByConversationSessionId: BindingsByConversationSessionId,
     persistedBindingsByConversationSessionId: BindingsByConversationSessionId,
@@ -95,6 +112,12 @@ function buildMergedBindings(
     });
 
     return buildBindingsByConversationSessionId(bindings);
+}
+
+export function listPersistedVoiceBindingsFromState(
+    state: SessionServerLookupStateLike,
+): ReadonlyArray<VoiceSessionBinding> {
+    return listPersistedBindingsFromState(state);
 }
 
 function listPersistedBindingsFromState(state: SessionServerLookupStateLike): ReadonlyArray<VoiceSessionBinding> {
@@ -174,10 +197,12 @@ export function createVoiceSessionBindingStore() {
         getByControlSessionId: (controlSessionId) => {
             const normalized = normalizeId(controlSessionId);
             if (!normalized) return null;
+            let resolved: VoiceSessionBinding | null = null;
             for (const binding of Object.values(get().bindingsByConversationSessionId)) {
-                if (binding.controlSessionId === normalized) return binding;
+                if (binding.controlSessionId !== normalized) continue;
+                resolved = pickNewerVoiceBinding(resolved, binding);
             }
-            return null;
+            return resolved;
         },
         list: () => Object.values(get().bindingsByConversationSessionId),
     }));

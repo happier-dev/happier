@@ -1,3 +1,5 @@
+import { createAttemptGuard } from '@/utils/timing/attemptGuard';
+
 export type VoicePlaybackStopperRegistrar = (stopper: () => void) => () => void;
 
 export type VoicePlaybackController = Readonly<{
@@ -8,8 +10,13 @@ export type VoicePlaybackController = Readonly<{
 }>;
 
 export function createVoicePlaybackController(): VoicePlaybackController {
+    // The playback "epoch" is a latest-wins generation token: callers capture it
+    // before async work and re-check it before committing playback; `interrupt()`
+    // advances the generation so stale completions drop out. Back it with the
+    // shared AttemptGuard so this staleness logic has one owner.
+    const playbackGuard = createAttemptGuard();
     let activeStopper: (() => void) | null = null;
-    let playbackEpoch = 0;
+    let playbackEpoch = playbackGuard.next();
     let pendingInterrupt = false;
 
     const registerStopper: VoicePlaybackStopperRegistrar = (stopper) => {
@@ -33,9 +40,9 @@ export function createVoicePlaybackController(): VoicePlaybackController {
 
     return {
         captureEpoch: () => playbackEpoch,
-        isEpochCurrent: (epoch: number) => playbackEpoch === epoch,
+        isEpochCurrent: (epoch: number) => playbackGuard.isCurrent(epoch),
         interrupt: () => {
-            playbackEpoch += 1;
+            playbackEpoch = playbackGuard.next();
 
             const stopper = activeStopper;
             if (!stopper) {

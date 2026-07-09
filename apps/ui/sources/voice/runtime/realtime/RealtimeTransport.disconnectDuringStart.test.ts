@@ -22,7 +22,7 @@ describe('RealtimeTransport (disconnect during start)', () => {
         vi.restoreAllMocks();
     });
 
-    it('aborts an in-flight startRealtimeSession when provider disconnects, preventing late completion from reviving state', async () => {
+    it('aborts an in-flight startRealtimeSession when provider disconnects, finalizing a late provider completion without reviving state', async () => {
         const startSessionCalled = createDeferred<void>();
         const startSessionDeferred = createDeferred<string>();
 
@@ -40,6 +40,7 @@ describe('RealtimeTransport (disconnect during start)', () => {
         };
 
         const providerHandleSessionStarted = vi.fn();
+        const providerHandleSessionEnded = vi.fn(async () => {});
         const provider: RealtimeTransportProvider = {
             adapterId: 'test_provider',
             buildConversationStartConfig: ({ config }) => config,
@@ -47,7 +48,7 @@ describe('RealtimeTransport (disconnect during start)', () => {
             handleProviderDiagnosticsError: () => {},
             handleProviderDisconnected: () => {},
             handleProviderMessage: () => {},
-            handleSessionEnded: async () => {},
+            handleSessionEnded: providerHandleSessionEnded,
             handleSessionStarted: (args) => providerHandleSessionStarted(args),
             isSelectedProvider: () => true,
             prepareSessionStart: async ({ controlSessionId, textOnly }) => ({
@@ -104,7 +105,8 @@ describe('RealtimeTransport (disconnect during start)', () => {
         startSessionDeferred.resolve('conv_1');
         await startPromise;
 
-        expect(providerHandleSessionStarted).not.toHaveBeenCalled();
+        expect(providerHandleSessionStarted).toHaveBeenCalledTimes(1);
+        expect(providerHandleSessionEnded).toHaveBeenCalled();
         expect(transport.isVoiceSessionStarted()).toBe(false);
         expect(transport.getCurrentRealtimeControlSessionId()).toBeNull();
         expect(endSession).toHaveBeenCalledTimes(1);

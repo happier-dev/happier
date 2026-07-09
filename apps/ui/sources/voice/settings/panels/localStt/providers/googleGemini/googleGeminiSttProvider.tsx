@@ -7,20 +7,14 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
-import type { SecretString } from '@/sync/encryption/secretSettings';
 import { t } from '@/text';
 import type { VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
 import { LANGUAGES, getLanguageDisplayName } from '@/constants/Languages';
 import { fetchGoogleGeminiModelCatalog, type GoogleGeminiModelSummary } from '@/voice/input/googleGeminiModelsApi';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { normalizeSecretStringPromptInput } from '@/utils/secrets/normalizeSecretStringPromptInput';
 
 import type { LocalSttProviderSpec } from '../_types';
-
-function normalizeSecretStringPromptInput(value: string | null): SecretString | null {
-  if (value === null) return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? { _isSecretValue: true, value: trimmed } : null;
-}
 
 const GoogleGeminiSttSettings: LocalSttProviderSpec['Settings'] = (props) => {
   const { theme } = useUnistyles();

@@ -1,4 +1,5 @@
 import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
+import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { storage } from '@/sync/domains/state/storage';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { isHiddenSystemSession } from '@happier-dev/protocol';
@@ -52,20 +53,25 @@ export async function listSessionsForVoiceTool(params: Readonly<{
     .filter(Boolean) as any[];
 
   const prefs = resolveVoiceUpdatesPrefs((state?.settings ?? {}) as any);
+  const privacy = readVoicePrivacySettings(state?.settings);
 
   const sessions = rows
     .sort((a: any, b: any) => compareSessionKeyDesc(a.key, b.key))
     .filter((s: any) => (cursorKey ? shouldIncludeAfterCursor(s.key, cursorKey) : true))
     .slice(0, limit)
     .map((s: any) => {
+      // The session `title` is the session summary text, so it is gated by `shareSessionSummary`.
+      // Location labels are repo/workspace path tails, so they are gated by `shareFilePaths`.
       const out: any = {
         id: s.id,
-        title: s.title,
         active: s.active,
         presence: s.presence,
         updatedAt: s.updatedAt,
       };
-      if (typeof s.locationLabel === 'string' && s.locationLabel.trim().length > 0) {
+      if (privacy.shareSessionSummary && typeof s.title === 'string' && s.title.trim().length > 0) {
+        out.title = s.title;
+      }
+      if (privacy.shareFilePaths && typeof s.locationLabel === 'string' && s.locationLabel.trim().length > 0) {
         out.locationLabel = s.locationLabel;
       }
       if (typeof s.serverId === 'string' && s.serverId.trim().length > 0) {

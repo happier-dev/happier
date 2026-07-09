@@ -12,6 +12,7 @@ import { getKokoroSherpaVoiceCatalogForSpeakerCount } from '@/voice/kokoro/voice
 import { resolveLocalNeuralExecutionPolicy } from '@/voice/runtime/daemonInference/daemonVoiceInferencePolicy';
 import { DaemonVoiceInferenceExecutionDropdown } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceExecutionDropdown';
 import { DaemonVoiceInferenceModelSection } from '@/voice/settings/panels/daemonInference/DaemonVoiceInferenceModelSection';
+import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 
 type KokoroVoiceSummary = Readonly<{
     id: string;
@@ -32,6 +33,7 @@ export function LocalNeuralTtsSettings(props: {
     setKokoro: (next: VoiceLocalTtsSettings['localNeural']) => void;
     networkTimeoutMs: number;
     popoverBoundaryRef?: React.RefObject<any> | null;
+    daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 }) {
     const { theme } = useUnistyles();
     const [openMenu, setOpenMenu] = React.useState<null | 'voiceId' | 'speed'>(null);
@@ -74,7 +76,11 @@ export function LocalNeuralTtsSettings(props: {
                 allowDeviceSelection={executionPolicy.allowDeviceSelection}
             />
 
-            <DaemonVoiceInferenceModelSection packId={daemonPackId} kind="tts" />
+            <DaemonVoiceInferenceModelSection
+                packId={daemonPackId}
+                kind="tts"
+                daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+            />
 
             <DropdownMenu
                 open={openMenu === 'voiceId'}

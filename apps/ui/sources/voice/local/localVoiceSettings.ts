@@ -11,7 +11,7 @@ import {
 import {
   DEFAULT_ADAPTIVE_INTERRUPTION_IGNORED_PHRASES,
   type AdaptiveInterruptionConfig,
-} from '@/voice/runtime/input/resolveAdaptiveInterruptionDecision';
+} from '@/voice/runtime/input/resolveBackchannelDecision';
 
 export function resolveLocalVoiceAdapterSettings(settings: any): {
   adapterId: 'local_direct' | 'local_conversation';

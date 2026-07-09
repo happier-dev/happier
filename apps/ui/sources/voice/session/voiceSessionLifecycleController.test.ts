@@ -128,13 +128,11 @@ describe('createVoiceSessionLifecycleController', () => {
             list: () => [sourceAdapter.controller, targetAdapter.controller],
         };
 
-        setVoiceSessionSnapshot({
-            adapterId: null,
-            sessionId: null,
-            status: 'disconnected',
-            mode: 'idle',
-            canStop: false,
-        });
+        // The published snapshot already reflects the active source adapter (the
+        // realistic state once adapters derive from the owner-aware machine);
+        // the controller no longer relies on a blind active-adapter fallback to
+        // discover an owner, so it must start from the owner's snapshot.
+        setVoiceSessionSnapshot(sourceSnapshot);
 
         const controller = createVoiceSessionLifecycleController({
             getRegistry: () => registry,

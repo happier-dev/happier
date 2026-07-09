@@ -1,27 +1,20 @@
-import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import type { MicSession } from '@/voice/runtime/mic/MicSession';
 
 import type { TurnEndpointSignal } from './TurnEndpointController';
-
-type WebVadLike = Readonly<{
-    pause: () => void | Promise<void>;
-    start: () => void | Promise<void>;
-}>;
-
-type ActiveWebVadSession = Readonly<{
-    sessionId: string;
-    token: number;
-    vad: WebVadLike;
-}>;
+import type { TurnPolicy } from './turnPolicyMachine';
 
 type WebVadControllerDeps = Readonly<{
     now?: () => number;
     onEndpointSignal: (signal: TurnEndpointSignal) => void;
+    turnPolicy?: Partial<TurnPolicy>;
+    getLatestPartialTranscript?: () => string | null | undefined;
 }>;
 
 type StartWebVadSessionArgs = Readonly<{
     minSpeechMs: number;
     redemptionMs: number;
     sessionId: string;
+    micSession?: MicSession | null;
 }>;
 
 export type WebVadController = Readonly<{
@@ -30,92 +23,25 @@ export type WebVadController = Readonly<{
     stopSession: (sessionId?: string | null) => Promise<void>;
 }>;
 
-function isDomRuntime(): boolean {
-    return typeof window !== 'undefined' && typeof document !== 'undefined';
-}
-
-function normalizeSessionId(sessionId: string | null | undefined): string | null {
-    return normalizeNonEmptyString(sessionId);
-}
-
-function normalizeDurationMs(value: number): number {
-    if (!Number.isFinite(value)) {
-        return 0;
-    }
-
-    return Math.max(0, Math.round(value));
-}
-
-export function createWebVadController(deps: WebVadControllerDeps): WebVadController {
-    const now = deps.now ?? (() => Date.now());
-    let activeSession: ActiveWebVadSession | null = null;
-    let nextToken = 1;
-
-    const clearActiveSession = async (sessionId?: string | null) => {
-        const normalizedSessionId = normalizeSessionId(sessionId);
-        if (!activeSession) {
-            return;
-        }
-
-        if (normalizedSessionId && activeSession.sessionId !== normalizedSessionId) {
-            return;
-        }
-
-        const previousSession = activeSession;
-        activeSession = null;
-        try {
-            await previousSession.vad.pause();
-        } catch {
-            // Ignore teardown failures and allow heuristic fallback to continue.
-        }
-    };
-
+/**
+ * Native/default fallback for the browser-only `@ricky0123/vad-web` engine.
+ * The real implementation (which dynamically imports `@ricky0123/vad-web` ->
+ * `onnxruntime-web`) lives in `WebVadController.web.ts` and is resolved by
+ * Metro only when bundling for `platform: "web"`. Without this platform
+ * split, Metro's static bundler eagerly pulled the whole `vad-web` ->
+ * `onnxruntime-web` dependency tree into the iOS/Android bundle even though
+ * it was never reachable at runtime there — `onnxruntime-web`'s wasm loader
+ * uses webpack-only dynamic-import syntax Metro's transform can't parse,
+ * failing the native bundle compile entirely.
+ *
+ * This stub reproduces the exact behavior the real controller already had on
+ * non-DOM runtimes (its internal `isDomRuntime()` guard made every method a
+ * no-op there), so native callers observe no behavior change.
+ */
+export function createWebVadController(_deps: WebVadControllerDeps): WebVadController {
     return {
-        isActiveSession: (sessionId) => activeSession?.sessionId === normalizeSessionId(sessionId),
-        startSession: async ({ minSpeechMs, redemptionMs, sessionId }) => {
-            const normalizedSessionId = normalizeSessionId(sessionId);
-            if (!normalizedSessionId || !isDomRuntime()) {
-                await clearActiveSession();
-                return false;
-            }
-
-            await clearActiveSession();
-
-            const token = nextToken++;
-            try {
-                const { MicVAD } = await import('@ricky0123/vad-web');
-                const vad = await MicVAD.new({
-                    minSpeechMs: normalizeDurationMs(minSpeechMs),
-                    model: 'v5',
-                    redemptionMs: normalizeDurationMs(redemptionMs),
-                    onSpeechEnd: () => {
-                        if (!activeSession || activeSession.sessionId !== normalizedSessionId || activeSession.token !== token) {
-                            return;
-                        }
-
-                        deps.onEndpointSignal({
-                            detectedAt: now(),
-                            sessionId: normalizedSessionId,
-                            source: 'web_vad',
-                            transcript: '',
-                        });
-                    },
-                });
-
-                activeSession = {
-                    sessionId: normalizedSessionId,
-                    token,
-                    vad,
-                };
-                await vad.start();
-                return true;
-            } catch {
-                if (activeSession?.token === token) {
-                    activeSession = null;
-                }
-                return false;
-            }
-        },
-        stopSession: clearActiveSession,
+        isActiveSession: () => false,
+        startSession: async () => false,
+        stopSession: async () => {},
     };
 }

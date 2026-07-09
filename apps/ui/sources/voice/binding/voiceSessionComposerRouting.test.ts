@@ -89,4 +89,31 @@ describe('resolveVoiceSessionComposerRouting', () => {
         const store = createVoiceSessionBindingStore();
         expect(resolveVoiceSessionComposerRouting({ conversationSessionId: 's1', store })).toBeNull();
     });
+
+    it('memoizes the singleton routing lookup for a referentially-stable result on repeat calls', () => {
+        // Same conversation id + same sessionMetadata reference -> same result object,
+        // so heavy callers (SessionView) do not re-walk state or break memoized children.
+        const sessionMetadata = writeVoiceConversationBindingMetadata(
+            { systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true } },
+            {
+                adapterId: 'realtime_elevenlabs',
+                controlSessionId: 'voice-global',
+                conversationSessionId: 'carrier-memo',
+                transcriptMode: 'synthetic',
+                targetSessionId: 's1',
+                updatedAt: 1,
+            },
+        );
+
+        const first = resolveVoiceSessionComposerRouting({ conversationSessionId: 'carrier-memo', sessionMetadata });
+        const second = resolveVoiceSessionComposerRouting({ conversationSessionId: 'carrier-memo', sessionMetadata });
+        expect(second).toBe(first);
+
+        // A different metadata reference recomputes (no stale memo).
+        const third = resolveVoiceSessionComposerRouting({
+            conversationSessionId: 'carrier-memo',
+            sessionMetadata: { ...sessionMetadata },
+        });
+        expect(third).not.toBe(first);
+    });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ensureModelPackInstalled, getModelPackInstallSummary, removeModelPack } from '@/voice/modelPacks/installer.native';
+import { createMemFs } from '@/voice/modelPacks/installerTestFs';
 
 describe('modelPacks installer (native)', () => {
   it('rejects pack ids that attempt to escape the model packs root directory', async () => {
@@ -59,76 +60,7 @@ describe('modelPacks installer (native)', () => {
     const chunks = [new Uint8Array([1, 2]), new Uint8Array([3, 4])];
     const expectedSha = createHash('sha256').update(Buffer.concat(chunks.map((c) => Buffer.from(c)))).digest('hex');
 
-    const writes = new Map<string, Uint8Array[]>();
-
-    class Directory {
-      uri: string;
-      exists = true;
-      constructor(...uris: any[]) {
-        const packId = String(uris[uris.length - 1] ?? '');
-        this.uri = `file:///docs/happier/voice/modelPacks/${packId}`;
-      }
-      create() {}
-      delete() {}
-    }
-
-    class File {
-      uri: string;
-      constructor(...uris: any[]) {
-        const [base, name] = uris;
-        if (base?.uri && typeof name === 'string') {
-          this.uri = `${String(base.uri).replace(/\/$/, '')}/${name}`;
-        } else if (typeof base === 'string' && typeof name === 'string') {
-          this.uri = `${base.replace(/\/$/, '')}/${name}`;
-        } else if (typeof uris[0] === 'string') {
-          this.uri = uris[0];
-        } else {
-          this.uri = 'file:///docs/happier/voice/modelPacks/example/pack.json';
-        }
-      }
-      get exists() {
-        return writes.has(this.uri);
-      }
-      create() {
-        if (!writes.has(this.uri)) writes.set(this.uri, []);
-      }
-      writableStream() {
-        const uri = this.uri;
-        return new WritableStream({
-          write(chunk: Uint8Array) {
-            const arr = writes.get(uri) ?? [];
-            arr.push(new Uint8Array(chunk));
-            writes.set(uri, arr);
-          },
-        });
-      }
-      async bytes() {
-        const arr = writes.get(this.uri) ?? [];
-        const total = arr.reduce((acc, b) => acc + b.length, 0);
-        const out = new Uint8Array(total);
-        let off = 0;
-        for (const b of arr) {
-          out.set(b, off);
-          off += b.length;
-        }
-        return out;
-      }
-      async text() {
-        const buf = await this.bytes();
-        return new TextDecoder().decode(buf);
-      }
-      write(data: string | Uint8Array) {
-        const buf = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-        writes.set(this.uri, [new Uint8Array(buf)]);
-      }
-      delete() {
-        writes.delete(this.uri);
-      }
-      arrayBuffer() {
-        return this.bytes().then((b) => b.buffer);
-      }
-    }
-
+    const { fs } = createMemFs();
     const progressCalls: Array<{ loaded: number; total: number }> = [];
 
     const fetchImpl = async (url: string) => {
@@ -181,7 +113,7 @@ describe('modelPacks installer (native)', () => {
         onProgress: (p) => progressCalls.push({ loaded: p.loaded, total: p.total }),
       },
       {
-        fs: { Directory, File, Paths: { document: 'file:///docs/' } } as any,
+        fs: fs as any,
         fetch: fetchImpl as any,
       },
     );
@@ -195,80 +127,18 @@ describe('modelPacks installer (native)', () => {
     }
   });
 
-  it('rewrites GitHub release file URLs to match the manifest origin', async () => {
+  it('fetches each manifest file from its as-authored URL (no host-specific rewrite)', async () => {
     const { createHash } = await import('node:crypto');
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const expectedSha = createHash('sha256').update(Buffer.from(bytes)).digest('hex');
 
-    const writes = new Map<string, Uint8Array[]>();
-
-    class Directory {
-      uri: string;
-      exists = true;
-      constructor(...uris: any[]) {
-        const packId = String(uris[uris.length - 1] ?? '');
-        this.uri = `file:///docs/happier/voice/modelPacks/${packId}`;
-      }
-      create() {}
-      delete() {}
-    }
-
-    class File {
-      uri: string;
-      constructor(...uris: any[]) {
-        const [base, name] = uris;
-        if (base?.uri && typeof name === 'string') {
-          this.uri = `${String(base.uri).replace(/\/$/, '')}/${name}`;
-        } else if (typeof base === 'string' && typeof name === 'string') {
-          this.uri = `${base.replace(/\/$/, '')}/${name}`;
-        } else if (typeof uris[0] === 'string') {
-          this.uri = uris[0];
-        } else {
-          this.uri = 'file:///docs/happier/voice/modelPacks/example/pack.json';
-        }
-      }
-      get exists() {
-        return writes.has(this.uri);
-      }
-      create() {
-        if (!writes.has(this.uri)) writes.set(this.uri, []);
-      }
-      write(data: string | Uint8Array) {
-        const buf = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-        writes.set(this.uri, [new Uint8Array(buf)]);
-      }
-      writableStream() {
-        const uri = this.uri;
-        return new WritableStream({
-          write(chunk: Uint8Array) {
-            const arr = writes.get(uri) ?? [];
-            arr.push(new Uint8Array(chunk));
-            writes.set(uri, arr);
-          },
-        });
-      }
-      async bytes() {
-        const arr = writes.get(this.uri) ?? [];
-        const total = arr.reduce((acc, b) => acc + b.length, 0);
-        const out = new Uint8Array(total);
-        let off = 0;
-        for (const b of arr) {
-          out.set(b, off);
-          off += b.length;
-        }
-        return out;
-      }
-      async text() {
-        const buf = await this.bytes();
-        return new TextDecoder().decode(buf);
-      }
-      delete() {
-        writes.delete(this.uri);
-      }
-    }
+    const { fs } = createMemFs();
 
     const manifestUrl = 'https://github.com/happier-dev/happier-assets/releases/download/model-packs/example__manifest.json';
-    const expectedDownloadPrefix = 'https://github.com/happier-dev/happier-assets/releases/download/model-packs/';
+    // The file URL the manifest declares is trusted verbatim — the installer
+    // does not rewrite it to match the manifest origin.
+    const fileUrl = 'https://cdn.example.com/packs/example/model.onnx?v=1';
+    const requestedFileUrls: string[] = [];
 
     const fetchImpl = async (url: string) => {
       if (url.includes('__manifest.json')) {
@@ -283,7 +153,7 @@ describe('modelPacks installer (native)', () => {
             files: [
               {
                 path: 'model.onnx',
-                url: 'https://github.com/happier/happier-assets/releases/download/model-packs/example__model.onnx?v=1',
+                url: fileUrl,
                 sha256: expectedSha,
                 sizeBytes: bytes.length,
               },
@@ -292,10 +162,7 @@ describe('modelPacks installer (native)', () => {
         } as any;
       }
 
-      if (!url.startsWith(expectedDownloadPrefix)) {
-        throw new Error(`unexpected_file_url:${url}`);
-      }
-
+      requestedFileUrls.push(url);
       return {
         ok: true,
         status: 200,
@@ -324,10 +191,12 @@ describe('modelPacks installer (native)', () => {
         signal: new AbortController().signal,
       },
       {
-        fs: { Directory, File, Paths: { document: 'file:///docs/' } } as any,
+        fs: fs as any,
         fetch: fetchImpl as any,
       },
     );
+
+    expect(requestedFileUrls).toEqual([fileUrl]);
   });
 
   it('rejects pack manifests that contain unsafe paths', async () => {
@@ -397,79 +266,31 @@ describe('modelPacks installer (native)', () => {
   });
 
   it('refreshes an installed pack when manual_update_if_available is requested and the remote manifest differs', async () => {
-    const files = new Map<string, Uint8Array>();
+    const { fs, files } = createMemFs();
     const sha256Byte1 = '4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a';
-
-    class Directory {
-      uri: string;
-      constructor(...uris: any[]) {
-        const packId = String(uris[uris.length - 1] ?? '');
-        this.uri = `file:///docs/happier/voice/modelPacks/${packId || 'example'}`;
-      }
-      create() {}
-      delete() {
-        // Wipe all tracked files in this directory.
-        for (const key of Array.from(files.keys())) {
-          if (key.startsWith(this.uri)) files.delete(key);
-        }
-      }
-    }
-
-    class File {
-      uri: string;
-      constructor(...uris: any[]) {
-        const [base, name] = uris;
-        if (typeof base === 'string' && typeof name === 'string') {
-          this.uri = `${base.replace(/\/$/, '')}/${name}`;
-        } else if (base?.uri && typeof name === 'string') {
-          this.uri = `${String(base.uri).replace(/\/$/, '')}/${name}`;
-        } else if (typeof uris[0] === 'string') {
-          this.uri = uris[0];
-        } else {
-          this.uri = 'file:///docs/happier/voice/modelPacks/example/pack.json';
-        }
-      }
-      get exists() {
-        return files.has(this.uri);
-      }
-      async text() {
-        const buf = files.get(this.uri) ?? new Uint8Array();
-        return new TextDecoder().decode(buf);
-      }
-      async bytes() {
-        return files.get(this.uri) ?? new Uint8Array();
-      }
-      write(data: string | Uint8Array) {
-        const buf = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-        files.set(this.uri, new Uint8Array(buf));
-      }
-      create() {
-        if (!files.has(this.uri)) files.set(this.uri, new Uint8Array());
-      }
-      delete() {
-        files.delete(this.uri);
-      }
-    }
+    const metaUri = 'file:///docs/happier/voice/modelPacks/example/pack.json';
 
     // Seed an installed pack.json with manifest A.
-    const installedMeta = new File('file:///docs/happier/voice/modelPacks/example', 'pack.json');
-    installedMeta.write(
-      JSON.stringify({
-        manifest: {
-          packId: 'example',
-          kind: 'tts_sherpa',
-          model: 'kokoro',
-          version: 'v1',
-          files: [
-            {
-              path: 'model.onnx',
-              url: 'https://example.com/model.onnx',
-              sha256: 'a'.repeat(64),
-              sizeBytes: 1,
-            },
-          ],
-        },
-      }),
+    files.set(
+      metaUri,
+      new TextEncoder().encode(
+        JSON.stringify({
+          manifest: {
+            packId: 'example',
+            kind: 'tts_sherpa',
+            model: 'kokoro',
+            version: 'v1',
+            files: [
+              {
+                path: 'model.onnx',
+                url: 'https://example.com/model.onnx',
+                sha256: 'a'.repeat(64),
+                sizeBytes: 1,
+              },
+            ],
+          },
+        }),
+      ),
     );
 
     const fetchImpl = async (url: string) => {
@@ -512,13 +333,15 @@ describe('modelPacks installer (native)', () => {
         signal: new AbortController().signal,
       },
       {
-        fs: { Directory, File, Paths: { document: 'file:///docs/' } } as any,
+        fs: fs as any,
         fetch: fetchImpl as any,
       },
     );
 
     // pack.json should now contain version v2.
-    const parsed = JSON.parse(await installedMeta.text());
+    const finalMeta = files.get(metaUri);
+    expect(finalMeta).toBeDefined();
+    const parsed = JSON.parse(new TextDecoder().decode(finalMeta!));
     expect(parsed?.manifest?.version).toBe('v2');
   });
 
@@ -532,31 +355,7 @@ describe('modelPacks installer (native)', () => {
           timeoutMs: 5000,
           signal: new AbortController().signal,
         },
-        {
-          fs: {
-            Directory: class {
-              uri: string;
-              exists = false;
-              constructor(..._uris: any[]) {
-                this.uri = 'file:///docs/happier/voice/modelPacks/kokoro-tts-en-v1';
-              }
-              create() {}
-              list() {
-                return [];
-              }
-            },
-            File: class {
-              exists = false;
-              uri = 'file:///docs/happier/voice/modelPacks/kokoro-tts-en-v1/pack.json';
-              constructor(..._uris: any[]) {}
-              async text() {
-                return '';
-              }
-              write() {}
-            },
-            Paths: { document: 'file:///docs/' },
-          },
-        },
+        { fs: createMemFs().fs },
       ),
     ).rejects.toThrow(/model_pack_not_installed/);
   });
@@ -571,31 +370,7 @@ describe('modelPacks installer (native)', () => {
           timeoutMs: 5000,
           signal: new AbortController().signal,
         },
-        {
-          fs: {
-            Directory: class {
-              uri: string;
-              exists = false;
-              constructor(..._uris: any[]) {
-                this.uri = 'file:///docs/happier/voice/modelPacks/kokoro-tts-en-v1';
-              }
-              create() {}
-              list() {
-                return [];
-              }
-            },
-            File: class {
-              exists = false;
-              uri = 'file:///docs/happier/voice/modelPacks/kokoro-tts-en-v1/pack.json';
-              constructor(..._uris: any[]) {}
-              async text() {
-                return '';
-              }
-              write() {}
-            },
-            Paths: { document: 'file:///docs/' },
-          },
-        },
+        { fs: createMemFs().fs },
       ),
     ).rejects.toThrow(/model_pack_manifest_url_missing/);
   });
@@ -603,27 +378,7 @@ describe('modelPacks installer (native)', () => {
   it('reports not installed when pack.json is missing', async () => {
     const summary = await getModelPackInstallSummary(
       { packId: 'kokoro-tts-en-v1' },
-      {
-        fs: {
-          Directory: class {
-            uri: string;
-            exists = false;
-            constructor(..._uris: any[]) {
-              this.uri = 'file:///docs/happier/voice/modelPacks/kokoro-tts-en-v1';
-            }
-            create() {}
-          },
-          File: class {
-            exists = false;
-            uri = 'file:///docs/happier/voice/modelPacks/kokoro-tts-en-v1/pack.json';
-            constructor(..._uris: any[]) {}
-            async text() {
-              return '';
-            }
-          },
-          Paths: { document: 'file:///docs/' },
-        },
-      },
+      { fs: createMemFs().fs },
     );
 
     expect(summary.installed).toBe(false);
@@ -632,25 +387,7 @@ describe('modelPacks installer (native)', () => {
 
   it('removes without throwing when the directory is missing', async () => {
     await expect(
-      removeModelPack(
-        { packId: 'kokoro-tts-en-v1' },
-        {
-          fs: {
-            Directory: class {
-              exists = false;
-              uri = 'file:///docs/happier/voice/modelPacks/kokoro-tts-en-v1';
-              constructor(..._uris: any[]) {}
-              delete() {}
-            },
-            File: class {
-              exists = false;
-              uri = 'file:///docs/happier/voice/modelPacks/kokoro-tts-en-v1/pack.json';
-              constructor(..._uris: any[]) {}
-            },
-            Paths: { document: 'file:///docs/' },
-          },
-        },
-      ),
+      removeModelPack({ packId: 'kokoro-tts-en-v1' }, { fs: createMemFs().fs }),
     ).resolves.toBeUndefined();
   });
 });

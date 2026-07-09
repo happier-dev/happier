@@ -7,6 +7,7 @@ const machineSpawnNewSession = vi.fn();
 const refreshSessions = vi.fn(async () => {});
 const patchSessionMetadataWithRetry = vi.fn(async (_sessionId: string, _patcher: unknown) => {});
 const sendMessage = vi.fn(async (..._args: unknown[]) => {});
+const followUpSpawnedSessionWithServerScope = vi.fn(async (_params: unknown) => {});
 const state: any = {
   settings: {
     ...settingsDefaults,
@@ -47,9 +48,13 @@ vi.mock('@/sync/ops/machines', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
-  isAgentId: (agentId: unknown) => typeof agentId === 'string' && ['claude', 'codex'].includes(agentId),
+  isAgentId: (agentId: unknown) => typeof agentId === 'string' && ['claude', 'codex', 'opencode'].includes(agentId),
   getAgentCore: (agentId: string) => ({
     displayNameKey: `agent.${agentId}`,
+    model: {
+      supportsSelection: true,
+      nonAcpApplyScope: agentId === 'opencode' ? 'next_prompt' : 'spawn_only',
+    },
   }),
 }));
 
@@ -59,6 +64,10 @@ vi.mock('@/sync/sync', () => ({
     patchSessionMetadataWithRetry: (sessionId: string, patcher: any) => patchSessionMetadataWithRetry(sessionId, patcher),
     sendMessage: (...args: unknown[]) => sendMessage(...args),
   },
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', () => ({
+  followUpSpawnedSessionWithServerScope: (params: unknown) => followUpSpawnedSessionWithServerScope(params),
 }));
 
 describe('spawnSessionWithPickerForVoiceTool', () => {
@@ -81,6 +90,7 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
     refreshSessions.mockClear();
     patchSessionMetadataWithRetry.mockClear();
     sendMessage.mockClear();
+    followUpSpawnedSessionWithServerScope.mockClear();
   });
 
   it('opens a picker and spawns a session from the user-selected machine + directory', async () => {
@@ -88,7 +98,11 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
       cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
       return 'modal_1';
     });
-    machineSpawnNewSession.mockResolvedValue({ type: 'success', sessionId: 's_new' });
+    machineSpawnNewSession.mockResolvedValue({
+      type: 'success',
+      sessionId: 's_new',
+      usedInitialPrompt: true,
+    });
 
     const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
     const res = await spawnSessionWithPickerForVoiceTool({ tag: 'T', initialMessage: 'Hi' });
@@ -99,11 +113,120 @@ describe('spawnSessionWithPickerForVoiceTool', () => {
       directory: '/tmp/s2',
       backendTarget: { kind: 'backend', backendId: 'claude' },
       serverId: 'server-a',
+      initialPrompt: 'Hi',
     }));
     expect(refreshSessions).toHaveBeenCalled();
     expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('s_new', expect.any(Function));
-    expect(sendMessage).toHaveBeenCalledWith('s_new', 'Hi', undefined, undefined, {
-      bypassPendingQueueReason: 'spawn_post_process',
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('uses the same spawn attempt key when retrying the same picker spawn request', async () => {
+    modalShow.mockImplementation((cfg: any) => {
+      cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
+      return 'modal_1';
+    });
+    machineSpawnNewSession.mockResolvedValue({
+      type: 'success',
+      sessionId: 's_new',
+    });
+
+    const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
+    await spawnSessionWithPickerForVoiceTool({ tag: 'T', initialMessage: 'Hi' });
+    await spawnSessionWithPickerForVoiceTool({ tag: 'T', initialMessage: 'Hi' });
+
+    const firstSpawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as { spawnAttemptKey?: string };
+    const secondSpawnOptions = machineSpawnNewSession.mock.calls[1]?.[0] as { spawnAttemptKey?: string };
+    expect(firstSpawnOptions.spawnAttemptKey).toEqual(expect.stringMatching(/^voice\.tool\.spawn-session-picker:/));
+    expect(secondSpawnOptions.spawnAttemptKey).toBe(firstSpawnOptions.spawnAttemptKey);
+  });
+
+  it('confirms daemon initialPrompt custody through the post-spawn send path', async () => {
+    modalShow.mockImplementationOnce((cfg: any) => {
+      cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
+      return 'modal_1';
+    });
+    machineSpawnNewSession.mockResolvedValue({
+      type: 'success',
+      sessionId: 's_new',
+      usedInitialPrompt: true,
+    });
+
+    const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
+    await spawnSessionWithPickerForVoiceTool({ initialMessage: 'Hi' });
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      initialPrompt: 'Hi',
+    }));
+    expect(refreshSessions).not.toHaveBeenCalled();
+    expect(patchSessionMetadataWithRetry).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(followUpSpawnedSessionWithServerScope).toHaveBeenCalledWith({
+      sessionId: 's_new',
+      targetServerId: 'server-a',
+      initialMessageText: 'Hi',
+      metaOverrides: {
+        source: 'daemon-initial-prompt',
+        sentFrom: 'ui',
+      },
+      messageLocalId: 'daemon-initial-prompt:s_new',
+    });
+  });
+
+  it('keeps the post-spawn first message when daemon initialPrompt custody is not confirmed', async () => {
+    modalShow.mockImplementationOnce((cfg: any) => {
+      cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
+      return 'modal_1';
+    });
+    machineSpawnNewSession.mockResolvedValue({
+      type: 'success',
+      sessionId: 's_new',
+    });
+
+    const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
+    await spawnSessionWithPickerForVoiceTool({ initialMessage: 'Hi' });
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      initialPrompt: 'Hi',
+    }));
+    expect(refreshSessions).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(followUpSpawnedSessionWithServerScope).toHaveBeenCalledWith({
+      sessionId: 's_new',
+      targetServerId: 'server-a',
+      initialMessageText: 'Hi',
+      metaOverrides: undefined,
+    });
+  });
+
+  it('keeps next-prompt model first turns on the post-spawn path with model metadata', async () => {
+    modalShow.mockImplementationOnce((cfg: any) => {
+      cfg?.props?.onResolve?.({ machineId: 'm2', directory: '/tmp/s2' });
+      return 'modal_1';
+    });
+    machineSpawnNewSession.mockResolvedValue({
+      type: 'success',
+      sessionId: 's_new',
+    });
+
+    const { spawnSessionWithPickerForVoiceTool } = await import('./spawnSessionPicker');
+    await spawnSessionWithPickerForVoiceTool({
+      agentId: 'opencode',
+      modelId: 'gpt-5',
+      initialMessage: 'Use the selected model for this first turn',
+    });
+
+    const spawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(spawnOptions).toMatchObject({
+      modelId: 'gpt-5',
+      modelUpdatedAt: expect.any(Number),
+    });
+    expect(spawnOptions).not.toHaveProperty('initialPrompt');
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(followUpSpawnedSessionWithServerScope).toHaveBeenCalledWith({
+      sessionId: 's_new',
+      targetServerId: 'server-a',
+      initialMessageText: 'Use the selected model for this first turn',
+      metaOverrides: { model: 'gpt-5' },
     });
   });
 

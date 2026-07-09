@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 
 import { sync } from '@/sync/sync';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
+import { guessAudioMimeType } from '@/voice/input/guessAudioMimeType';
 import { MissingSttBaseUrlError, transcribeRecordedAudioWithHttpStt } from '@/voice/input/HttpSttController';
 import { transcribeWithGoogleGeminiStt } from '@/voice/input/googleGeminiStt';
 import { prepareDaemonVoiceInferenceSttSource } from '@/voice/input/prepareDaemonVoiceInferenceSttSource';
@@ -32,14 +33,6 @@ export type RecordedAudioTranscriptionRequest = Readonly<{
 export type RecordedAudioTranscriptionController = Readonly<{
   transcribe: (params: RecordedAudioTranscriptionRequest) => Promise<string | null>;
 }>;
-
-function guessMimeType(uri: string): string {
-  const lower = uri.toLowerCase();
-  if (lower.endsWith('.webm')) return 'audio/webm';
-  if (lower.endsWith('.wav')) return 'audio/wav';
-  if (lower.endsWith('.mp3')) return 'audio/mpeg';
-  return 'audio/mp4';
-}
 
 type RecordedAudioTranscriptionContext = RecordedAudioTranscriptionRequest & Readonly<{
   adapter: any;
@@ -130,7 +123,7 @@ async function transcribeWithGoogleGeminiRecordedAudio(params: RecordedAudioTran
   const text = await transcribeWithGoogleGeminiStt({
     apiKey,
     model,
-    audio: { kind: 'native', uri: params.uri, mimeType: guessMimeType(params.uri) },
+    audio: { kind: 'native', uri: params.uri, mimeType: guessAudioMimeType(params.uri) },
     language,
     timeoutMs,
   });

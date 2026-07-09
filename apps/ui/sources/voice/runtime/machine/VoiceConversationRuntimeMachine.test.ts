@@ -107,20 +107,14 @@ describe('VoiceConversationRuntimeMachine', () => {
         });
     });
 
-    it('supports explicit connected, listening, and disconnected lifecycle transitions', () => {
+    it('supports explicit listening and disconnected lifecycle transitions', () => {
         const machine = createVoiceConversationRuntimeMachine();
-
-        machine.transitionToConnected({ controlSessionId: 's1' });
-        expect(machine.getSnapshot()).toMatchObject({
-            controlSessionId: 's1',
-            state: 'connected',
-            error: null,
-        });
 
         machine.transitionToListening({ controlSessionId: 's1' });
         expect(machine.getSnapshot()).toMatchObject({
             controlSessionId: 's1',
             state: 'listening',
+            error: null,
         });
 
         machine.transitionToDisconnected({
@@ -139,6 +133,57 @@ describe('VoiceConversationRuntimeMachine', () => {
                 reason: 'lost connection',
                 recoverable: true,
             },
+        });
+    });
+
+    it('renames the post-transcription compute state to thinking', () => {
+        const machine = createVoiceConversationRuntimeMachine();
+
+        machine.transitionToListening({ controlSessionId: 's1' });
+        machine.transitionToThinking({ controlSessionId: 's1' });
+
+        expect(machine.getSnapshot()).toMatchObject({
+            controlSessionId: 's1',
+            state: 'thinking',
+            error: null,
+        });
+    });
+
+    it('records the owning adapter for an entry transition and clears it on disconnect', () => {
+        const machine = createVoiceConversationRuntimeMachine();
+
+        machine.transitionToConnecting({ controlSessionId: 's1', adapterId: 'realtime_elevenlabs' });
+        expect(machine.getSnapshot()).toMatchObject({
+            controlSessionId: 's1',
+            state: 'connecting',
+            adapterId: 'realtime_elevenlabs',
+        });
+
+        // A non-owner mid-pipeline transition is rejected (owner guard).
+        machine.transitionToSpeaking({ controlSessionId: 's2' });
+        expect(machine.getSnapshot()).toMatchObject({
+            controlSessionId: 's1',
+            state: 'connecting',
+            adapterId: 'realtime_elevenlabs',
+        });
+
+        machine.transitionToDisconnected({ controlSessionId: 's1' });
+        expect(machine.getSnapshot()).toMatchObject({
+            state: 'disconnected',
+            adapterId: null,
+        });
+    });
+
+    it('rejects an illegal source-state transition as a no-op', () => {
+        const machine = createVoiceConversationRuntimeMachine();
+
+        machine.transitionToEnding({ controlSessionId: 's1' });
+        // ending -> speaking is not a legal transition; it must be ignored.
+        machine.transitionToSpeaking({ controlSessionId: 's1' });
+
+        expect(machine.getSnapshot()).toMatchObject({
+            controlSessionId: 's1',
+            state: 'ending',
         });
     });
 
@@ -180,6 +225,92 @@ describe('VoiceConversationRuntimeMachine', () => {
             state: 'acquiring_mic',
             error: null,
         });
+    });
+
+    it('ignores a stale rearm rejection after control session ownership retargets', async () => {
+        const machine = createVoiceConversationRuntimeMachine({
+            listeningStartTimeoutMs: 1_000,
+        });
+        const deferred = createDeferred<void>();
+
+        const rearmPromise = machine.rearmListening({
+            controlSessionId: 's1',
+            startListening: () => deferred.promise,
+        });
+
+        // A newer owner takes over while the first start is still in flight.
+        machine.transitionToAcquiringMic({ controlSessionId: 's2' });
+
+        // The losing start now rejects late — it must not stomp mic_error onto s2.
+        deferred.reject(new Error('device_stt_start_failed'));
+        await rearmPromise;
+
+        expect(machine.getSnapshot()).toMatchObject({
+            controlSessionId: 's2',
+            state: 'acquiring_mic',
+            error: null,
+        });
+    });
+
+    it('ignores a stale rearm timeout after control session ownership retargets', async () => {
+        vi.useFakeTimers();
+        try {
+            const machine = createVoiceConversationRuntimeMachine({
+                listeningStartTimeoutMs: 25,
+            });
+
+            const rearmPromise = machine.rearmListening({
+                controlSessionId: 's1',
+                startListening: () => new Promise<void>(() => {}),
+            });
+
+            // A newer owner takes over before the stale timeout fires.
+            machine.transitionToAcquiringMic({ controlSessionId: 's2' });
+
+            await vi.advanceTimersByTimeAsync(30);
+            await rearmPromise;
+
+            expect(machine.getSnapshot()).toMatchObject({
+                controlSessionId: 's2',
+                state: 'acquiring_mic',
+                error: null,
+            });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('aborts the in-flight capture signal when the listening start times out', async () => {
+        vi.useFakeTimers();
+        try {
+            const machine = createVoiceConversationRuntimeMachine({
+                listeningStartTimeoutMs: 25,
+            });
+
+            let observedSignal: AbortSignal | undefined;
+            const rearmPromise = machine.rearmListening({
+                controlSessionId: 's1',
+                startListening: (signal) => {
+                    observedSignal = signal;
+                    return new Promise<void>(() => {});
+                },
+            });
+
+            expect(observedSignal).toBeDefined();
+            expect(observedSignal?.aborted).toBe(false);
+
+            await vi.advanceTimersByTimeAsync(30);
+            await rearmPromise;
+
+            expect(observedSignal?.aborted).toBe(true);
+            expect(machine.getSnapshot()).toMatchObject({
+                controlSessionId: 's1',
+                state: 'mic_error',
+                error: { kind: 'stt_timeout' },
+            });
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('interrupts speaking and rearms listening through the machine owner seam', async () => {

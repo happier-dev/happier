@@ -26,8 +26,6 @@ function hasSameBindingSemantics(
         existing.adapterId === adapterId
         && existing.controlSessionId === resolution.controlSessionId
         && existing.conversationSessionId === resolution.conversationSessionId
-        && normalizeTargetSessionId(existing.runId) === normalizeTargetSessionId(resolution.runId)
-        && normalizeTargetSessionId(existing.streamId) === normalizeTargetSessionId(resolution.streamId)
         && existing.transcriptMode === resolution.transcriptMode
         && normalizeTargetSessionId(existing.targetSessionId) === normalizeTargetSessionId(resolution.targetSessionId)
     );
@@ -41,6 +39,9 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
         controlSessionId: string;
         requestedTargetSessionId?: string | null;
     }>) => Promise<VoiceConversationBindingResolution | null>;
+    resolveExistingBindingByConversationSessionId?: (
+        conversationSessionId: string,
+    ) => VoiceSessionBinding | null;
     appendTargetSwitchNote?: (params: Readonly<{
         conversationSessionId: string;
         previousTargetSessionId: string | null;
@@ -52,6 +53,8 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
     const nowMs = deps.nowMs ?? (() => Date.now());
     const appendTargetSwitchNote = deps.appendTargetSwitchNote ?? (() => {});
     const persistBinding = deps.persistBinding ?? (() => {});
+    const resolveExistingBindingByConversationSessionId =
+        deps.resolveExistingBindingByConversationSessionId ?? (() => null);
 
     const ensureBound = async (params: Readonly<{
         adapterId: string;
@@ -75,14 +78,10 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
         }
 
         const previous = store.getState().getByConversationSessionId(resolution.conversationSessionId);
-        const runId = normalizeTargetSessionId(resolution.runId);
-        const streamId = normalizeTargetSessionId(resolution.streamId);
         const nextBinding: VoiceSessionBinding = {
             adapterId,
             controlSessionId: resolution.controlSessionId,
             conversationSessionId: resolution.conversationSessionId,
-            ...(runId ? { runId } : {}),
-            ...(streamId ? { streamId } : {}),
             transcriptMode: resolution.transcriptMode,
             targetSessionId: resolution.targetSessionId,
             updatedAt: nowMs(),
@@ -104,6 +103,51 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
         }
 
         return nextBinding;
+    };
+
+    /**
+     * Owns the "should we rebind when opening the conversation?" policy that used
+     * to live inline in the voice surface action handler. Given the currently
+     * resolved open-conversation session and the requested route target, it
+     * decides whether the existing binding still matches; if not (or none exists)
+     * it rebinds through `ensureBound` and returns the conversation session id the
+     * caller should navigate to. The UI only requests "open conversation X for
+     * control session Y targeting Z" — it no longer encodes binding decisions.
+     */
+    const ensureBoundForOpenConversation = async (params: Readonly<{
+        openConversationSessionId: string;
+        fallbackControlSessionId: string | null;
+        activeAdapterId: string | null;
+        providerId: string;
+        requestedTargetSessionId: string | null;
+    }>): Promise<{ conversationSessionId: string } | null> => {
+        const openConversationSessionId = normalizeNonEmptyString(params.openConversationSessionId);
+        if (!openConversationSessionId) return null;
+
+        const requestedTargetSessionId = normalizeTargetSessionId(params.requestedTargetSessionId);
+        const existing = resolveExistingBindingByConversationSessionId(openConversationSessionId);
+        const shouldRebind =
+            !existing
+            || normalizeTargetSessionId(existing.targetSessionId) !== requestedTargetSessionId;
+        if (!shouldRebind) {
+            return { conversationSessionId: openConversationSessionId };
+        }
+
+        const rebindAdapterId =
+            normalizeNonEmptyString(existing?.adapterId)
+            ?? normalizeNonEmptyString(params.activeAdapterId)
+            ?? normalizeNonEmptyString(params.providerId);
+        const controlSessionId = normalizeNonEmptyString(params.fallbackControlSessionId);
+        if (!rebindAdapterId || !controlSessionId) {
+            return { conversationSessionId: openConversationSessionId };
+        }
+
+        const rebound = await ensureBound({
+            adapterId: rebindAdapterId,
+            controlSessionId,
+            requestedTargetSessionId,
+        }).catch(() => null);
+        return { conversationSessionId: rebound?.conversationSessionId ?? openConversationSessionId };
     };
 
     const syncTargetSession = (params: Readonly<{
@@ -134,6 +178,7 @@ export function createVoiceSessionBindingManager(deps: Readonly<{
 
     return {
         ensureBound,
+        ensureBoundForOpenConversation,
         syncTargetSession,
         getByConversationSessionId: (conversationSessionId: string) => store.getState().getByConversationSessionId(conversationSessionId),
         getByControlSessionId: (controlSessionId: string) => store.getState().getByControlSessionId(controlSessionId),

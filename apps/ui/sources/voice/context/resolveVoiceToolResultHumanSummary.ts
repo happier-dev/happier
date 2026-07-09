@@ -159,18 +159,30 @@ export function resolveVoiceToolResultHumanSummary(params: Readonly<{
     toolInput: unknown;
     toolResult: unknown;
     shareFilePaths: boolean;
+    /**
+     * Session titles surfaced by the session tools are the session summary text. When sharing of
+     * session summaries is disabled, those summary-derived labels must not be spoken back to the
+     * provider. Defaults to true so existing callers that only gate file paths keep working.
+     */
+    shareSessionSummary?: boolean;
 }>): string | null {
     const result = asObject(params.toolResult);
     if (!result) return null;
+    const shareSessionSummary = params.shareSessionSummary !== false;
 
+    // An explicit `result.summary` (or `error.message`) is summary text, so it must honor the
+    // `shareSessionSummary` toggle, not only `shareFilePaths` (X-L1). When summary sharing is
+    // disabled the explicit summary is suppressed entirely rather than spoken back to the provider.
     const explicitSummary = normalizeText(result.summary)
         ?? normalizeText(asObject(result.error)?.message);
     if (explicitSummary) {
+        if (!shareSessionSummary) return null;
         return maybeRedact(explicitSummary, params.shareFilePaths);
     }
 
     switch (params.toolName) {
         case 'listSessions': {
+            if (!shareSessionSummary) return null;
             return summarizeLabelList(
                 'Available sessions',
                 collectSessionLabels(result.sessions, params.shareFilePaths),
@@ -178,6 +190,7 @@ export function resolveVoiceToolResultHumanSummary(params: Readonly<{
             );
         }
         case 'openSession': {
+            if (!shareSessionSummary) return null;
             const sessionSummary = summarizeSessionReference(result.session, params.shareFilePaths);
             return sessionSummary ? `Opened ${sessionSummary}.` : null;
         }
@@ -201,16 +214,20 @@ export function resolveVoiceToolResultHumanSummary(params: Readonly<{
             return summarizeLabelList(prefix, labels);
         }
         case 'setPrimaryActionSession': {
+            if (!shareSessionSummary) return null;
             const sessionSummary = summarizeSessionReference(result.session, params.shareFilePaths);
             return sessionSummary ? `Using ${sessionSummary}.` : null;
         }
         case 'setTrackedSessions': {
+            if (!shareSessionSummary) return null;
             return summarizeLabelList('Tracking sessions', collectSessionLabels(result.sessions, params.shareFilePaths));
         }
         case 'spawnSession': {
-            const sessionSummary = summarizeSessionReference(result.session, params.shareFilePaths);
-            if (sessionSummary) {
-                return `Created ${sessionSummary}.`;
+            if (shareSessionSummary) {
+                const sessionSummary = summarizeSessionReference(result.session, params.shareFilePaths);
+                if (sessionSummary) {
+                    return `Created ${sessionSummary}.`;
+                }
             }
             const targetLabels = collectLabels(result.target ? [result.target] : [], params.shareFilePaths);
             return summarizeLabelList('Created a session in', targetLabels);

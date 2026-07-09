@@ -6,24 +6,12 @@ import {
     collectAssistantTextMessagesSinceBaseline,
 } from '@/voice/runtime/waitForNextAssistantTextMessage';
 import { isVoiceAgentBusyError, isVoiceAgentNotFoundError, isVoiceAgentRpcMethodUnavailable } from '@/voice/agent/voiceAgentErrorGuards';
-import {
-    clearStaleDaemonRunState,
-    persistVoiceAgentTurnStreamId,
-    persistVoiceAgentWelcomedEpoch,
-    resolveVoiceRunMetadataSessionId,
-} from '@/voice/agent/voiceAgentRunState';
+import { clearStaleDaemonRunState } from '@/voice/agent/voiceAgentRunState';
 import { streamVoiceAgentTurn } from '@/voice/agent/streamVoiceAgentTurn';
 import { buildVoiceAgentTurnPayload } from '@/voice/agent/buildVoiceAgentTurnPayload';
 import { readPersistedVoiceConversationRuntimePublication } from '@/voice/binding/voiceConversationBindingPersistence';
-import { readVoiceAgentRunMetadataFromSession } from '@/voice/persistence/voiceAgentRunMetadata';
 
 type SendTurnOptions = Readonly<{ onTextDelta?: (textDelta: string) => void | Promise<void>; signal?: AbortSignal }>;
-
-function readPersistedWelcomedEpoch(metadataSessionId: string | null): number | undefined {
-    if (!metadataSessionId) return undefined;
-    const metadata = readVoiceAgentRunMetadataFromSession({ sessionId: metadataSessionId });
-    return typeof metadata?.welcomedEpoch === 'number' ? metadata.welcomedEpoch : undefined;
-}
 
 export function createVoiceTurnStreaming(args: Readonly<{
     getVoiceAgentHandle: (sessionId: string) => Promise<VoiceAgentHandle>;
@@ -49,9 +37,6 @@ export function createVoiceTurnStreaming(args: Readonly<{
         options?: SendTurnOptions,
     ) => Promise<Readonly<{ assistantText: string; actions: VoiceAssistantAction[] }>>;
 }> {
-    const resolveDaemonMetadataSessionId = (managedSessionId: string): string | null =>
-        resolveVoiceRunMetadataSessionId(managedSessionId, 'daemon');
-
     const readDaemonRuntimePublication = (managedSessionId: string) =>
         readPersistedVoiceConversationRuntimePublication({ managedSessionId });
 
@@ -62,12 +47,11 @@ export function createVoiceTurnStreaming(args: Readonly<{
     ): Promise<Readonly<{ assistantText: string; actions: VoiceAssistantAction[] }>> => {
         let lastHandle: VoiceAgentHandle | null = null;
         let preparedPayloadText: string | null = null;
-        let preparedWelcomeEpoch: number | null = null;
         const preparePayloadText = (): string => {
             if (preparedPayloadText !== null) return preparedPayloadText;
 
             const pendingContext = args.voiceAgentPendingContextBySessionId.get(sessionId) ?? [];
-            let nextPayloadText = userText;
+            const nextPayloadText = userText;
             if (pendingContext.length > 0) {
                 args.voiceAgentPendingContextBySessionId.delete(sessionId);
             }
@@ -75,11 +59,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
                 sessionId,
                 userText: nextPayloadText,
                 pendingContext,
-                lastWelcomedEpoch: readPersistedWelcomedEpoch(resolveDaemonMetadataSessionId(sessionId)),
             });
-            if (payload.nextWelcomedEpoch !== null) {
-                preparedWelcomeEpoch = payload.nextWelcomedEpoch;
-            }
             preparedPayloadText = payload.payloadText;
             return preparedPayloadText;
         };
@@ -91,10 +71,6 @@ export function createVoiceTurnStreaming(args: Readonly<{
             const transcriptBaseline = captureAssistantTextMessageBaseline(handle.rpcSessionId);
             const settings: any = storage.getState().settings;
             const streamingEnabled = settings?.voice?.adapters?.local_conversation?.streaming?.enabled === true;
-            const daemonMetadataSessionId =
-                handle.backend === 'daemon'
-                    ? resolveDaemonMetadataSessionId(sessionId)
-                    : null;
             const daemonRuntimePublication =
                 handle.backend === 'daemon'
                     ? readDaemonRuntimePublication(sessionId)
@@ -113,32 +89,18 @@ export function createVoiceTurnStreaming(args: Readonly<{
                     displayUserText,
                     resume: shouldResumeStreamStart,
                     options,
-                    onStreamStarted:
-                        handle.backend === 'daemon'
-                            ? async (streamId) => {
-                                await persistVoiceAgentTurnStreamId(daemonMetadataSessionId, streamId).catch(() => {});
-                            }
-                            : undefined,
-                    onStreamFinished:
-                        handle.backend === 'daemon'
-                            ? async () => {
-                                await persistVoiceAgentTurnStreamId(daemonMetadataSessionId, null).catch(() => {});
-                            }
-                            : undefined,
                 })
                 : await handle.client.sendTurn({
                     sessionId: handle.rpcSessionId,
                     voiceAgentId: handle.voiceAgentId,
                     userText: nextUserText,
                     displayUserText,
+                    ...(options?.signal ? { signal: options.signal } : {}),
                 });
             const normalizedResponse = {
                 assistantText: response.assistantText,
                 actions: response.actions ?? [],
             };
-            if (handle.backend === 'daemon' && preparedWelcomeEpoch !== null) {
-                await persistVoiceAgentWelcomedEpoch(daemonMetadataSessionId, preparedWelcomeEpoch).catch(() => {});
-            }
             if (
                 normalizedResponse.assistantText.trim().length === 0
                 && ((storage.getState() as any).settings?.voice?.adapters?.local_conversation?.agent?.backend ?? 'daemon') === 'daemon'

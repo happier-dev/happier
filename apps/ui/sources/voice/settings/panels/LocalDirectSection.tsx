@@ -11,11 +11,13 @@ import { LocalVoiceTtsGroup } from '@/voice/settings/panels/localTts/LocalVoiceT
 import { LocalVoiceSttGroup } from '@/voice/settings/panels/localStt/LocalVoiceSttGroup';
 import { resolveVoiceProviderId } from '@/voice/settings/resolveVoiceProviderId';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 
 export function LocalDirectSection(props: {
   voice: VoiceSettings;
   setVoice: (next: VoiceSettings) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
+  daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 }) {
   const enabled = resolveVoiceProviderId(props.voice.providerId) === 'local_direct';
   if (!enabled) return null;
@@ -36,7 +38,12 @@ export function LocalDirectSection(props: {
 
   return (
     <>
-      <LocalVoiceSttGroup cfgStt={cfg.stt} setStt={(next) => setCfg({ stt: next })} popoverBoundaryRef={props.popoverBoundaryRef} />
+      <LocalVoiceSttGroup
+        cfgStt={cfg.stt}
+        setStt={(next) => setCfg({ stt: next })}
+        popoverBoundaryRef={props.popoverBoundaryRef}
+        daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+      />
 
       {sttProvider === 'device' ? (
         <ItemGroup title={t('settingsVoice.local.conversation.handsFree.title')}>
@@ -99,6 +106,7 @@ export function LocalDirectSection(props: {
         setTts={(next) => setCfg({ tts: next })}
         networkTimeoutMs={cfg.networkTimeoutMs}
         popoverBoundaryRef={props.popoverBoundaryRef}
+        daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
       />
 
       <ItemGroup>

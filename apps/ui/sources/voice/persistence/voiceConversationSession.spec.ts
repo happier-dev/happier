@@ -163,6 +163,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       machineId: 'machine-1',
       directory: '/Users/test/.happier/voice-agent',
       serverId: 'server-1',
+      spawnAttemptKey: expect.stringMatching(/^voice\.conversation\.home:/),
     }));
   });
 
@@ -614,28 +615,26 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     expect(patchSessionMetadataWithRetry.mock.calls.some(([sessionId]) => sessionId === 'legacy-session')).toBe(true);
   });
 
-  it('recovers a late-spawned voice home session after webhook timeout even when metadata hydrates only after ensuring the session is visible', async () => {
+  it('does not recover a timed-out voice home spawn by scanning unrelated late sessions', async () => {
     machineSpawnNewSession.mockResolvedValue({
       type: 'error',
       errorCode: 'SESSION_WEBHOOK_TIMEOUT',
       errorMessage: 'Session startup timed out',
-	    });
-	    refreshSessions.mockImplementation(async () => {
-	      state = {
-	        ...state,
-	        sessions: {
-	          ...state.sessions,
-	          // Intentionally hydrate the late session without enough metadata to match the voice-home target yet.
-	          // The recovery loop should then force-hydrate it via ensureSessionVisibleForMessageRoute.
-	          'late-session': {
-	            id: 'late-session',
-	            active: true,
-	            updatedAt: 2,
-	            metadata: null,
-	          },
-	        },
-	      };
-	    });
+    });
+    refreshSessions.mockImplementation(async () => {
+      state = {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          'late-session': {
+            id: 'late-session',
+            active: true,
+            updatedAt: 2,
+            metadata: null,
+          },
+        },
+      };
+    });
     ensureSessionVisibleForMessageRoute.mockImplementation(async (sessionId: string) => {
       if (sessionId !== 'late-session') return;
       const nextRenderables = {
@@ -671,8 +670,18 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
 
     const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
 
-    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('late-session');
-    expect(ensureSessionVisibleForMessageRoute).toHaveBeenCalledWith('late-session', { forceRefresh: true });
+    await expect(ensureVoiceConversationSessionForVoiceHome()).rejects.toMatchObject({
+      code: 'SESSION_WEBHOOK_TIMEOUT',
+    });
+    await expect(ensureVoiceConversationSessionForVoiceHome()).rejects.toMatchObject({
+      code: 'SESSION_WEBHOOK_TIMEOUT',
+    });
+    const firstSpawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as { spawnAttemptKey?: string };
+    const secondSpawnOptions = machineSpawnNewSession.mock.calls[1]?.[0] as { spawnAttemptKey?: string };
+    expect(firstSpawnOptions.spawnAttemptKey).toEqual(expect.stringMatching(/^voice\.conversation\.home:/));
+    expect(secondSpawnOptions.spawnAttemptKey).toBe(firstSpawnOptions.spawnAttemptKey);
+    expect(refreshSessions).not.toHaveBeenCalled();
+    expect(ensureSessionVisibleForMessageRoute).not.toHaveBeenCalled();
   });
 });
 
@@ -776,6 +785,7 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
       machineId: 'machine-target',
       directory: '/Users/test/workspace/rebound',
       serverId: 'server-1',
+      spawnAttemptKey: expect.stringMatching(/^voice\.conversation\.session-root:/),
     }));
   });
 
@@ -844,5 +854,65 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
 
     await expect(ensureVoiceConversationSessionForSessionRoot({ sessionId: 'root-session' })).resolves.toBe('voice-root-session');
     expect(machineSpawnNewSession).not.toHaveBeenCalled();
+  });
+
+  it('does not recover a timed-out session-root voice spawn by scanning unrelated late sessions', async () => {
+    state.sessions['root-session'] = {
+      id: 'root-session',
+      active: true,
+      updatedAt: 5,
+      metadata: {
+        machineId: 'machine-target',
+        path: '/Users/test/workspace/rebound',
+        homeDir: '/Users/test',
+        host: 'target.local',
+      },
+    };
+    state.getProjectForSession = (sessionId: string) =>
+      sessionId === 'root-session'
+        ? {
+            key: {
+              machineId: 'machine-target',
+              path: '/Users/test/workspace/rebound',
+            },
+          }
+        : null;
+    machineSpawnNewSession.mockResolvedValue({
+      type: 'error',
+      errorCode: 'SESSION_WEBHOOK_TIMEOUT',
+      errorMessage: 'Session startup timed out',
+    });
+    refreshSessions.mockImplementation(async () => {
+      state = {
+        ...state,
+        sessions: {
+          ...state.sessions,
+          'late-root-session': {
+            id: 'late-root-session',
+            active: true,
+            updatedAt: 20,
+            metadata: {
+              machineId: 'machine-target',
+              path: '/Users/test/workspace/rebound',
+            },
+          },
+        },
+      };
+    });
+
+    const { ensureVoiceConversationSessionForSessionRoot } = await import('./voiceConversationSession');
+
+    await expect(ensureVoiceConversationSessionForSessionRoot({ sessionId: 'root-session' })).rejects.toMatchObject({
+      code: 'SESSION_WEBHOOK_TIMEOUT',
+    });
+    await expect(ensureVoiceConversationSessionForSessionRoot({ sessionId: 'root-session' })).rejects.toMatchObject({
+      code: 'SESSION_WEBHOOK_TIMEOUT',
+    });
+    const firstSpawnOptions = machineSpawnNewSession.mock.calls[0]?.[0] as { spawnAttemptKey?: string };
+    const secondSpawnOptions = machineSpawnNewSession.mock.calls[1]?.[0] as { spawnAttemptKey?: string };
+    expect(firstSpawnOptions.spawnAttemptKey).toEqual(expect.stringMatching(/^voice\.conversation\.session-root:/));
+    expect(secondSpawnOptions.spawnAttemptKey).toBe(firstSpawnOptions.spawnAttemptKey);
+    expect(refreshSessions).not.toHaveBeenCalled();
+    expect(ensureSessionVisibleForMessageRoute).not.toHaveBeenCalled();
   });
 });

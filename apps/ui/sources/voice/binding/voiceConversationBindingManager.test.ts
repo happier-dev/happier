@@ -222,6 +222,139 @@ describe('createVoiceSessionBindingManager', () => {
     expect(store.getState().getByControlSessionId('voice-global')).toEqual(initial);
   });
 
+  describe('ensureBoundForOpenConversation', () => {
+    it('routes to the existing conversation session without rebinding when the target already matches', async () => {
+      const { createVoiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+      const { createVoiceSessionBindingManager } = await import('@/voice/binding/voiceConversationBindingManager');
+
+      const store = createVoiceSessionBindingStore();
+      const resolveBinding = vi.fn(async () => null);
+      const manager = createVoiceSessionBindingManager({
+        store,
+        nowMs: () => 1,
+        resolveBinding,
+        resolveExistingBindingByConversationSessionId: () => ({
+          adapterId: 'realtime_elevenlabs',
+          controlSessionId: 'voice-global',
+          conversationSessionId: 'carrier-s1',
+          transcriptMode: 'synthetic',
+          targetSessionId: 's1',
+          updatedAt: 1,
+        }),
+      });
+
+      const result = await manager.ensureBoundForOpenConversation({
+        openConversationSessionId: 'carrier-s1',
+        fallbackControlSessionId: 'voice-global',
+        activeAdapterId: 'realtime_elevenlabs',
+        providerId: 'realtime_elevenlabs',
+        requestedTargetSessionId: 's1',
+      });
+
+      expect(resolveBinding).not.toHaveBeenCalled();
+      expect(result).toEqual({ conversationSessionId: 'carrier-s1' });
+    });
+
+    it('rebinds through ensureBound when the requested target drifts from the existing binding', async () => {
+      const { createVoiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+      const { createVoiceSessionBindingManager } = await import('@/voice/binding/voiceConversationBindingManager');
+
+      const store = createVoiceSessionBindingStore();
+      const resolveBinding = vi.fn(async () => ({
+        conversationSessionId: 'carrier-s2',
+        controlSessionId: 'voice-global',
+        transcriptMode: 'native_session' as const,
+        targetSessionId: 's2',
+      }));
+      const manager = createVoiceSessionBindingManager({
+        store,
+        nowMs: () => 2,
+        resolveBinding,
+        resolveExistingBindingByConversationSessionId: () => ({
+          adapterId: 'local_conversation',
+          controlSessionId: 'voice-global',
+          conversationSessionId: 'carrier-s1',
+          transcriptMode: 'native_session',
+          targetSessionId: 's1',
+          updatedAt: 1,
+        }),
+      });
+
+      const result = await manager.ensureBoundForOpenConversation({
+        openConversationSessionId: 'carrier-s1',
+        fallbackControlSessionId: 'voice-global',
+        activeAdapterId: 'local_conversation',
+        providerId: 'local_conversation',
+        requestedTargetSessionId: 's2',
+      });
+
+      expect(resolveBinding).toHaveBeenCalledWith({
+        adapterId: 'local_conversation',
+        controlSessionId: 'voice-global',
+        requestedTargetSessionId: 's2',
+      });
+      expect(result).toEqual({ conversationSessionId: 'carrier-s2' });
+    });
+
+    it('rebinds when no existing binding is found, using the active adapter then provider id', async () => {
+      const { createVoiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+      const { createVoiceSessionBindingManager } = await import('@/voice/binding/voiceConversationBindingManager');
+
+      const store = createVoiceSessionBindingStore();
+      const resolveBinding = vi.fn(async () => ({
+        conversationSessionId: 'voice-root-s1',
+        controlSessionId: 'voice-global',
+        transcriptMode: 'native_session' as const,
+        targetSessionId: 's1',
+      }));
+      const manager = createVoiceSessionBindingManager({
+        store,
+        nowMs: () => 3,
+        resolveBinding,
+        resolveExistingBindingByConversationSessionId: () => null,
+      });
+
+      const result = await manager.ensureBoundForOpenConversation({
+        openConversationSessionId: 'carrier-s1',
+        fallbackControlSessionId: 'voice-global',
+        activeAdapterId: null,
+        providerId: 'local_conversation',
+        requestedTargetSessionId: 's1',
+      });
+
+      expect(resolveBinding).toHaveBeenCalledWith({
+        adapterId: 'local_conversation',
+        controlSessionId: 'voice-global',
+        requestedTargetSessionId: 's1',
+      });
+      expect(result).toEqual({ conversationSessionId: 'voice-root-s1' });
+    });
+
+    it('falls back to the original conversation session when rebinding cannot proceed', async () => {
+      const { createVoiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+      const { createVoiceSessionBindingManager } = await import('@/voice/binding/voiceConversationBindingManager');
+
+      const store = createVoiceSessionBindingStore();
+      const resolveBinding = vi.fn(async () => null);
+      const manager = createVoiceSessionBindingManager({
+        store,
+        nowMs: () => 4,
+        resolveBinding,
+        resolveExistingBindingByConversationSessionId: () => null,
+      });
+
+      const result = await manager.ensureBoundForOpenConversation({
+        openConversationSessionId: 'carrier-s1',
+        fallbackControlSessionId: null,
+        activeAdapterId: null,
+        providerId: 'realtime_elevenlabs',
+        requestedTargetSessionId: null,
+      });
+
+      expect(result).toEqual({ conversationSessionId: 'carrier-s1' });
+    });
+  });
+
   it('rebinds when re-resolution changes binding semantics for the same control session and target session', async () => {
     const { createVoiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
     const { createVoiceSessionBindingManager } = await import('@/voice/binding/voiceConversationBindingManager');

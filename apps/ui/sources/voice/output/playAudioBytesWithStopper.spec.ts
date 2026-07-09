@@ -17,15 +17,55 @@ vi.mock('react-native', async () => {
 
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
 
+const realURL = globalThis.URL;
+const realCreateObjectURLDescriptor = Object.getOwnPropertyDescriptor(realURL, 'createObjectURL');
+const realRevokeObjectURLDescriptor = Object.getOwnPropertyDescriptor(realURL, 'revokeObjectURL');
+const realAudio = (globalThis as typeof globalThis & { Audio?: unknown }).Audio;
+const realAudioContext = (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext;
+
+function restoreUrlHelper(
+    name: 'createObjectURL' | 'revokeObjectURL',
+    descriptor: PropertyDescriptor | undefined,
+): void {
+    if (descriptor) {
+        Object.defineProperty(realURL, name, descriptor);
+        return;
+    }
+    delete (realURL as unknown as Record<string, unknown>)[name];
+}
+
+function stubBlobUrlHelpers(input: Readonly<{
+    createObjectURL: (value: Blob | MediaSource) => string;
+    revokeObjectURL: (url: string) => void;
+}>): void {
+    Object.defineProperty(realURL, 'createObjectURL', {
+        configurable: true,
+        writable: true,
+        value: input.createObjectURL,
+    });
+    Object.defineProperty(realURL, 'revokeObjectURL', {
+        configurable: true,
+        writable: true,
+        value: input.revokeObjectURL,
+    });
+}
+
 afterEach(() => {
     platformOsMock.value = 'web';
+    (globalThis as typeof globalThis & { URL: typeof URL }).URL = realURL;
+    restoreUrlHelper('createObjectURL', realCreateObjectURLDescriptor);
+    restoreUrlHelper('revokeObjectURL', realRevokeObjectURLDescriptor);
+    (globalThis as typeof globalThis & { Audio?: unknown }).Audio = realAudio;
+    (globalThis as typeof globalThis & { AudioContext?: unknown }).AudioContext = realAudioContext;
+    vi.restoreAllMocks();
 });
 
 describe('playAudioBytesWithStopper (web)', () => {
   it('uses WebAudio when available', async () => {
     const createObjectURL = vi.fn(() => 'blob:mock');
     const revokeObjectURL = vi.fn();
-    (globalThis as any).URL = { createObjectURL, revokeObjectURL };
+    stubBlobUrlHelpers({ createObjectURL, revokeObjectURL });
+    const onPlaybackStarted = vi.fn();
 
     const audioCtor = vi.fn();
     (globalThis as any).Audio = audioCtor;
@@ -82,6 +122,7 @@ describe('playAudioBytesWithStopper (web)', () => {
       bytes: new Uint8Array([1, 2, 3]).buffer,
       format: 'wav',
       registerPlaybackStopper,
+      onPlaybackStarted,
     });
 
     expect(typeof registeredStopper).toBe('function');
@@ -89,7 +130,9 @@ describe('playAudioBytesWithStopper (web)', () => {
     expect(audioCtor).not.toHaveBeenCalled();
 
     // Allow the async decode/play pipeline to attach handlers.
-    await new Promise((r) => setTimeout(r, 0));
+    await vi.waitFor(() => {
+      expect(onPlaybackStarted).toHaveBeenCalledTimes(1);
+    });
     if (!endedHandler) throw new Error('Expected onended to be set');
     const onEnded: () => void = endedHandler;
     onEnded();
@@ -100,7 +143,7 @@ describe('playAudioBytesWithStopper (web)', () => {
     (globalThis as any).AudioContext = undefined;
     const createObjectURL = vi.fn(() => 'blob:mock');
     const revokeObjectURL = vi.fn();
-    (globalThis as any).URL = { createObjectURL, revokeObjectURL };
+    stubBlobUrlHelpers({ createObjectURL, revokeObjectURL });
 
     let endedHandler: (() => void) | null = null;
     const pause = vi.fn();
@@ -150,11 +193,59 @@ describe('playAudioBytesWithStopper (web)', () => {
     expect(cleared).toBe(true);
   });
 
+  it('calls onPlaybackStarted after Audio.play() resolves', async () => {
+    (globalThis as any).AudioContext = undefined;
+    stubBlobUrlHelpers({
+      createObjectURL: vi.fn(() => 'blob:mock'),
+      revokeObjectURL: vi.fn(),
+    });
+
+    let endedHandler: (() => void) | null = null;
+    let resolvePlay!: () => void;
+    const play = vi.fn(() => new Promise<void>((resolve) => {
+      resolvePlay = resolve;
+    }));
+    const onPlaybackStarted = vi.fn();
+
+    (globalThis as any).Audio = function AudioMock(_url: string) {
+      return {
+        pause: vi.fn(),
+        play,
+        set onended(cb: any) {
+          endedHandler = cb;
+        },
+        get onended() {
+          return endedHandler;
+        },
+        onerror: null,
+      };
+    } as any;
+
+    const promise = playAudioBytesWithStopper({
+      bytes: new ArrayBuffer(4),
+      format: 'wav',
+      registerPlaybackStopper: () => () => {},
+      onPlaybackStarted,
+    });
+
+    expect(onPlaybackStarted).not.toHaveBeenCalled();
+    resolvePlay();
+    await vi.waitFor(() => {
+      expect(onPlaybackStarted).toHaveBeenCalledTimes(1);
+    });
+    const notifyEnded = endedHandler as (() => void) | null;
+    if (!notifyEnded) {
+      throw new Error('Expected audio ended handler to be registered');
+    }
+    notifyEnded();
+    await promise;
+  });
+
   it('rejects when Audio.play() returns a rejected promise (autoplay blocked)', async () => {
     (globalThis as any).AudioContext = undefined;
     const createObjectURL = vi.fn(() => 'blob:mock');
     const revokeObjectURL = vi.fn();
-    (globalThis as any).URL = { createObjectURL, revokeObjectURL };
+    stubBlobUrlHelpers({ createObjectURL, revokeObjectURL });
 
     const pause = vi.fn();
     const play = vi.fn(() => Promise.reject(new Error('NotAllowedError')));
@@ -163,14 +254,18 @@ describe('playAudioBytesWithStopper (web)', () => {
       return { pause, play, onended: null, onerror: null };
     } as any;
 
+    const onPlaybackStarted = vi.fn();
+
     await expect(
       playAudioBytesWithStopper({
         bytes: new ArrayBuffer(4),
         format: 'wav',
         registerPlaybackStopper: () => () => {},
+        onPlaybackStarted,
       }),
     ).rejects.toThrow(/NotAllowedError/);
 
+    expect(onPlaybackStarted).not.toHaveBeenCalled();
     expect(pause).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock');
   });

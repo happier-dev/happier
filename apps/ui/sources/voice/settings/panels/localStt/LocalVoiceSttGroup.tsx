@@ -9,11 +9,13 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { VoiceLocalSttSchema, type VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
 import { t } from '@/text';
 import { getLocalSttProviderSpec, localSttProviderSpecs } from '@/voice/settings/panels/localStt/providers/registry';
+import type { VoiceDaemonRouteDiagnosticReason } from '@/voice/settings/voiceProviderLocalAvailability';
 
 export function LocalVoiceSttGroup(props: {
   cfgStt: VoiceLocalSttSettings | any;
   setStt: (next: VoiceLocalSttSettings | any) => void;
   popoverBoundaryRef?: React.RefObject<any> | null;
+  daemonRouteDiagnosticReason?: VoiceDaemonRouteDiagnosticReason | null;
 }) {
   const { theme } = useUnistyles();
   const [openMenu, setOpenMenu] = React.useState<null | 'sttProvider'>(null);
@@ -56,7 +58,12 @@ export function LocalVoiceSttGroup(props: {
         }}
       />
 
-      <providerSpec.Settings cfgStt={normalized} setStt={props.setStt} popoverBoundaryRef={props.popoverBoundaryRef} />
+      <providerSpec.Settings
+        cfgStt={normalized}
+        setStt={props.setStt}
+        popoverBoundaryRef={props.popoverBoundaryRef}
+        daemonRouteDiagnosticReason={props.daemonRouteDiagnosticReason}
+      />
     </ItemGroup>
   );
 }

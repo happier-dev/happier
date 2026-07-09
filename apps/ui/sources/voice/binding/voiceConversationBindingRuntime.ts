@@ -4,6 +4,7 @@ import { sync } from '@/sync/sync';
 import { appendVoiceTargetSessionSwitchNote } from './appendVoiceTargetSessionSwitchNote';
 import { createVoiceSessionBindingManager } from './voiceConversationBindingManager';
 import { ensureVoiceConversationBindingResolution } from './resolveVoiceConversationBindingResolution';
+import { voiceConversationBindingResolver } from './VoiceConversationBindingResolver';
 import { writeVoiceConversationBindingMetadata } from './voiceConversationBindingMetadata';
 
 export const voiceSessionBindingManager = createVoiceSessionBindingManager({
@@ -14,6 +15,8 @@ export const voiceSessionBindingManager = createVoiceSessionBindingManager({
             requestedTargetSessionId,
             settings: storage.getState().settings,
         }),
+    resolveExistingBindingByConversationSessionId: (conversationSessionId) =>
+        voiceConversationBindingResolver.resolveByConversationSessionId({ conversationSessionId }),
     persistBinding: async (binding) => {
         await sync.patchSessionMetadataWithRetry(binding.conversationSessionId, (metadata: any) =>
             writeVoiceConversationBindingMetadata(metadata, binding),

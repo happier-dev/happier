@@ -1,10 +1,11 @@
 import { parseModelPackManifest, type ModelPackManifest } from '@happier-dev/protocol';
+import { installModelPackWithHost } from '@happier-dev/voice-modelpacks';
 
-import { downloadManifestFiles } from './installer/download.native';
 import { getFetch, getFs } from './installer/fs.native';
+import { createExpoModelPackInstallerHost, reconcileExpoModelPackPromotion } from './installer/host.native';
 import { fetchRemoteManifest } from './installer/network';
 import { assertManifestPathsSafe, getMetaFile, getPackRootDir, normalizePackId } from './installer/paths';
-import type { InstallMode, InstallerOverrides, UpdatePolicy } from './installer/types';
+import type { InstallerFs, InstallMode, InstallerOverrides, UpdatePolicy } from './installer/types';
 
 function manifestsEqual(a: ModelPackManifest, b: ModelPackManifest): boolean {
   if (a.packId !== b.packId) return false;
@@ -16,6 +17,30 @@ function manifestsEqual(a: ModelPackManifest, b: ModelPackManifest): boolean {
     if (sha !== f.sha256.toLowerCase()) return false;
   }
   return true;
+}
+
+async function installViaHost(opts: {
+  fs: InstallerFs;
+  fetchImpl: typeof fetch;
+  packId: string;
+  manifest: ModelPackManifest;
+  timeoutMs: number;
+  signal: AbortSignal;
+  onProgress?: (p: { loaded: number; total: number; file?: string }) => void;
+}): Promise<{ packDirUri: string; manifest: ModelPackManifest }> {
+  const host = createExpoModelPackInstallerHost({
+    fs: opts.fs,
+    fetchImpl: opts.fetchImpl,
+    timeoutMs: opts.timeoutMs,
+  });
+  const result = await installModelPackWithHost({
+    host,
+    packId: opts.packId,
+    manifest: opts.manifest,
+    signal: opts.signal,
+    onProgress: opts.onProgress,
+  });
+  return { packDirUri: result.rootLocation, manifest: result.manifest };
 }
 
 export async function ensureModelPackInstalled(
@@ -33,21 +58,17 @@ export async function ensureModelPackInstalled(
   const fs = await getFs(overrides);
   const fetchImpl = getFetch(overrides);
   const id = normalizePackId(opts.packId);
+  // X-M1: roll forward/back any swap this pack left interrupted by a crash before
+  // inspecting/serving it, so a transiently-missing live dir is never observed.
+  reconcileExpoModelPackPromotion({ fs, packId: id });
   const rootDir = getPackRootDir(fs, id);
-
-  try {
-    rootDir.create({ intermediates: true, idempotent: true });
-  } catch {
-    // ignore
-  }
 
   const meta = getMetaFile(fs, rootDir);
   if (meta.exists) {
-    try {
-      const parsed = JSON.parse(await meta.text());
-      const manifest = parseModelPackManifest(parsed?.manifest ?? parsed);
+    const installedManifest = await readInstalledManifest(meta);
+    if (installedManifest) {
       if (opts.updatePolicy !== 'manual_update_if_available') {
-        return { packDirUri: rootDir.uri, manifest };
+        return { packDirUri: rootDir.uri, manifest: installedManifest };
       }
 
       if (!opts.manifestUrl || !opts.manifestUrl.trim()) {
@@ -62,50 +83,24 @@ export async function ensureModelPackInstalled(
       });
       if (remote.packId !== id) throw new Error('model_pack_manifest_packid_mismatch');
       assertManifestPathsSafe(remote);
-      if (manifestsEqual(remote, manifest)) {
-        return { packDirUri: rootDir.uri, manifest };
+      if (manifestsEqual(remote, installedManifest)) {
+        return { packDirUri: rootDir.uri, manifest: installedManifest };
       }
 
-      // Wipe to guarantee no stale files remain (pack contents are manifest-driven).
-      try {
-        rootDir.delete({ idempotent: true });
-      } catch {
-        // ignore
-      }
-      try {
-        rootDir.create({ intermediates: true, idempotent: true });
-      } catch {
-        // ignore
-      }
-
-      await downloadManifestFiles({
+      // Stage-before-delete via the shared core: the live pack is replaced only
+      // after the new pack is fully downloaded and verified. A failed/cancelled
+      // update leaves the previously-installed pack intact (no data loss).
+      return await installViaHost({
         fs,
         fetchImpl,
-        rootDir,
+        packId: id,
         manifest: remote,
         timeoutMs: opts.timeoutMs,
         signal: opts.signal,
         onProgress: opts.onProgress,
       });
-
-      try {
-        meta.create?.();
-      } catch {
-        // ignore
-      }
-      try {
-        meta.write(JSON.stringify({ manifest: remote }));
-      } catch {
-        // ignore
-      }
-      return { packDirUri: rootDir.uri, manifest: remote };
-    } catch {
-      try {
-        meta.delete();
-      } catch {
-        // ignore
-      }
     }
+    // Corrupt/unreadable meta: fall through to a fresh install below.
   }
 
   if (opts.mode === 'require_installed') {
@@ -127,28 +122,24 @@ export async function ensureModelPackInstalled(
   }
   assertManifestPathsSafe(manifest);
 
-  await downloadManifestFiles({
+  return await installViaHost({
     fs,
     fetchImpl,
-    rootDir,
+    packId: id,
     manifest,
     timeoutMs: opts.timeoutMs,
     signal: opts.signal,
     onProgress: opts.onProgress,
   });
+}
 
+async function readInstalledManifest(meta: any): Promise<ModelPackManifest | null> {
   try {
-    meta.create?.();
+    const parsed = JSON.parse(await meta.text());
+    return parseModelPackManifest(parsed?.manifest ?? parsed);
   } catch {
-    // ignore
+    return null;
   }
-  try {
-    meta.write(JSON.stringify({ manifest }));
-  } catch {
-    // ignore
-  }
-
-  return { packDirUri: rootDir.uri, manifest };
 }
 
 export async function checkModelPackUpdateAvailable(
@@ -206,6 +197,8 @@ export async function getModelPackInstallSummary(
 ): Promise<{ installed: boolean; packDirUri: string | null; manifest: ModelPackManifest | null }> {
   const fs = await getFs(overrides);
   const id = normalizePackId(opts.packId);
+  // X-M1: recover an interrupted swap before reporting install state.
+  reconcileExpoModelPackPromotion({ fs, packId: id });
   const rootDir = getPackRootDir(fs, id);
   const meta = getMetaFile(fs, rootDir);
 
@@ -228,7 +221,7 @@ export async function removeModelPack(opts: { packId: string | null }, overrides
   const rootDir = getPackRootDir(fs, id);
   try {
     if (rootDir.exists) {
-      rootDir.delete({ idempotent: true });
+      rootDir.delete?.({ idempotent: true });
     }
   } catch {
     // ignore

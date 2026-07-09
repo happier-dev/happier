@@ -19,8 +19,9 @@ describe('voiceConversationRuntimeStore', () => {
             expect(listener).not.toHaveBeenCalled();
 
             setVoiceConversationRuntimeSnapshot({
+                adapterId: null,
                 controlSessionId: 'session-1',
-                state: 'connected',
+                state: 'listening',
                 micMuted: false,
                 error: null,
             });

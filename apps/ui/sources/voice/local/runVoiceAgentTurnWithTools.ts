@@ -2,8 +2,31 @@ import { createVoiceToolHandlers } from '@/voice/tools/handlers';
 import { resolveToolSessionId } from '@/voice/tools/resolveToolSessionId';
 import { resolveVoiceToolResultHumanSummary } from '@/voice/context/resolveVoiceToolResultHumanSummary';
 import { isAgentId } from '@/agents/catalog/catalog';
+import { storage } from '@/sync/domains/state/storage';
+import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
+import {
+  redactVoiceToolResultValue,
+  type VoiceToolResultRedactionPrefs,
+} from '@/voice/context/redactVoiceToolResult';
 
 type VoiceToolAction = Readonly<{ t?: unknown; args?: unknown }>;
+
+/**
+ * Privacy controls that gate what tool-result detail is serialized back to the voice provider on
+ * the follow-up turn. Sourced from the canonical voice privacy settings so the local agent honors
+ * the same `shareFilePaths`/`shareSessionSummary`/`sharePermissionRequests` prefs as the push-based
+ * context formatters. Redaction itself is owned by `@/voice/context/redactVoiceToolResult`.
+ */
+export type VoiceToolResultPrivacyPrefs = VoiceToolResultRedactionPrefs;
+
+function resolveVoiceToolResultPrivacyPrefs(): VoiceToolResultPrivacyPrefs {
+  const privacy = readVoicePrivacySettings((storage.getState() as { settings?: unknown })?.settings);
+  return {
+    shareFilePaths: privacy.shareFilePaths,
+    shareSessionSummary: privacy.shareSessionSummary,
+    sharePermissionRequests: privacy.sharePermissionRequests,
+  };
+}
 
 type VoiceAgentSessionsLike = Readonly<{
   sendTurn: (
@@ -103,7 +126,10 @@ function compactToolResultValue(value: unknown): unknown {
   return String(value);
 }
 
-function compactToolResultsForFollowUp(toolResults: ReadonlyArray<LocalVoiceAgentToolResultEntry>): ReadonlyArray<LocalVoiceAgentToolResultEntry> {
+function compactToolResultsForFollowUp(
+  toolResults: ReadonlyArray<LocalVoiceAgentToolResultEntry>,
+  prefs: VoiceToolResultPrivacyPrefs,
+): ReadonlyArray<LocalVoiceAgentToolResultEntry> {
   const pinnedBackendTargetKeys = new Set<string>();
   for (const entry of toolResults) {
     if (entry.t !== 'listAgentModels') continue;
@@ -119,7 +145,8 @@ function compactToolResultsForFollowUp(toolResults: ReadonlyArray<LocalVoiceAgen
       toolName: entry.t,
       toolInput: entry.args,
       toolResult: entry.result,
-      shareFilePaths: true,
+      shareFilePaths: prefs.shareFilePaths,
+      shareSessionSummary: prefs.shareSessionSummary,
     });
 
     if (entry.t === 'listAgentBackends') {
@@ -144,7 +171,7 @@ function compactToolResultsForFollowUp(toolResults: ReadonlyArray<LocalVoiceAgen
 
       return {
         t: entry.t,
-        args: compactToolResultValue(entry.args),
+        args: compactToolResultValue(redactVoiceToolResultValue(entry.args, prefs)),
         result: {
           ...(result && typeof result === 'object' && (result as { ok?: unknown }).ok === false ? { ok: false } : { ok: true }),
           ...(humanSummary ? { summary: humanSummary } : {}),
@@ -164,7 +191,7 @@ function compactToolResultsForFollowUp(toolResults: ReadonlyArray<LocalVoiceAgen
 
       return {
         t: entry.t,
-        args: compactToolResultValue(entry.args),
+        args: compactToolResultValue(redactVoiceToolResultValue(entry.args, prefs)),
         result: {
           ...(typeof (result as { agentId?: unknown })?.agentId === 'string' ? { agentId: (result as { agentId: string }).agentId } : {}),
           ...(typeof (result as { source?: unknown })?.source === 'string' ? { source: (result as { source: string }).source } : {}),
@@ -179,9 +206,9 @@ function compactToolResultsForFollowUp(toolResults: ReadonlyArray<LocalVoiceAgen
 
     return {
       t: entry.t,
-      args: compactToolResultValue(entry.args),
+      args: compactToolResultValue(redactVoiceToolResultValue(entry.args, prefs)),
       result: (() => {
-        const compacted = compactToolResultValue(entry.result);
+        const compacted = compactToolResultValue(redactVoiceToolResultValue(entry.result, prefs));
         if (!humanSummary) {
           return compacted;
         }
@@ -194,7 +221,10 @@ function compactToolResultsForFollowUp(toolResults: ReadonlyArray<LocalVoiceAgen
   });
 }
 
-function buildToolResultsFollowUpPrompt(toolResults: ReadonlyArray<LocalVoiceAgentToolResultEntry>): string {
+export function buildToolResultsFollowUpPrompt(
+  toolResults: ReadonlyArray<LocalVoiceAgentToolResultEntry>,
+  prefs: VoiceToolResultPrivacyPrefs,
+): string {
   const hasErrors = toolResults.some((entry) => {
     const result = entry.result;
     if (!result || typeof result !== 'object') {
@@ -209,7 +239,7 @@ function buildToolResultsFollowUpPrompt(toolResults: ReadonlyArray<LocalVoiceAge
     ? 'VOICE_TOOL_RESULT_INSTRUCTIONS: At least one action failed. Do not claim success, do not repeat a requested success token, and explain the failure plainly.'
     : 'VOICE_TOOL_RESULT_INSTRUCTIONS: All actions succeeded. Summarize the completed outcome accurately.';
 
-  return `VOICE_TOOL_RESULTS_JSON:\n${JSON.stringify({ toolResults: compactToolResultsForFollowUp(toolResults) })}\n${instruction}`;
+  return `VOICE_TOOL_RESULTS_JSON:\n${JSON.stringify({ toolResults: compactToolResultsForFollowUp(toolResults, prefs) })}\n${instruction}`;
 }
 
 function createAbortError() {
@@ -588,7 +618,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
       };
     }
 
-    nextPrompt = buildToolResultsFollowUpPrompt(toolResults);
+    nextPrompt = buildToolResultsFollowUpPrompt(toolResults, resolveVoiceToolResultPrivacyPrefs());
   }
 
   return {

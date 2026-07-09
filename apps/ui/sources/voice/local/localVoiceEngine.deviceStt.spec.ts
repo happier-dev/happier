@@ -12,6 +12,7 @@ import {
     speechRecStop,
     speechRecRequestPermissionsAsync,
 } from './localVoiceEngine.testHarness';
+import type { TurnEndpointSignal } from '@/voice/runtime/input/TurnEndpointController';
 
 const webVadState = vi.hoisted(() => ({
     onSpeechEnd: null as null | (() => void),
@@ -60,7 +61,7 @@ describe('local voice engine device STT (experimental)', () => {
         }
     });
 
-    it('surfaces mic permission denial as an error instead of entering recording', async () => {
+    it('surfaces mic permission denial as a recoverable idle error instead of entering recording', async () => {
         const { requestMicrophonePermission } = await import('@/utils/platform/microphonePermissions');
         vi.mocked(requestMicrophonePermission).mockResolvedValueOnce({ granted: false, canAskAgain: false });
 
@@ -95,7 +96,7 @@ describe('local voice engine device STT (experimental)', () => {
 
         expect(speechRecStart).not.toHaveBeenCalled();
         expect(getLocalVoiceState()).toMatchObject({
-            status: 'error',
+            status: 'idle',
             sessionId: 's1',
             error: 'mic_permission_denied',
         });
@@ -128,6 +129,9 @@ describe('local voice engine device STT (experimental)', () => {
             },
         });
 
+        const { resolveLocalSttProvider } = await import('./localVoiceSettings');
+        expect(resolveLocalSttProvider(storage.getState().settings)).toBe('device');
+
         const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
         await toggleLocalVoiceTurn('s1');
         expect(getLocalVoiceState().status).toBe('recording');
@@ -148,8 +152,7 @@ describe('local voice engine device STT (experimental)', () => {
                             ...storage.getState().settings.voice.adapters.local_direct,
                             stt: {
                                 ...storage.getState().settings.voice.adapters.local_direct.stt,
-                                useDeviceStt: true,
-                                baseUrl: null,
+                                provider: 'device',
                             },
                             tts: {
                                 ...storage.getState().settings.voice.adapters.local_direct.tts,
@@ -177,7 +180,9 @@ describe('local voice engine device STT (experimental)', () => {
 
         await stopPromise;
 
-        expect(sendMessage).toHaveBeenCalledWith('s1', 'hello from device stt');
+        expect(sendMessage).toHaveBeenCalledWith('s1', 'hello from device stt', undefined, undefined, {
+            bypassPendingQueueReason: 'voice_turn',
+        });
         expect((globalThis.fetch as any).mock.calls.length).toBe(0);
     });
 
@@ -197,8 +202,7 @@ describe('local voice engine device STT (experimental)', () => {
                             ...storage.getState().settings.voice.adapters.local_direct,
                             stt: {
                                 ...storage.getState().settings.voice.adapters.local_direct.stt,
-                                useDeviceStt: true,
-                                baseUrl: null,
+                                provider: 'device',
                             },
                         },
                     },
@@ -269,8 +273,7 @@ describe('local voice engine device STT (experimental)', () => {
                             ...storage.getState().settings.voice.adapters.local_direct,
                             stt: {
                                 ...storage.getState().settings.voice.adapters.local_direct.stt,
-                                useDeviceStt: true,
-                                baseUrl: null,
+                                provider: 'device',
                             },
                             tts: {
                                 ...storage.getState().settings.voice.adapters.local_direct.tts,
@@ -293,13 +296,16 @@ describe('local voice engine device STT (experimental)', () => {
         expect(speechRecStart).toHaveBeenCalledTimes(1);
 
         emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'hands free message', confidence: 0.9, segments: [] }] });
-        await waitForCallCount(speechRecStop, 1);
-        expect(speechRecStop).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => {
+            expect(getLocalVoiceState().status).toBe('transcribing');
+        });
         emitSpeechRecEvent('end', {});
 
         await waitForCallCount(sendMessage, 1);
         await waitForCallCount(speechRecStart, 2);
-        expect(sendMessage).toHaveBeenCalledWith('s1', 'hands free message');
+        expect(sendMessage).toHaveBeenCalledWith('s1', 'hands free message', undefined, undefined, {
+            bypassPendingQueueReason: 'voice_turn',
+        });
         expect(speechRecStart).toHaveBeenCalledTimes(2);
         expect(getLocalVoiceState().status).toBe('recording');
     });
@@ -318,8 +324,7 @@ describe('local voice engine device STT (experimental)', () => {
                             ...storage.getState().settings.voice.adapters.local_direct,
                             stt: {
                                 ...storage.getState().settings.voice.adapters.local_direct.stt,
-                                useDeviceStt: true,
-                                baseUrl: null,
+                                provider: 'device',
                             },
                             tts: {
                                 ...storage.getState().settings.voice.adapters.local_direct.tts,
@@ -366,8 +371,7 @@ describe('local voice engine device STT (experimental)', () => {
                             ...storage.getState().settings.voice.adapters.local_direct,
                             stt: {
                                 ...storage.getState().settings.voice.adapters.local_direct.stt,
-                                useDeviceStt: true,
-                                baseUrl: null,
+                                provider: 'device',
                             },
                             tts: {
                                 ...storage.getState().settings.voice.adapters.local_direct.tts,
@@ -430,23 +434,26 @@ describe('local voice engine device STT (experimental)', () => {
             },
         });
 
-        const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await loadLocalVoiceEngineWithCompatState();
         await toggleLocalVoiceTurn('s1');
         emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: 'timed hands free', confidence: 0.9, segments: [] }] });
-        expect(speechRecStop).not.toHaveBeenCalled();
+        expect(getLocalVoiceState().status).toBe('recording');
 
         await new Promise((resolve) => setTimeout(resolve, 5));
-        expect(speechRecStop).not.toHaveBeenCalled();
+        expect(getLocalVoiceState().status).toBe('recording');
 
-        await waitForCallCount(speechRecStop, 1);
-        expect(speechRecStop).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => {
+            expect(getLocalVoiceState().status).toBe('transcribing');
+        });
         emitSpeechRecEvent('end', {});
 
         await waitForCallCount(sendMessage, 1);
-        expect(sendMessage).toHaveBeenCalledWith('s1', 'timed hands free');
+        expect(sendMessage).toHaveBeenCalledWith('s1', 'timed hands free', undefined, undefined, {
+            bypassPendingQueueReason: 'voice_turn',
+        });
     });
 
-    it('uses web VAD endpoint signals to stop and rearm hands-free web capture', async () => {
+    it('keeps hands-free web capture active when a web VAD endpoint only yields a short backchannel partial', async () => {
         setPlatformOs('web');
         webVadState.onSpeechEnd = null;
         (globalThis as { window?: object }).window = {};
@@ -493,14 +500,201 @@ describe('local voice engine device STT (experimental)', () => {
 
         const onSpeechEnd = webVadState.onSpeechEnd as null | (() => void);
         onSpeechEnd?.();
-
-        await waitForCallCount(speechRecStop, 1);
+        expect(getLocalVoiceState().status).toBe('recording');
         emitSpeechRecEvent('end', {});
 
-        await waitForCallCount(sendMessage, 1);
-        await waitForCallCount(speechRecStart, 2);
-        expect(sendMessage).toHaveBeenCalledWith('s1', 'web vad message');
+        await vi.waitFor(() => {
+            expect(getLocalVoiceState().status).toBe('recording');
+        });
+        expect(sendMessage).not.toHaveBeenCalled();
+        expect(speechRecStart).toHaveBeenCalledTimes(1);
         expect(getLocalVoiceState().status).toBe('recording');
+    });
+
+    it('routes runtime-owned hands-free endpoint signals through the capture-owner active-session gate', async () => {
+        const endpointSignalHarness: {
+            emit: ((signal: TurnEndpointSignal) => void) | null;
+        } = { emit: null };
+        const startCapture = vi.fn(async () => {});
+        const stopEndpointDrivenCapture = vi.fn(async () => ({
+            followUp: { kind: 'none' as const },
+            kind: 'submit_turn' as const,
+            transcript: 'hands free message',
+        }));
+        const resolveEndpointSignalAction = vi.fn((args: { signal: { sessionId: string } }) => ({
+            kind: 'stop_capture' as const,
+            provider: 'device' as const,
+            sessionId: args.signal.sessionId,
+        }));
+        const isHandsFreeCaptureSession = vi.fn(() => true);
+
+        vi.doMock('@/voice/runtime/input/LocalVoiceCaptureOwner', () => ({
+            createLocalVoiceCaptureOwner: (deps: {
+                onEndpointSignal?: (signal: TurnEndpointSignal) => void;
+            }) => {
+                endpointSignalHarness.emit = (signal) => deps.onEndpointSignal?.(signal);
+                return {
+                    resolveManualBargeInAction: vi.fn(() => ({
+                        kind: 'noop',
+                        reason: 'not_speaking',
+                    })),
+                    resolveEndpointSignalAction,
+                    startCapture,
+                    stopCapture: vi.fn(async () => ({
+                        continueHandsFree: false,
+                        provider: 'device',
+                        text: '',
+                    })),
+                    stopEndpointDrivenCapture,
+                    isHandsFreeCaptureSession,
+                    clearHandsFree: vi.fn(),
+                    setMuted: vi.fn(async () => {}),
+                    stopSession: vi.fn(async () => {}),
+                };
+            },
+        }));
+
+        const storage = await getStorage();
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_direct',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_direct: {
+                            ...storage.getState().settings.voice.adapters.local_direct,
+                            stt: {
+                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                provider: 'device',
+                            },
+                            tts: {
+                                ...storage.getState().settings.voice.adapters.local_direct.tts,
+                                autoSpeakReplies: false,
+                            },
+                            handsFree: {
+                                ...storage.getState().settings.voice.adapters.local_direct.handsFree,
+                                enabled: true,
+                                endpointing: { silenceMs: 0, minSpeechMs: 0 },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        const { toggleLocalVoiceTurn } = await loadLocalVoiceEngineWithCompatState();
+        await toggleLocalVoiceTurn('s1');
+        expect(startCapture).toHaveBeenCalledWith(expect.objectContaining({
+            provider: 'device',
+            sessionId: 's1',
+            signal: expect.any(Object),
+        }));
+
+        endpointSignalHarness.emit?.({
+            detectedAt: Date.now(),
+            sessionId: 's1',
+            source: 'heuristic',
+            transcript: 'hands free message',
+        });
+
+        await waitForCallCount(stopEndpointDrivenCapture as unknown as CallCountSpy, 1);
+        expect(isHandsFreeCaptureSession).toHaveBeenCalledWith({ provider: 'device', sessionId: 's1' });
+        expect(resolveEndpointSignalAction).toHaveBeenCalledWith(expect.objectContaining({
+            currentSessionId: 's1',
+            currentStatus: 'recording',
+            handsFreeEnabled: true,
+            inFlight: false,
+            provider: 'device',
+        }));
+        expect(sendMessage).toHaveBeenCalledWith('s1', 'hands free message', undefined, undefined, {
+            bypassPendingQueueReason: 'voice_turn',
+        });
+    });
+
+    it('real capture owner forwards finalized device-STT endpoints to the runtime engine seam', async () => {
+        const storage = await getStorage();
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voice: {
+                    ...storage.getState().settings.voice,
+                    providerId: 'local_direct',
+                    adapters: {
+                        ...storage.getState().settings.voice.adapters,
+                        local_direct: {
+                            ...storage.getState().settings.voice.adapters.local_direct,
+                            stt: {
+                                ...storage.getState().settings.voice.adapters.local_direct.stt,
+                                provider: 'device',
+                            },
+                            handsFree: {
+                                ...storage.getState().settings.voice.adapters.local_direct.handsFree,
+                                enabled: true,
+                                endpointing: { silenceMs: 0, minSpeechMs: 0 },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        const onEndpointSignal = vi.fn();
+        const liveMicSession = {
+            ensureActive: vi.fn(async () => {}),
+            setMuted: vi.fn(),
+            isMuted: vi.fn(() => false),
+            teardown: vi.fn(async () => {}),
+            getStream: vi.fn(() => null),
+            getAudioContext: vi.fn(() => null),
+        };
+        const { createLocalVoiceCaptureOwner } = await import('@/voice/runtime/input/LocalVoiceCaptureOwner');
+        const { createDeviceSttController } = await import('@/voice/input/DeviceSttController');
+        const owner = createLocalVoiceCaptureOwner(
+            {
+                getSettings: () => storage.getState().settings,
+                onCaptureStarted: vi.fn(),
+                onCaptureError: vi.fn(),
+                onEndpointSignal,
+            },
+            {
+                createDeviceSttController,
+                createLiveMicSession: () => liveMicSession as never,
+            },
+        );
+
+        await owner.startCapture({
+            handsFree: true,
+            provider: 'device',
+            sessionId: 's1',
+            signal: new AbortController().signal,
+        });
+        emitSpeechRecEvent('result', {
+            isFinal: true,
+            results: [{ transcript: 'hands free message', confidence: 0.9, segments: [] }],
+        });
+
+        await vi.waitFor(() => {
+            expect(onEndpointSignal).toHaveBeenCalledWith(expect.objectContaining({
+                sessionId: 's1',
+                source: 'heuristic',
+                transcript: 'hands free message',
+            }));
+        });
+        await expect(owner.stopEndpointDrivenCapture({
+            adaptiveConfig: { ignoredPhrases: [] },
+            provider: 'device',
+            sessionId: 's1',
+        })).resolves.toEqual({
+            followUp: {
+                kind: 'rearm_capture',
+                provider: 'device',
+                sessionId: 's1',
+            },
+            kind: 'submit_turn',
+            transcript: 'hands free message',
+        });
+        expect(speechRecStop).toHaveBeenCalledTimes(1);
     });
 
     it('delegates device STT ownership to LocalVoiceCaptureOwner instead of constructing the device controller in localVoiceEngine', async () => {
@@ -571,6 +765,7 @@ describe('local voice engine device STT (experimental)', () => {
         expect(startCapture).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 's1',
             provider: 'device',
+            signal: expect.any(Object),
         }));
         expect(getLocalVoiceState().status).toBe('recording');
     });

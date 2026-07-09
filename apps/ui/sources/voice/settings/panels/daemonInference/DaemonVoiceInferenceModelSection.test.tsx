@@ -12,6 +12,53 @@ vi.mock('@/components/ui/lists/Item', () => ({
 }));
 
 describe('DaemonVoiceInferenceModelSection', () => {
+    it('surfaces relay-disabled daemon diagnostics ahead of daemon service readiness', async () => {
+        const client: Pick<DaemonVoiceInferenceClient, 'getStatus' | 'getModelsStatus' | 'installModel' | 'removeModel'> = {
+            getStatus: vi.fn(async () => ({
+                ok: true as const,
+                serviceState: 'ready' as const,
+                normalization: {
+                    inputTransport: 'upload_transfer' as const,
+                    strategy: 'ui_pretranscoded_pcm16_fallback' as const,
+                    systemFfmpegAllowed: false as const,
+                },
+                models: [],
+            })),
+            getModelsStatus: vi.fn(async () => ([])),
+            installModel: vi.fn(async (request): Promise<DaemonVoiceInferenceModelStatus> => ({
+                packId: request.packId,
+                kind: 'tts_sherpa' as const,
+                model: 'kokoro',
+                version: null,
+                executionSupport: ['daemon'],
+                installState: 'installed' as const,
+                progress: null,
+                lastError: null,
+                updatedAtMs: 1,
+            })),
+            removeModel: vi.fn(async () => undefined),
+        };
+
+        const { DaemonVoiceInferenceModelSection } = await import('./DaemonVoiceInferenceModelSection');
+
+        const { tree } = await renderScreen(
+            <DaemonVoiceInferenceModelSection
+                packId="kokoro-tts-en-v1"
+                kind="tts"
+                client={client}
+                daemonRouteDiagnosticReason="daemon_relay_disabled"
+            />,
+        );
+
+        await act(async () => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+        const serviceItem = tree.root.find((node) => node.props?.title === 'Daemon inference service');
+
+        expect(serviceItem.props.detail).toBe('Daemon relay is disabled.');
+    });
+
     it('renders daemon service/model state and installs the selected model pack on demand', async () => {
         const notInstalledModel: DaemonVoiceInferenceModelStatus = {
             packId: 'kokoro-tts-en-v1',

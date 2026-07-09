@@ -132,7 +132,7 @@ describe('synthesizeKokoroWav (native)', () => {
     expect(new Uint8Array(bytes)).toEqual(new Uint8Array([1, 2, 3, 4]));
   });
 
-  it('uses the default Kokoro asset set id when assetSetId is missing', async () => {
+  it('uses the canonical Kokoro pack id when assetSetId is missing', async () => {
     const fileDelete = vi.fn().mockResolvedValue(undefined);
     class File {
       uri: string;
@@ -160,7 +160,7 @@ describe('synthesizeKokoroWav (native)', () => {
     const ensureInstalled = vi.fn().mockResolvedValue({
       packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-test',
       manifest: {
-        packId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+        packId: 'kokoro-tts-en-v1',
         kind: 'tts_sherpa',
         model: 'kokoro',
         version: '1.0.0',
@@ -186,7 +186,59 @@ describe('synthesizeKokoroWav (native)', () => {
       },
     );
 
-    expect(ensureInstalled).toHaveBeenCalledWith(expect.objectContaining({ packId: 'kokoro-82m-v1.0-onnx-q8-wasm' }), expect.anything());
+    expect(ensureInstalled).toHaveBeenCalledWith(expect.objectContaining({ packId: 'kokoro-tts-en-v1' }), expect.anything());
+  });
+
+  it('normalizes a legacy Kokoro asset id to the canonical native installer pack id', async () => {
+    class File {
+      uri: string;
+      constructor(...uris: any[]) {
+        this.uri = typeof uris[0] === 'string' ? uris[0] : 'file:///tmp/out.wav';
+      }
+      async arrayBuffer() {
+        return new Uint8Array([1]).buffer;
+      }
+      delete = vi.fn().mockResolvedValue(undefined);
+    }
+
+    const kokoroNativeModule = {
+      initialize: vi.fn().mockResolvedValue(undefined),
+      listVoices: vi.fn().mockResolvedValue([]),
+      synthesizeToWavFile: vi.fn().mockResolvedValue({ wavPath: 'file:///tmp/out.wav', sampleRate: 24000 }),
+      cancel: vi.fn().mockResolvedValue(undefined),
+    };
+    const ensureInstalled = vi.fn().mockResolvedValue({
+      packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-tts-en-v1',
+      manifest: {
+        packId: 'kokoro-tts-en-v1',
+        kind: 'tts_sherpa',
+        model: 'kokoro',
+        version: '1.0.0',
+        files: [],
+      } as any,
+    });
+    const resolveManifestUrl = vi.fn(() => 'https://example.com/kokoro-tts-en-v1__manifest.json');
+
+    await synthesizeKokoroWav(
+      {
+        text: 'hello',
+        assetSetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+        voiceId: 'af_bella',
+        speed: 1,
+        timeoutMs: 5000,
+        signal: new AbortController().signal,
+      },
+      {
+        kokoroNativeModule,
+        fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
+        resolveOutWavPath: () => 'file:///tmp/out.wav',
+        ensureInstalled,
+        resolveManifestUrl,
+      },
+    );
+
+    expect(resolveManifestUrl).toHaveBeenCalledWith('kokoro-tts-en-v1');
+    expect(ensureInstalled).toHaveBeenCalledWith(expect.objectContaining({ packId: 'kokoro-tts-en-v1' }), expect.anything());
   });
 
   it('cancels in-flight synthesis when aborted', async () => {
@@ -348,5 +400,80 @@ describe('synthesizeKokoroWav (native)', () => {
     );
 
     expect(onProgress).toHaveBeenCalledWith({ loaded: 1, total: 4, file: 'onnx/model_quantized.onnx' });
+  });
+
+  it('does not poison the speaker-count cache when the first lookup fails (retry succeeds)', async () => {
+    // L4-5: a transient listVoices failure must not be cached. A poisoned cache
+    // would pin the failed `null` speaker count for the assets dir forever,
+    // permanently degrading speaker-id resolution on every later synth.
+    const fileDelete = vi.fn().mockResolvedValue(undefined);
+    class File {
+      uri: string;
+      constructor(...uris: any[]) {
+        this.uri = typeof uris[0] === 'string' ? uris[0] : 'file:///tmp/out.wav';
+      }
+      async arrayBuffer() {
+        return new Uint8Array([1]).buffer;
+      }
+      delete = fileDelete;
+    }
+
+    // First lookup rejects (transient); the retry resolves the real 11-speaker
+    // (v0.19) catalog.
+    const listVoices = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('transient_list_voices_failure'))
+      .mockResolvedValueOnce(
+        Array.from({ length: 11 }).map((_, i) => ({ id: `sid:${i}`, title: `Speaker ${i}`, sid: i })),
+      );
+
+    const kokoroNativeModule = {
+      initialize: vi.fn().mockResolvedValue(undefined),
+      listVoices,
+      synthesizeToWavFile: vi.fn().mockResolvedValue({ wavPath: 'file:///tmp/out.wav', sampleRate: 24000 }),
+      cancel: vi.fn().mockResolvedValue(undefined),
+    };
+
+    // Unique assets dir so the module-level cache is not pre-populated by a
+    // sibling test.
+    const overrides = {
+      kokoroNativeModule,
+      fs: { File, Paths: { cache: 'file:///tmp/', document: 'file:///docs/' } } as any,
+      resolveOutWavPath: () => 'file:///tmp/out.wav',
+      ensureInstalled: async () => ({
+        packDirUri: 'file:///docs/happier/voice/modelPacks/kokoro-cache-poison-test',
+        manifest: {
+          packId: 'kokoro-cache-poison-test',
+          kind: 'tts_sherpa',
+          model: 'kokoro',
+          version: '1.0.0',
+          files: [],
+        } as any,
+      }),
+    };
+
+    const baseOpts = {
+      text: 'hello',
+      assetSetId: 'kokoro-cache-poison-test',
+      voiceId: 'af_bella',
+      speed: 1,
+      timeoutMs: 5000,
+    };
+
+    // First call: listVoices fails → speaker count unknown → fallback sid (v1.0
+    // map → af_bella = 0). Synthesis still proceeds.
+    await synthesizeKokoroWav({ ...baseOpts, signal: new AbortController().signal }, overrides);
+    expect(kokoroNativeModule.synthesizeToWavFile).toHaveBeenLastCalledWith(
+      expect.objectContaining({ voiceId: 'af_bella', sid: 0 }),
+    );
+
+    // Second call (same assets dir): listVoices now succeeds with 11 speakers.
+    // A poisoned cache would reuse the failed `null` and keep sid 0; the fix
+    // re-queries and resolves the v0.19 (11-speaker) sid = 1.
+    await synthesizeKokoroWav({ ...baseOpts, signal: new AbortController().signal }, overrides);
+    expect(listVoices).toHaveBeenCalledTimes(2);
+    expect(kokoroNativeModule.synthesizeToWavFile).toHaveBeenLastCalledWith(
+      expect.objectContaining({ voiceId: 'af_bella', sid: 1 }),
+    );
   });
 });

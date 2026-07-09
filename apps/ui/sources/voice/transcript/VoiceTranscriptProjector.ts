@@ -10,6 +10,7 @@ import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSes
 import { storage } from '@/sync/domains/state/storage';
 import type { NormalizedMessage } from '@/sync/typesRaw';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import { VOICE_TRANSCRIPT_UNRECONCILED_EVENT_RING_MAX } from './voiceTranscriptBounds';
 import type { VoiceTranscriptTurn } from './voiceTranscriptEvents';
 import { buildVoiceTranscriptNoteMeta } from './voiceTranscriptNoteMeta';
 
@@ -159,13 +160,26 @@ function promoteProvisionalMessage(existing: unknown, message: NormalizedMessage
     }
 }
 
+type UpsertProjectedMessageResult = Readonly<{
+    message: NormalizedMessage;
+    appliedNew: boolean;
+    reconciledProvisionalId: string | null;
+}>;
+
+function readProvisionalRecordId(record: Readonly<Record<string, unknown>> | null): string | null {
+    if (!record) return null;
+    if (typeof record.localId === 'string' && record.localId.trim()) return record.localId;
+    if (typeof record.id === 'string' && record.id.trim()) return record.id;
+    return null;
+}
+
 function upsertProjectedMessage(
     state: VoiceTranscriptStateLike,
     conversationSessionId: string,
     message: NormalizedMessage,
     text: string,
     turn: VoiceTranscriptTurn | null,
-): NormalizedMessage {
+): UpsertProjectedMessageResult {
     const existingMessages = readStoredSessionMessages(state as any, conversationSessionId);
     const existing = existingMessages.find((candidate: unknown) => {
         const candidateRecord = readRecord(candidate);
@@ -179,17 +193,63 @@ function upsertProjectedMessage(
     if (existing) {
         if (messageMatchesProvisionalTurn(existing, conversationSessionId, text, turn)) {
             promoteProvisionalMessage(existing, message);
+            return {
+                message,
+                appliedNew: false,
+                reconciledProvisionalId: readProvisionalRecordId(readRecord(existing)),
+            };
         }
-        return message;
+        return { message, appliedNew: false, reconciledProvisionalId: null };
     }
     state.applyMessagesLoaded?.(conversationSessionId);
     state.applyMessages?.(conversationSessionId, [message]);
-    return message;
+    return { message, appliedNew: true, reconciledProvisionalId: null };
+}
+
+/**
+ * Truncate `fullText` to the prefix that was actually heard, snapping back to the
+ * nearest preceding word boundary so a partially-spoken word is not surfaced.
+ */
+export function truncateTextToPlayedBoundary(fullText: string, playedMs: number, spokenDurationMs: number): string {
+    if (!Number.isFinite(spokenDurationMs) || spokenDurationMs <= 0) return fullText;
+    const fraction = playedMs / spokenDurationMs;
+    if (!Number.isFinite(fraction) || fraction >= 1) return fullText;
+    if (fraction <= 0) return '';
+    const cut = Math.floor(fraction * fullText.length);
+    if (cut >= fullText.length) return fullText;
+    if (cut <= 0) return '';
+    const head = fullText.slice(0, cut);
+    const lastBoundary = head.search(/\s+\S*$/);
+    const snapped = lastBoundary > 0 ? head.slice(0, lastBoundary) : head;
+    return snapped.trimEnd();
 }
 
 export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDeps) {
     const nowMs = deps.nowMs ?? (() => Date.now());
     let localProjectionSequence = 0;
+
+    /**
+     * In-memory ring of still-unreconciled (provisional/ephemeral) projection ids.
+     * Reconciled ephemerals are retired immediately when their canonical turn lands
+     * (see {@link upsertProjectedMessage}'s `reconciledProvisionalId`); this ring only
+     * bounds the still-pending set, retiring the oldest once it exceeds the cap so a
+     * long call cannot grow the unreconciled set without bound.
+     */
+    const unreconciledProjectionIds: string[] = [];
+
+    const retireUnreconciledProjection = (provisionalId: string | null): void => {
+        if (!provisionalId) return;
+        const index = unreconciledProjectionIds.indexOf(provisionalId);
+        if (index >= 0) unreconciledProjectionIds.splice(index, 1);
+    };
+
+    const trackUnreconciledProjection = (provisionalId: string | null): void => {
+        if (!provisionalId) return;
+        unreconciledProjectionIds.push(provisionalId);
+        while (unreconciledProjectionIds.length > VOICE_TRANSCRIPT_UNRECONCILED_EVENT_RING_MAX) {
+            unreconciledProjectionIds.shift();
+        }
+    };
 
     const projectTextMessage = (params: Readonly<{
         conversationSessionId: string;
@@ -235,7 +295,15 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
                             : {}
                 ),
             };
-        return upsertProjectedMessage(deps.getState(), conversationSessionId, message, text, turn);
+        const result = upsertProjectedMessage(deps.getState(), conversationSessionId, message, text, turn);
+
+        // Retire any provisional projection that this canonical turn reconciled, and
+        // track a freshly applied unreconciled (no-turn) projection in the bounded ring.
+        retireUnreconciledProjection(result.reconciledProvisionalId);
+        if (result.appliedNew && !turn) {
+            trackUnreconciledProjection(message.localId ?? message.id ?? null);
+        }
+        return result.message;
     };
 
     return {
@@ -245,6 +313,18 @@ export function createVoiceTranscriptProjector(deps: VoiceTranscriptProjectorDep
             projectTextMessage({ ...params, role: 'assistant' }),
         projectNoteText: (params: Readonly<{ conversationSessionId: string; text: string }>) =>
             projectTextMessage({ ...params, role: 'note' }),
+        /**
+         * Count of still-unreconciled in-memory projections (bounded by
+         * {@link VOICE_TRANSCRIPT_UNRECONCILED_EVENT_RING_MAX}). Exposed for the
+         * perf-bound regression test and ring observability.
+         */
+        unreconciledProjectionCount: (): number => unreconciledProjectionIds.length,
+        /**
+         * Truncate assistant transcript text to the prefix that was actually heard.
+         * Method-only hook: barge-in wires this to the real `playedMs` later.
+         */
+        truncateToPlayedBoundary: (params: Readonly<{ fullText: string; playedMs: number; spokenDurationMs: number }>): string =>
+            truncateTextToPlayedBoundary(params.fullText, params.playedMs, params.spokenDurationMs),
     };
 }
 

@@ -8,6 +8,10 @@ import type {
 } from '@elevenlabs/client';
 
 import type { RealtimeConversationHandle } from '@/voice/runtime/realtime/realtimeTransportProvider';
+import {
+    redactRealtimeClientToolResults,
+    type RealtimeClientToolMap,
+} from './redactRealtimeClientToolResults';
 
 type MessagePayload = Parameters<NonNullable<Callbacks['onMessage']>>[0];
 
@@ -52,6 +56,16 @@ export function createElevenLabsConversationHandle(params: Readonly<{
     let activeConversation: ElevenLabsConversation | null = null;
     let latestStartSequence = 0;
     let disposed = false;
+
+    // Route every realtime tool result through the canonical provider-bound
+    // redaction chokepoint before it reaches the provider. Without this the raw
+    // tool result (which can carry session summaries/paths) bypasses the voice
+    // privacy prefs that the local follow-up channel already honors.
+    const redactedClientTools = (
+        params.clientTools && typeof params.clientTools === 'object'
+            ? redactRealtimeClientToolResults(params.clientTools as RealtimeClientToolMap)
+            : params.clientTools
+    ) as PartialOptions['clientTools'];
 
     const isCurrentStartSequence = (startSequence: number): boolean =>
         !disposed && startSequence === latestStartSequence;
@@ -102,7 +116,7 @@ export function createElevenLabsConversationHandle(params: Readonly<{
             const conversation = await Conversation.startSession({
                 ...readRecord(config),
                 ...buildCallbackOptions(startSequence),
-                clientTools: params.clientTools,
+                clientTools: redactedClientTools,
             } as PartialOptions);
 
             if (!isCurrentStartSequence(startSequence)) {

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { registerStorageStateReader } from '@/sync/domains/state/storageStateReaderBridge';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
@@ -312,10 +313,10 @@ describe('voice tool handlers', () => {
 
   });
 
-  it('does not expose review.start when the review action is not voice-enabled', async () => {
+  it('exposes review.start through the catalog voice binding', async () => {
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
-    expect(tools.startReview).toBeUndefined();
+    expect(tools.startReview).toEqual(expect.any(Function));
   });
 
   it('can apply an execution run action via sessionExecutionRunAction', async () => {
@@ -586,10 +587,10 @@ describe('voice tool handlers', () => {
     expect(routerNavigate).toHaveBeenCalledWith('/session/s_other', expect.any(Object));
   });
 
-  it('does not expose review.start for cross-server sessions when the action is not voice-enabled', async () => {
+  it('exposes review.start for cross-server sessions through the catalog voice binding', async () => {
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : null) });
-    expect(tools.startReview).toBeUndefined();
+    expect(tools.startReview).toEqual(expect.any(Function));
   });
 
   it('increments agent transcript epoch when resetting the global agent and persistence is enabled', async () => {
@@ -652,9 +653,108 @@ describe('voice tool handlers', () => {
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
       sessionId: 's1',
       serverId: 'server-a',
-      method: 'permission',
+      method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
       payload: { id: 'req_permission', approved: true },
     });
+  });
+
+  it('does not answer a covered permission request while still answering a live user-action request', async () => {
+    const questionPayload = { questions: [{ question: 'Continue?', options: [{ label: 'Yes' }] }] };
+    state.sessions.s1.agentState.requests = {
+      req_permission_done: {
+        id: 'req_permission_done',
+        tool: 'Bash',
+        kind: 'permission',
+        arguments: { command: 'pwd' },
+        createdAt: 10,
+      },
+    };
+    state.sessions.s1.agentState.completedRequests = {
+      req_permission_done: {
+        tool: 'Bash',
+        kind: 'permission',
+        arguments: { command: 'pwd' },
+        completedAt: 11,
+        status: 'approved',
+      },
+    };
+    sessionRpcWithServerScope.mockResolvedValue({ ok: true });
+
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
+
+    const permissionResult = await tools.processPermissionRequest({ decision: 'allow', currentSessionOnly: true });
+
+    expect(JSON.parse(permissionResult)).toMatchObject({
+      ok: false,
+      errorCode: 'request_not_in_current_session',
+      sessionId: 's1',
+    });
+    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
+
+    state.sessions.s1.agentState.requests = {
+      req_question_live: {
+        id: 'req_question_live',
+        tool: 'AskUserQuestion',
+        kind: 'user_action',
+        arguments: questionPayload,
+        createdAt: 20,
+      },
+    };
+
+    const userActionResult = await (tools as any).answerUserActionRequest({
+      answers: [{ question: 'Continue?', answer: 'Yes' }],
+    });
+
+    expect(JSON.parse(userActionResult)).toMatchObject({
+      ok: true,
+      sessionId: 's1',
+      requestId: 'req_question_live',
+    });
+    expect(sessionRpcWithServerScope).toHaveBeenCalledTimes(1);
+    expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
+      sessionId: 's1',
+      serverId: 'server-a',
+      method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
+      payload: { id: 'req_question_live', approved: true, answers: { 'Continue?': 'Yes' } },
+    });
+  });
+
+  it('does not answer a covered user-action request', async () => {
+    const questionPayload = { questions: [{ question: 'Continue?', options: [{ label: 'Yes' }] }] };
+    state.sessions.s1.agentState.requests = {
+      req_question_done: {
+        id: 'req_question_done',
+        tool: 'AskUserQuestion',
+        kind: 'user_action',
+        arguments: questionPayload,
+        createdAt: 10,
+      },
+    };
+    state.sessions.s1.agentState.completedRequests = {
+      req_question_done: {
+        tool: 'AskUserQuestion',
+        kind: 'user_action',
+        arguments: questionPayload,
+        completedAt: 11,
+        status: 'approved',
+      },
+    };
+    sessionRpcWithServerScope.mockResolvedValue({ ok: true });
+
+    const { createVoiceToolHandlers } = await import('./handlers');
+    const tools = createVoiceToolHandlers({ resolveSessionId: (explicit) => (explicit ? (explicit as any) : 's1') });
+
+    const result = await (tools as any).answerUserActionRequest({
+      answers: [{ question: 'Continue?', answer: 'Yes' }],
+    });
+
+    expect(JSON.parse(result)).toMatchObject({
+      ok: false,
+      errorCode: 'no_permission_request',
+      sessionId: 's1',
+    });
+    expect(sessionRpcWithServerScope).not.toHaveBeenCalled();
   });
 
   it('allows explicit requestId selection', async () => {
@@ -669,7 +769,7 @@ describe('voice tool handlers', () => {
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
       sessionId: 's1',
       serverId: 'server-a',
-      method: 'permission',
+      method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
       payload: { id: 'req_b', approved: true },
     });
     expect(trackPermissionResponse).toHaveBeenCalledWith(true);
@@ -725,7 +825,7 @@ describe('voice tool handlers', () => {
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
       sessionId: 's1',
       serverId: 'server-a',
-      method: 'permission',
+      method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
       payload: { id: 'req_permission', approved: true },
     });
   });
@@ -803,7 +903,7 @@ describe('voice tool handlers', () => {
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
       sessionId: 's1',
       serverId: 'server-a',
-      method: 'permission',
+      method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
       payload: { id: 'acp-fs-write:64154962-012d-4d95-8211-b65855cc7476', approved: true },
     });
   });
@@ -900,7 +1000,7 @@ describe('voice tool handlers', () => {
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
       sessionId: 's1',
       serverId: 'server-a',
-      method: 'permission',
+      method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
       payload: { id: 'req_question', approved: true, answers: { 'Continue?': 'Yes' } },
     });
   });
@@ -938,7 +1038,7 @@ describe('voice tool handlers', () => {
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 's1',
-        method: 'permission',
+        method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
         payload: {
           id: 'req_question',
           approved: false,
@@ -966,7 +1066,7 @@ describe('voice tool handlers', () => {
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
       sessionId: 's1',
       serverId: 'server-a',
-      method: 'permission',
+      method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
       payload: {
         id: 'req_exit_plan',
         approved: false,
@@ -1028,7 +1128,7 @@ describe('voice tool handlers', () => {
     expect(sessionRpcWithServerScope).toHaveBeenCalledWith({
       sessionId: 's1',
       serverId: 'server-a',
-      method: 'permission',
+      method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
       payload: { id: 'req_question', approved: true, answers: { 'Continue?': 'Yes' } },
     });
   });
@@ -1188,7 +1288,9 @@ describe('voice tool handlers', () => {
     });
   });
 
-  it('includes a human-readable location label in listSessions results', async () => {
+  it('omits the location label from listSessions results because file-path sharing is hardened off', async () => {
+    // `voiceSettingsParse` force-disables shareFilePaths over the voice transport, so the
+    // workspace location label must not be surfaced to the provider.
     const { createVoiceToolHandlers } = await import('./handlers');
     const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
 
@@ -1196,10 +1298,8 @@ describe('voice tool handlers', () => {
     const parsed = JSON.parse(res) as any;
 
     const session = parsed.sessions.find((entry: any) => entry.id === 's1');
-    expect(session).toMatchObject({
-      id: 's1',
-      locationLabel: 'project-alpha',
-    });
+    expect(session).toMatchObject({ id: 's1' });
+    expect(session.locationLabel).toBeUndefined();
   });
 
   it('prefers the visible human title over a stale raw session title for the same session id', async () => {

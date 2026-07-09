@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS } from '@/sync/domains/settings/voiceSettings';
 import type { MicSession } from '@/voice/runtime/mic/MicSession';
+import type { SttSink } from '@/voice/input/sttController';
 
 const platformOsMock = vi.hoisted(() => ({ value: 'ios' }));
 const webVadState = vi.hoisted(() => ({
@@ -71,6 +72,41 @@ function createMicSession(): MicSession {
     isMuted: vi.fn(() => false),
     teardown: vi.fn(async () => {}),
     getStream: vi.fn(() => null),
+    getAudioContext: vi.fn(() => null),
+  };
+}
+
+function createSink(): SttSink & {
+  onAudioStarted: ReturnType<typeof vi.fn>;
+  onPartial: ReturnType<typeof vi.fn>;
+  onFinal: ReturnType<typeof vi.fn>;
+  onEndpoint: ReturnType<typeof vi.fn>;
+  onError: ReturnType<typeof vi.fn>;
+} {
+  return {
+    onAudioStarted: vi.fn(),
+    onPartial: vi.fn(),
+    onFinal: vi.fn(),
+    onEndpoint: vi.fn(),
+    onError: vi.fn(),
+  };
+}
+
+function baseSettings(handsFreeEnabled: boolean, endpointing?: { silenceMs: number; minSpeechMs: number } | null) {
+  return {
+    voice: {
+      providerId: 'local_direct',
+      assistantLanguage: 'en',
+      adapters: {
+        local_direct: {
+          stt: { provider: 'device', useDeviceStt: true },
+          handsFree: {
+            enabled: handsFreeEnabled,
+            ...(endpointing === null ? {} : { endpointing: endpointing ?? { silenceMs: 0, minSpeechMs: 0 } }),
+          },
+        },
+      },
+    },
   };
 }
 
@@ -97,163 +133,85 @@ describe('createDeviceSttController', () => {
     }
   });
 
-  it('demotes web speech recognition to fallback turn-capture mode', async () => {
+  it('demotes web speech recognition to single-utterance (non-continuous) mode', async () => {
     platformOsMock.value = 'web';
     start.mockClear();
 
     const { createDeviceSttController } = await import('./DeviceSttController');
-    const controller = createDeviceSttController({
-      onCaptureStarted: vi.fn(),
-      onCaptureError: vi.fn(),
-      getSettings: () => ({
-        voice: {
-          providerId: 'local_direct',
-          assistantLanguage: 'en',
-          adapters: {
-            local_direct: {
-              stt: { provider: 'device', useDeviceStt: true },
-              handsFree: {
-                enabled: false,
-                endpointing: { silenceMs: 0, minSpeechMs: 0 },
-              },
-            },
-          },
-        },
-      }),
-    });
+    const controller = createDeviceSttController({ getSettings: () => baseSettings(false) });
 
-    await controller.start('session-web', createMicSession());
+    await controller.start({ micSession: createMicSession(), sink: createSink() });
 
-    expect(start).toHaveBeenCalledWith(expect.objectContaining({
-      continuous: false,
-    }));
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ continuous: false }));
   });
 
-  it('trims the voice provider id before resolving endpoint signals', async () => {
-    const onEndpointSignal = vi.fn();
-    const onCaptureStarted = vi.fn();
-
+  it('surfaces interim transcripts via onPartial and the committed transcript via onFinal', async () => {
+    const sink = createSink();
     const { createDeviceSttController } = await import('./DeviceSttController');
-    const controller = createDeviceSttController({
-      onCaptureStarted,
-      onCaptureError: vi.fn(),
-      getSettings: () => ({
-        voice: {
-          providerId: ' local_direct ',
-          assistantLanguage: 'en',
-          adapters: {
-            local_direct: {
-              stt: { provider: 'device', useDeviceStt: true },
-              handsFree: {
-                enabled: true,
-                endpointing: { silenceMs: 0, minSpeechMs: 0 },
-              },
-            },
-            local_conversation: {
-              stt: { provider: 'openai_compat', useDeviceStt: false },
-              handsFree: { enabled: false, endpointing: { silenceMs: 0, minSpeechMs: 0 } },
-            },
-          },
-        },
-      }),
-      onEndpointSignal,
-    });
+    const controller = createDeviceSttController({ getSettings: () => baseSettings(false) });
 
-    await controller.start('session-1', createMicSession());
-    expect(onCaptureStarted).toHaveBeenCalledWith('session-1');
-    expect(start).toHaveBeenCalled();
+    await controller.start({ micSession: createMicSession(), sink });
+
+    listeners.result?.({ results: [{ transcript: ' hello ' }], isFinal: false });
+    expect(sink.onAudioStarted).toHaveBeenCalledTimes(1);
+    expect(sink.onPartial).toHaveBeenCalledWith('hello');
 
     listeners.result?.({ results: [{ transcript: ' hello world ' }], isFinal: true });
-    await flushMicrotasks();
-
-    expect(onEndpointSignal).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'session-1',
-      source: 'heuristic',
-      transcript: 'hello world',
-    }));
+    expect(sink.onFinal).toHaveBeenCalledWith('hello world');
   });
 
-  it('emits runtime-owned endpoint signals for finalized device transcripts', async () => {
+  it('emits runtime-owned heuristic endpoint signals for finalized device transcripts', async () => {
     const onEndpointSignal = vi.fn();
-
     const { createDeviceSttController } = await import('./DeviceSttController');
-    const controller = createDeviceSttController({
-      onCaptureStarted: vi.fn(),
-      onCaptureError: vi.fn(),
-      getSettings: () => ({
-        voice: {
-          providerId: 'local_direct',
-          assistantLanguage: 'en',
-          adapters: {
-            local_direct: {
-              stt: { provider: 'device', useDeviceStt: true },
-              handsFree: {
-                enabled: false,
-                endpointing: { silenceMs: 0, minSpeechMs: 0 },
-              },
-            },
-          },
-        },
-      }),
-      onEndpointSignal,
-    });
+    const controller = createDeviceSttController({ getSettings: () => baseSettings(false), onEndpointSignal });
 
-    await controller.start('session-endpoint', createMicSession());
+    await controller.start({ micSession: createMicSession(), sink: createSink() });
     listeners.result?.({ results: [{ transcript: ' hello runtime ' }], isFinal: true });
     await flushMicrotasks();
 
     expect(onEndpointSignal).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'session-endpoint',
       source: 'heuristic',
       transcript: 'hello runtime',
+      sessionId: expect.any(String),
     }));
   });
 
-  it('prefers web VAD endpoint signals over finalized transcript heuristics on web', async () => {
+  it('uses finalized transcript endpointing as a fallback while web VAD is active', async () => {
     platformOsMock.value = 'web';
     (globalThis as { window?: object }).window = {};
     (globalThis as { document?: object }).document = {};
     const onEndpointSignal = vi.fn();
 
     const { createDeviceSttController } = await import('./DeviceSttController');
+    // WebVadController is platform-split (WebVadController.ts is the native-safe
+    // no-op fallback; WebVadController.web.ts holds the real `@ricky0123/vad-web`
+    // integration this test simulates). Metro resolves the `.web` file for real
+    // web builds, but Vitest has no such platform resolution — inject the real
+    // web implementation explicitly to exercise it under the simulated DOM.
+    const { createWebVadController } = await import('@/voice/runtime/input/WebVadController.web');
     const controller = createDeviceSttController({
-      onCaptureStarted: vi.fn(),
-      onCaptureError: vi.fn(),
-      getSettings: () => ({
-        voice: {
-          providerId: 'local_direct',
-          assistantLanguage: 'en',
-          adapters: {
-            local_direct: {
-              stt: { provider: 'device', useDeviceStt: true },
-              handsFree: {
-                enabled: true,
-                endpointing: { silenceMs: 0, minSpeechMs: 0 },
-              },
-            },
-          },
-        },
-      }),
+      getSettings: () => baseSettings(true),
       onEndpointSignal,
+      webVadController: createWebVadController({ onEndpointSignal }),
     });
 
-    await controller.start('session-vad', createMicSession());
+    await controller.start({ micSession: createMicSession(), sink: createSink() });
     listeners.result?.({ results: [{ transcript: 'vad backed transcript' }], isFinal: true });
     await flushMicrotasks();
 
-    expect(onEndpointSignal).not.toHaveBeenCalled();
-
-    const onSpeechEnd = webVadState.onSpeechEnd as null | (() => void);
-    onSpeechEnd?.();
-
     expect(onEndpointSignal).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'session-vad',
+      source: 'heuristic',
+      transcript: 'vad backed transcript',
+    }));
+
+    webVadState.onSpeechEnd?.();
+    expect(onEndpointSignal).toHaveBeenCalledWith(expect.objectContaining({
       source: 'web_vad',
       transcript: '',
     }));
   });
 
-  it('prefers native VAD over finalized transcript heuristics when the native bridge starts', async () => {
+  it('uses finalized transcript endpointing as a fallback while native VAD is active', async () => {
     const onEndpointSignal = vi.fn();
     const nativeVadController = {
       isActiveSession: vi.fn(() => true),
@@ -263,41 +221,28 @@ describe('createDeviceSttController', () => {
 
     const { createDeviceSttController } = await import('./DeviceSttController');
     const controller = createDeviceSttController({
-      onCaptureStarted: vi.fn(),
-      onCaptureError: vi.fn(),
-      getSettings: () => ({
-        voice: {
-          providerId: 'local_direct',
-          assistantLanguage: 'en',
-          adapters: {
-            local_direct: {
-              stt: { provider: 'device', useDeviceStt: true },
-              handsFree: {
-                enabled: true,
-                endpointing: { silenceMs: 30, minSpeechMs: 10 },
-              },
-            },
-          },
-        },
-      }),
+      getSettings: () => baseSettings(true, { silenceMs: 30, minSpeechMs: 10 }),
       nativeVadController,
       onEndpointSignal,
     });
 
-    await controller.start('session-native-vad', createMicSession());
+    await controller.start({ micSession: createMicSession(), sink: createSink() });
     listeners.result?.({ results: [{ transcript: 'native vad backed transcript' }], isFinal: true });
-    await flushMicrotasks();
 
     expect(nativeVadController.startSession).toHaveBeenCalledWith({
-      sessionId: 'session-native-vad',
+      sessionId: expect.any(String),
       minSpeechMs: 10,
       redemptionMs: 30,
     });
-    expect(onEndpointSignal).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(onEndpointSignal).toHaveBeenCalledWith(expect.objectContaining({
+        source: 'heuristic',
+        transcript: 'native vad backed transcript',
+      }));
+    });
   });
 
   it('uses the current hands-free endpointing defaults when endpointing settings are missing', async () => {
-    const onEndpointSignal = vi.fn();
     const nativeVadController = {
       isActiveSession: vi.fn(() => true),
       startSession: vi.fn(async () => false),
@@ -306,62 +251,26 @@ describe('createDeviceSttController', () => {
 
     const { createDeviceSttController } = await import('./DeviceSttController');
     const controller = createDeviceSttController({
-      onCaptureStarted: vi.fn(),
-      onCaptureError: vi.fn(),
-      getSettings: () => ({
-        voice: {
-          providerId: 'local_direct',
-          assistantLanguage: 'en',
-          adapters: {
-            local_direct: {
-              stt: { provider: 'device', useDeviceStt: true },
-              handsFree: {
-                enabled: true,
-                // Intentionally omit `endpointing` to assert the controller uses the
-                // current schema defaults rather than legacy hardcoded values.
-              },
-            },
-          },
-        },
-      }),
+      getSettings: () => baseSettings(true, null),
       nativeVadController,
-      onEndpointSignal,
+      onEndpointSignal: vi.fn(),
     });
 
-    await controller.start('session-default-endpointing', createMicSession());
+    await controller.start({ micSession: createMicSession(), sink: createSink() });
 
     expect(nativeVadController.startSession).toHaveBeenCalledWith({
-      sessionId: 'session-default-endpointing',
+      sessionId: expect.any(String),
       minSpeechMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.minSpeechMs,
       redemptionMs: VOICE_HANDS_FREE_ENDPOINTING_DEFAULTS.silenceMs,
     });
   });
 
-  it('ensures an injected mic session is active before starting device STT', async () => {
+  it('ensures the injected mic session is active before starting device STT (single acquisition)', async () => {
     const micSession = createMicSession();
-
     const { createDeviceSttController } = await import('./DeviceSttController');
-    const controller = createDeviceSttController({
-      onCaptureStarted: vi.fn(),
-      onCaptureError: vi.fn(),
-      getSettings: () => ({
-        voice: {
-          providerId: 'local_direct',
-          assistantLanguage: 'en',
-          adapters: {
-            local_direct: {
-              stt: { provider: 'device', useDeviceStt: true },
-              handsFree: {
-                enabled: false,
-                endpointing: { silenceMs: 0, minSpeechMs: 0 },
-              },
-            },
-          },
-        },
-      }),
-    });
+    const controller = createDeviceSttController({ getSettings: () => baseSettings(false) });
 
-    await controller.start('session-mic', micSession);
+    await controller.start({ micSession, sink: createSink() });
 
     expect(micSession.ensureActive).toHaveBeenCalledTimes(1);
     expect(start).toHaveBeenCalled();
@@ -371,28 +280,9 @@ describe('createDeviceSttController', () => {
     requestMicrophonePermission.mockClear();
     start.mockClear();
     const { createDeviceSttController } = await import('./DeviceSttController');
-    const controller = createDeviceSttController({
-      onCaptureStarted: vi.fn(),
-      onCaptureError: vi.fn(),
-      getSettings: () => ({
-        voice: {
-          providerId: 'local_direct',
-          assistantLanguage: 'en',
-          adapters: {
-            local_direct: {
-              stt: { provider: 'device', useDeviceStt: true },
-              handsFree: {
-                enabled: false,
-                endpointing: { silenceMs: 0, minSpeechMs: 0 },
-              },
-            },
-          },
-        },
-      }),
-    });
+    const controller = createDeviceSttController({ getSettings: () => baseSettings(false) });
 
-    // @ts-expect-error intentional contract violation to verify the runtime guard
-    await expect(controller.start('session-missing-mic')).rejects.toThrow('mic_session_required');
+    await expect(controller.start({ sink: createSink() } as never)).rejects.toThrow('mic_session_required');
     expect(requestMicrophonePermission).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
   });
@@ -407,74 +297,114 @@ describe('createDeviceSttController', () => {
 
     const { createDeviceSttController } = await import('./DeviceSttController');
     const controller = createDeviceSttController({
-      onCaptureStarted: vi.fn(),
-      onCaptureError: vi.fn(),
-      getSettings: () => ({
-        voice: {
-          providerId: 'local_direct',
-          assistantLanguage: 'en',
-          adapters: {
-            local_direct: {
-              stt: { provider: 'device', useDeviceStt: true },
-              handsFree: {
-                enabled: true,
-                endpointing: { silenceMs: 0, minSpeechMs: 0 },
-              },
-            },
-          },
-        },
-      }),
+      getSettings: () => baseSettings(true),
       nativeVadController,
       onEndpointSignal,
     });
 
-    await controller.start('session-native-fallback', createMicSession());
+    await controller.start({ micSession: createMicSession(), sink: createSink() });
     listeners.result?.({ results: [{ transcript: 'native fallback transcript' }], isFinal: true });
     await flushMicrotasks();
 
-    expect(nativeVadController.startSession).toHaveBeenCalledWith({
-      sessionId: 'session-native-fallback',
-      minSpeechMs: 0,
-      redemptionMs: 0,
-    });
     expect(onEndpointSignal).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'session-native-fallback',
       source: 'heuristic',
       transcript: 'native fallback transcript',
     }));
   });
 
-  it('surfaces device STT startup failures through the explicit capture-error callback', async () => {
+  it('surfaces an unavailable recognizer through a typed sink error instead of throwing', async () => {
+    isRecognitionAvailable.mockReturnValueOnce(false);
+    const sink = createSink();
+    const { createDeviceSttController } = await import('./DeviceSttController');
+    const controller = createDeviceSttController({ getSettings: () => baseSettings(false) });
+
+    await controller.start({ micSession: createMicSession(), sink });
+
+    expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'provider_error',
+      reason: 'device_stt_unavailable',
+    }));
+  });
+
+  it('surfaces device STT startup failures through a typed sink error and rethrows', async () => {
     start.mockImplementationOnce(() => {
       throw new Error('speech_start_failed');
     });
-    const onCaptureError = vi.fn();
+    const sink = createSink();
 
     const { createDeviceSttController } = await import('./DeviceSttController');
-    const controller = createDeviceSttController({
-      onCaptureStarted: vi.fn(),
-      onCaptureError,
-      getSettings: () => ({
-        voice: {
-          providerId: 'local_direct',
-          assistantLanguage: 'en',
-          adapters: {
-            local_direct: {
-              stt: { provider: 'device', useDeviceStt: true },
-              handsFree: {
-                enabled: false,
-                endpointing: { silenceMs: 0, minSpeechMs: 0 },
-              },
-            },
-          },
-        },
-      }),
+    const controller = createDeviceSttController({ getSettings: () => baseSettings(false) });
+
+    await expect(controller.start({ micSession: createMicSession(), sink })).rejects.toThrow('speech_start_failed');
+    expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'provider_error',
+      reason: 'device_stt_start_failed',
+    }));
+  });
+
+  it('stops the in-flight recognizer promptly when the D8 abort signal fires mid-recognition', async () => {
+    start.mockClear();
+    stop.mockClear();
+    const sink = createSink();
+    const abortController = new AbortController();
+
+    const { createDeviceSttController } = await import('./DeviceSttController');
+    const controller = createDeviceSttController({ getSettings: () => baseSettings(false) });
+
+    await controller.start({ micSession: createMicSession(), sink, signal: abortController.signal });
+
+    // Recognizer is running: an interim result has streamed in but no stop yet.
+    listeners.audiostart?.({});
+    listeners.result?.({ results: [{ transcript: 'partial in flight' }], isFinal: false });
+    expect(stop).not.toHaveBeenCalled();
+
+    // Firing the abort signal mid-recognition must stop the recognizer promptly
+    // (the contract requires aborting in-flight work, not only the entry check).
+    abortController.abort();
+    expect(stop).toHaveBeenCalledTimes(1);
+
+    // The in-flight turn ends without hanging on the stop timeout.
+    await expect(controller.stop()).resolves.toEqual({ finalText: 'partial in flight' });
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start a recognizer when the abort signal fires during async setup', async () => {
+    start.mockClear();
+    const sink = createSink();
+    const abortController = new AbortController();
+    const micSession = createMicSession();
+    // Abort while ensureActive() is in flight, before the recognizer starts.
+    (micSession.ensureActive as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      abortController.abort();
     });
 
-    await expect(controller.start('session-error', createMicSession())).rejects.toThrow('speech_start_failed');
-    expect(onCaptureError).toHaveBeenCalledWith({
-      controlSessionId: 'session-error',
-      reason: 'device_stt_start_failed',
-    });
+    const { createDeviceSttController } = await import('./DeviceSttController');
+    const controller = createDeviceSttController({ getSettings: () => baseSettings(false) });
+
+    await controller.start({ micSession, sink, signal: abortController.signal });
+
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('removes the abort listener when the turn completes so the signal does not leak', async () => {
+    start.mockClear();
+    stop.mockClear();
+    const sink = createSink();
+    const abortController = new AbortController();
+    const removeSpy = vi.spyOn(abortController.signal, 'removeEventListener');
+
+    const { createDeviceSttController } = await import('./DeviceSttController');
+    const controller = createDeviceSttController({ getSettings: () => baseSettings(false), stopTimeoutMs: 0 });
+
+    await controller.start({ micSession: createMicSession(), sink, signal: abortController.signal });
+    listeners.end?.({});
+    await controller.stop();
+
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+
+    // A late abort after completion must not reach the torn-down recognizer.
+    stop.mockClear();
+    abortController.abort();
+    expect(stop).not.toHaveBeenCalled();
   });
 });

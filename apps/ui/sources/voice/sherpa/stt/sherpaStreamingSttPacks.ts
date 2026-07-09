@@ -1,3 +1,4 @@
+import { getDefaultModelPackId } from '@happier-dev/protocol';
 import { z } from 'zod';
 
 export type SherpaStreamingSttPackOption = {
@@ -14,10 +15,13 @@ const SherpaStreamingSttPackOptionSchema = z.object({
   subtitle: z.string().optional(),
 });
 
+const DEFAULT_STREAMING_STT_PACK_ID =
+  getDefaultModelPackId('stt_sherpa') ?? 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17';
+
 function getBuiltInOptions(): SherpaStreamingSttPackOption[] {
   return [
     {
-      id: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
+      id: DEFAULT_STREAMING_STT_PACK_ID,
       title: 'Zipformer EN 20M (int8)',
       subtitle: 'Streaming, low latency (recommended).',
     },

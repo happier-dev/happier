@@ -450,6 +450,63 @@ describe('DaemonVoiceAgentClient', () => {
     );
   });
 
+  it('sendTurn aborts the in-flight turn and cancels the daemon stream when the signal fires', async () => {
+    settingsState.current = {
+      voice: {
+        providerId: 'local_conversation',
+        adapters: {
+          local_conversation: {
+            streaming: {
+              enabled: false,
+              turnReadPollIntervalMs: 10,
+              turnReadMaxEvents: 64,
+              turnStreamTimeoutMs: null,
+            },
+            networkTimeoutMs: 15000,
+          },
+        },
+      },
+    };
+
+    const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    const { sessionRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc');
+    let cancelCalled = false;
+    vi.mocked(sessionRpcWithServerScope).mockImplementation(async (args: any) => {
+      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START) {
+        return { streamId: 'stream-1' } as any;
+      }
+      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ) {
+        return { streamId: 'stream-1', events: [], nextCursor: 0, done: false } as any;
+      }
+      if (args?.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL) {
+        cancelCalled = true;
+        return { ok: true } as any;
+      }
+      throw new Error(`unexpected rpc method: ${String(args?.method ?? '')}`);
+    });
+
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const client = new DaemonVoiceAgentClient();
+
+    const controller = new AbortController();
+    const sendPromise = client.sendTurn({
+      sessionId: 'session-1',
+      voiceAgentId: 'm1',
+      userText: 'hello',
+      signal: controller.signal,
+    });
+
+    const halfway = await settleWithin(sendPromise, 40);
+    expect(halfway.state).toBe('pending');
+
+    controller.abort();
+
+    const outcome = await settleWithin(sendPromise, 300);
+    expect(outcome.state).toBe('rejected');
+    expect(String(outcome.state === 'rejected' ? (outcome.reason as any)?.name ?? '' : '')).toBe('AbortError');
+    expect(cancelCalled).toBe(true);
+  });
+
   it('sendTurn does not fall back to networkTimeoutMs when turnStreamTimeoutMs is null', async () => {
     settingsState.current = {
       voice: {

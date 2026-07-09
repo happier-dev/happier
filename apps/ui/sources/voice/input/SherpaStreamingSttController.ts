@@ -4,19 +4,16 @@ import { getOptionalHappierAudioStreamNativeModule } from '@happier-dev/audio-st
 import { getOptionalHappierSherpaNativeModule } from '@happier-dev/sherpa-native';
 import { ensureModelPackInstalled } from '@/voice/modelPacks/installer.native';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
-import { VoiceLocalSttSchema } from '@/sync/domains/settings/voiceLocalSttSettings';
 import {
   createTurnEndpointController,
   type TurnEndpointController,
   type TurnEndpointSignal,
 } from '@/voice/runtime/input/TurnEndpointController';
-import type { MicSession } from '@/voice/runtime/mic/MicSession';
-import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { VOICE_RUNTIME_STT_PCM_FORMAT } from '@happier-dev/protocol';
 
-type DeviceSttStatePatch = {
-  controlSessionId: string;
-  reason: string;
-};
+import { resolveLocalNeuralSttCaptureSettings } from './resolveLocalNeuralSttCaptureSettings';
+import type { SttController, SttStartParams } from './sttController';
 
 type AudioStreamFrameEvent = {
   streamId: string;
@@ -48,12 +45,17 @@ type SherpaSttHandle = {
   pushing: boolean;
   queuedFrames: Array<{ pcm16leBase64: string; sampleRate: number; channels: number }>;
   pushLoop: Promise<void> | null;
+  audioStarted: boolean;
+  abortCleanup: () => void;
 };
 
-export type SherpaStreamingSttController = Readonly<{
-  start: (sessionId: string, micSession: MicSession) => Promise<void>;
-  stop: (sessionId: string) => Promise<string>;
-}>;
+export type SherpaStreamingSttController = SttController;
+
+export type CreateSherpaStreamingSttControllerDeps = {
+  getSettings: () => any;
+  onEndpointSignal?: (signal: TurnEndpointSignal) => void;
+  endpointController?: TurnEndpointController;
+};
 
 function getOptionalAudioStreamModule(): AudioStreamModuleLike | null {
   return (getOptionalHappierAudioStreamNativeModule() as unknown as AudioStreamModuleLike | null) ?? null;
@@ -63,16 +65,9 @@ function getOptionalSherpaNativeModule(): SherpaNativeModuleLike | null {
   return (getOptionalHappierSherpaNativeModule() as unknown as SherpaNativeModuleLike | null) ?? null;
 }
 
-export function createSherpaStreamingSttController(deps: {
-  onCaptureStarted: (controlSessionId: string) => void;
-  onCaptureError: (patch: DeviceSttStatePatch) => void;
-  getSettings: () => any;
-  onEndpointSignal?: (signal: TurnEndpointSignal) => void;
-  endpointController?: TurnEndpointController;
-}): SherpaStreamingSttController {
+export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSttControllerDeps): SherpaStreamingSttController {
   let handle: SherpaSttHandle | null = null;
   const MAX_QUEUED_FRAMES = 8;
-  const normalizeSessionId = (sessionId: string | null | undefined): string | null => normalizeNonEmptyString(sessionId);
   const endpointController = deps.endpointController ?? createTurnEndpointController({
     onSignal: (signal) => {
       deps.onEndpointSignal?.(signal);
@@ -93,6 +88,7 @@ export function createSherpaStreamingSttController(deps: {
     } catch {
       // ignore
     }
+    h.abortCleanup();
     try {
       h.subscriptions.forEach((s) => s.remove());
     } catch {
@@ -116,12 +112,14 @@ export function createSherpaStreamingSttController(deps: {
     }
   };
 
-  const start = async (sessionId: string, micSession: MicSession) => {
-    const normalizedSessionId = normalizeSessionId(sessionId);
-    if (!normalizedSessionId) return;
+  const start = async ({ micSession, sink, signal }: SttStartParams) => {
+    if (signal?.aborted) {
+      return;
+    }
     if (!micSession) {
       throw new Error('mic_session_required');
     }
+    const normalizedSessionId = `local-neural-${Date.now()}-${Math.random()}`;
 
     const permission = await requestMicrophonePermission();
     if (!permission.granted) {
@@ -134,43 +132,74 @@ export function createSherpaStreamingSttController(deps: {
     const audioStream = getOptionalAudioStreamModule();
     const sherpa = getOptionalSherpaNativeModule();
     if (!audioStream || !sherpa) {
-      deps.onCaptureError({ controlSessionId: normalizedSessionId, reason: 'local_neural_stt_unavailable' });
+      sink.onError(createVoiceMachineError({ kind: 'provider_error', reason: 'local_neural_stt_unavailable' }));
       return;
     }
 
+    // Single transactional cleanup path for ANY startup failure after the mic is
+    // active: releases every native resource staged so far (recognizer, audio
+    // stream, frame subscriptions) AND the injected mic capture, so a failed start
+    // never leaks mic/audio. Mic teardown is also performed by the capture owner
+    // (the mic's lifecycle owner) for the device path; both are best-effort and
+    // idempotent so a defence-in-depth double-release cannot strand state.
+    let startupStreamId: string | null = null;
+    let startupRecognizerJobId: string | null = null;
+    let abortCleanup = (): void => {};
+    const startupSubscriptions: SherpaSttHandle['subscriptions'] = [];
+    const releaseStartupResources = async (): Promise<void> => {
+      abortCleanup();
+      try {
+        startupSubscriptions.forEach((s) => s.remove());
+      } catch {
+        // ignore
+      }
+      startupSubscriptions.length = 0;
+      if (startupRecognizerJobId !== null) {
+        try {
+          await sherpa.cancel({ jobId: startupRecognizerJobId });
+        } catch {
+          // ignore
+        }
+        startupRecognizerJobId = null;
+      }
+      if (startupStreamId !== null) {
+        try {
+          await audioStream.stop({ streamId: startupStreamId });
+        } catch {
+          // ignore
+        }
+        startupStreamId = null;
+      }
+      try {
+        micSession.setMuted(false);
+        await micSession.teardown();
+      } catch {
+        // ignore
+      }
+    };
+
     await micSession.ensureActive();
 
-    const settings = deps.getSettings();
-    const voice = settings?.voice ?? null;
-    const providerId = voice?.providerId;
-    const adapter =
-      providerId === 'local_direct'
-        ? voice?.adapters?.local_direct
-        : voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct;
-    const stt = adapter?.stt ?? null;
-    let normalizedStt: any;
-    try {
-      normalizedStt = VoiceLocalSttSchema.parse(stt ?? {});
-    } catch {
-      normalizedStt = VoiceLocalSttSchema.parse({});
-    }
-
-    const defaultPackId = VoiceLocalSttSchema.parse({})?.localNeural?.assetId ?? null;
-    const rawPackId = normalizedStt?.localNeural?.assetId;
-    const packId =
-      typeof rawPackId === 'string' && rawPackId.trim().length > 0
-        ? rawPackId.trim()
-        : typeof defaultPackId === 'string' && defaultPackId.trim().length > 0
-          ? defaultPackId.trim()
-          : '';
-    const rawLanguage = normalizedStt?.localNeural?.language;
-    const language = typeof rawLanguage === 'string' && rawLanguage.trim() ? rawLanguage.trim() : null;
+    const { packId, language } = resolveLocalNeuralSttCaptureSettings(deps.getSettings());
     if (!packId) {
-      deps.onCaptureError({ controlSessionId: normalizedSessionId, reason: 'local_neural_pack_missing' });
+      await releaseStartupResources();
+      sink.onError(createVoiceMachineError({ kind: 'provider_error', reason: 'local_neural_pack_missing' }));
       return;
     }
 
     const abortController = new AbortController();
+    if (signal) {
+      if (signal.aborted) {
+        abortController.abort();
+        await releaseStartupResources();
+        return;
+      }
+      const abortFromExternalSignal = () => abortController.abort();
+      signal.addEventListener('abort', abortFromExternalSignal, { once: true });
+      abortCleanup = () => {
+        signal.removeEventListener('abort', abortFromExternalSignal);
+      };
+    }
     const manifestUrl = resolveModelPackManifestUrl({ packId });
     let packDirUri: string;
     try {
@@ -183,20 +212,37 @@ export function createSherpaStreamingSttController(deps: {
       });
       packDirUri = installed.packDirUri;
     } catch {
-      deps.onCaptureError({ controlSessionId: normalizedSessionId, reason: 'local_neural_pack_not_installed' });
+      await releaseStartupResources();
+      sink.onError(createVoiceMachineError({ kind: 'provider_error', reason: 'local_neural_pack_not_installed' }));
       return;
     }
 
     const assetsDir = uriToFilePath(packDirUri);
 
-    const sampleRate = 16000;
-    const channels = 1;
+    const sampleRate = VOICE_RUNTIME_STT_PCM_FORMAT.sampleRateHz;
+    const channels = VOICE_RUNTIME_STT_PCM_FORMAT.channelCount;
     const frameMs = 20;
 
-    const { streamId } = await audioStream.start({ sampleRate, channels, frameMs });
-    const jobId = randomUUID();
-
-    await sherpa.createStreamingRecognizer({ jobId, assetsDir, sampleRate, channels, language });
+    let jobId: string;
+    try {
+      const started = await audioStream.start({ sampleRate, channels, frameMs });
+      startupStreamId = started.streamId;
+      jobId = randomUUID();
+      await sherpa.createStreamingRecognizer({ jobId, assetsDir, sampleRate, channels, language });
+      startupRecognizerJobId = jobId;
+    } catch (error) {
+      // Half-open startup (stream up, recognizer down — or vice versa): release
+      // every staged resource + the mic before propagating, so nothing leaks.
+      await releaseStartupResources();
+      throw error;
+    }
+    if (startupStreamId === null) {
+      // Defensive: the successful try guarantees a stream id; treat its absence as
+      // a startup failure rather than committing a handle with no stream.
+      await releaseStartupResources();
+      throw new Error('local_neural_audio_stream_missing');
+    }
+    const streamId: string = startupStreamId;
 
     const processFrame = async (frame: { pcm16leBase64: string; sampleRate: number; channels: number }) => {
       const active = handle;
@@ -213,8 +259,14 @@ export function createSherpaStreamingSttController(deps: {
       const after = handle;
       if (!after || after.sessionId !== normalizedSessionId || after.jobId !== jobId) return;
       const text = typeof res?.text === 'string' ? res.text : '';
-      if (text.trim().length > 0) after.transcript = text.trim();
+      if (text.trim().length > 0) {
+        const trimmed = text.trim();
+        after.transcript = trimmed;
+        sink.onPartial(trimmed);
+      }
       if (res?.isEndpoint === true) {
+        sink.onFinal(after.transcript);
+        sink.onEndpoint('vad');
         endpointController.signalEndpointDetected({
           sessionId: normalizedSessionId,
           source: 'native_stream',
@@ -251,10 +303,14 @@ export function createSherpaStreamingSttController(deps: {
       });
     };
 
-    const subscriptions: SherpaSttHandle['subscriptions'] = [];
+    const subscriptions: SherpaSttHandle['subscriptions'] = startupSubscriptions;
     subscriptions.push(
       audioStream.addListener('audioFrame', (event) => {
         if (!handle || handle.sessionId !== normalizedSessionId || handle.streamId !== event.streamId) return;
+        if (!handle.audioStarted) {
+          handle.audioStarted = true;
+          sink.onAudioStarted();
+        }
         const frame = {
           pcm16leBase64: String(event.pcm16leBase64 ?? ''),
           sampleRate: event.sampleRate ?? sampleRate,
@@ -284,15 +340,16 @@ export function createSherpaStreamingSttController(deps: {
       pushing: false,
       queuedFrames: [],
       pushLoop: null,
+      audioStarted: false,
+      abortCleanup,
     };
     endpointController.startSession(normalizedSessionId);
-    deps.onCaptureStarted(normalizedSessionId);
   };
 
-  const stop = async (sessionId: string): Promise<string> => {
-    const normalizedSessionId = normalizeSessionId(sessionId);
-    if (!handle || !normalizedSessionId || handle.sessionId !== normalizedSessionId) return '';
+  const stop = async () => {
+    if (!handle) return { finalText: '' };
     const current = handle;
+    const normalizedSessionId = current.sessionId;
     endpointController.clearSession(normalizedSessionId);
 
     try {
@@ -325,7 +382,8 @@ export function createSherpaStreamingSttController(deps: {
     if (handle && handle.sessionId === normalizedSessionId) {
       handle = null;
     }
-    return current.transcript.trim();
+    current.abortCleanup();
+    return { finalText: current.transcript.trim() };
   };
 
   return {

@@ -1,11 +1,21 @@
 import { voiceHooks } from '@/voice/context/voiceHooks';
 import type { VoiceAdapterController, VoiceSessionSnapshot } from '@/voice/session/types';
 import { realtimeTransport } from '@/voice/runtime/realtime/RealtimeTransport';
+import { deriveLocalVoiceSessionSnapshot } from '@/voice/runtime/machine/deriveLocalVoiceSessionSnapshot';
+import {
+  getVoiceConversationRuntimeSnapshot,
+  useVoiceConversationRuntimeStore,
+} from '@/voice/runtime/machine/voiceConversationRuntimeStore';
 
 export function createRealtimeElevenLabsVoiceAdapter(): VoiceAdapterController {
   const id = 'realtime_elevenlabs';
 
-  const getSnapshot = (): VoiceSessionSnapshot => realtimeTransport.getSessionSnapshot();
+  // The runtime machine is the single source of truth for the realtime
+  // lifecycle: the transport drives machine transitions and the adapter
+  // projects the machine snapshot for this adapter id (mirroring the local
+  // adapters). The transport no longer keeps a private session snapshot.
+  const getSnapshot = (): VoiceSessionSnapshot =>
+    deriveLocalVoiceSessionSnapshot(id, getVoiceConversationRuntimeSnapshot());
 
   const start = async (opts: Readonly<{ sessionId: string; initialContext?: string }>) => {
     const initialContext = opts.initialContext ?? voiceHooks.onVoiceStarted(opts.sessionId);
@@ -46,7 +56,12 @@ export function createRealtimeElevenLabsVoiceAdapter(): VoiceAdapterController {
     voice.sendTextMessage(opts.text);
   };
 
-  const subscribe = (listener: () => void) => realtimeTransport.subscribe(listener);
+  const subscribe = (listener: () => void) =>
+    useVoiceConversationRuntimeStore.subscribe(() => listener());
+
+  // Realtime speech-to-speech always projects a synthetic transcript: the
+  // provider streams audio, so UI-side turns are reconstructed locally.
+  const resolveBindingTranscriptMode = () => 'synthetic' as const;
 
   return {
     id,
@@ -59,5 +74,6 @@ export function createRealtimeElevenLabsVoiceAdapter(): VoiceAdapterController {
     sendTextTurn,
     getSnapshot,
     subscribe,
+    resolveBindingTranscriptMode,
   };
 }
