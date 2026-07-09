@@ -1,0 +1,43 @@
+---
+title: Projection and no-execute discovery
+description: Happier projects catalogs and UI from manifests before importing executable plugin modules.
+---
+
+Happier must be able to inspect a plugin safely before running it. This is the no-execute projection rule.
+
+## Projected without code execution
+
+Happier should project these from manifest/protocol data:
+
+- plugin listing and marketplace preview
+- install and trust prompts
+- settings forms
+- agent settings forms
+- action, tool, and command catalogs
+- hook and lifecycle declarations
+- event declarations and payload schema metadata
+- agent catalogs
+- agent runtime capabilities and selectable runtime targets
+- agent runtime surface declarations
+- UI surface descriptors
+- MCP server and discovery descriptors
+- generated artifacts and integrity metadata
+
+## Why this matters
+
+No-execute projection lets Happier:
+
+- show install prompts before trusting code
+- render settings before daemon activation
+- validate manifests deterministically
+- build catalogs without filesystem scanning
+- reject invalid contribution ids before runtime
+- keep plugin reload safe when activation fails
+
+## Handler binding happens later
+
+Executable handlers are bound during daemon activation or runtime invocation. For example, an action is declared in the manifest, then `api.registerAction({ id, handler })` binds behavior for that id.
+
+## Avoid split-brain declarations
+
+Do not declare the same static contribution in both manifest data and activation-time code. The manifest owns projected identity; activation owns executable behavior.

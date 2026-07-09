@@ -1,0 +1,51 @@
+---
+title: Plugins
+description: Build Happier plugins, agents, UI surfaces, tools, hooks, and runtime integrations.
+---
+
+Happier plugins extend the local runtime without changing Happier core source code. A plugin can contribute actions, tools, commands, hooks, UI surfaces, settings, MCP integrations, SCM integrations, and AI agents.
+
+The plugin system is manifest-first. Static facts live in the plugin manifest so Happier can project catalogs, settings, permissions, marketplace listings, and UI surfaces without executing plugin code. Executable code is loaded only when the local daemon activates the plugin or invokes a plugin-owned handler.
+
+## Core model
+
+- **Manifest**: declares identity, `uses`, permissions, and contribution descriptors.
+- **Activation API**: `activate(host)` binds executable handlers and disposables to manifest-declared contributions.
+- **Runtime context**: agent runtime factories receive `PluginContextV1`; action/tool/command/hook handlers receive handler-scoped `storage`, `settings`, `logger`, and `events` on their existing handler context.
+- **Agent runtime**: a plugin-owned `AgentRuntime` registered with `registerAgentRuntime({ agentId, create })`.
+- **Runtime host**: Happier-owned session and execution-run orchestration. Agent leaves map agent-specific behavior into shared runtime contracts.
+
+## Start here
+
+<Cards>
+  <Card title="Quickstart" href="/docs/plugins/quickstart" />
+  <Card title="Glossary" href="/docs/plugins/glossary" />
+  <Card title="Manifest" href="/docs/plugins/manifest" />
+  <Card title="Activation API" href="/docs/plugins/api/activation" />
+  <Card title="Runtime context" href="/docs/plugins/api/context" />
+  <Card title="Agent runtimes" href="/docs/plugins/agent-runtimes/agent-runtime" />
+  <Card title="Hooks and lifecycle" href="/docs/plugins/api/hooks" />
+  <Card title="Events" href="/docs/plugins/api/events" />
+  <Card title="Security and permissions" href="/docs/plugins/security" />
+</Cards>
+
+## Stable authoring rules
+
+- Import Happier plugin types and helpers from `@happier-dev/plugin-sdk`.
+- Do not import Happier internal packages from a plugin.
+- Keep static projected facts in the manifest.
+- Bind executable code through `activate(host)` and manifest-declared ids.
+- Use host-provided services for runtime capabilities: handler services on `request.context` or hook `context`, and `PluginContextV1` services inside agent runtime factories. Do not shell out or read host internals directly when a service exists.
+- Keep agent-specific behavior inside the plugin-owned agent runtime leaf.
+- Do not write Happier transcript rows, session rows, or execution-run state directly from agent code.
+
+## Where plugin code runs
+
+Executable plugin code runs in the local daemon process through `entrypoints.main` or trusted `entrypoints.dev`. Hosted UI artifacts are built into portable bundles and served by the daemon. Server-side executable plugins and arbitrary in-app executable plugins are not the public runtime model.
+
+## Related docs
+
+- [Runtime architecture](/docs/architecture/runtime)
+- [Happier tools and actions](/docs/features/happier-tools)
+- [MCP servers](/docs/features/mcp-servers)
+- [Permissions](/docs/features/permissions)

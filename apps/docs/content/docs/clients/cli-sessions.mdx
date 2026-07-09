@@ -121,6 +121,7 @@ happier session wait <session-id-or-prefix> --timeout 60
 
 Notes:
 
+- `session send` targets active sessions. For inactive sessions, use `happier session list --resumable` and `happier resume <session-id-or-prefix>` first.
 - `--wait` can time out if the agent is offline/busy or if the backend does not emit an “idle” signal.
 - `--permission-mode` lets you override the permission intent for a single send.
 - `--model` lets you target a specific model for that message when the backend supports it.

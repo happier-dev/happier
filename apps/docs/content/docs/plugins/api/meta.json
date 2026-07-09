@@ -1,0 +1,13 @@
+{
+  "title": "API",
+  "pages": [
+    "index",
+    "activation",
+    "context",
+    "actions-tools-commands",
+    "hooks",
+    "events",
+    "lifecycle",
+    "request-interceptors"
+  ]
+}

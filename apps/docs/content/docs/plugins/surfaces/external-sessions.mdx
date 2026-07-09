@@ -1,0 +1,37 @@
+---
+title: External sessions
+description: Browse, import, follow, link, and take over native agent sessions.
+---
+
+External session surfaces let Happier work with sessions that were created outside a normal Happier session loop.
+
+## Supported operations
+
+An external session surface can support:
+
+- source resolution
+- candidate listing
+- activity reads
+- transcript paging
+- transcript read-after/follow
+- link identity resolution
+- linked identity resolution
+- takeover launch resolution
+
+## Source declarations
+
+External session sources should be declared in the agent manifest contribution. Source schemas define required fields, optional fields, passthrough behavior, and canonical key segments.
+
+This lets the host validate and key sources without executing plugin code.
+
+## Transcript access
+
+Use bounded transcript paging and read-after/follow APIs. Avoid reading entire native transcript files for candidate lists or activity checks.
+
+## Linking
+
+Link identity resolution maps a native remote session id and source into a Happier-understandable identity. The agent leaf owns agent-specific matching rules.
+
+## Takeover
+
+Takeover launch resolution returns the agent-specific launch plan needed to continue or attach to a native session. The host owns the product flow around the launch.

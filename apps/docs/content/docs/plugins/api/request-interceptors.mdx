@@ -1,0 +1,55 @@
+---
+title: Request interceptors
+description: Mediate plugin-authored fetch requests through declared policy handlers.
+---
+
+Request interceptors are policy hooks for plugin-authored `ctx.fetch` calls. They are not general HTTP middleware for all Happier traffic.
+
+## Declaration
+
+Declare interceptors in the manifest with stable ids, order, and target constraints.
+
+The manifest owns:
+
+- interceptor id
+- ordering
+- target scope
+- allowed URL origins
+- required permission capability
+
+The activation handler binds executable policy only.
+
+## Binding
+
+```js
+export async function activate(api) {
+  api.registerRequestInterceptor({
+    id: 'audit-plugin-fetch',
+    handle: async (request) => ({
+      kind: 'allow',
+      auditMetadata: {
+        policy: 'audit-plugin-fetch'
+      }
+    })
+  });
+}
+```
+
+## Result model
+
+An interceptor should return one of the accepted policy decisions:
+
+- allow
+- allow with request patch
+- deny with code/reason
+- error with code/reason/retryable metadata
+
+Request body mutation is not part of the V1 model.
+
+## Security model
+
+Interception cannot launder network access. The original plugin caller still needs permission for the destination it requests, and interceptor plugins need their own interception permission.
+
+## Recursion
+
+An interceptor's own `ctx.fetch` work should not recursively re-enter the same interceptor for the same operation unless a future policy-internal flow explicitly allows it.

@@ -1,0 +1,31 @@
+---
+title: Provider leaves
+description: Keep provider-specific behavior in plugin-owned backend leaves.
+---
+
+Provider leaves are the backend/plugin modules that know a specific provider.
+
+## Belongs in provider leaves
+
+- provider CLI arguments
+- provider environment variables
+- provider auth materialization
+- provider protocol clients
+- provider permission payload translation
+- provider transcript parsing
+- provider runtime event mapping
+- provider external session stores
+- provider managed-server setup
+
+## Does not belong in shared runtime code
+
+- provider-id branching
+- provider-specific UI status heuristics
+- direct provider transcript writes
+- provider-local host loops
+- duplicate execution-run managers
+- raw provider payload publication to public host surfaces
+
+## Why it matters
+
+This boundary lets new backends plug into Happier without changing core host runtime code.

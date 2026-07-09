@@ -1,280 +1,91 @@
 ---
-title: Plugin & Extension Authoring
-description: Current Wave 1 plugin package format, activation API, reload flow, examples, and trust boundaries.
+title: Plugin authoring
+description: Compatibility entry point for Happier plugin development docs.
 ---
 
-## Current contract
+The canonical plugin documentation now lives under [Plugins](/docs/plugins).
 
-Happier has a real plugin runtime today, and the installable package format is in a transitional Wave 1/Wave 2 state:
+Use the plugin docs for the final public model:
 
-- Installable packages are discovered from a local directory or installed archive.
-- The package manifest is `.happier-plugin/plugin.json`, with `schemaVersion: 2` as the canonical install/runtime authoring shape.
-- `schemaVersion: 1` remains as a narrow compatibility bridge for older static manifest provider/backend/action/hook fixtures.
-- The CLI runtime loads executable plugin code from the **daemon target only**.
-- The daemon module activates through `export async function activate(api) { ... }`, and activation-time registrations must declare matching `runtime.capabilities` and `permissions`.
+- [Plugin quickstart](/docs/plugins/quickstart)
+- [Plugin manifest](/docs/plugins/manifest)
+- [Activation API](/docs/plugins/api/activation)
+- [Runtime context](/docs/plugins/api/context)
+- [Actions, tools, and commands](/docs/plugins/api/actions-tools-commands)
+- [Hooks](/docs/plugins/api/hooks)
+- [Events](/docs/plugins/api/events)
+- [Backend engines](/docs/plugins/backends/backend-engines)
+- [Runtime core](/docs/plugins/backends/runtime-core)
+- [Backend surfaces](/docs/plugins/surfaces)
+- [Runtime facets](/docs/plugins/facets)
+- [Runtime services](/docs/plugins/services)
+- [Security](/docs/plugins/security)
+- [Packaging and install](/docs/plugins/packaging)
+- [Testing plugins](/docs/plugins/testing)
 
-Important: the CLI/plugin loader now reads canonical manifest V2 packages directly and upconverts manifest V1 through a compatibility bridge. When you author `activate(api)` registrations, use `schemaVersion: 2` and declare the runtime families and permissions you consume.
+## Current model
 
-## Package anatomy
-
-The practical local authoring layout is:
-
-```text
-my-plugin/
-├─ .happier-plugin/
-│  └─ plugin.json
-├─ daemon.mjs
-└─ resources/
-   └─ ...
-```
-
-Minimal activation-time manifest:
+Happier plugins are manifest-first. The canonical manifest is schemaVersion 2:
 
 ```json
 {
   "schemaVersion": 2,
-  "id": "com.example.my-plugin",
+  "id": "acme.sample",
   "version": "0.1.0",
-  "displayName": "Example Plugin",
-  "description": "Local development plugin",
+  "displayName": "Acme Sample",
   "engines": {
     "happier": "^0.2.0"
   },
   "runtime": {
     "apiVersion": 1,
-    "capabilities": ["actions"]
+    "capabilities": ["lifecycle"]
   },
-  "permissions": [
-    {
-      "capability": "actions.register",
-      "reason": "Register the example action during activation"
-    }
-  ],
   "targets": {
     "daemon": {
-      "entry": "./daemon.mjs"
+      "entry": "./src/daemon.mjs"
     }
   },
-  "contributions": []
+  "capabilities": {
+    "permissions": []
+  },
+  "contributes": {}
 }
 ```
 
-Daemon entry files must currently resolve to `.js`, `.mjs`, or `.cjs`.
+The local executable trust path is explicit: a local plugin directory, manifest path, or `.happier-plugin` directory resolves as a `path` source with `trustPolicy: "local_trusted"` and `installPolicy: "link"`. Treat that as machine-local executable trust for plugin daemon code, and only install local paths that you control.
 
-## Local development workflow
-
-The supported dev loop is **local path + explicit reload**:
+The real local install and reload loop is:
 
 ```bash
-happier plugins install /absolute/path/to/my-plugin
-happier plugins show com.example.my-plugin
-happier plugins reload com.example.my-plugin
+happier plugins install /absolute/path/to/acme-sample
+happier plugins reload acme.sample
 ```
 
-Recommended loop:
+During live local authoring, edit the installed path in place and run `happier plugins reload [pluginId]` after changes. Omit the plugin id to reload all plugin runtime contributions.
 
-1. Create a plugin folder with `.happier-plugin/plugin.json` and `daemon.mjs`.
-2. Install it from its local directory with `happier plugins install /abs/path/to/plugin`.
-3. Verify the source and manifest path with `happier plugins show <pluginId>`.
-4. Edit `daemon.mjs`, resources, or descriptor metadata in place.
-5. Run `happier plugins reload <pluginId>` after each change.
-
-Notes:
-
-- There is **no filesystem watcher** for plugins in this wave.
-- Reload is explicit and generation-based.
-- If a reload fails after a plugin edit, the host keeps the last known good runtime registry when one exists.
-- `happier providers list` is the fastest way to confirm provider/backend contributions became visible after install or reload.
-
-## Session-driven self-improvement
-
-The current Happier equivalent of Pi-style self-extension is **real, but still explicit**.
-
-What is proven today:
-
-- a live Happier session can scaffold a local plugin inside the workspace
-- that same plugin can be installed as a trusted local path plugin
-- the same active session can use the shell/CLI bridge to execute the new capability immediately
-- the same active session can then edit the plugin again, reload it, and use the changed capability again
-
-The exact proven loop is:
-
-1. Start a normal Happier session with workspace edit access.
-2. Have the session create a plugin folder with `.happier-plugin/plugin.json` and `daemon.mjs`.
-3. Install it from the local path with `happier plugins install /abs/path/to/plugin`.
-4. Execute the new capability from the active session through the Happier bridge.
-5. Edit the plugin in place.
-6. Run `happier plugins reload <pluginId>`.
-7. Execute the same capability again and confirm the changed behavior.
-
-For plugin-owned tools/actions, the most direct bridge path is:
+To start from the public SDK scaffold, run:
 
 ```bash
-happier tools call \
-  --session-id <sessionId> \
-  --directory /abs/path/to/repo \
-  --source happier \
-  --tool action_execute \
-  --args-json '{"actionId":"com.example.my-plugin.tool","input":{}}' \
-  --json
+happier plugins scaffold /absolute/path/to/acme-sample --id acme.sample --name "Acme Sample"
+happier plugins install /absolute/path/to/acme-sample
+happier plugins reload acme.sample
 ```
 
-This explicit `action_execute` path matters because a newly edited local plugin capability can be usable before every discovery surface has refreshed.
+To package a local plugin, validate and build an installable archive with the pack command:
 
-## Current gaps vs Pi
-
-Compared with Pi’s smoother package loop, Happier still has deliberate friction:
-
-- install/link is explicit
-- reload is explicit
-- there is no filesystem watch/hot-reload
-- the best current self-improvement path is still CLI/shell-driven rather than a dedicated in-product “develop this plugin” flow
-- dedicated browser/manual validation of detail-page reload continuity is still less mature than the CLI/runtime proof path
-
-So the current recommendation is:
-
-- use local-path plugins for active development
-- keep the session in the same workspace
-- edit in place
-- reload explicitly
-- call the plugin capability again through the Happier bridge to confirm the new generation
-
-## Activation API
-
-Runtime activation is daemon-side:
-
-```js
-export async function activate(api) {
-    api.registerAction({
-        id: 'com.example.echo',
-        title: 'Echo',
-        surface: 'cli',
-        handler: async (request) => ({
-            ok: true,
-            data: { input: request.input }
-        })
-    });
-
-    api.onDispose(async () => {
-        // close handles, flush state, etc.
-    });
-}
+```bash
+happier plugins pack /absolute/path/to/acme-sample --out /absolute/path/to/acme-sample.happier-plugin.tgz
+happier plugins install /absolute/path/to/acme-sample.happier-plugin.tgz
+happier plugins reload acme.sample
 ```
 
-Current host API methods:
+The pack command validates through the same local plugin source resolver, writes the archive outside the plugin root, and emits a `.sha256` digest sidecar next to the archive.
 
-- `registerProvider(...)`
-- `registerBackend(...)`
-- `registerAction(...)`
-- `registerTool(...)`
-- `registerCommand(...)`
-- `registerHook(...)`
-- `registerLifecycleHandler(...)`
-- `registerRuntimeAdapter(...)`
-- `registerDisposable(...)`
-- `onDispose(...)`
+The manifest-first runtime model is:
 
-Recommended rule: use a named `activate` export even though the loader also accepts a default-export fallback.
+- `.happier-plugin/plugin.json` declares identity, capabilities, permissions, and projected contributions.
+- `activate(api)` binds executable handlers and disposables for manifest-declared ids.
+- invoked handlers and backend engines receive `PluginContextV1` for host runtime capabilities.
+- backend engines expose `BackendEngineV1`, including optional `runtimeCore`, facets, and backend surfaces.
 
-What is **not** available yet:
-
-- a plugin-side `requestReload(...)` API
-- executable UI plugins
-- executable server plugins
-
-## Contribution families
-
-### Supported today
-
-These families are live in the current CLI/runtime:
-
-| Family | Current declaration path | Notes |
-| --- | --- | --- |
-| Providers | Manifest V1 compatibility bridge and activation-time `registerProvider` | Provider definitions join the same merged registry as built-ins. |
-| Backends | Manifest V1 compatibility bridge and activation-time `registerBackend` | Backend runtime adapters still need daemon-side handlers. |
-| Runtime adapters | Backend manifest entries or activation-time `registerRuntimeAdapter` | Handler execution stays daemon-local. |
-| Actions | Manifest V1 compatibility bridge and activation-time `registerAction` | Current real action path is plugin-owned daemon execution. |
-| Hooks | Manifest V1 compatibility bridge and activation-time `registerHook` | Hook coverage is real but still narrower than the long-term plan. |
-| Tools | Activation-time `registerTool` | Tool registrations are daemon-hosted and require the `tools` runtime capability plus `tools.register`. |
-| Commands | Activation-time `registerCommand` | Command registrations are daemon-hosted and require the `commands` runtime capability plus `commands.register`. |
-| Resources | Static `contributions.resources` / `contributes.resources` manifest data | Resources are descriptor-only projection data and are not created by activation-time API calls. |
-| UI descriptors | Static `contributions.uiDescriptors` / `contributes.uiDescriptors` manifest data | UI descriptors are host-rendered descriptor-only projection data and are not created by activation-time API calls. |
-
-### Not supported yet
-
-These surfaces exist in the plan or protocol drafts, but not in the live install/runtime contract:
-
-- npm/package/git install sources
-- automatic plugin watch/reload
-- plugin-triggered reload APIs
-- executable UI/server plugin code
-
-## Reload workflow
-
-`happier plugins reload [pluginId]` rebuilds the executable plugin runtime registry.
-
-Today that means:
-
-- plugin daemon modules are re-imported with cache-busting
-- activation runs again against a fresh API host
-- activation-time registrations replace the old runtime registry on success
-- old disposables are disposed after the new registry becomes active
-- activation failures keep the prior last-known-good registry when available
-
-This is the intended loop for self-extension work today: edit a local plugin, then trigger reload from the CLI.
-
-## Trust and source model
-
-Source support is intentionally conservative.
-
-Direct install currently supports:
-
-- local directories
-- local archives (`.tar.gz`, `.tar.xz`, `.zip`)
-- remote archive URLs
-- marketplace catalogs whose entries resolve to archives
-
-Source kinds that are **not** installable today:
-
-- npm/package sources
-- git sources
-
-Trust behavior:
-
-- Local directories resolve as `path` + `local_trusted` + `link`.
-- Local archives install as `archive` + `local_trusted` + `managed_install`.
-- Remote archives and marketplace archive installs currently resolve as `archive` + `prompt` + `managed_install`.
-- `untrusted` plugin code is refused before daemon import.
-- `prompt` plugin code also fails closed before daemon import because the explicit trust-approval UX is not finished yet.
-
-Practical implication: **local path authoring is the supported executable development flow** right now. Remote archive and marketplace installs are useful for catalog/install plumbing, but executable daemon loading still requires the trusted local-dev path until the approval surface lands.
-
-Additional safeguards:
-
-- archive installs reject symlinks in the extracted payload
-- daemon code only runs on the machine-local daemon side
-- UI descriptors are projected into host-rendered settings/setup/status surfaces rather than running arbitrary plugin UI code
-
-## Example fixtures in this repo
-
-The canonical example packages live under:
-
-```text
-apps/cli/src/plugins/testkit/fixtures/authoring-examples/
-```
-
-Included examples:
-
-- `action-plugin`: manifest-v1 compatibility action executed by plugin daemon code
-- `lifecycle-hook-plugin`: manifest-v1 compatibility lifecycle hook handler
-- `provider-backend-plugin`: manifest-v1 compatibility provider + backend package with daemon runtime adapters
-- `ui-descriptor-plugin`: manifest-v2 activation-time resource and host-rendered settings descriptor registration
-- `reload-helper-plugin`: manifest-v2 activation-time action plus `onDispose(...)` for the explicit reload loop
-
-There is also an existing broader provider/backend sample fixture in:
-
-```text
-apps/cli/src/plugins/testkit/fixtures/sample-package/
-```
-
-Use these fixtures as the source of truth for docs/examples in this wave instead of inventing alternate manifest shapes or npm/git package examples.
+Older extension terminology and activation-time static provider/backend registration examples are not the recommended public authoring path.

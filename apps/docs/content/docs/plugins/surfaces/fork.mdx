@@ -1,0 +1,21 @@
+---
+title: Fork surface
+description: Launch native child sessions from replay or fork points.
+---
+
+Fork surfaces let an agent runtime create a native child session from an existing session, replay point, or native fork operation.
+
+## Common operations
+
+- resolve replay child launch
+- fork from native conversation id
+- map parent/child native session ids
+- return launch hints for the host session flow
+
+## Host boundary
+
+The host owns Happier session creation, parent/child relationships, user flow, and durable fork metadata. The agent leaf owns native fork mechanics.
+
+## Expected failures
+
+Return typed failures when the agent cannot fork from the requested point, the parent is not found, the account lacks permission, or the agent only supports replay instead of native fork.

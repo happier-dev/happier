@@ -1,0 +1,17 @@
+---
+title: Sandboxing and boundaries
+description: Understand what plugin code can and cannot isolate.
+---
+
+Daemon-side plugin code is local executable code. The primary safety boundaries are trust, manifest validation, permissions, host services, and scoped runtime APIs.
+
+## Practical boundaries
+
+- UI artifacts are served with declared policies and verified digests.
+- Hosted web UI is not daemon executable code.
+- Agent runtime leaves should use host process services.
+- Settings, secrets, sessions, and transcripts are accessed through host APIs.
+
+## Not a security boundary
+
+Do not treat TypeScript types, file layout, or plugin conventions as isolation. Trust and permissions are the executable-code boundary.

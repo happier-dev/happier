@@ -1,0 +1,28 @@
+---
+title: Runtime tests
+description: Test agent runtimes, runtime events, execution-runs, and cleanup.
+---
+
+Runtime tests should prove that agent leaves map into shared host contracts.
+
+## Agent runtime tests
+
+Cover:
+
+- `api.registerAgentRuntime` binding
+- `runtimeCore.createSessionRuntime`
+- `runtimeCore.createExecutionRunBackend`
+- `SessionRuntimeV1.send`
+- runtime events
+- permission response behavior
+- cancellation and disposal
+- connected-service auth refresh
+- structured input support or explicit rejection
+
+## Execution-run tests
+
+When execution-runs are session-backed, test the shared adapter instead of duplicating agent-specific run loops.
+
+## Cleanup tests
+
+Assert that dispose during startup, cancellation, reload, and failed health checks does not leak agent processes or managed servers.

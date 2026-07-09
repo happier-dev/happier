@@ -1,0 +1,28 @@
+---
+title: SDK boundaries
+description: Public plugin contracts versus host implementation details.
+---
+
+The public SDK is the plugin authoring seam. Host implementation modules are not public plugin dependencies.
+
+## Public
+
+- `PluginManifestV2`
+- `PluginApiV1`
+- `PluginContextV1`
+- `BackendEngineV1`
+- runtime session and execution-run types
+- UI, actions, events, hooks, ACP, MCP, SCM, reviews, and service types re-exported by the SDK
+
+## Internal
+
+- CLI engine registry implementation
+- daemon runtime registry
+- host plugin context factory implementation
+- server database models
+- UI provider registry internals
+- first-party plugin private modules
+
+## Rule
+
+Plugins should import from `@happier-dev/plugin-sdk`, not from Happier source internals.

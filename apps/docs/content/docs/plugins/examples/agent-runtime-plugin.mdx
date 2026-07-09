@@ -1,0 +1,37 @@
+---
+title: Agent runtime plugin example
+description: A plugin that contributes a custom AI agent runtime.
+---
+
+An agent runtime plugin declares an agent and registers a runtime.
+
+## Manifest
+
+Declare:
+
+- `uses: ["agents"]`
+- `contributes.agents[]`
+- agent id
+- catalog ids when applicable
+- `runtime.kind`
+- agent runtime capabilities
+
+## Activation
+
+```ts
+export async function activate(host) {
+  host.registerAgentRuntime({
+    agentId: 'example',
+    create: (ctx) => ({
+      runtimeCore: {
+        createSessionRuntime: async (params) => createRuntime(ctx, params),
+        createExecutionRunBackend: (params) => createExecutionRunBackend(ctx, params)
+      }
+    })
+  });
+}
+```
+
+## Host boundary
+
+The runtime creates agent execution objects. The host owns session and execution-run orchestration.

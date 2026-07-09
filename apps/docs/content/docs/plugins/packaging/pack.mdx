@@ -1,0 +1,30 @@
+---
+title: Pack plugins
+description: Create portable plugin archives for install and smoke testing.
+---
+
+Packing creates an installable archive from a local plugin directory.
+
+```bash
+happier plugins pack /absolute/path/to/plugin --out ./plugin.happier-plugin.tgz
+```
+
+## Include
+
+- `.happier-plugin/plugin.json`
+- daemon entry files
+- runtime resources
+- built UI artifact tree
+- files needed by declared handlers
+
+## Exclude
+
+- local secrets
+- build caches
+- absolute-path artifacts
+- unrelated source-control metadata
+- agent CLI binaries
+
+## Smoke test
+
+Install the archive into a clean local environment before sharing it.

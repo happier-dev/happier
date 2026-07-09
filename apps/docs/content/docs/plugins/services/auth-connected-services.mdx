@@ -1,0 +1,35 @@
+---
+title: Auth and connected services
+description: Use host-managed auth identity and connected-service materialization from plugins.
+---
+
+`ctx.auth` exposes the current plugin auth identity and connected-service materialization.
+
+## Identity
+
+Plugins can read the current identity and subscribe to identity changes:
+
+- account id
+- email when available
+- profile id when available
+
+## Materialization
+
+Connected-service materialization returns credential material for a declared service and reason:
+
+- environment variables
+- HTTP headers
+- files
+- metadata
+
+The host owns credential storage, refresh, scoping, and redaction.
+
+## Runtime auth
+
+Session runtime auth refresh and connected-service runtime identity should flow through session/runtime services rather than agent-local global state.
+
+## Rules
+
+- Do not persist materialized credentials in plugin storage.
+- Do not infer auth state by reading agent CLI files when a host auth adapter exists.
+- Fail closed when required connected-service materialization is unavailable.

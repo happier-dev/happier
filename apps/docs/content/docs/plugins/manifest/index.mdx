@@ -1,0 +1,68 @@
+---
+title: Plugin manifest
+description: The manifest is the static source of truth for plugin identity, uses, permissions, and projected contributions.
+---
+
+The plugin manifest is the contract Happier reads before executing plugin code. It is used for install validation, trust decisions, catalogs, settings UI, action/tool/command projection, agent projection, permissions, and generated artifacts.
+
+## File location
+
+Installable plugins use:
+
+```text
+.happier-plugin/plugin.json
+```
+
+TypeScript-authored first-party or in-repo plugins may export a `PLUGIN_MANIFEST` wrapped with `definePluginManifest(...)`, but that helper is a type-preserving authoring convenience. Host ingestion still validates the resulting manifest with the canonical protocol schemas.
+
+## Top-level shape
+
+```json
+{
+  "schemaVersion": 2,
+  "id": "com.example.plugin",
+  "version": "0.1.0",
+  "displayName": "Example plugin",
+  "description": "Optional description",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "uses": ["actions"],
+  "entrypoints": {
+    "main": "./dist/index.js",
+    "dev": "./src/index.ts"
+  },
+  "permissions": {
+    "required": [],
+    "optional": []
+  },
+  "contributes": {}
+}
+```
+
+## Stable identity
+
+`id` is the stable plugin id. It is used for:
+
+- namespacing plugin-owned events
+- qualifying action/tool/command ids
+- trust and install records
+- reload ownership
+- permissions and capability grants
+- diagnostics and provenance
+
+Do not change a published plugin id to rename display text. Use `displayName` for user-facing naming.
+
+## Entrypoints
+
+`entrypoints.main` points at the packaged executable activation entry. `entrypoints.dev` may point at a TypeScript source entry and is used only for linked `local_trusted` installs. Executable plugin code is daemon-local. Static projection must not depend on importing either file.
+
+## Manifest-first rule
+
+If Happier needs to show, validate, authorize, or route a contribution before running code, it belongs in the manifest. Activation then binds executable handlers to declared ids.
+
+This applies to actions, tools, commands, hooks, lifecycle handlers, agent runtimes, agent runtime surface handlers, request interceptors, settings, UI artifacts, MCP servers, MCP discovery contributions, managed dependencies, and plugin-owned events.
+
+## Public import path
+
+Plugin source should import Happier authoring helpers and types from `@happier-dev/plugin-sdk`. Do not import host internals, provider internals, or another plugin's source files.

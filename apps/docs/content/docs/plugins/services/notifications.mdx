@@ -1,0 +1,22 @@
+---
+title: Notifications
+description: Register notification channels and send host-mediated notifications.
+---
+
+Plugins can contribute notification categories and channels, then send notifications through `ctx.notifications`.
+
+## Notification services
+
+Plugins can:
+
+- send a notification
+- list channels
+- list categories
+- read user preferences for a category
+
+## Rules
+
+- Declare categories and channels in the manifest or activation registration path expected by the host.
+- Respect user notification preferences.
+- Do not send notifications directly through platform APIs from agent leaves.
+- Keep payloads free of secrets and raw provider tokens.

@@ -1,0 +1,19 @@
+---
+title: No-execute projection
+description: Why catalogs and UI must render from manifests before plugin code runs.
+---
+
+No-execute projection is the rule that Happier can inspect and display plugin capabilities before trusting or importing plugin code.
+
+## Benefits
+
+- safe marketplace previews
+- trustworthy install prompts
+- deterministic settings UI
+- catalog projection without side effects
+- reliable reload failure behavior
+- static validation for handler ids and permissions
+
+## Implementation boundary
+
+Manifest and protocol schemas own projected shape. Activation code only binds executable behavior.

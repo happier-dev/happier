@@ -1,0 +1,24 @@
+---
+title: Storage service
+description: Use plugin storage scopes for plugin-owned non-secret data.
+---
+
+Plugin storage exposes scoped key-value stores. Action, tool, and command handlers access it through `request.context.storage`; hook handlers use `context.storage`; agent runtime factories and runtime leaves use `ctx.storage` from `PluginContextV1`.
+
+## Scopes
+
+| Scope | Use |
+| --- | --- |
+| `ephemeral` | temporary runtime data for the current process/generation |
+| `session` | data scoped to a session context |
+| `local` | machine-local plugin data |
+| `synced` | account-backed plugin data when available |
+
+Generic settings values use plugin-local storage in v1. Agent settings descriptors can choose `account` or `local` per field through `contributes.agentSettings[]`.
+
+## Rules
+
+- Do not store secrets in storage.
+- Do not use plugin storage as a shared coordination path for host-owned state.
+- Do not duplicate session transcripts, execution-run public state, or permission lifecycle state in plugin storage.
+- Use narrow keys and versioned values for data you might migrate later.

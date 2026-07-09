@@ -1,0 +1,26 @@
+---
+title: Plugin glossary
+description: Define plugin SDK terms that are easy to misread from VS Code, pi, or older Happier docs.
+---
+
+Use these terms consistently in plugin manifests, SDK code, and docs.
+
+| Term | Meaning |
+| --- | --- |
+| Plugin | Installable package with a manifest and optional daemon executable code. It is the unit of trust, reload, permissions, storage namespace, and diagnostics. |
+| Agent | A selectable AI coding/runtime capability contributed by a plugin under `contributes.agents[]`. The declaration key is `id`; references use `agentId`. |
+| Model provider | A provider of models or inference endpoints, such as OpenRouter, Ollama, or LM Studio. The providers-first-class plan reserves `provider` for this domain, not executable agent runtimes. |
+| Agent runtime | The executable object returned by `registerAgentRuntime({ agentId, create })`. The public SDK type is `AgentRuntime`. It may expose `runtimeCore`, facets, and agent runtime surface handlers. |
+| `uses` | Top-level manifest list of runtime families a plugin participates in, such as `actions`, `hooks`, `agents`, `settings`, or `managedDependencies`. It is not a permission grant. |
+| Permissions | Runtime-enforced authority declared under `permissions.required[]` and `permissions.optional[]`. Use `declares.capabilities[]` for metadata without an enforcement checkpoint. |
+| Managed dependencies | Manifest contributions under `contributes.managedDependencies[]` for host-managed tools or runtime prerequisites. |
+| Surface | A UI placement or agent runtime capability exposed to the host. Static support is declared in the manifest; executable behavior binds by declared ids. |
+| Placement | The host location where UI appears, such as a session details panel, browser panel, app settings page, or app right-sidebar tab. |
+| Mode id | UI rendering mode. Stable ids are `host`, `declarative`, `structured`, `action`, `hostedWeb`, and `reactNative`. `embeddedWeb` is retired from authoring (superseded by `reactNative`, which also renders on web). Bundle suffixes are reserved for artifact kinds. |
+| Host renderer kind | The renderer family behind a mode: native host-rendered descriptors, sandboxed web/webview, or React Native host. |
+| Storage scope | `storage` scopes plugin-owned non-secret data. Handlers receive it on their existing context; agent runtimes receive it as `ctx.storage`. Generic settings values are plugin-local in v1; `agentSettings` can declare `account` or `local` field storage. |
+| Settings | Generic plugin-local form descriptors under `contributes.settings[]`, read and written with handler `settings` services or `ctx.settings` in agent runtimes. |
+| Agent settings | Agent-specific settings contribution under `contributes.agentSettings[]`, targeted by `agentId`. |
+| Hooks | Manifest-declared host extension points bound with `registerHook`. Interception hooks declare supported runtime families and fail through the canonical hook dispatcher. |
+| Events | Daemon-global live pub/sub through handler `events` services or `ctx.events` in agent runtimes; event ids are permission-gated and namespaced as `<pluginId>/<localId>` or reserved `@happier/*`. |
+| `local_trusted` | Development source kind for linked local plugin paths installed with `plugins install --dev`. It enables `entrypoints.dev` loading and source watching. |

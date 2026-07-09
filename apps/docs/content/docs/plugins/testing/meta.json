@@ -1,0 +1,10 @@
+{
+  "title": "Testing",
+  "pages": [
+    "index",
+    "fixtures",
+    "runtime-tests",
+    "manual-qa",
+    "debugging"
+  ]
+}

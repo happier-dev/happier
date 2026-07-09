@@ -1,0 +1,29 @@
+---
+title: Attach surface
+description: Attach Happier to an existing running native agent session when an agent supports it.
+---
+
+Attach surfaces let Happier connect to a running native agent session instead of starting a fresh process.
+
+## Responsibilities
+
+The agent leaf owns:
+
+- detecting attachable native sessions
+- validating source identity
+- mapping native state into Happier runtime identity
+- returning typed attach availability and diagnostics
+
+The host owns:
+
+- user flow
+- permission and trust decisions
+- session state updates
+- transcript projection
+- cleanup and detach behavior
+
+## Failure states
+
+Attach should fail explicitly when the native session is gone, belongs to a different source, lacks required metadata, or is not writable.
+
+Do not silently start a fresh session when the user requested attach.

@@ -1,0 +1,12 @@
+{
+  "title": "Agent runtimes",
+  "pages": [
+    "index",
+    "agent-runtime",
+    "runtime-core",
+    "session-runtime",
+    "execution-runs",
+    "acp",
+    "mcp"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "title": "Packaging",
+  "pages": [
+    "index",
+    "local-development",
+    "install-reload",
+    "versioning-compat",
+    "pack",
+    "marketplace"
+  ]
+}

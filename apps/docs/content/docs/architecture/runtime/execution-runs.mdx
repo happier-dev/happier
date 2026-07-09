@@ -1,0 +1,34 @@
+---
+title: Execution-runs
+description: How task-like AI execution uses the same backend runtime path as sessions.
+---
+
+Execution-runs are host-owned product runs backed by backend execution.
+
+## Shared backend seam
+
+Execution-runs resolve the same backend engine and consume `runtimeCore.createExecutionRunBackend(...)`.
+
+This removes the old pattern where each backend maintained its own one-shot execution manager.
+
+## Host bridge owns
+
+- run public state
+- status and activity markers
+- bounded loop behavior
+- cancellation
+- permission dispatch
+- lifecycle hook events
+- session provisioning
+- execution-run actions
+
+## Backend owns
+
+- provider runtime creation
+- provider prompt delivery
+- provider event mapping
+- provider-specific liveness or completion checks
+
+## Session-backed execution-runs
+
+When an execution-run can use a session runtime, use the shared adapter from the plugin SDK. That keeps session and execution-run behavior converged.

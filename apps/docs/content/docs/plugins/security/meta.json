@@ -1,0 +1,11 @@
+{
+  "title": "Security",
+  "pages": [
+    "index",
+    "trust-model",
+    "permissions",
+    "network",
+    "secret-handling",
+    "sandboxing"
+  ]
+}

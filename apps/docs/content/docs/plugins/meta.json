@@ -1,0 +1,20 @@
+{
+  "title": "Plugins",
+  "pages": [
+    "index",
+    "quickstart",
+    "glossary",
+    "concepts",
+    "manifest",
+    "api",
+    "agent-runtimes",
+    "surfaces",
+    "facets",
+    "services",
+    "ui",
+    "security",
+    "packaging",
+    "testing",
+    "examples"
+  ]
+}

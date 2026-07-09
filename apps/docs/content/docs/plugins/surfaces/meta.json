@@ -1,0 +1,12 @@
+{
+  "title": "Surfaces",
+  "pages": [
+    "index",
+    "external-sessions",
+    "terminal-runtime",
+    "attach",
+    "handoff",
+    "fork",
+    "checkpoints"
+  ]
+}

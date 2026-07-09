@@ -1,0 +1,34 @@
+---
+title: Session loop
+description: How Happier runs live backend sessions through host-owned lifecycle.
+---
+
+The session loop is the host executor for live backend sessions.
+
+## Constructor/executor split
+
+`runtimeCore.createSessionRuntime(...)` constructs the provider runtime or host runtime plan. The host bridge then executes that plan.
+
+## Host loop owns
+
+- prompt dispatch
+- pending queue waits
+- ready notifications
+- runtime event observation
+- transcript projection
+- permission orchestration
+- model/mode/config updates
+- recoverable turn failure behavior
+- connected-service auth refresh routing
+- cleanup and disposal
+
+## Runtime leaf owns
+
+- provider protocol send/cancel/update operations
+- provider event mapping
+- provider session identity reads
+- provider resource cleanup
+
+## Structured input
+
+Runtime input is typed and can include text plus structured selections. Provider leaves must explicitly support, reject, or report unavailable structured input instead of silently dropping it.

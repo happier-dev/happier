@@ -1,0 +1,28 @@
+---
+title: Settings UI
+description: Render plugin and agent settings from descriptors.
+---
+
+Plugin settings UI is host-rendered from descriptors. Plugins should not ship custom code for normal settings forms.
+
+## Descriptor fields
+
+Settings descriptors can include:
+
+- field id
+- kind and value schema
+- control type
+- display and description keys
+- group and order
+- redaction
+- hidden state
+- default values
+- gates
+
+## Runtime access
+
+Plugin handlers read and write values through `request.context.settings` or hook `context.settings`. Agent runtimes use `ctx.settings`. Secret values should use `ctx.secrets` from `PluginContextV1`; handler-scoped services intentionally expose only non-secret settings.
+
+## Agent settings
+
+Agent settings are plugin-owned descriptors projected into agent settings screens. Generic settings UI should not branch on `agentId`; it should render the descriptors supplied by projection.

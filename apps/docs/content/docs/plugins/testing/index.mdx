@@ -1,0 +1,22 @@
+---
+title: Testing plugins
+description: Validate plugin manifests, activation, runtime behavior, and user flows.
+---
+
+Plugin tests should cover both static projection and executable behavior.
+
+## Test layers
+
+- manifest schema validation
+- no-execute projection
+- activation registration validation
+- action/tool/command handler behavior
+- hook and lifecycle behavior
+- agent runtime session runtime behavior
+- execution-run behavior
+- process cleanup
+- manual UI/CLI flows
+
+## Principle
+
+Test observable behavior and stable contracts. Do not assert internal host implementation details unless the test is a host-runtime regression test.

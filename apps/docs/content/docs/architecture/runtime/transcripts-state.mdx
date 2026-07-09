@@ -1,0 +1,30 @@
+---
+title: Transcripts and state
+description: Durable session data remains host-owned even when provider leaves emit evidence.
+---
+
+Transcripts and session state are durable product data. Provider leaves emit evidence and expose facets; the host owns persistence.
+
+## Host-owned data
+
+- session rows
+- message/transcript rows
+- pending messages
+- encrypted/plain content envelopes
+- session metadata
+- registered session-state fields
+- execution-run public state
+- permission request lifecycle
+
+## Provider-owned evidence
+
+- provider-native transcript files
+- provider session ids
+- provider runtime descriptors
+- provider tool payloads
+- provider status events
+- provider auth state
+
+## Rule
+
+Provider leaves map evidence into typed runtime events, facets, or operation results. They do not write durable Happier state directly unless a host service explicitly exposes a scoped write path.

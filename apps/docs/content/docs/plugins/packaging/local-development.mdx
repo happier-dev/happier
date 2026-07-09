@@ -1,0 +1,72 @@
+---
+title: Local development
+description: Use scaffolded local path plugins, TypeScript dev entries, and automatic reloads.
+---
+
+Local development uses a trusted path install. The daemon loads `entrypoints.dev`
+directly for that local plugin and watches the plugin source tree for changes.
+
+```bash
+happier plugins scaffold /absolute/path/to/plugin --id com.example.plugin --name "Example"
+cd /absolute/path/to/plugin
+npm install
+happier plugins install /absolute/path/to/plugin --dev
+```
+
+The SDK is not public on npm during the pre-publication period. When scaffold is
+run from a Happier checkout, it writes `@happier-dev/plugin-sdk` as a local
+`file:` dependency pointing at that checkout's `packages/plugin-sdk`, so the
+`npm install` command above is the working install path.
+
+`--dev` records the install as a linked `local_trusted` source and enables
+dev-watch for that plugin. The watcher observes the plugin root, the manifest
+directory, and the active source entry directory. A source edit is debounced and
+sent through the same reload controller as `happier plugins reload`, so a broken
+edit rolls back to the last known good generation.
+
+## Edit loop
+
+1. Edit `.happier-plugin/plugin.json` or `src/index.ts`.
+2. Wait for the automatic reload, or run `happier plugins reload com.example.plugin`.
+3. Exercise the plugin action, hook, command, agent runtime, or UI surface.
+4. Check reload diagnostics with `happier plugins list --json` or
+   `happier plugins reload com.example.plugin --json`.
+5. Fix syntax or activation errors; the next valid edit replaces the rollback
+   generation.
+
+## Agent-driven loop
+
+The same loop is available through manifest-declared actions:
+
+1. `plugins.scaffold` creates the local plugin from the template.
+2. `plugins.install` installs it with `dev: true`.
+3. The agent edits `src/index.ts` or the manifest through normal file tools.
+4. The watcher reloads automatically, or the agent calls `plugins.reload`.
+5. Diagnostics return through `plugins.reload` and `plugins.list`.
+6. The agent calls the new action, tool, hook, command, or agent runtime in the same session.
+
+## TypeScript dev entry
+
+Scaffolded plugins define both entries:
+
+```json
+{
+  "entrypoints": {
+    "main": "./dist/index.js",
+    "dev": "./src/index.ts"
+  }
+}
+```
+
+The TypeScript `dev` entry is only used for linked, locally trusted installs.
+Packaged or non-trusted sources continue to use the compiled `main` entry and
+must not rely on local TypeScript loading.
+
+## Watcher control
+
+Dev-watch is on for `plugins install --dev` and follows the daemon setting
+`plugins.devWatch`. Set it to `false` to keep linked plugins installed without
+automatic reloads; explicit `happier plugins reload <pluginId>` still works.
+
+Rapid edits are coalesced into one reload per plugin. The watcher only watches
+source locations, not generated install artifacts, to avoid reload loops.

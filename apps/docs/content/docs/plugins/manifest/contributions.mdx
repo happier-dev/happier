@@ -1,0 +1,40 @@
+---
+title: Contributions
+description: Contribution families that a plugin can declare for projection and executable binding.
+---
+
+`contributes` is the manifest section that declares plugin-owned projected capabilities.
+
+## Common contribution families
+
+| Family | Purpose | Executable binding |
+| --- | --- | --- |
+| `actions` | User, CLI, MCP, and session-agent operations | `api.registerAction` |
+| `tools` | Tool-facing action wrappers | `api.registerTool` |
+| `commands` | CLI command entries | `api.registerCommand` |
+| `hooks` | Host extension points | `api.registerHook` |
+| lifecycle handlers | Plugin lifecycle callbacks | `api.registerLifecycleHandler` |
+| `events` | Plugin-authored event ids and payload schemas | `context.events.emit` in handlers or `ctx.events.emit` in agent runtimes |
+| `agents` | AI agent declarations and runtime metadata | `api.registerAgentRuntime` |
+| agent `surfaceHandlers` | Daemon handlers for agent runtime surfaces | exported daemon handler or runtime registry binding |
+| `settings` | Plugin-local settings descriptors | `request.context.settings`/`context.settings` in handlers or `ctx.settings` in agent runtimes |
+| `agentSettings` | Agent account/local settings descriptors | projected host settings UI |
+| MCP servers | Hosted or managed MCP server descriptors | `api.registerMcpServer` |
+| MCP discovery | Runtime MCP discovery | `api.registerMcpDiscoveryProvider` |
+| UI artifacts | Hosted web, embedded web, or React Native UI surfaces | built artifact tree |
+| request interceptors | Policy over plugin-authored fetch calls | `api.registerRequestInterceptor` |
+| `managedDependencies` | Host-managed tool/runtime dependencies | dependency installer/validator |
+
+The exact availability of a family depends on the current Happier version and the plugin's declared `uses[]` families.
+
+## Descriptor-first families
+
+Settings, UI surfaces, managed dependencies, notification categories, agent runtime capabilities, and projected display metadata should be descriptor-first. The manifest describes them; executable code only handles the dynamic behavior the descriptor references.
+
+## Handler id matching
+
+Registration methods bind executable handlers to manifest-declared ids. Invalid, missing, duplicate, or undeclared ids are authoring errors. Happier should fail closed rather than silently accepting a no-op registration for a declared required contribution.
+
+## Dynamic runtime state is not a contribution
+
+Agent-native commands, model lists, active account state, transcript lines, runtime status, and native session ids are runtime state. They should flow through runtime services, events, facets, or agent runtime surfaces, not become static manifest contributions.

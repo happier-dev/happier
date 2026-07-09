@@ -16,7 +16,7 @@ This section describes how to deploy **your own Happier Server** (the sync backe
   - See: [Self-host runtime (installer vs runner)](./self-host-runtime)
 - **Run from a monorepo clone** (repo-local mode): use `yarn` from the repo root to run a stackless local stack, install a service, and configure Tailscale.
   - See: [Run from a monorepo clone (repo-local mode)](./repo-local)
-- **Docker** (recommended starting point): build from this repo’s `Dockerfile` and run with Docker / Docker Compose.
+- **Docker** (recommended starting point): use the published image, or build from this repo’s `Dockerfile`, and run with Docker / Docker Compose.
   - See: [Docker](./docker)
 - **Observability** (Prometheus + Grafana + Alertmanager): the repo ships a Docker-friendly observability pack under `apps/server/observability`.
   - See: [Observability](./observability)
@@ -29,7 +29,7 @@ This section describes how to deploy **your own Happier Server** (the sync backe
 ## Quick decision (recommended)
 
 - Want a **managed service** on a host/VPS: use **Self-host runtime** (`happier relay host install`).
-- Already using a supervisor (Docker/Compose/k8s/Nomad/systemd): use **Docker** or the **runner** (`@happier-dev/relay-server`) and update on restart.
+- Already using a supervisor (Docker/Compose/k8s/Nomad/systemd): use **Docker** for image-pull updates, or the **runner** (`@happier-dev/relay-server`) for artifact downloads on restart.
 - Developing or customizing from source: use **repo-local mode** (or `hstack setup-from-source` for stack-based local workflows).
 
 ## Server flavors (high level)

@@ -1,0 +1,74 @@
+---
+title: Events
+description: Publish and subscribe to typed plugin and host events.
+---
+
+Events are live daemon-global pub/sub observations. They are not hooks, not transcript rows, and not history/replay APIs.
+
+## Event ids
+
+Plugin-owned events use the plugin id as a namespace:
+
+```text
+<pluginId>/<event-path>
+```
+
+Reserved host events use:
+
+```text
+@happier/<namespace>/<event-path>
+```
+
+Plugins cannot emit reserved `@happier/*` events.
+
+## Declare plugin events
+
+Plugin-authored events should be declared in the manifest with local ids and payload schemas. The host derives the fully qualified event id from the trusted plugin id, yielding `<pluginId>/<localId>`.
+
+## Emit events
+
+```js
+await ctx.events.emit({
+  id: 'com.example.plugin/build.completed',
+  payload: {
+    status: 'ok'
+  }
+});
+```
+
+For own-plugin events, the host can qualify the local id against the caller plugin. For host or cross-plugin events, use explicit selectors and required permissions.
+
+## Subscribe to events
+
+```js
+const subscription = ctx.events.subscribe('@happier/session/*', async (event) => {
+  const payload = event.payload;
+});
+
+subscription.unsubscribe();
+```
+
+Subscription handlers receive a typed event object. The value field is `payload`.
+
+## Runtime events are different
+
+Lower provider-to-host runtime subscriptions receive direct `RuntimeEventV1` payloads. Public `ctx.events.subscribe(...)` receives event envelopes with metadata and `payload`.
+
+## Permissions
+
+Emitting declared own-plugin events is not privileged. Observing reserved host namespaces or another plugin's events requires permission capabilities declared in the manifest.
+
+| Event family | Required permission |
+| --- | --- |
+| `@happier/runtime/*` | `events.runtime.subscribe` |
+| `@happier/lifecycle/*` | `events.lifecycle.subscribe` |
+| `@happier/session/*` | `events.session.subscribe` |
+| another plugin's `<pluginId>/*` | `events.plugin.subscribe` scoped to that plugin id |
+
+## Reload caveat
+
+The first-party Plugin Inspector currently observes reloads through the `plugin.reload.after` hook contribution registered with `api.registerHook(...)`. Startup activation receives `PluginApi`, not `PluginContextV1`, so that reload-live-update path does not use `ctx.events` yet.
+
+## Delivery model
+
+The event bus is live. It does not provide replay, history, global ordering, or transcript persistence by default. Subscriber failures should be isolated from the publisher.

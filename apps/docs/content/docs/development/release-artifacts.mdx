@@ -14,6 +14,7 @@ description: Binary artifacts, channels, checksums/signatures, and manifests.
 - CLI binary archives: `happier-v{version}-{os}-{arch}.tar.gz`
 - hstack binary archives: `hstack-v{version}-{os}-{arch}.tar.gz`
 - Self-host server runtime archives: `happier-server-v{version}-{os}-{arch}.tar.gz`
+- Self-host UI web bundle archives: `happier-ui-web-v{version}-web-any.tar.gz`
 - Checksums: `checksums-{product}-v{version}.txt`
 - Checksums signature: `checksums-{product}-v{version}.txt.minisig`
 
@@ -34,6 +35,10 @@ Self-host server runtime:
 - `darwin-x64`
 - `darwin-arm64`
 - `windows-x64`
+
+Self-host UI web bundle:
+
+- `web-any`
 
 ## Manifest schema (`/v1`)
 
@@ -59,4 +64,5 @@ Each platform manifest includes:
 
 - CLI/hstack: rolling tags (`cli-stable` / `cli-preview` / `cli-dev`, `stack-stable` / `stack-preview` / `stack-dev`) + versioned tags.
 - Self-host runtime: rolling server release tags + versioned artifacts.
+- Self-host UI web bundle: rolling UI-web release tags + versioned artifacts.
 - `happier self update --to <version>` is a version-targeted rollback entry point.

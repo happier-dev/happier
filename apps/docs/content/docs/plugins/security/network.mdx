@@ -1,0 +1,13 @@
+---
+title: Network access
+description: Use host-mediated fetch and scoped network permissions.
+---
+
+Plugins should use `ctx.fetch` for network requests. The host can apply permissions, request policies, diagnostics, retries, timeout, and redaction.
+
+## Rules
+
+- Declare network permission for external origins.
+- Use request interceptors only for plugin-authored fetch policy.
+- Do not route agent auth or Happier server traffic through plugin policy unless a future host-owned scope explicitly supports it.
+- Do not log authorization headers, tokens, cookies, or raw credentials.

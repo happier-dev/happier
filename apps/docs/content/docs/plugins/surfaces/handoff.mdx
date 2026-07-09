@@ -1,0 +1,22 @@
+---
+title: Handoff surface
+description: Export and import provider session state across machines or runtime modes.
+---
+
+Handoff surfaces move provider session state between Happier contexts.
+
+## Export
+
+Export creates an agent-owned bundle or descriptor that contains enough native state to resume or reconstruct the session elsewhere.
+
+## Import
+
+Import consumes that bundle or descriptor and returns a typed result that the host can use to continue the session flow.
+
+## Ownership
+
+Agent leaves own native bundle semantics. The host owns Happier session continuity, storage, transfer, permissions, and user-facing errors.
+
+## Security
+
+Handoff bundles can contain sensitive provider state. They should be scoped, redacted where possible, and never exposed as raw unvalidated payloads in UI.

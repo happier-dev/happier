@@ -3,10 +3,11 @@ title: Self-host runtime (installer vs runner)
 description: Understand the supported ways to run a self-hosted Happier Server, and what each option installs/manages.
 ---
 
-Happier currently supports two **different** self-host “shapes”:
+Happier currently supports three **different** self-host “shapes”:
 
 1) a **managed install** (service + config) driven by `happier relay host …`
-2) a **runner** that simply downloads/verifies artifacts and starts the server process (`@happier-dev/relay-server`)
+2) a **Docker image** that bakes verified server-runtime + UI-web artifacts into the image
+3) a **runner** that downloads/verifies artifacts on startup and starts the server process (`@happier-dev/relay-server`)
 
 They are complementary, but they are not the same thing.
 
@@ -66,7 +67,19 @@ Local Relay aliases default to the current CLI release channel. Pass `--local-ch
 
 This managed Relay runtime is separate from this computer's Happier background service. Installing the CLI or hosting a Relay does not automatically configure the background service for sessions; use `happier setup` for first-time computer setup and `happier doctor repair` to fix drift or broken state later.
 
-## Option B: Runner (`@happier-dev/relay-server`) (recommended for Docker / “just run it”)
+## Option B: Docker image (recommended starting point)
+
+The `happierdev/relay-server` image is built from the same signed server-runtime and UI-web release artifacts, but they are fetched and verified during the Docker image build. The running container starts the embedded `happier-server` binary directly.
+
+This is ideal when:
+
+- you run the server in **Docker**, Compose, Nomad, or Kubernetes
+- you want image-pull based updates
+- you do not want the container to download new application artifacts on every restart
+
+See: [Docker](./docker).
+
+## Option C: Runner (`@happier-dev/relay-server`)
 
 The relay server package is a **server runner**:
 
@@ -78,7 +91,7 @@ The relay server package is a **server runner**:
 
 This is ideal when:
 
-- you run the server in **Docker** (or any process supervisor you already have)
+- you already have a process supervisor
 - you want updates to happen on **restart** (no managed install / no scheduler)
 - you do not want `hstack` installing services/timers/tasks on the host
 
@@ -107,7 +120,8 @@ For a production-style self-host deployment, use Prometheus and Grafana rather t
 
 ## Choosing between them
 
-- If you want a **service** and `hstack`-managed lifecycle → use **Option A**.
-- If you already have a process manager (Docker/Compose/systemd/nomad/k8s) and just want a **runner** → use **Option B**.
+- If you want a **service** and managed lifecycle → use **Option A**.
+- If you want a self-contained container image → use **Option B**.
+- If you already have a process manager and want artifact downloads on restart → use **Option C**.
 
-If you’re unsure, start with Docker (runner) and switch to a managed install later.
+If you’re unsure, start with Docker and switch to a managed install later.

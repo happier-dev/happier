@@ -1,0 +1,112 @@
+---
+title: Actions, tools, and commands
+description: Register executable operations and expose them across CLI, MCP, and session-agent surfaces.
+---
+
+Actions are the canonical executable operation model. Tools and commands are convenience surfaces over the same idea.
+
+## Actions
+
+Declare actions in the manifest, then bind handlers with `api.registerAction(...)`.
+
+```ts
+export async function activate(host) {
+  host.registerAction({
+    id: 'echo',
+    handler: async (request) => ({
+      ok: true,
+      data: { input: request.input }
+    })
+  });
+}
+```
+
+Action results use a typed success/error shape:
+
+```js
+{ ok: true, data: { value: 1 } }
+{ ok: false, error: { code: 'invalid_input', message: 'Invalid input' } }
+```
+
+Prefer stable error codes over parsing text.
+
+## Tools
+
+Tools expose plugin operations to tool-capable surfaces. The manifest owns tool metadata; runtime registration binds only the manifest-declared tool id and handler.
+
+Use tools when the operation is meant to be called by agents or MCP-compatible tool clients.
+
+### Worked tool example
+
+Declare the tool under `contributes.tools[]`. The `surfaces` list makes it available to agent/tool surfaces, and the handler target points at the runtime registration id.
+
+```json
+{
+  "uses": ["tools"],
+  "contributes": {
+    "tools": [
+      {
+        "id": "com.example.session-notes.notes.add",
+        "name": "session_notes_add",
+        "title": "Add session note",
+        "description": "Store a note for the current plugin.",
+        "surfaces": ["agent", "mcp"],
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "note": { "type": "string" }
+          },
+          "required": ["note"]
+        },
+        "handler": {
+          "target": "plugin",
+          "registrationId": "com.example.session-notes.notes.add"
+        }
+      }
+    ]
+  }
+}
+```
+
+Bind the handler during activation. Tool handlers receive the existing action-style request object; `request.context` includes plugin-scoped `storage`, `settings`, `logger`, and `events`.
+
+```ts
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+
+const ADD_NOTE_TOOL_ID = 'com.example.session-notes.notes.add';
+
+export function activate(api: PluginApi): void {
+  api.registerTool({
+    id: ADD_NOTE_TOOL_ID,
+    handler: async (request) => {
+      const services = request.context;
+      const note = String((request.input as { note?: unknown }).note ?? '');
+      const existing = await services.storage.local.get<string[]>('notes');
+      const notes = [...(existing ?? []), note];
+      await services.storage.local.set('notes', notes);
+      services.logger.info('Stored session note', { count: notes.length });
+      await services.events.emit({
+        id: 'com.example.session-notes.note-added',
+        payload: { count: notes.length },
+      });
+      return { ok: true, data: { note, count: notes.length } };
+    },
+  });
+}
+```
+
+## Commands
+
+Commands expose CLI-facing entries. Command declarations should specify visibility, feature gates, and the action they trigger when applicable.
+
+## Approvals
+
+Dangerous actions should declare danger level and confirmation metadata in the manifest. Runtime approvals should use the host action approval service instead of prompting through agent-specific side channels.
+
+## Design rules
+
+- Keep operation identity in the manifest.
+- Keep executable code in handlers.
+- Keep user-facing placement and availability descriptor-driven.
+- Do not create parallel RPC handlers for operations that fit the action model.

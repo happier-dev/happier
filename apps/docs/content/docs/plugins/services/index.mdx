@@ -1,0 +1,27 @@
+---
+title: Runtime services
+description: Host-provided services available through PluginContextV1.
+---
+
+Runtime services are exposed through `PluginContextV1`. They are the supported way for plugin code to interact with host capabilities.
+
+Use runtime services instead of reading Happier internals, spawning unmanaged processes, writing host state files directly, or maintaining agent-local duplicates of host systems.
+
+## Service principles
+
+- Services are scoped to the invoking plugin, agent runtime, session, or operation.
+- Services return typed results and diagnostics.
+- Long-running methods should honor abort signals.
+- Services expose focused reads instead of full host read models.
+- Disposables should be idempotent.
+
+## Common service groups
+
+<Cards>
+  <Card title="Exec" href="/docs/plugins/services/exec" />
+  <Card title="Managed servers" href="/docs/plugins/services/managed-servers" />
+  <Card title="Settings" href="/docs/plugins/services/settings" />
+  <Card title="Secrets" href="/docs/plugins/services/secrets" />
+  <Card title="Sessions and transcripts" href="/docs/plugins/services/sessions-transcripts" />
+  <Card title="Auth and connected services" href="/docs/plugins/services/auth-connected-services" />
+</Cards>

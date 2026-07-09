@@ -1,0 +1,33 @@
+---
+title: Versioning and compatibility
+description: Understand plugin manifest compatibility, Happier engine ranges, SDK semver, passthrough policy, and publication probes.
+---
+
+Plugin compatibility has three independent axes.
+
+| Axis | Where it appears | What it means |
+| --- | --- | --- |
+| Manifest version | Author manifests use `schemaVersion`; installation records also carry manifest-version metadata. | Selects the manifest schema family. Current public authoring examples use v2. |
+| Happier engine range | `engines.happier` | npm-style semver range for compatible Happier hosts. Unsupported ranges fail validation with diagnostics. |
+| SDK semver | `@happier-dev/plugin-sdk` package version | TypeScript authoring contract for imports such as `PluginApi`, `PluginContext`, and `AgentRuntime`. |
+
+## Forward compatibility
+
+The manifest root and contribution rows preserve unknown fields through the passthrough policy. Closed discriminated unions still reject unknown or retired contract keys when accepting them would create ambiguity.
+
+Do not use passthrough fields for behavior that must be projected or authorized before plugin code runs. Add a real contribution field instead.
+
+## Publication model
+
+The SDK is published as a bundled tarball when release approval allows it. The packed tarball must be self-sufficient: consumers install `@happier-dev/plugin-sdk` without separately publishing internal workspaces such as `@happier-dev/protocol` or `@happier-dev/agents`.
+
+Bundling solves installation. It does not make internal workspace imports public API. Plugin authors should import from `@happier-dev/plugin-sdk` stable or documented experimental subpaths only.
+
+## Consumer probes
+
+Release validation should pack the SDK tarball and install it into out-of-repo consumers:
+
+- strict TypeScript with `moduleResolution: NodeNext`
+- a Vite consumer using the documented SDK subpaths
+
+Both probes should compile against the packed tarball, not workspace links.

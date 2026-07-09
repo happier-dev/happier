@@ -1,0 +1,24 @@
+---
+title: Packaging and install
+description: Develop, install, reload, pack, and distribute plugins.
+---
+
+Plugin packaging turns a manifest, daemon entry, resources, and UI artifacts into an installable local path or archive.
+
+## Common commands
+
+```bash
+happier plugins scaffold /absolute/path/to/plugin --id com.example.plugin --name "Example"
+cd /absolute/path/to/plugin && npm install
+happier plugins install /absolute/path/to/plugin
+happier plugins reload com.example.plugin
+happier plugins pack /absolute/path/to/plugin --out ./example.happier-plugin.tgz
+```
+
+Pre-publication SDK note: `@happier-dev/plugin-sdk` is not yet installed from the
+public npm registry. Scaffolds created from a Happier checkout use a local
+`file:` dependency for the SDK so `npm install` works immediately.
+
+## Install model
+
+Happier validates the manifest and source trust before loading executable daemon code.

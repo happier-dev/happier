@@ -1,0 +1,28 @@
+---
+title: Debugging
+description: Diagnose plugin manifest, activation, runtime, and agent integration issues.
+---
+
+## Common failure classes
+
+- manifest schema invalid
+- undeclared handler id
+- missing runtime capability family
+- missing permission grant
+- untrusted source
+- activation exception
+- stale runtime generation
+- agent binary unavailable
+- managed server health check failure
+- agent auth unavailable
+- runtime event schema invalid
+- process disposal leak
+
+## Debugging approach
+
+1. Validate manifest projection first.
+2. Confirm the daemon loaded the expected plugin generation.
+3. Confirm activation registrations match manifest ids.
+4. Run the smallest handler or agent runtime flow.
+5. Inspect daemon/plugin logs.
+6. Add focused tests for the observed failure.

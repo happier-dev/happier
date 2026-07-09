@@ -1,0 +1,60 @@
+---
+title: Hooks
+description: Extend host workflows through manifest-declared hook handlers.
+---
+
+Hooks are host-invoked extension points. They let plugins observe or influence specific Happier workflows without owning the workflow.
+
+## Hook declaration
+
+Declare hook contributions in the manifest. Include the hook id, scope, filters, priority, and execution kind when the hook family supports them.
+
+## Hook binding
+
+Bind the executable handler during activation:
+
+```ts
+export async function activate(host) {
+  host.registerHook({
+    hookId: 'session.input.transform',
+    priority: 100,
+    handler: async (payload, context) => {
+      if (context.signal?.aborted) return;
+      return payload;
+    }
+  });
+}
+```
+
+## Hook result classes
+
+Different hooks have different result contracts:
+
+- lifecycle hooks usually return `void`
+- augmentation hooks may return an object with additional fields
+- decision hooks may return a typed decision result
+
+Always follow the hook family's result contract. Do not return ad-hoc objects.
+
+## Scope and filters
+
+Use manifest scope and filters to keep hooks narrow. A hook that only applies to one `agentId`, one action, or one session flow should declare that restriction.
+
+## Turn interception hooks
+
+Turn interception hooks declare the runtime families where the host actually dispatches them. A missing runtime family means unsupported, not a silent no-op:
+
+| Hook | Supported runtime families | Contract |
+| --- | --- | --- |
+| `session.input.transform` | `hostSession` | Transform normalized user input before it is committed to the transcript and handed to the agent queue. |
+| `agent.context.before` | `hostSession` | Transform the finalized outgoing model context before the provider request is sent. |
+| `agent.request.before` | `acpSession` | Transform the raw ACP `session/prompt` request before dispatch. |
+| `agent.stream.token` | `hostSession` | Observe streamed token deltas. This hook is observational only: handlers should not mutate host state required for the active turn, should return quickly, and should throttle or sample expensive work. |
+
+## Failure behavior
+
+Hook failures should become diagnostics unless the hook contract says the failure blocks the host operation. Blocking hooks need explicit error codes and validation coverage.
+
+## Ownership rule
+
+Hooks should not become hidden alternate implementations of host workflows. If a hook needs a new capability, extend the hook contract or the canonical host service instead of bypassing the runtime host.

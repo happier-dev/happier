@@ -1,0 +1,67 @@
+---
+title: UI artifacts
+description: Build, digest, and verify portable plugin UI artifact trees.
+---
+
+Plugin UI artifacts are written to:
+
+```text
+dist/happier-plugin-ui/
+  ui-artifacts.json
+  hosted-web/<contributionId>/...
+  react-native/<contributionId>/...           # ios/android, Re.Pack-built
+  react-native-web/<contributionId>/...       # web, Vite + react-native-web-built
+```
+
+A `reactNative`-mode contribution typically ships all three platform entries
+(`ios`, `android`, `web`) for the same `contributionId` — one manifest, three
+`tier: 'reactNative'` entries distinguished by `platform` and `builtWith.bundler`
+(`repack` for ios/android, `vite` for web). `embedded-web/` is retired: the
+manifest schema's `embeddedWeb` tier still parses (governs any already-installed
+embeddedWeb artifact's rendering), but no new `embeddedWeb` artifact can be
+authored — `reactNative`-on-web supersedes it.
+
+## Build contract
+
+The build command emits a manifest and computes content digests from emitted
+bytes. Authors do not supply the final digest manually.
+
+```bash
+happier-plugin-build-ui --project-root .
+```
+
+The command discovers one of these config files at the plugin root:
+`pluginUiBuild.mjs`, `pluginUiBuild.js`, `pluginUiBuild.ts`,
+`happier-plugin-ui.config.mjs`, `happier-plugin-ui.config.js`, or
+`happier-plugin-ui.config.ts`. It also accepts `--config <path>` and prints the
+same contract with `--help`.
+
+The recommended config shape mirrors the SDK examples:
+
+```ts
+export function definePluginUiBuildConfig(context) {
+  return {
+    surfaces: [
+      // defineHostedWebViteBuildPreset(...) or defineReactNativeWebViteBuildPreset(...)
+    ],
+    runBundler: createManagedRuntimeBundlerRunner({
+      exec: context.exec,
+      emittedRoot: context.emittedRoot,
+      listEmittedFiles: context.listEmittedFiles,
+    }),
+  };
+}
+```
+
+If no config is found, the config is invalid, or it declares no surfaces, the
+command exits non-zero with an actionable error.
+
+## Runtime verification
+
+The daemon re-derives the digest when loading artifacts. Mismatched, missing, unsafe, or schema-invalid artifact trees fail closed.
+
+Artifact kinds may use bundle suffixes such as `reactNativeBundle`. Runtime mode ids do not: use `reactNative`.
+
+## Path safety
+
+Artifact paths must be relative, non-traversing, and safe to serve. Do not include absolute paths or symlinks.

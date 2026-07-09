@@ -1,0 +1,100 @@
+---
+title: Capabilities and permissions
+description: Understand runtime families, declarative capabilities, permission grants, and contribution-local capability objects.
+---
+
+The word "capability" appears in several plugin surfaces. These surfaces are intentionally
+different and must not be treated as interchangeable.
+
+## Runtime families
+
+```json
+{
+  "uses": ["actions", "tools", "mcp"]
+}
+```
+
+`uses[]` declares the plugin runtime families that can be activated and projected. It is not a
+permission grant.
+
+## Declarative capabilities
+
+```json
+{
+  "declares": {
+    "capabilities": [
+      {
+        "capability": "storage.local",
+        "reason": "Stores plugin-local settings."
+      }
+    ]
+  }
+}
+```
+
+`declares.capabilities[]` is metadata for non-authority capabilities. It does not unlock host
+operations.
+
+## Permission grants
+
+```json
+{
+  "permissions": {
+    "required": [
+      {
+        "capability": "network",
+        "scope": "https://api.example.com",
+        "reason": "Calls the plugin service API."
+      }
+    ],
+    "optional": []
+  }
+}
+```
+
+`permissions.required[]` and `permissions.optional[]` are for host operations with implemented
+runtime enforcement. See [Permissions](/docs/plugins/security/permissions) for the enforced v1
+matrix.
+
+## Contribution-local capabilities
+
+```json
+{
+  "contributes": {
+    "agents": [
+      {
+        "id": "example.agent",
+        "capabilities": {
+          "executionRun": {
+            "supported": true
+          },
+          "session": {
+            "media": {
+              "acceptsImageInput": {
+                "supported": false
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}
+```
+
+Contribution-local capability objects describe what that contribution supports. They do not grant
+authority to the whole plugin.
+
+## Fail-closed behavior
+
+Missing, malformed, or unauthorized permission data should be treated as unavailable or disabled.
+Plugins should not infer permission from `uses[]`, `declares.capabilities[]`, contribution-local
+support facts, or agent support flags.
+
+## Good authoring pattern
+
+- Use `uses[]` to declare which plugin families you activate.
+- Use `declares.capabilities[]` for non-authority metadata.
+- Use `permissions.required[]` or `permissions.optional[]` only for enforced runtime authority.
+- Use contribution-local `capabilities` to describe agent or UI behavior.
+- Keep reasons concrete and user-readable.

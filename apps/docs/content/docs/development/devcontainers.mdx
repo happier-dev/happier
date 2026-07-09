@@ -21,14 +21,16 @@ docker pull ghcr.io/happier-dev/dev-box:preview
 
 The image includes:
 
-- `happier` CLI
-- optional provider CLIs (install on first boot via env)
+- the published `happier` CLI binary
+- optional provider CLIs, installed on first boot via `happier install provider`
+
+The image does not include a source checkout or `hstack`; it is meant for using Happier from a container, not developing Happier itself.
 
 Note: “dev box” is our Docker image name — it’s not tied to any specific editor “devcontainer” feature.
 
 ### Optional: install provider CLIs on first boot
 
-Set `HAPPIER_PROVIDER_CLIS` to install provider CLIs into the container user’s npm prefix:
+Set `HAPPIER_PROVIDER_CLIS` to install provider CLIs through the Happier CLI:
 
 ```bash
 docker run --rm -it \

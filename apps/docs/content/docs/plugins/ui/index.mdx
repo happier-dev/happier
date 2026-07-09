@@ -1,0 +1,76 @@
+---
+title: Plugin UI
+description: Contribute host-rendered, hosted web, and React Native surfaces.
+---
+
+Plugin UI is descriptor and artifact based. The host projects UI contributions from the manifest and serves verified artifact trees at runtime.
+
+## Which mode do I use?
+
+Two authoring modes remain — pick by what you're building, not by target platform:
+
+- **`reactNative` — the default and recommended path.** Write one React Native UI
+  (`import { View, Text } from 'react-native'`, one `sourceEntry`). It ships to
+  ios/android via a Re.Pack bundle **and** to web via a Vite +
+  react-native-web build of the *same* source — one authoring model, every
+  client. Use this unless you're specifically embedding an existing web app.
+- **`hostedWeb` — only to embed an existing, already-deployed web UI** you
+  don't want to (or can't) rewrite in RN. Works everywhere: a browser iframe
+  on web, a native `WebView` on ios/android, over the same postMessage
+  host-API bridge either way.
+
+That's it. `embeddedWeb` is **retired** from the authoring story (see below)
+— its "in-process web rendering" capability is a strict subset of what
+`reactNative` mode now offers (same react-native-web rendering, plus native
+support), for identical runtime cost.
+
+One residual gotcha: `hostedWeb` on native only loads **production `https://`
+endpoints** by default. A local `hostedWeb` dev server (`http://localhost:…`)
+is blocked unless the contribution declares
+`security.mixedContent: 'devLoopbackOnly'` **and** is installed on the
+`development` channel **and** the host is a dev build — all three, or it
+stays blocked. If your on-device `hostedWeb` preview shows "unavailable,"
+check those three before assuming the mode itself doesn't work on native.
+
+### Real example: the Plugin Inspector
+
+`packages/plugins/inspector` (`happier.inspector`) is the first real,
+dogfooded `reactNative`-mode consumer: one source
+(`src/ui/renderSurface.tsx`, plain `View`/`Text`/`Pressable`/`ScrollView`)
+built for web via `vite.config.ts` (`defineReactNativeWebViteBuildPreset`).
+It replaced the plugin's earlier `hostedWeb` contribution outright — one UI
+owner, not two.
+
+Inside `renderSurface`, `context.hostApi.dispatchAction({ actionId, input })`
+is the same object every `reactNative` surface gets, native or web. A plugin
+component that needs host-API access **without** prop-drilling through a deep
+tree can instead `import { createPluginUiHostApiClient } from
+'@happier-dev/plugin-sdk/ui/hostApiClient'` and call
+`createPluginUiHostApiClient({ surface })` — same transport, resolved through
+the surface's registered handler rather than through props.
+
+Known gap found while wiring the inspector: `contributes.reactNativeBundles[]`
+binds exactly one `bundle.platform` per contribution id today, and the CLI
+registry/projection layer resolves strictly by that declared platform — there
+is no way yet for one `reactNative` surface placement to serve ios **and**
+web simultaneously from sibling contributions sharing an id (the
+per-platform-per-contributionId story described above is proven at the
+*build artifact* manifest layer, not yet at the *contribution declaration*
+layer). The inspector currently targets `platform: 'web'` for this reason.
+
+## UI families
+
+- hosted web surfaces
+- React Native surfaces (renders on web too — see above)
+- host-rendered settings and agent settings forms
+- session header actions
+- structured message renderers
+- UI artifacts and translations
+
+## Runtime modes
+
+Stable mode ids are `host`, `declarative`, `structured`, `action`, `hostedWeb`, and `reactNative`. `embeddedWeb` is retired from authoring: `defineSurfaceContribution` no longer accepts it, and the SDK no longer exports an `embeddedWeb` build preset. The bundle suffix `reactNativeBundle` names an artifact kind (including its web-target artifacts), not a runtime mode.
+
+## Rule
+
+The manifest declares UI identity and policy. The artifact build emits portable files. The daemon verifies the artifact digest before serving the UI.

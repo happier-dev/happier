@@ -1,0 +1,25 @@
+---
+title: Marketplace distribution
+description: Marketplace-oriented plugin packaging and trust considerations.
+---
+
+Marketplace distribution uses the same manifest-first and trust-first model as local plugins.
+
+## Requirements
+
+Marketplace entries should provide enough metadata for Happier to show:
+
+- plugin identity
+- source and provenance
+- version compatibility
+- declared permissions
+- contribution previews
+- install/trust prompts
+
+## Executable trust
+
+Executable marketplace installs should require explicit trust before daemon code runs.
+
+## Compatibility
+
+Use the manifest schema version, `engines.happier`, and the plugin SDK package version to communicate compatibility. See [Versioning and compatibility](/docs/plugins/packaging/versioning-compat).

@@ -1,0 +1,30 @@
+---
+title: ACP agent runtimes
+description: Author Agent Client Protocol runtimes through the SDK ACP substrate.
+---
+
+ACP agent runtimes use the Agent Client Protocol through the SDK ACP substrate. Plugins should not implement a separate ACP JSON-RPC loop when the host substrate can provide it.
+
+## Define an ACP runtime
+
+Use `ctx.acp.defineAcpBackend(...)` inside an agent runtime factory.
+
+```ts
+const acpEngine = ctx.acp.defineAcpBackend(EXAMPLE_ACP_BACKEND_SPEC);
+```
+
+The resulting engine exposes `runtimeCore` when the ACP spec is complete enough to run sessions or execution-runs.
+
+## Tier-2 shaping
+
+Agent-specific ACP shaping belongs in the ACP definition callbacks, such as argv, environment, preflight, and permission decision logic.
+
+Do not create a separate activation hook registry for ACP shaping.
+
+## Generic ACP vs agent leaf
+
+Use generic ACP when the agent protocol is declarative enough. Use an agent-specific plugin leaf when the agent needs custom auth, launch, transcript, permission, or runtime behavior.
+
+## Execution-runs
+
+If an ACP agent runtime supports execution-runs, route them through the ACP-derived `runtimeCore.createExecutionRunBackend(...)` rather than building a local execution-run bypass.

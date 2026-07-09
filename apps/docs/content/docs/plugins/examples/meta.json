@@ -1,0 +1,11 @@
+{
+  "title": "Examples",
+  "pages": [
+    "index",
+    "action-plugin",
+    "agent-runtime-plugin",
+    "acp-agent-runtime",
+    "external-session-source",
+    "managed-server-agent-runtime"
+  ]
+}

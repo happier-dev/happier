@@ -1,0 +1,24 @@
+---
+title: External session source example
+description: An agent runtime that exposes native sessions for browsing and import.
+---
+
+Use an external session surface when the agent has its own session store.
+
+## Manifest
+
+Declare `surfaces.externalSession.sources[]` with:
+
+- `sourceKind`
+- source schema fields
+- canonical key segments
+
+Declare `surfaceHandlers[]` for operations such as list candidates, page transcript, read after, and resolve link identity.
+
+## Agent implementation
+
+Agent code can read native transcript files or server APIs, then return bounded pages and typed identities to the host.
+
+## Host boundary
+
+The host owns user flow, link records, imports, transcript projection, and takeover orchestration.

@@ -1,0 +1,18 @@
+---
+title: Action plugin example
+description: A plugin that exposes one manifest-declared action.
+---
+
+Use this shape for a simple operation that can be called from CLI, MCP, or a session-agent surface.
+
+## Manifest
+
+Declare the action under `contributes.actions[]`.
+
+## Activation
+
+Bind the handler with `api.registerAction({ id, handler })`.
+
+## Runtime services
+
+If the action needs plugin-owned state or diagnostics, use `request.context.storage`, `request.context.settings`, `request.context.logger`, or `request.context.events`. Do not read host internals directly.

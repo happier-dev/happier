@@ -1,0 +1,30 @@
+---
+title: Settings service
+description: Read and update plugin settings declared by manifest descriptors.
+---
+
+Plugin settings are available for the current plugin through handler-scoped services (`request.context.settings` for actions/tools/commands and `context.settings` for hooks) and through `ctx.settings` in agent runtimes.
+
+## Descriptor-first settings
+
+Settings fields should be declared in the manifest. Generic plugin settings use `contributes.settings[]` and are plugin-local in v1. Agent-specific settings use `contributes.agentSettings[]` and target an `agentId`.
+
+## Runtime access
+
+Plugin code can:
+
+- read all settings
+- read one setting by key
+- set a setting
+- subscribe to changes
+- describe fields
+- project a settings form
+
+`settings.onChange` fires for writes performed through the same settings service instance. It is not a cross-process or reload replay subscription.
+
+## Design rules
+
+- Keep display metadata in descriptors.
+- Keep secret values in `ctx.secrets`, not settings.
+- Preserve unknown plugin-owned settings keys unless a migration intentionally changes them.
+- Do not add agent-specific branches in generic settings UI code; use descriptors and `agentSettings`.

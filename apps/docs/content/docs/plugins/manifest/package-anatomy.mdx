@@ -1,0 +1,52 @@
+---
+title: Package anatomy
+description: The expected local and packaged file layout for Happier plugins.
+---
+
+## Local development layout
+
+```text
+my-plugin/
+  .happier-plugin/
+    plugin.json
+  daemon.mjs
+  resources/
+  ui/
+  dist/
+```
+
+Only `.happier-plugin/plugin.json` and the files it references are required. Keep plugin runtime code self-contained. Do not import from sibling plugins or Happier source paths.
+
+## Daemon entry
+
+The daemon entry exports activation:
+
+```js
+export async function activate(api) {
+  api.onDispose(async () => {
+    // Dispose plugin-owned resources.
+  });
+}
+```
+
+Use a named `activate` export. The activation API is registration-only.
+
+## UI artifacts
+
+Hosted web, embedded web, and React Native plugin UI surfaces are compiled into portable artifact trees. The build output includes a manifest with content digests derived from emitted bytes. The daemon verifies the artifact tree when loading it.
+
+## Packaged archives
+
+Packed plugins should contain the manifest, daemon entry, resources, and built UI artifacts needed to run on another machine. Archive install rejects unsafe extracted payloads such as symlinks.
+
+## Trust boundary
+
+Local path plugins are trusted local source. Remote archives and marketplace entries must pass the install/trust flow before daemon executable code can run.
+
+## What not to include
+
+- references to absolute build-machine paths
+- secrets or account tokens
+- agent CLI binaries
+- generated files that can be rebuilt and are not part of the runtime artifact
+- imports from `apps/`, `packages/agents`, `packages/protocol`, or another plugin package

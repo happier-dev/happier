@@ -1,0 +1,32 @@
+---
+title: Managed servers
+description: Supervise plugin-owned local servers through ctx.managedServer.
+---
+
+`ctx.managedServer` is for plugin-owned local services such as provider loopback servers.
+
+## What the host manages
+
+The managed-server service owns:
+
+- process launch
+- port resolution
+- loopback binding
+- health checks
+- startup timeout
+- credentials
+- durable logs
+- process cleanup
+- snapshots and diagnostics
+
+## Use case
+
+OpenCode server mode uses `ctx.managedServer.supervise(...)` to start a loopback server, wait for `/global/health`, inject credentials, and dispose the server with the session runtime.
+
+## Good practices
+
+- Bind to `127.0.0.1` unless the feature explicitly requires otherwise.
+- Use generated credentials for local HTTP servers.
+- Redact durable logs.
+- Fail closed when post-start health or auth handshake validation fails.
+- Keep external-attach and managed-spawn modes explicit.

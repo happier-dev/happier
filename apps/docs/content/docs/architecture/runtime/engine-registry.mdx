@@ -1,0 +1,35 @@
+---
+title: Engine registry
+description: Resolve manifest contributions and executable backend engines into runtime adapters.
+---
+
+The engine registry is the host-owned resolver for backend execution.
+
+## Inputs
+
+- merged plugin contribution registry
+- executable plugin runtime registry
+- backend definitions
+- backend catalog entries
+- registered backend engine factories
+- host runtime params such as happy home dir and daemon-local services
+
+## Output
+
+The registry resolves an engine adapter for a backend id. The adapter can include:
+
+- `runtimeCore`
+- facets
+- discovery and control surfaces
+- runtime preferences
+- auth and connected-service adapters
+- message metadata enrichment
+- backend execution surfaces
+
+## Runtime context
+
+The registry creates `PluginContextV1` for backend engine factories. This keeps runtime capabilities out of discovery/projection and activation-time static facts.
+
+## Resolution rule
+
+Selectable backends should resolve through the registry path. Production session and execution-run code should not instantiate provider engines directly.

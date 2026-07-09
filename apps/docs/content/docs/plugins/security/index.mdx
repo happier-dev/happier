@@ -1,0 +1,15 @@
+---
+title: Plugin security
+description: Trust, permission, secret, network, and sandboxing rules for plugins.
+---
+
+Plugins are executable local code. Happier keeps plugin behavior reviewable by separating static projection from executable activation and by requiring declared permissions for privileged operations.
+
+## Security principles
+
+- Validate manifests before importing code.
+- Refuse untrusted executable plugin code.
+- Keep permissions explicit and scoped.
+- Keep secrets out of settings and logs.
+- Keep agent-specific logic in agent leaves.
+- Use host services for process, network, filesystem, and session operations.

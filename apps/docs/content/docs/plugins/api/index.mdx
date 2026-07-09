@@ -1,0 +1,51 @@
+---
+title: Plugin API
+description: Public daemon-side API surfaces for activating plugins and running plugin-owned handlers.
+---
+
+The plugin API has two public objects:
+
+- `PluginApiV1`: registration-only API passed to `activate(host)`.
+- `PluginContextV1`: runtime capability object passed to agent runtime factories.
+- `PluginHandlerServicesV1`: handler-scoped `storage`, `settings`, `logger`, and `events` exposed on action/tool/command request contexts and hook handler contexts.
+
+## Activation API
+
+Use `PluginApiV1` to register executable handlers for manifest-declared contributions:
+
+- agent runtimes
+- actions
+- tools
+- commands
+- hooks
+- lifecycle handlers
+- notification channels
+- SCM hosting and repository integrations
+- MCP servers and discovery contributions
+- request interceptors
+- disposables
+
+## Runtime context
+
+Use `PluginContextV1` from agent runtime code for host capabilities:
+
+- `ctx.exec`
+- `ctx.permissions`
+- `ctx.managedServer`
+- `ctx.mcp`
+- `ctx.settings`
+- `ctx.secrets`
+- `ctx.storage`
+- `ctx.events`
+- `ctx.sessions.current`
+- `ctx.sessions`
+- `ctx.transcripts`
+- `ctx.auth`
+- `ctx.account`
+- `ctx.projects`
+- `ctx.notifications`
+- `ctx.timeout`, `ctx.retry`, `ctx.abort`, and `ctx.progress`
+
+## Rule of thumb
+
+If it declares an identity, put it in the manifest. If it binds executable behavior, use `api`. If it is an action/tool/command/hook handler, use the services on the existing handler context. If it is an agent runtime factory, use `PluginContextV1`.

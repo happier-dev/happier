@@ -1,0 +1,26 @@
+---
+title: Transcript source facet
+description: Read and follow native transcript sources through a bounded contract.
+---
+
+The transcript source facet exposes native transcript reads without making the host know agent file formats.
+
+## Methods
+
+- `page(...)`: read older or newer transcript items with byte and item limits
+- `readAfter(...)`: continue from a cursor
+- `acquireFollowLease(...)`: optionally follow a source for live updates
+
+## Requirements
+
+Transcript source implementations should:
+
+- use cursors
+- enforce byte and item bounds
+- avoid full-file reads in hot paths
+- preserve raw native payloads only inside agent-owned parsing code
+- map transcript items into host-understandable shapes
+
+## Ownership
+
+The facet reads agent evidence. Durable Happier transcript storage remains host/transcript-owned.

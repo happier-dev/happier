@@ -1,0 +1,20 @@
+---
+title: Reviews
+description: Use host-owned review comment services from plugins.
+---
+
+`ctx.reviews.comments` exposes durable review comment operations.
+
+## Operations
+
+Review plugins can create, list, get, edit, reply, transition, redact, set disposition, attach evidence, bulk transition, and resolve snapshots for review comments.
+
+## Snapshot boundary
+
+The host owns source reads, content-envelope compatibility, context windows, truncation, hashes, binary/symlink/submodule classification, and workspace scope for snapshots.
+
+Review plugins can compute engine-specific fingerprints, but should not capture local source text or create fallback snapshots outside the SDK service.
+
+## Permissions
+
+Direct review comment writes require explicit permission. Without direct-write permission, plugin-created comments should be proposed or routed through host approval flows.

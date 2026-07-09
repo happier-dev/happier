@@ -1,0 +1,35 @@
+---
+title: Exec service
+description: Launch processes and protocol clients through the binary-safe host runtime.
+---
+
+`ctx.exec` is the supported way for plugins to launch agent CLIs, system tools, protocol clients, and managed runtime-dependent commands.
+
+## Why use ctx.exec
+
+Happier ships binary installers and must work on machines without system `node`, `npm`, `npx`, `pnpm`, `yarn`, or `bunx`. `ctx.exec` lets the host resolve launch sources, environment, logging, cancellation, and binary-safe policy centrally.
+
+## Launch classes
+
+The exec service can support:
+
+- agent CLI launches
+- binary launches
+- managed installable launches
+- IPC/protocol clients
+- JSON-RPC clients
+- JSON stream clients
+- strict-LF JSON stream clients
+- framed byte clients
+- loopback WebSocket clients
+
+## Rules
+
+- Prefer `kind: 'agent-cli'` for agent CLI launches.
+- Do not spawn raw `node` or package managers from product runtime paths.
+- Use host-provided diagnostics rather than logging secrets or raw command lines.
+- Dispose process handles when runtime work completes.
+
+## Agent launch example
+
+An OpenCode managed server launches through an agent CLI launch with host-owned supervision rather than a raw process spawn.

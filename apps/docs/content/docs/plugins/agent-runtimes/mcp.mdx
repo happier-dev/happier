@@ -1,0 +1,27 @@
+---
+title: MCP in agent runtime plugins
+description: Use MCP servers and discovery contributions from plugin and agent runtime code.
+---
+
+MCP support is split between static manifest descriptors and runtime registration.
+
+## Manifest descriptors
+
+Declare MCP servers and discovery contributions in the manifest when they should be projected or discovered before executable plugin code runs.
+
+## Runtime registration
+
+Bind executable MCP behavior during activation:
+
+- `api.registerMcpServer(...)`
+- `api.registerMcpDiscoveryProvider(...)`
+
+Runtime-discovered per-session servers should be returned through the MCP runtime/discovery APIs, not promoted into the static plugin catalog by side effect.
+
+## Session-scoped MCP
+
+Agent runtimes can resolve MCP servers for a session through `ctx.mcp` and session-scoped services. The host owns the session integration and transport exposure.
+
+## Agent rule
+
+Agent-specific MCP configuration belongs in the agent leaf or manifest descriptors. Shared runtime code should not branch on `agentId` to discover MCP servers.

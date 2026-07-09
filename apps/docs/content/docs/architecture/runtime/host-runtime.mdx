@@ -1,0 +1,33 @@
+---
+title: Host runtime
+description: The host-owned runtime layer around provider leaves.
+---
+
+The host runtime is the shared Happier layer that sits between product flows and provider-specific code.
+
+## Host responsibilities
+
+- resolve backend engines
+- build plugin runtime context
+- run session host loops
+- run execution-run bridges
+- route permission requests and responses
+- manage pending prompt delivery
+- publish runtime identity and facets
+- project transcript and session state changes
+- coordinate cleanup and disposal
+- emit lifecycle hook events
+
+## Provider leaf responsibilities
+
+- launch or connect to provider protocol clients
+- encode prompts and structured input
+- decode provider events
+- map provider permission requests
+- publish `RuntimeEventV1` facts
+- expose provider-specific backend surfaces
+- dispose provider-owned resources
+
+## Forbidden split-brain paths
+
+Provider leaves should not own duplicate host loops, direct Happier transcript writes, direct session row mutation, UI status heuristics, or execution-run public state.

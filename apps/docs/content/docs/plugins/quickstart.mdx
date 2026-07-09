@@ -1,0 +1,126 @@
+---
+title: Plugin quickstart
+description: Create a local plugin, declare a manifest, bind an action, install it in dev mode, and reload it.
+---
+
+This quickstart shows the smallest useful local plugin. It uses a manifest for projection and an activation file for executable behavior.
+
+## Create the scaffold
+
+During the pre-publication SDK period, run scaffold from a Happier checkout. The
+generated `package.json` uses a local `file:` dependency for
+`@happier-dev/plugin-sdk`, so `npm install` works without a public npm package.
+
+```bash
+happier plugins scaffold /absolute/path/to/my-plugin --id com.example.echo --name "Echo plugin"
+cd /absolute/path/to/my-plugin
+npm install
+```
+
+## Package layout
+
+```text
+my-plugin/
+  .happier-plugin/
+    plugin.json
+  src/
+    index.ts
+  dist/
+    index.js
+```
+
+## Manifest
+
+```json
+{
+  "schemaVersion": 2,
+  "id": "com.example.echo",
+  "version": "0.1.0",
+  "displayName": "Echo plugin",
+  "engines": {
+    "happier": "^0.0.0"
+  },
+  "uses": ["actions"],
+  "entrypoints": {
+    "main": "./dist/index.js",
+    "dev": "./src/index.ts"
+  },
+  "permissions": {
+    "required": [],
+    "optional": []
+  },
+  "contributes": {
+    "actions": [
+      {
+        "id": "echo",
+        "title": "Echo",
+        "description": "Return the input payload.",
+        "scopes": ["session"],
+        "surfaces": ["cli", "mcp", "agent"],
+        "placement": "commandPalette",
+        "handler": {
+          "target": "plugin",
+          "registrationId": "echo"
+        },
+        "dangerLevel": "safe"
+      }
+    ]
+  }
+}
+```
+
+The manifest is the source of truth for the action identity. Happier can display and validate the action without importing `src/index.ts` or `dist/index.js`.
+
+## Activation
+
+```ts
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+
+export async function activate(host: PluginApi) {
+  host.registerAction({
+    id: 'echo',
+    handler: async (request) => ({
+      ok: true,
+      data: {
+        input: request.input
+      }
+    })
+  });
+
+  host.onDispose(async () => {
+    // Close plugin-owned handles here.
+  });
+}
+```
+
+Activation binds executable behavior to the manifest-declared action. It does not create the action identity by side effect.
+
+## Install and reload
+
+```bash
+happier plugins install /absolute/path/to/my-plugin --dev
+happier plugins list --json
+happier plugins reload com.example.echo
+```
+
+`--dev` records the path as `local_trusted`, uses `entrypoints.dev`, and enables source watching. On reload success, the new runtime registry replaces the old one. On reload failure, Happier keeps the previous working generation when one exists.
+
+## Call the action
+
+For a session-scoped smoke test:
+
+```bash
+happier tools call \
+  --session-id <sessionId> \
+  --directory /absolute/path/to/repo \
+  --source happier \
+  --tool action_execute \
+  --args-json '{"actionId":"com.example.echo.echo","input":{"message":"hello"}}' \
+  --json
+```
+
+## Next steps
+
+- Add manifest descriptors for settings, tools, hooks, or UI surfaces.
+- Use handler-scoped `request.context` or hook `context` services for `storage`, `settings`, `logger`, and `events` in action/tool/command/hook handlers. Use `PluginContextV1` from agent runtime factories when you need broader runtime services.
+- Use an agent runtime when the plugin contributes an AI agent.

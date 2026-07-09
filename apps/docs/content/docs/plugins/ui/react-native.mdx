@@ -1,0 +1,18 @@
+---
+title: React Native UI
+description: Contribute React Native plugin UI when the host surface supports it.
+---
+
+React Native plugin UI surfaces use runtime mode `reactNative` and are packaged as portable artifact bundles for supported host platforms.
+
+## Bundle shape
+
+React Native UI artifacts should be emitted under the canonical plugin UI artifact tree with platform-specific bundle files.
+
+## Compatibility
+
+The contribution should declare the host UI API version and React/React Native compatibility expected by the bundle.
+
+## Boundary
+
+The host owns app navigation, permissions, storage, and native capabilities. Plugin UI should use the exposed host UI API rather than importing app internals.

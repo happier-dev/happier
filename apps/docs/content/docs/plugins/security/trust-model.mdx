@@ -1,0 +1,22 @@
+---
+title: Trust model
+description: How Happier decides whether plugin code can execute.
+---
+
+Plugin source and install policy determine whether executable code can run.
+
+## Source classes
+
+Common source classes include local path plugins, local archives, remote archives, package/catalog sources, and bundled plugins.
+
+## Trust behavior
+
+Local trusted sources can execute after validation. Prompt or untrusted sources must go through an install/trust flow before daemon code is imported.
+
+## Reload safety
+
+Reload builds a new runtime registry generation. If activation fails and a previous working generation exists, the host can keep the last known good runtime registry.
+
+## No-execute projection
+
+Catalogs, settings, permissions, and install previews should be projected before executable code runs.

@@ -1,0 +1,17 @@
+{
+  "title": "Services",
+  "pages": [
+    "index",
+    "exec",
+    "managed-servers",
+    "filesystem",
+    "settings",
+    "secrets",
+    "storage",
+    "auth-connected-services",
+    "sessions-transcripts",
+    "projects-account",
+    "notifications",
+    "reviews"
+  ]
+}

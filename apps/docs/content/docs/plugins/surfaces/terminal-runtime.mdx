@@ -1,0 +1,25 @@
+---
+title: Terminal runtime
+description: Integrate terminal-hosted agent runtimes and direct transcript bindings.
+---
+
+Terminal runtime surfaces describe agent behavior that runs through a terminal or TUI-like process.
+
+## Common uses
+
+- resolve a transcript binding for a terminal-hosted native session
+- project native session identity from terminal breadcrumbs
+- expose terminal launch metadata
+- coordinate terminal handoff and input readiness through host-owned runtime mechanics
+
+## Terminal host ownership
+
+The host owns terminal host resolution, liveness, diagnostics, input injection policy, and terminal turn state. Agent leaves own agent-specific breadcrumbs, transcript locations, and marker parsing.
+
+## Transcript binding
+
+Transcript binding should return typed native session projection information. It should not write Happier transcript rows directly.
+
+## Safety rule
+
+Terminal attach metadata does not imply write access. Input injection requires an explicit host capability and readiness decision.

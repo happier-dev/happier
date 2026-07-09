@@ -1,0 +1,21 @@
+---
+title: Hosted web UI
+description: Build plugin-owned web UI as portable daemon-served artifacts.
+---
+
+Hosted web UI surfaces are compiled into static artifacts served by the local daemon.
+
+## Authoring flow
+
+1. Declare the hosted-web contribution in the manifest.
+2. Build the UI into `dist/happier-plugin-ui`.
+3. Emit `ui-artifacts.json`.
+4. Let the daemon verify the artifact tree before serving it.
+
+## Security policy
+
+Hosted web descriptors should declare navigation policy, callback origins, connect origins, CSP source policy, source-map handling, and mixed-content behavior.
+
+## Runtime boundary
+
+Hosted web UI is not arbitrary host code. It communicates through declared host UI APIs and callback channels.

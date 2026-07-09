@@ -1,0 +1,10 @@
+{
+  "title": "Plugins",
+  "pages": [
+    "index",
+    "plugin-platform",
+    "no-execute-projection",
+    "sdk-boundaries",
+    "provider-leaves"
+  ]
+}

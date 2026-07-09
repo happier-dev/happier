@@ -27,6 +27,8 @@ Published images:
 - `relay-server`: Happier Server + embedded web UI (this page)
 - `dev-box`: Happier CLI + daemon in Docker (see: [Dev box](../development/devcontainers))
 
+The published `relay-server` image is built from signed server-runtime and UI-web release artifacts. It runs as the non-root `happier` user, embeds the UI bundle at image build time, and does not need a source checkout or `hstack`.
+
 Tags:
 
 - `:preview` (floating preview tag)
@@ -71,7 +73,7 @@ Notes:
 
 ### Prebuilt image: use Postgres (full flavor)
 
-The `relay-server` image is built from the same server code and can run full flavor too — you just override the defaults.
+The `relay-server` image is built from the same server runtime and can run full flavor too — you just override the defaults.
 
 Example `docker-compose.yml` (Postgres + local files backend):
 
@@ -180,10 +182,20 @@ docker build -t happier-server --target server .
 
 # Worker image (sets SERVER_ROLE=worker in the image)
 docker build -t happier-server-worker --target server-worker .
-
-# Relay server image (defaults to light flavor + sqlite; stores state under /data)
-docker build -t happier-relay-server --target relay-server .
 ```
+
+The `server` and `server-worker` targets build from the source tree. The `relay-server` target is the same artifact-based shape used by published Docker images, so it expects explicit release artifact inputs:
+
+```bash
+docker build -t happier-relay-server --target relay-server \
+  --build-arg HAPPIER_RELAY_SERVER_RELEASE_TAG=server-preview \
+  --build-arg HAPPIER_RELAY_SERVER_VERSION=<server-runtime-version> \
+  --build-arg HAPPIER_RELAY_UI_WEB_RELEASE_TAG=ui-web-preview \
+  --build-arg HAPPIER_RELAY_UI_WEB_VERSION=<ui-web-version> \
+  .
+```
+
+The release pipeline resolves these build args from GitHub releases automatically. For local source iteration, build the `server` target instead.
 
 ### Optional: build only selected DB providers
 

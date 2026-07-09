@@ -1,0 +1,38 @@
+---
+title: Lifecycle handlers
+description: Handle plugin activation and deactivation lifecycle events safely.
+---
+
+Lifecycle handlers are plugin-owned callbacks for plugin generation events.
+
+## Activation lifecycle
+
+Activation runs when the daemon loads a plugin generation. Register handlers and disposables during `activate(api)`.
+
+## Deactivation lifecycle
+
+Deactivation runs when a plugin generation is replaced or disposed. Use it to close plugin-owned resources, abort background work, release handles, and flush plugin-owned state.
+
+## Registering lifecycle handlers
+
+```js
+export async function activate(api) {
+  api.registerLifecycleHandler({
+    id: 'cleanup',
+    event: 'deactivating',
+    handler: async (request) => {
+      // Clean up resources owned by request.generation.
+    }
+  });
+}
+```
+
+Handler ids should be stable and manifest-declared when projected.
+
+## Safety rules
+
+- Make cleanup idempotent.
+- Do not dispose host-owned resources.
+- Do not keep references to old `ctx` services after deactivation.
+- Do not assume deactivation means Happier is shutting down; reload also deactivates old generations.
+- Abort long-running provider operations through the runtime-owned cancellation path when possible.

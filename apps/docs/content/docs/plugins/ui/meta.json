@@ -1,0 +1,10 @@
+{
+  "title": "UI",
+  "pages": [
+    "index",
+    "hosted-web",
+    "react-native",
+    "ui-artifacts",
+    "settings-ui"
+  ]
+}

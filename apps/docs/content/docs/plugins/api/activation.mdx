@@ -1,0 +1,50 @@
+---
+title: Activation
+description: Bind executable plugin behavior to manifest-declared contributions.
+---
+
+Activation is the daemon-side entry point for executable plugin code.
+
+```ts
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+
+export async function activate(host: PluginApi) {
+  host.registerAction({
+    id: 'echo',
+    handler: async (request) => ({
+      ok: true,
+      data: request.input
+    })
+  });
+
+  host.onDispose(async () => {
+    // Dispose handles owned by this plugin generation.
+  });
+}
+```
+
+## What activation can do
+
+Activation can register executable handlers and disposables. It should be fast, deterministic, and free of expensive provider startup work.
+
+## What activation cannot do
+
+Activation does not receive `PluginContextV1`. It should not:
+
+- spawn agent processes
+- read session state
+- fetch secrets
+- write transcript rows
+- perform agent auth flows
+- query broad host read models
+- create static contribution identity by side effect
+
+Those operations belong to invoked handlers that receive handler-scoped services, or to agent runtimes that receive `PluginContextV1`.
+
+## Registration ids
+
+Registration ids bind to manifest-declared ids. If a contribution is descriptor-only, it should not need an activation registration method. If a contribution needs executable behavior, its handler should be registered by id.
+
+## Disposables
+
+Use `api.onDispose(...)` for resources owned by the current activation generation. Dispose handlers should be idempotent because reload and shutdown can race with in-flight operations.

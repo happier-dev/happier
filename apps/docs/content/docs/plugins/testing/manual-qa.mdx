@@ -1,0 +1,22 @@
+---
+title: Manual QA
+description: Manually validate plugin behavior through the app, CLI, daemon, and agent runtime.
+---
+
+Manual QA should exercise real user flows:
+
+- install a local plugin
+- reload it after edits
+- call an action from CLI or session-agent surface
+- use settings UI and verify persistence
+- start an agent session
+- send a normal prompt
+- send unsupported structured input and verify explicit rejection
+- cancel a turn
+- stop/dispose a session
+- start an execution-run
+- test permission prompts
+- test external session browsing/import when supported
+- inspect logs for redaction and cleanup
+
+Record exact commands, expected behavior, actual behavior, and log evidence.

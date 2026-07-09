@@ -1,0 +1,28 @@
+---
+title: Agent runtime surfaces
+description: Optional agent runtime capability families such as external sessions, terminal runtime, attach, handoff, fork, and checkpoints.
+---
+
+Agent runtime surfaces are product-facing capability families exposed by an agent runtime. They are adjacent to `runtimeCore`, not replacements for it.
+
+## Surface examples
+
+- external session browsing, import, follow, and takeover
+- terminal runtime transcript binding and process launch metadata
+- attach to running native sessions
+- handoff export/import
+- fork/replay child launch
+- checkpoint listing and restore
+
+## Static and executable halves
+
+Most surfaces have two halves:
+
+1. Manifest declarations describe support, source schemas, operation ids, and handler refs.
+2. Agent runtime or daemon handlers execute agent-specific logic.
+
+The host uses the static half for projection and the executable half for operations.
+
+## Agent ownership
+
+Surface handlers are agent leaves. They can parse native transcripts, inspect native session stores, or launch native flows. They should return typed results and diagnostics instead of writing Happier state directly.

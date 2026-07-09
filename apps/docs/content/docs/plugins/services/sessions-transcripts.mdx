@@ -1,0 +1,33 @@
+---
+title: Sessions and transcripts
+description: Work with sessions and transcript sources through focused host services.
+---
+
+`ctx.sessions`, `ctx.session`, and `ctx.transcripts` expose focused session and transcript operations.
+
+## Sessions
+
+Use session services for:
+
+- listing or resolving sessions through focused filters
+- watching session changes
+- sending scoped messages or events
+- writing approved session metadata/state fields
+- permission decisions
+- session-scoped MCP and auth operations
+- subagent lifecycle updates
+
+## Transcripts
+
+Use transcript services for:
+
+- reading transcript pages
+- following transcript files through grants
+- resolving transcript source definitions
+- reading after a cursor
+
+## Host ownership
+
+The host owns durable transcript rows, encryption envelopes, ordering, pending queue state, permission lifecycle, and session state publication.
+
+Plugins should not write Happier transcript or session storage directly.

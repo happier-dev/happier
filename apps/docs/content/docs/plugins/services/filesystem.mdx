@@ -1,0 +1,21 @@
+---
+title: Filesystem service
+description: Use scoped filesystem helpers for plugin-owned runtime files.
+---
+
+`ctx.fs` exposes scoped filesystem helpers for runtime work. Use it when plugin code needs atomic writes, temporary files, scoped path listing, or file metadata.
+
+## Common operations
+
+- create temporary directories
+- write text or JSON atomically
+- write temporary text files
+- stat files
+- list scoped paths with diagnostics
+
+## Rules
+
+- Do not write Happier session, transcript, or daemon state files directly.
+- Do not store secrets in regular plugin storage.
+- Use atomic writes for state files that must survive process interruption.
+- Validate paths and avoid preserving absolute build-machine paths in packaged plugins.

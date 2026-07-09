@@ -1,0 +1,19 @@
+---
+title: Managed server agent runtime example
+description: An agent runtime that starts and supervises an agent-owned loopback server.
+---
+
+Use `ctx.managedServer` when an agent needs a local HTTP or protocol server.
+
+## Pattern
+
+1. Resolve endpoint mode: external attach or managed spawn.
+2. If external, run a health check through `ctx.fetch`.
+3. If managed, call `ctx.managedServer.supervise(...)`.
+4. Wait until healthy.
+5. Create the agent client against the resolved base URL.
+6. Dispose the managed server with the session runtime.
+
+## Safety
+
+Use loopback binding, generated credentials, startup timeouts, redacted durable logs, and fail-closed post-start validation.

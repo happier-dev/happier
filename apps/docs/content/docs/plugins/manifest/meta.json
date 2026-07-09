@@ -1,0 +1,10 @@
+{
+  "title": "Manifest",
+  "pages": [
+    "index",
+    "package-anatomy",
+    "contributions",
+    "capabilities-and-permissions",
+    "projection-and-no-execute"
+  ]
+}

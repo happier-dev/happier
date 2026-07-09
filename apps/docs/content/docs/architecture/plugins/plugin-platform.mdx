@@ -1,0 +1,22 @@
+---
+title: Plugin platform
+description: Manifest ingestion, contribution projection, runtime registry, and reload ownership.
+---
+
+The plugin platform owns the lifecycle around plugin packages.
+
+## Ingestion
+
+The host reads a plugin source, validates the manifest, checks version compatibility, and records trust/source metadata.
+
+## Projection
+
+The host projects contributions into catalogs and UI data without importing daemon executable code.
+
+## Activation
+
+The host imports daemon code only after trust and validation. Activation receives `PluginApiV1` and registers executable bindings.
+
+## Runtime registry
+
+The executable runtime registry is generation-based. Successful reload replaces the current generation; failed reload can keep the last known good generation.
