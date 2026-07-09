@@ -192,11 +192,14 @@ export async function createServerLightTemplateCacheKey(params: {
   const schemaPath = params.provider === 'sqlite'
     ? resolve(prismaDir, 'sqlite', 'schema.prisma')
     : resolve(prismaDir, 'schema.prisma');
-  const migrationsDir = resolve(prismaDir, 'migrations');
+  const migrationsDir = params.provider === 'sqlite'
+    ? resolve(prismaDir, 'sqlite', 'migrations')
+    : resolve(prismaDir, 'migrations');
   const hash = createHash('sha256');
 
   hash.update(`provider:${params.provider}\n`);
   hash.update(`schema:${await readFile(schemaPath, 'utf8')}\n`);
+  hash.update(`migrationsDir:${relative(prismaDir, migrationsDir)}\n`);
 
   for (const relativePath of await listRelativeFilePaths(migrationsDir)) {
     hash.update(`file:${relativePath}\n`);

@@ -3,7 +3,7 @@ import { decryptLegacyBase64, encryptLegacyBase64 } from './messageCrypto';
 import { waitFor } from './timing';
 import { unwrapSerializedJsonValue } from './unwrapSerializedJsonValue';
 
-type RpcAck = { ok: boolean; result?: string; error?: string; errorCode?: string };
+type RpcAck = { ok: boolean; result?: string; error?: string; errorCode?: string; errorMessage?: string };
 type SafeParseResult<T> = { success: true; data: T } | { success: false };
 type ParseSchema<T> = { safeParse: (input: unknown) => SafeParseResult<T> };
 
@@ -24,7 +24,7 @@ export async function callLegacyEncryptedSessionRpc<TReq, TRes>(params: {
   let lastAck: unknown = null;
   let lastDecrypted: unknown = null;
 
-  const isRpcErrorEnvelope = (value: unknown): value is { ok: false; error?: unknown; errorCode?: unknown } => {
+  const isRpcErrorEnvelope = (value: unknown): value is { ok: false; error?: unknown; errorCode?: unknown; errorMessage?: unknown } => {
     return !!value && typeof value === 'object' && (value as { ok?: unknown }).ok === false;
   };
 
@@ -43,7 +43,12 @@ export async function callLegacyEncryptedSessionRpc<TReq, TRes>(params: {
         lastDecrypted = decrypted;
         if (isRpcErrorEnvelope(decrypted)) {
           const errorCode = typeof decrypted.errorCode === 'string' ? ` (${decrypted.errorCode})` : '';
-          const errorMessage = typeof decrypted.error === 'string' ? decrypted.error : 'Unknown RPC error';
+          const errorMessage =
+            typeof decrypted.error === 'string'
+              ? decrypted.error
+              : typeof decrypted.errorMessage === 'string'
+                ? decrypted.errorMessage
+                : 'Unknown RPC error';
           throw new LegacyEncryptedSessionRpcApplicationError(`RPC returned application error${errorCode}: ${errorMessage}`);
         }
         const parsed = params.schema.safeParse(decrypted);

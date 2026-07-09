@@ -117,6 +117,7 @@ export async function openNewSessionMachineSelection(
       // The route picker is the canonical fallback when the inline composer chip
       // is temporarily covered by an animation or overlay.
     }
+
   }
 
   await gotoDomContentLoadedWithPathFallback(

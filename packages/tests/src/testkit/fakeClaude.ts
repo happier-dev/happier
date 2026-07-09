@@ -15,6 +15,8 @@ export type FakeClaudeInvocation = {
   [key: string]: unknown;
 };
 
+export type FakeClaudeLogEvent = Record<string, unknown>;
+
 export function fakeClaudeFixturePath(): string {
   const path = resolve(repoRootDir(), 'packages/tests/src/fixtures/fake-claude-code-cli.js');
   if (!existsSync(path)) {
@@ -41,6 +43,49 @@ async function readJsonlFile(path: string): Promise<any[]> {
   if (!existsSync(path)) return [];
   const raw = await readFile(path, 'utf8').catch(() => '');
   return parseJsonl(raw);
+}
+
+function asFakeClaudeLogEvent(value: unknown): FakeClaudeLogEvent | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as FakeClaudeLogEvent
+    : null;
+}
+
+async function readRequiredFakeClaudeJsonlFile(path: string): Promise<FakeClaudeLogEvent[]> {
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Expected readable fake Claude log at ${path}: ${reason}`);
+  }
+  return parseJsonl(raw).flatMap((event) => {
+    const record = asFakeClaudeLogEvent(event);
+    return record ? [record] : [];
+  });
+}
+
+export async function countFakeClaudeEventsAfterCurrentRunSentinel(params: Readonly<{
+  logPath: string;
+  sinceMs: number;
+  predicate: (event: FakeClaudeLogEvent) => boolean;
+  sentinelPredicate?: (event: FakeClaudeLogEvent) => boolean;
+}>): Promise<number> {
+  const events = await readRequiredFakeClaudeJsonlFile(params.logPath);
+  const hasCurrentRunSentinel = events.some((event) => {
+    if (params.sentinelPredicate) return params.sentinelPredicate(event);
+    return event.type === 'invocation'
+      && typeof event.ts === 'number'
+      && Number.isFinite(event.ts)
+      && event.ts <= params.sinceMs;
+  });
+  if (!hasCurrentRunSentinel) {
+    throw new Error(`Expected fake Claude log current-run sentinel in ${params.logPath}`);
+  }
+  return events.filter((event) => {
+    if (typeof event.ts !== 'number' || !Number.isFinite(event.ts) || event.ts < params.sinceMs) return false;
+    return params.predicate(event);
+  }).length;
 }
 
 export async function waitForFakeClaudeInvocation(

@@ -1,5 +1,6 @@
 import { once } from 'node:events';
 import { randomBytes } from 'node:crypto';
+import { type Dirent, readdirSync, statSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { join, resolve } from 'node:path';
@@ -284,7 +285,74 @@ export async function spawnConnectedCodexSession(
   });
 }
 
-export function codexAuthPath(fixture: StartedConnectedServicesCodexDaemonFixture): string {
+export async function spawnConnectedCodexAppServerSession(
+  fixture: StartedConnectedServicesCodexDaemonFixture,
+  params: Readonly<{
+    sessionId: string;
+    fakeAppServerPath: string;
+    environmentVariables?: NodeJS.ProcessEnv;
+  }>,
+) {
+  return await daemonControlPostJson<{ success?: boolean; sessionId?: string; error?: string; errorCode?: string }>({
+    port: fixture.daemonPort,
+    path: '/spawn-session',
+    controlToken: fixture.controlToken,
+    body: {
+      directory: fixture.workspaceDir,
+      agent: 'codex',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      sessionId: params.sessionId,
+      terminal: { mode: 'plain' },
+      codexBackendMode: 'appServer',
+      environmentVariables: {
+        CI: '1',
+        HAPPIER_HOME_DIR: fixture.daemonHomeDir,
+        HAPPIER_SERVER_URL: fixture.daemonServerBaseUrl,
+        HAPPIER_WEBAPP_URL: fixture.daemonServerBaseUrl,
+        HAPPIER_VARIANT: 'dev',
+        HAPPIER_DISABLE_CAFFEINATE: '1',
+        HAPPIER_CODEX_APP_SERVER_BIN: params.fakeAppServerPath,
+        HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '2000',
+        HAPPIER_CODEX_EXECUTION_RUN_TRANSPORT: 'appServer',
+        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+        ...(params.environmentVariables ?? {}),
+      },
+      connectedServices: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': { source: 'connected', profileId: 'work' },
+        },
+      },
+    },
+    timeoutMs: 150_000,
+  });
+}
+
+export function codexAuthPath(
+  fixture: Pick<StartedConnectedServicesCodexDaemonFixture, 'daemonHomeDir' | 'serverId'>,
+): string {
+  const materializedBase = resolve(
+    join(fixture.daemonHomeDir, 'daemon', 'connected-services', 'materialized'),
+  );
+  let materializedEntries: Dirent[];
+  try {
+    materializedEntries = readdirSync(materializedBase, { withFileTypes: true });
+  } catch {
+    materializedEntries = [];
+  }
+  const materializedAuthPaths = materializedEntries.flatMap((entry) => {
+    if (!entry.isDirectory() || !entry.name.startsWith('csm_')) return [];
+    const authPath = resolve(join(materializedBase, entry.name, 'codex', 'codex-home', 'auth.json'));
+    try {
+      return statSync(authPath).isFile() ? [authPath] : [];
+    } catch {
+      return [];
+    }
+  });
+  if (materializedAuthPaths.length === 1) {
+    return materializedAuthPaths[0]!;
+  }
+
   return resolve(
     join(
       fixture.daemonHomeDir,

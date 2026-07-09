@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 
 import { buildAuthBootstrapStorageSnapshot } from './buildAuthBootstrapStorageSnapshot';
+
+function hashScope(raw: string): string {
+    return createHash('sha256').update(raw).digest('base64url');
+}
 
 describe('buildAuthBootstrapStorageSnapshot', () => {
     it('builds a scoped browser auth snapshot that matches the app bootstrap contract', () => {
@@ -63,5 +68,29 @@ describe('buildAuthBootstrapStorageSnapshot', () => {
                 },
             }),
         );
+    });
+
+    it('seeds identity and URL-hash credential scopes used by current token storage', () => {
+        const snapshot = buildAuthBootstrapStorageSnapshot({
+            serverUrl: 'http://127.0.0.1:53288/',
+            credentials: { token: 'stack-token', secret: 'stack-token' },
+            storageScope: 'repo-dev-a1cc5e0671',
+            serverIdentityId: 'srv_niq4j8b2',
+            legacyServerIds: ['legacy-relay'],
+        });
+
+        const credentialPayload = JSON.stringify({ token: 'stack-token', secret: 'stack-token' });
+        const canonicalHash = hashScope('http://localhost:53288');
+        const loopbackHash = hashScope('http://127.0.0.1:53288');
+
+        expect(snapshot.sessionStorage.activeServerId).toBe('localhost-53288');
+        expect(snapshot.localStorage['server-profiles:server-state-v1']).toContain('"serverIdentityId":"srv_niq4j8b2"');
+        expect(snapshot.localStorage['server-profiles:server-state-v1']).toContain('"legacyServerIds":["legacy-relay","localhost-53288"]');
+        expect(snapshot.localStorage['auth_credentials__srv_srv_niq4j8b2']).toBe(credentialPayload);
+        expect(snapshot.localStorage['auth_credentials__srv_srv_niq4j8b2__repo-dev-a1cc5e0671']).toBe(credentialPayload);
+        expect(snapshot.localStorage['auth_credentials__srv_legacy-relay']).toBe(credentialPayload);
+        expect(snapshot.localStorage[`auth_credentials__srv_${canonicalHash}`]).toBe(credentialPayload);
+        expect(snapshot.localStorage[`auth_credentials__srv_${canonicalHash}__repo-dev-a1cc5e0671`]).toBe(credentialPayload);
+        expect(snapshot.localStorage[`auth_credentials__srv_${loopbackHash}`]).toBe(credentialPayload);
     });
 });

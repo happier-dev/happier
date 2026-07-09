@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -64,9 +64,9 @@ describe("startServerLight planning helpers", () => {
     });
   });
 
-  it("renders generated server-light sqlite DATABASE_URL with a single Prisma connection", () => {
+  it("renders generated server-light sqlite DATABASE_URL with a bounded multi-connection pool", () => {
     expect(renderServerLightSqliteDatabaseUrl({ dbPath: "/tmp/happier-e2e/happier-server-light.sqlite", platform: "linux" })).toBe(
-      "file:///tmp/happier-e2e/happier-server-light.sqlite?socket_timeout=30&connection_limit=1",
+      "file:///tmp/happier-e2e/happier-server-light.sqlite?socket_timeout=30&connection_limit=4",
     );
   });
 
@@ -147,6 +147,70 @@ describe("startServerLight planning helpers", () => {
 
     await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
     expect(secondEntered).toBe(true);
+  });
+
+  it("does not reclaim a shared deps build lock from a live owner solely because the owner file is old", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "happier-server-shared-deps-live-lock-"));
+    const lockPath = resolve(rootDir, "server-shared-deps-build.lock");
+    const ownerRaw = JSON.stringify({
+      pid: process.pid,
+      createdAtMs: Date.now() - 60_000,
+    });
+    writeFileSync(lockPath, ownerRaw, "utf8");
+
+    let entered = false;
+    try {
+      await expect(
+        withServerSharedDepsBuildLock(
+          async () => {
+            entered = true;
+          },
+          {
+            lockPath,
+            timeoutMs: 50,
+            pollIntervalMs: 5,
+            staleAfterMs: 1,
+          },
+        ),
+      ).rejects.toThrow(/Timed out waiting for server shared deps build lock/);
+
+      expect(entered).toBe(false);
+      expect(readFileSync(lockPath, "utf8")).toBe(ownerRaw);
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not overwrite or unlink a successor shared deps build lock after ownership changes", async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), "happier-server-shared-deps-successor-lock-"));
+    const lockPath = resolve(rootDir, "server-shared-deps-build.lock");
+    const successorRaw = JSON.stringify({
+      pid: process.pid,
+      createdAtMs: Date.now(),
+      owner: "successor",
+    });
+
+    try {
+      await withServerSharedDepsBuildLock(
+        async () => {
+          unlinkSync(lockPath);
+          writeFileSync(lockPath, successorRaw, "utf8");
+
+          await sleep(600);
+          expect(readFileSync(lockPath, "utf8")).toBe(successorRaw);
+        },
+        {
+          lockPath,
+          timeoutMs: 5_000,
+          pollIntervalMs: 5,
+          staleAfterMs: 1,
+        },
+      );
+
+      expect(readFileSync(lockPath, "utf8")).toBe(successorRaw);
+    } finally {
+      rmSync(rootDir, { recursive: true, force: true });
+    }
   });
 
 	  it("detects when shared server dependency outputs already exist", () => {

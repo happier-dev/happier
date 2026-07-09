@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeAll, afterAll, beforeEach } from 'vitest';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { appendFile, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -737,6 +737,41 @@ describe('uiWebExport (cache clearing)', () => {
       } catch {
         // ignore cleanup when the orphan is already gone
       }
+      await rm(rootDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('does not remove a successor export lock when a reclaimed owner finishes later', async () => {
+    const helper = (uiWebExportTestables as Record<string, unknown>).withUiWebExportLock;
+    expect(helper).toBeTypeOf('function');
+
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-successor-lock-'));
+    const lockPath = resolve(rootDir, 'build.lock');
+    const successorRaw = JSON.stringify({
+      pid: process.pid,
+      createdAtMs: Date.now(),
+      owner: 'successor',
+    });
+
+    try {
+      await (helper as (
+        lockPath: string,
+        fn: () => Promise<void>,
+        options: { timeoutMs?: number; staleAfterMs?: number },
+      ) => Promise<void>)(
+        lockPath,
+        async () => {
+          await rm(lockPath, { force: true });
+          await writeFile(lockPath, successorRaw, 'utf8');
+        },
+        {
+          timeoutMs: 5_000,
+          staleAfterMs: 1,
+        },
+      );
+
+      expect(readFileSync(lockPath, 'utf8')).toBe(successorRaw);
+    } finally {
       await rm(rootDir, { recursive: true, force: true }).catch(() => {});
     }
   });

@@ -41,6 +41,7 @@ async function gotoWithRetries(page: GotoPage, url: string, timeoutMs: number, w
       || message.includes('net::ERR_CONNECTION_REFUSED')
       || message.includes('net::ERR_CONNECTION_RESET')
       || message.includes('ECONNRESET')
+      || message.includes('EPIPE')
       || message.includes('net::ERR_ABORTED')
       || message.includes('is interrupted by another navigation')
       // Chromium navigates to a chrome-error:// page when it cannot reach the target origin.
@@ -60,6 +61,7 @@ async function gotoWithRetries(page: GotoPage, url: string, timeoutMs: number, w
   };
 
   const isCommittedTimeout = (error: unknown, candidateUrl: string): boolean => {
+    if (waitUntil !== 'commit') return false;
     const message = error instanceof Error ? error.message : String(error);
     if (!message.toLowerCase().includes('timeout')) return false;
     return normalizeLoopbackUrl(page.url()) === normalizeLoopbackUrl(candidateUrl);
@@ -79,7 +81,7 @@ async function gotoWithRetries(page: GotoPage, url: string, timeoutMs: number, w
         await page.goto(candidateUrl, { waitUntil, timeout: remaining });
         return;
       } catch (error) {
-        if (waitUntil === 'commit' && isCommittedTimeout(error, candidateUrl)) return;
+        if (isCommittedTimeout(error, candidateUrl)) return;
         if (!retryable(error)) throw error;
         lastRetryableError = error;
         if (!shouldTryNextCandidateImmediately(error)) break;

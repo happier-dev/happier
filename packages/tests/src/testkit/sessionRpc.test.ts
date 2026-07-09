@@ -58,4 +58,36 @@ describe('callLegacyEncryptedSessionRpc', () => {
       message: 'RPC returned application error (execution_run_invalid_action_input): Invalid params',
     });
   });
+
+  it('uses canonical errorMessage text from decrypted application error envelopes', async () => {
+    const secret = new Uint8Array(32).fill(9);
+    const ui = {
+      rpcCall: async () => ({
+        ok: true,
+        result: encryptLegacyBase64(
+          {
+            ok: false,
+            errorCode: 'invalid_parameters',
+            errorMessage: 'Rollback target is not available in the active conversation',
+          },
+          secret,
+        ),
+      }),
+    } as any;
+
+    await expect(
+      callLegacyEncryptedSessionRpc({
+        ui,
+        sessionId: 'sess_2',
+        method: 'execution.run.rollback',
+        req: { turnId: 'turn_1' },
+        secret,
+        schema: { safeParse: () => ({ success: false }) },
+        timeoutMs: 250,
+      }),
+    ).rejects.toMatchObject({
+      message:
+        'RPC returned application error (invalid_parameters): Rollback target is not available in the active conversation',
+    });
+  });
 });

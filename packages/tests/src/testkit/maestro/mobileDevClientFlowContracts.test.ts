@@ -134,12 +134,6 @@ describe('mobile Dev Client flow contracts', () => {
     expect((flow.match(/- back/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
-  it('passes Metro stdout path through the Maestro CLI adapter', () => {
-    const source = readFileSync(new URL('./mobileMaestroCli.ts', import.meta.url), 'utf8');
-
-    expect(source).toContain('stdoutPath: started.stdoutPath');
-  });
-
   it('keeps runFlow file references resolvable relative to their owner flow', () => {
     const missingReferences: string[] = [];
     for (const flowPath of listYamlFiles(mobileFlowsRootUrl.pathname)) {

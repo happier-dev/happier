@@ -1,10 +1,13 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { writeEnabledPluginSdkV1State } from '../plugins/pluginSdkV1Fixture';
+
 type LocalExtensionContribution = Readonly<Record<string, unknown>>;
+type LocalExtensionContributionMap = Readonly<Record<string, readonly LocalExtensionContribution[] | undefined>>;
 
 export type LocalExtensionPackageManifest = Readonly<{
-    schemaVersion: 1 | 2;
+    schemaVersion: 2;
     id: string;
     version: string;
     displayName: string;
@@ -12,21 +15,26 @@ export type LocalExtensionPackageManifest = Readonly<{
     engines: Readonly<{
         happier: string;
     }>;
-    targets: Readonly<{
-        daemon: Readonly<{
-            entry: string;
-        }>;
+    uses: readonly ExtensionRuntimeCapability[];
+    entrypoints: Readonly<{
+        main: string;
+        dev?: string;
     }>;
-    contributions:
-        | (Readonly<{
-            providers?: readonly LocalExtensionContribution[];
-            backends?: readonly LocalExtensionContribution[];
-            actions?: readonly LocalExtensionContribution[];
-            hooks?: readonly LocalExtensionContribution[];
-            resources?: readonly LocalExtensionContribution[];
-            uiDescriptors?: readonly LocalExtensionContribution[];
-        }> & Readonly<Record<string, unknown>>)
-        | readonly LocalExtensionContribution[];
+    declares: Readonly<{
+        capabilities: readonly unknown[];
+    }>;
+    permissions: Readonly<{
+        required: readonly Readonly<{
+            capability: string;
+            reason?: string;
+        }>[];
+        optional: readonly Readonly<{
+            capability: string;
+            reason?: string;
+        }>[];
+    }>;
+    activationEvents: readonly string[];
+    contributes: LocalExtensionContributionMap;
 }> & Readonly<Record<string, unknown>>;
 
 export type LocalExtensionPackageFixture = Readonly<{
@@ -41,13 +49,11 @@ export function createLocalExtensionPackageManifest(params: Readonly<{
     displayName?: string;
     description?: string;
     daemonEntry?: string;
-    contributions?: LocalExtensionPackageManifest['contributions'];
+    contributes?: LocalExtensionContributionMap;
     extraManifestFields?: Readonly<Record<string, unknown>>;
 }>): LocalExtensionPackageManifest {
-    const contributions = params.contributions ?? [];
-    const inferredCapabilities = inferRuntimeCapabilitiesFromContributions(
-        normalizeContributionsToV2Array(contributions),
-    );
+    const contributes = params.contributes ?? {};
+    const inferredCapabilities = inferRuntimeCapabilitiesFromContributes(contributes);
 
     return {
         schemaVersion: 2,
@@ -58,59 +64,60 @@ export function createLocalExtensionPackageManifest(params: Readonly<{
         engines: {
             happier: '^0.2.0',
         },
-        runtime: {
-            apiVersion: 1,
-            capabilities: inferredCapabilities,
+        uses: inferredCapabilities,
+        entrypoints: {
+            main: params.daemonEntry ?? './daemon.mjs',
         },
-        permissions: [],
-        targets: {
-            daemon: {
-                entry: params.daemonEntry ?? './daemon.mjs',
-            },
+        declares: {
+            capabilities: [],
         },
-        contributions,
+        permissions: {
+            required: [],
+            optional: [],
+        },
+        activationEvents: ['startup'],
+        contributes,
         ...(params.extraManifestFields ?? {}),
     };
 }
 
 type ExtensionRuntimeCapability =
-    | 'providers'
-    | 'backends'
+    | 'agents'
     | 'actions'
     | 'tools'
     | 'commands'
     | 'hooks'
     | 'resources'
     | 'uiDescriptors'
+    | 'settings'
+    | 'managedDependencies'
+    | 'mcp'
+    | 'notifications'
+    | 'executionRunProfiles'
     | 'lifecycle'
     | 'reload';
 
-function inferRuntimeCapabilitiesFromContributions(
-    contributions: readonly LocalExtensionContribution[],
+function inferRuntimeCapabilitiesFromContributes(
+    contributes: LocalExtensionContributionMap,
 ): readonly ExtensionRuntimeCapability[] {
     const capabilities = new Set<ExtensionRuntimeCapability>();
 
-    for (const contribution of contributions) {
-        const kind = contribution.kind;
-        if (kind === 'provider') {
-            capabilities.add('providers');
-        } else if (kind === 'backend') {
-            capabilities.add('backends');
-        } else if (kind === 'action') {
-            capabilities.add('actions');
-        } else if (kind === 'tool') {
-            capabilities.add('tools');
-        } else if (kind === 'command') {
-            capabilities.add('commands');
-        } else if (kind === 'hook') {
-            capabilities.add('hooks');
-        } else if (kind === 'resource') {
-            capabilities.add('resources');
-        } else if (kind === 'uiDescriptor') {
-            capabilities.add('uiDescriptors');
-        } else if (kind === 'lifecycleHandler') {
-            capabilities.add('lifecycle');
-        }
+    if ((contributes.agents?.length ?? 0) > 0) capabilities.add('agents');
+    if ((contributes.actions?.length ?? 0) > 0) capabilities.add('actions');
+    if ((contributes.tools?.length ?? 0) > 0) capabilities.add('tools');
+    if ((contributes.commands?.length ?? 0) > 0) capabilities.add('commands');
+    if ((contributes.hooks?.length ?? 0) > 0) capabilities.add('hooks');
+    if ((contributes.resources?.length ?? 0) > 0) capabilities.add('resources');
+    if ((contributes.uiDescriptors?.length ?? 0) > 0) capabilities.add('uiDescriptors');
+    if ((contributes.settings?.length ?? 0) > 0) capabilities.add('settings');
+    if ((contributes.agentSettings?.length ?? 0) > 0) capabilities.add('settings');
+    if ((contributes.lifecycleHandlers?.length ?? 0) > 0) capabilities.add('lifecycle');
+    if ((contributes.managedDependencies?.length ?? 0) > 0) capabilities.add('managedDependencies');
+    if (contributes.mcp) capabilities.add('mcp');
+    if ((contributes.notifications?.length ?? 0) > 0) capabilities.add('notifications');
+    if ((contributes.notificationChannels?.length ?? 0) > 0) capabilities.add('notifications');
+    if ((contributes.executionRunProfiles?.length ?? 0) > 0) {
+        capabilities.add('executionRunProfiles');
     }
 
     return [...capabilities];
@@ -170,20 +177,19 @@ function normalizeUiDescriptorContributionV1ish(value: LocalExtensionContributio
         };
     });
 
-    // Legacy fixtures sometimes used more specific surfaces; clamp to the canonical V2 surface set.
-    const normalizedSurface =
-        surface === 'settings' ||
-        surface === 'setup' ||
-        surface === 'status' ||
-        surface === 'providerSettings' ||
-        surface === 'backendSettings'
-            ? surface
-            : 'settings';
+    if (
+        surface !== 'settings'
+        && surface !== 'setup'
+        && surface !== 'status'
+        && surface !== 'agentSettings'
+    ) {
+        throw new Error(`Unsupported uiDescriptor surface '${surface}'`);
+    }
 
     return {
         kind: 'uiDescriptor',
         id,
-        surface: normalizedSurface,
+        surface,
         title,
         description: typeof value.description === 'string' ? value.description : undefined,
         fields,
@@ -215,7 +221,13 @@ function normalizeLegacyActionContributionV1ish(value: LocalExtensionContributio
     const surfacesRaw = typeof value.surfaces === 'object' && value.surfaces !== null ? (value.surfaces as Record<string, unknown>) : {};
     const surfaces: string[] = [];
     if (surfacesRaw.cli === true) surfaces.push('cli');
-    if (surfacesRaw.session_agent === true) surfaces.push('agentTool');
+    if (surfacesRaw.agent === true) surfaces.push('agent');
+    if (surfacesRaw.mcp === true) surfaces.push('mcp');
+    for (const surfaceName of Object.keys(surfacesRaw)) {
+        if (surfaceName !== 'cli' && surfaceName !== 'agent' && surfaceName !== 'mcp') {
+            throw new Error(`Unsupported action surface '${surfaceName}'`);
+        }
+    }
     if (surfaces.length === 0) surfaces.push('cli');
 
     return {
@@ -235,64 +247,8 @@ function normalizeLegacyActionContributionV1ish(value: LocalExtensionContributio
     };
 }
 
-function normalizeContributionsToV2Array(
-    contributions: LocalExtensionPackageManifest['contributions'],
-): readonly LocalExtensionContribution[] {
-    if (Array.isArray(contributions)) {
-        return contributions.map((contribution) => {
-            const obj = contribution as LocalExtensionContribution;
-            if (typeof obj.kind === 'string' && obj.kind.length > 0) return obj;
-
-            // Best-effort inference for older array-based shapes.
-            if (typeof obj.providerId === 'string' && typeof obj.runtimeKind === 'string') {
-                return { kind: 'backend', ...obj };
-            }
-            if (Array.isArray(obj.ownedBackendIds) || typeof obj.providerAgentId === 'string') {
-                return { kind: 'provider', ...obj };
-            }
-            if (typeof obj.hookApiVersion === 'number' || typeof obj.executionKind === 'string') {
-                return { kind: 'hook', ...obj };
-            }
-            if (typeof obj.surface === 'string' && Array.isArray(obj.fields)) {
-                return normalizeUiDescriptorContributionV1ish(obj);
-            }
-            if (typeof obj.path === 'string' && (typeof obj.type === 'string' || typeof obj.resourceKind === 'string')) {
-                return normalizeResourceContributionV1ish(obj);
-            }
-
-            throw new Error('Unsupported legacy contribution array item; expected a V2 contribution with kind');
-        });
-    }
-
-    const normalized: LocalExtensionContribution[] = [];
-    const legacy = contributions as Record<string, unknown>;
-    const providers = Array.isArray(legacy.providers) ? (legacy.providers as LocalExtensionContribution[]) : [];
-    const backends = Array.isArray(legacy.backends) ? (legacy.backends as LocalExtensionContribution[]) : [];
-    const actions = Array.isArray(legacy.actions) ? (legacy.actions as LocalExtensionContribution[]) : [];
-    const hooks = Array.isArray(legacy.hooks) ? (legacy.hooks as LocalExtensionContribution[]) : [];
-    const resources = Array.isArray(legacy.resources) ? (legacy.resources as LocalExtensionContribution[]) : [];
-    const uiDescriptors = Array.isArray(legacy.uiDescriptors) ? (legacy.uiDescriptors as LocalExtensionContribution[]) : [];
-
-    normalized.push(...providers.map((provider) => ({ kind: 'provider', ...provider })));
-    normalized.push(...backends.map((backend) => ({ kind: 'backend', ...backend })));
-    normalized.push(...actions.map((action) => normalizeLegacyActionContributionV1ish(action)));
-    normalized.push(...hooks.map((hook) => ({ kind: 'hook', ...hook })));
-    normalized.push(...resources.map((resource) => normalizeResourceContributionV1ish(resource)));
-    normalized.push(...uiDescriptors.map((descriptor) => normalizeUiDescriptorContributionV1ish(descriptor)));
-
-    return normalized;
-}
-
 function normalizeManifestForWrite(manifest: LocalExtensionPackageManifest): Record<string, unknown> {
-    const contributions = normalizeContributionsToV2Array(manifest.contributions);
-    const runtime = typeof manifest.runtime === 'object' && manifest.runtime !== null
-        ? (manifest.runtime as Record<string, unknown>)
-        : null;
-    const runtimeCapabilities =
-        runtime && Array.isArray(runtime.capabilities) && runtime.capabilities.length > 0
-            ? runtime.capabilities
-            : null;
-    const capabilities = runtimeCapabilities ?? inferRuntimeCapabilitiesFromContributions(contributions);
+    const contributes = normalizeContributesForWrite(manifest.contributes);
 
     const normalized: Record<string, unknown> = {
         schemaVersion: 2,
@@ -301,18 +257,35 @@ function normalizeManifestForWrite(manifest: LocalExtensionPackageManifest): Rec
         displayName: manifest.displayName,
         description: manifest.description,
         engines: manifest.engines,
-        runtime: {
-            apiVersion: 1,
-            capabilities,
-        },
-        targets: manifest.targets,
-        permissions: Array.isArray(manifest.permissions) ? manifest.permissions : [],
-        contributions,
+        uses: manifest.uses.length > 0 ? manifest.uses : inferRuntimeCapabilitiesFromContributes(contributes),
+        entrypoints: manifest.entrypoints,
+        declares: manifest.declares,
+        permissions: manifest.permissions,
+        activationEvents: manifest.activationEvents,
+        contributes,
     };
 
-    // Preserve known V2 fields when provided, but avoid writing unknown top-level keys since the V2 schema is strict.
     if (typeof manifest.source === 'object' && manifest.source !== null) normalized.source = manifest.source;
     if (typeof manifest.marketplace === 'object' && manifest.marketplace !== null) normalized.marketplace = manifest.marketplace;
+
+    return normalized;
+}
+
+function normalizeContributesForWrite(contributes: LocalExtensionContributionMap): LocalExtensionContributionMap {
+    const normalized: Record<string, readonly LocalExtensionContribution[]> = {};
+
+    for (const [family, entries] of Object.entries(contributes)) {
+        if (!Array.isArray(entries)) continue;
+        if (family === 'actions') {
+            normalized.actions = entries.map((entry) => normalizeLegacyActionContributionV1ish(entry));
+        } else if (family === 'resources') {
+            normalized.resources = entries.map((entry) => normalizeResourceContributionV1ish(entry));
+        } else if (family === 'uiDescriptors') {
+            normalized.uiDescriptors = entries.map((entry) => normalizeUiDescriptorContributionV1ish(entry));
+        } else {
+            normalized[family] = entries;
+        }
+    }
 
     return normalized;
 }
@@ -339,57 +312,13 @@ export async function writeEnabledLocalExtensionPackageState(params: Readonly<{
     pluginId: string;
     manifestVersion?: string;
 }>): Promise<void> {
-    const stateDir = join(params.happyHomeDir, 'extensions', 'plugins', 'state');
-    const installedDir = join(params.happyHomeDir, 'extensions', 'plugins', 'installed');
-    const cacheDir = join(params.happyHomeDir, 'extensions', 'plugins', 'cache');
-    const logsDir = join(params.happyHomeDir, 'extensions', 'plugins', 'logs');
-    const locksDir = join(params.happyHomeDir, 'extensions', 'plugins', 'locks');
-
-    await Promise.all([
-        mkdir(stateDir, { recursive: true }),
-        mkdir(installedDir, { recursive: true }),
-        mkdir(cacheDir, { recursive: true }),
-        mkdir(logsDir, { recursive: true }),
-        mkdir(locksDir, { recursive: true }),
-    ]);
-
-    await writeFile(
-        join(stateDir, 'plugin-state.v1.json'),
-        JSON.stringify(
-            {
-                t: 'happier_plugin_state_v1',
-                schemaVersion: 1,
-                plugins: {
-                    [params.pluginId]: {
-                        source: {
-                            kind: 'path',
-                            locator: params.pluginRoot,
-                            trustPolicy: 'local_trusted',
-                            installPolicy: 'link',
-                            resolvedPath: params.pluginRoot,
-                            manifestPath: join(params.pluginRoot, '.happier-plugin', 'plugin.json'),
-                        },
-                        compatibility: {
-                            status: 'unknown',
-                            diagnostics: [],
-                        },
-                        install: {
-                            mode: 'link',
-                            manifestVersion: params.manifestVersion ?? '1.0.0',
-                            manifestDigest: null,
-                            installedPath: null,
-                        },
-                        state: {
-                            enabled: true,
-                        },
-                    },
-                },
-            },
-            null,
-            2,
-        ),
-        'utf8',
-    );
+    await writeEnabledPluginSdkV1State({
+        happyHomeDir: params.happyHomeDir,
+        pluginRoot: params.pluginRoot,
+        pluginId: params.pluginId,
+        manifestVersion: params.manifestVersion,
+        devWatch: true,
+    });
 }
 
 export function createActivationRuntimeDaemonModule(params: Readonly<{
@@ -415,7 +344,7 @@ export function createPluginActionContribution(params: Readonly<{
         title: params.title ?? 'Plugin Fixture Action',
         description: params.description,
         scopes: ['global'],
-        surfaces: ['cli', 'agentTool'],
+        surfaces: ['cli', 'agent'],
         placement: 'commandPalette',
         inputSchema: {
             type: 'object',
@@ -440,7 +369,7 @@ export async function writeActionExecutionPluginFixture(params: Readonly<{
         pluginId: params.pluginId,
         displayName: 'Action Execution Fixture',
         description: 'Contributes a daemon-executed action for core e2e validation',
-        contributions: {
+        contributes: {
             actions: [
                 createPluginActionContribution({
                     actionId: params.actionId,
@@ -487,22 +416,27 @@ export async function writeActivatedActionExecutionPluginFixture(params: Readonl
         engines: {
             happier: '^0.2.0',
         },
-        runtime: {
-            apiVersion: 1,
-            capabilities: ['actions'],
+        uses: ['actions'],
+        entrypoints: {
+            main: './daemon.mjs',
         },
-        permissions: [
-            {
-                capability: 'actions.register',
-                reason: 'Register activation-time action for daemon execution validation.',
-            },
-        ],
-        targets: {
-            daemon: {
-                entry: './daemon.mjs',
-            },
+        declares: {
+            capabilities: [],
         },
-        contributions: [],
+        permissions: {
+            required: [],
+            optional: [],
+        },
+        activationEvents: ['startup'],
+        contributes: {
+            actions: [
+                createPluginActionContribution({
+                    actionId: params.actionId,
+                    title: 'Fixture Activated Action',
+                    description: 'Executes through the runtime activation registry',
+                }),
+            ],
+        },
     };
     const resultValue = params.resultValue ?? 'plugin-action-fired';
     await writeLocalExtensionPackageFixture({
@@ -514,9 +448,6 @@ export async function writeActivatedActionExecutionPluginFixture(params: Readonl
             'export async function activate(api) {',
             '  api.registerAction({',
             `    id: ${JSON.stringify(params.actionId)},`,
-            '    title: "Fixture Activated Action",',
-            '    description: "Executes through the runtime activation registry",',
-            '    surface: "cli",',
             '    handler: async (request = {}) => {',
             `      await writeFile(${JSON.stringify(params.markerPath)}, ${JSON.stringify(`${resultValue}\n`)}, "utf8");`,
             `      return { ok: true, data: { value: ${JSON.stringify(resultValue)}, input: request.input ?? null } };`,
@@ -543,7 +474,7 @@ export async function writeDescriptorProjectionPluginFixture(params: Readonly<{
         pluginId: params.pluginId,
         displayName: 'Descriptor Projection Fixture',
         description: 'Contributes host-rendered descriptors and resources for projection validation',
-        contributions: {
+        contributes: {
             resources: [
                 {
                     kindVersion: 1,
@@ -557,7 +488,7 @@ export async function writeDescriptorProjectionPluginFixture(params: Readonly<{
                 {
                     kindVersion: 1,
                     id: params.descriptorId,
-                    surface: 'settings.plugin.details',
+                    surface: 'settings',
                     title: 'Fixture Settings',
                     fields: [
                         {
@@ -590,16 +521,14 @@ export async function writeRuntimeProjectionPluginFixture(params: Readonly<{
     settingsDescriptorId?: string;
     setupDescriptorId?: string;
     statusDescriptorId?: string;
-    providerSettingsDescriptorId?: string;
-    backendSettingsDescriptorId?: string;
+    agentSettingsDescriptorId?: string;
 }>): Promise<LocalExtensionPackageFixture> {
     const actionId = params.actionId ?? `${params.pluginId}-refresh`;
     const resourceId = params.resourceId ?? `${params.pluginId}-prompt`;
     const settingsDescriptorId = params.settingsDescriptorId ?? `${params.pluginId}-settings-panel`;
     const setupDescriptorId = params.setupDescriptorId ?? `${params.pluginId}-setup-panel`;
     const statusDescriptorId = params.statusDescriptorId ?? `${params.pluginId}-status-panel`;
-    const providerSettingsDescriptorId = params.providerSettingsDescriptorId ?? `${params.pluginId}-provider-settings-panel`;
-    const backendSettingsDescriptorId = params.backendSettingsDescriptorId ?? `${params.pluginId}-backend-settings-panel`;
+    const agentSettingsDescriptorId = params.agentSettingsDescriptorId ?? `${params.pluginId}-agent-settings-panel`;
     const manifest: LocalExtensionPackageManifest = {
         schemaVersion: 2,
         id: params.pluginId,
@@ -609,22 +538,26 @@ export async function writeRuntimeProjectionPluginFixture(params: Readonly<{
         engines: {
             happier: '^0.2.0',
         },
-        runtime: {
-            apiVersion: 1,
-            capabilities: ['actions', 'resources', 'uiDescriptors'],
+        uses: ['actions', 'resources', 'uiDescriptors'],
+        entrypoints: {
+            main: './daemon.mjs',
         },
-        permissions: [
-            {
-                capability: 'actions.register',
-                reason: 'Expose a fixture action in runtime projection tests.',
-            },
-        ],
-        targets: {
-            daemon: {
-                entry: './daemon.mjs',
-            },
+        declares: {
+            capabilities: [],
         },
-        contributions: {
+        permissions: {
+            required: [],
+            optional: [],
+        },
+        activationEvents: ['startup'],
+        contributes: {
+            actions: [
+                createPluginActionContribution({
+                    actionId,
+                    title: 'Fixture Refresh',
+                    description: 'Runtime action visible in plugin details',
+                }),
+            ],
             resources: [
                 {
                     id: resourceId,
@@ -656,9 +589,9 @@ export async function writeRuntimeProjectionPluginFixture(params: Readonly<{
                             ],
                         },
                         {
-                            id: 'providerSecret',
+                            id: 'agentSecret',
                             type: 'secret',
-                            title: 'Provider secret',
+                            title: 'Agent secret',
                         },
                         {
                             id: 'connect',
@@ -694,28 +627,15 @@ export async function writeRuntimeProjectionPluginFixture(params: Readonly<{
                     ],
                 },
                 {
-                    id: providerSettingsDescriptorId,
+                    id: agentSettingsDescriptorId,
                     surface: 'agentSettings',
-                    title: 'Provider Settings',
-                    description: 'Host-rendered provider settings descriptor',
+                    title: 'Agent Settings',
+                    description: 'Host-rendered agent settings descriptor',
                     fields: [
                         {
-                            id: 'providerSecret',
+                            id: 'agentSecret',
                             type: 'secret',
-                            title: 'Provider secret',
-                        },
-                    ],
-                },
-                {
-                    id: backendSettingsDescriptorId,
-                    surface: 'backendSettings',
-                    title: 'Backend Settings',
-                    description: 'Host-rendered backend settings descriptor',
-                    fields: [
-                        {
-                            id: 'maxParallel',
-                            type: 'number',
-                            title: 'Max parallel',
+                            title: 'Agent secret',
                         },
                     ],
                 },
@@ -732,9 +652,6 @@ export async function writeRuntimeProjectionPluginFixture(params: Readonly<{
             'export async function activate(api) {',
             '    api.registerAction({',
             `        id: ${JSON.stringify(actionId)},`,
-            '        title: "Fixture Refresh",',
-            '        description: "Runtime action visible in plugin details",',
-            '        surface: "cli",',
             '        handler: async () => ({ ok: true, source: "fixture" }),',
             '    });',
             '}',
@@ -765,22 +682,26 @@ export async function writeReloadableActivationPluginFixture(params: Readonly<{
         engines: {
             happier: '^0.2.0',
         },
-        runtime: {
-            apiVersion: 1,
-            capabilities: ['actions'],
+        uses: ['actions'],
+        entrypoints: {
+            main: './daemon.mjs',
         },
-        permissions: [
-            {
-                capability: 'actions.register',
-                reason: 'Register an activation-time action for reload validation.',
-            },
-        ],
-        targets: {
-            daemon: {
-                entry: './daemon.mjs',
-            },
+        declares: {
+            capabilities: [],
         },
-        contributions: [],
+        permissions: {
+            required: [],
+            optional: [],
+        },
+        activationEvents: ['startup'],
+        contributes: {
+            actions: [
+                createPluginActionContribution({
+                    actionId: params.actionId,
+                    title: `Reload Fixture ${params.generation}`,
+                }),
+            ],
+        },
     };
     await writeLocalExtensionPackageFixture({
         pluginRoot: params.pluginRoot,
@@ -792,8 +713,6 @@ export async function writeReloadableActivationPluginFixture(params: Readonly<{
             `  await appendFile(${JSON.stringify(params.activationMarkerPath)}, ${JSON.stringify(`activate:${params.generation}\n`)}, "utf8");`,
             '  api.registerAction({',
             `    id: ${JSON.stringify(params.actionId)},`,
-            `    title: ${JSON.stringify(`Reload Fixture ${params.generation}`)},`,
-            '    surface: "cli",',
             '    handler: async () => ({ ok: true, data: { generation: ' + JSON.stringify(params.generation) + ' } }),',
             '  });',
             '  api.onDispose(async () => {',
@@ -824,22 +743,19 @@ export async function writeBrokenActivationPluginFixture(params: Readonly<{
         engines: {
             happier: '^0.2.0',
         },
-        runtime: {
-            apiVersion: 1,
-            capabilities: ['actions'],
+        uses: ['actions'],
+        entrypoints: {
+            main: './daemon.mjs',
         },
-        permissions: [
-            {
-                capability: 'actions.register',
-                reason: 'Keep the fixture on the same activation contract after a broken edit.',
-            },
-        ],
-        targets: {
-            daemon: {
-                entry: './daemon.mjs',
-            },
+        declares: {
+            capabilities: [],
         },
-        contributions: [],
+        permissions: {
+            required: [],
+            optional: [],
+        },
+        activationEvents: ['startup'],
+        contributes: {},
     };
     await writeLocalExtensionPackageFixture({
         pluginRoot: params.pluginRoot,

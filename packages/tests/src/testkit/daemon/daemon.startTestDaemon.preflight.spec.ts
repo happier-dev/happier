@@ -594,6 +594,38 @@ describe('startTestDaemon', () => {
     }
   });
 
+  it('keeps source-entrypoint testdir mode on the per-test snapshot when no shared snapshot is prepared', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-testdir-source-snapshot-preflight-'));
+    const homeDir = resolve(testDir, 'home');
+    const repoRoot = resolve(testDir, 'repo-root');
+
+    try {
+      repoRootDirMock.mockReturnValue(repoRoot);
+      await mkdir(homeDir, { recursive: true });
+
+      vi.stubEnv('HAPPIER_E2E_DAEMON_CLI_SNAPSHOT_MODE', 'testdir');
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockRejectedValueOnce(new Error('stop after launch-spec capture'));
+
+      await expect(
+        startTestDaemon({
+          testDir,
+          happyHomeDir: homeDir,
+          env: {
+            HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+          },
+          startupTimeoutMs: 15_000,
+        }),
+      ).rejects.toThrow('stop after launch-spec capture');
+
+      const launchOptions = cliLaunchSpecMock.resolveCliTestLaunchSpec.mock.calls[0]?.[1] as
+        | Readonly<{ snapshotDir?: string }>
+        | undefined;
+      expect(launchOptions?.snapshotDir).toBe(resolve(testDir, 'cli-dist'));
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
   it('keeps source-entrypoint testdir mode on the per-test snapshot when e2e logs dir is provided', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-writable-snapshot-preflight-'));
     const homeDir = resolve(testDir, 'home');
@@ -628,6 +660,36 @@ describe('startTestDaemon', () => {
         | Readonly<{ snapshotDir?: string }>
         | undefined;
       expect(launchOptions?.snapshotDir).toBe(resolve(testDir, 'cli-dist'));
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses a separate shared source snapshot in source-entrypoint default mode', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-source-snapshot-preflight-'));
+    const homeDir = resolve(testDir, 'home');
+    const repoRoot = resolve(testDir, 'repo-root');
+
+    try {
+      repoRootDirMock.mockReturnValue(repoRoot);
+      await mkdir(homeDir, { recursive: true });
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockRejectedValueOnce(new Error('stop after launch-spec capture'));
+
+      await expect(
+        startTestDaemon({
+          testDir,
+          happyHomeDir: homeDir,
+          env: {
+            HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+          },
+          startupTimeoutMs: 15_000,
+        }),
+      ).rejects.toThrow('stop after launch-spec capture');
+
+      const launchOptions = cliLaunchSpecMock.resolveCliTestLaunchSpec.mock.calls[0]?.[1] as
+        | Readonly<{ snapshotDir?: string }>
+        | undefined;
+      expect(launchOptions?.snapshotDir).toBe(resolve(repoRoot, '.project', 'tmp', 'cli-source-snapshot'));
     } finally {
       await rm(testDir, { recursive: true, force: true });
     }

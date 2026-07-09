@@ -2,7 +2,17 @@ import { expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
 import { fetchJson } from '../http';
+import { mutateUiE2eLocalSettings } from './localSettingsStorage';
 import { gotoDomContentLoadedWithRetries } from './pageNavigation';
+import { mutateUiE2eScopedAccountSettings } from './scopedAccountSettingsStorage';
+import {
+  buildSessionOrganizationImportRequestFromFolderSettings,
+  fetchSessionOrganizationSnapshot,
+  importSessionOrganization,
+  readSessionOrganizationFolderSettingsSnapshot,
+  type SessionFolderSettingsSnapshot,
+  type SessionFoldersSetting,
+} from './sessionOrganization';
 
 export {
   beginSteppedSessionDrag,
@@ -18,36 +28,7 @@ export {
   type SteppedSessionDrag,
 } from './sessionFoldersPointerDrag';
 
-const ACCOUNT_SETTINGS_LOGICAL_KEY_PREFIX = 'account-settings:v2:';
-const PENDING_ACCOUNT_SETTINGS_LOGICAL_KEY_PREFIX = 'pending-account-settings:v2:';
-
-type PersistedSettingsEnvelope = {
-  settings?: Record<string, unknown>;
-};
-
-export type SessionFoldersSetting = Readonly<{
-  v: 1;
-  folders: ReadonlyArray<Readonly<{
-    id: string;
-    workspace: Readonly<{
-      t: 'workspaceScope';
-      serverId: string;
-      machineId: string;
-      rootPath: string;
-    }>;
-    renderWorkspaceKey?: string;
-    parentId: string | null;
-    name: string;
-    createdAt: number;
-    updatedAt: number;
-    sortKey?: string;
-  }>>;
-}>;
-
-type SessionFolderSettingsSnapshot = Readonly<{
-  sessionFoldersV1: SessionFoldersSetting;
-  sessionListGroupOrderV1: Record<string, string[]>;
-}>;
+export type { SessionFolderSettingsSnapshot, SessionFoldersSetting } from './sessionOrganization';
 
 type SessionCreateResponse = {
   session?: {
@@ -55,17 +36,33 @@ type SessionCreateResponse = {
   };
 };
 
-type SessionFolderAssignmentListResponse = {
-  assignments?: ReadonlyArray<Readonly<{
-    sessionId?: string;
-    folderId?: string | null;
-  }>>;
-};
-
 type SessionFolderAssignmentSetResponse = {
   sessionId?: string;
   folderId?: string | null;
 };
+
+type ServerFeaturesIdentityResponse = {
+  capabilities?: {
+    serverIdentity?: {
+      serverIdentityId?: unknown;
+    };
+  };
+};
+
+type SessionFolderDragSettingsRouteParams = Readonly<{
+  baseUrl: string;
+  token: string;
+  serverId: string;
+}>;
+
+export function buildSessionFolderDragLocalSettingsPatch(params: Readonly<{
+  folderSortMode?: 'foldersFirst' | 'mixed';
+}>): Record<string, unknown> {
+  return {
+    sessionListFolderSortModeV1: params.folderSortMode ?? 'mixed',
+    sessionsListStorageTab: 'persisted',
+  };
+}
 
 export function deriveServerIdFromUrl(url: string): string {
   const normalized = url.trim();
@@ -73,6 +70,21 @@ export function deriveServerIdFromUrl(url: string): string {
   const port = parsed.port ? `-${parsed.port}` : '';
   const base = `${parsed.hostname.toLowerCase()}${port}`;
   return base.replace(/[^a-z0-9._-]/g, '_').replace(/_+/g, '_') || 'custom';
+}
+
+export async function resolveCanonicalServerIdForUi(baseUrl: string): Promise<string> {
+  const fallback = deriveServerIdFromUrl(baseUrl);
+  try {
+    const response = await fetchJson<ServerFeaturesIdentityResponse>(`${baseUrl}/v1/features`, {
+      timeoutMs: 15_000,
+    });
+    const serverIdentityId = response.data?.capabilities?.serverIdentity?.serverIdentityId;
+    return typeof serverIdentityId === 'string' && serverIdentityId.trim()
+      ? serverIdentityId.trim()
+      : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export function sessionOrderKey(serverId: string, sessionId: string): string {
@@ -97,129 +109,109 @@ function readOrderIndex(
   return null;
 }
 
-async function mutateScopedSettings(params: Readonly<{
+async function ensureSessionFolderViewMode(params: Readonly<{
   page: Page;
-  values: Record<string, unknown>;
+  folderViewMode: 'tree' | 'off';
+  sessionFoldersV1: SessionFoldersSetting;
 }>): Promise<void> {
-  await params.page.evaluate(
-    ({ accountSettingsLogicalKeyPrefix, pendingAccountSettingsLogicalKeyPrefix, values }) => {
-      type ParsedScopedSettingsKey = Readonly<{
-        fullKey: string;
-        logicalKey: string;
-        storageNamespace: string;
-      }>;
+  if (params.folderViewMode !== 'tree') return;
+  const firstFolderId = params.sessionFoldersV1.folders[0]?.id;
+  if (!firstFolderId) return;
 
-      const parseScopedSettingsKey = (rawKey: string): ParsedScopedSettingsKey | null => {
-        const separatorIndex = rawKey.lastIndexOf('\\');
-        if (separatorIndex <= 0 || separatorIndex >= rawKey.length - 1) return null;
-
-        const storageNamespace = rawKey.slice(0, separatorIndex);
-        const logicalKey = rawKey.slice(separatorIndex + 1);
-        if (!logicalKey.startsWith(accountSettingsLogicalKeyPrefix)) return null;
-
-        return {
-          fullKey: rawKey,
-          logicalKey,
-          storageNamespace,
-        };
-      };
-
-      const scopedSettingsKeys: ParsedScopedSettingsKey[] = [];
-      for (let index = 0; index < window.localStorage.length; index += 1) {
-        const rawKey = window.localStorage.key(index);
-        if (!rawKey) continue;
-
-        const parsedKey = parseScopedSettingsKey(rawKey);
-        if (parsedKey) scopedSettingsKeys.push(parsedKey);
-      }
-      if (scopedSettingsKeys.length !== 1) {
-        throw new Error(`expected exactly one scoped persisted settings record, found ${scopedSettingsKeys.length}`);
-      }
-
-      const settingsKey = scopedSettingsKeys[0]!;
-      const pendingSettingsKey = `${settingsKey.storageNamespace}\\${pendingAccountSettingsLogicalKeyPrefix}${settingsKey.logicalKey.slice(accountSettingsLogicalKeyPrefix.length)}`;
-      const rawSettings = window.localStorage.getItem(settingsKey.fullKey);
-      if (!rawSettings) throw new Error('missing persisted settings');
-
-      const parsed = JSON.parse(rawSettings) as PersistedSettingsEnvelope;
-      const settings = typeof parsed.settings === 'object' && parsed.settings ? parsed.settings : {};
-      const rawPending = window.localStorage.getItem(pendingSettingsKey);
-      const pending = rawPending && typeof JSON.parse(rawPending) === 'object'
-        ? JSON.parse(rawPending) as Record<string, unknown>
-        : {};
-
-      parsed.settings = {
-        ...settings,
-        ...values,
-      };
-
-      window.localStorage.setItem(settingsKey.fullKey, JSON.stringify(parsed));
-      window.localStorage.setItem(
-        pendingSettingsKey,
-        JSON.stringify({
-          ...pending,
-          ...values,
-        }),
-      );
-    },
-    {
-      accountSettingsLogicalKeyPrefix: ACCOUNT_SETTINGS_LOGICAL_KEY_PREFIX,
-      pendingAccountSettingsLogicalKeyPrefix: PENDING_ACCOUNT_SETTINGS_LOGICAL_KEY_PREFIX,
-      values: params.values,
-    },
+  const firstFolderHeader = params.page.getByTestId(`session-folder-header-${firstFolderId}`);
+  const alreadyTree = await firstFolderHeader.waitFor({ state: 'attached', timeout: 2_000 }).then(
+    () => true,
+    () => false,
   );
+  if (alreadyTree) return;
+
+  await params.page.getByTestId('session-list-ordering-menu-trigger').first().click();
+  const folderViewToggle = params.page.getByTestId('session-folder-view-toggle');
+  await expect(folderViewToggle).toHaveCount(1, { timeout: 60_000 });
+  await folderViewToggle.click();
+  await expect(firstFolderHeader).toHaveCount(1, { timeout: 120_000 });
+}
+
+async function selectSessionListViewMenuItem(page: Page, testId: string): Promise<void> {
+  await page.getByTestId('session-list-ordering-menu-trigger').first().click();
+  const item = page.getByTestId(testId);
+  await expect(item).toHaveCount(1, { timeout: 60_000 });
+  await item.click();
+}
+
+async function ensureSessionFolderDragOrderingPreferences(params: Readonly<{
+  page: Page;
+  folderSortMode: 'foldersFirst' | 'mixed';
+}>): Promise<void> {
+  await selectSessionListViewMenuItem(params.page, 'session-list-ordering-mode-custom');
+  await selectSessionListViewMenuItem(
+    params.page,
+    params.folderSortMode === 'mixed'
+      ? 'session-folder-sort-mode-mixed'
+      : 'session-folder-sort-mode-folders-first',
+  );
+}
+
+async function selectPersistedSessionListStorageTab(page: Page): Promise<void> {
+  const persistedTab = page.getByTestId('sessions-list-storage-tab:persisted');
+  await expect(persistedTab).toHaveCount(1, { timeout: 120_000 });
+  await persistedTab.click();
+  await expect(persistedTab).toHaveAttribute('aria-selected', 'true', { timeout: 60_000 });
 }
 
 export async function setSessionFolderDragSettings(params: Readonly<{
   page: Page;
   baseUrl: string;
+  apiBaseUrl: string;
+  token: string;
+  serverId: string;
   sessionFoldersV1: SessionFoldersSetting;
   sessionListGroupOrderV1?: Record<string, string[]>;
+  folderViewMode?: 'tree' | 'off';
+  folderSortMode?: 'foldersFirst' | 'mixed';
 }>): Promise<void> {
-  await mutateScopedSettings({
-    page: params.page,
-    values: {
+  await importSessionOrganization({
+    baseUrl: params.apiBaseUrl,
+    token: params.token,
+    request: buildSessionOrganizationImportRequestFromFolderSettings({
+      serverId: params.serverId,
       sessionFoldersV1: params.sessionFoldersV1,
-      sessionFolderViewModeV1: 'tree',
-      sessionListGroupOrderV1: params.sessionListGroupOrderV1 ?? {},
+      sessionListGroupOrderV1: params.sessionListGroupOrderV1,
+    }),
+  });
+
+  await mutateUiE2eScopedAccountSettings({
+    page: params.page,
+    settingsPatch: {
+      sessionFolderViewModeV1: params.folderViewMode ?? 'tree',
+      sessionListOrderingModeV1: 'custom',
     },
   });
 
+  await mutateUiE2eLocalSettings({
+    page: params.page,
+    settingsPatch: buildSessionFolderDragLocalSettingsPatch({
+      folderSortMode: params.folderSortMode,
+    }),
+  });
+
   await gotoDomContentLoadedWithRetries(params.page, `${params.baseUrl}/?happier_hmr=0`, 120_000);
+  await selectPersistedSessionListStorageTab(params.page);
+  await ensureSessionFolderDragOrderingPreferences({
+    page: params.page,
+    folderSortMode: params.folderSortMode ?? 'mixed',
+  });
+  await ensureSessionFolderViewMode({
+    page: params.page,
+    folderViewMode: params.folderViewMode ?? 'tree',
+    sessionFoldersV1: params.sessionFoldersV1,
+  });
 }
 
-export async function readSessionFolderDragSettings(page: Page): Promise<SessionFolderSettingsSnapshot> {
-  return page.evaluate(
-    ({ accountSettingsLogicalKeyPrefix }) => {
-      type ParsedScopedSettingsKey = Readonly<{ fullKey: string; logicalKey: string }>;
-
-      const keys: ParsedScopedSettingsKey[] = [];
-      for (let index = 0; index < window.localStorage.length; index += 1) {
-        const rawKey = window.localStorage.key(index);
-        if (!rawKey) continue;
-        const separatorIndex = rawKey.lastIndexOf('\\');
-        if (separatorIndex <= 0) continue;
-        const logicalKey = rawKey.slice(separatorIndex + 1);
-        if (logicalKey.startsWith(accountSettingsLogicalKeyPrefix)) {
-          keys.push({ fullKey: rawKey, logicalKey });
-        }
-      }
-      if (keys.length !== 1) {
-        throw new Error(`expected exactly one scoped persisted settings record, found ${keys.length}`);
-      }
-
-      const rawSettings = window.localStorage.getItem(keys[0]!.fullKey);
-      if (!rawSettings) throw new Error('missing persisted settings');
-
-      const parsed = JSON.parse(rawSettings) as PersistedSettingsEnvelope;
-      const settings = typeof parsed.settings === 'object' && parsed.settings ? parsed.settings : {};
-      return {
-        sessionFoldersV1: settings.sessionFoldersV1,
-        sessionListGroupOrderV1: settings.sessionListGroupOrderV1 ?? {},
-      };
-    },
-    { accountSettingsLogicalKeyPrefix: ACCOUNT_SETTINGS_LOGICAL_KEY_PREFIX },
-  ) as Promise<SessionFolderSettingsSnapshot>;
+export async function readSessionFolderDragSettings(
+  params: SessionFolderDragSettingsRouteParams,
+): Promise<SessionFolderSettingsSnapshot> {
+  return readSessionOrganizationFolderSettingsSnapshot(params);
 }
 
 export async function createPlainSession(params: Readonly<{
@@ -270,7 +262,7 @@ export async function setSessionFolderAssignment(params: Readonly<{
   folderId: string | null;
 }>): Promise<void> {
   const res = await fetchJson<SessionFolderAssignmentSetResponse>(
-    `${params.baseUrl}/v2/session-folder-assignments/${encodeURIComponent(params.sessionId)}`,
+    `${params.baseUrl}/v2/session-organization/folder-assignments/${encodeURIComponent(params.sessionId)}`,
     {
       method: 'PUT',
       headers: {
@@ -291,17 +283,25 @@ async function fetchFolderAssignment(params: Readonly<{
   token: string;
   sessionId: string;
 }>): Promise<string | null> {
-  const res = await fetchJson<SessionFolderAssignmentListResponse>(
-    `${params.baseUrl}/v2/session-folder-assignments?sessionIds=${encodeURIComponent(params.sessionId)}`,
-    {
-      headers: { Authorization: `Bearer ${params.token}` },
-      timeoutMs: 20_000,
+  const snapshot = await fetchSessionOrganizationSnapshot({
+    baseUrl: params.baseUrl,
+    token: params.token,
+    request: {
+      includeFolders: false,
+      includeTags: false,
+      includeLabels: false,
+      assignmentSessionIds: [params.sessionId],
     },
-  );
-  if (res.status !== 200) {
-    throw new Error(`Failed to fetch folder assignment for ${params.sessionId} (status=${res.status})`);
-  }
-  return res.data?.assignments?.find((assignment) => assignment.sessionId === params.sessionId)?.folderId ?? null;
+  });
+  const assignment = snapshot.folderAssignments.find((candidate) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false;
+    const record = candidate as Record<string, unknown>;
+    return record.sessionId === params.sessionId
+      && (typeof record.folderId === 'string' || record.folderId === null);
+  });
+  if (!assignment || typeof assignment !== 'object' || Array.isArray(assignment)) return null;
+  const folderId = (assignment as Record<string, unknown>).folderId;
+  return typeof folderId === 'string' ? folderId : null;
 }
 
 export async function expectFolderAssignment(params: Readonly<{
@@ -317,12 +317,14 @@ export async function expectFolderAssignment(params: Readonly<{
 }
 
 export async function expectFolderParent(params: Readonly<{
-  page: Page;
+  baseUrl: string;
+  token: string;
+  serverId: string;
   folderId: string;
   parentId: string | null;
 }>): Promise<void> {
   await expect.poll(async () => {
-    const snapshot = await readSessionFolderDragSettings(params.page);
+    const snapshot = await readSessionFolderDragSettings(params);
     return snapshot.sessionFoldersV1.folders.find((folder) => folder.id === params.folderId)?.parentId ?? null;
   }, { timeout: 60_000 }).toBe(params.parentId);
 }
@@ -333,31 +335,42 @@ export async function expectOrderBefore(params: Readonly<{
   secondTestId: string;
 }>): Promise<void> {
   await expect.poll(async () => {
-    const firstBox = await params.page.getByTestId(params.firstTestId).boundingBox();
-    const secondBox = await params.page.getByTestId(params.secondTestId).boundingBox();
+    const firstBox = await params.page.getByTestId(params.firstTestId).boundingBox({ timeout: 500 }).catch(() => null);
+    const secondBox = await params.page.getByTestId(params.secondTestId).boundingBox({ timeout: 500 }).catch(() => null);
     if (!firstBox || !secondBox) return false;
     return firstBox.y < secondBox.y;
   }, { timeout: 60_000 }).toBe(true);
 }
 
 export async function expectOrderMapContainsBefore(params: Readonly<{
-  page: Page;
+  baseUrl: string;
+  token: string;
+  serverId: string;
   firstKey: string;
   secondKey: string;
 }>): Promise<void> {
-  await expect.poll(async () => {
-    const snapshot = await readSessionFolderDragSettings(params.page);
+  let lastSnapshot: SessionFolderSettingsSnapshot | null = null;
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    const snapshot = await readSessionFolderDragSettings(params);
+    lastSnapshot = snapshot;
     const indexes = readOrderIndex(snapshot.sessionListGroupOrderV1, params.firstKey, params.secondKey);
-    return indexes ? indexes.first < indexes.second : false;
-  }, { timeout: 60_000 }).toBe(true);
+    if (indexes ? indexes.first < indexes.second : false) return;
+    await new Promise((resolve) => {
+      setTimeout(resolve, 500);
+    });
+  }
+  throw new Error(`Expected ${params.firstKey} before ${params.secondKey}; last order map=${JSON.stringify(lastSnapshot?.sessionListGroupOrderV1 ?? null)}`);
 }
 
 export async function expectOrderMapStartsWith(params: Readonly<{
-  page: Page;
+  baseUrl: string;
+  token: string;
+  serverId: string;
   firstKey: string;
 }>): Promise<void> {
   await expect.poll(async () => {
-    const snapshot = await readSessionFolderDragSettings(params.page);
+    const snapshot = await readSessionFolderDragSettings(params);
     return Object.values(snapshot.sessionListGroupOrderV1)
       .some((keys) => Array.isArray(keys) && keys[0] === params.firstKey);
   }, { timeout: 60_000 }).toBe(true);

@@ -5,6 +5,7 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -47,6 +48,12 @@ function shouldSkipCliSharedDepsBuildForE2e(env: NodeJS.ProcessEnv): boolean {
 type CliDistBuildLockOwner = {
   pid: number | null;
   createdAtMs: number | null;
+};
+
+type CliDistBuildLockSnapshot = {
+  exists: boolean;
+  raw: string | null;
+  owner: CliDistBuildLockOwner;
 };
 
 type CliDistBuildLockOptions = {
@@ -147,47 +154,71 @@ function parseCliDistLockOwner(raw: string): CliDistBuildLockOwner {
   }
 }
 
+function readCliDistBuildLockSnapshot(lockPath: string): CliDistBuildLockSnapshot {
+  try {
+    const raw = readFileSync(lockPath, 'utf8');
+    return { exists: true, raw, owner: parseCliDistLockOwner(raw) };
+  } catch {
+    return { exists: false, raw: null, owner: { pid: null, createdAtMs: null } };
+  }
+}
+
 function serializeCliDistLockOwner(createdAtMs: number): string {
   return JSON.stringify({ pid: process.pid, createdAtMs });
 }
 
-function shouldReclaimCliDistBuildLock(lockPath: string, staleAfterMs: number, nowMs: number): boolean {
-  let owner: CliDistBuildLockOwner = { pid: null, createdAtMs: null };
+function shouldReclaimCliDistBuildLockSnapshot(
+  snapshot: CliDistBuildLockSnapshot,
+  staleAfterMs: number,
+  nowMs: number,
+): boolean {
+  if (!snapshot.exists) return true;
+  const owner = snapshot.owner;
+  if (owner.pid == null && owner.createdAtMs == null) return true;
+  if (owner.pid != null) return !isRunningPid(owner.pid);
+  if (owner.createdAtMs != null && nowMs - owner.createdAtMs > staleAfterMs) return true;
+  return false;
+}
+
+function reclaimCliDistBuildLockSnapshot(lockPath: string, expectedRaw: string | null): boolean {
+  if (expectedRaw == null) return true;
+  const reclaimPath = `${lockPath}.reclaim-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
-    owner = parseCliDistLockOwner(readFileSync(lockPath, 'utf8'));
+    renameSync(lockPath, reclaimPath);
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') return true;
+    return false;
+  }
+
+  let movedRaw: string | null = null;
+  try {
+    movedRaw = readFileSync(reclaimPath, 'utf8');
   } catch {
     return false;
   }
 
-  if (owner.pid != null) {
-    if (isRunningPid(owner.pid)) {
-      if (owner.createdAtMs != null && nowMs - owner.createdAtMs <= staleAfterMs) {
-        return false;
-      }
-    } else {
-      try {
-        unlinkSync(lockPath);
-        return true;
-      } catch {
-        return false;
-      }
-    }
-
+  if (movedRaw === expectedRaw) {
     try {
-      unlinkSync(lockPath);
-      return true;
+      unlinkSync(reclaimPath);
     } catch {
-      return false;
+      // ignore
     }
-  }
-
-  if (owner.createdAtMs != null && nowMs - owner.createdAtMs <= staleAfterMs) {
-    return false;
+    return true;
   }
 
   try {
-    unlinkSync(lockPath);
-    return true;
+    writeFileSync(lockPath, movedRaw, { encoding: 'utf8', flag: 'wx' });
+    unlinkSync(reclaimPath);
+  } catch {
+    // Another owner already has the lock path. Keep the quarantined file for diagnostics.
+  }
+  return false;
+}
+
+function isCliDistBuildLockOwnedBy(lockPath: string, expectedRaw: string | null): boolean {
+  if (expectedRaw == null) return false;
+  try {
+    return readFileSync(lockPath, 'utf8') === expectedRaw;
   } catch {
     return false;
   }
@@ -1124,14 +1155,19 @@ export async function withCliDistBuildLock<T>(fn: () => Promise<T>, options: Cli
 
   let fd: number | null = null;
   let heartbeatTimer: NodeJS.Timeout | null = null;
+  let ownLockRaw: string | null = null;
   while (true) {
     try {
+      ownLockRaw = serializeCliDistLockOwner(Date.now());
       fd = openSync(lockPath, 'wx');
-      writeFileSync(fd, serializeCliDistLockOwner(Date.now()), 'utf8');
+      writeFileSync(fd, ownLockRaw, 'utf8');
       break;
     } catch (e: any) {
       if (e?.code !== 'EEXIST') throw e;
-      if (shouldReclaimCliDistBuildLock(lockPath, staleAfterMs, Date.now())) {
+      ownLockRaw = null;
+      const snapshot = readCliDistBuildLockSnapshot(lockPath);
+      if (shouldReclaimCliDistBuildLockSnapshot(snapshot, staleAfterMs, Date.now())) {
+        reclaimCliDistBuildLockSnapshot(lockPath, snapshot.raw);
         continue;
       }
       if (Date.now() - startedAt > timeoutMs) {
@@ -1147,7 +1183,9 @@ export async function withCliDistBuildLock<T>(fn: () => Promise<T>, options: Cli
       const heartbeatIntervalMs = Math.max(250, Math.min(5_000, Math.floor(staleAfterMs / 4) || 250));
       heartbeatTimer = setInterval(() => {
         try {
-          writeFileSync(lockPath, serializeCliDistLockOwner(Date.now()), 'utf8');
+          if (!isCliDistBuildLockOwnedBy(lockPath, ownLockRaw)) return;
+          ownLockRaw = serializeCliDistLockOwner(Date.now());
+          writeFileSync(lockPath, ownLockRaw, 'utf8');
         } catch {
           // Best-effort lease heartbeat only.
         }
@@ -1166,7 +1204,7 @@ export async function withCliDistBuildLock<T>(fn: () => Promise<T>, options: Cli
       // ignore
     }
     try {
-      unlinkSync(lockPath);
+      if (isCliDistBuildLockOwnedBy(lockPath, ownLockRaw)) unlinkSync(lockPath);
     } catch {
       // ignore
     }

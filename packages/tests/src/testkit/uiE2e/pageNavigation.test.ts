@@ -157,6 +157,25 @@ describe('gotoDomContentLoadedWithRetries', () => {
     expect(waitForTimeout).toHaveBeenCalledWith(500);
   });
 
+  it('retries raw EPIPE transport errors before succeeding', async () => {
+    const goto = vi
+      .fn<(_url: string, _options: { waitUntil: 'domcontentloaded'; timeout: number }) => Promise<void>>()
+      .mockRejectedValueOnce(new Error('write EPIPE'))
+      .mockResolvedValueOnce(undefined);
+    const waitForTimeout = vi.fn(async () => {});
+
+    const page = {
+      goto,
+      waitForTimeout,
+      url: () => 'about:blank',
+    };
+
+    await gotoDomContentLoadedWithRetries(page as never, 'http://localhost:3000');
+
+    expect(goto).toHaveBeenCalledTimes(2);
+    expect(waitForTimeout).toHaveBeenCalledWith(500);
+  });
+
   it('keeps retrying connection-refused navigations until the page becomes reachable', async () => {
     let nowMs = 0;
     vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
@@ -183,7 +202,7 @@ describe('gotoDomContentLoadedWithRetries', () => {
     expect(waitForTimeout).toHaveBeenCalled();
   });
 
-  it('rejects a timed-out navigation when waiting for DOM content (even if the target URL committed)', async () => {
+  it('does not treat a timed-out DOM-content navigation as usable based only on current URL equality', async () => {
     const targetUrl = 'http://localhost:3000/';
     const goto = vi.fn(async () => {
       throw new Error('page.goto: Timeout 90000ms exceeded.');
@@ -195,7 +214,7 @@ describe('gotoDomContentLoadedWithRetries', () => {
       url: () => targetUrl,
     };
 
-    await expect(gotoDomContentLoadedWithRetries(page as never, targetUrl)).rejects.toThrow(/timeout/i);
+    await expect(gotoDomContentLoadedWithRetries(page as never, targetUrl)).rejects.toThrow(/Timeout/);
     expect(goto).toHaveBeenCalledTimes(1);
   });
 

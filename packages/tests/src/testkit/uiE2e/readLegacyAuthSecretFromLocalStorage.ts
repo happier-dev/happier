@@ -10,36 +10,37 @@ export type AuthBootstrapStorageSnapshot = Readonly<{
 function applyAuthBootstrapStorageSnapshot(snapshot: AuthBootstrapStorageSnapshot): void {
     if (typeof window === 'undefined') return;
 
-    const clearMatchingKeys = (storage: Storage | undefined, predicate: (key: string) => boolean): void => {
-        if (!storage) return;
-        const keysToDelete: string[] = [];
-        for (let index = 0; index < storage.length; index += 1) {
-            const key = storage.key(index);
-            if (key && predicate(key)) {
-                keysToDelete.push(key);
-            }
+    const localStorageKeysToDelete: string[] = [];
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+        const key = window.localStorage.key(index);
+        if (!key) continue;
+        if (key.includes('server-state-v1') || key === 'auth_credentials' || key.startsWith('auth_credentials__srv_')) {
+            localStorageKeysToDelete.push(key);
         }
-        for (const key of keysToDelete) {
-            storage.removeItem(key);
+    }
+    for (const key of localStorageKeysToDelete) {
+        window.localStorage.removeItem(key);
+    }
+
+    const sessionStorageKeysToDelete: string[] = [];
+    for (let index = 0; index < window.sessionStorage.length; index += 1) {
+        const key = window.sessionStorage.key(index);
+        if (key === 'activeServerId') {
+            sessionStorageKeysToDelete.push(key);
         }
-    };
+    }
+    for (const key of sessionStorageKeysToDelete) {
+        window.sessionStorage.removeItem(key);
+    }
 
-    const applyEntries = (storage: Storage | undefined, entries: Readonly<Record<string, string>>): void => {
-        if (!storage) return;
-        for (const [key, value] of Object.entries(entries)) {
-            if (!key || typeof value !== 'string') continue;
-            storage.setItem(key, value);
-        }
-    };
-
-    const isAuthBootstrapLocalStorageKey = (key: string): boolean =>
-        key.includes('server-state-v1') || key === 'auth_credentials' || key.startsWith('auth_credentials__srv_');
-    const isAuthBootstrapSessionStorageKey = (key: string): boolean => key === 'activeServerId';
-
-    clearMatchingKeys(window.localStorage, isAuthBootstrapLocalStorageKey);
-    clearMatchingKeys(window.sessionStorage, isAuthBootstrapSessionStorageKey);
-    applyEntries(window.localStorage, snapshot.localStorage);
-    applyEntries(window.sessionStorage, snapshot.sessionStorage);
+    for (const [key, value] of Object.entries(snapshot.localStorage)) {
+        if (!key || typeof value !== 'string') continue;
+        window.localStorage.setItem(key, value);
+    }
+    for (const [key, value] of Object.entries(snapshot.sessionStorage)) {
+        if (!key || typeof value !== 'string') continue;
+        window.sessionStorage.setItem(key, value);
+    }
 }
 
 export async function readLegacyAuthSecretFromLocalStorage(page: LocalStorageReadablePage): Promise<string> {

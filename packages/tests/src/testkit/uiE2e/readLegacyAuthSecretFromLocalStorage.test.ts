@@ -107,6 +107,11 @@ function withWindowStorage<T>(
     }
 }
 
+function runSerializedScript(fn: (snapshot: unknown) => void, arg: unknown): void {
+    const serialized = (0, eval)(`(${String(fn)})`) as (value: unknown) => void;
+    serialized(arg);
+}
+
 function createWritablePage(options: Readonly<{
     throwOnEvaluate?: boolean;
     initialSnapshot?: StorageSnapshot;
@@ -133,7 +138,7 @@ function createWritablePage(options: Readonly<{
             }
             if (typeof fn !== 'function') return undefined;
             return await withWindowStorage(currentSnapshot, async (state) => {
-                const result = await (fn as (snapshot: unknown) => unknown)(arg);
+                const result = runSerializedScript(fn as (snapshot: unknown) => void, arg);
                 currentSnapshot = {
                     localStorage: Object.fromEntries(state.localStorage.entries()),
                     sessionStorage: Object.fromEntries(state.sessionStorage.entries()),
@@ -263,7 +268,7 @@ describe('installAuthBootstrapStorageSnapshot', () => {
 
         await withWindowStorage({}, async () => {
             for (const { fn, arg } of page.initScripts) {
-                fn(arg);
+                runSerializedScript(fn, arg);
             }
             expect(window.localStorage.getItem('server-profiles:server-state-v1')).toBe(
                 snapshot.localStorage?.['server-profiles:server-state-v1'] ?? null,
@@ -326,7 +331,7 @@ describe('installAuthBootstrapStorageSnapshot', () => {
             },
         }, async () => {
             for (const { fn, arg } of page.initScripts) {
-                fn(arg);
+                runSerializedScript(fn, arg);
             }
             expect(window.localStorage.getItem('server-profiles:server-state-v1')).toBeNull();
             expect(window.localStorage.getItem('auth_credentials__srv_stale-server')).toBeNull();

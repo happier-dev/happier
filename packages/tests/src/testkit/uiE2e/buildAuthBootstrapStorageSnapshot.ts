@@ -1,4 +1,12 @@
+import { createHash } from 'node:crypto';
+
 import type { AuthBootstrapStorageSnapshot } from './readLegacyAuthSecretFromLocalStorage';
+import {
+    canonicalizeServerUrlForUiWeb,
+    deriveUiServerIdFromUrl,
+    scopedUiStorageId,
+    uniqueNonEmptyStrings,
+} from './uiWebStorageContract';
 
 export type AuthBootstrapCredentials =
     | Readonly<{
@@ -13,54 +21,58 @@ export type AuthBootstrapCredentials =
         }>;
     }>;
 
-function canonicalizeServerUrlForUiWeb(rawServerUrl: string): string {
-    const trimmed = String(rawServerUrl ?? '').trim().replace(/\/+$/, '');
-    if (!trimmed) return '';
-
-    try {
-        const parsed = new URL(trimmed);
-        const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
-        const isLoopback =
-            hostname === '127.0.0.1'
-            || hostname === '::1'
-            || hostname === '[::1]'
-            || hostname === 'localhost'
-            || hostname.endsWith('.localhost');
-
-        const normalizedPath = parsed.pathname.replace(/\/+$/, '');
-        const path = normalizedPath && normalizedPath !== '/' ? normalizedPath : '';
-        const port = parsed.port ? `:${parsed.port}` : '';
-        const auth = parsed.username
-            ? `${parsed.username}${parsed.password ? `:${parsed.password}` : ''}@`
-            : '';
-
-        return `${parsed.protocol}//${auth}${isLoopback ? 'localhost' : hostname}${port}${path}${parsed.search}${parsed.hash}`
-            .replace(/\/+$/, '');
-    } catch {
-        return trimmed;
-    }
+function sanitizeScopeToken(raw: string): string {
+    const token = String(raw ?? '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '_').replace(/_+/g, '_');
+    return token || 'default';
 }
 
-function deriveServerIdFromUrl(serverUrl: string): string {
-    let hostname = '';
-    let port = '';
-
-    try {
-        const parsed = new URL(canonicalizeServerUrlForUiWeb(serverUrl));
-        hostname = parsed.hostname.toLowerCase();
-        port = parsed.port ? `-${parsed.port}` : '';
-    } catch {
-        const normalized = canonicalizeServerUrlForUiWeb(serverUrl).toLowerCase();
-        hostname = normalized.replace(/^[a-z]+:\/\//, '').replace(/\/+$/, '');
-    }
-
-    const base = `${hostname}${port}`.trim();
-    const sanitized = base.replace(/[^a-z0-9._-]/g, '_').replace(/_+/g, '_');
-    return sanitized || 'custom';
+function hashScopeForNormalizedUrl(normalizedUrl: string): string | null {
+    const normalized = String(normalizedUrl ?? '').trim();
+    if (!normalized) return null;
+    return createHash('sha256').update(normalized).digest('base64url');
 }
 
-function scopedStorageId(baseId: string, scope: string | null): string {
-    return scope ? `${baseId}__${scope}` : baseId;
+function normalizeUrlLegacy(raw: string): string {
+    return String(raw ?? '').trim().replace(/\/+$/, '');
+}
+
+function listCredentialScopeTokens(params: Readonly<{
+    canonicalServerUrl: string;
+    serverId: string;
+    serverIdentityId?: string | null;
+    legacyServerIds?: readonly string[];
+}>): string[] {
+    const tokens = new Set<string>();
+    const appendId = (raw: string | null | undefined): void => {
+        const value = String(raw ?? '').trim();
+        if (!value) return;
+        tokens.add(sanitizeScopeToken(value));
+    };
+    const appendHash = (raw: string | null | undefined): void => {
+        const value = String(raw ?? '').trim();
+        if (!value) return;
+        const hash = hashScopeForNormalizedUrl(value);
+        if (hash) tokens.add(hash);
+    };
+
+    appendId(params.serverIdentityId);
+    appendId(params.serverId);
+    for (const legacyServerId of params.legacyServerIds ?? []) {
+        appendId(legacyServerId);
+    }
+    appendHash(params.canonicalServerUrl);
+
+    try {
+        const parsed = new URL(params.canonicalServerUrl);
+        if (parsed.hostname.toLowerCase() === 'localhost') {
+            parsed.hostname = '127.0.0.1';
+            appendHash(normalizeUrlLegacy(parsed.toString()));
+        }
+    } catch {
+        // ignore malformed compatibility URLs
+    }
+
+    return [...tokens];
 }
 
 function defaultServerNameFromUrl(serverUrl: string): string {
@@ -76,11 +88,17 @@ export function buildAuthBootstrapStorageSnapshot(params: Readonly<{
     serverUrl: string;
     credentials: AuthBootstrapCredentials;
     storageScope: string;
+    serverIdentityId?: string | null;
+    legacyServerIds?: readonly string[];
 }>): AuthBootstrapStorageSnapshot {
     const now = Date.now();
     const canonicalServerUrl = canonicalizeServerUrlForUiWeb(params.serverUrl);
-    const serverId = deriveServerIdFromUrl(canonicalServerUrl);
+    const serverId = deriveUiServerIdFromUrl(canonicalServerUrl);
     const credentialPayload = JSON.stringify(params.credentials);
+    const legacyServerIds = uniqueNonEmptyStrings([
+        ...(params.legacyServerIds ?? []),
+        params.serverIdentityId ? serverId : null,
+    ]);
     const serverState = JSON.stringify({
         activeServerId: serverId,
         servers: {
@@ -88,6 +106,8 @@ export function buildAuthBootstrapStorageSnapshot(params: Readonly<{
                 id: serverId,
                 name: defaultServerNameFromUrl(canonicalServerUrl),
                 serverUrl: canonicalServerUrl || params.serverUrl,
+                ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
+                ...(legacyServerIds.length > 0 ? { legacyServerIds } : {}),
                 createdAt: now,
                 updatedAt: now,
                 lastUsedAt: now,
@@ -96,10 +116,21 @@ export function buildAuthBootstrapStorageSnapshot(params: Readonly<{
         },
     });
 
-    const scoped = (key: string): string => scopedStorageId(key, params.storageScope);
+    const scoped = (key: string): string => scopedUiStorageId(key, params.storageScope);
     const scopedServerStateKey = `${scoped('server-profiles')}:server-state-v1`;
     const scopedAuthKey = scoped('auth_credentials');
-    const scopedServerAuthKey = scoped(`auth_credentials__srv_${serverId}`);
+    const credentialScopes = listCredentialScopeTokens({
+        canonicalServerUrl,
+        serverId,
+        serverIdentityId: params.serverIdentityId,
+        legacyServerIds,
+    });
+    const scopedAuthEntries: Record<string, string> = {};
+    for (const scopeToken of credentialScopes) {
+        const key = `auth_credentials__srv_${scopeToken}`;
+        scopedAuthEntries[key] = credentialPayload;
+        scopedAuthEntries[scoped(key)] = credentialPayload;
+    }
 
     return {
         localStorage: {
@@ -107,8 +138,7 @@ export function buildAuthBootstrapStorageSnapshot(params: Readonly<{
             [scopedServerStateKey]: serverState,
             auth_credentials: credentialPayload,
             [scopedAuthKey]: credentialPayload,
-            [`auth_credentials__srv_${serverId}`]: credentialPayload,
-            [scopedServerAuthKey]: credentialPayload,
+            ...scopedAuthEntries,
         },
         sessionStorage: {
             activeServerId: serverId,

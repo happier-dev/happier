@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync, closeSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { appendFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { basename, extname, dirname, relative as relativePath, resolve as resolvePath } from 'node:path';
@@ -12,6 +12,7 @@ import type { StartedUiWeb } from './uiWebTypes';
 import { terminateProcessTreeByPid } from './processTree';
 import { buildUiWebExportCacheKey } from './uiWebExportCacheKey';
 import { redactHarnessLogText } from './harnessLogRedaction';
+import { type JsonOwnerFileLockLease, withJsonOwnerFileLock } from './jsonOwnerFileLock';
 import {
   createUiWebExportStartupStallGuard,
   isUiWebExportMetroCacheCorruptionError,
@@ -81,6 +82,7 @@ export const __testables = {
     sharedExportRootDir = null;
   },
   shouldReclaimUiWebExportLock,
+  withUiWebExportLock,
   removePathWithRetries,
 };
 
@@ -218,17 +220,8 @@ async function hasRecentUiWebExportOwnerStagingProgress(params: {
   return stagingLatestMtimeMs > cutoffMs;
 }
 
-function writeUiWebExportLockOwnerMetadata(lockPath: string, stagingDir: string): void {
-  try {
-    const existing = parseLockOwner(readFileSync(lockPath, 'utf8'));
-    writeFileSync(lockPath, JSON.stringify({
-      pid: process.pid,
-      createdAtMs: existing.createdAtMs ?? Date.now(),
-      stagingDir,
-    }), 'utf8');
-  } catch {
-    // ignore lock metadata update failures; lock semantics still rely on file existence.
-  }
+function writeUiWebExportLockOwnerMetadata(lease: JsonOwnerFileLockLease, stagingDir: string): void {
+  lease.updateOwnerMetadata({ stagingDir });
 }
 
 function listUiWebExportOwnerProcessPids(ownerStagingPath: string): number[] {
@@ -268,9 +261,13 @@ async function terminateOrphanedUiWebExportOwnerProcesses(ownerStagingPath: stri
   }
 }
 
-export async function shouldReclaimUiWebExportLock(lockPath: string, staleAfterMs: number): Promise<boolean> {
+async function shouldReclaimUiWebExportLockRaw(
+  lockPath: string,
+  rawOwner: string | null,
+  staleAfterMs: number,
+): Promise<boolean> {
   try {
-    const owner = parseLockOwner(readFileSync(lockPath, 'utf8'));
+    const owner = parseLockOwner(rawOwner ?? '');
     const rootDir = dirname(lockPath);
     if (owner.pid == null && owner.createdAtMs == null) {
       return !(await hasRecentUiWebExportStagingProgress(rootDir, staleAfterMs));
@@ -300,57 +297,31 @@ export async function shouldReclaimUiWebExportLock(lockPath: string, staleAfterM
   }
 }
 
+export async function shouldReclaimUiWebExportLock(lockPath: string, staleAfterMs: number): Promise<boolean> {
+  try {
+    return await shouldReclaimUiWebExportLockRaw(lockPath, readFileSync(lockPath, 'utf8'), staleAfterMs);
+  } catch {
+    return true;
+  }
+}
+
 async function withUiWebExportLock<T>(
   lockPath: string,
-  fn: () => Promise<T>,
+  fn: (lease: JsonOwnerFileLockLease) => Promise<T>,
   options?: { timeoutMs?: number; staleAfterMs?: number },
 ): Promise<T> {
-  mkdirSync(dirname(lockPath), { recursive: true });
   const timeoutMs = options?.timeoutMs ?? 900_000;
   const staleAfterMs = options?.staleAfterMs ?? timeoutMs;
-  const startedAt = Date.now();
-
-  let fd: number | null = null;
-  while (true) {
-    try {
-      fd = openSync(lockPath, 'wx');
-      writeFileSync(fd, JSON.stringify({ pid: process.pid, createdAtMs: Date.now() }), 'utf8');
-      break;
-    } catch (error: any) {
-      if (error?.code !== 'EEXIST') throw error;
-
-      const reclaim = await shouldReclaimUiWebExportLock(lockPath, staleAfterMs);
-
-      if (reclaim) {
-        try {
-          unlinkSync(lockPath);
-          continue;
-        } catch {
-          // ignore and continue waiting
-        }
-      }
-
-      if (Date.now() - startedAt > timeoutMs) {
-        throw new Error(`Timed out waiting for UI web export build lock: ${lockPath}`);
-      }
-      await sleep(250);
-    }
-  }
-
-  try {
-    return await fn();
-  } finally {
-    try {
-      if (fd != null) closeSync(fd);
-    } catch {
-      // ignore
-    }
-    try {
-      unlinkSync(lockPath);
-    } catch {
-      // ignore
-    }
-  }
+  return await withJsonOwnerFileLock(fn, {
+    lockPath,
+    timeoutMs,
+    pollIntervalMs: 250,
+    staleAfterMs,
+    heartbeat: false,
+    errorLabel: 'UI web export build lock',
+    shouldReclaimSnapshot: async ({ snapshot }) =>
+      await shouldReclaimUiWebExportLockRaw(lockPath, snapshot.raw, staleAfterMs),
+  });
 }
 
 export function resolveUiWebExportBuildTimeoutMs(env: NodeJS.ProcessEnv): number {
@@ -791,7 +762,7 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
     ].filter(Boolean).join(' | '));
   }
 
-  const buildPromise = withUiWebExportLock(exportedDistLockPath, async () => {
+  const buildPromise = withUiWebExportLock(exportedDistLockPath, async (lockLease) => {
     const stagingDir = resolvePath(exportedDistParent, `dist-staging-${process.pid}-${Date.now()}`);
     const stdoutPath = resolvePath(params.testDir, 'ui.web.export.stdout.log');
     const stderrPath = resolvePath(params.testDir, 'ui.web.export.stderr.log');
@@ -799,7 +770,7 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
     await mkdir(params.testDir, { recursive: true });
     await mkdir(exportedDistParent, { recursive: true });
     await removePathWithRetries(stagingDir).catch(() => {});
-    writeUiWebExportLockOwnerMetadata(exportedDistLockPath, stagingDir);
+    writeUiWebExportLockOwnerMetadata(lockLease, stagingDir);
 
     for (;;) {
       try {

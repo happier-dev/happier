@@ -40,19 +40,15 @@ function resolveCoverageExpectation(
   };
 }
 
-function providerSpecSearchRoots(): ProviderSpecSearchRoot[] {
+function providerSpecSearchRoots(rootDir = repoRootDir()): ProviderSpecSearchRoot[] {
   return [
     {
-      baseDir: join(repoRootDir(), 'apps', 'cli', 'src', 'backends'),
-      e2eDirForEntry: (entryName) => join(repoRootDir(), 'apps', 'cli', 'src', 'backends', entryName, 'e2e'),
+      baseDir: join(rootDir, 'packages', 'plugins'),
+      e2eDirForEntry: (entryName) => join(rootDir, 'packages', 'plugins', entryName, 'src', 'agent', 'e2e'),
     },
     {
-      baseDir: join(repoRootDir(), 'packages', 'plugins'),
-      e2eDirForEntry: (entryName) => join(repoRootDir(), 'packages', 'plugins', entryName, 'src', 'agent', 'e2e'),
-    },
-    {
-      baseDir: join(repoRootDir(), 'packages', 'tests', 'fixtures', 'cli-backends'),
-      e2eDirForEntry: (entryName) => join(repoRootDir(), 'packages', 'tests', 'fixtures', 'cli-backends', entryName, 'e2e'),
+      baseDir: join(rootDir, 'packages', 'tests', 'fixtures', 'cli-backends'),
+      e2eDirForEntry: (entryName) => join(rootDir, 'packages', 'tests', 'fixtures', 'cli-backends', entryName, 'e2e'),
     },
   ];
 }
@@ -91,6 +87,10 @@ function parseScenarioRegistryJson(params: {
 }
 
 async function loadProviderSpecRecords(root: ProviderSpecSearchRoot): Promise<ProviderSpecRecord[]> {
+  if (!existsSync(root.baseDir)) {
+    return [];
+  }
+
   const entries = await readdir(root.baseDir, { withFileTypes: true });
   const records: ProviderSpecRecord[] = [];
 
@@ -113,12 +113,16 @@ async function loadProviderSpecRecords(root: ProviderSpecSearchRoot): Promise<Pr
   return records;
 }
 
-export async function loadCliProviderSpecs(): Promise<CliProviderSpecV1[]> {
+async function loadProviderSpecRecordsFromRoot(rootDir: string): Promise<ProviderSpecRecord[]> {
   const records: ProviderSpecRecord[] = [];
-  for (const root of providerSpecSearchRoots()) {
+  for (const root of providerSpecSearchRoots(rootDir)) {
     records.push(...(await loadProviderSpecRecords(root)));
   }
+  return records;
+}
 
+export async function loadCliProviderSpecsFromRoot(rootDir: string): Promise<CliProviderSpecV1[]> {
+  const records = await loadProviderSpecRecordsFromRoot(rootDir);
   const seen = new Set<string>();
   const specs: CliProviderSpecV1[] = [];
   for (const record of records) {
@@ -129,11 +133,12 @@ export async function loadCliProviderSpecs(): Promise<CliProviderSpecV1[]> {
   return specs;
 }
 
-export async function loadProvidersFromCliSpecs(): Promise<ProviderUnderTest[]> {
-  const records: ProviderSpecRecord[] = [];
-  for (const root of providerSpecSearchRoots()) {
-    records.push(...(await loadProviderSpecRecords(root)));
-  }
+export function loadCliProviderSpecs(): Promise<CliProviderSpecV1[]> {
+  return loadCliProviderSpecsFromRoot(repoRootDir());
+}
+
+export async function loadProvidersFromCliSpecsFromRoot(rootDir: string): Promise<ProviderUnderTest[]> {
+  const records = await loadProviderSpecRecordsFromRoot(rootDir);
 
   const providers: ProviderUnderTest[] = [];
   const seen = new Set<string>();
@@ -165,4 +170,8 @@ export async function loadProvidersFromCliSpecs(): Promise<ProviderUnderTest[]> 
   }
 
   return providers;
+}
+
+export function loadProvidersFromCliSpecs(): Promise<ProviderUnderTest[]> {
+  return loadProvidersFromCliSpecsFromRoot(repoRootDir());
 }

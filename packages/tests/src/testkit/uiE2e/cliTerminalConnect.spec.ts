@@ -55,6 +55,14 @@ vi.mock('../timing', async () => {
     };
 });
 
+vi.mock('../waitForRegexInFile', async () => {
+    const actual = await vi.importActual<typeof import('../waitForRegexInFile')>('../waitForRegexInFile');
+    return {
+        ...actual,
+        waitForRegexInFile: vi.fn(actual.waitForRegexInFile),
+    };
+});
+
 import {
     resolveCliTerminalConnectOwnershipLeasesDir,
     startCliAuthLoginForTerminalConnect,
@@ -62,6 +70,7 @@ import {
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
 import { spawnDetachedTestProcess } from '../process/testSpawn';
 import { waitFor } from '../timing';
+import { waitForRegexInFile } from '../waitForRegexInFile';
 
 afterEach(() => {
     vi.restoreAllMocks();
@@ -97,6 +106,34 @@ describe('startCliAuthLoginForTerminalConnect', () => {
             });
 
             expect(lastSpawnCwd).toBe(resolve(testDir));
+
+            await started.stop();
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it('uses a validation-safe default timeout while waiting for the terminal-connect URL', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-cli-terminal-connect-timeout-'));
+        const cliHomeDir = resolve(testDir, 'cli-home');
+
+        try {
+            await mkdir(cliHomeDir, { recursive: true });
+
+            const started = await startCliAuthLoginForTerminalConnect({
+                testDir,
+                cliHomeDir,
+                serverUrl: 'http://127.0.0.1:4011',
+                webappUrl: 'http://127.0.0.1:19006',
+                waitForConnectUrlReady: false,
+                env: {},
+            });
+
+            expect(started.connectUrl).toBe(defaultTerminalConnectStdout.trim());
+            expect(waitForRegexInFile).toHaveBeenCalledWith(expect.objectContaining({
+                context: 'CLI terminal connect URL',
+                timeoutMs: 180_000,
+            }));
 
             await started.stop();
         } finally {

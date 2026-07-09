@@ -692,6 +692,7 @@ describe('mobileMaestroRunner', () => {
     expect(cancelBundleBody).toHaveBeenCalledTimes(1);
     expect(arrayBufferSpy).not.toHaveBeenCalled();
     expect(result.server?.baseUrl).toBe('http://127.0.0.1:43210');
+    expect(result.metro?.stdoutPath).toBe(metroStdoutPath);
   });
 
   it('pins managed android Metro to the installed dev-client runtime version before start', async () => {

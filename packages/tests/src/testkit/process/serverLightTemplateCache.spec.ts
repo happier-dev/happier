@@ -97,16 +97,30 @@ describe('serverLightTemplateCache', () => {
     expect(readFileSync(resolve(targetDir, 'seed.txt'), 'utf8')).toBe('fresh\n');
   });
 
-  it('changes the cache key when migration contents change', async () => {
+  it('changes the PGlite cache key when Postgres migration contents change', async () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'happier-server-light-template-key-'));
-    mkdirSync(resolve(rootDir, 'apps', 'server', 'prisma', 'sqlite'), { recursive: true });
+    mkdirSync(resolve(rootDir, 'apps', 'server', 'prisma', 'migrations', '20260101000000_initial'), { recursive: true });
+    writeFileSync(resolve(rootDir, 'apps', 'server', 'prisma', 'schema.prisma'), 'datasource db { provider = "postgresql" }\n', 'utf8');
+    writeFileSync(resolve(rootDir, 'apps', 'server', 'prisma', 'migrations', '20260101000000_initial', 'migration.sql'), 'create table test (id text);\n', 'utf8');
+
+    const before = await createServerLightTemplateCacheKey({ rootDir, provider: 'pglite' });
+    writeFileSync(resolve(rootDir, 'apps', 'server', 'prisma', 'migrations', '20260101000000_initial', 'migration.sql'), 'create table test (id text, name text);\n', 'utf8');
+    const after = await createServerLightTemplateCacheKey({ rootDir, provider: 'pglite' });
+
+    expect(before).not.toBe(after);
+  });
+
+  it('changes the SQLite cache key when SQLite provider migration contents change', async () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-server-light-template-key-'));
+    mkdirSync(resolve(rootDir, 'apps', 'server', 'prisma', 'sqlite', 'migrations', '20260101000000_initial'), { recursive: true });
     mkdirSync(resolve(rootDir, 'apps', 'server', 'prisma', 'migrations', '20260101000000_initial'), { recursive: true });
     writeFileSync(resolve(rootDir, 'apps', 'server', 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf8');
     writeFileSync(resolve(rootDir, 'apps', 'server', 'prisma', 'schema.prisma'), 'datasource db { provider = "postgresql" }\n', 'utf8');
     writeFileSync(resolve(rootDir, 'apps', 'server', 'prisma', 'migrations', '20260101000000_initial', 'migration.sql'), 'create table test (id text);\n', 'utf8');
+    writeFileSync(resolve(rootDir, 'apps', 'server', 'prisma', 'sqlite', 'migrations', '20260101000000_initial', 'migration.sql'), 'create table test (id text);\n', 'utf8');
 
     const before = await createServerLightTemplateCacheKey({ rootDir, provider: 'sqlite' });
-    writeFileSync(resolve(rootDir, 'apps', 'server', 'prisma', 'migrations', '20260101000000_initial', 'migration.sql'), 'create table test (id text, name text);\n', 'utf8');
+    writeFileSync(resolve(rootDir, 'apps', 'server', 'prisma', 'sqlite', 'migrations', '20260101000000_initial', 'migration.sql'), 'create table test (id text, runtimeActivityActiveCount integer);\n', 'utf8');
     const after = await createServerLightTemplateCacheKey({ rootDir, provider: 'sqlite' });
 
     expect(before).not.toBe(after);

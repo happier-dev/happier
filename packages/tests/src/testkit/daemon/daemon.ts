@@ -113,6 +113,11 @@ function resolveDaemonLaunchSnapshotDir(params: {
     if (!isPreparedPerTestCliSnapshot(perTestSnapshotDir) && isPreparedPerTestCliSnapshot(sharedSnapshotDir)) {
       return sharedSnapshotDir;
     }
+    return perTestSnapshotDir;
+  }
+
+  if (shouldUseCliSourceEntrypoint(params.env)) {
+    return resolve(repoRootDir(), '.project', 'tmp', 'cli-source-snapshot');
   }
 
   return resolveDaemonCliSnapshotDir({ testDir: params.testDir });

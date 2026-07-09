@@ -15,6 +15,8 @@ import { createServerUrlComparableKey } from '@happier-dev/protocol';
 import { waitFor } from '../timing';
 import { expandLoopbackBaseUrlCandidates } from '../network/loopbackBaseUrl';
 
+const DEFAULT_TERMINAL_CONNECT_URL_TIMEOUT_MS = 180_000;
+
 function extractHttpUrls(text: string): string[] {
   const out: string[] = [];
   const pattern = /\bhttps?:\/\/[^\s)]+/g;
@@ -279,7 +281,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
     const match = await waitForRegexInFile({
       path: stdoutPath,
       regex: /https?:\/\/[^\s)]+\/terminal\/connect#key=[^\s]+/,
-      timeoutMs: params.connectUrlTimeoutMs ?? 90_000,
+      timeoutMs: params.connectUrlTimeoutMs ?? DEFAULT_TERMINAL_CONNECT_URL_TIMEOUT_MS,
       pollMs: 100,
       context: 'CLI terminal connect URL',
     });

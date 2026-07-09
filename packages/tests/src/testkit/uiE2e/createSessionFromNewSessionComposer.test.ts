@@ -81,6 +81,60 @@ describe('openNewSessionMachineSelection', () => {
     expect(machineOptions.clickSpy).toHaveBeenCalledTimes(0);
     expect(waitForTimeoutSpy).toHaveBeenCalledWith(250);
   });
+
+  it('uses the route fallback when the machine chip is not actionable even if the composer is visible', async () => {
+    let nowMs = 0;
+    let currentUrl = 'http://127.0.0.1:3000/new';
+    const machineChip = {
+      count: async (): Promise<number> => 1,
+      click: vi.fn(async () => {
+        throw new Error('covered by modal transition');
+      }),
+    };
+    const composerInput = createCountableLocator({ counts: [1] });
+    const machineOptions = createCountableLocator({ counts: [1] });
+    const gotoSpy = vi.fn(async (url: string) => {
+      currentUrl = url;
+    });
+    const waitForTimeoutSpy = vi.fn(async (delayMs: number) => {
+      nowMs += delayMs;
+    });
+    const page = {
+      getByTestId: vi.fn((testId: string) => {
+        if (testId === 'agent-input-machine-chip') return machineChip;
+        if (testId === 'new-session-composer-input') return composerInput;
+        throw new Error(`unexpected test id: ${testId}`);
+      }),
+      locator: vi.fn((selector: string) => {
+        if (
+          selector === '[data-testid^="new-session-machine:"], [data-testid^="new-session-machine-option:"]'
+          || selector === '[data-testid^="new-session-machine:"]'
+        ) {
+          return { first: () => machineOptions };
+        }
+        throw new Error(`unexpected selector: ${selector}`);
+      }),
+      goto: gotoSpy,
+      waitForTimeout: waitForTimeoutSpy,
+      url: vi.fn(() => currentUrl),
+    };
+
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    await expect(openNewSessionMachineSelection({
+      page: page as never,
+      uiBaseUrl: 'http://127.0.0.1:3000',
+      popoverWaitMs: 1_000,
+      routeFallbackWaitMs: 1_000,
+    })).resolves.toBe('picker_open');
+
+    expect(machineChip.click).toHaveBeenCalledTimes(1);
+    expect(gotoSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:3000/new/pick/machine',
+      expect.objectContaining({ waitUntil: 'domcontentloaded' }),
+    );
+    expect(composerInput.clickSpy).toHaveBeenCalledTimes(0);
+  });
 });
 
 describe('openNewSessionPathSelection', () => {

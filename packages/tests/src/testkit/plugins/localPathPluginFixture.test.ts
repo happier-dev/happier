@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+    createLocalExtensionPackageManifest,
     writeEnabledLocalPathPluginState,
     writeLocalPathPluginFixture,
 } from './localPathPluginFixture';
@@ -23,48 +24,14 @@ describe('localPathPluginFixture', () => {
                     '}',
                     '',
                 ].join('\n'),
-                manifest: {
-                    schemaVersion: 2,
-                    id: 'acme.local-path.fixture',
-                    version: '1.0.0',
+                manifest: createLocalExtensionPackageManifest({
+                    pluginId: 'acme.local-path.fixture',
                     displayName: 'Local Path Fixture',
                     description: 'Deterministic local-path plugin fixture for tests',
-                    engines: {
-                        happier: '^0.2.0',
-                    },
-                    runtime: {
-                        apiVersion: 1,
-                        capabilities: ['providers', 'backends', 'hooks'],
-                    },
-                    targets: {
-                        daemon: {
-                            entry: './daemon.mjs',
-                        },
-                    },
-                    permissions: [],
-                    contributions: [
-                        {
-                            kind: 'provider',
-                            kindVersion: 1,
-                            id: 'acme.local-path.fixture.provider',
-                            display: {
-                                name: 'Fixture Provider',
-                            },
-                            ownedBackendIds: ['acme.local-path.fixture.backend'],
-                        },
-                        {
-                            kind: 'backend',
-                            kindVersion: 1,
-                            id: 'acme.local-path.fixture.backend',
-                            providerId: 'acme.local-path.fixture.provider',
-                            engine: {
-                                kind: 'custom',
-                            },
-                        },
-                        {
-                            kind: 'hook',
+                    contributes: {
+                        hooks: [{
                             hookApiVersion: 1,
-                            id: 'session.spawn_new',
+                            id: 'session.spawned',
                             category: 'lifecycle',
                             scope: 'session',
                             executionKind: 'observe',
@@ -72,9 +39,9 @@ describe('localPathPluginFixture', () => {
                                 target: 'plugin',
                                 exportName: 'recordHookInvocation',
                             },
-                        },
-                    ],
-                },
+                        }],
+                    },
+                }),
             });
 
             await writeEnabledLocalPathPluginState({
@@ -85,7 +52,7 @@ describe('localPathPluginFixture', () => {
 
             await expect(readFile(join(pluginRoot, 'daemon.mjs'), 'utf8')).resolves.toContain('plugin-hook-fired');
             await expect(readFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), 'utf8')).resolves.toContain('"acme.local-path.fixture"');
-            const stateJson = JSON.parse(await readFile(join(happyHomeDir, 'extensions', 'plugins', 'state', 'plugin-state.v1.json'), 'utf8')) as Record<string, unknown>;
+            const stateJson = JSON.parse(await readFile(join(happyHomeDir, 'plugins', 'plugins', 'state', 'plugin-state.v1.json'), 'utf8')) as Record<string, unknown>;
             expect(stateJson).toMatchObject({
                 t: 'happier_plugin_state_v1',
                 schemaVersion: 1,

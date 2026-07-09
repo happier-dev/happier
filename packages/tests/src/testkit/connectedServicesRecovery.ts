@@ -380,7 +380,6 @@ export async function createConnectedServiceAuthGroup(params: Readonly<{
         autoSwitch: true,
         ...(params.preTurnProbeMode ? { preTurnProbeMode: params.preTurnProbeMode } : {}),
         recoveryMode: 'switch_or_wait',
-        memberRuntimeStatePersistence: 'server_state_json',
       },
     }),
     timeoutMs: 20_000,
@@ -798,6 +797,47 @@ export async function readSessionContinuationRecoveryAttempts(params: Readonly<{
       targetGeneration: recoveryIdentity.targetGeneration,
     }];
   });
+}
+
+export type SessionContinuationProofWaitStatus =
+  | 'awaiting_provider_activity'
+  | 'provider_activity_timeout';
+
+const SESSION_CONTINUATION_PROOF_WAIT_STATUSES: ReadonlySet<string> = new Set([
+  'awaiting_provider_activity',
+  'provider_activity_timeout',
+]);
+
+export function findSessionContinuationProofWaitAttempt(params: Readonly<{
+  attempts: readonly unknown[];
+  serviceId: ConnectedServiceId;
+  groupId: string | null;
+  profileId: string | null;
+  statuses?: ReadonlySet<SessionContinuationProofWaitStatus> | readonly SessionContinuationProofWaitStatus[];
+}>): UnknownRecord | null {
+  const statuses = params.statuses
+    ? new Set(params.statuses)
+    : SESSION_CONTINUATION_PROOF_WAIT_STATUSES;
+  for (const candidate of params.attempts) {
+    const attempt = asRecord(candidate);
+    if (!attempt) continue;
+    if (attempt.continuationRequired !== true) continue;
+    if (attempt.replayMode !== 'continuation_prompt') continue;
+    if (attempt.serviceId !== params.serviceId) continue;
+    if ((attempt.groupId ?? null) !== params.groupId) continue;
+    if ((attempt.profileId ?? null) !== params.profileId) continue;
+    if (typeof attempt.status !== 'string' || !statuses.has(attempt.status as SessionContinuationProofWaitStatus)) {
+      continue;
+    }
+    return attempt;
+  }
+  return null;
+}
+
+export function isRuntimeAuthRecoveryAwaitingProviderOutcomeProof(intent: unknown): boolean {
+  const record = asRecord(intent);
+  return record?.status === 'resumed_awaiting_proof'
+    && record.lastError === 'recovery_unproven_awaiting_provider_outcome';
 }
 
 export async function countFakeClaudeUserTextOccurrences(params: Readonly<{
