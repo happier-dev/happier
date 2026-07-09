@@ -117,6 +117,7 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
         canApprovePermissions: session.canApprovePermissions ?? null,
         pendingPermissionRequestCount: session.pendingPermissionRequestCount ?? null,
         pendingUserActionRequestCount: session.pendingUserActionRequestCount ?? null,
+        pendingRequestObservedAt: session.pendingRequestObservedAt ?? null,
         latestUsage: buildShellVisibleLatestUsageSignatureValue(session.latestUsage),
         agentStateRequests: buildShellVisibleAgentStateRequestSignatureValue(session.agentState),
         metadata: buildShellVisibleMetadataSignatureValue(session.metadata),

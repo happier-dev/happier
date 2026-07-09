@@ -21,6 +21,7 @@ export type UseSessionViewBootstrapInput = Readonly<{
     sessionPath: string | null;
     sessionAccepted: boolean;
     surfaceFocused: boolean;
+    surfaceRetained?: boolean;
     surfaceVisible: boolean;
     routeAnchor: boolean;
     paneUrlSyncRouteActive: boolean;
@@ -72,6 +73,7 @@ export function useSessionViewBootstrap(input: UseSessionViewBootstrapInput): Us
         sessionId: input.sessionId,
         serverId: input.serverId,
         surfaceFocused: input.surfaceFocused,
+        surfaceRetained: input.surfaceRetained,
         surfaceVisible: input.surfaceVisible,
         routeAnchor: input.routeAnchor,
     });

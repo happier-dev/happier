@@ -162,6 +162,9 @@ function mockCommonDeps() {
 });
 
     vi.doMock('@/agents/catalog/catalog', () => ({
+        getAgentIconSvgXml: () => null,
+        getAgentIconSource: () => null,
+        getAgentIconTintColor: () => undefined,
         AGENT_IDS: ['codex'],
         DEFAULT_AGENT_ID: 'codex',
         resolveAgentIdFromFlavor: () => null,

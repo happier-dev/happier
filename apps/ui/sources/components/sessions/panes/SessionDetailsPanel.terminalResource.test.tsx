@@ -27,7 +27,12 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
+    Typography: {
+        default: () => ({}),
+        rowTitle: () => ({}),
+        rowMeta: () => ({}),
+        pillLabel: () => ({}),
+    },
 }));
 
 const terminalViewSpy = vi.fn();

@@ -1,8 +1,9 @@
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
+import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessage';
 import { storage } from '@/sync/domains/state/storage';
-import type { Session } from '@/sync/domains/state/storageTypes';
+import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 import {
     deriveLatestPendingRequestObservedAtFromSession,
     derivePendingRequestFlagsFromSession,
@@ -11,7 +12,6 @@ import {
 type SessionRuntimeStatusFields = Pick<
     Session,
     | 'active'
-    | 'activeAt'
     | 'presence'
     | 'thinking'
     | 'thinkingAt'
@@ -27,13 +27,17 @@ type SessionRuntimeStatusFields = Pick<
     hasPendingPermissionRequests: boolean;
     hasPendingUserActionRequests: boolean;
     pendingRequestObservedAt: number | null;
+    pendingCount: number;
 }>;
 
-function selectSessionRuntimeStatusFields(session: Session): SessionRuntimeStatusFields {
+function selectSessionRuntimeStatusFields(
+    session: Session,
+    pendingMessages: ReadonlyArray<PendingMessage>,
+): SessionRuntimeStatusFields {
     const pendingFlags = derivePendingRequestFlagsFromSession(session);
+    const optimisticPendingUserMessageAt = readLatestLocalOutboundPendingUserMessageAt(pendingMessages);
     return {
         active: session.active,
-        activeAt: session.activeAt,
         presence: session.presence,
         thinking: session.thinking,
         thinkingAt: session.thinkingAt,
@@ -43,11 +47,12 @@ function selectSessionRuntimeStatusFields(session: Session): SessionRuntimeStatu
         lastRuntimeIssue: session.lastRuntimeIssue,
         pendingPermissionRequestCount: session.pendingPermissionRequestCount,
         pendingUserActionRequestCount: session.pendingUserActionRequestCount,
-        optimisticThinkingAt: session.optimisticThinkingAt,
+        optimisticThinkingAt: session.optimisticThinkingAt ?? optimisticPendingUserMessageAt ?? null,
         thinkingGraceUntil: session.thinkingGraceUntil,
         hasPendingPermissionRequests: pendingFlags.hasPendingPermissionRequests,
         hasPendingUserActionRequests: pendingFlags.hasPendingUserActionRequests,
         pendingRequestObservedAt: deriveLatestPendingRequestObservedAtFromSession(session),
+        pendingCount: pendingMessages.length,
     };
 }
 
@@ -59,7 +64,10 @@ export function useSessionRuntimeStatusSource(session: Session | null): Session 
     const runtimeFields = storage(
         useShallow((state) => {
             const liveSession = sessionId.length > 0 ? state.sessions[sessionId] ?? null : null;
-            return liveSession ? selectSessionRuntimeStatusFields(liveSession) : null;
+            const pendingMessages = sessionId.length > 0
+                ? state.sessionPending[sessionId]?.messages ?? []
+                : [];
+            return liveSession ? selectSessionRuntimeStatusFields(liveSession, pendingMessages) : null;
         }),
     );
 

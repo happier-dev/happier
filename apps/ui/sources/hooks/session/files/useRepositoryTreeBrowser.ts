@@ -10,6 +10,7 @@ import {
     type RepositoryDirectoryEntry,
 } from '@/sync/domains/input/repositoryDirectory';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
+import { useWorkspaceRepositoryDirectoryRevision } from '@/hooks/workspaces/files/useWorkspaceRepositoryDirectoryRevision';
 
 function joinPath(parent: string, name: string): string {
     const trimmedParent = parent.trim().replace(/\/+$/g, '');
@@ -46,10 +47,15 @@ export function useRepositoryTreeBrowser(input: {
     onExpandedPathsChange?: (paths: string[]) => void;
     reloadToken?: number;
 }) {
-    const scopeKey = React.useMemo(() => {
+    const workspaceCacheKey = React.useMemo(() => {
         const target = resolveWorkspaceTargetForSession(input.sessionId);
-        return target?.workspaceCacheKey ?? input.sessionId;
+        return target?.workspaceCacheKey ?? null;
     }, [input.sessionId]);
+    const scopeKey = workspaceCacheKey ?? input.sessionId;
+    const directoryRevision = useWorkspaceRepositoryDirectoryRevision(workspaceCacheKey);
+    const effectiveReloadToken = React.useMemo(() => (
+        `${input.reloadToken ?? ''}:${directoryRevision}`
+    ), [directoryRevision, input.reloadToken]);
 
     const getCachedEntries = React.useCallback((directoryPath: string) => {
         const cached = getCachedRepositoryDirectoryEntries({ sessionId: input.sessionId, directoryPath });
@@ -72,7 +78,7 @@ export function useRepositoryTreeBrowser(input: {
         rootDirectoryPath: '',
         expandedPaths: input.expandedPaths,
         onExpandedPathsChange: input.onExpandedPathsChange,
-        reloadToken: input.reloadToken,
+        reloadToken: effectiveReloadToken,
         getCachedEntries,
         loadDirectoryEntries,
         warmDirectoryEntries,

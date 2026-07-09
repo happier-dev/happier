@@ -1,7 +1,10 @@
-import type { AccountProfile } from '@happier-dev/protocol';
-import { buildBackendTargetKey } from '@happier-dev/protocol';
+import {
+    buildBackendTargetKey,
+    type AccountProfile,
+} from '@happier-dev/protocol';
 
 import { getAgentCore, isAgentId } from '@/agents/catalog/catalog';
+import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
 import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 
@@ -29,9 +32,12 @@ function resolveActiveGroupProfileId(params: Readonly<{
     const group = service.groups.find((candidate) => candidate.groupId === params.groupId) ?? null;
     if (!group) return null;
 
+    // Usage DISPLAY fails OPEN: exclude a member ONLY for an explicit,
+    // recognized needs_reauth. Absent/unknown/'' status keeps the member
+    // eligible for the session quota badge (single shared predicate).
     const connectedProfileIds = new Set(
         service.profiles
-            .filter((profile) => profile.status === 'connected')
+            .filter((profile) => !shouldHideQuotaForCredentialStatus(profile.status))
             .map((profile) => profile.profileId.trim())
             .filter(Boolean),
     );

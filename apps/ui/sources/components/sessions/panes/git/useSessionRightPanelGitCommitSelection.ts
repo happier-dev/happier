@@ -2,7 +2,6 @@ import * as React from 'react';
 
 import { applyBulkFileStageAction } from '@/scm/operations/applyBulkFileStageAction';
 import { applyFileStageAction } from '@/scm/operations/applyFileStageAction';
-import { countCommitSelectionItems } from '@/scm/operations/commitSelectionHints';
 import { isAtomicCommitStrategy, type ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { storage } from '@/sync/domains/state/storage';
@@ -42,24 +41,14 @@ export function useSessionRightPanelGitCommitSelection(
         return set;
     }, [input.commitSelectionPatches, input.commitSelectionPaths]);
 
-    const commitSelectionCount = React.useMemo(() => {
-        return countCommitSelectionItems({
-            commitSelectionPaths: input.commitSelectionPaths,
-            commitSelectionPatches: input.commitSelectionPatches,
-        });
-    }, [input.commitSelectionPatches, input.commitSelectionPaths]);
-
     const isSelectedForCommit = React.useCallback((file: ScmFileStatus) => {
         const atomic = isAtomicCommitStrategy(input.scmCommitStrategy);
         return atomic ? commitSelectionSet.has(file.fullPath) : file.isIncluded === true;
     }, [commitSelectionSet, input.scmCommitStrategy]);
 
     const repositorySelectedCount = React.useMemo(() => {
-        if (isAtomicCommitStrategy(input.scmCommitStrategy)) {
-            return commitSelectionCount;
-        }
         return input.changedFiles.filter((file) => isSelectedForCommit(file)).length;
-    }, [commitSelectionCount, input.changedFiles, input.scmCommitStrategy, isSelectedForCommit]);
+    }, [input.changedFiles, isSelectedForCommit]);
 
     const toggleCommitSelectionForFile = React.useCallback((file: ScmFileStatus) => {
         if (!input.scmWriteEnabled) return;

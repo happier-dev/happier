@@ -5,7 +5,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
-import { getAgentCore, isAgentId } from '@/agents/catalog/catalog';
+import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { AgentInputEngineDetail } from '@/components/sessions/agentInput/components/AgentInputEngineDetail';
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
@@ -23,10 +24,12 @@ import {
     type FavoriteModelBackendIdentity,
     type FavoriteModelSelectionV1,
 } from '@/sync/domains/models/favoriteModelSelections';
+import { findModelOptionForEffectiveModelId } from '@/sync/domains/models/modelOptions';
 import { t } from '@/text';
 
 export type NewSessionEngineOptionDetailProps = Readonly<{
     backendTarget: BackendTargetRefV2;
+    runtimeCarrierAgentId?: AgentId | null;
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd?: string | null;
@@ -100,13 +103,15 @@ function EngineFavoriteToggle(props: Readonly<{
 export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetailProps) {
     const { modelOptions, preflightModels, probe: modelProbe } = useNewSessionPreflightModelsState({
         backendTarget: props.backendTarget,
+        runtimeCarrierAgentId: props.runtimeCarrierAgentId ?? null,
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
         cwd: props.cwd ?? null,
         probeContext: props.capabilityProbeContext ?? null,
     });
-    const { configOptions, probe: configProbe } = useNewSessionPreflightConfigOptionsState({
+    const { configOptions, unavailable: configOptionsUnavailable, probe: configProbe } = useNewSessionPreflightConfigOptionsState({
         backendTarget: props.backendTarget,
+        runtimeCarrierAgentId: props.runtimeCarrierAgentId ?? null,
         selectedMachineId: props.selectedMachineId,
         capabilityServerId: props.capabilityServerId,
         cwd: props.cwd ?? null,
@@ -165,9 +170,13 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         props.onSelectionChange?.(nextSelection);
     }, [props.onSelectionChange]);
 
-    const providerAgentId = React.useMemo(() => (
-        isAgentId(props.backendTarget.backendId) ? props.backendTarget.backendId : null
-    ), [props.backendTarget.backendId]);
+    const providerAgentId = React.useMemo<AgentId | null>(() => {
+        if (isAgentId(props.runtimeCarrierAgentId)) {
+            return props.runtimeCarrierAgentId;
+        }
+        return resolveProviderAgentIdForBackendTarget(props.backendTarget)
+            ?? (isAgentId(props.backendTarget.backendId) ? props.backendTarget.backendId : null);
+    }, [props.backendTarget, props.runtimeCarrierAgentId]);
     const providerCore = React.useMemo(() => (
         providerAgentId ? getAgentCore(providerAgentId) : null
     ), [providerAgentId]);
@@ -176,10 +185,24 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         if (props.backendTarget.configuredBackendId) return true;
         return providerCore?.model.supportsFreeform === true;
     }, [props.backendTarget.configuredBackendId, providerCore?.model.supportsFreeform]);
-    const canEnterCustomModel = preflightModels?.supportsFreeform === true || providerSupportsFreeform;
+    const canEnterCustomModel = preflightModels?.unavailable === true
+        ? false
+        : preflightModels?.supportsFreeform === true || providerSupportsFreeform;
     const effectiveModelLabel = React.useMemo(
         () => resolveEffectiveModelLabel(modelOptions, selectedModelId),
         [modelOptions, selectedModelId],
+    );
+    const modelNotes = React.useMemo(
+        () => preflightModels?.unavailable === true && modelProbe.phase === 'idle'
+            ? [t('agentInput.model.unavailable')]
+            : [],
+        [modelProbe.phase, preflightModels?.unavailable],
+    );
+    const configNotes = React.useMemo(
+        () => configOptionsUnavailable
+            ? [t('agentInput.acp.optionsUnavailable')]
+            : [],
+        [configOptionsUnavailable],
     );
 
     const configControls = React.useMemo(
@@ -194,7 +217,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     );
 
     const selectedModelOptionControls = React.useMemo(() => {
-        const selectedModel = modelOptions.find((option) => option.value === selectedModelId) ?? null;
+        const selectedModel = findModelOptionForEffectiveModelId(modelOptions, selectedModelId);
         if (!selectedModel?.modelOptions?.length) return null;
         return computeAcpConfigOptionControlsForProvider({
             providerId,
@@ -259,7 +282,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             modelOptions={modelOptions}
             selectedModelId={selectedModelId}
             effectiveModelLabel={effectiveModelLabel}
-            modelNotes={[]}
+            modelNotes={modelNotes}
             modelEmptyText={t('agentInput.model.configureInCli')}
             canEnterCustomModel={canEnterCustomModel}
             modelProbe={unifiedProbe}
@@ -304,6 +327,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                 });
             }}
             configControls={configControls}
+            configNotes={configNotes}
             onSelectConfigValue={(configId, valueId) => {
                 publishSelection({
                     ...selectionRef.current,

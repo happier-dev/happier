@@ -72,6 +72,29 @@ describe('connectedServicesNewSessionBindings', () => {
         });
     });
 
+    it('keeps retryable refresh-failure profiles selectable for spawn bindings', () => {
+        const result = buildConnectedServicesBindingsPayload({
+            supportedConnectedServiceIds: ['anthropic'],
+            connectedServiceProfileOptionsByServiceId: {
+                anthropic: [
+                    { profileId: 'retryable', status: 'refresh_failed_retryable', providerEmail: 'retryable@example.com' },
+                ],
+            },
+            connectedServiceAccountGroupOptionsByServiceId: {},
+            connectedServicesBindingsByServiceId: {
+                anthropic: { source: 'connected', selection: 'profile', profileId: 'retryable' },
+            },
+            defaultProfileByServiceId: {},
+            accountGroupsFeatureEnabled: true,
+        });
+
+        expect(result?.bindingsByServiceId.anthropic).toEqual({
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'retryable',
+        });
+    });
+
     it('degrades to native when account groups are disabled for spawn', () => {
         const result = buildConnectedServicesBindingsPayload({
             supportedConnectedServiceIds: ['anthropic'],
@@ -227,7 +250,7 @@ describe('connectedServicesNewSessionBindings', () => {
         });
     });
 
-    it('keeps OpenCode Claude subscription OAuth profiles visible as setup-token action rows', () => {
+    it('keeps OpenCode Claude subscription OAuth profiles connected when the manifest supports OAuth', () => {
         const result = buildConnectedServiceProfileOptionsByServiceId({
             accountProfileConnectedServicesV2: [{
                 serviceId: 'claude-subscription',
@@ -259,9 +282,8 @@ describe('connectedServicesNewSessionBindings', () => {
             }),
             expect.objectContaining({
                 profileId: 'claude-pro-oauth',
-                status: 'unsupported_kind',
+                status: 'connected',
                 kind: 'oauth',
-                unsupportedSubtitleKey: 'connectedServices.detail.connectSetupTokenSubtitle',
             }),
         ]);
     });

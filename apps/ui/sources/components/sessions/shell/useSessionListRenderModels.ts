@@ -7,14 +7,20 @@ import type { WorkspacePathDisplayModeV1 } from '@/sync/domains/workspaces/works
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import {
     buildSessionListReachabilityRenderableKey,
+    type SessionListReachabilityRenderable,
     useSessionListReachabilityRenderablesForItems,
     useSessionListRowRenderablesForItems,
 } from '@/sync/domains/state/storage';
 
 import { filterCollapsedSessionListItems } from './filterCollapsedSessionListItems';
 import { buildSessionListProjectHeaderViewModels, type SessionListProjectHeaderViewModel } from './sessionListProjectHeaderViewModels';
-import { buildSessionListReachabilitySummary } from './buildSessionListReachabilitySummary';
+import {
+    buildSessionListReachabilitySummary,
+    createSessionListReachabilitySummaryCache,
+} from './buildSessionListReachabilitySummary';
 import { buildSessionListRowViewModels, type SessionListRowViewModel } from './sessionListRowViewModels';
+import { useSessionListRelativeNowMs } from './sessionListRowClocks';
+import { useSessionListRuntimeNowMs, useSessionListRuntimeWake } from '@/hooks/session/sessionListRuntimeClock';
 import type { SessionWorkingTextMode } from '@/utils/sessions/sessionUtils';
 import { normalizeSessionListShellState } from './normalizeSessionListShellState';
 import {
@@ -29,7 +35,7 @@ import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDi
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
     resolveSessionListRowStoreScopeKey,
-    resolveSessionListRowStoreSubscriptionItems,
+    resolveSessionListRowStoreSubscriptionItemsWithUncachedRows,
 } from './row/sessionListVisibleRowStoreScopes';
 
 type SessionReachableDisplay = Readonly<{
@@ -40,13 +46,14 @@ type SessionReachableDisplay = Readonly<{
 }>;
 
 const EMPTY_PINNED_KEY_SET: ReadonlySet<string> = new Set();
+const EMPTY_MACHINE_DISPLAY_BY_ID_MAP = new Map<string, MachineDisplayRenderable>();
 const EMPTY_SESSION_LIST_ROW_RENDERABLES_BY_KEY = new Map<string, SessionListRenderableSession>() as ReadonlyMap<string, SessionListRenderableSession>;
-const SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS = 60_000;
 
 const EMPTY_SESSION_LIST_RENDER_MODELS = {
     listItems: [] as Array<SessionListIndexItem>,
     selectionScopeListItems: [] as Array<SessionListIndexItem>,
     reachableSessionDisplayById: new Map<string, SessionReachableDisplay>(),
+    reachableSessionDisplayByKey: new Map<string, SessionReachableDisplay>(),
     hasMultipleMachines: false,
     projectHeaderViewModelState: {
         projectHeaderViewModelByGroupKey: new Map<string, SessionListProjectHeaderViewModel>(),
@@ -58,53 +65,12 @@ const EMPTY_SESSION_LIST_RENDER_MODELS = {
     listItems: ReadonlyArray<SessionListIndexItem>;
     selectionScopeListItems: ReadonlyArray<SessionListIndexItem>;
     reachableSessionDisplayById: ReadonlyMap<string, SessionReachableDisplay>;
+    reachableSessionDisplayByKey: ReadonlyMap<string, SessionReachableDisplay>;
     hasMultipleMachines: boolean;
     projectHeaderViewModelState: SessionListProjectHeaderViewModelState;
     rowViewModels: ReadonlyArray<SessionListRowViewModel | null>;
     selectionScopeRowViewModels: ReadonlyArray<SessionListRowViewModel | null>;
 }>;
-
-function useSessionListRelativeNowMs(enabled = true): number {
-    const [nowMs, setNowMs] = React.useState(() => Date.now());
-    const wasEnabledRef = React.useRef(enabled);
-    React.useEffect(() => {
-        if (!enabled) {
-            wasEnabledRef.current = false;
-            return undefined;
-        }
-        if (!wasEnabledRef.current) {
-            setNowMs(Date.now());
-        }
-        wasEnabledRef.current = true;
-        const intervalId = setInterval(() => {
-            setNowMs(Date.now());
-        }, SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS);
-        return () => clearInterval(intervalId);
-    }, [enabled]);
-    return nowMs;
-}
-
-function useSessionListRuntimeNowMs(nextRuntimeFreshnessAtMs: number | null, enabled = true): number {
-    const [nowMs, setNowMs] = React.useState(() => Date.now());
-    const wasEnabledRef = React.useRef(enabled);
-    React.useEffect(() => {
-        if (!enabled) {
-            wasEnabledRef.current = false;
-            return undefined;
-        }
-        if (!wasEnabledRef.current) {
-            setNowMs(Date.now());
-        }
-        wasEnabledRef.current = true;
-        if (nextRuntimeFreshnessAtMs === null) return undefined;
-        const delayMs = Math.max(0, nextRuntimeFreshnessAtMs - Date.now());
-        const timeoutId = setTimeout(() => {
-            setNowMs(Date.now());
-        }, delayMs);
-        return () => clearTimeout(timeoutId);
-    }, [enabled, nextRuntimeFreshnessAtMs]);
-    return nowMs;
-}
 
 function countSessionListItems(items: ReadonlyArray<SessionListIndexItem> | null | undefined): number {
     if (!items) return 0;
@@ -163,6 +129,33 @@ function resolveCachedSessionListRowRenderablesForItems(input: Readonly<{
     return next.size === 0 ? EMPTY_SESSION_LIST_ROW_RENDERABLES_BY_KEY : next;
 }
 
+const EMPTY_SESSION_LIST_REACHABILITY_RENDERABLES_BY_KEY =
+    new Map<string, SessionListReachabilityRenderable>() as ReadonlyMap<string, SessionListReachabilityRenderable>;
+
+function resolveCachedSessionListReachabilityRenderablesForItems(input: Readonly<{
+    items: ReadonlyArray<SessionListIndexItem>;
+    subscribedReachabilityRenderableByKey: ReadonlyMap<string, SessionListReachabilityRenderable>;
+    cacheByKey: Map<string, SessionListReachabilityRenderable>;
+}>): ReadonlyMap<string, SessionListReachabilityRenderable> {
+    for (const [key, renderable] of input.subscribedReachabilityRenderableByKey) {
+        input.cacheByKey.set(key, renderable);
+    }
+
+    if (input.items.length === 0) return EMPTY_SESSION_LIST_REACHABILITY_RENDERABLES_BY_KEY;
+
+    const next = new Map<string, SessionListReachabilityRenderable>();
+    for (const item of input.items) {
+        if (item.type !== 'session') continue;
+        const key = buildSessionListReachabilityRenderableKey(item.serverId, item.sessionId);
+        if (!key) continue;
+        const renderable = input.subscribedReachabilityRenderableByKey.get(key) ?? input.cacheByKey.get(key) ?? null;
+        if (!renderable) continue;
+        next.set(key, renderable);
+    }
+
+    return next.size === 0 ? EMPTY_SESSION_LIST_REACHABILITY_RENDERABLES_BY_KEY : next;
+}
+
 export function useSessionListRenderModels(input: Readonly<{
     paneState: VisibleSessionListPaneState;
     collapsedGroupKeys: Readonly<Record<string, boolean>>;
@@ -183,7 +176,9 @@ export function useSessionListRenderModels(input: Readonly<{
     hideInactiveSessions?: boolean | null;
     rowSubscriptionKeys?: ReadonlySet<string> | null;
     clocksActive?: boolean | null;
+    rowViewModelMode?: 'list' | 'deferred' | null;
 }>) {
+    const deriveRowViewModels = input.rowViewModelMode !== 'deferred';
     const pinnedKeySet = React.useMemo(() => (
         input.pinnedKeySet.size === 0 ? EMPTY_PINNED_KEY_SET : input.pinnedKeySet
     ), [input.pinnedKeySet]);
@@ -197,7 +192,10 @@ export function useSessionListRenderModels(input: Readonly<{
     }, [input.collapsedGroupKeys, input.sessionTags, input.workspaceLabels, input.workspaceRefs]);
 
     const machinesById = React.useMemo(() => {
-        return new Map(Object.entries(input.machineDisplayById));
+        const entries = Object.entries(input.machineDisplayById);
+        return entries.length === 0
+            ? EMPTY_MACHINE_DISPLAY_BY_ID_MAP
+            : new Map(entries);
     }, [input.machineDisplayById]);
 
     const headerFiltersActive = hasActiveSessionListHeaderFilters(input.headerFilters);
@@ -234,13 +232,24 @@ export function useSessionListRenderModels(input: Readonly<{
             sessionTags: normalizedShellState.sessionTags,
         });
     }, [input.headerFilters, input.paneState.visibleSessionListIndex, normalizedShellState.sessionTags]);
-    const reachabilityRenderablesByKey = useSessionListReachabilityRenderablesForItems(listItems);
-    const rowSubscriptionItems = React.useMemo(() => resolveSessionListRowStoreSubscriptionItems(
-        listItems,
-        input.rowSubscriptionKeys ?? null,
-    ), [input.rowSubscriptionKeys, listItems]);
-    const subscribedRowRenderableByKey = useSessionListRowRenderablesForItems(rowSubscriptionItems);
     const rowRenderableCacheByKeyRef = React.useRef(new Map<string, SessionListRenderableSession>());
+    const rowSubscriptionItems = React.useMemo(() => (
+        resolveSessionListRowStoreSubscriptionItemsWithUncachedRows(
+            listItems,
+            input.rowSubscriptionKeys ?? null,
+            (key) => rowRenderableCacheByKeyRef.current.has(key),
+        )
+    ), [input.rowSubscriptionKeys, listItems]);
+    const reachabilityRenderableCacheByKeyRef = React.useRef(new Map<string, SessionListReachabilityRenderable>());
+    const subscribedReachabilityRenderablesByKey = useSessionListReachabilityRenderablesForItems(rowSubscriptionItems);
+    const reachabilityRenderablesByKey = React.useMemo(() => resolveCachedSessionListReachabilityRenderablesForItems({
+        items: listItems,
+        subscribedReachabilityRenderableByKey: subscribedReachabilityRenderablesByKey,
+        cacheByKey: reachabilityRenderableCacheByKeyRef.current,
+    }), [listItems, subscribedReachabilityRenderablesByKey]);
+    const subscribedRowRenderableByKey = useSessionListRowRenderablesForItems(
+        deriveRowViewModels ? rowSubscriptionItems : null,
+    );
     const rowRenderableByKey = React.useMemo(() => resolveCachedSessionListRowRenderablesForItems({
         items: listItems,
         subscribedRowRenderableByKey,
@@ -253,9 +262,14 @@ export function useSessionListRenderModels(input: Readonly<{
     }), [selectionScopeListItems, subscribedRowRenderableByKey]);
     const clocksActive = input.clocksActive !== false;
     const relativeNowMs = useSessionListRelativeNowMs(clocksActive);
-    const [nextRuntimeFreshnessAtMs, setNextRuntimeFreshnessAtMs] = React.useState<number | null>(null);
-    const runtimeNowMs = useSessionListRuntimeNowMs(nextRuntimeFreshnessAtMs, clocksActive);
+    // Shared session-list runtime clock: rows must derive working freshness
+    // from the SAME timestamp as group placement (useVisibleSessionListViewState)
+    // so the indicator and the group can never cross a freshness boundary in
+    // different render cycles. The wake horizon is contributed below from the
+    // freshly built row view models.
+    const runtimeNowMs = useSessionListRuntimeNowMs(clocksActive);
 
+    const sessionReachabilitySummaryCacheRef = React.useRef(createSessionListReachabilitySummaryCache());
     const sessionReachabilitySummary = React.useMemo(() => {
         return measureSessionListRenderDerivation(
             'ui.sessionsList.render.reachabilityDisplayMap',
@@ -265,6 +279,7 @@ export function useSessionListRenderModels(input: Readonly<{
                 displayRows: countSessionListItems(listItems),
             }),
             () => buildSessionListReachabilitySummary({
+                cache: sessionReachabilitySummaryCacheRef.current,
                 listItems,
                 machinesById,
                 workspaceRefs: normalizedShellState.workspaceRefs,
@@ -287,6 +302,11 @@ export function useSessionListRenderModels(input: Readonly<{
     }, [input.workspacePathDisplayModeV1, listItems, normalizedShellState.workspaceLabels, normalizedShellState.workspaceRefs]);
 
     const rowViewModels = React.useMemo(() => {
+        if (!deriveRowViewModels) {
+            return listItems.length === 0
+                ? [] as ReadonlyArray<SessionListRowViewModel | null>
+                : listItems.map(() => null);
+        }
         return measureSessionListRenderDerivation(
             'ui.sessionsList.render.selectedMapping',
             () => ({
@@ -325,6 +345,7 @@ export function useSessionListRenderModels(input: Readonly<{
         input.identityDisplay,
         input.workingTextMode,
         input.workingIndicatorMode,
+        deriveRowViewModels,
         listItems,
         normalizedShellState.sessionTags,
         relativeNowMs,
@@ -335,6 +356,11 @@ export function useSessionListRenderModels(input: Readonly<{
         sessionReachabilitySummary.hasMultipleMachines,
     ]);
     const selectionScopeRowViewModels = React.useMemo(() => {
+        if (!deriveRowViewModels) {
+            return selectionScopeListItems.length === 0
+                ? [] as ReadonlyArray<SessionListRowViewModel | null>
+                : selectionScopeListItems.map(() => null);
+        }
         if (selectionScopeListItems.length === 0) return [] as ReadonlyArray<SessionListRowViewModel | null>;
         return buildSessionListRowViewModels({
             listItems: selectionScopeListItems,
@@ -366,6 +392,7 @@ export function useSessionListRenderModels(input: Readonly<{
         input.showServerBadge,
         input.workingTextMode,
         input.workingIndicatorMode,
+        deriveRowViewModels,
         normalizedShellState.sessionTags,
         pinnedKeySet,
         relativeNowMs,
@@ -377,15 +404,17 @@ export function useSessionListRenderModels(input: Readonly<{
         sessionReachabilitySummary.hasMultipleMachines,
     ]);
 
-    React.useEffect(() => {
+    const nextRuntimeFreshnessAtMs = React.useMemo(() => {
+        if (!deriveRowViewModels) return null;
         let nextFreshnessAt: number | null = null;
         for (const rowViewModel of rowViewModels) {
             const candidate = rowViewModel?.nextRuntimeFreshnessAtMs ?? null;
             if (candidate === null) continue;
             nextFreshnessAt = nextFreshnessAt === null ? candidate : Math.min(nextFreshnessAt, candidate);
         }
-        setNextRuntimeFreshnessAtMs((current) => current === nextFreshnessAt ? current : nextFreshnessAt);
-    }, [rowViewModels]);
+        return nextFreshnessAt;
+    }, [deriveRowViewModels, rowViewModels]);
+    useSessionListRuntimeWake(nextRuntimeFreshnessAtMs, clocksActive);
 
     return React.useMemo(() => {
         if (listItems.length === 0 && selectionScopeListItems.length === 0) {
@@ -396,6 +425,7 @@ export function useSessionListRenderModels(input: Readonly<{
             listItems,
             selectionScopeListItems,
             reachableSessionDisplayById: sessionReachabilitySummary.displayById,
+            reachableSessionDisplayByKey: sessionReachabilitySummary.displayByKey,
             hasMultipleMachines: sessionReachabilitySummary.hasMultipleMachines,
             projectHeaderViewModelState,
             rowViewModels,
@@ -408,6 +438,7 @@ export function useSessionListRenderModels(input: Readonly<{
         selectionScopeListItems,
         selectionScopeRowViewModels,
         sessionReachabilitySummary.displayById,
+        sessionReachabilitySummary.displayByKey,
         sessionReachabilitySummary.hasMultipleMachines,
     ]);
 }

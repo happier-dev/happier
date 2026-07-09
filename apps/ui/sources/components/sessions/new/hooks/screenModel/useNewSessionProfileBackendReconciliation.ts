@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { InteractionManager } from 'react-native';
 import { type BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { type AgentId } from '@/agents/catalog/catalog';
@@ -12,6 +11,7 @@ import { normalizePermissionModeForAgentType } from '@/sync/domains/permissions/
 import { type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
+import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 
 type AgentAvailabilityById = Readonly<Partial<Record<AgentId, boolean | null>>>;
 type AgentAuthStatusById = Readonly<Partial<Record<AgentId, { state: 'logged_in' | 'logged_out' | 'unknown'; checkedAt: number } | null>>>;
@@ -115,7 +115,9 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
         if (!pending || pending.profileId !== params.selectedProfileId) return;
         pendingProfileSelectionRef.current = null;
 
-        const interactionHandle = InteractionManager.runAfterInteractions(() => {
+        // Timeout fallback keeps the reconciliation running when interactions
+        // never settle; the request-id/profile-id guards keep late runs safe.
+        const cancelReconciliation = runAfterInteractionsWithFallback(() => {
             if (latestSelectionRequestIdRef.current !== pending.requestId) return;
             if (latestSelectedProfileIdRef.current !== pending.profileId) return;
 
@@ -138,7 +140,7 @@ export function useNewSessionProfileBackendReconciliation(params: Readonly<{
         });
 
         return () => {
-            interactionHandle.cancel();
+            cancelReconciliation();
         };
     }, [
         params.agentType,

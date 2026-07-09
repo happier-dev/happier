@@ -5,6 +5,7 @@ import { renderHook } from '@/dev/testkit';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 import { storage } from '@/sync/domains/state/storageStore';
+import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 
 import type { VisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
@@ -28,6 +29,14 @@ function makeRenderable(id: string, metadata: SessionListRenderableSession['meta
         thinkingAt: 0,
         presence: 0,
     } satisfies SessionListRenderableSession;
+}
+
+function rowKey(serverId: string, sessionId: string): string {
+    const key = buildSessionListServerScopedRowKey(serverId, sessionId);
+    if (!key) {
+        throw new Error(`Expected a session-list row key for ${serverId}:${sessionId}`);
+    }
+    return key;
 }
 
 describe('useSessionListRenderModels', () => {
@@ -112,6 +121,92 @@ describe('useSessionListRenderModels', () => {
             await flushHookEffects({ advanceTimersMs: 120_000, cycles: 1, turns: 2 });
 
             expect(renderCount).toBe(inactiveRenderCount);
+        } finally {
+            await hook?.unmount();
+            storage.setState(previousState);
+        }
+    });
+
+    it('does not rerender parent render models when a subscribed row renderable changes without reachability changes', async () => {
+        const previousState = storage.getState();
+        let hook: Awaited<ReturnType<typeof renderHook>> | null = null;
+        try {
+            const row = makeRenderable('session-1', {
+                machineId: 'machine-1',
+                path: '/workspace/active',
+                host: 'workstation.local',
+            });
+            storage.setState((state) => ({
+                ...state,
+                sessionListRowStateByServerId: {
+                    'server-1': {
+                        'session-1': row,
+                    },
+                },
+            }));
+            const paneState = {
+                summary: {
+                    sessionsReady: true,
+                    sessionCount: 1,
+                },
+                visibleSessionListIndex: [
+                    {
+                        type: 'session',
+                        sessionId: 'session-1',
+                        serverId: 'server-1',
+                        groupKey: 'active',
+                    },
+                ] satisfies ReadonlyArray<SessionListIndexItem>,
+                hasHiddenInactiveSessions: false,
+                folderFocus: null,
+                showLoading: false,
+                showEmptyState: false,
+            } as VisibleSessionListPaneState;
+
+            let renderCount = 0;
+            hook = await renderHook(() => {
+                renderCount += 1;
+                return useSessionListRenderModels({
+                    paneState,
+                    collapsedGroupKeys: {},
+                    machineDisplayById: {},
+                    workspaceLabels: {},
+                    workspaceRefs: [],
+                    pinnedKeySet: new Set<string>(),
+                    sessionTags: {},
+                    selectedSessionId: null,
+                    showServerBadge: false,
+                    showPinnedServerBadge: false,
+                    rowViewModelMode: 'deferred',
+                });
+            });
+            await flushHookEffects({ cycles: 1, turns: 2 });
+            const stableRenderCount = renderCount;
+            const initial = hook.getCurrent();
+
+            act(() => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessionListRowStateByServerId: {
+                        ...state.sessionListRowStateByServerId,
+                        'server-1': {
+                            ...state.sessionListRowStateByServerId?.['server-1'],
+                            'session-1': {
+                                ...row,
+                                active: true,
+                                activeAt: 1_000,
+                                thinking: true,
+                                thinkingAt: 1_000,
+                                presence: 'online',
+                            },
+                        },
+                    },
+                }));
+            });
+            await flushHookEffects({ cycles: 1, turns: 2 });
+
+            expect(renderCount).toBe(stableRenderCount);
+            expect(hook.getCurrent()).toBe(initial);
         } finally {
             await hook?.unmount();
             storage.setState(previousState);
@@ -528,7 +623,7 @@ describe('useSessionListRenderModels', () => {
             expect(initialRows[1]?.session?.id).toBe(backgroundRow.id);
 
             await act(async () => {
-                await hook.rerender({ rowSubscriptionKeys: new Set(['server-1:session-1']) });
+                await hook.rerender({ rowSubscriptionKeys: new Set([rowKey('server-1', 'session-1')]) });
             });
             const narrowedRows = hook.getCurrent().rowViewModels;
             expect(narrowedRows[1]?.session?.id).toBe(backgroundRow.id);
@@ -577,6 +672,231 @@ describe('useSessionListRenderModels', () => {
             expect(renderCount).toBeGreaterThan(renderCountAfterNarrow);
             expect(hook.getCurrent().rowViewModels[0]).not.toBe(narrowedRows[0]);
             expect(hook.getCurrent().rowViewModels[0]?.hasUnreadMessages).toBe(true);
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('subscribes uncached inserted rows even when viewability keys are still stale', async () => {
+        const previousState = storage.getState();
+        try {
+            const existingRow = makeRenderable('session-1', {
+                machineId: 'machine-1',
+                path: '/workspace/existing',
+                host: 'workstation.local',
+            });
+            const insertedRow = makeRenderable('session-0', {
+                machineId: 'machine-1',
+                path: '/workspace/inserted',
+                host: 'workstation.local',
+            });
+            storage.setState((state) => ({
+                ...state,
+                sessionListRowStateByServerId: {
+                    'server-1': {
+                        'session-1': existingRow,
+                    },
+                },
+            }));
+
+            const initialPaneState = {
+                summary: {
+                    sessionsReady: true,
+                    sessionCount: 1,
+                },
+                visibleSessionListIndex: [
+                    {
+                        type: 'session',
+                        sessionId: 'session-1',
+                        serverId: 'server-1',
+                        groupKey: 'active',
+                    },
+                ] satisfies ReadonlyArray<SessionListIndexItem>,
+                hasHiddenInactiveSessions: false,
+                folderFocus: null,
+                showLoading: false,
+                showEmptyState: false,
+            } as VisibleSessionListPaneState;
+            const insertedPaneState = {
+                ...initialPaneState,
+                summary: {
+                    sessionsReady: true,
+                    sessionCount: 2,
+                },
+                visibleSessionListIndex: [
+                    {
+                        type: 'session',
+                        sessionId: 'session-0',
+                        serverId: 'server-1',
+                        groupKey: 'active',
+                    },
+                    ...initialPaneState.visibleSessionListIndex!,
+                ] satisfies ReadonlyArray<SessionListIndexItem>,
+            } as VisibleSessionListPaneState;
+            const staleViewabilityKeys = new Set([rowKey('server-1', 'session-1')]);
+
+            const hook = await renderHook((input: { paneState: VisibleSessionListPaneState }) =>
+                useSessionListRenderModels({
+                    paneState: input.paneState,
+                    collapsedGroupKeys: {},
+                    machineDisplayById: {},
+                    workspaceLabels: {},
+                    workspaceRefs: [],
+                    pinnedKeySet: new Set<string>(),
+                    sessionTags: {},
+                    selectedSessionId: null,
+                    showServerBadge: false,
+                    showPinnedServerBadge: false,
+                    rowSubscriptionKeys: staleViewabilityKeys,
+                }), {
+                initialProps: { paneState: initialPaneState },
+            });
+
+            expect(hook.getCurrent().rowViewModels[0]?.session?.id).toBe('session-1');
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessionListRowStateByServerId: {
+                        ...state.sessionListRowStateByServerId,
+                        'server-1': {
+                            ...(state.sessionListRowStateByServerId['server-1'] ?? {}),
+                            'session-0': insertedRow,
+                        },
+                    },
+                }));
+                await hook.rerender({ paneState: insertedPaneState });
+            });
+            await flushHookEffects({ cycles: 1, turns: 2 });
+
+            expect(hook.getCurrent().rowViewModels[0]?.session?.id).toBe('session-0');
+            expect(hook.getCurrent().rowViewModels[1]?.session?.id).toBe('session-1');
+
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('does not subscribe uncached inserted rows while row subscriptions are explicitly inactive', async () => {
+        const previousState = storage.getState();
+        try {
+            const existingRow = makeRenderable('session-1', {
+                machineId: 'machine-1',
+                path: '/workspace/existing',
+                host: 'workstation.local',
+            });
+            const insertedRow = makeRenderable('session-0', {
+                machineId: 'machine-1',
+                path: '/workspace/inserted',
+                host: 'workstation.local',
+            });
+            storage.setState((state) => ({
+                ...state,
+                sessionListRowStateByServerId: {
+                    'server-1': {
+                        'session-1': existingRow,
+                    },
+                },
+            }));
+
+            const initialPaneState = {
+                summary: {
+                    sessionsReady: true,
+                    sessionCount: 1,
+                },
+                visibleSessionListIndex: [
+                    {
+                        type: 'session',
+                        sessionId: 'session-1',
+                        serverId: 'server-1',
+                        groupKey: 'active',
+                    },
+                ] satisfies ReadonlyArray<SessionListIndexItem>,
+                hasHiddenInactiveSessions: false,
+                folderFocus: null,
+                showLoading: false,
+                showEmptyState: false,
+            } as VisibleSessionListPaneState;
+            const insertedPaneState = {
+                ...initialPaneState,
+                summary: {
+                    sessionsReady: true,
+                    sessionCount: 2,
+                },
+                visibleSessionListIndex: [
+                    {
+                        type: 'session',
+                        sessionId: 'session-0',
+                        serverId: 'server-1',
+                        groupKey: 'active',
+                    },
+                    ...initialPaneState.visibleSessionListIndex!,
+                ] satisfies ReadonlyArray<SessionListIndexItem>,
+            } as VisibleSessionListPaneState;
+
+            let renderCount = 0;
+            const initialInput: {
+                paneState: VisibleSessionListPaneState;
+                rowSubscriptionKeys: ReadonlySet<string> | null;
+            } = {
+                paneState: initialPaneState,
+                rowSubscriptionKeys: null,
+            };
+            const hook = await renderHook((input: {
+                paneState: VisibleSessionListPaneState;
+                rowSubscriptionKeys: ReadonlySet<string> | null;
+            }) => {
+                renderCount += 1;
+                return useSessionListRenderModels({
+                    paneState: input.paneState,
+                    collapsedGroupKeys: {},
+                    machineDisplayById: {},
+                    workspaceLabels: {},
+                    workspaceRefs: [],
+                    pinnedKeySet: new Set<string>(),
+                    sessionTags: {},
+                    selectedSessionId: null,
+                    showServerBadge: false,
+                    showPinnedServerBadge: false,
+                    rowSubscriptionKeys: input.rowSubscriptionKeys,
+                });
+            }, {
+                initialProps: initialInput,
+            });
+
+            expect(hook.getCurrent().rowViewModels[0]?.session?.id).toBe('session-1');
+
+            await act(async () => {
+                await hook.rerender({
+                    paneState: insertedPaneState,
+                    rowSubscriptionKeys: new Set<string>(),
+                });
+            });
+            const inactiveRows = hook.getCurrent().rowViewModels;
+            const inactiveRenderCount = renderCount;
+            expect(inactiveRows[0]?.session?.id).toBeUndefined();
+            expect(inactiveRows[1]?.session?.id).toBe('session-1');
+
+            await act(async () => {
+                storage.setState((state) => ({
+                    ...state,
+                    sessionListRowStateByServerId: {
+                        ...state.sessionListRowStateByServerId,
+                        'server-1': {
+                            ...(state.sessionListRowStateByServerId['server-1'] ?? {}),
+                            'session-0': insertedRow,
+                        },
+                    },
+                }));
+            });
+            await flushHookEffects({ cycles: 1, turns: 2 });
+
+            expect(renderCount).toBe(inactiveRenderCount);
+            expect(hook.getCurrent().rowViewModels[0]).toBe(inactiveRows[0]);
+            expect(hook.getCurrent().rowViewModels[0]?.session?.id).toBeUndefined();
 
             await hook.unmount();
         } finally {

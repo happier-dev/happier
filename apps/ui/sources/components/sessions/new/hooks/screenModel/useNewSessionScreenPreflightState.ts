@@ -30,6 +30,7 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd: string | null;
+    connectedServices?: unknown;
 }>): Readonly<{
     preflightModels: ReturnType<typeof useNewSessionPreflightModelsState>['preflightModels'];
     preflightModelsTargetKey: ReturnType<typeof useNewSessionPreflightModelsState>['preflightModelsTargetKey'];
@@ -46,8 +47,9 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
             backendTarget: params.backendTarget,
             settings: params.settings,
             runtimeCarrierAgentId: params.runtimeCarrierAgentId,
+            connectedServices: params.connectedServices,
         });
-    }, [params.backendTarget, params.runtimeCarrierAgentId, params.settings]);
+    }, [params.backendTarget, params.connectedServices, params.runtimeCarrierAgentId, params.settings]);
 
     const { preflightModels, preflightModelsTargetKey, modelOptions, probe: modelOptionsProbe } = useNewSessionPreflightModelsState({
         backendTarget: params.backendTarget,

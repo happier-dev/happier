@@ -1,12 +1,13 @@
 import * as React from 'react';
-import { InteractionManager } from 'react-native';
 
+import { useIsFocused } from '@react-navigation/native';
 import type { Href, Router } from 'expo-router';
 
 import { buildBackendTargetRouteParams, type SerializedBackendTargetRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 import { useNewSessionDraftAutoPersist } from '@/components/sessions/new/hooks/useNewSessionDraftAutoPersist';
+import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 
 export function useNewSessionProfileEditPersistence(params: Readonly<{
     router: Router;
@@ -16,6 +17,7 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
     persistDraftIfEnabled: (draft: NewSessionDraft) => void;
     draftPersistenceEnabled: boolean;
     draftPersistenceGenerationRef: React.MutableRefObject<number>;
+    draftTextLength?: number | null;
 }>): Readonly<{
     openProfileEdit: (args: Readonly<{ profileId?: string; cloneFromProfileId?: string }>) => void;
     handleAddProfile: () => void;
@@ -41,7 +43,9 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
             },
         } as Href);
 
-        InteractionManager.runAfterInteractions(() => {
+        // Timeout fallback keeps the draft persisting even when interactions
+        // never settle; the generation check keeps late runs harmless.
+        runAfterInteractionsWithFallback(() => {
             if (persistenceGeneration !== params.draftPersistenceGenerationRef.current) {
                 return;
             }
@@ -69,9 +73,16 @@ export function useNewSessionProfileEditPersistence(params: Readonly<{
         params.persistDraftIfEnabled(params.buildCurrentPersistedDraft());
     }, [params.buildCurrentPersistedDraft, params.persistDraftIfEnabled]);
 
+    // Only the focused new-session screen instance may auto-persist the shared scoped
+    // draft: an unfocused instance (stacked /new modal, screen behind a picker) holds a
+    // stale prompt and persisting it would clobber the focused instance's live typing.
+    const isFocused = useIsFocused();
+
     useNewSessionDraftAutoPersist({
         persistDraftNow,
         persistenceEnabled: params.draftPersistenceEnabled,
+        draftTextLength: params.draftTextLength,
+        focused: isFocused,
     });
 
     return {

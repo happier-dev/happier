@@ -30,6 +30,7 @@ vi.mock('@/agents/registry/registryUiBehavior', () => ({
     getNewSessionRelevantInstallableDepKeys: () => [],
     resolveAgentUiBehavior: () => ({}),
     resolveAgentUiBehaviorFromFlavor: () => ({}),
+    resolveAgentUiBehaviorFromSessionMetadata: () => ({}),
     supportsDetectedMcpConfigScan: () => false,
     supportsEditableSessionGoals: () => false,
 }));
@@ -99,6 +100,7 @@ installSessionShellCommonModuleMocks({
         const session: any = {
             id: 's1',
             seq: 1,
+            serverId: 'server-2',
             presence: 'online',
             active: true,
             accessLevel: 'edit',
@@ -128,6 +130,8 @@ installSessionShellCommonModuleMocks({
             useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
             useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
             useSessionSubagentSourceMessages: () => [],
+            useOpenApprovalArtifactsForSession: () => [],
+            useEnabledAutomationsCountForSession: () => 0,
             useSessionReviewCommentsDrafts: () => [],
             useWorkspaceReviewCommentsDrafts: () => [],
             useSessionUsage: () => null,
@@ -376,7 +380,7 @@ describe('SessionView info navigation', () => {
         standardCleanup();
     });
 
-    it('opens session info via singular navigate using the cached owning server id instead of a stale route server id', async () => {
+    it('opens session info via singular navigate using the explicit route server id for a route-owned session', async () => {
         const { SessionView } = await import('./SessionView');
 
         await renderScreen(
@@ -391,7 +395,7 @@ describe('SessionView info navigation', () => {
 
         expect(routerPushSpy).not.toHaveBeenCalled();
         expect(routerNavigateSpy).toHaveBeenCalledTimes(1);
-        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-cache', expect.objectContaining({
+        expect(routerNavigateSpy).toHaveBeenCalledWith('/session/s1/info?serverId=server-2', expect.objectContaining({
             dangerouslySingular: expect.any(Function),
         }));
 
@@ -510,6 +514,6 @@ describe('SessionView info navigation', () => {
 
         capturedOpenSessionSpy('child-session-1');
 
-        expect(routerPushSpy).toHaveBeenCalledWith('/session/child-session-1?serverId=server-cache');
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/child-session-1?serverId=server-2');
     });
 });

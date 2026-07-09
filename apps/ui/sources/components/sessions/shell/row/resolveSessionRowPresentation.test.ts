@@ -11,6 +11,7 @@ type SessionRowAttentionState =
     | 'unread'
     | 'pending'
     | 'working'
+    | 'backgroundActive'
     | 'ready'
     | 'failed'
     | 'permission_required'
@@ -21,11 +22,12 @@ type ResolveSessionRowPresentation = (input: Readonly<{
     density: 'default' | 'compact' | 'minimal';
     requestedSecondaryLineMode: 'status' | 'path';
     hasPathSubtitle: boolean;
+    workingRetained?: boolean;
 }>) => Readonly<{
-    attentionIndicator: 'none' | 'working' | 'ready' | 'failed' | 'unread' | 'pending' | 'permission' | 'action';
+    attentionIndicator: 'none' | 'working' | 'background' | 'ready' | 'failed' | 'unread' | 'pending' | 'permission' | 'action';
     titleTone: 'quiet' | 'normal' | 'emphasized';
     secondaryLine: 'none' | 'path' | 'status';
-    statusTextKey?: 'status.readyForReview' | 'status.error';
+    statusTextKey?: 'status.readyForReview' | 'status.error' | 'status.workingRetained' | 'status.backgroundActive';
 }>;
 
 async function loadRowPresentationResolver(): Promise<ResolveSessionRowPresentation> {
@@ -137,6 +139,51 @@ describe('resolveSessionRowPresentation', () => {
             titleTone: 'emphasized',
             secondaryLine: 'status',
             statusTextKey: 'status.error',
+        });
+    });
+
+    it('gives retained working rows a dedicated status text instead of live status', async () => {
+        const resolveSessionRowPresentation = await loadRowPresentationResolver();
+
+        expect(resolveSessionRowPresentation({
+            attentionState: 'working',
+            workingRetained: true,
+            density: 'default',
+            requestedSecondaryLineMode: 'path',
+            hasPathSubtitle: true,
+        })).toEqual({
+            attentionIndicator: 'working',
+            titleTone: 'emphasized',
+            secondaryLine: 'status',
+            statusTextKey: 'status.workingRetained',
+        });
+    });
+
+    it('does not apply the retained status text to live working rows', async () => {
+        const resolveSessionRowPresentation = await loadRowPresentationResolver();
+
+        expect(resolveSessionRowPresentation({
+            attentionState: 'working',
+            workingRetained: false,
+            density: 'default',
+            requestedSecondaryLineMode: 'path',
+            hasPathSubtitle: true,
+        }).statusTextKey).toBeUndefined();
+    });
+
+    it('uses a distinct working-colored indicator and label for background work', async () => {
+        const resolveSessionRowPresentation = await loadRowPresentationResolver();
+
+        expect(resolveSessionRowPresentation({
+            attentionState: 'backgroundActive',
+            density: 'default',
+            requestedSecondaryLineMode: 'path',
+            hasPathSubtitle: true,
+        })).toEqual({
+            attentionIndicator: 'background',
+            titleTone: 'emphasized',
+            secondaryLine: 'status',
+            statusTextKey: 'status.backgroundActive',
         });
     });
 

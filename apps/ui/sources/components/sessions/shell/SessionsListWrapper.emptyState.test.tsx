@@ -2,15 +2,23 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import type { VisibleSessionListPaneStateOptions } from '@/hooks/session/useVisibleSessionListPaneState';
 import { SessionsListWrapper } from './SessionsListWrapper';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { resetSessionListPaneRetentionForTests } from './sessionListPaneRetention';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const sessionListState = vi.hoisted(() => ({
     data: [] as any[] | null,
     storageKinds: [] as string[],
-    paneCalls: [] as Array<{ storageKind: string; pathname: string | null; sessionListSurfaceDataActive: boolean | null }>,
+    paneCalls: [] as Array<{
+        storageKind: string;
+        pathname: string | null;
+        retainedPathname: string | null;
+        retainedVisibleSessionListIndex: VisibleSessionListPaneStateOptions['retainedVisibleSessionListIndex'] | null;
+        sessionListSurfaceDataActive: boolean | null;
+    }>,
 }));
 const focusState = vi.hoisted(() => ({
     focused: true,
@@ -24,6 +32,19 @@ const featureDecisionState = vi.hoisted(() => ({
 const storageKindState = vi.hoisted(() => ({
     storageKind: 'persisted' as 'persisted' | 'direct',
     setStorageKind: vi.fn(),
+}));
+const serverSelectionState = vi.hoisted(() => ({
+    selection: {
+        activeTarget: { kind: 'server' as const, id: 'server-a', serverId: 'server-a' },
+        activeServerId: 'server-a',
+        allowedServerIds: ['server-a'],
+        enabled: false,
+        explicit: false,
+        presentation: 'grouped' as const,
+    },
+}));
+const accountScopeState = vi.hoisted(() => ({
+    scope: { serverId: 'server-a', accountId: 'account-a' } as { serverId: string; accountId: string } | null,
 }));
 const gettingStartedState = vi.hoisted(() => ({
     kind: 'create_session' as 'create_session' | 'connect_machine' | 'start_daemon' | 'select_session' | 'loading',
@@ -53,13 +74,27 @@ vi.mock('@react-navigation/native', () => ({
 vi.mock('expo-router', () => ({
     usePathname: () => routeState.pathname,
 }));
+vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
+    useResolvedActiveServerSelection: () => serverSelectionState.selection,
+}));
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({
+        useActiveServerAccountScope: () => accountScopeState.scope,
+    });
+});
 
 vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
-    useVisibleSessionListPaneState: (storageKind?: string, options?: { pathname?: string; sessionListSurfaceDataActive?: boolean }) => {
+    useVisibleSessionListPaneState: (
+        storageKind?: string,
+        options?: VisibleSessionListPaneStateOptions,
+    ) => {
         sessionListState.storageKinds.push(storageKind ?? 'all');
         sessionListState.paneCalls.push({
             storageKind: storageKind ?? 'all',
             pathname: options?.pathname ?? null,
+            retainedPathname: options?.retainedPathname ?? null,
+            retainedVisibleSessionListIndex: options?.retainedVisibleSessionListIndex ?? null,
             sessionListSurfaceDataActive: options?.sessionListSurfaceDataActive ?? null,
         });
         const data = sessionListState.data;
@@ -69,8 +104,9 @@ vi.mock('@/hooks/session/useVisibleSessionListPaneState', () => ({
                 sessionsReady: true,
                 sessionCount,
             },
-            visibleSessionListViewData: data,
+            visibleSessionListIndex: data,
             folderFocus: null,
+            hasHiddenInactiveSessions: false,
             showLoading: false,
             showEmptyState: sessionCount === 0,
         };
@@ -131,8 +167,18 @@ describe('SessionsListWrapper (empty state)', () => {
         storageKindState.storageKind = 'persisted';
         storageKindState.setStorageKind.mockReset();
         gettingStartedState.kind = 'create_session';
+        serverSelectionState.selection = {
+            activeTarget: { kind: 'server', id: 'server-a', serverId: 'server-a' },
+            activeServerId: 'server-a',
+            allowedServerIds: ['server-a'],
+            enabled: false,
+            explicit: false,
+            presentation: 'grouped',
+        };
+        accountScopeState.scope = { serverId: 'server-a', accountId: 'account-a' };
         focusState.focused = true;
         routeState.pathname = '/';
+        resetSessionListPaneRetentionForTests();
     });
 
     afterEach(() => {
@@ -182,8 +228,47 @@ describe('SessionsListWrapper (empty state)', () => {
         const screen = await renderScreen(<SessionsListWrapper pathname="/" />);
 
         expect(sessionListState.paneCalls).toEqual([
-            { storageKind: 'persisted', pathname: '/', sessionListSurfaceDataActive: true },
+            {
+                storageKind: 'persisted',
+                pathname: '/',
+                retainedPathname: null,
+                retainedVisibleSessionListIndex: null,
+                sessionListSurfaceDataActive: true,
+            },
         ]);
+
+        await screen.unmount();
+    });
+
+    it('seeds retained index and foreground pathname when returning from a foreground session route', async () => {
+        const retainedIndex = [{ type: 'session', sessionId: 'done', serverId: 'server-1', groupKind: 'attention' }];
+        sessionListState.data = retainedIndex;
+        routeState.pathname = '/';
+
+        const screen = await renderScreen(<SessionsListWrapper pathname="/" />);
+
+        expect(sessionListState.paneCalls).toEqual([{
+            storageKind: 'persisted',
+            pathname: '/',
+            retainedPathname: null,
+            retainedVisibleSessionListIndex: null,
+            sessionListSurfaceDataActive: true,
+        }]);
+
+        routeState.pathname = '/session/done';
+        await screen.update(<SessionsListWrapper pathname="/" />);
+        expect(sessionListState.paneCalls).toHaveLength(1);
+
+        routeState.pathname = '/';
+        await screen.update(<SessionsListWrapper pathname="/" />);
+
+        expect(sessionListState.paneCalls[1]).toEqual({
+            storageKind: 'persisted',
+            pathname: '/',
+            retainedPathname: '/session/done',
+            retainedVisibleSessionListIndex: retainedIndex,
+            sessionListSurfaceDataActive: true,
+        });
 
         await screen.unmount();
     });
@@ -220,7 +305,13 @@ describe('SessionsListWrapper (empty state)', () => {
         const screen = await renderScreen(<SessionsListWrapper pathname="/" />);
 
         expect(sessionListState.paneCalls).toEqual([
-            { storageKind: 'persisted', pathname: '/', sessionListSurfaceDataActive: true },
+            {
+                storageKind: 'persisted',
+                pathname: '/',
+                retainedPathname: null,
+                retainedVisibleSessionListIndex: null,
+                sessionListSurfaceDataActive: true,
+            },
         ]);
         expect(screen.findByType('SessionsListView' as any).props.surfaceOwnership).toEqual({
             ownerKey: 'phone-root',
@@ -233,7 +324,13 @@ describe('SessionsListWrapper (empty state)', () => {
         await screen.update(<SessionsListWrapper pathname="/" />);
 
         expect(sessionListState.paneCalls).toEqual([
-            { storageKind: 'persisted', pathname: '/', sessionListSurfaceDataActive: true },
+            {
+                storageKind: 'persisted',
+                pathname: '/',
+                retainedPathname: null,
+                retainedVisibleSessionListIndex: null,
+                sessionListSurfaceDataActive: true,
+            },
         ]);
         const list = screen.findByType('SessionsListView' as any);
         expect(list.props.pathname).toBe('/');
@@ -246,6 +343,91 @@ describe('SessionsListWrapper (empty state)', () => {
         });
 
         await screen.unmount();
+    });
+
+    it('renders the last active pane snapshot after the retained phone list remounts inactive', async () => {
+        const retainedIndex = [{ type: 'session', session: { id: 'session-1' } }];
+        sessionListState.data = retainedIndex;
+
+        const activeScreen = await renderScreen(<SessionsListWrapper pathname="/" />);
+
+        expect(activeScreen.findByType('SessionsListView' as any).props.paneState.visibleSessionListIndex).toBe(retainedIndex);
+
+        await activeScreen.unmount();
+
+        sessionListState.data = null;
+        sessionListState.paneCalls = [];
+        routeState.pathname = '/session/session-1';
+
+        const inactiveScreen = await renderScreen(<SessionsListWrapper pathname="/" />);
+
+        expect(sessionListState.paneCalls).toEqual([]);
+        const list = inactiveScreen.findByType('SessionsListView' as any);
+        expect(list.props.paneState.visibleSessionListIndex).toBe(retainedIndex);
+        expect(list.props.surfaceOwnership).toEqual({
+            ownerKey: 'phone-root',
+            visible: true,
+            interactive: false,
+            dataActive: false,
+        });
+
+        await inactiveScreen.unmount();
+    });
+
+    it('does not render a retained pane snapshot after the selected server scope changes', async () => {
+        const serverAIndex = [{ type: 'session', sessionId: 'session-a', serverId: 'server-a' }];
+        sessionListState.data = serverAIndex;
+
+        const activeScreen = await renderScreen(<SessionsListWrapper pathname="/" />);
+
+        expect(activeScreen.findByType('SessionsListView' as any).props.paneState.visibleSessionListIndex).toBe(serverAIndex);
+
+        await activeScreen.unmount();
+
+        sessionListState.data = null;
+        sessionListState.paneCalls = [];
+        routeState.pathname = '/session/session-a';
+        serverSelectionState.selection = {
+            activeTarget: { kind: 'server', id: 'server-b', serverId: 'server-b' },
+            activeServerId: 'server-b',
+            allowedServerIds: ['server-b'],
+            enabled: false,
+            explicit: false,
+            presentation: 'grouped',
+        };
+        accountScopeState.scope = { serverId: 'server-b', accountId: 'account-a' };
+
+        const inactiveScreen = await renderScreen(<SessionsListWrapper pathname="/" />);
+
+        expect(sessionListState.paneCalls).toEqual([]);
+        expect(() => inactiveScreen.findByType('SessionsListView' as any)).toThrow();
+        expect(inactiveScreen.findByType('ActivitySpinner' as any)).toBeTruthy();
+
+        await inactiveScreen.unmount();
+    });
+
+    it('does not render a retained pane snapshot after the active account scope changes', async () => {
+        const accountAIndex = [{ type: 'session', sessionId: 'session-a', serverId: 'server-a' }];
+        sessionListState.data = accountAIndex;
+
+        const activeScreen = await renderScreen(<SessionsListWrapper pathname="/" />);
+
+        expect(activeScreen.findByType('SessionsListView' as any).props.paneState.visibleSessionListIndex).toBe(accountAIndex);
+
+        await activeScreen.unmount();
+
+        sessionListState.data = null;
+        sessionListState.paneCalls = [];
+        routeState.pathname = '/session/session-a';
+        accountScopeState.scope = { serverId: 'server-a', accountId: 'account-b' };
+
+        const inactiveScreen = await renderScreen(<SessionsListWrapper pathname="/" />);
+
+        expect(sessionListState.paneCalls).toEqual([]);
+        expect(() => inactiveScreen.findByType('SessionsListView' as any)).toThrow();
+        expect(inactiveScreen.findByType('ActivitySpinner' as any)).toBeTruthy();
+
+        await inactiveScreen.unmount();
     });
 
     it('shows storage tabs and uses the selected direct storage filter when direct sessions are enabled', async () => {

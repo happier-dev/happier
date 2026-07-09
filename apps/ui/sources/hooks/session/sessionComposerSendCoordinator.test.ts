@@ -1,11 +1,47 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+    captureComposerTransientInputStateForOutboundHandoff,
     clearComposerAfterOutboundHandoff,
     restoreComposerAfterFailedOutboundHandoff,
 } from './sessionComposerSendCoordinator';
 
 describe('sessionComposerSendCoordinator', () => {
+    it('captures transient input handlers for the outbound lifecycle before owner refs change', () => {
+        const ownerAState = { expanded: true, scrollY: 42, updatedAt: 1 };
+        const captureOwnerA = vi.fn(() => ownerAState);
+        const clearOwnerA = vi.fn();
+        const restoreOwnerA = vi.fn();
+        const captureOwnerB = vi.fn(() => null);
+        const clearOwnerB = vi.fn();
+        const restoreOwnerB = vi.fn();
+
+        const captured = captureComposerTransientInputStateForOutboundHandoff({
+            captureTransientInputState: captureOwnerA,
+            clearTransientInputState: clearOwnerA,
+            restoreTransientInputState: restoreOwnerA,
+        });
+
+        const currentHandlers = {
+            captureTransientInputState: captureOwnerB,
+            clearTransientInputState: clearOwnerB,
+            restoreTransientInputState: restoreOwnerB,
+        };
+        currentHandlers.clearTransientInputState();
+        currentHandlers.restoreTransientInputState(null);
+
+        captured.clearTransientInputState();
+        captured.restoreTransientInputState();
+
+        expect(captureOwnerA).toHaveBeenCalledTimes(1);
+        expect(captured.transientInputStateSnapshot).toBe(ownerAState);
+        expect(clearOwnerA).toHaveBeenCalledTimes(1);
+        expect(restoreOwnerA).toHaveBeenCalledWith(ownerAState);
+        expect(captureOwnerB).not.toHaveBeenCalled();
+        expect(clearOwnerB).toHaveBeenCalledTimes(1);
+        expect(restoreOwnerB).toHaveBeenCalledWith(null);
+    });
+
     it('clears transient state only after the submitted snapshot is handed off', () => {
         const clearDraftForSessionIfCurrentValueMatches = vi.fn(() => true);
         const clearTransientInputState = vi.fn();

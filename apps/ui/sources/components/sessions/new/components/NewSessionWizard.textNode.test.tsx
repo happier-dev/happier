@@ -3,6 +3,7 @@ import renderer from 'react-test-renderer';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
+import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
 import { installNewSessionComponentsCommonModuleMocks, resetNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -16,6 +17,7 @@ const pathSelectorPropsRef: { current: Record<string, unknown> | null } = { curr
 const machineSelectorPropsRef: { current: Record<string, unknown> | null } = { current: null };
 const modelSelectionPropsRef: { current: Record<string, unknown> | null } = { current: null };
 const dropdownPropsRef: { current: Record<string, unknown> | null } = { current: null };
+const agentInputPropsRef: { current: Record<string, unknown> | null } = { current: null };
 installNewSessionComponentsCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -61,7 +63,10 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
         React.createElement('ItemGroup', props, props.children),
 }));
 vi.mock('@/components/sessions/agentInput', () => ({
-    AgentInput: () => null,
+    AgentInput: (props: Record<string, unknown>) => {
+        agentInputPropsRef.current = props;
+        return null;
+    },
 }));
 vi.mock('@/components/machines/InstallableDepInstaller', () => ({
     InstallableDepInstaller: () => null,
@@ -103,6 +108,7 @@ vi.mock('@/components/sessions/attachments/useAttachmentDraftManager', () => ({
     useAttachmentDraftManager: () => ({
         filePickerRef: { current: null },
         drafts: [],
+        getDraftsSnapshot: () => [],
         hasSendableAttachments: false,
         agentInputAttachments: [],
         addWebFiles: () => {},
@@ -148,6 +154,7 @@ describe('NewSessionWizard', () => {
         machineSelectorPropsRef.current = null;
         modelSelectionPropsRef.current = null;
         dropdownPropsRef.current = null;
+        agentInputPropsRef.current = null;
     });
 
     afterAll(() => {
@@ -164,7 +171,10 @@ describe('NewSessionWizard', () => {
         return {};
     }
 
-    async function renderWizardForModelRefresh(agentOverrides: Record<string, unknown> = {}) {
+    async function renderWizardForModelRefresh(
+        agentOverrides: Record<string, unknown> = {},
+        footerOverrides: Record<string, unknown> = {},
+    ) {
         const { NewSessionWizard } = await import('./NewSessionWizard');
         return renderScreen(<NewSessionWizard
             popoverBoundaryRef={{ current: null } as any}
@@ -279,9 +289,56 @@ describe('NewSessionWizard', () => {
                 emptyAutocompletePrefixes: [],
                 emptyAutocompleteSuggestions: async () => [],
                 agentInputExtraActionChips: [],
+                ...footerOverrides,
             }}
         />);
     }
+
+    it('passes launch status badges through to the wizard composer input', async () => {
+        const statusBadges = [{
+            key: 'new-session-launch-starting',
+            label: 'newSession.startingSession',
+            testID: 'new-session-launch-status',
+            tone: 'active' as const,
+        }];
+
+        await renderWizardForModelRefresh({}, {
+            isCreating: true,
+            statusBadges,
+        });
+
+        expect(agentInputPropsRef.current?.statusBadges).toBe(statusBadges);
+    });
+
+    it('renders the submitted prompt as pending wizard launch content while creation is unresolved', async () => {
+        const pendingLaunchAttempt: NewSessionLaunchAttempt = {
+            attemptId: 'attempt-1',
+            spawnNonce: 'spawn-1',
+            spawnAttemptKey: null,
+            scopeKey: 'scope-1',
+            createdSessionId: null,
+            daemonInitialPromptUsed: false,
+            firstTurnLocalId: 'first-turn-1',
+            attachmentMessageLocalId: 'attachment-1',
+            status: 'spawning',
+            prompt: {
+                prompt: 'Build the wizard pending launch state',
+                displayText: 'Build the wizard pending launch state',
+                meta: null,
+            },
+            phaseErrors: {},
+        };
+
+        const screen = await renderWizardForModelRefresh({}, {
+            sessionPrompt: 'Build the wizard pending launch state',
+            isCreating: true,
+            pendingLaunchAttempt,
+        });
+
+        expect(screen.findByProps({ testID: 'new-session-launch-pending-preview' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'new-session-launch-pending-preview-prompt' }).props.children)
+            .toBe('Build the wizard pending launch state');
+    });
 
     it('does not force the wizard shell to full-height on wide web layouts', async () => {
         mockEnv.windowWidth = 900;

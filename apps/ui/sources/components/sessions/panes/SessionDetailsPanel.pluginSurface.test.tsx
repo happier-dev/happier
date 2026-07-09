@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
@@ -10,16 +10,18 @@ import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPan
 
 const pluginUiProjection = {
     ...EMPTY_PLUGIN_UI_PROJECTION,
-    sessionSurfacesById: {
-        'sessionSurface:acme.preview:preview-pane': {
+    surfacePlacementsByPlacement: {
+        'session.preview': [{
             id: 'sessionSurface:acme.preview:preview-pane',
             pluginId: 'acme.preview',
-            contributionKind: 'sessionSurface',
+            contributionKind: 'surfacePlacement',
             descriptorId: 'preview-pane',
-            surfaceKind: 'previewPane',
+            placement: 'session.preview',
+            target: { kind: 'session', sessionIdPath: '/session/id' },
             renderer: { kind: 'host', rendererId: 'previewPlaceholder' },
             display: { titleKey: 'title' },
-        },
+            availability: { state: 'available', reason: 'available', diagnostics: [] },
+        }],
     },
 };
 
@@ -60,6 +62,9 @@ vi.mock('@/constants/Typography', () => ({
         mono: () => ({}),
         eyebrow: () => ({}),
         keyHint: () => ({}),
+        rowTitle: () => ({}),
+        rowMeta: () => ({}),
+        pillLabel: () => ({}),
     },
 }));
 
@@ -100,6 +105,7 @@ describe('SessionDetailsPanel plugin session surfaces', () => {
             scopeId="session:s1"
             {...({ pluginUiProjection } as any)}
         />);
+        await flushHookEffects({ cycles: 8, turns: 3 });
 
         expect(screen.findByTestId('plugin-session-surface-previewPlaceholder')).toBeTruthy();
     });

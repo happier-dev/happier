@@ -67,6 +67,8 @@ type TextLikeProps = Readonly<{
     children?: unknown;
     ellipsizeMode?: 'head' | 'middle' | 'tail' | 'clip';
 }>;
+type OptionWrapperLikeProps = Readonly<{ 'aria-selected'?: boolean }>;
+type ComboboxLikeProps = Readonly<{ 'aria-activedescendant'?: string }>;
 
 function flattenStyle(props: StyleLikeProps): Record<string, unknown> {
     const style = props.style;
@@ -286,6 +288,43 @@ describe('PathSelectionList', () => {
         const input = screen.findByTestId('path-selection-list:header:input');
         expect(input).not.toBeNull();
         expect(readProps<ValueLikeProps>(input!).value).toBe('/Users/leeroy/current');
+        act(() => screen.tree.unmount());
+    });
+
+    it('history-first mode selects the saved row that matches the displayed path instead of the first row', async () => {
+        const currentPath = '/Users/leeroy/Documents/Development/happier/dev';
+        const firstPath = '/Users/leeroy/Documents/Development/happier/remote-dev';
+        const { PathSelectionList } = await import('./PathSelectionList');
+        const screen = await renderScreen(
+            <PathSelectionList
+                initialValue={currentPath}
+                initialSuggestionMode="history"
+                favorites={[{ path: firstPath }]}
+                recents={[{ path: currentPath, lastUsedAt: 1 }]}
+                machineHomeDir="/Users/leeroy"
+                machineId="m-1"
+                serverId={null}
+                machinePlatform="unix"
+                onCommit={() => {}}
+                onRequestClose={() => {}}
+            />,
+        );
+
+        const firstWrapper = screen.findByTestId(
+            `path-selection-list:path-root:option-wrapper:favorite:${firstPath}`,
+        );
+        const currentWrapper = screen.findByTestId(
+            `path-selection-list:path-root:option-wrapper:recent:${currentPath}`,
+        );
+        const input = screen.findByTestId('path-selection-list:header:input');
+
+        expect(firstWrapper).not.toBeNull();
+        expect(currentWrapper).not.toBeNull();
+        expect(readProps<OptionWrapperLikeProps>(firstWrapper!)['aria-selected']).toBe(false);
+        expect(readProps<OptionWrapperLikeProps>(currentWrapper!)['aria-selected']).toBe(true);
+        expect(readProps<ComboboxLikeProps>(input!)['aria-activedescendant']).toBe(
+            `path-selection-list:path-root:option:recent:${currentPath}`,
+        );
         act(() => screen.tree.unmount());
     });
 

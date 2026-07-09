@@ -3,9 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildNewSessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
+import type { EnsureSessionVisibleForRouteResult } from '@/sync/domains/session/sessionRouteHydrationState';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
 
 
@@ -17,20 +18,64 @@ type SpawnPayloadCapture = {
     accountSettingsVersionHint?: number;
 } | null;
 
+type ConfiguredBackendHarnessOptions = Readonly<{
+    deferFollowUp?: boolean;
+    spawnSuccess?: boolean;
+}>;
+
+type EnsureSessionVisibleForMessageRouteMock = (
+    sessionId: string,
+    options?: Readonly<{ forceRefresh?: boolean; serverId?: string; includeTurnsProjection?: boolean }>,
+) => Promise<EnsureSessionVisibleForRouteResult>;
+
 const applySettingsMock = vi.hoisted(() => vi.fn());
 const clearNewSessionDraftMock = vi.hoisted(() => vi.fn());
 const prepareAccountSettingsForDaemonSpawnMock = vi.hoisted(() => vi.fn(async () => ({})));
+const configuredBackendHarnessModuleState = vi.hoisted(() => ({
+    captured: null as { value: SpawnPayloadCapture } | null,
+    createdAutomationTemplate: null as { value: Record<string, unknown> | null } | null,
+    storageState: null as any,
+    spawnSuccess: false,
+    followUpPending: Promise.resolve() as Promise<void>,
+    ensureSessionVisibleForMessageRoute: vi.fn<EnsureSessionVisibleForMessageRouteMock>(async (sessionId) => ({
+        kind: 'available',
+        sessionId,
+    })),
+}));
 
-async function setupHarness(options?: Readonly<{ deferFollowUp?: boolean; spawnSuccess?: boolean }>) {
+async function setupHarness(options?: ConfiguredBackendHarnessOptions) {
     const captured: { value: SpawnPayloadCapture } = { value: null };
     const createdAutomationTemplate: { value: Record<string, unknown> | null } = { value: null };
     const routerReplaceSpy = vi.fn();
+    const storageState = {
+        settings: {},
+        machines: { m1: { id: 'm1' } },
+        sessions: {} as Record<string, any>,
+        updateSessionPermissionMode: vi.fn(),
+        updateSessionModelMode: vi.fn(),
+        updateSessionDraft: vi.fn(),
+        markSessionOptimisticThinking: vi.fn(),
+        upsertPendingMessage: vi.fn(),
+    };
+    const ensureSessionVisibleForMessageRouteSpy = vi.fn<EnsureSessionVisibleForMessageRouteMock>(async (sessionId) => {
+        storageState.sessions[sessionId] = {
+            id: sessionId,
+            active: true,
+        };
+        return { kind: 'available', sessionId };
+    });
     let resolveFollowUp: (() => void) | null = null;
     const followUpPending = options?.deferFollowUp
         ? new Promise<void>((resolve) => {
             resolveFollowUp = resolve;
         })
         : Promise.resolve();
+    configuredBackendHarnessModuleState.captured = captured;
+    configuredBackendHarnessModuleState.createdAutomationTemplate = createdAutomationTemplate;
+    configuredBackendHarnessModuleState.storageState = storageState;
+    configuredBackendHarnessModuleState.spawnSuccess = options?.spawnSuccess === true;
+    configuredBackendHarnessModuleState.followUpPending = followUpPending;
+    configuredBackendHarnessModuleState.ensureSessionVisibleForMessageRoute = ensureSessionVisibleForMessageRouteSpy;
 
     installNewSessionScreenModelCommonModuleMocks({
         text: async () => {
@@ -52,13 +97,7 @@ async function setupHarness(options?: Readonly<{ deferFollowUp?: boolean; spawnS
             const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
             return createStorageModuleStub({
                 storage: {
-                    getState: () => ({
-                        settings: {},
-                        machines: { m1: { id: 'm1' } },
-                        updateSessionPermissionMode: vi.fn(),
-                        updateSessionModelMode: vi.fn(),
-                        updateSessionDraft: vi.fn(),
-                    }),
+                    getState: () => configuredBackendHarnessModuleState.storageState,
                 },
             });
         },
@@ -71,12 +110,16 @@ async function setupHarness(options?: Readonly<{ deferFollowUp?: boolean; spawnS
                 encryptAutomationTemplateRaw: vi.fn(async (value: unknown) => value),
             },
             createAutomation: vi.fn(async (input: { templateCiphertext: string }) => {
-                createdAutomationTemplate.value = JSON.parse(input.templateCiphertext) as Record<string, unknown>;
+                if (configuredBackendHarnessModuleState.createdAutomationTemplate) {
+                    configuredBackendHarnessModuleState.createdAutomationTemplate.value = JSON.parse(input.templateCiphertext) as Record<string, unknown>;
+                }
                 return {};
             }),
             decryptSecretValue: vi.fn(),
             refreshAutomations: vi.fn(async () => {}),
             refreshSessions: vi.fn(async () => {}),
+            ensureSessionVisibleForMessageRoute: vi.fn(async (sessionId: string, options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>) =>
+                configuredBackendHarnessModuleState.ensureSessionVisibleForMessageRoute(sessionId, options)),
             sendMessage: vi.fn(async () => {}),
             prepareAccountSettingsForDaemonSpawn: prepareAccountSettingsForDaemonSpawnMock,
         },
@@ -211,14 +254,16 @@ async function setupHarness(options?: Readonly<{ deferFollowUp?: boolean; spawnS
     });
     vi.doMock('@/sync/ops', () => ({
         machineSpawnNewSession: vi.fn(async (opts: SpawnPayloadCapture) => {
-            captured.value = opts;
-            return options?.spawnSuccess
+            if (configuredBackendHarnessModuleState.captured) {
+                configuredBackendHarnessModuleState.captured.value = opts;
+            }
+            return configuredBackendHarnessModuleState.spawnSuccess
                 ? { type: 'success', sessionId: 'session-created' }
                 : { type: 'error', errorCode: 'unexpected', errorMessage: 'stop' };
         }),
     }));
     vi.doMock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', () => ({
-        followUpSpawnedSessionWithServerScope: vi.fn(async () => followUpPending),
+        followUpSpawnedSessionWithServerScope: vi.fn(async () => configuredBackendHarnessModuleState.followUpPending),
     }));
 
     const { useCreateNewSession } = await import('./useCreateNewSession');
@@ -227,6 +272,8 @@ async function setupHarness(options?: Readonly<{ deferFollowUp?: boolean; spawnS
         captured,
         createdAutomationTemplate,
         routerReplaceSpy,
+        storageState,
+        ensureSessionVisibleForMessageRouteSpy,
         resolveFollowUp: () => resolveFollowUp?.(),
     };
 }
@@ -241,7 +288,8 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
     });
 
     afterEach(() => {
-        vi.restoreAllMocks();
+        standardCleanup();
+        vi.clearAllMocks();
     });
 
     it('passes a configured ACP backend backend target into machineSpawnNewSession', async () => {
@@ -291,7 +339,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
                 selectedSecretIdByProfileIdByEnvVarName: {},
                 sessionOnlySecretValueByProfileIdByEnvVarName: {},
                 selectedMachineCapabilities: null,
-                targetServerId: null,
+                targetServerId: 'server-a',
                 allowedTargetServerIds: ['server-a'],
             } as any);
 
@@ -705,7 +753,13 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
     });
 
     it('replaces the route to the created session before the follow-up send resolves', async () => {
-        const { useCreateNewSession, routerReplaceSpy, resolveFollowUp } = await setupHarness({
+        const {
+            useCreateNewSession,
+            routerReplaceSpy,
+            resolveFollowUp,
+            captured,
+            ensureSessionVisibleForMessageRouteSpy,
+        } = await setupHarness({
             deferFollowUp: true,
             spawnSuccess: true,
         });
@@ -768,10 +822,12 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
 
         expect(handleCreateSession).toBeTruthy();
         const createPromise = handleCreateSession!();
-        for (let attempt = 0; attempt < 40 && routerReplaceSpy.mock.calls.length === 0; attempt += 1) {
+        for (let attempt = 0; attempt < 200 && routerReplaceSpy.mock.calls.length === 0; attempt += 1) {
             await new Promise((resolve) => setTimeout(resolve, 25));
         }
 
+        expect(captured.value).not.toBeNull();
+        expect(ensureSessionVisibleForMessageRouteSpy).toHaveBeenCalled();
         expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
         expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
         expect(disableDraftPersistence).not.toHaveBeenCalled();
@@ -781,6 +837,109 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
 
         expect(clearNewSessionDraftMock).toHaveBeenCalledTimes(1);
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
+    });
+
+    it('waits to open a configured-backend session until route hydration can expose the first turn', async () => {
+        const {
+            useCreateNewSession,
+            routerReplaceSpy,
+            resolveFollowUp,
+            storageState,
+            ensureSessionVisibleForMessageRouteSpy,
+        } = await setupHarness({
+            deferFollowUp: true,
+            spawnSuccess: true,
+        });
+        ensureSessionVisibleForMessageRouteSpy
+            .mockImplementationOnce(async (sessionId) => ({
+                kind: 'retryable_failure',
+                sessionId,
+                cause: 'network',
+            }))
+            .mockImplementation(async (sessionId) => {
+                storageState.sessions[sessionId] = {
+                    id: sessionId,
+                    active: true,
+                };
+                return { kind: 'available', sessionId };
+            });
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = {
+            experiments: false,
+            lastUsedAgent: 'codex',
+        } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: routerReplaceSpy },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'customAcp',
+                backendTarget: {
+                    kind: 'backend',
+                    backendId: 'custom-kiro-preset',
+                    configuredBackendId: 'custom-kiro-preset',
+                    sourceKind: 'configured',
+                },
+                permissionMode: 'default' as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: 'launch the session',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-a',
+                allowedTargetServerIds: ['server-a'],
+            } as any);
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        await renderScreen(React.createElement(Test));
+
+        expect(handleCreateSession).toBeTruthy();
+        const createPromise = handleCreateSession!();
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+
+        expect(routerReplaceSpy).not.toHaveBeenCalled();
+        expect(storageState.upsertPendingMessage).not.toHaveBeenCalled();
+
+        resolveFollowUp();
+        await createPromise;
+
+        expect(storageState.markSessionOptimisticThinking).toHaveBeenCalledWith('session-created');
+        expect(storageState.upsertPendingMessage).toHaveBeenCalledWith(
+            'session-created',
+            expect.objectContaining({
+                text: 'launch the session',
+                displayText: 'launch the session',
+                deliveryStatus: 'queued',
+            }),
+        );
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-created?serverId=server-a', expect.anything());
     });
 
     it('writes codex backend mode into automation templates without the experimental shadow flag', async () => {

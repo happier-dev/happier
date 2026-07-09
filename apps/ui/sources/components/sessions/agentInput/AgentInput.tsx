@@ -1,47 +1,76 @@
-import { Ionicons, Octicons } from '@expo/vector-icons';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import {
+    Ionicons,
+    Octicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { View, Platform, useWindowDimensions, ViewStyle, Pressable, ScrollView } from 'react-native';
+import { View,
+    Platform,
+    useWindowDimensions,
+    ViewStyle,
+    Pressable,
+    ScrollView } from 'react-native';
 import { layout } from '@/components/ui/layout/layout';
-import { createBackdropNativeStyle, createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
-import { MultiTextInput, KeyPressEvent, type MultiTextInputSubmitBehavior } from '@/components/ui/forms/MultiTextInput';
+import { useComposerKeyboardLayoutContext } from '@/components/sessions/keyboardAvoidance';
+import { createBackdropNativeStyle,
+    createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
+import { MultiTextInput,
+    KeyPressEvent,
+    type MultiTextInputSubmitBehavior } from '@/components/ui/forms/MultiTextInput';
+import {
+    TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS,
+    isLargeTextInputValueLength,
+} from '@/components/ui/forms/largeTextInputPolicy';
 import { MULTI_TEXT_INPUT_BASE_FONT_SIZE } from '@/components/ui/forms/multiTextInputTypography';
 import { Typography } from '@/constants/Typography';
-import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import { findModelOptionForEffectiveModelId, getModelOptionsForSession, supportsFreeformModelSelectionForSession, type ModelOption } from '@/sync/domains/models/modelOptions';
+import type { PermissionMode,
+    ModelMode } from '@/sync/domains/permissions/permissionTypes';
+import { findModelOptionForEffectiveModelId,
+    getModelOptionsForSession,
+    supportsFreeformModelSelectionForSession,
+    type ModelOption } from '@/sync/domains/models/modelOptions';
 import { describeEffectiveModelMode } from '@/sync/domains/models/describeEffectiveModelMode';
 import { Modal } from '@/modal';
 import {
     getPermissionModeBadgeLabelForAgentType,
     getPermissionModeLabelForAgentType,
     getPermissionModeOptionsForSession,
-} from '@/sync/domains/permissions/permissionModeOptions';
+    } from '@/sync/domains/permissions/permissionModeOptions';
 import { describeEffectivePermissionMode } from '@/sync/domains/permissions/describeEffectivePermissionMode';
 import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
-import { hapticsLight, hapticsError } from '@/components/ui/theme/haptics';
+import { hapticsLight,
+    hapticsError } from '@/components/ui/theme/haptics';
 import { type ShakeInstance } from '@/components/ui/feedback/Shaker';
 import { StatusDot } from '@/components/ui/status/StatusDot';
-import { findActiveWord, type ActiveWord } from '@/components/autocomplete/findActiveWord';
+import { findActiveWord,
+    type ActiveWord } from '@/components/autocomplete/findActiveWord';
 import { useActiveSuggestions } from '@/components/autocomplete/useActiveSuggestions';
-import { TextInputState, MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
+import { TextInputState,
+    MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import { applySuggestion } from '@/components/autocomplete/applySuggestion';
-import { useCommandMenuKeyboard, type CommandMenuAnchor } from '@/components/ui/commandMenu';
+import { useCommandMenuKeyboard,
+    type CommandMenuAnchor } from '@/components/ui/commandMenu';
 import { useTextInputCaretRect } from '@/hooks/ui/textInputCaretRect';
 import { type ModelPickerProbeState } from '@/components/model/ModelPickerOverlay';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet,
+    useUnistyles } from 'react-native-unistyles';
 import {
     useSessionMessagesById,
     useSessionMessagesReducerState,
     useSessionMessagesVersion,
     useSessionTranscriptIds,
     useSetting,
-} from '@/sync/domains/state/storage';
+    } from '@/sync/domains/state/storage';
 import { useUserMessageHistory } from '@/hooks/session/useUserMessageHistory';
 import { Theme } from '@/theme';
 import { t } from '@/text';
 import { Metadata } from '@/sync/domains/state/storageTypes';
-import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
-import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
+import { getProfileEnvironmentVariables,
+    type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import { DEFAULT_AGENT_ID,
+    getAgentCore,
+    type AgentId,
+} from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
@@ -80,6 +109,7 @@ import { resolveSessionModeChipPresentation } from './controls/resolveSessionMod
 import { useAgentInputActionMenuControls } from './controls/useAgentInputActionMenuControls';
 import { useAgentInputCoreControlHandlers } from './controls/useAgentInputCoreControlHandlers';
 import { useRenderedAgentInputControlRows } from './controls/useRenderedAgentInputControlRows';
+import { recordLargeTextInputDiagnostic } from '@/utils/system/userInteractionDiagnostics';
 import { buildAgentInputSelectionOverlayViewModel } from './selection/buildAgentInputSelectionOverlayViewModel';
 import { useAgentInputSelectionAnchors } from './selection/useAgentInputSelectionAnchors';
 import { useAgentInputSelectionOverlayController } from './selection/useAgentInputSelectionOverlayController';
@@ -93,7 +123,9 @@ import {
 import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { Text } from '@/components/ui/text/Text';
+import { buildGlassCastShadowStyle } from '@/shadowElevation';
 import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
+import { isGlassComposerSurface } from './composerSurfaceStyle';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
 import { resolvePermissionToolCallLocations } from '@/utils/sessions/permissions/resolvePermissionToolCallLocations';
 import { resolveApprovalToolCallLocations } from '@/utils/sessions/approvals/resolveApprovalToolCallLocations';
@@ -104,7 +136,7 @@ import {
 import { buildSessionMessageRouteId } from '@/sync/domains/messages/messageRouteIds';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { useLocalSetting } from '@/sync/store/hooks';
-import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1, SessionContextUsageSnapshotV1 } from '@happier-dev/protocol';
 import { useWebFileDropZone } from '@/hooks/ui/useWebFileDropZone';
 import { WebDropTargetView } from '@/components/workspaces/files/repositoryTree/WebDropTargetView';
 import { extractWebAttachmentFilesFromDataTransfer } from '@/utils/files/webAttachmentDataTransfer';
@@ -137,6 +169,7 @@ import {
     buildStructuredInputMetaOverrides,
     createStructuredInputMentionFromSuggestion,
     reconcileStructuredInputMentionsWithText,
+    reconcileStructuredInputMentionsWithTextChange,
     type ComposerStructuredInputMention,
 } from './structuredInputMentions';
 import {
@@ -165,6 +198,9 @@ const AGENT_INPUT_CONTAINER_VERTICAL_PADDING = 4;
 const AGENT_INPUT_CONTAINER_VERTICAL_CHROME_HEIGHT = AGENT_INPUT_CONTAINER_VERTICAL_PADDING * 2;
 const AGENT_INPUT_PANEL_PADDING_TOP = 2;
 const AGENT_INPUT_PANEL_PADDING_BOTTOM = 8;
+// Composer panel corner radius. Shared by the panel surface and its cast-shadow
+// wrapper so the drop shadow follows the same rounded shape.
+const AGENT_INPUT_PANEL_RADIUS = Platform.select({ default: 16, android: 20 });
 const AGENT_INPUT_PANEL_VERTICAL_CHROME_HEIGHT = AGENT_INPUT_PANEL_PADDING_TOP + AGENT_INPUT_PANEL_PADDING_BOTTOM;
 const AGENT_INPUT_VARIABLE_SECTION_CONTENT_PADDING_BOTTOM = 4;
 
@@ -192,6 +228,23 @@ export type AgentInputAutocompleteSelectionHandler = (args: Readonly<{
 type ProgrammaticHistoryInputState = Readonly<{
     state: TextInputState;
 }>;
+
+type AgentInputPendingParentTextSync = {
+    text: string;
+    hasFlushed: boolean;
+};
+
+function shouldDeferAgentInputParentTextSync(
+    parentText: string,
+    nextText: string,
+): boolean {
+    if (!isLargeTextInputValueLength(nextText.length)) {
+        return false;
+    }
+    const parentStatus = resolveLiveInputTextStatus(parentText);
+    const nextStatus = resolveLiveInputTextStatus(nextText);
+    return parentStatus.hasText === nextStatus.hasText;
+}
 
 function resolveHistoryKeyInputState(event: KeyPressEvent, fallback: TextInputState): TextInputState {
     return event.inputState ?? fallback;
@@ -286,6 +339,8 @@ interface AgentInputProps {
         isPulsing?: boolean;
     };
     providerUsageGauge?: ConnectedServiceQuotaGaugeViewModel | null;
+    onProviderUsageRecoveryCreditPress?: () => void;
+    providerUsageRecoveryCreditPending?: boolean;
     statusBadges?: ReadonlyArray<AgentInputStatusBadgeDescriptor>;
     activeStatusBadgeKey?: string | null;
     onActiveStatusBadgeKeyChange?: (key: string | null) => void;
@@ -299,6 +354,8 @@ interface AgentInputProps {
         cacheRead: number;
         contextSize: number;
         contextWindowTokens?: number;
+        contextSnapshot?: SessionContextUsageSnapshotV1;
+        contextSnapshotStale?: boolean;
     };
     alwaysShowContextSize?: boolean;
     onFileViewerPress?: () => void;
@@ -362,7 +419,6 @@ interface AgentInputProps {
     hasSendableAttachments?: boolean;
     permissionRequests?: ReadonlyArray<PendingPermissionRequest>;
     approvalRequests?: ReadonlyArray<OpenApprovalArtifactForSession>;
-    userActionRequests?: ReadonlyArray<PendingPermissionRequest>;
     canApprovePermissions?: boolean;
     permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
 }
@@ -380,8 +436,7 @@ const AgentInputAttentionRequestsWithLocations = React.memo(function AgentInputA
     const committedMessagesReducerState = useSessionMessagesReducerState(props.sessionId);
     const permissionLocationVersion = useSessionMessagesVersion(
         props.sessionId,
-        props.permissionRequests.length > 0 ||
-            (props.approvalRequests?.length ?? 0) > 0,
+        props.permissionRequests.length > 0 || (props.approvalRequests?.length ?? 0) > 0,
     );
 
     const permissionLocationsById = React.useMemo(() => {
@@ -455,9 +510,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         width: '100%',
         position: 'relative',
     },
+    // Default (non-glass) composer surface — the original styling: standard input
+    // background + hairline surface border, no drop shadow.
     unifiedPanel: {
         backgroundColor: theme.colors.input.background,
-        borderRadius: Platform.select({ default: 16, android: 20 }),
+        borderRadius: AGENT_INPUT_PANEL_RADIUS,
         ...resolveThemeSurfaceBorderStyle({
             borderColor: theme.colors.border.surface,
             highlightColor: theme.colors.effect.surfaceHighlight,
@@ -466,6 +523,31 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingTop: AGENT_INPUT_PANEL_PADDING_TOP,
         paddingBottom: AGENT_INPUT_PANEL_PADDING_BOTTOM,
         paddingHorizontal: 8,
+    },
+    // Opt-in "glass" composer: the Liquid Glass tab bar's solid look — `surface.base`
+    // fill, the glass rim, and a top inset shadow. Fully redefines the border so the
+    // standard hairline + highlight don't leak through. The cast shadow lives on the
+    // `panelShadow` wrapper (glass mode only).
+    unifiedPanelGlass: {
+        backgroundColor: theme.colors.glass.composerSurface,
+        // Light: a touch thicker rim so the edge reads against the white surface.
+        borderWidth: theme.dark ? 1.5 : 2,
+        borderColor: theme.colors.glass.border,
+        borderTopWidth: theme.dark ? 1.5 : 2,
+        borderTopColor: theme.colors.glass.border,
+        // Composer-only fainter inner shadow (the other glass surfaces keep `glass.innerShadow`).
+        boxShadow: theme.colors.glass.composerInnerShadow,
+    },
+    // Cast-shadow wrapper (un-clipped) for the glass composer — the two-layer pattern
+    // the tab bar uses so the soft drop shadow renders around the clipped surface.
+    // `buildGlassCastShadowStyle` uses native shadow* on iOS and the cross-platform
+    // boxShadow on Android/web (never Android `elevation`), damped further on web.
+    panelShadow: {
+        borderRadius: AGENT_INPUT_PANEL_RADIUS,
+    },
+    // Match the cockpit tab bar that sits beside the composer: same level, softened.
+    panelShadowGlass: {
+        ...buildGlassCastShadowStyle(theme.colors.shadowLevels[4], theme.colors.glass.castShadow, true),
     },
     inputContainer: {
         flexDirection: 'row',
@@ -855,6 +937,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         theme.colors.overlay.scrimWizard,
         uiBackdropBlurEnabled,
     ]);
+    const isGlassComposer = isGlassComposerSurface({ setting: useSetting('composerSurfaceStyle') });
     const keyboardShortcutsV2Enabled = useSetting('keyboardShortcutsV2Enabled') === true;
     const keyboardSingleKeyShortcutsEnabled = useSetting('keyboardSingleKeyShortcutsEnabled') === true;
     const keyboardShortcutOverridesV1 = useSetting('keyboardShortcutOverridesV1') ?? {};
@@ -936,6 +1019,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const inputExpansionCollapsedMaxHeight = normalizeAgentInputExpansionCollapsedMaxHeight(
         props.inputExpansion?.collapsedMaxHeight,
     );
+    const handleInputContentHeightChange = React.useCallback((height: number) => {
+        updateNullableLayoutHeight(setInputContentHeightPx, height);
+    }, []);
     const hasInputExpansion = Boolean(props.inputExpansion);
     React.useEffect(() => {
         setInputExpansionToggleVisible((currentVisible) => resolveAgentInputExpansionToggleVisible({
@@ -990,7 +1076,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         }
     }, [hasComposerAttentionRequests]);
 
-    const agentId: AgentId = resolveAgentIdFromFlavor(props.metadata?.flavor) ?? DEFAULT_AGENT_ID;
+    const agentId: AgentId = resolveAgentIdFromSessionMetadata(props.metadata) ?? DEFAULT_AGENT_ID;
     const lastNonEmptySessionModelOptionsRef = React.useRef<readonly ModelOption[] | null>(null);
     React.useEffect(() => {
         lastNonEmptySessionModelOptionsRef.current = null;
@@ -1087,6 +1173,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return getContextWarning({
             contextSize: props.usageData?.contextSize ?? 0,
             contextWindowTokens,
+            contextSnapshot: props.usageData?.contextSnapshot,
+            contextSnapshotStale: props.usageData?.contextSnapshotStale,
             alwaysShow,
             theme,
         });
@@ -1106,18 +1194,82 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     });
 
     const inputRef = React.useRef<MultiTextInputHandle>(null);
+    const lastControlledValueRef = React.useRef(props.value);
+    const onChangeTextRef = React.useRef(props.onChangeText);
+    const deferredParentTextSyncRef = React.useRef<AgentInputPendingParentTextSync | null>(null);
+    const deferredParentTextSyncTimerRef = React.useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
     const sendActionDisabled = Boolean(props.disabled || props.isSendDisabled || props.isSending);
     const enterToSendEnabled = Platform.OS === 'web'
         ? agentInputEnterToSend === true
         : agentInputEnterToSendNative === true;
 
+    React.useEffect(() => {
+        onChangeTextRef.current = props.onChangeText;
+    }, [props.onChangeText]);
+
+    const clearDeferredParentTextSync = React.useCallback(() => {
+        if (deferredParentTextSyncTimerRef.current !== null) {
+            globalThis.clearTimeout(deferredParentTextSyncTimerRef.current);
+            deferredParentTextSyncTimerRef.current = null;
+        }
+        deferredParentTextSyncRef.current = null;
+    }, []);
+
+    const flushDeferredParentTextSync = React.useCallback(() => {
+        const pending = deferredParentTextSyncRef.current;
+        if (!pending) return null;
+        if (deferredParentTextSyncTimerRef.current !== null) {
+            globalThis.clearTimeout(deferredParentTextSyncTimerRef.current);
+            deferredParentTextSyncTimerRef.current = null;
+        }
+        if (!pending.hasFlushed) {
+            pending.hasFlushed = true;
+            onChangeTextRef.current(pending.text);
+        }
+        return pending.text;
+    }, []);
+
+    const scheduleDeferredParentTextSync = React.useCallback((text: string) => {
+        deferredParentTextSyncRef.current = {
+            text,
+            hasFlushed: false,
+        };
+        if (deferredParentTextSyncTimerRef.current !== null) {
+            globalThis.clearTimeout(deferredParentTextSyncTimerRef.current);
+        }
+        deferredParentTextSyncTimerRef.current = globalThis.setTimeout(() => {
+            deferredParentTextSyncTimerRef.current = null;
+            const pending = deferredParentTextSyncRef.current;
+            if (!pending || pending.hasFlushed) return;
+            pending.hasFlushed = true;
+            onChangeTextRef.current(pending.text);
+        }, TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS);
+    }, []);
+
+    React.useEffect(() => () => {
+        if (deferredParentTextSyncTimerRef.current !== null) {
+            globalThis.clearTimeout(deferredParentTextSyncTimerRef.current);
+            deferredParentTextSyncTimerRef.current = null;
+        }
+    }, []);
+
     const handleSend = React.useCallback((options?: AgentInputSendIntentOptions) => {
         if (sendActionDisabled) {
             return;
         }
-        const liveInputText = inputRef.current?.flushPendingTextChange?.()
+        const liveInputText = flushDeferredParentTextSync()
+            ?? inputRef.current?.flushPendingTextChange?.()
             ?? inputRef.current?.getText?.()
             ?? inputStateRef.current.text;
+        recordLargeTextInputDiagnostic({
+            phase: 'send-flush',
+            platform: Platform.OS,
+            surface: 'agentInput',
+            textLength: liveInputText.length,
+            selection: inputStateRef.current.selection,
+            valueLength: props.value.length,
+            liveTextLength: liveInputText.length,
+        });
         if (inputStateRef.current.text !== liveInputText) {
             const nextState = {
                 text: liveInputText,
@@ -1152,6 +1304,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         );
     }, [
         messageHistory,
+        flushDeferredParentTextSync,
         props.onSend,
         props.sessionId,
         props.value,
@@ -1188,6 +1341,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const abortConfirmationExpiresAtRef = React.useRef(0);
     const shakerRef = React.useRef<ShakeInstance>(null);
     const [isInputFocused, setIsInputFocused] = React.useState(false);
+    const composerKeyboardLayoutForFocus = useComposerKeyboardLayoutContext();
 
     // Forward ref to the MultiTextInput
     React.useImperativeHandle(ref, () => inputRef.current!, []);
@@ -1203,7 +1357,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         findActiveWord(initialInputState.text, initialInputState.selection, props.autocompletePrefixes)
     ));
     const [hasAutocompleteTextInteraction, setHasAutocompleteTextInteraction] = React.useState(false);
-    const lastControlledValueRef = React.useRef(props.value);
     const inputScopeKeyRef = React.useRef<string | null>(props.sessionId ?? null);
     const [uncontrolledStructuredInputMentions, setUncontrolledStructuredInputMentions] = React.useState<ComposerStructuredInputMention[]>([]);
     const structuredInputMentions = props.structuredInputMentions ?? uncontrolledStructuredInputMentions;
@@ -1253,7 +1406,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     // Handle combined text and selection state changes
     const handleInputStateChange = React.useCallback((newState: TextInputState) => {
-        const previousText = inputStateRef.current.text;
+        const previousState = inputStateRef.current;
+        const previousText = previousState.text;
         const historyAppliedInputState = historyAppliedInputStateRef.current;
         const isProgrammaticHistoryApply =
             historyAppliedInputState !== null
@@ -1263,9 +1417,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             historyAppliedInputStateRef.current = null;
             messageHistory.pause(newState.text);
         }
-        updateStructuredInputMentions((current) => reconcileStructuredInputMentionsWithText({
+        updateStructuredInputMentions((current) => reconcileStructuredInputMentionsWithTextChange({
             previousText,
             nextText: newState.text,
+            previousSelection: previousState.selection,
             mentions: current,
         }));
         if (newState.text !== previousText && !isProgrammaticHistoryApply) {
@@ -1288,15 +1443,20 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     React.useEffect(() => {
         if (props.value === lastControlledValueRef.current) return;
+        clearDeferredParentTextSync();
         lastControlledValueRef.current = props.value;
 
         const current = inputStateRef.current;
         if (current.text === props.value) return;
 
-        const nextSelection = {
-            start: Math.min(current.selection.start, props.value.length),
-            end: Math.min(current.selection.end, props.value.length),
-        };
+        const wasSelectionAtCurrentEnd = current.selection.start === current.text.length
+            && current.selection.end === current.text.length;
+        const nextSelection = wasSelectionAtCurrentEnd
+            ? { start: props.value.length, end: props.value.length }
+            : {
+                start: Math.min(current.selection.start, props.value.length),
+                end: Math.min(current.selection.end, props.value.length),
+            };
         const nextState = {
             text: props.value,
             selection: nextSelection,
@@ -1315,7 +1475,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             setLiveTextStatus(nextStatus);
         }
         updateInputSelectionState(nextSelection);
-    }, [props.value, updateActiveWordState, updateInputSelectionState, updateStructuredInputMentions]);
+    }, [clearDeferredParentTextSync, props.value, updateActiveWordState, updateInputSelectionState, updateStructuredInputMentions]);
 
     React.useEffect(() => {
         updateActiveWordState(inputStateRef.current);
@@ -1355,12 +1515,27 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const handleComposerTextChange = React.useCallback((text: string) => {
         setHasAutocompleteTextInteraction(true);
-        props.onChangeText(text);
-    }, [props.onChangeText]);
+        const isProgrammaticHistoryApply = historyAppliedInputStateRef.current?.state.text === text;
+        if (isProgrammaticHistoryApply || !shouldDeferAgentInputParentTextSync(lastControlledValueRef.current, text)) {
+            clearDeferredParentTextSync();
+            props.onChangeText(text);
+            return;
+        }
+        scheduleDeferredParentTextSync(text);
+    }, [clearDeferredParentTextSync, props.onChangeText, scheduleDeferredParentTextSync]);
 
     React.useEffect(() => {
         const selection = props.inputPersistence?.initialSelection;
         if (!selection) return;
+        const liveTextLength = inputRef.current?.getText?.().length ?? props.value.length;
+        recordLargeTextInputDiagnostic({
+            phase: 'selection-restore',
+            platform: Platform.OS,
+            surface: 'agentInput',
+            textLength: liveTextLength,
+            selection,
+            valueLength: props.value.length,
+        });
         inputRef.current?.setSelection(selection);
     }, [props.inputPersistence?.restoreToken]);
 
@@ -1371,13 +1546,27 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [props.value, updateStructuredInputMentions]);
 
     const handleComposerFocus = React.useCallback(() => {
+        composerKeyboardLayoutForFocus?.setComposerInputFocused?.(true);
         setIsInputFocused(true);
+        const focusedActiveWord = findActiveWord(
+            inputStateRef.current.text,
+            inputStateRef.current.selection,
+            props.autocompletePrefixes,
+        );
+        if (focusedActiveWord) {
+            setActiveWordState((currentActiveWord) => (
+                areActiveWordsEqual(currentActiveWord, focusedActiveWord) ? currentActiveWord : focusedActiveWord
+            ));
+            setHasAutocompleteTextInteraction(true);
+        }
         messageHistory.warmup();
-    }, [messageHistory]);
+    }, [composerKeyboardLayoutForFocus, messageHistory, props.autocompletePrefixes]);
 
     const handleComposerBlur = React.useCallback(() => {
+        flushDeferredParentTextSync();
+        composerKeyboardLayoutForFocus?.setComposerInputFocused?.(false);
         setIsInputFocused(false);
-    }, []);
+    }, [composerKeyboardLayoutForFocus, flushDeferredParentTextSync]);
 
     const applyHistoryInputText = React.useCallback((next: string) => {
         const nextState = { text: next, selection: { start: next.length, end: next.length } };
@@ -2035,6 +2224,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         closeSelectionOverlay,
         toggleSelectionOverlay,
     });
+    const engineChipLabel = React.useMemo(() => {
+        return hasAgentPickerOptions ? effectiveModelLabel : resolvedAgentLabel;
+    }, [effectiveModelLabel, hasAgentPickerOptions, resolvedAgentLabel]);
+    const engineChipAgentId = props.agentType ?? agentId;
     const hasRecipient = React.useMemo(() => {
         return (props.extraActionChips ?? []).some((chip) => chip.controlId === 'recipient');
     }, [props.extraActionChips]);
@@ -2111,8 +2304,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     ]);
 
     const actionBarFadeColor = React.useMemo(() => {
-        return theme.colors.input.background;
-    }, [theme.colors.input.background]);
+        return isGlassComposer ? theme.colors.surface.base : theme.colors.input.background;
+    }, [isGlassComposer, theme.colors.surface.base, theme.colors.input.background]);
 
     // Handle abort button press
     const handleAbortPress = React.useCallback(async () => {
@@ -2200,11 +2393,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         actionBarIsCollapsed,
         hasAnyActions,
         tint: theme.colors.composer.chipTint,
-        agentId,
+        agentId: engineChipAgentId,
         profileLabel,
         profileIcon,
         envVarsCount: props.envVarsCount,
         agentLabel: resolvedAgentLabel,
+        engineLabel: engineChipLabel,
         machineName: props.machineName,
         currentPath: props.currentPath,
         resumeSessionId: props.resumeSessionId,
@@ -2277,7 +2471,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         onEnvVarsPress: handleEnvVarsPress,
         hasAgentSelection: hasAgent,
         agentChipAnchorRef,
+        agentId: engineChipAgentId,
         agentLabel: resolvedAgentLabel,
+        engineLabel: engineChipLabel,
         onAgentPress: handleAgentPress,
         machineChipAnchorRef,
         onMachinePress: handleMachinePress,
@@ -2450,6 +2646,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         );
     };
 
+    const deferredParentTextSync = deferredParentTextSyncRef.current;
+    const renderedComposerInputValue = deferredParentTextSync && props.value === lastControlledValueRef.current
+        ? deferredParentTextSync.text
+        : props.value;
+
     return (
         <SyncPerformanceReactProfiler id="sessions.agentInput">
             <View
@@ -2586,6 +2787,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             {props.providerUsageGauge ? (
                                 <AgentInputProviderUsageBadge
                                     viewModel={props.providerUsageGauge}
+                                    onRecoveryCreditPress={props.onProviderUsageRecoveryCreditPress}
+                                    recoveryCreditActionPending={props.providerUsageRecoveryCreditPending}
                                 />
                             ) : null}
                             {props.statusBadges?.map(({ key, renderPopover, onPress, ...badge }) => (
@@ -2632,9 +2835,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 })}
 
                 {/* Box 2: Action Area (Input + Send) */}
+                <View style={[styles.panelShadow, isGlassComposer ? styles.panelShadowGlass : null]}>
                 <WebDropTargetView
                     style={[
                         styles.unifiedPanel,
+                        isGlassComposer ? styles.unifiedPanelGlass : null,
                         props.panelStyle,
                         typeof hostPanelMaxHeight === 'number' ? { maxHeight: hostPanelMaxHeight } : null,
                     ]}
@@ -2692,7 +2897,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         ref={inputRef}
                                         testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionInput : AGENT_INPUT_TEST_IDS.newSessionInput}
                                         textStyle={props.sessionId ? styles.sessionInputText : styles.newSessionInputText}
-                                        value={props.value}
+                                        value={renderedComposerInputValue}
                                         paddingTop={Platform.OS === 'web' ? 10 : 8}
                                         paddingBottom={Platform.OS === 'web' ? 10 : 8}
                                         paddingRight={shouldReserveInputExpansionToggleSpace ? INPUT_EXPANSION_TOGGLE_INPUT_PADDING_RIGHT : undefined}
@@ -2710,9 +2915,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         maxHeight={resolvedInputMaxHeight}
                                         editable={!props.disabled}
                                         onFilesPasted={props.onAttachmentsAdded}
-                                        onContentHeightChange={(height) => {
-                                            updateNullableLayoutHeight(setInputContentHeightPx, height);
-                                        }}
+                                        onContentHeightChange={handleInputContentHeightChange}
                                     />
                                     {props.inputExpansion && shouldShowInputExpansionToggle ? (
                                         <AgentInputExpansionToggle
@@ -2868,7 +3071,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         ref={inputRef}
                                         testID={props.sessionId ? AGENT_INPUT_TEST_IDS.sessionInput : AGENT_INPUT_TEST_IDS.newSessionInput}
                                         textStyle={props.sessionId ? styles.sessionInputText : styles.newSessionInputText}
-                                        value={props.value}
+                                        value={renderedComposerInputValue}
                                         paddingTop={8}
                                         paddingBottom={8}
                                         paddingRight={shouldReserveInputExpansionToggleSpace ? INPUT_EXPANSION_TOGGLE_INPUT_PADDING_RIGHT : undefined}
@@ -2886,9 +3089,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         maxHeight={resolvedInputMaxHeight}
                                         editable={!props.disabled}
                                         onFilesPasted={props.onAttachmentsAdded}
-                                        onContentHeightChange={(height) => {
-                                            updateNullableLayoutHeight(setInputContentHeightPx, height);
-                                        }}
+                                        onContentHeightChange={handleInputContentHeightChange}
                                     />
                                     {props.inputExpansion && shouldShowInputExpansionToggle ? (
                                         <AgentInputExpansionToggle
@@ -3021,6 +3222,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         </View>
                     )}
                 </WebDropTargetView>
+                </View>
             </View>
             </View>
         </SyncPerformanceReactProfiler>

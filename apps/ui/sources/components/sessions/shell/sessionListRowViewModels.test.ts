@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { SESSION_OPTIMISTIC_PENDING_THINKING_MS } from '@/sync/domains/session/attention/runtimePresentation';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import { buildSessionListRowViewModels } from './sessionListRowViewModels';
 
 function createRenderableSession(id: string): SessionListRenderableSession {
@@ -27,6 +29,16 @@ function createRenderableSession(id: string): SessionListRenderableSession {
     };
 }
 
+type SessionListSessionIndexItem = Extract<SessionListIndexItem, { type: 'session' }>;
+
+function rowKey(item: Pick<SessionListSessionIndexItem, 'serverId' | 'sessionId'>): string {
+    const key = buildSessionListServerScopedRowKey(item.serverId, item.sessionId);
+    if (!key) {
+        throw new Error(`Expected a session-list row key for ${item.serverId}:${item.sessionId}`);
+    }
+    return key;
+}
+
 describe('buildSessionListRowViewModels', () => {
     it('keeps current-session selection derived only from selectedSessionId', () => {
         const firstItem = {
@@ -46,8 +58,8 @@ describe('buildSessionListRowViewModels', () => {
             listItems: [firstItem, secondItem],
             reachableSessionDisplayById: new Map(),
             rowRenderableByKey: new Map([
-                ['server_a:sess_selected_current', createRenderableSession('sess_selected_current')],
-                ['server_a:sess_not_current', createRenderableSession('sess_not_current')],
+                [rowKey(firstItem), createRenderableSession('sess_selected_current')],
+                [rowKey(secondItem), createRenderableSession('sess_not_current')],
             ]),
             relativeNowMs: 1000,
             runtimeNowMs: 1000,
@@ -82,7 +94,7 @@ describe('buildSessionListRowViewModels', () => {
         const first = buildSessionListRowViewModels({
             listItems: [item],
             reachableSessionDisplayById: new Map(),
-            rowRenderableByKey: new Map([['server_a:sess_row_vm_stability', session]]),
+            rowRenderableByKey: new Map([[rowKey(item), session]]),
             relativeNowMs: 1000,
             runtimeNowMs: 1000,
             hasMultipleMachines: false,
@@ -100,7 +112,7 @@ describe('buildSessionListRowViewModels', () => {
         const second = buildSessionListRowViewModels({
             listItems: [{ ...item }],
             reachableSessionDisplayById: new Map(),
-            rowRenderableByKey: new Map([['server_a:sess_row_vm_stability', equivalentSession]]),
+            rowRenderableByKey: new Map([[rowKey(item), equivalentSession]]),
             relativeNowMs: 1000,
             runtimeNowMs: 1000,
             hasMultipleMachines: false,
@@ -128,7 +140,7 @@ describe('buildSessionListRowViewModels', () => {
         const rows = buildSessionListRowViewModels({
             listItems: [item],
             reachableSessionDisplayById: new Map(),
-            rowRenderableByKey: new Map([['server_a:sess_row_vm_working', {
+            rowRenderableByKey: new Map([[rowKey(item), {
                 ...session,
                 active: true,
                 thinking: true,
@@ -162,7 +174,7 @@ describe('buildSessionListRowViewModels', () => {
         const rows = buildSessionListRowViewModels({
             listItems: [item],
             reachableSessionDisplayById: new Map(),
-            rowRenderableByKey: new Map([['server_a:sess_row_vm_static_working', {
+            rowRenderableByKey: new Map([[rowKey(item), {
                 ...session,
                 active: true,
                 thinking: true,
@@ -181,5 +193,41 @@ describe('buildSessionListRowViewModels', () => {
 
         expect(rows[0]?.sessionStatus?.state).toBe('thinking');
         expect(rows[0]?.sessionStatus?.statusText).toBe(t('status.working'));
+    });
+
+    it('uses the optimistic pending first-turn expiration for list-row freshness refreshes', () => {
+        const item = {
+            type: 'session',
+            sessionId: 'sess_row_vm_pending_first_turn',
+            serverId: 'server_a',
+            storageKind: 'persisted',
+            groupKey: 'group-a',
+            groupKind: 'date',
+        } satisfies SessionListIndexItem;
+        const nowMs = 1_000_000;
+        const optimisticThinkingAt = nowMs - 1_000;
+        const session = createRenderableSession(item.sessionId);
+        const rows = buildSessionListRowViewModels({
+            listItems: [item],
+            reachableSessionDisplayById: new Map(),
+            rowRenderableByKey: new Map([[rowKey(item), {
+                ...session,
+                active: true,
+                optimisticThinkingAt,
+                pendingCount: 1,
+            }]]),
+            relativeNowMs: nowMs,
+            runtimeNowMs: nowMs,
+            workingTextMode: 'static',
+            hasMultipleMachines: false,
+            pinnedSessionKeys: new Set(),
+            sessionTags: {},
+            selectedSessionId: null,
+            showServerBadge: false,
+            showPinnedServerBadge: false,
+        });
+
+        expect(rows[0]?.sessionStatus?.state).toBe('thinking');
+        expect(rows[0]?.nextRuntimeFreshnessAtMs).toBe(optimisticThinkingAt + SESSION_OPTIMISTIC_PENDING_THINKING_MS);
     });
 });

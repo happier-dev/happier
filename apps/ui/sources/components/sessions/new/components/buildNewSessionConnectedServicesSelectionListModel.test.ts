@@ -28,7 +28,10 @@ function buildModel(overrides: Partial<Parameters<typeof buildNewSessionConnecte
         quotaBadgesByKey: {},
         setBindingForService: vi.fn(),
         onOpenSettings: vi.fn(),
-        translate: (key) => key,
+        translate: ((key: string, params?: { profileId?: string }) =>
+            key === 'connectedServices.detail.groups.activeMember' && params?.profileId
+                ? `Active ${params.profileId}`
+                : key) as Parameters<typeof buildNewSessionConnectedServicesSelectionListModel>[0]['translate'],
         resolveServiceTitle: (serviceId) => `service:${serviceId}`,
         renderSelectionIcon: ({ selected }) => selected ? 'selected-icon' : 'unselected-icon',
         renderSettingsIcon: () => 'settings-icon',
@@ -81,7 +84,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         expect(groupOption).toEqual(expect.objectContaining({
             id: createConnectedServiceGroupOptionId('anthropic', 'team'),
             label: 'Team',
-            subtitle: 'connectedServices.authModal.groupSubtitle',
+            subtitle: 'Active work@example.com · work',
         }));
 
         groupOption?.onSelect?.();
@@ -199,6 +202,33 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         }));
         expect(setBindingForService).not.toHaveBeenCalled();
         expect(onOpenSettings).toHaveBeenCalledWith('anthropic');
+    });
+
+    it('keeps retryable refresh-failure profiles selectable instead of routing them to reconnect', () => {
+        const setBindingForService = vi.fn();
+        const onOpenSettings = vi.fn();
+        const model = buildModel({
+            profileOptionsByServiceId: {
+                anthropic: [{ profileId: 'retryable', status: 'refresh_failed_retryable', providerEmail: 'retryable@example.com' }],
+            },
+            setBindingForService,
+            onOpenSettings,
+        });
+
+        const accountOption = firstStaticSection(model).options.find((option) =>
+            option.id === createConnectedServiceOptionId('anthropic', 'retryable')
+        );
+        accountOption?.onSelect?.();
+
+        expect(accountOption).toEqual(expect.objectContaining({
+            label: 'retryable@example.com',
+        }));
+        expect(setBindingForService).toHaveBeenCalledWith('anthropic', {
+            source: 'connected',
+            selection: 'profile',
+            profileId: 'retryable',
+        });
+        expect(onOpenSettings).not.toHaveBeenCalled();
     });
 
     it('routes connected accounts that need reauth through the reconnect callback when available', () => {

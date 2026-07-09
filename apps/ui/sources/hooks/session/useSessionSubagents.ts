@@ -95,9 +95,12 @@ export function useSessionSubagents(params: Readonly<{
 }> {
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const normalizedSessionId = React.useMemo(() => normalizeSessionId(params.sessionId), [params.sessionId]);
-    const sessionFlavor = typeof (params.session as any)?.metadata?.flavor === 'string'
-        ? String((params.session as any).metadata.flavor)
-        : null;
+    const sessionMetadata = params.session?.metadata ?? null;
+    const sessionMetadataSignature = React.useMemo(
+        () => buildStableJsonSignature(sessionMetadata),
+        [sessionMetadata],
+    );
+    const stableSessionMetadata = useStableValueBySignature(sessionMetadata, sessionMetadataSignature);
     const subagentMessagesSignature = React.useMemo(
         () => buildSessionSubagentMessagesSignature(params.messages),
         [params.messages],
@@ -131,7 +134,7 @@ export function useSessionSubagents(params: Readonly<{
         if (!params.session) return [] as const;
         const derivedSubagents = deriveSessionSubagents({
             session: {
-                metadata: sessionFlavor ? { flavor: sessionFlavor } : {},
+                metadata: stableSessionMetadata,
             },
             messages: subagentMessages,
             activeExecutionRuns: runningExecutionRuns,
@@ -146,7 +149,7 @@ export function useSessionSubagents(params: Readonly<{
         externalSessionRuntime.status?.runnerActive,
         params.session != null,
         runningExecutionRuns,
-        sessionFlavor,
+        stableSessionMetadata,
         subagentMessages,
     ]);
     const subagentsSignature = React.useMemo(

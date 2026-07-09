@@ -72,9 +72,13 @@ const storageListeners = new Set<() => void>();
 function getStorageStateForTest() {
     return {
         sessions: sessionState ? { s1: sessionState } : {},
+        machines: {},
+        sessionMessages: {},
+        sessionPending: {},
+        sessionListRenderables: {},
         settings: {
-            sessionMessageSendMode: 'direct',
-            sessionBusySteerSendPolicy: 'steerImmediately',
+            sessionMessageSendMode: 'agent_queue',
+            sessionBusySteerSendPolicy: 'steer_immediately',
         },
         concurrentSessionListCacheByServerId: concurrentSessionListCacheByServerIdState,
     };
@@ -408,6 +412,8 @@ vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
 }));
 vi.mock('@/agents/runtime/resumeCapabilities', () => ({
     canResumeSessionWithOptions: () => true,
+    canContinueSessionWithFreshSpawn: () => false,
+    canResumeOrContinueSessionWithOptions: () => true,
     getAgentVendorResumeId: () => '',
 }));
 vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
@@ -498,6 +504,7 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
             updatedAt: 100,
             presence: 'online',
             active: true,
+            agentStateVersion: 1,
             accessLevel: 'edit',
             metadata: { machineId: 'm1', flavor: 'codex', version: '0.0.0', path: '/tmp', homeDir: '/tmp' },
             agentState: {},
@@ -961,6 +968,35 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         expect(chatHeaderRenderSpy).not.toHaveBeenCalled();
         expect(agentInputRenderSpy).not.toHaveBeenCalled();
         expect(chatListRenderSpy).toHaveBeenCalled();
+
+        await screen.unmount();
+    });
+
+    it('keeps the session shell and composer stable for seq-only streaming updates', async () => {
+        const screen = await renderSessionView();
+
+        await flushHookEffects({ cycles: 5, turns: 5 });
+        appPaneScopeHostRenderSpy.mockClear();
+        chatHeaderRenderSpy.mockClear();
+        agentInputRenderSpy.mockClear();
+        chatListRenderSpy.mockClear();
+
+        await act(async () => {
+            sessionState = {
+                ...sessionState,
+                seq: 26,
+                updatedAt: 200,
+                activeAt: 200,
+            };
+            emitStorageChangeForTest();
+            await Promise.resolve();
+        });
+        await flushHookEffects({ cycles: 2, turns: 1 });
+
+        expect(appPaneScopeHostRenderSpy).not.toHaveBeenCalled();
+        expect(chatHeaderRenderSpy).not.toHaveBeenCalled();
+        expect(agentInputRenderSpy).not.toHaveBeenCalled();
+        expect(chatListRenderSpy).not.toHaveBeenCalled();
 
         await screen.unmount();
     });

@@ -10,6 +10,7 @@ import { installSessionGitPaneCommonModuleMocks } from './sessionGitPaneTestHelp
 const commitTabRenderSpy = vi.hoisted(() => vi.fn());
 const bulkSelectAllSpy = vi.hoisted(() => vi.fn());
 const bulkSelectFilesSpy = vi.hoisted(() => vi.fn());
+const commitSelectionInputSpy = vi.hoisted(() => vi.fn());
 
 function makeChangedFilesData(overrides: Record<string, unknown> = {}) {
     return {
@@ -68,20 +69,28 @@ vi.mock('@/sync/domains/session/changes/hooks/useDerivedSessionChangeSet', () =>
 }));
 
 vi.mock('./useSessionRightPanelGitCommitSelection', () => ({
-    useSessionRightPanelGitCommitSelection: (input: any) => ({
-        repositorySelectedCount: input.commitSelectionPaths?.length ?? 0,
-        isSelectedForCommit: (file: any) => {
+    useSessionRightPanelGitCommitSelection: (input: any) => {
+        commitSelectionInputSpy(input);
+        const selectedVisibleCount = (input.changedFiles ?? []).filter((file: any) => {
             const selectedPaths = new Set<string>(input.commitSelectionPaths ?? []);
             const selectedPatches = new Set<string>((input.commitSelectionPatches ?? []).map((patch: any) => patch.path));
             return selectedPaths.has(file.fullPath) || selectedPatches.has(file.fullPath);
-        },
-        toggleCommitSelectionForFile: vi.fn(),
-        bulkSelectAll: bulkSelectAllSpy,
-        bulkSelectFiles: bulkSelectFilesSpy,
-        bulkSelectNone: vi.fn(),
-        disableSelectAll: false,
-        disableSelectNone: true,
-    }),
+        }).length;
+        return {
+            repositorySelectedCount: selectedVisibleCount,
+            isSelectedForCommit: (file: any) => {
+                const selectedPaths = new Set<string>(input.commitSelectionPaths ?? []);
+                const selectedPatches = new Set<string>((input.commitSelectionPatches ?? []).map((patch: any) => patch.path));
+                return selectedPaths.has(file.fullPath) || selectedPatches.has(file.fullPath);
+            },
+            toggleCommitSelectionForFile: vi.fn(),
+            bulkSelectAll: bulkSelectAllSpy,
+            bulkSelectFiles: bulkSelectFilesSpy,
+            bulkSelectNone: vi.fn(),
+            disableSelectAll: false,
+            disableSelectNone: true,
+        };
+    },
 }));
 
 describe('SessionRightPanelGitCommitTabContent', () => {
@@ -91,6 +100,7 @@ describe('SessionRightPanelGitCommitTabContent', () => {
         commitTabRenderSpy.mockClear();
         bulkSelectAllSpy.mockClear();
         bulkSelectFilesSpy.mockClear();
+        commitSelectionInputSpy.mockClear();
         useDerivedSessionChangeSetSpy.mockReset();
         useDerivedSessionChangeSetSpy.mockImplementation((_: unknown) => ({
             turnChangeSets: [],
@@ -404,7 +414,7 @@ describe('SessionRightPanelGitCommitTabContent', () => {
         expect(commitTabRenderSpy.mock.calls.at(-1)?.[0].changedFilesViewMode).toBe('repository');
     });
 
-    it('passes leading changed-file action buttons when commit selection UI and write operations are enabled', async () => {
+    it('reveals leading changed-file action buttons only after entering selection mode', async () => {
         useChangedFilesDataSpy.mockClear();
         commitTabRenderSpy.mockClear();
         useDerivedSessionChangeSetSpy.mockReturnValue({
@@ -455,7 +465,17 @@ describe('SessionRightPanelGitCommitTabContent', () => {
 
         expect(commitTabRenderSpy).toHaveBeenCalled();
         const props = commitTabRenderSpy.mock.calls.at(-1)?.[0];
-        const action = props.renderFileActions({
+        expect(props.commitSelectionAvailable).toBe(true);
+        // Opt-in: no per-file "+" until the user enters selection mode.
+        expect(props.renderFileActions({ fullPath: 'src/a.ts', fileName: 'a.ts' })).toBeNull();
+
+        await act(async () => {
+            props.onEnterSelectionMode();
+        });
+
+        const nextProps = commitTabRenderSpy.mock.calls.at(-1)?.[0];
+        expect(nextProps.selectionModeActive).toBe(true);
+        const action = nextProps.renderFileActions({
             fullPath: 'src/a.ts',
             fileName: 'a.ts',
         });
@@ -533,6 +553,65 @@ describe('SessionRightPanelGitCommitTabContent', () => {
         expect(props.changedFilesViewMode).toBe('repository');
     });
 
+    it('passes only visible repository files to commit selection', async () => {
+        const visibleFile = {
+            fullPath: 'src/visible.ts',
+            fileName: 'visible.ts',
+            status: 'modified',
+        } as any;
+        const hiddenDirectory = {
+            fullPath: 'src/generated/',
+            fileName: 'generated',
+            status: 'modified',
+        } as any;
+        useChangedFilesDataSpy.mockClear();
+        useChangedFilesDataSpy.mockReturnValue(makeChangedFilesData({
+            allRepositoryChangedFiles: [visibleFile, hiddenDirectory],
+        }));
+        commitTabRenderSpy.mockClear();
+
+        const { SessionRightPanelGitCommitTabContent } = await import('./SessionRightPanelGitCommitTabContent');
+
+        await renderScreen(<SessionRightPanelGitCommitTabContent
+                    theme={{}}
+                    sessionId="s1"
+                    sessionPath="/tmp/repo"
+                    scmSnapshot={{ capabilities: {} } as any}
+                    touchedPaths={[]}
+                    operationLog={[]}
+                    projectSessionIds={[]}
+                    commitSelectionPaths={['src/visible.ts', 'src/generated/']}
+                    commitSelectionPatches={[]}
+                    scmCommitStrategy="atomic"
+                    scmWriteEnabled={true}
+                    inFlightScmOperation={null}
+                    hasGlobalOperationInFlight={false}
+                    scmOperationBusy={false}
+                    scmOperationStatus={null}
+                    backendLabel="Git"
+                    commitActionLabel="Commit"
+                    hasConflicts={false}
+                    commitAllowedForComposer={true}
+                    commitBlockedMessageForComposer={null}
+                    commitWriteEnabled={true}
+                    commitSelectionUiEnabled={true}
+                    commitDraftMessage=""
+                    onCommitDraftMessageChange={vi.fn()}
+                    onCommitFromMessage={vi.fn()}
+                    commitMessageGeneratorEnabled={false}
+                    onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
+                    onOpenFilesSidebar={vi.fn()}
+                    onOpenReviewAllChanges={vi.fn()}
+                    onOpenStashDetails={vi.fn()}
+                    openFileInDetails={vi.fn()}
+                    openFileInDetailsPinned={vi.fn()}
+                />);
+
+        expect(commitSelectionInputSpy.mock.calls.at(-1)?.[0].changedFiles.map((file: any) => file.fullPath)).toEqual(['src/visible.ts']);
+        expect(commitTabRenderSpy.mock.calls.at(-1)?.[0].repositorySelectedCount).toBe(1);
+        expect(commitTabRenderSpy.mock.calls.at(-1)?.[0].selectedRepositoryChangedFiles.map((file: any) => file.fullPath)).toEqual(['src/visible.ts']);
+    });
+
     it('selects all files from the current scoped view instead of the full repository', async () => {
         const turnFile = {
             fullPath: 'src/turn.ts',
@@ -544,11 +623,19 @@ describe('SessionRightPanelGitCommitTabContent', () => {
             fileName: 'repository.ts',
             status: 'modified',
         } as any;
+        const hiddenTurnDirectory = {
+            fullPath: 'src/generated/',
+            fileName: 'generated',
+            status: 'modified',
+        } as any;
         useChangedFilesDataSpy.mockClear();
         useChangedFilesDataSpy.mockReturnValue(makeChangedFilesData({
             showTurnViewToggle: true,
-            allRepositoryChangedFiles: [turnFile, repositoryFile],
-            turnAttributedFiles: [{ file: turnFile, confidence: 'high' }],
+            allRepositoryChangedFiles: [turnFile, repositoryFile, hiddenTurnDirectory],
+            turnAttributedFiles: [
+                { file: turnFile, confidence: 'high' },
+                { file: hiddenTurnDirectory, confidence: 'high' },
+            ],
         }));
         commitTabRenderSpy.mockClear();
         useDerivedSessionChangeSetSpy.mockReturnValue({

@@ -26,8 +26,7 @@ import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permi
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import type { SecretSatisfactionResult } from '@/utils/secrets/secretSatisfaction';
 import type { CLIAvailability } from '@/hooks/auth/useCLIDetection';
-import type { AgentId } from '@/agents/catalog/catalog';
-import { getAgentCore } from '@/agents/catalog/catalog';
+import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { getAgentPickerOptions } from '@/agents/catalog/agentPickerOptions';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { CliNotDetectedBanner, type CliNotDetectedBannerDismissScope } from '@/components/sessions/new/components/CliNotDetectedBanner';
@@ -62,6 +61,11 @@ import type {
     NewSessionWizardSelectionSectionId,
 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
+import {
+    NewSessionLaunchPendingPreview,
+    shouldRenderNewSessionLaunchPendingPreview,
+} from '@/components/sessions/new/components/NewSessionLaunchPendingPreview';
+import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
 
 
 export interface NewSessionWizardLayoutProps {
@@ -165,11 +169,13 @@ export interface NewSessionWizardFooterProps {
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     canCreate: boolean;
     isCreating: boolean;
+    pendingLaunchAttempt?: NewSessionLaunchAttempt | null;
     submitAccessibilityLabel?: React.ComponentProps<typeof AgentInput>['submitAccessibilityLabel'];
     emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
     onAutocompleteSuggestionSelect?: React.ComponentProps<typeof AgentInput>['onAutocompleteSuggestionSelect'];
     connectionStatus?: React.ComponentProps<typeof AgentInput>['connectionStatus'];
+    statusBadges?: React.ComponentProps<typeof AgentInput>['statusBadges'];
     machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
     pathPopover?: React.ComponentProps<typeof AgentInput>['pathPopover'];
     resumeSessionId?: string | null;
@@ -192,6 +198,17 @@ export interface NewSessionWizardProps {
 }
 
 const WIZARD_AUTO_DROPDOWN_MIN_VISIBLE_ROWS = 5;
+type NewSessionWizardAgentPickerOption = NonNullable<React.ComponentProps<typeof AgentInput>['agentPickerOptions']>[number];
+
+function isWizardBackendPickerOption(option: NewSessionWizardAgentPickerOption): boolean {
+    return option.id.startsWith('backend:');
+}
+
+function resolveBuiltInAgentIdFromBackendPickerOptionId(optionId: string): AgentId | null {
+    const match = /^backend:([^:]+)(?::configured:.+)?$/.exec(optionId);
+    const backendId = match?.[1];
+    return backendId && isAgentId(backendId) ? backendId : null;
+}
 
 function countVisibleWizardMachineRows(params: Readonly<{
     machines: ReadonlyArray<Machine>;
@@ -347,6 +364,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         agentType,
         agentLabel,
         agentPickerOptions,
+        agentPickerSelectedOptionId,
         onAgentPickerSelect,
         selectedBackendEntry,
         setAgentType,
@@ -424,10 +442,17 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         sectionPresentation.profiles,
         profiles.length > 8 ? 'compact' : 'expanded',
     );
-    const backendOptions = React.useMemo(() => getAgentPickerOptions(enabledAgentIds), [enabledAgentIds]);
+    const canonicalBackendPickerOptions = React.useMemo(
+        () => (agentPickerOptions ?? []).filter(isWizardBackendPickerOption),
+        [agentPickerOptions],
+    );
+    const legacyBackendOptions = React.useMemo(() => getAgentPickerOptions(enabledAgentIds), [enabledAgentIds]);
+    const backendOptionCount = canonicalBackendPickerOptions.length > 0
+        ? canonicalBackendPickerOptions.length
+        : legacyBackendOptions.length;
     const backendPresentation = resolveWizardAdaptivePresentation(
         sectionPresentation.backends,
-        backendOptions.length > 6 ? 'compact' : 'expanded',
+        backendOptionCount > 6 ? 'compact' : 'expanded',
     );
     const modelPresentation = resolveWizardAdaptivePresentation(
         sectionPresentation.models,
@@ -556,6 +581,11 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                             ) : null}
                             <View style={{ paddingHorizontal: newSessionSidePadding, width: '100%', alignSelf: 'stretch' }}>
                                 <View style={{ maxWidth: layout.maxWidth, width: '100%', alignSelf: 'center' }}>
+                                    {isCreating && shouldRenderNewSessionLaunchPendingPreview(props.footer.pendingLaunchAttempt) ? (
+                                        <View style={{ paddingBottom: 8 }}>
+                                            <NewSessionLaunchPendingPreview launchAttempt={props.footer.pendingLaunchAttempt} />
+                                        </View>
+                                    ) : null}
                                     <NewSessionWizardComposerInput
                                         composerReservedHeight={12 + newSessionBottomPadding}
                                         value={sessionPrompt}
@@ -600,6 +630,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         acpConfigOptionOverridesOverride={props.agent.acpConfigOptionOverrides ?? null}
                                         onAcpConfigOptionChange={props.agent.setAcpConfigOptionOverride}
                                         connectionStatus={connectionStatus}
+                                        statusBadges={props.footer.statusBadges}
                                         machineName={selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host}
                                         machinePopover={props.footer.machinePopover}
                                         onMachineClick={props.footer.machinePopover ? undefined : handleAgentInputMachineClick}
@@ -756,7 +787,59 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                 ? (resolvedProfileMap.get(selectedProfileId) || getBuiltInProfile(selectedProfileId))
                                                 : null;
 
-                                            const backendRows = backendOptions.map((option) => {
+                                            const showDisabledBackendAlert = (params: Readonly<{
+                                                compatible: boolean;
+                                                disabledReason: string;
+                                            }>) => {
+                                                Modal.alert(
+                                                    t('profiles.aiBackend.title'),
+                                                    params.disabledReason,
+                                                    params.compatible
+                                                        ? [{ text: t('common.ok'), style: 'cancel' }]
+                                                        : [
+                                                            { text: t('common.ok'), style: 'cancel' },
+                                                            ...(useProfiles && selectedProfileId ? [{ text: t('newSession.changeProfile'), onPress: handleAgentInputProfileClick }] : []),
+                                                        ],
+                                                );
+                                            };
+                                            const canonicalBackendRows = canonicalBackendPickerOptions.map((option) => {
+                                                const builtInAgentId = resolveBuiltInAgentIdFromBackendPickerOptionId(option.id);
+                                                const disabledReason = option.disabled ? (option.subtitle ?? null) : null;
+                                                return {
+                                                    id: option.id,
+                                                    key: option.id,
+                                                    testID: `new-session-agent:${builtInAgentId ?? option.id}`,
+                                                    title: option.label,
+                                                    subtitle: option.subtitle ?? null,
+                                                    leftElement: option.icon ?? renderIconNode('hardware-chip-outline', 24, theme.colors.text.secondary),
+                                                    dropdownIcon: option.icon ?? renderIconNode('hardware-chip-outline', 20, theme.colors.text.secondary),
+                                                    compatible: true,
+                                                    disabled: Boolean(option.disabled),
+                                                    disabledReason,
+                                                    isSelected: agentPickerSelectedOptionId === option.id
+                                                        || (!agentPickerSelectedOptionId && builtInAgentId === agentType),
+                                                    onPress: () => {
+                                                        if (option.disabled) {
+                                                            if (disabledReason) {
+                                                                showDisabledBackendAlert({ compatible: true, disabledReason });
+                                                            }
+                                                            return;
+                                                        }
+                                                        if (option.onSelectImmediate) {
+                                                            option.onSelectImmediate();
+                                                            return;
+                                                        }
+                                                        if (onAgentPickerSelect) {
+                                                            onAgentPickerSelect(option.id);
+                                                            return;
+                                                        }
+                                                        if (builtInAgentId) {
+                                                            setAgentType(builtInAgentId);
+                                                        }
+                                                    },
+                                                };
+                                            });
+                                            const legacyBackendRows = legacyBackendOptions.map((option) => {
                                                 const compatible = !selectedProfile || isProfileCompatibleWithAgent(selectedProfile, option.agentId);
                                                 const selectable = isAgentSelectable(option.agentId);
                                                 const disabledReason = !compatible
@@ -766,18 +849,34 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                         : null;
 
                                                 return {
-                                                    option,
+                                                    id: option.agentId,
+                                                    key: option.agentId,
+                                                    testID: `new-session-agent:${option.agentId}`,
+                                                    title: t(option.titleKey),
+                                                    subtitle: t(option.subtitleKey),
+                                                    leftElement: renderIconNode(option.iconName as any, 24, theme.colors.text.secondary),
+                                                    dropdownIcon: renderIconNode(option.iconName as any, 20, theme.colors.text.secondary),
                                                     compatible,
+                                                    disabled: Boolean(disabledReason),
                                                     disabledReason,
                                                     isSelected: agentType === option.agentId,
+                                                    onPress: () => {
+                                                        if (disabledReason) {
+                                                            showDisabledBackendAlert({ compatible, disabledReason });
+                                                            return;
+                                                        }
+                                                        setAgentType(option.agentId);
+                                                    },
                                                 };
                                             });
-                                            const dropdownItems: DropdownMenuItem[] = backendRows.map(({ option, disabledReason }) => ({
-                                                id: option.agentId,
-                                                title: t(option.titleKey),
-                                                subtitle: disabledReason ?? t(option.subtitleKey),
-                                                disabled: Boolean(disabledReason),
-                                                icon: renderIconNode(option.iconName as any, 20, theme.colors.text.secondary),
+                                            const backendRows = canonicalBackendRows.length > 0 ? canonicalBackendRows : legacyBackendRows;
+                                            const selectedBackendRowId = backendRows.find((row) => row.isSelected)?.id ?? null;
+                                            const dropdownItems: DropdownMenuItem[] = backendRows.map((row) => ({
+                                                id: row.id,
+                                                title: row.title,
+                                                subtitle: row.disabledReason ?? row.subtitle ?? undefined,
+                                                disabled: row.disabled,
+                                                icon: row.dropdownIcon,
                                             }));
 
                                             return (
@@ -785,38 +884,23 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                     presentation={backendPresentation}
                                                     expandedContent={(
                                                         <ItemGroup title={<View />} headerStyle={{ paddingTop: 0, paddingBottom: 0 }}>
-                                                            {backendRows.map(({ option, compatible, disabledReason, isSelected }, index) => (
+                                                            {backendRows.map((row, index) => (
                                                                 <Item
-                                                                    key={option.agentId}
-                                                                    testID={`new-session-agent:${option.agentId}`}
-                                                                    title={t(option.titleKey)}
-                                                                    subtitle={disabledReason ?? t(option.subtitleKey)}
-                                                                    leftElement={renderIconNode(option.iconName as any, 24, theme.colors.text.secondary)}
-                                                                    selected={isSelected}
-                                                                    disabled={!!disabledReason}
-                                                                    onPress={() => {
-                                                                        if (disabledReason) {
-                                                                            Modal.alert(
-                                                                                t('profiles.aiBackend.title'),
-                                                                                disabledReason,
-                                                                                compatible
-                                                                                    ? [{ text: t('common.ok'), style: 'cancel' }]
-                                                                                    : [
-                                                                                        { text: t('common.ok'), style: 'cancel' },
-                                                                                        ...(useProfiles && selectedProfileId ? [{ text: t('newSession.changeProfile'), onPress: handleAgentInputProfileClick }] : []),
-                                                                                    ],
-                                                                            );
-                                                                            return;
-                                                                        }
-                                                                        setAgentType(option.agentId);
-                                                                    }}
+                                                                    key={row.key}
+                                                                    testID={row.testID}
+                                                                    title={row.title}
+                                                                    subtitle={row.disabledReason ?? row.subtitle ?? undefined}
+                                                                    leftElement={row.leftElement}
+                                                                    selected={row.isSelected}
+                                                                    disabled={row.disabled}
+                                                                    onPress={row.onPress}
                                                                     rightElement={(
                                                                         <View style={{ width: 24, alignItems: 'center', justifyContent: 'center' }}>
                                                                             {renderIconNode(
                                                                                 'checkmark-circle',
                                                                                 24,
                                                                                 selectedIndicatorColor,
-                                                                                { opacity: isSelected ? 1 : 0 },
+                                                                                { opacity: row.isSelected ? 1 : 0 },
                                                                             )}
                                                                         </View>
                                                                     )}
@@ -830,11 +914,16 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                                         <NewSessionWizardDropdownSelectionItem
                                                             testID="new-session-agent-dropdown-trigger"
                                                             title={t('newSession.selectAiBackendTitle')}
-                                                            subtitle={agentLabel ?? dropdownItems.find((item) => item.id === agentType)?.title ?? t('newSession.aiBackendSelectWhichAiRuns')}
+                                                            subtitle={agentLabel ?? dropdownItems.find((item) => item.id === selectedBackendRowId)?.title ?? t('newSession.aiBackendSelectWhichAiRuns')}
                                                             icon={renderIconNode('hardware-chip-outline', 24, theme.colors.text.secondary)}
                                                             items={dropdownItems}
-                                                            selectedId={agentType}
+                                                            selectedId={selectedBackendRowId}
                                                             onSelect={(id) => {
+                                                                const row = backendRows.find((candidate) => candidate.id === id);
+                                                                if (row) {
+                                                                    row.onPress();
+                                                                    return;
+                                                                }
                                                                 if (onAgentPickerSelect && agentPickerOptions?.some((option) => option.id === id)) {
                                                                     onAgentPickerSelect(id);
                                                                     return;

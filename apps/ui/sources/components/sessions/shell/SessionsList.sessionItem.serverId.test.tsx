@@ -4,6 +4,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import {
+    SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_STOP_ID,
+} from '@/components/sessions/actions/sessionActionIds';
+import {
     createModelBackedSessionItemTestComponent,
     type ModelBackedSessionItemTestProps,
 } from './sessionItemRowViewModelTestFixture';
@@ -295,9 +300,9 @@ describe('SessionItem navigation', () => {
         expect(moreMenuItemIds).toEqual(expect.arrayContaining([
             'openInSplitRight',
             'openInSplitDown',
-            'rename',
-            'stop',
-            'archive',
+            SESSION_ACTION_RENAME_ID,
+            SESSION_ACTION_STOP_ID,
+            SESSION_ACTION_ARCHIVE_ID,
         ]));
 
         await act(async () => {

@@ -66,6 +66,7 @@ export function createSessionItemRowViewModel(
         selected: false,
         tags: [],
         secondaryLineMode: 'path',
+        workingPlacementRetained: false,
         ...input.overrides,
     };
 }

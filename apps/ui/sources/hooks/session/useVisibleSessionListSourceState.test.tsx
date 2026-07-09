@@ -4,6 +4,7 @@ import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 const sourceState = vi.hoisted(() => ({
+    equivalentPairs: new Set<string>(),
     selectedIndexRequests: [] as Array<ReadonlyArray<string> | undefined>,
     selection: {
         enabled: true,
@@ -39,6 +40,20 @@ const sourceState = vi.hoisted(() => ({
             },
         ] as SessionListIndexItem[],
     } as Record<string, SessionListIndexItem[]>,
+}));
+
+function equivalentPairKey(left: string, right: string): string {
+    return [left, right].sort().join('\u0000');
+}
+
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    areServerProfileIdentifiersEquivalent: (leftRaw: string | null | undefined, rightRaw: string | null | undefined) => {
+        const left = String(leftRaw ?? '').trim();
+        const right = String(rightRaw ?? '').trim();
+        if (!left || !right) return false;
+        if (left === right) return true;
+        return sourceState.equivalentPairs.has(equivalentPairKey(left, right));
+    },
 }));
 
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
@@ -95,6 +110,7 @@ describe('useVisibleSessionListSourceState', () => {
                 },
             ] as SessionListIndexItem[],
         } as Record<string, SessionListIndexItem[]>;
+        sourceState.equivalentPairs.clear();
         sourceState.selectedIndexRequests = [];
     });
 
@@ -131,5 +147,39 @@ describe('useVisibleSessionListSourceState', () => {
         expect(hook.getCurrent().activeIndex?.map((item) => item.type === 'session' ? item.sessionId : item.type)).toEqual(['active-1']);
         expect(hook.getCurrent().source?.map((item) => item.type === 'session' ? item.sessionId : item.type)).toEqual(['active-1']);
         expect(sourceState.selectedIndexRequests).toEqual([['srv-a']]);
+    });
+
+    it('keeps the active index visible when the selected server id is an equivalent identity alias', async () => {
+        sourceState.selection = {
+            enabled: true,
+            presentation: 'grouped',
+            activeServerId: 'srv-active-identity',
+            allowedServerIds: ['srv-active-identity'],
+            explicit: false,
+            activeTarget: { kind: 'server', id: 'srv-active-identity', serverId: 'srv-active-identity' },
+        };
+        sourceState.equivalentPairs.add(equivalentPairKey('srv-active-identity', 'localhost-53288'));
+        sourceState.byServerId = {
+            'localhost-53288': [
+                {
+                    type: 'session',
+                    sessionId: 'alias-created-session',
+                    serverId: 'localhost-53288',
+                    serverName: 'localhost:53288',
+                },
+            ],
+        };
+
+        const { useVisibleSessionListSourceState } = await import('./useVisibleSessionListSourceState');
+        const hook = await renderHook(() => useVisibleSessionListSourceState());
+        await flushHookEffects();
+
+        expect(hook.getCurrent().activeIndex?.map((item) => item.type === 'session' ? item.sessionId : item.type)).toEqual([
+            'alias-created-session',
+        ]);
+        expect(hook.getCurrent().source?.map((item) => item.type === 'session' ? item.sessionId : item.type)).toEqual([
+            'alias-created-session',
+        ]);
+        expect(sourceState.selectedIndexRequests).toEqual([['srv-active-identity']]);
     });
 });

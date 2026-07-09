@@ -31,6 +31,7 @@ vi.mock('@/scm/scmRepositoryService', async () => {
 });
 
 vi.mock('@react-navigation/native', () => ({
+    useIsFocused: () => true,
     useFocusEffect: (callback: () => void | (() => void)) => {
         focusEffectRunnerState.callback = callback;
     },
@@ -259,6 +260,91 @@ describe('useNewSessionRepoScmSnapshot', () => {
             resolveLight?.(cachedLight);
         });
         await flushHookEffects();
+        await hook.unmount();
+    });
+
+    it('keeps the hydrated worktree list mounted when switching to a sibling worktree of the same repo', async () => {
+        // (c) Selecting an existing worktree changes the bound path. The new
+        // path has no cache of its own, but it is a worktree of the SAME repo —
+        // whose `git worktree list` is identical — so the chip's worktree list
+        // must NOT flash empty during the refetch. We hold the sibling's light
+        // fetch in flight so the seed is the only thing that can set state.
+        const repoSnapshot = makeSnapshot({
+            fetchedAt: 1,
+            repo: {
+                isRepo: true,
+                rootPath: '/repo',
+                backendId: 'git',
+                mode: '.git',
+                worktrees: [
+                    { path: '/repo', branch: 'main', isCurrent: true },
+                    { path: '/repo/.dev/worktree/feature', branch: 'feature', isCurrent: false },
+                ],
+            },
+        });
+        readCachedSnapshotForMachinePathMock.mockImplementation((input: { path: string }) =>
+            (input.path === '/repo' ? repoSnapshot : null));
+        readCachedWorktreesEnrichmentMock.mockReturnValue(null);
+        fetchSnapshotForMachinePathMock.mockImplementation((input: { path: string }) =>
+            (input.path === '/repo' ? Promise.resolve(repoSnapshot) : new Promise(() => {})));
+        fetchWorktreesEnrichmentMock.mockResolvedValue(null);
+
+        const hook = await renderHook(
+            (props: { machineId: string | null; path: string }) => useNewSessionRepoScmSnapshot(props),
+            { initialProps: { machineId: 'machine-a', path: '/repo' } },
+        );
+
+        await act(async () => {
+            focusEffectRunnerState.callback?.();
+        });
+        await flushHookEffects();
+        expect(hook.getCurrent()?.repo.rootPath).toBe('/repo');
+
+        // Switch the bound path to a sibling worktree of the same repo.
+        await hook.rerender({ machineId: 'machine-a', path: '/repo/.dev/worktree/feature' });
+
+        const afterSwitch = hook.getCurrent();
+        expect(afterSwitch).not.toBeNull();
+        expect(afterSwitch?.repo.worktrees?.map((worktree) => worktree.path)).toEqual([
+            '/repo',
+            '/repo/.dev/worktree/feature',
+        ]);
+        await hook.unmount();
+    });
+
+    it('resets the snapshot when switching to a path in a DIFFERENT repo', async () => {
+        // The keep-on-same-repo guard must not mask a genuine repo switch: a path
+        // outside the current repo (and not one of its worktrees) still clears the
+        // stale snapshot so the chip does not show the wrong repo's worktrees.
+        const repoSnapshot = makeSnapshot({
+            fetchedAt: 1,
+            repo: {
+                isRepo: true,
+                rootPath: '/repo',
+                backendId: 'git',
+                mode: '.git',
+                worktrees: [{ path: '/repo', branch: 'main', isCurrent: true }],
+            },
+        });
+        readCachedSnapshotForMachinePathMock.mockImplementation((input: { path: string }) =>
+            (input.path === '/repo' ? repoSnapshot : null));
+        readCachedWorktreesEnrichmentMock.mockReturnValue(null);
+        fetchSnapshotForMachinePathMock.mockImplementation((input: { path: string }) =>
+            (input.path === '/repo' ? Promise.resolve(repoSnapshot) : new Promise(() => {})));
+        fetchWorktreesEnrichmentMock.mockResolvedValue(null);
+
+        const hook = await renderHook(
+            (props: { machineId: string | null; path: string }) => useNewSessionRepoScmSnapshot(props),
+            { initialProps: { machineId: 'machine-a', path: '/repo' } },
+        );
+        await act(async () => {
+            focusEffectRunnerState.callback?.();
+        });
+        await flushHookEffects();
+        expect(hook.getCurrent()?.repo.rootPath).toBe('/repo');
+
+        await hook.rerender({ machineId: 'machine-a', path: '/different-repo' });
+        expect(hook.getCurrent()).toBeNull();
         await hook.unmount();
     });
 

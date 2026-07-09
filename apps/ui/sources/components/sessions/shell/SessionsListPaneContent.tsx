@@ -18,11 +18,19 @@ import {
     normalizeSessionListSurfaceOwnership,
     type SessionListSurfaceOwnership,
 } from '@/components/sessions/shell/surface/sessionListSurfaceOwnership';
+import {
+    readRetainedSessionListPaneState,
+    retainSessionListPaneState,
+    type RetainedSessionListPaneState,
+    updateRetainedSessionListPaneSurfaceRoutePathname,
+    useSessionListPaneSourceScopeKey,
+} from './sessionListPaneRetention';
 
 type SessionsListPaneContentProps = Readonly<{
     storageKind: 'persisted' | 'direct';
     fallbackGuidanceVariant: SessionGettingStartedGuidanceVariant;
     pathname?: string;
+    surfaceRoutePathname?: string;
     sessionListSurfaceDataActive?: boolean;
     surfaceOwnership?: Partial<SessionListSurfaceOwnership>;
 }>;
@@ -66,33 +74,39 @@ const EMPTY_SESSIONS_LIST_PANE_STATE: VisibleSessionListPaneState = {
     showEmptyState: false,
 };
 
-type FrozenPaneState = Readonly<{
-    storageKind: 'persisted' | 'direct';
-    pathname?: string;
-    paneState: VisibleSessionListPaneState;
-}>;
-
 type SessionsListPaneContentViewProps = SessionsListPaneContentProps & Readonly<{
     sessionListPaneState: VisibleSessionListPaneState;
     surfaceOwnership: SessionListSurfaceOwnership;
 }>;
 
+function getRetainablePaneStateSnapshot(
+    retainedPaneState: RetainedSessionListPaneState | null,
+    props: Pick<RetainedSessionListPaneState, 'storageKind' | 'pathname' | 'sourceScopeKey'>,
+): RetainedSessionListPaneState | null {
+    if (!retainedPaneState) return null;
+    if (retainedPaneState.storageKind !== props.storageKind) return null;
+    if ((retainedPaneState.pathname ?? '') !== (props.pathname ?? '')) return null;
+    if (retainedPaneState.sourceScopeKey !== props.sourceScopeKey) return null;
+    return retainedPaneState;
+}
+
 function getRetainablePaneState(
-    frozenPaneState: FrozenPaneState | null,
-    props: Pick<SessionsListPaneContentProps, 'storageKind' | 'pathname'>,
+    retainedPaneState: RetainedSessionListPaneState | null,
+    props: Pick<RetainedSessionListPaneState, 'storageKind' | 'pathname' | 'sourceScopeKey'>,
 ): VisibleSessionListPaneState {
-    if (!frozenPaneState) return EMPTY_SESSIONS_LIST_PANE_STATE;
-    if (frozenPaneState.storageKind !== props.storageKind) return EMPTY_SESSIONS_LIST_PANE_STATE;
-    if ((frozenPaneState.pathname ?? '') !== (props.pathname ?? '')) return EMPTY_SESSIONS_LIST_PANE_STATE;
-    return frozenPaneState.paneState;
+    return getRetainablePaneStateSnapshot(retainedPaneState, props)?.paneState ?? EMPTY_SESSIONS_LIST_PANE_STATE;
 }
 
 function ActiveSessionsListPaneStateSubscriber(props: SessionsListPaneContentProps & Readonly<{
+    retainedPathname?: string | null;
+    retainedVisibleSessionListIndex?: VisibleSessionListPaneState['visibleSessionListIndex'];
     surfaceOwnership: SessionListSurfaceOwnership;
     onPaneState: (paneState: VisibleSessionListPaneState) => void;
 }>) {
     const sessionListPaneState = useVisibleSessionListPaneState(props.storageKind, {
         pathname: props.pathname,
+        retainedPathname: props.retainedPathname,
+        retainedVisibleSessionListIndex: props.retainedVisibleSessionListIndex,
         sessionListSurfaceDataActive: true,
     });
 
@@ -189,19 +203,52 @@ function SessionsListPaneContentView(props: SessionsListPaneContentViewProps) {
 export const SessionsListPaneContent = React.memo((props: SessionsListPaneContentProps) => {
     const surfaceOwnership = normalizeSessionListSurfaceOwnership(props.surfaceOwnership);
     const sessionListSurfaceDataActive = props.sessionListSurfaceDataActive ?? surfaceOwnership.dataActive;
-    const frozenPaneStateRef = React.useRef<FrozenPaneState | null>(null);
+    const sourceScopeKey = useSessionListPaneSourceScopeKey();
+    const retentionIdentity = React.useMemo(() => ({
+        storageKind: props.storageKind,
+        pathname: props.pathname,
+        sourceScopeKey,
+    }), [props.pathname, props.storageKind, sourceScopeKey]);
+    const retainedPaneStateRef = React.useRef<RetainedSessionListPaneState | null>(
+        readRetainedSessionListPaneState(retentionIdentity),
+    );
     const handlePaneState = React.useCallback((paneState: VisibleSessionListPaneState) => {
-        frozenPaneStateRef.current = {
+        retainedPaneStateRef.current = retainSessionListPaneState({
             storageKind: props.storageKind,
             pathname: props.pathname,
+            sourceScopeKey,
+            surfaceRoutePathname: props.surfaceRoutePathname,
             paneState,
-        };
-    }, [props.pathname, props.storageKind]);
+        }) ?? retainedPaneStateRef.current;
+    }, [props.pathname, props.storageKind, props.surfaceRoutePathname, sourceScopeKey]);
+
+    React.useEffect(() => {
+        if (sessionListSurfaceDataActive) return;
+        const retained = getRetainablePaneStateSnapshot(
+            readRetainedSessionListPaneState(retentionIdentity) ?? retainedPaneStateRef.current,
+            retentionIdentity,
+        );
+        if (!retained) return;
+        if ((retained.surfaceRoutePathname ?? '') === (props.surfaceRoutePathname ?? '')) return;
+        retainedPaneStateRef.current = updateRetainedSessionListPaneSurfaceRoutePathname(
+            retentionIdentity,
+            props.surfaceRoutePathname,
+        ) ?? retained;
+    }, [props.surfaceRoutePathname, retentionIdentity, sessionListSurfaceDataActive]);
+
+    const retainedPaneState = sessionListSurfaceDataActive
+        ? getRetainablePaneStateSnapshot(
+            readRetainedSessionListPaneState(retentionIdentity) ?? retainedPaneStateRef.current,
+            retentionIdentity,
+        )
+        : null;
 
     if (sessionListSurfaceDataActive) {
         return (
             <ActiveSessionsListPaneStateSubscriber
                 {...props}
+                retainedPathname={retainedPaneState?.surfaceRoutePathname ?? null}
+                retainedVisibleSessionListIndex={retainedPaneState?.paneState.visibleSessionListIndex ?? null}
                 surfaceOwnership={surfaceOwnership}
                 onPaneState={handlePaneState}
             />
@@ -211,7 +258,10 @@ export const SessionsListPaneContent = React.memo((props: SessionsListPaneConten
     return (
         <SessionsListPaneContentView
             {...props}
-            sessionListPaneState={getRetainablePaneState(frozenPaneStateRef.current, props)}
+            sessionListPaneState={getRetainablePaneState(
+                readRetainedSessionListPaneState(retentionIdentity) ?? retainedPaneStateRef.current,
+                retentionIdentity,
+            )}
             surfaceOwnership={surfaceOwnership}
         />
     );

@@ -3,6 +3,7 @@ import * as React from 'react';
 import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { NewSessionEngineOptionDetail } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
+import type { AgentId } from '@/agents/catalog/catalog';
 import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
@@ -17,6 +18,7 @@ export type NewSessionAgentPickerSelection = Readonly<{
 
 export function buildNewSessionAgentPickerDetailContent(params: Readonly<{
     backendTarget: BackendTargetRefV2;
+    runtimeCarrierAgentId?: AgentId | null;
     selectedMachineId: string | null;
     capabilityServerId: string;
     cwd: string | null;
@@ -34,11 +36,13 @@ export function buildNewSessionAgentPickerDetailContent(params: Readonly<{
     const capabilityProbeContext = resolveNewSessionCapabilityProbeContext({
         backendTarget: params.backendTarget,
         settings: params.settings,
+        runtimeCarrierAgentId: params.runtimeCarrierAgentId ?? null,
     });
 
     return (
         <NewSessionEngineOptionDetail
             backendTarget={params.backendTarget}
+            runtimeCarrierAgentId={params.runtimeCarrierAgentId ?? null}
             selectedMachineId={params.selectedMachineId}
             capabilityServerId={params.capabilityServerId}
             cwd={params.cwd}

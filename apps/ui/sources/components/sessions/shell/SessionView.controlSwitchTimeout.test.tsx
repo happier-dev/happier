@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol';
 
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { createSessionFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
@@ -22,6 +23,7 @@ vi.mock('@/agents/registry/registryUiBehavior', () => ({
   getNewSessionRelevantInstallableDepKeys: () => [],
   resolveAgentUiBehavior: () => ({}),
   resolveAgentUiBehaviorFromFlavor: () => ({}),
+  resolveAgentUiBehaviorFromSessionMetadata: () => ({}),
   supportsDetectedMcpConfigScan: () => false,
   supportsEditableSessionGoals: () => false,
 }));
@@ -41,6 +43,8 @@ const chatListPropsSpy = vi.hoisted(() => vi.fn());
 const agentInputPropsSpy = vi.hoisted(() => vi.fn());
 const warningActionBannerPropsSpy = vi.hoisted(() => vi.fn());
 const sessionUsageLimitWaitResumeEnableSpy = vi.hoisted(() => vi.fn());
+const sessionRunnerRestartSpy = vi.hoisted(() => vi.fn());
+const sessionRunnerStatusGetSpy = vi.hoisted(() => vi.fn<() => Promise<unknown | null>>(async () => null));
 const cliDetectionState = vi.hoisted(() => ({
   authStatus: {} as Record<string, { state: 'logged_in' | 'logged_out' | 'unknown'; checkedAt: number } | null>,
 }));
@@ -150,6 +154,8 @@ installSessionShellCommonModuleMocks({
       useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true }),
       useSessionPendingMessages: () => ({ messages: [] }),
       useSessionReviewCommentsDrafts: () => [],
+      useOpenApprovalArtifactsForSession: () => [],
+      useEnabledAutomationsCountForSession: () => 0,
       useSessionUsage: () => null,
       useLocalSetting: (key: string) => {
         if (key === 'acknowledgedCliVersions') return {};
@@ -264,6 +270,10 @@ vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
 vi.mock('@/components/sessions/model/resolveSessionMachineReachability', () => ({
   resolveSessionMachineReachability: () => true,
 }));
+vi.mock('@/components/sessions/model/useSessionMachineTarget', () => ({
+  useSessionMachineControlTarget: () => ({ machineId: 'm1', basePath: '/tmp' }),
+  useSessionMachineTarget: () => ({ machineId: 'm1', basePath: '/tmp' }),
+}));
 vi.mock(
   '@/components/sessions/model/useSessionMachineReachability',
   async (importOriginal) => {
@@ -321,9 +331,14 @@ vi.mock('@/sync/ops', async (importOriginal) => {
 });
 vi.mock('@/sync/ops/sessionUsageLimitRecovery', () => ({
   sessionUsageLimitCheckNow: vi.fn(),
+  sessionUsageLimitConsumeResetCredit: vi.fn(),
   sessionUsageLimitSwitchAccountNow: vi.fn(),
   sessionUsageLimitWaitResumeCancel: vi.fn(),
   sessionUsageLimitWaitResumeEnable: sessionUsageLimitWaitResumeEnableSpy,
+}));
+vi.mock('@/sync/ops/sessionRunnerRestart', () => ({
+  getSessionRunnerRuntimeStatus: sessionRunnerStatusGetSpy,
+  restartSessionRunnerOnCurrentRuntime: sessionRunnerRestartSpy,
 }));
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
   createDefaultActionExecutor: () => ({ execute: vi.fn() }),
@@ -401,6 +416,70 @@ describe('SessionView (control switch timeout)', () => {
     return props;
   }
 
+  function getWarningActionBannerPropsByTestId(testID: string) {
+    const props = warningActionBannerPropsSpy.mock.calls
+      .map((call) => call[0])
+      .find((candidate: { testID?: string }) => candidate?.testID === testID);
+    if (!props) {
+      throw new Error(`Expected WarningActionBanner props for ${testID}`);
+    }
+    return props;
+  }
+
+  function getUsageLimitStatusBadge() {
+    const badge = getAgentInputProps().statusBadges?.find((item: { key?: string }) => item.key === 'usage-limit-recovery');
+    if (!badge) {
+      throw new Error('Expected usage-limit status badge');
+    }
+    return badge;
+  }
+
+  function getStaleRunnerStatusBadge() {
+    const badge = getAgentInputProps().statusBadges?.find((item: { key?: string }) => item.key === 'stale-session-runner');
+    if (!badge) {
+      throw new Error('Expected stale runner status badge');
+    }
+    return badge;
+  }
+
+  function buildStaleRunnerMetadata() {
+    return {
+      path: '/repo',
+      host: 'host-1',
+      machineId: 'm1',
+      [SESSION_RUNNER_RUNTIME_METADATA_KEY]: {
+        v: 1,
+        sessionId: 's1',
+        machineId: 'm1',
+        daemonId: 'd1',
+        observedAtMs: 1_700_000_000_000,
+        runner: {
+          pid: 123,
+          runtimeId: 'runner-runtime-old',
+          cliVersion: '1.0.0',
+          entrypointVersion: 'entry-old',
+          processCommandHash: 'hash-old',
+          entrypointSource: 'process_command',
+          startedBy: 'daemon',
+          startingMode: 'remote',
+        },
+        daemon: {
+          cliVersion: '1.1.0',
+          startedWithCliVersion: '1.1.0',
+          currentEntrypointVersion: 'runner-runtime-new',
+          currentEntrypointSource: 'packaged_runtime',
+        },
+        versionState: 'stale',
+        statusSource: 'daemon_tracking',
+        plannedRestart: {
+          supported: true,
+          eligible: true,
+          disabledReason: null,
+        },
+      },
+    };
+  }
+
   async function waitForControlSwitchTimeout() {
     await act(async () => {
       await new Promise((resolve) => {
@@ -418,6 +497,9 @@ describe('SessionView (control switch timeout)', () => {
     agentInputPropsSpy.mockClear();
     warningActionBannerPropsSpy.mockClear();
     sessionUsageLimitWaitResumeEnableSpy.mockReset();
+    sessionRunnerRestartSpy.mockReset();
+    sessionRunnerStatusGetSpy.mockReset();
+    sessionRunnerStatusGetSpy.mockResolvedValue(null);
     useFeatureEnabledSpy.mockClear();
     enabledFeatureIds.clear();
     cliDetectionState.authStatus = {
@@ -535,6 +617,219 @@ describe('SessionView (control switch timeout)', () => {
     await screen.unmount();
   });
 
+  it('lets the usage-limit status badge collapse and reopen the recovery banner', async () => {
+    enabledFeatureIds.add('sessions.usageLimitRecovery');
+    const futureResetAtMs = Date.now() + 60_000;
+    resetSession({
+      latestTurnStatus: 'failed' as any,
+      lastRuntimeIssue: {
+        v: 1,
+        scope: 'primary_session',
+        status: 'failed',
+        code: 'usage_limit',
+        source: 'usage_limit',
+        occurredAt: 1_700_000_000_000,
+        usageLimit: {
+          v: 1,
+          resetAtMs: futureResetAtMs,
+          retryAfterMs: null,
+          quotaScope: 'account',
+          recoverability: 'wait',
+        },
+      } as any,
+    });
+
+    const screen = await renderSessionView();
+
+    expect(screen.findByTestId('session-usageLimit-recovery')).toBeTruthy();
+    const expandedBadge = getUsageLimitStatusBadge();
+    expect(expandedBadge).toEqual(expect.objectContaining({
+      testID: 'session-usageLimit-status-badge',
+      onPress: expect.any(Function),
+    }));
+
+    await act(async () => {
+      expandedBadge.onPress();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(screen.findByTestId('session-usageLimit-recovery')).toBeNull();
+    const collapsedBadge = getUsageLimitStatusBadge();
+    expect(collapsedBadge).toEqual(expect.objectContaining({
+      testID: 'session-usageLimit-status-badge',
+      onPress: expect.any(Function),
+    }));
+
+    await act(async () => {
+      collapsedBadge.onPress();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(screen.findByTestId('session-usageLimit-recovery')).toBeTruthy();
+
+    await screen.unmount();
+  });
+
+  it('shows stale runner banner and badge, collapses through the badge, and clears after successful restart', async () => {
+    resetSession({
+      active: true,
+      metadata: buildStaleRunnerMetadata(),
+    });
+    sessionRunnerRestartSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 'restarted',
+      sessionId: 's1',
+    });
+
+    const screen = await renderSessionView();
+
+    expect(screen.findByTestId('session-staleRunner-version')).toBeTruthy();
+    expect(getStaleRunnerStatusBadge()).toEqual(expect.objectContaining({
+      key: 'stale-session-runner',
+      testID: 'session-staleRunner-status-badge',
+      onPress: expect.any(Function),
+    }));
+
+    await act(async () => {
+      getStaleRunnerStatusBadge().onPress();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(screen.findByTestId('session-staleRunner-version')).toBeNull();
+
+    await act(async () => {
+      getStaleRunnerStatusBadge().onPress();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    const staleRunnerBanner = getWarningActionBannerPropsByTestId('session-staleRunner-version');
+    await act(async () => {
+      await staleRunnerBanner.onActionPress();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(sessionRunnerRestartSpy).toHaveBeenCalledWith({
+      runtimeState: expect.objectContaining({
+        sessionId: 's1',
+        runner: expect.objectContaining({
+          pid: 123,
+          processCommandHash: 'hash-old',
+          runtimeId: 'runner-runtime-old',
+        }),
+      }),
+      serverId: 'server-1',
+    });
+    expect(screen.findByTestId('session-staleRunner-version')).toBeNull();
+    expect(getAgentInputProps().statusBadges?.some((badge: { key?: string }) => badge.key === 'stale-session-runner')).toBe(false);
+
+    await screen.unmount();
+  });
+
+  it('keeps stale-runner restart disabled for view-only shared sessions', async () => {
+    resetSession({
+      active: true,
+      accessLevel: 'view',
+      metadata: buildStaleRunnerMetadata(),
+    });
+
+    const screen = await renderSessionView();
+    const staleRunnerBanner = getWarningActionBannerPropsByTestId('session-staleRunner-version');
+
+    expect(staleRunnerBanner.disabled).toBe(true);
+
+    await act(async () => {
+      await staleRunnerBanner.onActionPress();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(sessionRunnerRestartSpy).not.toHaveBeenCalled();
+    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'session.sharing.noEditPermission');
+
+    await screen.unmount();
+  });
+
+  it('shows stale runner banner from daemon status RPC when metadata is not seeded', async () => {
+    const staleRuntimeState = (buildStaleRunnerMetadata() as Record<string, unknown>)[SESSION_RUNNER_RUNTIME_METADATA_KEY];
+    resetSession({
+      active: true,
+      serverId: 'server-1',
+      metadata: {
+        path: '/repo',
+        host: 'host-1',
+        machineId: 'm1',
+      },
+    });
+    sessionRunnerStatusGetSpy.mockResolvedValueOnce(staleRuntimeState);
+    sessionRunnerRestartSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 'restarted',
+      sessionId: 's1',
+    });
+
+    const screen = await renderSessionView({ routeServerId: 'server-1' });
+    await flushHookEffects({ cycles: 1, turns: 2 });
+
+    expect(sessionRunnerStatusGetSpy).toHaveBeenCalledWith({
+      sessionId: 's1',
+      machineId: 'm1',
+      serverId: 'server-1',
+    });
+    expect(screen.findByTestId('session-staleRunner-version')).toBeTruthy();
+
+    const staleRunnerBanner = getWarningActionBannerPropsByTestId('session-staleRunner-version');
+    await act(async () => {
+      await staleRunnerBanner.onActionPress();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(sessionRunnerRestartSpy).toHaveBeenCalledWith({
+      runtimeState: expect.objectContaining({
+        sessionId: 's1',
+        machineId: 'm1',
+        runner: expect.objectContaining({
+          pid: 123,
+          processCommandHash: 'hash-old',
+          runtimeId: 'runner-runtime-old',
+        }),
+      }),
+      serverId: 'server-1',
+    });
+
+    await screen.unmount();
+  });
+
+  it('keeps usage-limit badge ordering ahead of stale-runner and work-state badges', async () => {
+    enabledFeatureIds.add('sessions.usageLimitRecovery');
+    resetSession({
+      active: true,
+      metadata: buildStaleRunnerMetadata(),
+      latestTurnStatus: 'failed' as any,
+      lastRuntimeIssue: {
+        v: 1,
+        scope: 'primary_session',
+        status: 'failed',
+        code: 'usage_limit',
+        source: 'usage_limit',
+        occurredAt: 1_700_000_000_000,
+        usageLimit: {
+          v: 1,
+          resetAtMs: Date.now() + 60_000,
+          retryAfterMs: null,
+          quotaScope: 'account',
+          recoverability: 'wait',
+        },
+      } as any,
+    });
+
+    const screen = await renderSessionView();
+    const badgeKeys = getAgentInputProps().statusBadges?.map((badge: { key: string }) => badge.key);
+
+    expect(badgeKeys).toEqual(expect.arrayContaining(['usage-limit-recovery', 'stale-session-runner']));
+    expect(badgeKeys.indexOf('usage-limit-recovery')).toBeLessThan(badgeKeys.indexOf('stale-session-runner'));
+
+    await screen.unmount();
+  });
+
   it('clears optimistic usage-limit checking state after a recovery action fails', async () => {
     enabledFeatureIds.add('sessions.usageLimitRecovery');
     const futureResetAtMs = Date.now() + 60_000;
@@ -582,7 +877,7 @@ describe('SessionView (control switch timeout)', () => {
         serverId: 'server-1',
       }),
     );
-    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'temporary control failure');
+    expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'temporary control failure', undefined);
     expect(getWarningActionBannerProps().actionTestID).toBe('session-usageLimit-recovery-enable');
     expect(getAgentInputProps().statusBadges).toContainEqual(expect.objectContaining({
       key: 'usage-limit-recovery',

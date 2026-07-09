@@ -29,6 +29,8 @@ vi.mock('@/components/ui/forms/dropdown/ContextMenu', () => ({
     ContextMenu: (props: any) => React.createElement('ContextMenu', props),
 }));
 
+vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
+
 vi.mock('@/utils/sessions/sessionUtils', () => ({
     getSessionName: () => 'Session',
     getSessionSubtitle: () => 'Subtitle',
@@ -63,6 +65,10 @@ vi.mock('@/hooks/session/useNavigateToSession', () => ({
 }));
 
 let platformOs: 'ios' | 'android' | 'web' = 'ios';
+let localDevModeEnabled = false;
+const storageSessionsState = vi.hoisted(() => ({
+    current: {} as Record<string, any>,
+}));
 
 vi.mock('@/utils/platform/responsive', () => ({
     useIsTablet: () => false,
@@ -96,8 +102,23 @@ installSessionShellCommonModuleMocks({
         }).module;
     },
     storage: async (_importOriginal) => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { createStorageModuleStub, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+        const store = createStorageStoreMock({});
+        const getBaseState = store.getState;
+        const getBaseInitialState = store.getInitialState;
+        const storage = Object.assign(store, {
+            getState: () => ({
+                ...getBaseState(),
+                sessions: storageSessionsState.current,
+            }),
+            getInitialState: () => ({
+                ...getBaseInitialState(),
+                sessions: storageSessionsState.current,
+            }),
+        });
         return createStorageModuleStub({
+            storage,
+            getStorage: () => storage,
             useHasUnreadMessages: () => false,
             useProfile: () => ({
                 id: 'u1',
@@ -113,6 +134,7 @@ installSessionShellCommonModuleMocks({
             useSession: () => null,
             useSessionListRenderable: () => null,
             useSessionListMeaningfulActivityAt: () => null,
+            useLocalSetting: (key: string) => key === 'devModeEnabled' ? localDevModeEnabled : null,
         });
     },
 });
@@ -140,6 +162,14 @@ function hasSelectMenuItem(items: unknown): boolean {
     });
 }
 
+function hasCopyDebugInformationMenuItem(items: unknown): boolean {
+    if (!Array.isArray(items)) return false;
+    return items.some((item: unknown) => {
+        if (!item || typeof item !== 'object') return false;
+        return (item as { id?: unknown }).id === 'session.copyDebugInformation';
+    });
+}
+
 describe('SessionItem context menu press suppression', () => {
     afterEach(() => {
         standardCleanup();
@@ -147,6 +177,8 @@ describe('SessionItem context menu press suppression', () => {
         modalPromptSpy.mockClear();
         sessionRenameSpy.mockClear();
         platformOs = 'ios';
+        localDevModeEnabled = false;
+        storageSessionsState.current = {};
         vi.useRealTimers();
     });
 
@@ -201,6 +233,103 @@ describe('SessionItem context menu press suppression', () => {
         expect(menus).toHaveLength(1);
         expect(menus[0].props.open).toBe(true);
         expect(menus[0].props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_RENAME_ID)).toBe(true);
+    });
+
+    it('shows the copy information context menu item in developer mode', async () => {
+        localDevModeEnabled = true;
+        const SessionItem = await importSessionItem();
+
+        const session = createSessionFixture({
+            id: 'sess_debug_menu',
+            active: false,
+            metadata: {
+                path: '/workspace/repo',
+                host: 'host',
+                flavor: 'claude',
+                claudeSessionId: 'claude-session-1',
+                sessionLogPath: '/tmp/happier/session.log',
+            },
+        });
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={session}
+                serverId="server_a"
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                nativeContextMenuOpen={true}
+                onNativeContextMenuOpenChange={vi.fn()}
+            />,
+        );
+
+        const menus = screen.tree.root.findAllByType('ContextMenu' as React.ElementType);
+        expect(menus).toHaveLength(1);
+        expect(hasCopyDebugInformationMenuItem(menus[0].props.items)).toBe(true);
+    });
+
+    it('copies debug information from the full cached session when row metadata is list-projected', async () => {
+        const Clipboard = await import('expo-clipboard');
+        localDevModeEnabled = true;
+        const SessionItem = await importSessionItem();
+        const fullSession = createSessionFixture({
+            id: 'sess_debug_full',
+            active: false,
+            metadata: {
+                path: '/workspace/repo',
+                homeDir: '/Users/agent',
+                host: 'host',
+                flavor: 'codex',
+                sessionLogPath: '/tmp/happier/session.log',
+                runtimeDescriptorV1: {
+                    v: 1,
+                    providerId: 'codex',
+                    provider: {
+                        backendMode: 'appServer',
+                        providerSessionId: 'codex-session-1',
+                    },
+                },
+            },
+        });
+        storageSessionsState.current = { [fullSession.id]: fullSession };
+        const rowSession = {
+            ...fullSession,
+            metadata: {
+                path: '/workspace/repo',
+                homeDir: '/Users/agent',
+                host: 'host',
+                flavor: 'codex',
+            },
+        };
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={rowSession}
+                serverId="server_a"
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                nativeContextMenuOpen={true}
+                onNativeContextMenuOpenChange={vi.fn()}
+            />,
+        );
+
+        const contextMenu = screen.tree.root.findByType('ContextMenu' as React.ElementType);
+        await act(async () => {
+            await contextMenu.props.onSelect('session.copyDebugInformation');
+        });
+
+        expect(Clipboard.setStringAsync).toHaveBeenCalledWith([
+            'Happier session ID: sess_debug_full',
+            'agentInput.agent.codex session ID: codex-session-1',
+            'Happier logs: /tmp/happier/session.log',
+        ].join('\n'));
     });
 
     it('suppresses the release press after a native context menu is opened externally', async () => {

@@ -78,11 +78,12 @@ describe('newSessionLaunchAttempt', () => {
         expect(launchAttemptApi.shouldSpawnForNewSessionLaunchAttempt(attempt)).toBe(false);
     });
 
-    it('matches attempts only against the launch scope they were created for', () => {
+    it('matches attempts only against the launch scope and spawn identity they were created for', () => {
         const attempt = launchAttemptModule.createNewSessionLaunchAttempt({
             prompt: '',
             displayText: '',
             scopeKey: 'machine:m1|server:server-a|path:/repo',
+            spawnAttemptKey: 'new-session.launch:{"prompt":"a"}',
             createId: (prefix) => `${prefix}-stable`,
         });
 
@@ -90,7 +91,20 @@ describe('newSessionLaunchAttempt', () => {
         expect(typeof launchAttemptApi.isNewSessionLaunchAttemptInScope).toBe('function');
         if (typeof launchAttemptApi.isNewSessionLaunchAttemptInScope !== 'function') return;
 
-        expect(launchAttemptApi.isNewSessionLaunchAttemptInScope(attempt, 'machine:m1|server:server-a|path:/repo')).toBe(true);
-        expect(launchAttemptApi.isNewSessionLaunchAttemptInScope(attempt, 'machine:m1|server:server-b|path:/repo')).toBe(false);
+        expect(launchAttemptApi.isNewSessionLaunchAttemptInScope(
+            attempt,
+            'machine:m1|server:server-a|path:/repo',
+            'new-session.launch:{"prompt":"a"}',
+        )).toBe(true);
+        expect(launchAttemptApi.isNewSessionLaunchAttemptInScope(
+            attempt,
+            'machine:m1|server:server-b|path:/repo',
+            'new-session.launch:{"prompt":"a"}',
+        )).toBe(false);
+        expect(launchAttemptApi.isNewSessionLaunchAttemptInScope(
+            attempt,
+            'machine:m1|server:server-a|path:/repo',
+            'new-session.launch:{"prompt":"b"}',
+        )).toBe(false);
     });
 });

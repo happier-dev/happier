@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { renderHook, renderScreen } from '@/dev/testkit';
 import {
@@ -8,6 +9,12 @@ import {
     resetSessionSurfaceVisibilityForTests,
     useSessionSurfaceVisibilitySnapshot,
 } from '@/sync/domains/session/sessionSurfaceVisibility';
+import {
+    clearMountedSessionRealtimeTranscriptConsumers,
+    readMountedSessionRealtimeTranscriptConsumerSessionIds,
+    readMountedSessionTranscriptConsumerSessionIdsForRetention,
+} from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
+import { createSessionTranscriptRetentionController } from '@/sync/engine/sessions/sessionTranscriptRetention';
 
 const setLastFocusedSessionId = vi.fn();
 
@@ -34,13 +41,17 @@ vi.mock('@/voice/runtime/voiceTargetStore', () => ({
 }));
 
 describe('useSessionSurfaceActivation', () => {
+    const sessionIds = ['s1', 's2', 's3', 's4', 's5'] as const;
+
     beforeEach(() => {
         resetSessionSurfaceVisibilityForTests();
+        clearMountedSessionRealtimeTranscriptConsumers();
         setLastFocusedSessionId.mockClear();
     });
 
     afterEach(() => {
         resetSessionSurfaceVisibilityForTests();
+        clearMountedSessionRealtimeTranscriptConsumers();
     });
 
     it('registers visible sessions and updates focus and route-anchor state from the surface inputs', async () => {
@@ -282,6 +293,156 @@ describe('useSessionSurfaceActivation', () => {
 
         await screen.unmount();
         expect(getSessionSurfaceVisibilitySnapshot().visibleSessionIds).toEqual([]);
+    });
+
+    it('holds a mount-lifetime transcript retention consumer that survives hidden-but-mounted surfaces', async () => {
+        const { useSessionSurfaceActivation } = await import('./useSessionSurfaceActivation');
+        const hook = await renderHook((props: {
+            sessionId: string;
+            surfaceFocused: boolean;
+            surfaceVisible: boolean;
+            routeAnchor: boolean;
+        }) => useSessionSurfaceActivation({
+            sessionId: props.sessionId,
+            surfaceFocused: props.surfaceFocused,
+            surfaceVisible: props.surfaceVisible,
+            routeAnchor: props.routeAnchor,
+        }), {
+            initialProps: {
+                sessionId: 'session-1',
+                surfaceFocused: true,
+                surfaceVisible: true,
+                routeAnchor: false,
+            },
+        });
+
+        expect(readMountedSessionTranscriptConsumerSessionIdsForRetention()).toEqual(['session-1']);
+        // The retention hold must NOT widen realtime full-content routing.
+        expect(readMountedSessionRealtimeTranscriptConsumerSessionIds()).toEqual([]);
+
+        // Hidden-but-mounted back-stack surface: visibility drops, retention hold survives.
+        await hook.rerender({
+            sessionId: 'session-1',
+            surfaceFocused: false,
+            surfaceVisible: false,
+            routeAnchor: false,
+        });
+        expect(getSessionSurfaceVisibilitySnapshot().visibleSessionIds).toEqual([]);
+        expect(readMountedSessionTranscriptConsumerSessionIdsForRetention()).toEqual(['session-1']);
+
+        await hook.unmount();
+        expect(readMountedSessionTranscriptConsumerSessionIdsForRetention()).toEqual([]);
+    });
+
+    it('releases mounted web surfaces once they leave the rendered route surface set so eviction can use LRU and grace eligibility', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000_000);
+        const { useSessionSurfaceActivation } = await import('./useSessionSurfaceActivation');
+
+        type ActivationInput = Parameters<typeof useSessionSurfaceActivation>[0] & {
+            surfaceRetained?: boolean;
+        };
+
+        const MountedSessionSurface = React.memo(function MountedSessionSurface(props: Readonly<{
+            sessionId: string;
+            retained: boolean;
+            visible: boolean;
+        }>) {
+            const input: ActivationInput = {
+                sessionId: props.sessionId,
+                surfaceFocused: props.visible,
+                surfaceRetained: props.retained,
+                surfaceVisible: props.visible,
+                routeAnchor: props.visible,
+            };
+            useSessionSurfaceActivation(input);
+            return null;
+        });
+
+        const MountedSessionSurfaces = React.memo(function MountedSessionSurfaces(props: Readonly<{
+            retainedSessionIds: ReadonlySet<string>;
+            visibleSessionIds: ReadonlySet<string>;
+        }>) {
+            return (
+                <>
+                    {sessionIds.map((sessionId) => (
+                        <MountedSessionSurface
+                            key={sessionId}
+                            sessionId={sessionId}
+                            retained={props.retainedSessionIds.has(sessionId)}
+                            visible={props.visibleSessionIds.has(sessionId)}
+                        />
+                    ))}
+                </>
+            );
+        });
+
+        const screen = await renderScreen(
+            <MountedSessionSurfaces
+                retainedSessionIds={new Set(sessionIds)}
+                visibleSessionIds={new Set(['s5'])}
+            />,
+        );
+
+        expect(readMountedSessionTranscriptConsumerSessionIdsForRetention().sort()).toEqual([...sessionIds].sort());
+
+        await screen.update(
+            <MountedSessionSurfaces
+                retainedSessionIds={new Set()}
+                visibleSessionIds={new Set()}
+            />,
+        );
+
+        expect(getSessionSurfaceVisibilitySnapshot().visibleSessionIds).toEqual([]);
+        expect(readMountedSessionRealtimeTranscriptConsumerSessionIds()).toEqual([]);
+        expect(readMountedSessionTranscriptConsumerSessionIdsForRetention()).toEqual([]);
+
+        const evicted: string[] = [];
+        const controller = createSessionTranscriptRetentionController({
+            readHydratedSessionIds: () => [...sessionIds],
+            readProtectedSessionIds: () => new Set(readMountedSessionTranscriptConsumerSessionIdsForRetention()),
+            readLastViewedAtBySessionId: () => ({
+                s1: 1,
+                s2: 2,
+                s3: 3,
+                s4: 4,
+                s5: 5,
+            }),
+            evictSessionTranscript: (sessionId) => {
+                evicted.push(sessionId);
+            },
+            tuning: {
+                recentKeepCount: 3,
+                graceMs: 180_000,
+                sweepDebounceMs: 1_000,
+            },
+            now: () => Date.now(),
+        });
+
+        try {
+            controller.scheduleSweep();
+            await vi.advanceTimersByTimeAsync(1_000);
+            await vi.advanceTimersByTimeAsync(180_000);
+        } finally {
+            controller.dispose();
+        }
+
+        expect([...evicted].sort()).toEqual(['s1', 's2']);
+
+        await screen.unmount();
+    });
+
+    it('does not register a retention hold for blank session ids', async () => {
+        const { useSessionSurfaceActivation } = await import('./useSessionSurfaceActivation');
+        const hook = await renderHook(() => useSessionSurfaceActivation({
+            sessionId: '   ',
+            surfaceFocused: false,
+            surfaceVisible: false,
+            routeAnchor: false,
+        }));
+
+        expect(readMountedSessionTranscriptConsumerSessionIdsForRetention()).toEqual([]);
+        await hook.unmount();
     });
 
     it('can unmount a visible surface while a visibility subscriber is mounted', async () => {

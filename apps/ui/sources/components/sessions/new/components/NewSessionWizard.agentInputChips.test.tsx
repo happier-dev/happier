@@ -78,6 +78,10 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
         React.createElement('ItemGroup', props, props.children),
 }));
 
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
+    DropdownMenu: (props: Record<string, unknown>) => React.createElement('DropdownMenu', props),
+}));
+
 vi.mock('@/components/sessions/agentInput', () => ({
     AgentInput: AgentInputMock,
 }));
@@ -303,6 +307,52 @@ describe('NewSessionWizard agent input chips', () => {
         ]);
         expect(props.onAgentPickerSelect).toBe(onAgentPickerSelect);
         expect(props.onAgentClick).toBeUndefined();
+    });
+
+    it('routes compact backend dropdown selections through canonical picker options', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+        const selectPiImmediately = vi.fn();
+        const onAgentPickerSelect = vi.fn();
+        const setAgentType = vi.fn();
+        const props = buildProps();
+        props.agent = {
+            ...props.agent,
+            enabledAgentIds: ['gemini', 'pi'],
+            agentType: 'gemini',
+            agentLabel: 'Gemini',
+            setAgentType,
+            agentPickerOptions: [
+                { id: 'backend:gemini', label: 'Gemini' },
+                { id: 'backend:pi', label: 'Pi', onSelectImmediate: selectPiImmediately },
+            ],
+            agentPickerSelectedOptionId: 'backend:gemini',
+            onAgentPickerSelect,
+        } as any;
+
+        const screen = await renderScreen(React.createElement(NewSessionWizard, {
+            ...props,
+            sectionPresentation: { backends: 'dropdown' },
+            popoverBoundaryRef: { current: null },
+        } as any));
+
+        const dropdown = screen.tree.findAll((node: any) => (
+            node?.type === 'DropdownMenu'
+            && node?.props?.itemTrigger?.itemProps?.testID === 'new-session-agent-dropdown-trigger'
+        ))[0];
+
+        expect(dropdown?.props?.items?.map((item: any) => ({ id: item.id, title: item.title }))).toEqual([
+            { id: 'backend:gemini', title: 'Gemini' },
+            { id: 'backend:pi', title: 'Pi' },
+        ]);
+        expect(dropdown?.props?.selectedId).toBe('backend:gemini');
+
+        await act(async () => {
+            dropdown?.props?.onSelect?.('backend:pi');
+        });
+
+        expect(selectPiImmediately).toHaveBeenCalledTimes(1);
+        expect(onAgentPickerSelect).not.toHaveBeenCalled();
+        expect(setAgentType).not.toHaveBeenCalled();
     });
 
     it('passes the profile popover to AgentInput and omits the redundant env chip props', async () => {

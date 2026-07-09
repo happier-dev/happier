@@ -133,11 +133,13 @@ export function useNewSessionWizardProps(params: Readonly<{
     handleCreateSession: () => void;
     canCreate: boolean;
     isCreating: boolean;
+    pendingLaunchAttempt?: NewSessionWizardFooterProps['pendingLaunchAttempt'];
     submitAccessibilityLabel?: NewSessionWizardFooterProps['submitAccessibilityLabel'];
     emptyAutocompletePrefixes: any;
     emptyAutocompleteSuggestions: any;
     onAutocompleteSuggestionSelect?: NewSessionWizardFooterProps['onAutocompleteSuggestionSelect'];
     connectionStatus?: any;
+    statusBadges?: NewSessionWizardFooterProps['statusBadges'];
     machinePopover?: NewSessionWizardFooterProps['machinePopover'];
     pathPopover?: NewSessionWizardFooterProps['pathPopover'];
     resumeSessionId: string;
@@ -450,11 +452,13 @@ export function useNewSessionWizardProps(params: Readonly<{
             handleCreateSession: params.handleCreateSession,
             canCreate: params.canCreate,
             isCreating: params.isCreating,
+            pendingLaunchAttempt: params.pendingLaunchAttempt,
             submitAccessibilityLabel: params.submitAccessibilityLabel,
             emptyAutocompletePrefixes: params.emptyAutocompletePrefixes,
             emptyAutocompleteSuggestions: params.emptyAutocompleteSuggestions,
             onAutocompleteSuggestionSelect: params.onAutocompleteSuggestionSelect,
             connectionStatus: params.connectionStatus,
+            statusBadges: params.statusBadges,
             machinePopover: params.machinePopover,
             pathPopover: params.pathPopover,
             resumeSessionId: params.resumeSessionId,
@@ -480,12 +484,14 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.isCreating,
         params.isResumeSupportChecking,
         params.machinePopover,
+        params.pendingLaunchAttempt,
         params.pathPopover,
         params.resumePopover,
         params.resumeSessionId,
         params.sessionPrompt,
         params.sessionPromptInputMaxHeight,
         params.setSessionPrompt,
+        params.statusBadges,
     ]);
 
     return {

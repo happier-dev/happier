@@ -170,6 +170,21 @@ describe('buildSessionViewShellSessionSignature', () => {
         );
     });
 
+    it('changes when pending request freshness timestamp changes', () => {
+        const base = createSession({
+            pendingUserActionRequestCount: 1,
+            pendingRequestObservedAt: 1_000,
+        });
+        const refreshed = createSession({
+            pendingUserActionRequestCount: 1,
+            pendingRequestObservedAt: 5_000,
+        });
+
+        expect(buildSessionViewShellSessionSignature(refreshed)).not.toBe(
+            buildSessionViewShellSessionSignature(base),
+        );
+    });
+
     it('stays stable for read-cursor-only updates while viewing the session', () => {
         const base = createSession({
             lastViewedSessionSeq: 25,
@@ -503,6 +518,57 @@ describe('useSessionViewShellSession', () => {
             expect(hook.getCurrent().seq).toBe(26);
             expect(nextStatus.state).toBe('thinking');
             expect(shouldShowAbortButtonForSessionState(nextStatus.state)).toBe(true);
+            await hook.unmount();
+        } finally {
+            storage.setState(previousState);
+        }
+    });
+
+    it('uses local outbound pending timestamps for runtime status before the session row records optimistic thinking', async () => {
+        const previousState = storage.getState();
+        const shellSession = createSession({
+            id: 'session-1',
+            seq: 0,
+            active: true,
+            activeAt: 1_000_000,
+            thinking: false,
+            thinkingAt: 1,
+            latestTurnStatus: null,
+            latestTurnStatusObservedAt: null,
+            optimisticThinkingAt: null,
+            presence: 'online',
+        });
+        try {
+            storage.setState((state) => ({
+                ...state,
+                sessions: {
+                    ...state.sessions,
+                    'session-1': shellSession,
+                },
+                sessionPending: {
+                    ...state.sessionPending,
+                    'session-1': {
+                        isLoaded: true,
+                        discarded: [],
+                        messages: [{
+                            id: 'local-1',
+                            localId: 'local-1',
+                            createdAt: 1_000_000,
+                            updatedAt: 1_000_000,
+                            source: 'local_outbound',
+                            deliveryStatus: 'accepted',
+                            text: 'start',
+                            rawRecord: { role: 'user', content: { type: 'text', text: 'start' } },
+                        }],
+                    },
+                },
+            }));
+
+            const hook = await renderHook(() => useSessionRuntimeStatusSource(shellSession));
+            const status = getSessionStatus(hook.getCurrent()!, 1_000_100, 0);
+
+            expect(status.state).toBe('thinking');
+            expect(hook.getCurrent()?.optimisticThinkingAt).toBe(1_000_000);
             await hook.unmount();
         } finally {
             storage.setState(previousState);

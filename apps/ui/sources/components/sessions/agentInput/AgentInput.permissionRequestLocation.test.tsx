@@ -204,6 +204,9 @@ vi.mock('@/sync/domains/state/storageStore', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    getAgentIconSvgXml: () => null,
+    getAgentIconSource: () => null,
+    getAgentIconTintColor: () => undefined,
     AGENT_IDS: ['codex'],
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: () => null,

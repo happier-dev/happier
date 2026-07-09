@@ -6,10 +6,9 @@ import {
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import { resolveSessionListRenderableMeaningfulActivityAt } from '@/sync/domains/session/listing/sessionListRenderableSorting';
 import {
-    isFreshTimestamp,
-    readSessionRuntimePresentationFreshnessTimestamps,
-    SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
+    readSessionRuntimePresentationFreshnessExpirations,
 } from '@/sync/domains/session/attention/runtimePresentation';
+import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import type { WorkspaceDisplayEllipsizeMode } from '@/sync/domains/workspaces/workspaceDisplayPresentation';
 import { getSessionName, getSessionStatus, type SessionStatus, type SessionWorkingTextMode } from '@/utils/sessions/sessionUtils';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
@@ -19,7 +18,7 @@ import { t } from '@/text';
 import { getTagsForSession, sessionTagKey } from './sessionTagUtils';
 import { readSessionListShellCacheMaxEntriesFromEnv } from './sessionListShellCacheConfig';
 
-type SessionReachableDisplay = Readonly<{
+export type SessionReachableDisplay = Readonly<{
     machineId: string | null;
     machineLabel: string;
     workspaceSubtitle: string;
@@ -49,6 +48,12 @@ export type SessionListRowViewModel = Readonly<{
     selected: boolean;
     tags: string[];
     secondaryLineMode: ReturnType<typeof resolveSessionListSecondaryLineMode>;
+    /**
+     * Retained working placement: the session is held in the working group
+     * while its live signals are stale. Rows render the working indicator
+     * WITHOUT animation for it, with a dedicated status text.
+     */
+    workingPlacementRetained: boolean;
 }>;
 
 const EMPTY_SESSION_LIST_ROW_VIEW_MODELS: ReadonlyArray<SessionListRowViewModel | null> = [];
@@ -62,6 +67,113 @@ type RowViewModelCacheEntry = Readonly<{
 const SESSION_LIST_ROW_VIEW_MODEL_CACHE = new LruMap<string, RowViewModelCacheEntry>({
     maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
 });
+
+export type BuildSessionListRowViewModelInput = Readonly<{
+    item: Extract<SessionListIndexItem, { type: 'session' }>;
+    index: number;
+    listItems: ReadonlyArray<SessionListIndexItem>;
+    reachableSessionDisplayById: ReadonlyMap<string, SessionReachableDisplay>;
+    reachableSessionDisplayByKey?: ReadonlyMap<string, SessionReachableDisplay>;
+    rowRenderableByKey?: ReadonlyMap<string, SessionListRenderableSession>;
+    relativeNowMs?: number;
+    runtimeNowMs?: number;
+    workingIndicatorMode?: 'spinner' | 'pulse';
+    workingTextMode?: SessionWorkingTextMode;
+    identityDisplay?: 'avatar' | 'agentLogo' | 'none';
+    activeColorMode?: 'activityAndAttention' | 'attentionOnly' | 'allActive';
+    hideInactiveSessions?: boolean;
+    hasMultipleMachines: boolean;
+    pinnedSessionKeys: ReadonlySet<string>;
+    sessionTags: Record<string, string[]>;
+    selectedSessionId: string | null;
+    showServerBadge: boolean;
+    showPinnedServerBadge: boolean;
+}>;
+
+export function buildSessionListRowViewModel(input: BuildSessionListRowViewModelInput): SessionListRowViewModel {
+    const item = input.item;
+    const groupKey = String(item.groupKey ?? '').trim();
+    const prev = input.index > 0 ? input.listItems[input.index - 1] : null;
+    const next = input.index < input.listItems.length - 1 ? input.listItems[input.index + 1] : null;
+    const prevGroupKey = prev && prev.type === 'session' ? String(prev.groupKey ?? '').trim() : '';
+    const nextGroupKey = next && next.type === 'session' ? String(next.groupKey ?? '').trim() : '';
+    const isFirst = !groupKey || prevGroupKey !== groupKey;
+    const isLast = !groupKey || nextGroupKey !== groupKey;
+    const sessionId = String(item.sessionId ?? '').trim();
+    const serverId = typeof item.serverId === 'string' ? item.serverId.trim() : '';
+    const sessionKey = serverId && sessionId ? sessionTagKey(serverId, sessionId) : null;
+    const rowKey = buildSessionListServerScopedRowKey(serverId, sessionId);
+    const pinned = item.pinned === true || (sessionKey ? input.pinnedSessionKeys.has(sessionKey) : false);
+    const reachableDisplay = (sessionKey ? input.reachableSessionDisplayByKey?.get(sessionKey) : undefined)
+        ?? input.reachableSessionDisplayById.get(sessionId);
+    const workspaceSubtitle = reachableDisplay?.workspaceSubtitle ?? '';
+    const subtitleEllipsizeMode = reachableDisplay?.workspaceSubtitleEllipsizeMode ?? 'head';
+    const machineLabel = reachableDisplay?.machineLabel ?? '';
+    const subtitle = input.hasMultipleMachines
+        ? (machineLabel && workspaceSubtitle ? `${machineLabel} · ${workspaceSubtitle}` : machineLabel || workspaceSubtitle)
+        : workspaceSubtitle;
+    const session = rowKey ? input.rowRenderableByKey?.get(rowKey) ?? null : null;
+    const relativeNowMs = normalizeClockNow(input.relativeNowMs);
+    const runtimeNowMs = normalizeClockNow(input.runtimeNowMs);
+    const activityAt = session ? resolveSessionListRenderableMeaningfulActivityAt(session) : null;
+    const activityTimeLabel = typeof activityAt === 'number' && activityAt > 0
+        ? formatShortRelativeTimeAt(activityAt, relativeNowMs)
+        : '';
+    const sessionStatus = session
+        ? getSessionStatus(session, runtimeNowMs, {
+            vibingIndex: resolveStableVibingIndex(sessionKey ?? sessionId),
+            workingTextMode: input.workingTextMode ?? 'animated',
+        })
+        : null;
+    const sessionName = session ? getSessionName(session) : '';
+
+    const rowViewModel: SessionListRowViewModel = {
+        groupKey,
+        sessionKey,
+        session,
+        sessionStatus,
+        isIdentityLoading: session ? resolveRowIdentityLoading({
+            session,
+            title: sessionName,
+        }) : false,
+        nextRuntimeFreshnessAtMs: session ? resolveNextRuntimeFreshnessAtMs(session, runtimeNowMs) : null,
+        hasUnreadMessages: session?.hasUnreadMessages === true,
+        activityTimeLabel,
+        workingIndicatorMode: input.workingIndicatorMode === 'pulse' ? 'pulse' : 'spinner',
+        identityDisplay: input.identityDisplay === 'agentLogo' || input.identityDisplay === 'none' ? input.identityDisplay : 'avatar',
+        activeColorMode: normalizeActiveColorMode(input.activeColorMode),
+        hideInactiveSessions: input.hideInactiveSessions === true,
+        isFirst,
+        isLast,
+        isSingle: isFirst && isLast,
+        subtitleOverride: item.groupKind === 'project' && item.variant === 'no-path' ? null : (subtitle || null),
+        subtitleEllipsizeMode,
+        pinned,
+        showServerBadge: pinned ? input.showPinnedServerBadge : input.showServerBadge,
+        selected: input.selectedSessionId != null && input.selectedSessionId === sessionId,
+        tags: getTagsForSession(input.sessionTags, sessionKey ?? ''),
+        secondaryLineMode: resolveSessionListSecondaryLineMode({ groupKind: item.groupKind }),
+        workingPlacementRetained: item.workingPlacementReason === 'working-retained',
+    };
+    const signature = buildRowViewModelSignature(rowViewModel);
+    const cacheKey = sessionKey ?? `session:${sessionId}`;
+    const cached = SESSION_LIST_ROW_VIEW_MODEL_CACHE.get(cacheKey);
+    if (
+        cached?.signature === signature
+        && (
+            cached.sessionRef === session
+            || (cached.sessionRef != null && session != null && areSessionListRenderablesEqual(cached.sessionRef, session))
+        )
+    ) {
+        return cached.value;
+    }
+    SESSION_LIST_ROW_VIEW_MODEL_CACHE.set(cacheKey, {
+        sessionRef: session,
+        signature,
+        value: rowViewModel,
+    });
+    return rowViewModel;
+}
 
 export function buildSessionListRowViewModels(input: Readonly<{
     listItems: ReadonlyArray<SessionListIndexItem>;
@@ -91,85 +203,12 @@ export function buildSessionListRowViewModels(input: Readonly<{
             return null;
         }
 
-        const groupKey = String(item.groupKey ?? '').trim();
-        const prev = index > 0 ? input.listItems[index - 1] : null;
-        const next = index < input.listItems.length - 1 ? input.listItems[index + 1] : null;
-        const prevGroupKey = prev && prev.type === 'session' ? String(prev.groupKey ?? '').trim() : '';
-        const nextGroupKey = next && next.type === 'session' ? String(next.groupKey ?? '').trim() : '';
-        const isFirst = !groupKey || prevGroupKey !== groupKey;
-        const isLast = !groupKey || nextGroupKey !== groupKey;
-        const sessionId = String(item.sessionId ?? '').trim();
-        const serverId = typeof item.serverId === 'string' ? item.serverId.trim() : '';
-        const sessionKey = serverId && sessionId ? sessionTagKey(serverId, sessionId) : null;
-        const pinned = item.pinned === true || (sessionKey ? input.pinnedSessionKeys.has(sessionKey) : false);
-        const reachableDisplay = (sessionKey ? input.reachableSessionDisplayByKey?.get(sessionKey) : undefined)
-            ?? input.reachableSessionDisplayById.get(sessionId);
-        const workspaceSubtitle = reachableDisplay?.workspaceSubtitle ?? '';
-        const subtitleEllipsizeMode = reachableDisplay?.workspaceSubtitleEllipsizeMode ?? 'head';
-        const machineLabel = reachableDisplay?.machineLabel ?? '';
-        const subtitle = input.hasMultipleMachines
-            ? (machineLabel && workspaceSubtitle ? `${machineLabel} · ${workspaceSubtitle}` : machineLabel || workspaceSubtitle)
-            : workspaceSubtitle;
-        const session = sessionKey ? input.rowRenderableByKey?.get(sessionKey) ?? null : null;
-        const relativeNowMs = normalizeClockNow(input.relativeNowMs);
-        const runtimeNowMs = normalizeClockNow(input.runtimeNowMs);
-        const activityAt = session ? resolveSessionListRenderableMeaningfulActivityAt(session) : null;
-        const activityTimeLabel = typeof activityAt === 'number' && activityAt > 0
-            ? formatShortRelativeTimeAt(activityAt, relativeNowMs)
-            : '';
-        const sessionStatus = session
-            ? getSessionStatus(session, runtimeNowMs, {
-                vibingIndex: resolveStableVibingIndex(sessionKey ?? sessionId),
-                workingTextMode: input.workingTextMode ?? 'animated',
-            })
-            : null;
-        const sessionName = session ? getSessionName(session) : '';
-
-        const rowViewModel: SessionListRowViewModel = {
-            groupKey,
-            sessionKey,
-            session,
-            sessionStatus,
-            isIdentityLoading: session ? resolveRowIdentityLoading({
-                session,
-                title: sessionName,
-            }) : false,
-            nextRuntimeFreshnessAtMs: session ? resolveNextRuntimeFreshnessAtMs(session, runtimeNowMs) : null,
-            hasUnreadMessages: session?.hasUnreadMessages === true,
-            activityTimeLabel,
-            workingIndicatorMode: input.workingIndicatorMode === 'pulse' ? 'pulse' : 'spinner',
-            identityDisplay: input.identityDisplay === 'agentLogo' || input.identityDisplay === 'none' ? input.identityDisplay : 'avatar',
-            activeColorMode: normalizeActiveColorMode(input.activeColorMode),
-            hideInactiveSessions: input.hideInactiveSessions === true,
-            isFirst,
-            isLast,
-            isSingle: isFirst && isLast,
-            subtitleOverride: item.groupKind === 'project' && item.variant === 'no-path' ? null : (subtitle || null),
-            subtitleEllipsizeMode,
-            pinned,
-            showServerBadge: pinned ? input.showPinnedServerBadge : input.showServerBadge,
-            selected: input.selectedSessionId != null && input.selectedSessionId === sessionId,
-            tags: getTagsForSession(input.sessionTags, sessionKey ?? ''),
-            secondaryLineMode: resolveSessionListSecondaryLineMode({ groupKind: item.groupKind }),
-        };
-        const signature = buildRowViewModelSignature(rowViewModel);
-        const cacheKey = sessionKey ?? `session:${sessionId}`;
-        const cached = SESSION_LIST_ROW_VIEW_MODEL_CACHE.get(cacheKey);
-        if (
-            cached?.signature === signature
-            && (
-                cached.sessionRef === session
-                || (cached.sessionRef != null && session != null && areSessionListRenderablesEqual(cached.sessionRef, session))
-            )
-        ) {
-            return cached.value;
-        }
-        SESSION_LIST_ROW_VIEW_MODEL_CACHE.set(cacheKey, {
-            sessionRef: session,
-            signature,
-            value: rowViewModel,
+        return buildSessionListRowViewModel({
+            ...input,
+            item,
+            index,
+            listItems: input.listItems,
         });
-        return rowViewModel;
     });
     return next;
 }
@@ -199,6 +238,7 @@ function buildRowViewModelSignature(viewModel: SessionListRowViewModel): string 
         viewModel.selected ? '1' : '0',
         viewModel.tags.join('\u0001'),
         viewModel.secondaryLineMode,
+        viewModel.workingPlacementRetained ? '1' : '0',
     ].join('\u0002');
 }
 
@@ -231,28 +271,26 @@ function resolveRowIdentityLoading(input: Readonly<{
 }
 
 function resolveNextRuntimeFreshnessAtMs(session: SessionListRenderableSession, nowMs: number): number | null {
-    if (session.active !== true || session.presence !== 'online') return null;
+    if (session.presence !== 'online') return null;
 
-    const expirations: number[] = [];
-    const addExpiration = (timestamp: number | null | undefined) => {
-        if (!isFreshTimestamp(timestamp, nowMs, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS)) return;
-        expirations.push(Math.trunc(timestamp as number) + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS);
-    };
-
-    for (const timestamp of readSessionRuntimePresentationFreshnessTimestamps({
+    const expirations = readSessionRuntimePresentationFreshnessExpirations({
         active: session.active,
         activeAt: session.activeAt,
         presence: session.presence,
         thinking: session.thinking,
         thinkingAt: session.thinkingAt,
+        optimisticThinkingAt: session.optimisticThinkingAt,
+        hasPendingUserMessages: typeof session.pendingCount === 'number' && session.pendingCount > 0,
         latestTurnStatus: session.latestTurnStatus,
         latestTurnStatusObservedAt: session.latestTurnStatusObservedAt,
+        runtimeActivityActiveCount: session.runtimeActivityActiveCount ?? null,
+        runtimeActivityObservedAt: session.runtimeActivityObservedAt ?? null,
+        runtimeActivityExpiresAt: session.runtimeActivityExpiresAt ?? null,
+        runtimeActivitySourceClass: session.runtimeActivitySourceClass ?? null,
         hasPendingPermissionRequests: session.hasPendingPermissionRequests === true,
         hasPendingUserActionRequests: session.hasPendingUserActionRequests === true,
         pendingRequestObservedAt: session.pendingRequestObservedAt ?? null,
-    }, nowMs)) {
-        addExpiration(timestamp);
-    }
+    }, nowMs);
 
     if (expirations.length === 0) return null;
     return Math.min(...expirations);

@@ -70,6 +70,7 @@ vi.mock('@/components/ui/text/Text', () => ({
 describe('AgentInputChipPickerTopSelector', () => {
     it('renders a one-tap icon rail using the shared horizontal scroll row', async () => {
         const { AgentInputChipPickerTopSelector } = await import('./AgentInputChipPickerTopSelector');
+        const { AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE } = await import('./agentInputChipPickerOptionStyles');
         capturedDropdownMenuProps = null;
         capturedHorizontalRowProps = null;
         const onFocusOption = vi.fn();
@@ -115,7 +116,7 @@ describe('AgentInputChipPickerTopSelector', () => {
         expect(claudeStyle.backgroundColor).toBe('transparent');
 
         const codexIconChild = codexButton?.props.children.props.children;
-        expect(codexIconChild.props.size).toBe(18);
+        expect(codexIconChild.props.size).toBe(AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE);
 
         await screen.pressByTestIdAsync('agent-input-chip-picker.top-selector-option:claude');
         expect(onFocusOption).toHaveBeenCalledWith('claude');

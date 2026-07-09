@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import type { NewSessionProfileAvailabilityReason } from '@/components/sessions/new/modules/newSessionAgentSelection';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
@@ -24,6 +25,7 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     resolvedBackendEntries: readonly ResolvedBackendCatalogEntry[];
     getCompatibleProfileBackendEntries: (profile: AIBackendProfile) => readonly ResolvedBackendCatalogEntry[];
     isBackendEntrySelectable: (entry: ResolvedBackendCatalogEntry) => boolean;
+    getBackendEntryUnavailabilityReason?: (entry: ResolvedBackendCatalogEntry) => NewSessionProfileAvailabilityReason | null;
     getEngineSelectionForTargetKey: (targetKey: string) => NewSessionAgentPickerSelection;
     selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: NewSessionAgentPickerSelection) => void;
     selectedMachineId: string | null;
@@ -61,6 +63,9 @@ export type NewSessionAgentPickerOptionsState = Readonly<{
 export function buildNewSessionAgentPickerOptions(
     params: BuildNewSessionAgentPickerOptionsParams,
 ): NewSessionAgentPickerOptionsState {
+    const sessionCapableBackendEntries = params.resolvedBackendEntries.filter((entry) => (
+        entry.capabilities?.session?.supported !== false
+    ));
     const {
         profileForAgentSelection,
         compatibleBackendTargetKeys,
@@ -69,13 +74,13 @@ export function buildNewSessionAgentPickerOptions(
         useProfiles: params.useProfiles,
         selectedProfileId: params.selectedProfileId,
         profileMap: params.profileMap,
-        resolvedBackendEntries: params.resolvedBackendEntries,
+        resolvedBackendEntries: sessionCapableBackendEntries,
         getCompatibleProfileBackendEntries: params.getCompatibleProfileBackendEntries,
         isBackendEntrySelectable: params.isBackendEntrySelectable,
     });
 
-    const hasNonBuiltInBackend = params.resolvedBackendEntries.some((entry) => entry.kind !== 'builtInAgent');
-    if (params.resolvedBackendEntries.length <= 1 && !hasNonBuiltInBackend) {
+    const hasNonBuiltInBackend = sessionCapableBackendEntries.some((entry) => entry.kind !== 'builtInAgent');
+    if (sessionCapableBackendEntries.length <= 1 && !hasNonBuiltInBackend) {
         return {
             selectableBackendEntries,
         };
@@ -85,11 +90,12 @@ export function buildNewSessionAgentPickerOptions(
         profileForAgentSelection,
         compatibleBackendTargetKeys,
         resolvedBackendEntries: sortItemsByFavoriteTargetKey(
-            params.resolvedBackendEntries,
+            sessionCapableBackendEntries,
             params.favoriteBackendTargetKeys ?? [],
             (entry) => entry.backendTargetKey,
         ),
         isBackendEntrySelectable: params.isBackendEntrySelectable,
+        getBackendEntryUnavailabilityReason: params.getBackendEntryUnavailabilityReason,
         getEngineSelectionForTargetKey: params.getEngineSelectionForTargetKey,
         selectEngineSelection: params.selectEngineSelection,
         selectedMachineId: params.selectedMachineId,
@@ -108,7 +114,7 @@ export function buildNewSessionAgentPickerOptions(
     const favoriteOption = params.onSelectFavoriteModel && params.onToggleFavoriteModel
         ? buildNewSessionFavoriteModelsPickerOption({
             favoriteModelSelections: params.favoriteModelSelections ?? [],
-            resolvedBackendEntries: params.resolvedBackendEntries,
+            resolvedBackendEntries: sessionCapableBackendEntries,
             compatibleBackendTargetKeys,
             selectedBackendTargetKey: params.selectedBackendTargetKey,
             selectedModelId: params.selectedModelId,

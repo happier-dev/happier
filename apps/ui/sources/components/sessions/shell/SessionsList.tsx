@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Platform } from 'react-native';
+import { View, Platform, RefreshControl } from 'react-native';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import { sessionListStyles } from './sessionListStyles';
@@ -12,6 +12,7 @@ import { buildSessionListRetentionKey } from './scroll/sessionListRetentionKey';
 import { useVisibleSessionListPaneState, type VisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
 import { sync } from '@/sync/sync';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { runRefreshDiagnosticAction } from '@/utils/system/userInteractionDiagnostics';
 import { SyncPerformanceReactProfiler } from '@/components/ui/performance/SyncPerformanceReactProfiler';
 import {
     normalizeSessionListSurfaceOwnership,
@@ -19,6 +20,11 @@ import {
 } from './surface/sessionListSurfaceOwnership';
 import { SessionListSelectionStoreProvider } from './selection/SessionListSelectionContext';
 import { SessionListSelectionActionBarHost } from './selection/SessionListSelectionActionBar';
+import {
+    readRetainedSessionListPaneState,
+    retainSessionListPaneState,
+    useSessionListPaneSourceScopeKey,
+} from './sessionListPaneRetention';
 
 const SESSION_LIST_END_REACHED_THRESHOLD_RATIO = 0.4;
 
@@ -80,14 +86,32 @@ function SessionsListViewWithResolvedPaneState(props: Readonly<{
     surfaceOwnership?: Partial<SessionListSurfaceOwnership>;
 }>) {
     const surfaceOwnership = normalizeSessionListSurfaceOwnership(props.surfaceOwnership);
+    const sourceScopeKey = useSessionListPaneSourceScopeKey();
+    const retentionIdentity = React.useMemo(() => ({
+        storageKind: props.storageKind,
+        pathname: props.pathname,
+        sourceScopeKey,
+    }), [props.pathname, props.storageKind, sourceScopeKey]);
     const paneState = useVisibleSessionListPaneState(props.storageKind, {
         pathname: props.pathname,
         sessionListSurfaceDataActive: surfaceOwnership.dataActive,
     });
+    React.useEffect(() => {
+        if (!surfaceOwnership.dataActive) return;
+        retainSessionListPaneState({
+            storageKind: props.storageKind,
+            pathname: props.pathname,
+            sourceScopeKey,
+            paneState,
+        });
+    }, [paneState, props.pathname, props.storageKind, sourceScopeKey, surfaceOwnership.dataActive]);
+    const renderedPaneState = surfaceOwnership.dataActive
+        ? paneState
+        : readRetainedSessionListPaneState(retentionIdentity)?.paneState ?? paneState;
     return (
         <SessionsListViewContent
             storageKind={props.storageKind}
-            paneState={paneState}
+            paneState={renderedPaneState}
             pathname={props.pathname}
             surfaceOwnership={surfaceOwnership}
         />
@@ -105,6 +129,8 @@ function SessionsListViewContent(props: Readonly<{
     const surfaceOwnership = normalizeSessionListSurfaceOwnership(props.surfaceOwnership);
     const surfaceDataActiveRef = React.useRef(surfaceOwnership.dataActive);
     surfaceDataActiveRef.current = surfaceOwnership.dataActive;
+    const [refreshingSessions, setRefreshingSessions] = React.useState(false);
+    const refreshingSessionsRef = React.useRef(false);
     const viewState = useSessionListViewStateFromPaneState(props.storageKind, props.paneState, {
         pathname: props.pathname,
         surfaceOwnership,
@@ -126,6 +152,21 @@ function SessionsListViewContent(props: Readonly<{
         if (!surfaceDataActiveRef.current) return;
         fireAndForget(sync.fetchMoreSessions(), { tag: 'SessionsList.fetchMoreSessions' });
     }, []);
+    const handleRefreshSessions = React.useCallback(async () => {
+        if (!surfaceDataActiveRef.current) return;
+        if (refreshingSessionsRef.current) return;
+        refreshingSessionsRef.current = true;
+        setRefreshingSessions(true);
+        try {
+            await runRefreshDiagnosticAction(
+                { action: 'pull_to_refresh', screen: 'session_list' },
+                () => sync.refreshSessions(),
+            );
+        } finally {
+            refreshingSessionsRef.current = false;
+            setRefreshingSessions(false);
+        }
+    }, []);
     const handleTreeViewportLayout = React.useCallback((event: { nativeEvent?: { layout?: { height?: number } } }) => {
         onTreeViewportLayout(event);
         scrollRetention.handleLayout(event);
@@ -146,6 +187,15 @@ function SessionsListViewContent(props: Readonly<{
             handleLoadMoreSessions();
         }
     }, [handleLoadMoreSessions, onTreeScroll, scrollRetention]);
+    const nativeRefreshControl = React.useMemo(() => {
+        if (Platform.OS === 'web' || !surfaceOwnership.dataActive) return undefined;
+        return (
+            <RefreshControl
+                refreshing={refreshingSessions}
+                onRefresh={handleRefreshSessions}
+            />
+        );
+    }, [handleRefreshSessions, refreshingSessions, surfaceOwnership.dataActive]);
 
     return (
         <SessionListSelectionStoreProvider store={viewState.sessionListSelectionStore}>
@@ -159,16 +209,19 @@ function SessionsListViewContent(props: Readonly<{
                     <SessionListVirtualizedContent
                         listRef={viewState.virtualizedListRef}
                         nodes={viewState.nodes}
+                        rowDensity={viewState.rowDensity}
                         rowHeight={viewState.rowHeight}
                         safeAreaBottom={safeArea.bottom}
                         renderItem={viewState.renderVirtualizedItem}
                         rowExtraData={viewState.virtualizedRowExtraData}
+                        filteredNoResultsMessage={viewState.filteredNoResultsMessage}
                         onScroll={handleTreeScroll}
                         onScrollBeginDrag={viewState.onNativeListScrollInteractionStart}
                         onScrollEndDrag={viewState.onNativeListScrollInteractionEnd}
                         onMomentumScrollBegin={viewState.onNativeListScrollInteractionStart}
                         onMomentumScrollEnd={viewState.onNativeListScrollInteractionEnd}
                         onEndReached={surfaceOwnership.dataActive ? handleLoadMoreSessions : undefined}
+                        nativeRefreshControl={nativeRefreshControl}
                         onViewableItemsChanged={viewState.onViewableItemsChanged}
                         viewabilityConfig={viewState.viewabilityConfig}
                         onLayout={handleTreeViewportLayout}

@@ -2,6 +2,7 @@ import type { ConnectedServiceId } from '@happier-dev/protocol';
 
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import { resolveConnectedServiceDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
+import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import type {
     SessionConnectedServiceAuthSwitchResult,
     SessionConnectedServiceAuthSwitchServiceResult,
@@ -23,12 +24,29 @@ type PartialAuthSwitchServiceStatusLabelKey =
     | 'connectedServices.authSwitch.status.partialApplicationServiceFailed'
     | 'connectedServices.authSwitch.status.partialApplicationServiceNotApplied';
 
+type ConnectedServicesBindingMap = Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
+
+/**
+ * Reconcile context captured at the moment a partial hot-apply failed. The
+ * session-scope Retry/Revert affordance (the mirror of the pool-level
+ * divergence surface) re-applies against these binding sets through the ONE
+ * canonical apply path — never a parallel apply.
+ */
+export type PartialAuthSwitchReconcileContext = Readonly<{
+    /** The service the user switched — Retry/Revert re-applies against it. */
+    primaryServiceId: string;
+    /** Full binding-set that was attempted (Retry re-converges on the target). */
+    attemptedBindingsByServiceId: ConnectedServicesBindingMap;
+    /** Full binding-set before the switch (Revert re-converges on the previous account). */
+    previousBindingsByServiceId: ConnectedServicesBindingMap;
+}>;
+
 export type PartialAuthSwitchApplicationNotice =
-    | Readonly<{ kind: 'generic' }>
+    | Readonly<{ kind: 'generic' } & PartialAuthSwitchReconcileContext>
     | Readonly<{
         kind: 'services';
         services: ReadonlyArray<PartialAuthSwitchServiceNotice>;
-      }>;
+      } & PartialAuthSwitchReconcileContext>;
 
 function readRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
@@ -60,6 +78,7 @@ function isPartialAuthSwitchFallbackState(
 
 export function resolvePartialAuthSwitchApplicationNotice(
     result: SessionConnectedServiceAuthSwitchResult,
+    reconcile: PartialAuthSwitchReconcileContext,
 ): PartialAuthSwitchApplicationNotice | null {
     if (result.ok) return null;
     const serviceResultsByServiceId = result.diagnostics?.serviceResultsByServiceId;
@@ -77,11 +96,12 @@ export function resolvePartialAuthSwitchApplicationNotice(
             return {
                 kind: 'services',
                 services: nonAppliedServices,
+                ...reconcile,
             };
         }
     }
     return isPartialAuthSwitchFallbackState(result) || hasPartialAuthSwitchApplication(result)
-        ? { kind: 'generic' }
+        ? { kind: 'generic', ...reconcile }
         : null;
 }
 
@@ -96,8 +116,12 @@ function resolvePartialAuthSwitchServiceStatusLabelKey(
 
 export function buildPartialAuthSwitchApplicationStatusBadges(
     notice: PartialAuthSwitchApplicationNotice | null,
+    onReconcile?: () => void,
 ): ReadonlyArray<AgentInputStatusBadge> {
     if (!notice) return [];
+    // The badge is the actionable reconcile surface (session-scope mirror of the
+    // pool divergence Retry/Revert) — pressing it offers Retry/Revert.
+    const reconcileProps = onReconcile ? { onPress: onReconcile } : {};
     if (notice.kind === 'generic') {
         return [{
             key: 'connected-services-auth-switch-partial-application',
@@ -106,6 +130,7 @@ export function buildPartialAuthSwitchApplicationStatusBadges(
             testID: 'session-connected-services-auth-switch-partial-application-status',
             tone: 'warning',
             emphasis: 'prominent',
+            ...reconcileProps,
         }];
     }
     return notice.services.map((serviceNotice) => {
@@ -121,6 +146,7 @@ export function buildPartialAuthSwitchApplicationStatusBadges(
             testID: `session-connected-services-auth-switch-service-${serviceIdToken}-${statusToken}-status`,
             tone: 'warning',
             emphasis: 'prominent',
+            ...reconcileProps,
         };
     });
 }

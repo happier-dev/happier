@@ -243,6 +243,15 @@ export const sessionListStyles = StyleSheet.create((theme) => ({
     footerContainer: {
         marginTop: -4,
     },
+    filteredNoResultsContainer: {
+        paddingHorizontal: 24,
+        paddingTop: 12,
+        paddingBottom: 8,
+    },
+    filteredNoResultsText: {
+        color: theme.colors.text.secondary,
+        ...Typography.default(),
+    },
     dropIndicator: {
         position: 'absolute' as const,
         left: 16,

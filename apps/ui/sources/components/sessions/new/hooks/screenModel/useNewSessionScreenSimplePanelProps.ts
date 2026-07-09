@@ -40,11 +40,13 @@ export function useNewSessionScreenSimplePanelProps(params: Readonly<{
         | 'handleCreateSession'
         | 'canCreate'
         | 'isCreating'
+        | 'pendingLaunchAttempt'
         | 'submitAccessibilityLabel'
         | 'emptyAutocompletePrefixes'
         | 'emptyAutocompleteSuggestions'
         | 'onAutocompleteSuggestionSelect'
         | 'sessionPromptInputMaxHeight'
+        | 'statusBadges'
     >;
     agent: Pick<
         NewSessionSimplePanelProps,

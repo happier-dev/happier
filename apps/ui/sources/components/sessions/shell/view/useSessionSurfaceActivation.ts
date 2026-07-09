@@ -9,12 +9,19 @@ import {
     setFocusedSessionId,
     setRouteAnchorSessionId,
 } from '@/sync/domains/session/sessionSurfaceVisibility';
+import { registerSessionTranscriptRetentionConsumer } from '@/sync/runtime/sessionRealtimeTranscriptConsumers';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
 export type UseSessionSurfaceActivationInput = Readonly<{
     sessionId: string;
     serverId?: string | null;
     surfaceFocused: boolean;
+    /**
+     * Whether this mounted surface is still part of the user-reachable surface set.
+     * Defaults to true so hidden native back-stack screens remain protected while
+     * web route hosts can release mounted historical routes after SPA navigation.
+     */
+    surfaceRetained?: boolean;
     surfaceVisible: boolean;
     routeAnchor: boolean;
 }>;
@@ -52,6 +59,15 @@ export function useSessionSurfaceActivation(
             clearFocusedSessionId(normalizedSessionId);
         };
     }, [input.surfaceFocused, input.surfaceVisible, normalizedSessionId]);
+
+    // Transcript retention hold (NOT gated on surfaceVisible by default): a
+    // hidden-but-mounted back-stack SessionView still renders its transcript, so the
+    // eviction sweep must treat it as a retained consumer until real unmount. Web
+    // route hosts pass surfaceRetained=false when a mounted route is no longer displayed.
+    React.useEffect(() => {
+        if (!normalizedSessionId || input.surfaceRetained === false) return;
+        return registerSessionTranscriptRetentionConsumer(normalizedSessionId, input.serverId);
+    }, [input.serverId, input.surfaceRetained, normalizedSessionId]);
 
     React.useLayoutEffect(() => {
         if (!normalizedSessionId) return;

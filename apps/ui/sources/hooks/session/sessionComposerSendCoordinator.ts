@@ -1,5 +1,33 @@
 import type { SessionDraftTextSnapshot } from './useDraft';
 
+export type ComposerTransientInputStateHandlers<TState> = Readonly<{
+    captureTransientInputState: () => TState | null;
+    clearTransientInputState: () => void;
+    restoreTransientInputState: (state: TState | null) => void;
+}>;
+
+export type CapturedComposerTransientInputState<TState> = Readonly<{
+    transientInputStateSnapshot: TState | null;
+    clearTransientInputState: () => void;
+    restoreTransientInputState: () => void;
+}>;
+
+export function captureComposerTransientInputStateForOutboundHandoff<TState>({
+    captureTransientInputState,
+    clearTransientInputState,
+    restoreTransientInputState,
+}: ComposerTransientInputStateHandlers<TState>): CapturedComposerTransientInputState<TState> {
+    const transientInputStateSnapshot = captureTransientInputState();
+
+    return {
+        transientInputStateSnapshot,
+        clearTransientInputState,
+        restoreTransientInputState: () => {
+            restoreTransientInputState(transientInputStateSnapshot);
+        },
+    };
+}
+
 export type OutboundHandoffComposerClearParams = Readonly<{
     snapshot: SessionDraftTextSnapshot;
     clearDraftForSessionIfCurrentValueMatches: (snapshot: SessionDraftTextSnapshot) => boolean;

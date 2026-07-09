@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, useWindowDimensions, InteractionManager } from 'react-native';
+import { Platform, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLaunchSelectionMachines, useMachineListByServerId, useSessions, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
@@ -13,6 +13,7 @@ import { sync } from '@/sync/sync';
 import { getTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { Modal } from '@/modal';
 import { type PermissionMode, type ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import {
@@ -36,6 +37,7 @@ import { normalizeSessionAuthoringConnectedServices } from '@/sync/domains/sessi
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
+import { resolveNewSessionShouldBottomAnchor } from '@/components/sessions/new/navigation/newSessionPresentation';
 import { useProfileMap } from '@/components/sessions/new/modules/profileHelpers';
 import { newSessionScreenStyles } from '@/components/sessions/new/newSessionScreenStyles';
 import { resolveNewSessionCapabilityServerId } from '@/components/sessions/new/modules/resolveNewSessionCapabilityServerId';
@@ -52,7 +54,11 @@ import { useNewSessionActiveServerSource } from '@/components/sessions/new/hooks
 import { useNewSessionBackendTargetState } from '@/components/sessions/new/hooks/screenModel/useNewSessionBackendTargetState';
 import { useNewSessionMachinePathState } from '@/components/sessions/new/hooks/screenModel/useNewSessionMachinePathState';
 import { useNewSessionRepoScmSnapshot } from '@/components/sessions/new/hooks/screenModel/useNewSessionRepoScmSnapshot';
-import type { WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import {
+    buildAcpConfigOptionOverridesV1,
+    type AcpConfigOptionOverridesV1,
+    type WindowsRemoteSessionLaunchMode,
+} from '@happier-dev/protocol';
 import { useNewSessionMcpSelection } from '@/components/sessions/new/hooks/useNewSessionMcpSelection';
 import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
 import { useNewSessionAvailabilityState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAvailabilityState';
@@ -73,6 +79,7 @@ import { useNewSessionAgentSelectionModelModeReconciliation } from '@/components
 import { useNewSessionProfileBackendReconciliation } from '@/components/sessions/new/hooks/screenModel/useNewSessionProfileBackendReconciliation';
 import { useNewSessionProfileSelectionPresentation } from '@/components/sessions/new/hooks/screenModel/useNewSessionProfileSelectionPresentation';
 import { useNewSessionProfileActions } from '@/components/sessions/new/hooks/screenModel/useNewSessionProfileActions';
+import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { useNewSessionProfilePopover } from '@/components/sessions/new/hooks/screenModel/useNewSessionProfilePopover';
 import { useNewSessionCreateSessionAction } from '@/components/sessions/new/hooks/screenModel/useNewSessionCreateSessionAction';
 import { useNewSessionScreenAgentInputPresentation } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenAgentInputPresentation';
@@ -81,6 +88,7 @@ import { useNewSessionScreenSimplePanelProps } from '@/components/sessions/new/h
 import { useNewSessionScreenWizardProps } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenWizardProps';
 import { useNewSessionConnectedServicesAgentOptions } from '@/components/sessions/new/hooks/screenModel/useNewSessionConnectedServicesAgentOptions';
 import { useNewSessionScreenPreflightState } from '@/components/sessions/new/hooks/screenModel/useNewSessionScreenPreflightState';
+import { buildNewSessionLaunchStatusBadges } from '@/components/sessions/new/hooks/screenModel/newSessionLaunchStatusBadges';
 import type { NewSessionScreenModel } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { AgentInputAutocompleteSelectionHandler } from '@/components/sessions/agentInput';
@@ -95,6 +103,7 @@ import {
 import { useDeferredRememberedEngineSelection } from '@/components/sessions/new/hooks/screenModel/useDeferredRememberedEngineSelection';
 import { resolveLocalFeaturePolicyEnabled } from '@/sync/domains/features/featureLocalPolicy';
 import { getCommandSuggestions } from '@/components/autocomplete/commandSuggestions';
+import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
 
 
 // Configuration constants
@@ -116,6 +125,12 @@ function buildNewSessionDraftSignature(draft: NewSessionDraft | null): string {
         return 'unserializable';
     }
 }
+
+type EngineSelectionRememberPatch = Readonly<{
+    modelMode?: ModelMode;
+    acpSessionModeId?: string | null;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
+}>;
 
 function resolvePersistedWindowsLaunchOverrideForMachine(
     draft: NewSessionDraft | null,
@@ -140,7 +155,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     const newSessionSidePadding = 16;
     const newSessionBottomPadding = Math.max(screenWidth < 420 ? 8 : 16, safeArea.bottom);
-    const shouldBottomAnchor = isMobileLayoutWidth(screenWidth);
+    const isNewSessionMobileLayoutWidth = isMobileLayoutWidth(screenWidth);
 
     // Simple (non-wizard) new-session screen spacing.
     // Keep wizard spacing unchanged (the wizard layout benefits from wider margins).
@@ -242,8 +257,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     // Control A (false): Simpler AgentInput-driven layout
     // Variant B (true): Enhanced profile-first wizard with sections
     const useEnhancedSessionWizard = useSetting('useEnhancedSessionWizard');
+    const newSessionPresentationModeV1 = useSetting('newSessionPresentationModeV1');
     const newSessionWizardSectionPresentationV1 = useSetting('newSessionWizardSectionPresentationV1');
     const newSessionWizardColumnsEnabled = useSetting('newSessionWizardColumnsEnabled');
+    const shouldBottomAnchor = resolveNewSessionShouldBottomAnchor({
+        mode: newSessionPresentationModeV1,
+        platformOs: Platform.OS,
+        isMobileLayoutWidth: isNewSessionMobileLayoutWidth,
+    });
 
     useNewSessionHappyRouteFlag(pathname);
 
@@ -346,8 +367,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             setLoadedScopedPersistedDraft(loadScopedNewSessionDraft());
             // Ensure newly-registered machines show up without requiring an app restart.
             // Throttled to avoid spamming the server when navigating back/forth.
-            // Defer until after interactions so the screen feels instant on iOS.
-            InteractionManager.runAfterInteractions(() => {
+            // Defer until after interactions so the screen feels instant on iOS;
+            // the timeout fallback guarantees the refresh still runs when
+            // interactions never settle (hang class).
+            runAfterInteractionsWithFallback(() => {
                 fireAndForget(sync.refreshMachinesThrottled({ staleMs: 15_000 }), { tag: 'NewSessionScreenModel.refreshMachinesThrottled.focus' });
             });
         }, [loadScopedNewSessionDraft, setLoadedScopedPersistedDraft])
@@ -365,7 +388,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     // Combined profiles (built-in + custom)
     const allProfiles = React.useMemo(() => {
-        const builtInProfiles = DEFAULT_PROFILES.map(bp => getBuiltInProfile(bp.id)!);
+        const builtInProfiles = DEFAULT_PROFILES.flatMap((bp) => {
+            const profile = getBuiltInProfile(bp.id);
+            return profile ? [profile] : [];
+        });
         return [...builtInProfiles, ...profiles];
     }, [profiles]);
 
@@ -380,14 +406,23 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const machines = React.useMemo(() => {
         const resolvedTargetServerId = String(targetServerId ?? '').trim();
         const resolvedActiveServerId = String(activeServerSource.activeServerId ?? '').trim();
-        if (!resolvedTargetServerId || resolvedTargetServerId === resolvedActiveServerId) {
+        if (!resolvedTargetServerId) {
             return activeMachines;
         }
-        if (!Object.prototype.hasOwnProperty.call(machineListByServerId, resolvedTargetServerId)) {
-            return activeMachines;
+
+        const scopedMachines = resolveServerScopedMachines({
+            serverId: resolvedTargetServerId,
+            activeServerId: resolvedActiveServerId,
+            activeMachines,
+            machineListByServerId,
+        });
+        if (scopedMachines) {
+            return [...scopedMachines];
         }
-        const remoteMachines = machineListByServerId[resolvedTargetServerId];
-        return Array.isArray(remoteMachines) ? remoteMachines : [];
+
+        return Object.prototype.hasOwnProperty.call(machineListByServerId, resolvedTargetServerId)
+            ? []
+            : activeMachines;
     }, [activeMachines, activeServerSource.activeServerId, machineListByServerId, targetServerId]);
     const hasExplicitSeededProfileSelection = React.useMemo(() => {
         if (!useProfiles) {
@@ -607,11 +642,14 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setAcpSessionModeId,
         sessionConfigOptionOverrides,
         setSessionConfigOptionOverrides,
+        setEngineSelectionForBackendTarget,
         setAcpConfigOptionOverride,
         mcpSelection,
         setMcpSelection,
     } = useNewSessionAgentAuthoringOptionsState({
         agentType,
+        backendTargetKey: selectedBackendTargetKey,
+        allowTargetlessDraftEngineSelection: routeBackendTarget === null,
         hydratedTempAuthoringDraft,
         hydratedPersistedAuthoringDraft,
         rememberedEngineSelection,
@@ -622,26 +660,69 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         serverId: capabilityServerId,
         commit: setLastEngineSelectionsByScope,
     });
-
-    React.useEffect(() => {
-        rememberEngineSelection(selectedBackendEntry?.backendTarget ?? backendTarget, {
-            modelId: String(modelMode),
-            acpSessionModeId,
-            sessionConfigOptionOverrides,
-        });
-    }, [
-        acpSessionModeId,
-        backendTarget,
+    const currentEngineSelectionRef = useLatestRef({
+        backendTarget: selectedBackendEntry?.backendTarget ?? backendTarget,
         modelMode,
-        rememberEngineSelection,
-        selectedBackendEntry?.backendTarget,
+        acpSessionModeId,
         sessionConfigOptionOverrides,
-    ]);
+    });
+    const rememberCurrentEngineSelection = React.useCallback((patch: EngineSelectionRememberPatch = {}) => {
+        const current = currentEngineSelectionRef.current;
+        rememberEngineSelection(current.backendTarget, {
+            modelId: String(patch.modelMode ?? current.modelMode),
+            acpSessionModeId: Object.prototype.hasOwnProperty.call(patch, 'acpSessionModeId')
+                ? patch.acpSessionModeId ?? null
+                : current.acpSessionModeId,
+            sessionConfigOptionOverrides: Object.prototype.hasOwnProperty.call(patch, 'sessionConfigOptionOverrides')
+                ? patch.sessionConfigOptionOverrides ?? null
+                : current.sessionConfigOptionOverrides,
+        });
+    }, [currentEngineSelectionRef, rememberEngineSelection]);
+    const setModelModeAndRemember = React.useCallback<React.Dispatch<React.SetStateAction<ModelMode>>>((next) => {
+        const current = currentEngineSelectionRef.current.modelMode;
+        const value = typeof next === 'function'
+            ? (next as (value: ModelMode) => ModelMode)(current)
+            : next;
+        setModelMode(value);
+        rememberCurrentEngineSelection({ modelMode: value });
+    }, [currentEngineSelectionRef, rememberCurrentEngineSelection, setModelMode]);
+    const setAcpSessionModeIdAndRemember = React.useCallback<React.Dispatch<React.SetStateAction<string | null>>>((next) => {
+        const current = currentEngineSelectionRef.current.acpSessionModeId;
+        const value = typeof next === 'function'
+            ? (next as (value: string | null) => string | null)(current)
+            : next;
+        setAcpSessionModeId(value);
+        rememberCurrentEngineSelection({ acpSessionModeId: value });
+    }, [currentEngineSelectionRef, rememberCurrentEngineSelection, setAcpSessionModeId]);
+    const setAcpConfigOptionOverrideAndRemember = React.useCallback((configId: string, value: string) => {
+        const normalizedConfigId = typeof configId === 'string' ? configId.trim() : '';
+        const normalizedValue = typeof value === 'string' ? value.trim() : '';
+        if (!normalizedConfigId || !normalizedValue) return;
+        const updatedAt = Date.now();
+        const sessionConfigOptionOverrides = buildAcpConfigOptionOverridesV1({
+            updatedAt,
+            overrides: {
+                ...(currentEngineSelectionRef.current.sessionConfigOptionOverrides?.overrides ?? {}),
+                [normalizedConfigId]: {
+                    updatedAt,
+                    value: normalizedValue,
+                },
+            },
+        });
+        setSessionConfigOptionOverrides(sessionConfigOptionOverrides);
+        rememberCurrentEngineSelection({ sessionConfigOptionOverrides });
+    }, [currentEngineSelectionRef, rememberCurrentEngineSelection, setSessionConfigOptionOverrides]);
 
     const [pathPickerSearchQuery, setPathPickerSearchQuery] = React.useState('');
+    const selectedMachine = React.useMemo(() => {
+        if (!selectedMachineId) return null;
+        return machines.find(m => m.id === selectedMachineId) ?? null;
+    }, [selectedMachineId, machines]);
     const repoScmSnapshot = useNewSessionRepoScmSnapshot({
         machineId: selectedMachineId,
         path: selectedPath,
+        machineHomeDir: selectedMachine?.metadata?.homeDir ?? null,
+        machinePlatform: selectedMachine?.metadata?.platform ?? null,
     });
     const {
         checkoutCreationDraft,
@@ -658,15 +739,13 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         hydratedPersistedAuthoringDraft,
         selectedMachineId,
         selectedPath,
+        machineHomeDir: selectedMachine?.metadata?.homeDir ?? null,
+        machinePlatform: selectedMachine?.metadata?.platform ?? null,
         repoScmSnapshot,
         autoOpenWorktreePickerKey: effectiveWorktreeRouteMode === 'new'
             ? `route:new:${selectedMachineId ?? ''}:${selectedPath}`
             : null,
     });
-    const selectedMachine = React.useMemo(() => {
-        if (!selectedMachineId) return null;
-        return machines.find(m => m.id === selectedMachineId) ?? null;
-    }, [selectedMachineId, machines]);
     const {
         cliAvailability,
         selectedMachineCapabilities,
@@ -678,6 +757,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectableWithoutCliByAgentId,
         isAgentSelectable,
         isBackendEntrySelectable,
+        getBackendEntryUnavailabilityReason,
         isCliBannerDismissed,
         dismissCliBanner,
         getCompatibleProfileBackendEntries,
@@ -718,6 +798,19 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             onRefresh: refreshCliAvailability,
         };
     }, [cliAvailabilityProbePhase, refreshCliAvailability, selectedMachineId]);
+    const {
+        setAgentOptionStateForCurrentAgent,
+        connectedServicesAuthChip,
+        agentNewSessionOptions,
+    } = useNewSessionConnectedServicesAgentOptions({
+        agentType,
+        targetServerId,
+        selectedBackendTargetKey,
+        setBackendNewSessionOptionStateByTargetKey,
+        agentOptionState,
+        settings,
+        router,
+    });
     React.useEffect(() => {
         if (!useProfiles) {
             return;
@@ -748,6 +841,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedMachineId,
         capabilityServerId,
         cwd: selectedPath,
+        connectedServices: agentNewSessionOptions?.connectedServices ?? null,
     });
 
     const allProfilesRequirementNames = React.useMemo(() => {
@@ -798,6 +892,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     });
     const [isCreating, setIsCreating] = React.useState(false);
     const [isResumeSupportChecking, setIsResumeSupportChecking] = React.useState(false);
+    const [pendingLaunchAttempt, setPendingLaunchAttempt] = React.useState<NewSessionLaunchAttempt | null>(null);
 
     React.useEffect(() => {
         setResumeSessionId(hydratedResumeSessionId);
@@ -1118,6 +1213,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         resolvedBackendEntries,
         getCompatibleProfileBackendEntries,
         isBackendEntrySelectable,
+        getBackendEntryUnavailabilityReason,
         selectedBackendEntry,
         selectedBackendTargetKey,
         setBackendTarget,
@@ -1127,6 +1223,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         setAcpSessionModeId,
         sessionConfigOptionOverrides,
         setSessionConfigOptionOverrides,
+        setEngineSelectionForBackendTarget,
         selectedMachineId,
         capabilityServerId,
         selectedPath,
@@ -1143,20 +1240,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         onRememberEngineSelection: rememberEngineSelection,
         onExplicitBackendTargetSelection: clearBackendTargetRouteParamsAfterExplicitSelection,
         refreshProbe: cliAvailabilityProbe ?? null,
-    });
-
-    const {
-        setAgentOptionStateForCurrentAgent,
-        connectedServicesAuthChip,
-        agentNewSessionOptions,
-    } = useNewSessionConnectedServicesAgentOptions({
-        agentType,
-        targetServerId,
-        selectedBackendTargetKey,
-        setBackendNewSessionOptionStateByTargetKey,
-        agentOptionState,
-        settings,
-        router,
     });
 
     const {
@@ -1253,6 +1336,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         resolvedSettingsAllowedServerIds: resolvedSettingsTarget.allowedServerIds,
         draftScope,
         disableDraftPersistence,
+        onLaunchAttemptChange: setPendingLaunchAttempt,
     });
 
     const {
@@ -1320,11 +1404,16 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         persistDraftIfEnabled,
         draftPersistenceEnabled,
         draftPersistenceGenerationRef,
+        draftTextLength: sessionPrompt.length,
     });
 
     const submitAccessibilityLabel = newSessionAuthoringContext.submitAccessibilityLabelKey
         ? t(newSessionAuthoringContext.submitAccessibilityLabelKey)
         : undefined;
+    const launchStatusBadges = React.useMemo(
+        () => buildNewSessionLaunchStatusBadges({ isCreating, translate: t }),
+        [isCreating],
+    );
 
     const {
         layout: wizardLayoutProps,
@@ -1406,16 +1495,16 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
                 onRefresh: acpSessionModeProbeState.onRefresh,
             },
             acpSessionModeId,
-            setAcpSessionModeId,
+            setAcpSessionModeId: setAcpSessionModeIdAndRemember,
             acpConfigOptions: acpConfigOptions ?? undefined,
             acpConfigOptionsProbeState: {
                 phase: acpConfigOptionsProbeState.phase,
                 onRefresh: acpConfigOptionsProbeState.onRefresh,
             },
             acpConfigOptionOverrides: sessionConfigOptionOverrides,
-            setAcpConfigOptionOverride,
+            setAcpConfigOptionOverride: setAcpConfigOptionOverrideAndRemember,
             modelMode,
-            setModelMode,
+            setModelMode: setModelModeAndRemember,
             selectedIndicatorColor,
             profileMap,
             permissionMode,
@@ -1447,11 +1536,13 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             handleCreateSession,
             canCreate,
             isCreating,
+            pendingLaunchAttempt,
             submitAccessibilityLabel,
             emptyAutocompletePrefixes,
             emptyAutocompleteSuggestions,
             onAutocompleteSuggestionSelect: handleAutocompleteSuggestionSelect,
             connectionStatus,
+            statusBadges: launchStatusBadges,
             machinePopover,
             pathPopover,
             resumeSessionId,
@@ -1489,11 +1580,13 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             handleCreateSession,
             canCreate,
             isCreating,
+            pendingLaunchAttempt,
             submitAccessibilityLabel,
             emptyAutocompletePrefixes,
             emptyAutocompleteSuggestions,
             onAutocompleteSuggestionSelect: handleAutocompleteSuggestionSelect,
             sessionPromptInputMaxHeight,
+            statusBadges: launchStatusBadges,
         },
         agent: {
             agentInputExtraActionChips,
@@ -1511,7 +1604,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
             permissionMode,
             handlePermissionModeChange,
             modelMode,
-            setModelMode,
+            setModelMode: setModelModeAndRemember,
             modelOptions,
             modelOptionsProbeState: {
                 phase: modelOptionsProbeState.phase,
@@ -1521,10 +1614,10 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         acp: {
             acpSessionModeOptions,
             acpSessionModeId,
-            setAcpSessionModeId,
+            setAcpSessionModeId: setAcpSessionModeIdAndRemember,
             acpConfigOptions: acpConfigOptions ?? undefined,
             acpConfigOptionOverrides: sessionConfigOptionOverrides,
-            setAcpConfigOptionOverride,
+            setAcpConfigOptionOverride: setAcpConfigOptionOverrideAndRemember,
             acpSessionModeProbeState: {
                 phase: acpSessionModeProbeState.phase,
                 onRefresh: acpSessionModeProbeState.onRefresh,

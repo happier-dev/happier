@@ -2,7 +2,9 @@ import type { WorkspaceCheckoutKind } from '@happier-dev/protocol';
 
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import { normalizeFileSystemPath } from '@/sync/domains/fileSystem/normalizeFileSystemPath';
+
+import { buildWorktreeCheckoutOptionId } from './worktreeCheckoutOptionId';
+import { canonicalizeWorktreePath } from './worktreePathComparison';
 
 export type NewSessionCheckoutChipOption =
     | Readonly<{
@@ -28,8 +30,15 @@ export type NewSessionCheckoutChipModel = Readonly<{
     options: ReadonlyArray<NewSessionCheckoutChipOption>;
 }>;
 
-function normalizePath(raw: unknown): string {
-    return normalizeFileSystemPath(raw) ?? '';
+type WorktreePathComparisonContext = Readonly<{
+    machineHomeDir?: string | null;
+    machinePlatform?: string | null;
+}>;
+
+function normalizePath(raw: unknown, context: WorktreePathComparisonContext): string {
+    return typeof raw === 'string'
+        ? canonicalizeWorktreePath(raw, context.machineHomeDir ?? null, context.machinePlatform ?? null) ?? ''
+        : '';
 }
 
 function isPathAtOrWithinRoot(path: string, rootPath: string): boolean {
@@ -51,19 +60,29 @@ function supportsRepoWorktreeChip(snapshot: ScmWorkingSnapshot | null): boolean 
     return snapshot?.repo.isRepo === true && snapshot.repo.backendId === 'git';
 }
 
-function resolveMainRepoWorktreePath(snapshot: ScmWorkingSnapshot | null, fallbackPath: string): string {
+function resolveMainRepoWorktreePath(
+    snapshot: ScmWorkingSnapshot | null,
+    fallbackPath: string,
+    context: WorktreePathComparisonContext,
+): string {
     const mainWorktreePath = (snapshot?.repo.worktrees ?? [])
-        .map((worktree) => normalizePath(worktree.path))
+        .map((worktree) => normalizePath(worktree.path, context))
         .find((path, index) => Boolean(snapshot?.repo.worktrees?.[index]?.isMain) && path.length > 0);
     return mainWorktreePath || fallbackPath;
 }
 
 export function resolveNewSessionCheckoutChipModel(params: Readonly<{
     selectedPath: string;
+    machineHomeDir?: string | null;
+    machinePlatform?: string | null;
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
     repoSnapshot: ScmWorkingSnapshot | null;
 }>): NewSessionCheckoutChipModel {
-    const selectedPath = normalizePath(params.selectedPath);
+    const comparisonContext: WorktreePathComparisonContext = {
+        machineHomeDir: params.machineHomeDir ?? null,
+        machinePlatform: params.machinePlatform ?? null,
+    };
+    const selectedPath = normalizePath(params.selectedPath, comparisonContext);
     if (!selectedPath) {
         return {
             selectedOptionId: 'current_path',
@@ -71,8 +90,8 @@ export function resolveNewSessionCheckoutChipModel(params: Readonly<{
         };
     }
 
-    const repoRootPath = normalizePath(params.repoSnapshot?.repo.rootPath) || selectedPath;
-    const noWorktreePath = resolveMainRepoWorktreePath(params.repoSnapshot, repoRootPath);
+    const repoRootPath = normalizePath(params.repoSnapshot?.repo.rootPath, comparisonContext) || selectedPath;
+    const noWorktreePath = resolveMainRepoWorktreePath(params.repoSnapshot, repoRootPath, comparisonContext);
     const baseOptions: NewSessionCheckoutChipOption[] = [{
         id: 'current_path',
         kind: 'current_path',
@@ -90,7 +109,7 @@ export function resolveNewSessionCheckoutChipModel(params: Readonly<{
             (params.repoSnapshot?.repo.worktrees ?? [])
                 .map((worktree) => ({
                     ...worktree,
-                    path: normalizePath(worktree.path),
+                    path: normalizePath(worktree.path, comparisonContext),
                 }))
                 .filter((worktree) => worktree.path.length > 0 && worktree.path !== noWorktreePath)
                 .map((worktree) => [worktree.path, worktree] as const),
@@ -102,7 +121,7 @@ export function resolveNewSessionCheckoutChipModel(params: Readonly<{
             return leftLabel.localeCompare(rightLabel);
         })
         .map((worktree) => ({
-            id: `checkout:${worktree.path}` as const,
+            id: buildWorktreeCheckoutOptionId(worktree.path, comparisonContext),
             kind: 'linked_checkout' as const,
             path: worktree.path,
             displayName: worktree.branch ?? resolvePathDisplayName(worktree.path),
@@ -127,8 +146,9 @@ export function resolveNewSessionCheckoutChipModel(params: Readonly<{
     }
 
     const selectedExistingCheckout = checkoutOptions
-        .filter((option) => isPathAtOrWithinRoot(selectedPath, normalizePath(option.path)))
-        .sort((left, right) => normalizePath(right.path).length - normalizePath(left.path).length)
+        .filter((option) => isPathAtOrWithinRoot(selectedPath, normalizePath(option.path, comparisonContext)))
+        .sort((left, right) =>
+            normalizePath(right.path, comparisonContext).length - normalizePath(left.path, comparisonContext).length)
         .at(0);
     if (selectedExistingCheckout) {
         return {

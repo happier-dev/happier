@@ -123,16 +123,13 @@ describe('AgentInputPermissionRequests', () => {
                         status: 'open',
                         createdAtMs: 1,
                         updatedAtMs: 1,
-                        createdBy: { surface: 'session_agent', sessionId: 's1' },
-                        requestedSurface: 'session_agent',
+                        createdBy: { surface: 'agent', sessionId: 's1' },
+                        requestedSurface: 'agent',
                         actionId: 'session.list',
                         actionArgs: {},
                         summary: 'List sessions',
                     },
                 },
-            ],
-            userActionRequests: [
-                { id: 'u1', kind: 'user_action', tool: 'AskUserQuestion', arguments: { question: 'Continue?' }, createdAt: null },
             ],
             permissionLocationsById: new Map(),
             metadata: null,
@@ -148,6 +145,7 @@ describe('AgentInputPermissionRequests', () => {
         expect(capturedPermissionPromptCardProps).toHaveLength(1);
         expect(capturedApprovalPromptCardProps).toHaveLength(1);
         expect(capturedUserActionPromptCardProps).toHaveLength(0);
+        expect(capturedApprovalPromptCardProps[0]).toEqual(expect.objectContaining({ chrome: 'inline' }));
         expect(screen.findByTestId('agentInput.permissionRequests.divider:approval:approval-1')).toBeTruthy();
         expect(screen.findByTestId('agentInput.permissionRequests.divider:userAction:u1')).toBeNull();
     });
@@ -176,15 +174,14 @@ describe('AgentInputPermissionRequests', () => {
                         status: 'open',
                         createdAtMs: 1,
                         updatedAtMs: 1,
-                        createdBy: { surface: 'session_agent', sessionId: 's1' },
-                        requestedSurface: 'session_agent',
+                        createdBy: { surface: 'agent', sessionId: 's1' },
+                        requestedSurface: 'agent',
                         actionId: 'session.list',
                         actionArgs: {},
                         summary: 'List sessions',
                     },
                 },
             ],
-            userActionRequests: [],
             permissionLocationsById: new Map(),
             approvalLocationsByArtifactId: new Map([
                 ['approval-1', { kind: 'top' as const, messageId: 'tool:call-1', seq: 10 }],
@@ -248,5 +245,68 @@ describe('AgentInputPermissionRequests', () => {
 
         expect(screen.findByTestId('agentInput.permissionRequests.chrome')).toBeNull();
         expect(capturedPermissionPromptCardProps).toHaveLength(0);
+    });
+
+    it('does not render live user-action requests when permission approvals are inactive', async () => {
+        const { AgentInputPermissionRequests } = await import('./AgentInputPermissionRequests');
+        const UntypedAgentInputPermissionRequests = AgentInputPermissionRequests as React.ComponentType<any>;
+        capturedPermissionPromptCardProps.length = 0;
+        capturedApprovalPromptCardProps.length = 0;
+        capturedUserActionPromptCardProps.length = 0;
+
+        const screen = await renderScreen(React.createElement(UntypedAgentInputPermissionRequests, {
+            sessionId: 's1',
+            permissionRequests: [
+                { id: 'p1', kind: 'permission', tool: 'execute', arguments: { command: 'pwd' }, createdAt: null },
+            ],
+            approvalRequests: [
+                {
+                    artifact: {
+                        id: 'approval-1',
+                        header: { v: 1, kind: 'approval_request.v1', title: 'Approve', approvalStatus: 'open', sessionId: 's1' },
+                        title: 'Approve',
+                        headerVersion: 1,
+                        seq: 1,
+                        createdAt: 1,
+                        updatedAt: 1,
+                        isDecrypted: true,
+                    },
+                    approval: {
+                        v: 1,
+                        status: 'open',
+                        createdAtMs: 1,
+                        updatedAtMs: 1,
+                        createdBy: { surface: 'agent', sessionId: 's1' },
+                        requestedSurface: 'agent',
+                        actionId: 'session.list',
+                        actionArgs: {},
+                        summary: 'List sessions',
+                    },
+                },
+            ],
+            userActionRequests: [
+                {
+                    id: 'u1',
+                    kind: 'user_action',
+                    tool: 'AskUserQuestion',
+                    arguments: { question: 'How should Claude resume this session?' },
+                    createdAt: null,
+                },
+            ],
+            permissionLocationsById: new Map(),
+            metadata: null,
+            canApprovePermissions: false,
+            disabledReason: 'inactive',
+            maxHeightPx: 200,
+            onContentSizeChange: () => {},
+            onLayout: () => {},
+            onScroll: () => {},
+            fadeVisibility: { top: false, bottom: false },
+        }));
+
+        expect(screen.findByTestId('agentInput.permissionRequests.chrome')).toBeNull();
+        expect(capturedPermissionPromptCardProps).toHaveLength(0);
+        expect(capturedApprovalPromptCardProps).toHaveLength(0);
+        expect(capturedUserActionPromptCardProps).toHaveLength(0);
     });
 });

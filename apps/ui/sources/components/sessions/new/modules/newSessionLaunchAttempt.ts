@@ -1,4 +1,8 @@
 import { randomUUID } from '@/platform/randomUUID';
+import {
+    normalizeSpawnAttemptKey,
+    readOrCreateSpawnAttemptNonce,
+} from '@/sync/domains/session/spawn/spawnAttemptNonceStore';
 
 export type NewSessionLaunchAttemptStatus =
     | 'idle'
@@ -24,8 +28,10 @@ export type NewSessionLaunchAttemptPhaseError = Readonly<{
 export type NewSessionLaunchAttempt = Readonly<{
     attemptId: string;
     spawnNonce: string;
+    spawnAttemptKey: string | null;
     scopeKey: string;
     createdSessionId: string | null;
+    daemonInitialPromptUsed: boolean;
     firstTurnLocalId: string;
     attachmentMessageLocalId: string;
     status: NewSessionLaunchAttemptStatus;
@@ -42,6 +48,7 @@ type CreateNewSessionLaunchAttemptParams = Readonly<{
     displayText: string;
     scopeKey: string;
     meta?: unknown;
+    spawnAttemptKey?: string | null;
     createId?: (prefix: string) => string;
 }>;
 
@@ -57,13 +64,19 @@ function defaultCreateId(prefix: string): string {
 
 export function createNewSessionLaunchAttempt(params: CreateNewSessionLaunchAttemptParams): NewSessionLaunchAttempt {
     const createId = params.createId ?? defaultCreateId;
+    const spawnAttemptKey = normalizeSpawnAttemptKey(params.spawnAttemptKey);
     return {
         attemptId: createId('attempt'),
-        spawnNonce: createId('spawn'),
+        spawnNonce: readOrCreateSpawnAttemptNonce({
+            spawnAttemptKey,
+            seedNonce: createId('spawn'),
+        }),
+        spawnAttemptKey,
         scopeKey: params.scopeKey,
         firstTurnLocalId: createId('first-turn'),
         attachmentMessageLocalId: createId('attachment-message'),
         createdSessionId: null,
+        daemonInitialPromptUsed: false,
         status: 'idle',
         prompt: {
             prompt: params.prompt,
@@ -71,6 +84,16 @@ export function createNewSessionLaunchAttempt(params: CreateNewSessionLaunchAtte
             meta: params.meta ?? null,
         },
         phaseErrors: {},
+    };
+}
+
+export function markNewSessionLaunchAttemptDaemonInitialPromptUsed(
+    attempt: NewSessionLaunchAttempt,
+): NewSessionLaunchAttempt {
+    if (attempt.daemonInitialPromptUsed) return attempt;
+    return {
+        ...attempt,
+        daemonInitialPromptUsed: true,
     };
 }
 
@@ -138,9 +161,20 @@ export function shouldSpawnForNewSessionLaunchAttempt(attempt: NewSessionLaunchA
     return !attempt.createdSessionId;
 }
 
+export function isNewSessionLaunchAttemptPendingBeforeSession(
+    attempt: NewSessionLaunchAttempt | null | undefined,
+): attempt is NewSessionLaunchAttempt {
+    return !!attempt
+        && attempt.createdSessionId === null
+        && (attempt.status === 'idle' || attempt.status === 'spawning');
+}
+
 export function isNewSessionLaunchAttemptInScope(
     attempt: NewSessionLaunchAttempt | null,
     scopeKey: string,
+    spawnAttemptKey: string | null,
 ): attempt is NewSessionLaunchAttempt {
-    return !!attempt && attempt.scopeKey === scopeKey;
+    return !!attempt
+        && attempt.scopeKey === scopeKey
+        && attempt.spawnAttemptKey === normalizeSpawnAttemptKey(spawnAttemptKey);
 }

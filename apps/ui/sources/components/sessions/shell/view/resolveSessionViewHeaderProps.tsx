@@ -3,6 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Pressable, View } from 'react-native';
 
 import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
+import { SessionHeaderBrowserButton } from '@/components/sessions/actions/SessionHeaderBrowserButton';
 import { SessionHeaderSubagentsButton } from '@/components/sessions/actions/SessionHeaderSubagentsButton';
 import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -15,6 +16,8 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { formatPathRelativeToHome, getSessionAvatarId, getSessionName } from '@/utils/sessions/sessionUtils';
 import { LruMap } from '@/utils/cache/lruMap';
+
+import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
 import { resolveSessionViewBadges } from './resolveSessionViewBadges';
 import { resolveSessionViewHeaderActionItems } from './resolveSessionViewHeaderActionItems';
@@ -63,6 +66,15 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
     statusErrorColor: string;
     workspaceSubtitle?: string | null;
     workspaceSubtitleEllipsizeMode?: 'head' | 'tail';
+    /**
+     * Plugin-UI projection + open handler for the session header-action menu
+     * (Phase 2.2 / finding #11). When provided, plugin-contributed header actions
+     * are surfaced in the action menu and dispatched through the canonical
+     * `executePluginUiAction` executor.
+     */
+    pluginUiProjection?: PluginUiProjectionModel | null;
+    pluginUiLocale?: string | null;
+    onOpenPluginSurface?: (surfaceId: string) => void;
 }>;
 
 const LOADING_HEADER_PROPS: SessionViewHeaderProps = {
@@ -115,6 +127,8 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
     paneScopeId: string;
     sessionAutomationsEnabledCount: number;
     headerMenuExtraItemIdsKey: string;
+    pluginUiProjectionGeneration: number | null;
+    pluginUiLocale: string | null;
 }>): string {
     return JSON.stringify([
         input.sessionId,
@@ -142,6 +156,8 @@ function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
         input.paneScopeId,
         input.sessionAutomationsEnabledCount,
         input.headerMenuExtraItemIdsKey,
+        input.pluginUiProjectionGeneration ?? '',
+        input.pluginUiLocale ?? '',
     ]);
 }
 
@@ -209,6 +225,8 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         paneScopeId: input.paneScopeId,
         sessionAutomationsEnabledCount: input.sessionAutomationsEnabledCount,
         headerMenuExtraItemIdsKey: (input.headerMenuExtraItems ?? []).map((item) => item.id).join('|'),
+        pluginUiProjectionGeneration: input.pluginUiProjection?.generation ?? null,
+        pluginUiLocale: input.pluginUiLocale ?? null,
     });
 
     const cached = SESSION_VIEW_HEADER_PROPS_CACHE.get(cacheKey);
@@ -250,6 +268,9 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                     session={session}
                     extraItems={resolvedHeaderMenuExtraItems.length > 0 ? resolvedHeaderMenuExtraItems : undefined}
                     onSelectExtraItem={input.handleHeaderExtraItemSelect}
+                    pluginUiProjection={input.pluginUiProjection}
+                    pluginUiLocale={input.pluginUiLocale}
+                    onOpenPluginSurface={input.onOpenPluginSurface}
                 />
                 {!shouldFoldHeaderIconActions ? (
                     <SessionHeaderSubagentsButton
@@ -259,6 +280,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                     />
                 ) : null}
                 <SessionHeaderTerminalButton sessionId={input.sessionId} scopeId={input.paneScopeId} />
+                <SessionHeaderBrowserButton sessionId={input.sessionId} scopeId={input.paneScopeId} />
                 {!shouldFoldHeaderIconActions && input.sessionExecutionRunsSupported ? (
                     <Pressable
                         onPress={() => input.router.push(input.sessionRunsHref as any)}

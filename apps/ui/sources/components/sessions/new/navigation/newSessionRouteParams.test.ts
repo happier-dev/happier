@@ -1,11 +1,42 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+    buildNewSessionLaunchRouteParams,
     buildMachinePickerRouteParams,
     buildProfilePickerRouteParams,
     buildSecretRequirementRouteParams,
     buildServerPickerRouteParams,
 } from '@/components/sessions/new/navigation/newSessionRouteParams';
+
+describe('buildNewSessionLaunchRouteParams', () => {
+    it('includes machine, directory, worktree, and spawn target server params when provided', () => {
+        expect(
+            buildNewSessionLaunchRouteParams({
+                directory: '/repo',
+                machineId: 'machine-1',
+                targetServerId: 'server-2',
+                worktree: 'new',
+            }),
+        ).toEqual({
+            machineId: 'machine-1',
+            directory: '/repo',
+            worktree: 'new',
+            spawnServerId: 'server-2',
+        });
+    });
+
+    it('omits empty optional params', () => {
+        expect(
+            buildNewSessionLaunchRouteParams({
+                directory: '/repo',
+                machineId: null,
+                targetServerId: '',
+            }),
+        ).toEqual({
+            directory: '/repo',
+        });
+    });
+});
 
 describe('buildMachinePickerRouteParams', () => {
     it('includes selected machine and target server params when provided', () => {

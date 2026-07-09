@@ -340,6 +340,38 @@ describe('applySessionListTreeDropOperation', () => {
         });
     });
 
+    it('moves a root session before a root folder when mixed folder sort is selected', async () => {
+        const tree = buildTree();
+        const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'root-a') });
+        const result = resolveSessionListInstruction({
+            tree,
+            source,
+            pointer: { x: 160, y: 42 },
+            foldersFeatureEnabled: true,
+        });
+        const setSessionListGroupOrderV1 = vi.fn();
+
+        const applied = await applySessionListTreeDropOperation({
+            tree,
+            source,
+            result,
+            context: {
+                sessionFoldersV1: folders(),
+                sessionListGroupOrderV1: {},
+                sessionListFolderSortModeV1: 'mixed',
+                now: () => 100,
+                setSessionFoldersV1: vi.fn(),
+                setSessionListGroupOrderV1,
+                setSessionFolderAssignment: vi.fn(async () => undefined),
+            },
+        });
+
+        expect(applied).toEqual({ ok: true });
+        expect(setSessionListGroupOrderV1).toHaveBeenCalledWith({
+            [rootFolderGroupKey]: ['server-a:root-a', 'folder:folder-a', 'folder:folder-b'],
+        });
+    });
+
     it('commits pinned session reordering to the pinned group order without folder assignment', async () => {
         const tree = buildPinnedTree();
         const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'pinned-b') });

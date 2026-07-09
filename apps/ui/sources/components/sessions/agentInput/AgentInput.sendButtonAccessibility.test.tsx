@@ -97,6 +97,9 @@ vi.mock('@/sync/domains/state/storageStore', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    getAgentIconSvgXml: () => null,
+    getAgentIconSource: () => null,
+    getAgentIconTintColor: () => undefined,
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: () => null,
@@ -232,7 +235,7 @@ describe('AgentInput (send button accessibility)', () => {
         vi.clearAllMocks();
     });
 
-    it('does not request autocomplete suggestions before the composer text changes', async () => {
+    it('does not request autocomplete suggestions before focus, then follows focused text state', async () => {
         const { AgentInput } = await import('./AgentInput');
         const autocompleteSuggestions = vi.fn(async () => []);
 
@@ -258,7 +261,7 @@ describe('AgentInput (send button accessibility)', () => {
         });
 
         expect(useActiveSuggestionsMock).toHaveBeenLastCalledWith(
-            null,
+            '@src',
             autocompleteSuggestions,
             expect.objectContaining({ clampSelection: true, wrapAround: true }),
         );
@@ -268,7 +271,7 @@ describe('AgentInput (send button accessibility)', () => {
         });
 
         expect(useActiveSuggestionsMock).toHaveBeenLastCalledWith(
-            null,
+            '@/src',
             autocompleteSuggestions,
             expect.objectContaining({ clampSelection: true, wrapAround: true }),
         );

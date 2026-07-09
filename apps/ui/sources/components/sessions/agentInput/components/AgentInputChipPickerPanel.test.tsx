@@ -74,11 +74,12 @@ describe('AgentInputChipPickerPanel', () => {
         expect(screen.findByTestId('agent-input-chip-picker.option:two')).toBeTruthy();
     });
 
-    it('does not render inner scroll views in detailed mode', async () => {
+    it('keeps split detailed selector rows reachable through a scrollable rail', async () => {
         const { AgentInputChipPickerPanel } = await import('./AgentInputChipPickerPanel');
 
         const screen = await renderScreen(<AgentInputChipPickerPanel
             title="Pick"
+            maxHeight={321}
             options={[
                 { id: 'one', label: 'One', detailDescription: 'Primary checkout' } as any,
                 { id: 'two', label: 'Two', detailDescription: 'Feature checkout' } as any,
@@ -91,6 +92,12 @@ describe('AgentInputChipPickerPanel', () => {
         expect(screen.findByTestId('agent-input-chip-picker')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.title')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.close')).toBeTruthy();
+        const railScroll = screen.findByTestId('agent-input-chip-picker.option-rail-scroll');
+        expect(railScroll).toBeTruthy();
+        expect(railScroll?.type).toBe('ScrollView');
+        expect(railScroll?.props.style).toEqual(expect.arrayContaining([
+            expect.objectContaining({ maxHeight: 321 }),
+        ]));
         expect(screen.findByTestId('agent-input-chip-picker.option-rail')).toBeTruthy();
         expect(screen.findByTestId('agent-input-chip-picker.detail-pane')).toBeTruthy();
     });

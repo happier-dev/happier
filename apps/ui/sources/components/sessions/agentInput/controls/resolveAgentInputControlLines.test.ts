@@ -101,6 +101,7 @@ describe('resolveAgentInputControlLines', () => {
         expect(AGENT_INPUT_CONTROL_REGISTRY.map((control) => control.id)).toEqual([
             'engine',
             'mode',
+            'goal',
             'permission',
             'actionMenu',
             'profile',

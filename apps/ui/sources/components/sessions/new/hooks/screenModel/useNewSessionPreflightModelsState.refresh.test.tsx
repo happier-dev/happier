@@ -19,7 +19,7 @@ vi.mock('@/agents/catalog/catalog', () => ({
             dynamicProbe: agentId === 'claude' ? 'static-only' : 'dynamic',
         },
     }),
-    isAgentId: (value: unknown): value is string => typeof value === 'string' && ['claude', 'codex', 'customAcp'].includes(value),
+    isAgentId: (value: unknown): value is string => typeof value === 'string' && ['claude', 'codex', 'gemini', 'customAcp'].includes(value),
 }));
 
 type DeferredModelProbeResult = {
@@ -283,6 +283,63 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         await hook.unmount();
     });
 
+    it('does not expose a previous dynamic backend model list after switching to another dynamic backend', async () => {
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicModelProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+
+        machineCapabilitiesInvokeMock.mockImplementationOnce(async () => ({
+            supported: true as const,
+            response: {
+                ok: true as const,
+                result: {
+                    availableModels: [
+                        { id: 'gpt-5.5', name: 'GPT 5.5' },
+                        { id: 'opencode/big-pickle', name: 'Big Pickle' },
+                    ],
+                    supportsFreeform: true,
+                },
+            },
+        })).mockImplementationOnce(async () => ({
+            supported: true as const,
+            response: {
+                ok: true as const,
+                result: {
+                    availableModels: [
+                        { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
+                    ],
+                    supportsFreeform: true,
+                },
+            },
+        }));
+
+        const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+        const hook = await renderHook(
+            (props: { backendTarget: { kind: 'backend'; backendId: 'codex' | 'gemini' } }) =>
+                useNewSessionPreflightModelsState({
+                    backendTarget: props.backendTarget,
+                    selectedMachineId: 'machine-1',
+                    capabilityServerId: 'server-1',
+                    cwd: '/repo',
+                }),
+            { initialProps: { backendTarget: { kind: 'backend', backendId: 'codex' } } },
+        );
+
+        expect(hook.getCurrent().preflightModelsTargetKey).toBe('backend:codex');
+        expect(hook.getCurrent().modelOptions.some((option) => option.value === 'gpt-5.5')).toBe(true);
+        expect(hook.getCurrent().modelOptions.some((option) => option.value === 'opencode/big-pickle')).toBe(true);
+
+        await hook.rerender({ backendTarget: { kind: 'backend', backendId: 'gemini' } });
+
+        expect(hook.getCurrent().modelOptions.some((option) => option.value === 'gpt-5.5')).toBe(false);
+        expect(hook.getCurrent().modelOptions.some((option) => option.value === 'opencode/big-pickle')).toBe(false);
+        expect(hook.getCurrent().modelOptions.some((option) => option.value === 'gemini-2.5-pro')).toBe(true);
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
+    });
+
     it('retries after an error cooldown elapses so transient capability errors do not permanently hide model options', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000_000);
@@ -317,6 +374,12 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
         );
 
         expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().preflightModels).toEqual({
+            availableModels: [],
+            supportsFreeform: false,
+            unavailable: true,
+        });
+        expect(hook.getCurrent().modelOptions).toEqual([]);
         expect(hook.getCurrent().modelOptions.some((o) => o.value === 'm1')).toBe(false);
 
         await act(async () => {
@@ -524,6 +587,111 @@ describe('useNewSessionPreflightModelsState (refresh)', () => {
 
         await hook.unmount();
         vi.useRealTimers();
+    });
+
+    it('does not expose static Default options when the model probe reports unavailable', async () => {
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicModelProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+
+        machineCapabilitiesInvokeMock.mockImplementationOnce(async () => ({
+            supported: true as const,
+            response: {
+                ok: true as const,
+                result: {
+                    provider: 'codex',
+                    source: 'unavailable',
+                    availableModels: [],
+                    supportsFreeform: false,
+                },
+            },
+        }));
+
+        const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+        const hook = await renderHook(
+            () => useNewSessionPreflightModelsState({
+                backendTarget: { kind: 'backend', backendId: 'codex' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: '/repo',
+            }),
+        );
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().preflightModels).toEqual({
+            availableModels: [],
+            supportsFreeform: false,
+            unavailable: true,
+        });
+        expect(hook.getCurrent().modelOptions).toEqual([]);
+
+        await hook.unmount();
+    });
+
+    it('replaces a previous successful model list when a forced refresh reports unavailable', async () => {
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicModelProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+
+        machineCapabilitiesInvokeMock
+            .mockImplementationOnce(async () => ({
+                supported: true as const,
+                response: {
+                    ok: true as const,
+                    result: {
+                        provider: 'codex',
+                        source: 'dynamic',
+                        availableModels: [{ id: 'gpt-5.5', name: 'GPT 5.5' }],
+                        supportsFreeform: false,
+                    },
+                },
+            }))
+            .mockImplementationOnce(async () => ({
+                supported: true as const,
+                response: {
+                    ok: true as const,
+                    result: {
+                        provider: 'codex',
+                        source: 'unavailable',
+                        availableModels: [],
+                        supportsFreeform: false,
+                    },
+                },
+            }));
+
+        const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
+        const hook = await renderHook(
+            () => useNewSessionPreflightModelsState({
+                backendTarget: { kind: 'backend', backendId: 'codex' },
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                cwd: '/repo',
+            }),
+        );
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().modelOptions.some((option) => option.value === 'gpt-5.5')).toBe(true);
+
+        await act(async () => {
+            hook.getCurrent().probe.onRefresh?.();
+        });
+        await flushHookEffects();
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().preflightModels).toEqual({
+            availableModels: [],
+            supportsFreeform: false,
+            unavailable: true,
+        });
+        expect(hook.getCurrent().modelOptions).toEqual([]);
+
+        await hook.unmount();
     });
 
     it('does not enter a render loop when probeContext identity churns but cached values are stable by content', async () => {

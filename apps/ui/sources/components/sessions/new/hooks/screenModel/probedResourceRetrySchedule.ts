@@ -18,3 +18,12 @@ export function scheduleProbedResourceRetryAfterExpiry(
     return setTimeout(onRetry, delayMs);
 }
 
+export function scheduleProbedResourceRetryAfterDelay(
+    delayMs: number,
+    onRetry: () => void,
+): ReturnType<typeof setTimeout> | null {
+    if (!Number.isFinite(delayMs) || delayMs < 0) {
+        return null;
+    }
+    return setTimeout(onRetry, delayMs);
+}

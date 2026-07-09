@@ -31,12 +31,12 @@ export function buildFavoriteBackendIdentity(entry: ResolvedBackendCatalogEntry)
     };
 }
 
-function FavoriteModelsPickerIcon() {
+function FavoriteModelsPickerIcon(props: Readonly<{ size?: number }>) {
     const { theme } = useUnistyles();
     return (
         <Ionicons
             name="star"
-            size={12}
+            size={props.size ?? 12}
             color={theme.dark ? theme.colors.text.primary : theme.colors.button.primary.background}
         />
     );

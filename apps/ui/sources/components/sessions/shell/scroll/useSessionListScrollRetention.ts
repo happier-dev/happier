@@ -15,6 +15,9 @@ type SessionListScrollRetentionScrollEvent = Readonly<{
         contentOffset?: {
             y?: number;
         };
+        contentSize?: {
+            height?: number;
+        };
         layoutMeasurement?: {
             height?: number;
         };
@@ -27,6 +30,29 @@ type SessionListScrollRetentionEntry = {
 };
 
 const retainedScrollByKey = new Map<string, SessionListScrollRetentionEntry>();
+const SCROLL_OFFSET_TOLERANCE_PX = 2;
+
+function readFiniteNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function resolveScrollableOffsetLimit(contentHeight: number | null, viewportHeight: number): number | null {
+    if (contentHeight == null || contentHeight <= 0 || viewportHeight <= 0) return null;
+    return Math.max(0, contentHeight - viewportHeight);
+}
+
+function resolveRetainableScrollOffset(params: Readonly<{
+    contentHeight: number | null;
+    offsetY: number;
+    viewportHeight: number;
+}>): number | null {
+    if (params.offsetY < 0) return null;
+
+    const maxOffset = resolveScrollableOffsetLimit(params.contentHeight, params.viewportHeight);
+    if (maxOffset == null) return params.offsetY;
+    if (params.offsetY > maxOffset + SCROLL_OFFSET_TOLERANCE_PX) return null;
+    return Math.min(params.offsetY, maxOffset);
+}
 
 function getScrollRetentionEntry(retentionKey: string): SessionListScrollRetentionEntry {
     const existing = retainedScrollByKey.get(retentionKey);
@@ -51,6 +77,7 @@ export function useSessionListScrollRetention(params: Readonly<{
     );
 
     const visibleViewportHeightRef = React.useRef(0);
+    const contentHeightRef = React.useRef<number | null>(null);
 
     React.useEffect(() => () => {
         if (visibleViewportHeightRef.current <= 0) return;
@@ -59,16 +86,28 @@ export function useSessionListScrollRetention(params: Readonly<{
     }, [retentionEntry]);
 
     const handleScroll = React.useCallback((event: SessionListScrollRetentionScrollEvent) => {
-        const offsetY = event.nativeEvent?.contentOffset?.y;
-        if (typeof offsetY !== 'number' || !Number.isFinite(offsetY)) return;
+        const offsetY = readFiniteNumber(event.nativeEvent?.contentOffset?.y);
+        if (offsetY == null) return;
 
-        const measuredViewportHeight = event.nativeEvent?.layoutMeasurement?.height;
-        const viewportHeight = typeof measuredViewportHeight === 'number' && Number.isFinite(measuredViewportHeight)
+        const measuredContentHeight = readFiniteNumber(event.nativeEvent?.contentSize?.height);
+        if (measuredContentHeight != null && measuredContentHeight > 0) {
+            contentHeightRef.current = measuredContentHeight;
+        }
+
+        const measuredViewportHeight = readFiniteNumber(event.nativeEvent?.layoutMeasurement?.height);
+        const viewportHeight = measuredViewportHeight != null
             ? measuredViewportHeight
             : visibleViewportHeightRef.current;
         if (viewportHeight <= 0) return;
 
-        retentionEntry.lastVisibleOffsetY = Math.max(0, offsetY);
+        const retainedOffsetY = resolveRetainableScrollOffset({
+            contentHeight: contentHeightRef.current,
+            offsetY,
+            viewportHeight,
+        });
+        if (retainedOffsetY == null) return;
+
+        retentionEntry.lastVisibleOffsetY = retainedOffsetY;
         if (retentionEntry.lastVisibleOffsetY === 0) {
             retentionEntry.restorePending = false;
         }
@@ -91,7 +130,13 @@ export function useSessionListScrollRetention(params: Readonly<{
 
         if (!wasVisible && retentionEntry.restorePending && retentionEntry.lastVisibleOffsetY > 0) {
             retentionEntry.restorePending = false;
-            scrollToOffsetRef.current({ offset: retentionEntry.lastVisibleOffsetY, animated: false });
+            const restoredOffsetY = resolveRetainableScrollOffset({
+                contentHeight: contentHeightRef.current,
+                offsetY: retentionEntry.lastVisibleOffsetY,
+                viewportHeight: nextHeight,
+            });
+            if (restoredOffsetY == null || restoredOffsetY <= 0) return;
+            scrollToOffsetRef.current({ offset: restoredOffsetY, animated: false });
         }
     }, [retentionEntry]);
 

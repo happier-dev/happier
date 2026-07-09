@@ -2,7 +2,6 @@ import React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
 
 import type {
@@ -10,10 +9,10 @@ import type {
     AgentInputChipPickerOptionSection,
 } from './AgentInputChipPickerTypes';
 import {
-    AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE,
     AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
     createAgentInputChipPickerOptionTransientStyles,
 } from './agentInputChipPickerOptionStyles';
+import { normalizeAgentInputChipPickerOptionIcon } from './agentInputChipPickerOptionIcon';
 
 export type AgentInputChipPickerTopSelectorProps = Readonly<{
     sections: ReadonlyArray<AgentInputChipPickerOptionSection>;
@@ -22,29 +21,12 @@ export type AgentInputChipPickerTopSelectorProps = Readonly<{
     onFocusOption: (optionId: string) => void;
 }>;
 
-const PICKER_ICON_SIZE = AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE;
 const PICKER_OPTION_SIZE = 36;
 
 type WebHoverablePressableState = Readonly<{
     pressed: boolean;
     hovered?: boolean;
 }>;
-
-function normalizePickerIcon(icon: React.ReactNode): React.ReactNode {
-    if (!icon) return undefined;
-
-    const resizedIcon = React.isValidElement(icon) && icon.type !== React.Fragment
-        ? React.cloneElement(icon as React.ReactElement<Record<string, unknown>>, {
-            size: PICKER_ICON_SIZE,
-        })
-        : icon;
-
-    return (
-        <View style={iconStyles.iconWrapper}>
-            {normalizeNodeForView(resizedIcon)}
-        </View>
-    );
-}
 
 export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSelectorProps) {
     const { theme } = useUnistyles();
@@ -110,7 +92,7 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
                                 ];
                             }}
                         >
-                            {normalizePickerIcon(option.icon)}
+                            {normalizeAgentInputChipPickerOptionIcon(option.icon)}
                         </Pressable>
                     );
                 })}
@@ -160,14 +142,5 @@ const stylesheet = StyleSheet.create((theme) => ({
         bottom: 0,
         width: 24,
         zIndex: 2,
-    },
-}));
-
-const iconStyles = StyleSheet.create(() => ({
-    iconWrapper: {
-        width: PICKER_ICON_SIZE,
-        height: PICKER_ICON_SIZE,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
 }));

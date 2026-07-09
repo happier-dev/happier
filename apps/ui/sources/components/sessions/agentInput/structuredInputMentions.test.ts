@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     buildStructuredInputMetaOverrides,
+    reconcileStructuredInputMentionsWithTextChange,
     reconcileStructuredInputMentionsWithText,
     type ComposerStructuredInputMention,
 } from './structuredInputMentions';
@@ -55,6 +56,33 @@ describe('structured input mentions', () => {
         });
 
         expect(mentions).toEqual([]);
+    });
+
+    it('uses selection-based reconciliation for large insertions before a mention', () => {
+        const prefix = 'x'.repeat(300_000);
+        const insertedText = '<div>/'.repeat(50_000);
+        const previousText = `${prefix} @gmail tail`;
+        const mention = {
+            ...vendorPluginMention,
+            start: prefix.length + 1,
+            end: prefix.length + 7,
+        } satisfies ComposerStructuredInputMention;
+        const nextText = `${prefix} ${insertedText}@gmail tail`;
+
+        const mentions = reconcileStructuredInputMentionsWithTextChange({
+            previousText,
+            nextText,
+            previousSelection: { start: prefix.length + 1, end: prefix.length + 1 },
+            mentions: [mention],
+        });
+
+        expect(mentions).toEqual([
+            expect.objectContaining({
+                kind: 'vendorPlugin',
+                start: prefix.length + 1 + insertedText.length,
+                end: prefix.length + 7 + insertedText.length,
+            }),
+        ]);
     });
 
     it('does not infer a manually typed vendor plugin token', () => {

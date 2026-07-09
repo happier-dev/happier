@@ -17,6 +17,35 @@ describe('newSessionModelModePolicy', () => {
         expect(out).toBe('custom-model-id');
     });
 
+    it('uses provider freeform model id prefixes to reject stale cross-provider remembered selections', () => {
+        const out = resolveInitialNewSessionModelMode({
+            draftModelMode: 'gpt-5.5',
+            modelConfig: {
+                defaultMode: 'gemini-2.5-pro',
+                allowedModes: ['gemini-2.5-pro'],
+                supportsFreeform: true,
+                freeformModelIdPrefixes: ['gemini-', 'models/gemini-', 'publishers/google/models/gemini-'],
+            },
+        });
+
+        expect(out).toBe('gemini-2.5-pro');
+    });
+
+    it('keeps constrained provider freeform model ids that match an allowed prefix', () => {
+        const out = coerceNewSessionModelMode({
+            modelMode: 'models/gemini-3.5-flash',
+            modelConfig: {
+                defaultMode: 'gemini-2.5-pro',
+                allowedModes: ['gemini-2.5-pro'],
+                supportsFreeform: true,
+                freeformModelIdPrefixes: ['gemini-', 'models/gemini-', 'publishers/google/models/gemini-'],
+            },
+            preflight: null,
+        });
+
+        expect(out).toBe('models/gemini-3.5-flash');
+    });
+
     it('falls back to defaultMode when draft modelMode is empty', () => {
         const out = resolveInitialNewSessionModelMode({
             draftModelMode: '   ',
@@ -28,6 +57,31 @@ describe('newSessionModelModePolicy', () => {
         });
 
         expect(out).toBe('gemini-2.5-pro');
+    });
+
+    it('falls back to the default sentinel when provider defaultMode is absent', () => {
+        const initial = resolveInitialNewSessionModelMode({
+            draftModelMode: '   ',
+            modelConfig: {
+                defaultMode: null,
+                allowedModes: [],
+                supportsFreeform: false,
+                dynamicProbe: 'static-only',
+            },
+        });
+        const coerced = coerceNewSessionModelMode({
+            modelMode: null,
+            modelConfig: {
+                defaultMode: null,
+                allowedModes: [],
+                supportsFreeform: false,
+                dynamicProbe: 'static-only',
+            },
+            preflight: null,
+        });
+
+        expect(initial).toBe('default');
+        expect(coerced).toBe('default');
     });
 
     it('coerces invalid modelMode to defaultMode when freeform is disabled', () => {
@@ -59,6 +113,25 @@ describe('newSessionModelModePolicy', () => {
         });
 
         expect(out).toBe('gpt-5.5');
+    });
+
+    it('coerces stale dynamic/freeform modelMode to default when preflight is unavailable', () => {
+        const out = coerceNewSessionModelMode({
+            modelMode: 'opencode/big-pickle',
+            modelConfig: {
+                defaultMode: 'default',
+                allowedModes: [],
+                supportsFreeform: true,
+                dynamicProbe: 'auto',
+            },
+            preflight: {
+                availableModels: [],
+                supportsFreeform: false,
+                unavailable: true,
+            },
+        });
+
+        expect(out).toBe('default');
     });
 
     it('prefers draft modelMode for dynamic backends even when the static catalog is stale', () => {
@@ -169,5 +242,47 @@ describe('newSessionModelModePolicy', () => {
         });
 
         expect(out).toBe('custom-model-id');
+    });
+
+    it('repairs stale dynamic display-name selections to the unique provider-qualified preflight id', () => {
+        const out = coerceNewSessionModelMode({
+            modelMode: 'gpt-5.5',
+            modelConfig: {
+                defaultMode: 'default',
+                allowedModes: [],
+                supportsFreeform: true,
+                dynamicProbe: 'auto',
+            },
+            preflight: {
+                availableModels: [
+                    { id: 'anthropic/claude-sonnet-4-5', name: 'claude-sonnet-4-5' },
+                    { id: 'openai-codex/gpt-5.5', name: 'gpt-5.5' },
+                ],
+                supportsFreeform: true,
+            },
+        });
+
+        expect(out).toBe('openai-codex/gpt-5.5');
+    });
+
+    it('keeps custom/freeform modelMode when display-name repair would be ambiguous', () => {
+        const out = coerceNewSessionModelMode({
+            modelMode: 'gpt-5.5',
+            modelConfig: {
+                defaultMode: 'default',
+                allowedModes: [],
+                supportsFreeform: true,
+                dynamicProbe: 'auto',
+            },
+            preflight: {
+                availableModels: [
+                    { id: 'provider-a/gpt-5.5', name: 'gpt-5.5' },
+                    { id: 'provider-b/gpt-5.5', name: 'gpt-5.5' },
+                ],
+                supportsFreeform: true,
+            },
+        });
+
+        expect(out).toBe('gpt-5.5');
     });
 });

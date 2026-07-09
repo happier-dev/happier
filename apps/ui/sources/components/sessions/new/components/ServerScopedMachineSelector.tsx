@@ -31,6 +31,37 @@ const emptyTextStyle = {
     paddingVertical: 8,
 };
 
+function resolveGroupedMachineAvailability(machine: ServerScopedMachine): Readonly<{
+    detail: string;
+    selectable: boolean;
+}> {
+    const online = isMachineOnline(machine);
+    const readinessStatus = machine.spawnReadinessStatus;
+
+    if (readinessStatus === 'ready') {
+        return { detail: t('status.online'), selectable: true };
+    }
+
+    if (readinessStatus === 'unknown' || readinessStatus === 'probing') {
+        return {
+            detail: online ? t('status.online') : t('status.offline'),
+            selectable: online,
+        };
+    }
+
+    if (readinessStatus === 'rpcUnavailable' || readinessStatus === 'keyUnavailable') {
+        return {
+            detail: online ? t('common.unavailable') : t('status.offline'),
+            selectable: false,
+        };
+    }
+
+    return {
+        detail: t('status.offline'),
+        selectable: false,
+    };
+}
+
 export function ServerScopedMachineSelector(props: ServerScopedMachineSelectorProps) {
     const { theme } = useUnistyles();
     const optionTestIdPrefix = props.testIdPrefix ? `${props.testIdPrefix}-option` : undefined;
@@ -67,7 +98,7 @@ export function ServerScopedMachineSelector(props: ServerScopedMachineSelectorPr
                             ? group.machines.map((machine) => {
                                 const isSelected = props.selectedMachineId === machine.id
                                     && props.selectedServerId === group.serverId;
-                                const online = isMachineOnline(machine);
+                                const availability = resolveGroupedMachineAvailability(machine);
                                 return (
                                     <Item
                                         key={`${group.serverId}::${machine.id}`}
@@ -76,11 +107,11 @@ export function ServerScopedMachineSelector(props: ServerScopedMachineSelectorPr
                                         subtitle={machine.metadata?.host || machine.id}
                                         icon={<Ionicons name="desktop-outline" size={20} color={theme.colors.text.secondary} />}
                                         selected={isSelected}
-                                        detail={online ? t('status.online') : t('status.offline')}
+                                        detail={availability.detail}
                                         detailTestID={readinessTestIdPrefix ? `${readinessTestIdPrefix}:${machine.id}` : undefined}
-                                        disabled={!online}
+                                        disabled={!availability.selectable}
                                         onPress={() => {
-                                            if (!online) return;
+                                            if (!availability.selectable) return;
                                             props.onSelect(machine);
                                         }}
                                     />

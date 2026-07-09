@@ -42,6 +42,36 @@ vi.mock('./bottom/SessionBottomPanel', () => {
 });
 
 describe('useRegisterSessionPaneDriver (module prefetch)', () => {
+    it('defers pane module prefetch until after the initial session open window', async () => {
+        vi.useFakeTimers();
+        try {
+            const mod = await import('./useRegisterSessionPaneDriver');
+            const loadSubagentDetails = vi.fn(async () => undefined);
+            mod.sessionPaneModulePrefetchLoaders.splice(
+                0,
+                mod.sessionPaneModulePrefetchLoaders.length,
+                loadSubagentDetails,
+            );
+
+            const Probe = () => {
+                mod.useRegisterSessionPaneDriver('s1');
+                return React.createElement('Probe');
+            };
+
+            await renderScreen(<Probe />);
+
+            expect(loadSubagentDetails).not.toHaveBeenCalled();
+
+            await vi.advanceTimersByTimeAsync(2999);
+            expect(loadSubagentDetails).not.toHaveBeenCalled();
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(loadSubagentDetails).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('does not trigger duplicate eager pane-module loads when the hook mounts', async () => {
         const { useRegisterSessionPaneDriver } = await import('./useRegisterSessionPaneDriver');
         rightPanelModuleLoaded.mockClear();

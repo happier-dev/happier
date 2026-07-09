@@ -3,10 +3,13 @@ import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import type { BrowserContextState } from '@/sync/domains/browser/context';
+import { hasBrowserContextComposerAttachments } from '@/sync/domains/session/input/browserContext';
 import { storage } from '@/sync/domains/state/storage';
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 import { createLinkedFilesActionChip } from '../definitions/createLinkedFilesActionChip';
+import { createBrowserContextActionChip } from '../definitions/createBrowserContextActionChip';
 import { createReviewCommentsActionChip } from '../definitions/createReviewCommentsActionChip';
 import { buildSessionAgentInputActionChips } from './buildSessionAgentInputActionChips';
 import { createAttachmentActionChip } from './createAttachmentActionChip';
@@ -26,6 +29,12 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
     defaultBackendTarget?: BackendTargetRefV2Input | null;
     defaultBackendId: string | null;
     instructionsText: string;
+    browserContext?: Readonly<{
+        state: BrowserContextState;
+        onAttachPageReference?: () => void;
+        onRemoveAttachment?: (attachmentId: string) => void;
+        disabledReason?: string | null;
+    }> | null;
 }>): ReadonlyArray<AgentInputExtraActionChip> | undefined {
     const reviewWorkspaceCacheKey = React.useMemo(() => (
         params.reviewScope ? tryBuildWorkspaceCacheKey(params.reviewScope) : null
@@ -49,6 +58,11 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
                 disabled: params.isUploadingAttachments,
                 onPickPath: params.onAppendLinkedPath,
             }));
+        }
+
+        const browserContext = params.browserContext;
+        if (browserContext && hasBrowserContextComposerAttachments(browserContext.state)) {
+            chips.push(createBrowserContextActionChip(browserContext));
         }
 
         if (params.reviewCommentsEnabled) {
@@ -113,6 +127,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
         params.reviewCommentsEnabled,
         params.reviewScope,
         params.sessionId,
+        params.browserContext,
         reviewWorkspaceCacheKey,
     ]);
 }

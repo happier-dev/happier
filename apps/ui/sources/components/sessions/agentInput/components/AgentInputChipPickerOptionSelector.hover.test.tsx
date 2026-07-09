@@ -59,6 +59,35 @@ describe("AgentInputChipPickerOptionSelector (hover)", () => {
         return Object.assign({}, ...resolvedArray.filter(Boolean));
     }
 
+    it("normalizes rail option icons to the shared picker icon size", async () => {
+        const { AgentInputChipPickerOptionSelector } = await import("./AgentInputChipPickerOptionSelector");
+        const { AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE } = await import("./agentInputChipPickerOptionStyles");
+
+        const screen = await renderScreen(
+            <AgentInputChipPickerOptionSelector
+                sections={[
+                    {
+                        id: "sec",
+                        label: "Section",
+                        options: [
+                            {
+                                id: "engine:codex",
+                                label: "Codex",
+                                icon: React.createElement("EngineIcon", { testID: "engine-icon", size: 12 }),
+                            },
+                        ],
+                    },
+                ]}
+                focusedOptionId={null}
+                selectedOptionId={null}
+                onFocusOption={() => {}}
+                variant="rail"
+            />,
+        );
+
+        expect(screen.findByTestId("engine-icon")?.props.size).toBe(AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE);
+    });
+
     it("shows rail option actions only while hovering and keeps action presses from focusing the row", async () => {
         const {
             AgentInputChipPickerOptionSelector,
@@ -160,6 +189,43 @@ describe("AgentInputChipPickerOptionSelector (hover)", () => {
         await screen.pressByTestIdAsync("agent-input-chip-picker.option:engine:codex");
 
         expect(onFocusOption).toHaveBeenCalledWith("engine:codex");
+    });
+
+    it("does not focus disabled rail options", async () => {
+        const { AgentInputChipPickerOptionSelector } = await import("./AgentInputChipPickerOptionSelector");
+        const onFocusOption = vi.fn();
+
+        const screen = await renderScreen(
+            <AgentInputChipPickerOptionSelector
+                sections={[
+                    {
+                        id: "sec",
+                        label: "Section",
+                        options: [
+                            {
+                                id: "engine:codex",
+                                label: "Codex",
+                                subtitle: "Codex CLI not detected on this machine.",
+                                disabled: true,
+                                muted: true,
+                            },
+                        ],
+                    },
+                ]}
+                focusedOptionId={null}
+                selectedOptionId={null}
+                onFocusOption={onFocusOption}
+                variant="rail"
+            />,
+        );
+
+        await screen.pressByTestIdAsync("agent-input-chip-picker.option:engine:codex");
+
+        expect(onFocusOption).not.toHaveBeenCalled();
+        expect(screen.findByTestId("agent-input-chip-picker.option:engine:codex")?.props.accessibilityState).toEqual({
+            disabled: true,
+            selected: false,
+        });
     });
 
     it("keeps selected rail option actions hidden until the selected row is hovered", async () => {

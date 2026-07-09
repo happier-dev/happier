@@ -33,6 +33,7 @@ const viewState = vi.hoisted(() => ({
     sessionFoldersFeatureEnabled: true,
     focusedSessionFolder: null as any,
     sessionFolderAssignmentsBySessionKey: {} as Record<string, string | null>,
+    sessionOrganizationProjection: null as any,
     openApprovalSessionIds: [] as ReadonlyArray<string>,
     pathname: '/session/none',
     focusedSessionId: null as string | null,
@@ -75,6 +76,58 @@ function makeSourceIndex(): SessionListIndexItem[] {
     ];
 }
 
+function setSessionOrganizationProjection(params: Readonly<{
+    pinnedSessionIds?: readonly string[];
+    folders?: ReadonlyArray<Readonly<{
+        id: string;
+        name: string;
+        workspace: Readonly<{
+            t: 'workspaceScope';
+            serverId: string;
+            machineId: string;
+            rootPath: string;
+        }>;
+        parentId?: string | null;
+        sortKey?: string | null;
+    }>>;
+    folderAssignmentsBySessionId?: Readonly<Record<string, string | null>>;
+}>): void {
+    viewState.sessionOrganizationProjection = {
+        schemaVersion: 1,
+        version: 1,
+        pinnedSessionIds: params.pinnedSessionIds ?? [],
+        pinsBySessionId: Object.fromEntries((params.pinnedSessionIds ?? []).map((sessionId, index) => [
+            sessionId,
+            { sessionId, sortKey: String(index + 1).padStart(4, '0'), pinnedAt: index + 1 },
+        ])),
+        foldersById: Object.fromEntries((params.folders ?? []).map((folder, index) => [
+            folder.id,
+            {
+                folderId: folder.id,
+                folderKey: folder.id,
+                parentFolderId: folder.parentId ?? null,
+                parentFolderKey: folder.parentId ?? null,
+                sortKey: folder.sortKey ?? String(index + 1).padStart(4, '0'),
+                display: {
+                    t: 'plain',
+                    v: {
+                        name: folder.name,
+                        workspace: folder.workspace,
+                    },
+                },
+                archivedAt: null,
+                createdAt: 1,
+                updatedAt: 1,
+            },
+        ])),
+        folderAssignmentsBySessionId: params.folderAssignmentsBySessionId ?? {},
+        tagsById: {},
+        tagAssignmentsBySessionId: {},
+        orderEntriesByScopeKey: {},
+        labelsByLabelKey: {},
+    };
+}
+
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
     const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleMock({
@@ -109,6 +162,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 return null;
             }) as any,
             useSessionFolderAssignmentsBySessionKey: () => viewState.sessionFolderAssignmentsBySessionKey,
+            useSessionOrganizationProjection: () => viewState.sessionOrganizationProjection,
         },
     });
 });
@@ -164,6 +218,7 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
         viewState.sessionFoldersFeatureEnabled = true;
         viewState.focusedSessionFolder = null;
         viewState.sessionFolderAssignmentsBySessionKey = {};
+        viewState.sessionOrganizationProjection = null;
         viewState.openApprovalSessionIds = [];
         viewState.pathname = '/session/none';
         viewState.focusedSessionId = null;
@@ -190,6 +245,136 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
         expect(sessionIds).toEqual(['a', 'b']);
         expect(viewState.observedOrderingMode).toEqual(['updated']);
         expect(viewState.setGroupOrder).not.toHaveBeenCalled();
+    });
+
+    it('renders the visible list state without a Node stdout stream', async () => {
+        viewState.source = makeSourceIndex();
+        viewState.rowsByServerId = {
+            s1: {
+                a: makeSessionRow('a', { createdAt: 20, updatedAt: 200 }),
+                b: makeSessionRow('b', { createdAt: 10, updatedAt: 100 }),
+            },
+        };
+        const stdoutDescriptor = Object.getOwnPropertyDescriptor(process, 'stdout');
+        Object.defineProperty(process, 'stdout', {
+            configurable: true,
+            value: undefined,
+        });
+
+        let unmount: (() => Promise<void> | void) | null = null;
+        try {
+            const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
+            const hook = await renderHook(() => useVisibleSessionListViewState('all'));
+            unmount = () => hook.unmount();
+
+            expect(hook.getCurrent().visibleSessionListIndex?.map((item) => item.type === 'header'
+                ? `header:${item.headerKind ?? 'unknown'}`
+                : `session:${item.sessionId}`
+            )).toEqual([
+                'header:date',
+                'session:a',
+                'session:b',
+            ]);
+        } finally {
+            if (unmount) await unmount();
+            if (stdoutDescriptor) {
+                Object.defineProperty(process, 'stdout', stdoutDescriptor);
+            }
+        }
+    });
+
+    it('uses server organization projection for pins and folder placement instead of legacy settings', async () => {
+        viewState.sessionFolderViewMode = 'tree';
+        viewState.source = [
+            {
+                type: 'header',
+                title: '/repo',
+                headerKind: 'project',
+                groupKey: 'server:s1:active:project:hash-a',
+                workspaceKey: 'wl_hash_a',
+                serverId: 's1',
+                workspaceScopeHint: {
+                    serverId: 's1',
+                    machineId: 'm1',
+                    rootPath: '/repo',
+                },
+            },
+            {
+                type: 'session',
+                sessionId: 'in-folder',
+                serverId: 's1',
+                section: 'active',
+                groupKey: 'server:s1:active:project:hash-a',
+                groupKind: 'project',
+            },
+            {
+                type: 'session',
+                sessionId: 'pinned',
+                serverId: 's1',
+                section: 'active',
+                groupKey: 'server:s1:active:project:hash-a',
+                groupKind: 'project',
+            },
+        ];
+        viewState.rowsByServerId = {
+            s1: {
+                'in-folder': makeSessionRow('in-folder', { active: true, createdAt: 10 }),
+                pinned: makeSessionRow('pinned', { active: true, createdAt: 9 }),
+            },
+        };
+        viewState.sessionFolders = { v: 1, folders: [] };
+        viewState.sessionFolderAssignmentsBySessionKey = {};
+        viewState.sessionOrganizationProjection = {
+            schemaVersion: 1,
+            version: 7,
+            pinnedSessionIds: ['pinned'],
+            pinsBySessionId: {
+                pinned: { sessionId: 'pinned', sortKey: '0001', pinnedAt: 1 },
+            },
+            foldersById: {
+                'folder-a': {
+                    folderId: 'folder-a',
+                    folderKey: 'folder-a',
+                    parentFolderId: null,
+                    parentFolderKey: null,
+                    sortKey: '0001',
+                    display: {
+                        t: 'plain',
+                        v: {
+                            name: 'Planning',
+                            workspace: {
+                                t: 'workspaceScope',
+                                serverId: 's1',
+                                machineId: 'm1',
+                                rootPath: '/repo',
+                            },
+                        },
+                    },
+                    archivedAt: null,
+                    createdAt: 1,
+                    updatedAt: 1,
+                },
+            },
+            folderAssignmentsBySessionId: {
+                'in-folder': 'folder-a',
+            },
+            tagsById: {},
+            tagAssignmentsBySessionId: {},
+            orderEntriesByScopeKey: {},
+            labelsByLabelKey: {},
+        };
+
+        const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
+        const hook = await renderHook(() => useVisibleSessionListViewState('all'));
+        await flushHookEffects();
+
+        expect(hook.getCurrent()?.visibleSessionListIndex).toEqual([
+            expect.objectContaining({ type: 'header', headerKind: 'pinned' }),
+            expect.objectContaining({ type: 'session', sessionId: 'pinned', pinned: true }),
+            expect.objectContaining({ type: 'header', headerKind: 'project' }),
+            expect.objectContaining({ type: 'header', headerKind: 'folder', folderId: 'folder-a' }),
+            expect.objectContaining({ type: 'session', sessionId: 'in-folder', folderId: 'folder-a' }),
+        ]);
     });
 
     it('does not write normalized manual group order while the sessions surface is not data-active', async () => {
@@ -475,6 +660,63 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
         ]);
     });
 
+    it('uses a retained visible-index seed after the pane-state hook remounts', async () => {
+        const now = 1_000_000;
+        vi.useFakeTimers();
+        vi.setSystemTime(now);
+        viewState.orderingMode = 'custom';
+        viewState.workingPlacementMode = 'global';
+        viewState.pathname = '/session/other';
+        viewState.source = [
+            { type: 'header', headerKind: 'active', title: 'Active', serverId: 's1', groupKey: 'server:s1:active' },
+            { type: 'session', sessionId: 'stale-working', serverId: 's1', section: 'active', groupKey: 'server:s1:active', groupKind: 'active' },
+            { type: 'session', sessionId: 'other', serverId: 's1', section: 'active', groupKey: 'server:s1:active', groupKind: 'active' },
+        ];
+        viewState.rowsByServerId = {
+            s1: {
+                'stale-working': makeSessionRow('stale-working', {
+                    active: true,
+                    activeAt: now - 1_000,
+                    presence: 'online',
+                    thinking: true,
+                    latestTurnStatus: 'in_progress',
+                    latestTurnStatusObservedAt: now - 1_000,
+                    updatedAt: 200,
+                }),
+                other: makeSessionRow('other', { active: true, presence: 'online', updatedAt: 100 }),
+            },
+        };
+
+        const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
+        const firstHook = await renderHook(() => useVisibleSessionListViewState('all'));
+        await flushHookEffects();
+
+        const retainedVisibleSessionListIndex = firstHook.getCurrent()?.visibleSessionListIndex;
+        expect(retainedVisibleSessionListIndex).toEqual([
+            expect.objectContaining({ type: 'header', headerKind: 'working' }),
+            expect.objectContaining({ type: 'session', sessionId: 'stale-working', groupKind: 'working' }),
+            expect.objectContaining({ type: 'header', headerKind: 'active' }),
+            expect.objectContaining({ type: 'session', sessionId: 'other', groupKind: 'active' }),
+        ]);
+        await firstHook.unmount();
+
+        vi.setSystemTime(now + 130_000);
+        const remountOptions: Parameters<typeof useVisibleSessionListViewState>[1] & Readonly<{
+            retainedVisibleSessionListIndex: typeof retainedVisibleSessionListIndex;
+        }> = {
+            retainedVisibleSessionListIndex,
+        };
+        const remountedHook = await renderHook(() => useVisibleSessionListViewState('all', remountOptions));
+        await flushHookEffects();
+
+        expect(remountedHook.getCurrent()?.visibleSessionListIndex).toEqual([
+            expect.objectContaining({ type: 'header', headerKind: 'working' }),
+            expect.objectContaining({ type: 'session', sessionId: 'stale-working', groupKind: 'working' }),
+            expect.objectContaining({ type: 'header', headerKind: 'active' }),
+            expect.objectContaining({ type: 'session', sessionId: 'other', groupKind: 'active' }),
+        ]);
+    });
+
     it('demotes approval artifact attention rows after the approval closes', async () => {
         viewState.attentionPromotionMode = 'global';
         viewState.openApprovalSessionIds = ['approval-session'];
@@ -623,6 +865,80 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
         ]);
     });
 
+    it('uses a retained foreground pathname when retaining selected attention after remount', async () => {
+        viewState.orderingMode = 'custom';
+        viewState.attentionPromotionMode = 'global';
+        viewState.pathname = '/session/done';
+        viewState.selection = {
+            enabled: false,
+            presentation: 'grouped',
+            activeServerId: 's1',
+            allowedServerIds: ['s1'],
+            explicit: false,
+            activeTarget: { kind: 'server', id: 's1', serverId: 's1' },
+        };
+        viewState.source = [
+            { type: 'header', headerKind: 'date', title: 'Today', serverId: 's1', groupKey: 'server:s1:day:2026-02-17' },
+            { type: 'session', sessionId: 'done', serverId: 's1', section: 'inactive', groupKey: 'server:s1:day:2026-02-17', groupKind: 'date' },
+            { type: 'session', sessionId: 'quiet', serverId: 's1', section: 'inactive', groupKey: 'server:s1:day:2026-02-17', groupKind: 'date' },
+        ];
+        viewState.rowsByServerId = {
+            s1: {
+                done: makeSessionRow('done', {
+                    seq: 3,
+                    latestTurnStatus: 'completed',
+                    lastTurnCompletedAt: 300,
+                    lastViewedSessionSeq: 2,
+                    updatedAt: 300,
+                }),
+                quiet: makeSessionRow('quiet', { seq: 1, updatedAt: 100 }),
+            },
+        };
+
+        const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
+        const firstHook = await renderHook(() => useVisibleSessionListViewState('all'));
+        await flushHookEffects();
+        const retainedVisibleSessionListIndex = firstHook.getCurrent()?.visibleSessionListIndex;
+        expect(retainedVisibleSessionListIndex).toEqual([
+            expect.objectContaining({ type: 'header', headerKind: 'attention' }),
+            expect.objectContaining({ type: 'session', sessionId: 'done', groupKind: 'attention' }),
+            expect.objectContaining({ type: 'header', headerKind: 'date' }),
+            expect.objectContaining({ type: 'session', sessionId: 'quiet', groupKind: 'date' }),
+        ]);
+        await firstHook.unmount();
+
+        viewState.rowsByServerId = {
+            s1: {
+                done: makeSessionRow('done', {
+                    seq: 3,
+                    latestTurnStatus: 'completed',
+                    lastTurnCompletedAt: 300,
+                    lastViewedSessionSeq: 3,
+                    updatedAt: 300,
+                }),
+                quiet: makeSessionRow('quiet', { seq: 1, updatedAt: 100 }),
+            },
+        };
+        viewState.pathname = '/';
+        const remountOptions: Parameters<typeof useVisibleSessionListViewState>[1] & Readonly<{
+            retainedPathname: string;
+            retainedVisibleSessionListIndex: typeof retainedVisibleSessionListIndex;
+        }> = {
+            pathname: '/',
+            retainedPathname: '/session/done',
+            retainedVisibleSessionListIndex,
+        };
+        const remountedHook = await renderHook(() => useVisibleSessionListViewState('all', remountOptions));
+        await flushHookEffects();
+
+        expect(remountedHook.getCurrent()?.visibleSessionListIndex).toEqual([
+            expect.objectContaining({ type: 'header', headerKind: 'attention' }),
+            expect.objectContaining({ type: 'session', sessionId: 'done', groupKind: 'attention' }),
+            expect.objectContaining({ type: 'header', headerKind: 'date' }),
+            expect.objectContaining({ type: 'session', sessionId: 'quiet', groupKind: 'date' }),
+        ]);
+    });
+
     it('uses an explicit pathname override for retained root session-list state', async () => {
         viewState.orderingMode = 'custom';
         viewState.attentionPromotionMode = 'global';
@@ -745,6 +1061,22 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
         viewState.sessionFolderAssignmentsBySessionKey = {
             's1:in-folder': 'folder-a',
         };
+        setSessionOrganizationProjection({
+            folders: [{
+                id: 'folder-a',
+                workspace: {
+                    t: 'workspaceScope',
+                    serverId: 's1',
+                    machineId: 'm1',
+                    rootPath: '/repo',
+                },
+                parentId: null,
+                name: 'Planning',
+            }],
+            folderAssignmentsBySessionId: {
+                'in-folder': 'folder-a',
+            },
+        });
 
         const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
         const hook = await renderHook(() => useVisibleSessionListViewState('all'));
@@ -824,6 +1156,19 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
             }],
         };
         viewState.sessionFolderAssignmentsBySessionKey = {};
+        setSessionOrganizationProjection({
+            folders: [{
+                id: 'folder-a',
+                workspace: {
+                    t: 'workspaceScope',
+                    serverId: 's1',
+                    machineId: 'm1',
+                    rootPath: '/repo',
+                },
+                parentId: null,
+                name: 'Planning',
+            }],
+        });
 
         const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
         const hook = await renderHook(() => useVisibleSessionListViewState('all'));
@@ -886,6 +1231,22 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
         viewState.sessionFolderAssignmentsBySessionKey = {
             's1:in-folder': 'folder-a',
         };
+        setSessionOrganizationProjection({
+            folders: [{
+                id: 'folder-a',
+                workspace: {
+                    t: 'workspaceScope',
+                    serverId: 's1',
+                    machineId: 'm1',
+                    rootPath: '/repo',
+                },
+                parentId: null,
+                name: 'Planning',
+            }],
+            folderAssignmentsBySessionId: {
+                'in-folder': 'folder-a',
+            },
+        });
 
         const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
         const disabledHook = await renderHook(() => useVisibleSessionListViewState('all'));
@@ -903,5 +1264,81 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
 
         expect(directHook.getCurrent()?.visibleSessionListIndex).toEqual([]);
         expect(directHook.getCurrent()?.folderFocus).toBeNull();
+    });
+
+    it('keeps direct sessions visible when legacy index items omit storageKind but row state has direct metadata', async () => {
+        viewState.source = [
+            { type: 'header', title: 'dev', headerKind: 'project', groupKey: 'server:s1:project:dev', serverId: 's1' },
+            { type: 'session', sessionId: 'direct-session', serverId: 's1', section: 'active', groupKey: 'server:s1:project:dev', groupKind: 'project' },
+            { type: 'session', sessionId: 'persisted-session', serverId: 's1', section: 'active', groupKey: 'server:s1:project:dev', groupKind: 'project' },
+        ];
+        viewState.rowsByServerId = {
+            s1: {
+                'direct-session': makeSessionRow('direct-session', {
+                    active: true,
+                    metadata: {
+                        path: '/repo',
+                        externalSessionV1: { v: 1, providerId: 'opencode' },
+                    },
+                }),
+                'persisted-session': makeSessionRow('persisted-session', {
+                    active: true,
+                    metadata: { path: '/repo' },
+                }),
+            },
+        };
+
+        const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
+        const hook = await renderHook(() => useVisibleSessionListViewState('direct'));
+        await flushHookEffects();
+
+        expect(hook.getCurrent()?.visibleSessionListIndex).toEqual([
+            expect.objectContaining({ type: 'header', headerKind: 'project' }),
+            expect.objectContaining({ type: 'session', sessionId: 'direct-session' }),
+        ]);
+    });
+
+    it('recomputes working placement from the shared runtime clock when freshness expires without a store update', async () => {
+        const now = 1_000_000;
+        vi.useFakeTimers();
+        vi.setSystemTime(now);
+        viewState.orderingMode = 'custom';
+        viewState.workingPlacementMode = 'global';
+        viewState.source = [
+            { type: 'header', headerKind: 'active', title: 'Active', serverId: 's1', groupKey: 'server:s1:active' },
+            { type: 'session', sessionId: 'thinking-only', serverId: 's1', section: 'active', groupKey: 'server:s1:active', groupKind: 'active' },
+        ];
+        // Legacy-thinking working signal only: not a working-retention
+        // candidate (latestTurnStatus is not in_progress), so once the
+        // freshness window expires the session must LEAVE the working group —
+        // driven purely by the shared clock wake, with no store update.
+        viewState.rowsByServerId = {
+            s1: {
+                'thinking-only': makeSessionRow('thinking-only', {
+                    active: true,
+                    activeAt: now - 1_000,
+                    presence: 'online',
+                    thinking: true,
+                    thinkingAt: now - 1_000,
+                    updatedAt: 200,
+                }),
+            },
+        };
+
+        const { useVisibleSessionListViewState } = await import('./useVisibleSessionListViewState');
+        const hook = await renderHook(() => useVisibleSessionListViewState('all'));
+        await flushHookEffects();
+
+        expect(hook.getCurrent()?.visibleSessionListIndex).toEqual([
+            expect.objectContaining({ type: 'header', headerKind: 'working' }),
+            expect.objectContaining({ type: 'session', sessionId: 'thinking-only', groupKind: 'working' }),
+        ]);
+
+        await flushHookEffects({ advanceTimersMs: 121_000, cycles: 1, turns: 2 });
+
+        expect(hook.getCurrent()?.visibleSessionListIndex).toEqual([
+            expect.objectContaining({ type: 'header', headerKind: 'active' }),
+            expect.objectContaining({ type: 'session', sessionId: 'thinking-only', groupKind: 'active' }),
+        ]);
     });
 });

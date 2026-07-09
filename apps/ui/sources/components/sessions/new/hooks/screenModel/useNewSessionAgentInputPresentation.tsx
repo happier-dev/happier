@@ -199,6 +199,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         checkoutCreationDraft: params.checkoutCreationDraft,
         selectedMachineId: params.selectedMachineId,
         machineHomeDir: params.selectedMachine?.metadata?.homeDir ?? null,
+        machinePlatform: params.selectedMachine?.metadata?.platform ?? null,
         selectedPath: params.selectedPath,
         setSelectedPath: params.setSelectedPath,
         setCheckoutCreationDraft: params.setCheckoutCreationDraft,

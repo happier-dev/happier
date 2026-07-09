@@ -41,6 +41,7 @@ const preflightModelsState = vi.hoisted<{
     value: {
         availableModels: Array<{ id: string; name: string; description?: string }>;
         supportsFreeform: boolean;
+        unavailable?: boolean;
     } | null;
 }>(() => ({
     value: { availableModels: [] as Array<{ id: string; name: string }>, supportsFreeform: false },
@@ -62,10 +63,15 @@ const modeOptionsState = vi.hoisted(() => ({
 
 const configOptionsState = vi.hoisted(() => ({
     value: [] as ReadonlyArray<AgentInputOptionControl>,
+    unavailable: false,
 }));
 const probeEnabledState = vi.hoisted(() => ({
     models: true,
     config: true,
+}));
+const probePhaseState = vi.hoisted(() => ({
+    models: 'idle' as 'idle' | 'loading' | 'refreshing',
+    config: 'idle' as 'idle' | 'loading' | 'refreshing',
 }));
 let lastModelPickerOverlayProps: any = null;
 const probeRefreshSpies = {
@@ -167,7 +173,7 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModel
         modelOptions: modelOptionsState.value,
         preflightModels: preflightModelsState.value,
         probe: {
-            phase: 'idle',
+            phase: probePhaseState.models,
             ...(probeEnabledState.models ? { onRefresh: probeRefreshSpies.models } : {}),
         },
     }),
@@ -183,8 +189,9 @@ vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightSessi
 vi.mock('@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState', () => ({
     useNewSessionPreflightConfigOptionsState: () => ({
         configOptions: configOptionsState.value,
+        unavailable: configOptionsState.unavailable,
         probe: {
-            phase: 'idle',
+            phase: probePhaseState.config,
             ...(probeEnabledState.config ? { onRefresh: probeRefreshSpies.config } : {}),
         },
     }),
@@ -211,9 +218,12 @@ describe('NewSessionEngineOptionDetail', () => {
             { id: 'review', name: 'Review', description: 'Review and critique mode.' },
         ];
         configOptionsState.value = [];
+        configOptionsState.unavailable = false;
         lastModelPickerOverlayProps = null;
         probeEnabledState.models = true;
         probeEnabledState.config = true;
+        probePhaseState.models = 'idle';
+        probePhaseState.config = 'idle';
         probeRefreshSpies.cli.mockClear();
         probeRefreshSpies.models.mockClear();
         probeRefreshSpies.modes.mockClear();
@@ -446,6 +456,65 @@ describe('NewSessionEngineOptionDetail', () => {
         expect(lastModelPickerOverlayProps.canEnterCustomValue).toBe(true);
     });
 
+    it('shows a shared unavailable note when dynamic model discovery is unavailable', async () => {
+        const builtInBackendTarget: BackendTargetRefV2 = {
+            kind: 'backend',
+            backendId: 'codex',
+        };
+        modelOptionsState.value = [];
+        preflightModelsState.value = {
+            availableModels: [],
+            supportsFreeform: false,
+            unavailable: true,
+        };
+        agentCoreState.supportsFreeform = true;
+
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={builtInBackendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="default"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+        />);
+
+        expect(lastModelPickerOverlayProps).toBeTruthy();
+        expect(lastModelPickerOverlayProps.options).toEqual([]);
+        expect(lastModelPickerOverlayProps.canEnterCustomValue).toBe(false);
+        expect(lastModelPickerOverlayProps.notes).toContain('agentInput.model.unavailable');
+    });
+
+    it('suppresses the unavailable model note while an unavailable probe is retrying', async () => {
+        const builtInBackendTarget: BackendTargetRefV2 = {
+            kind: 'backend',
+            backendId: 'codex',
+        };
+        modelOptionsState.value = [];
+        preflightModelsState.value = {
+            availableModels: [],
+            supportsFreeform: false,
+            unavailable: true,
+        };
+        probePhaseState.models = 'loading';
+
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={builtInBackendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="default"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+        />);
+
+        expect(lastModelPickerOverlayProps).toBeTruthy();
+        expect(lastModelPickerOverlayProps.notes).not.toContain('agentInput.model.unavailable');
+        expect(lastModelPickerOverlayProps.probe?.phase).toBe('loading');
+    });
+
     it('keeps custom model entry available when the provider catalog supports freeform even if preflight does not', async () => {
         preflightModelsState.value = {
             availableModels: [
@@ -567,6 +636,25 @@ describe('NewSessionEngineOptionDetail', () => {
         });
     });
 
+    it('renders a shared unavailable note when dynamic config option discovery is unavailable', async () => {
+        configOptionsState.value = [];
+        configOptionsState.unavailable = true;
+
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+        const screen = await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="default"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{}}
+        />);
+
+        expect(screen.findByTestId('agent-input-config-options-unavailable')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('agentInput.acp.optionsUnavailable');
+    });
+
     it('merges multiple model option overrides (e.g. Thinking + Speed) instead of replacing prior selections', async () => {
         modelOptionsState.value = [
             {
@@ -653,6 +741,44 @@ describe('NewSessionEngineOptionDetail', () => {
                 service_tier: 'fast',
             },
         }));
+    });
+
+    it('shows base model scoped controls when the selected model is an effective bracket variant', async () => {
+        modelOptionsState.value = [
+            {
+                value: 'claude-sonnet-4-6',
+                label: 'Claude Sonnet 4.6',
+                description: 'Base model with a 1M context variant.',
+                modelOptions: [{
+                    id: 'reasoning_effort',
+                    name: 'Reasoning effort',
+                    type: 'select',
+                    currentValue: 'medium',
+                    options: [
+                        { value: 'medium', name: 'Medium' },
+                        { value: 'high', name: 'High' },
+                    ],
+                }],
+            },
+        ];
+
+        const { NewSessionEngineOptionDetail } = await import('./NewSessionEngineOptionDetail');
+        await renderScreen(<NewSessionEngineOptionDetail
+            backendTarget={backendTarget}
+            selectedMachineId="machine-1"
+            capabilityServerId="server-1"
+            cwd="/repo"
+            selectedModelId="claude-sonnet-4-6[1m]"
+            selectedSessionModeId="default"
+            selectedConfigOverrides={{ reasoning_effort: 'high' }}
+        />);
+
+        expect(lastModelPickerOverlayProps?.selectedOptionControls).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                option: expect.objectContaining({ id: 'reasoning_effort' }),
+                effectiveValue: 'high',
+            }),
+        ]));
     });
 
     it('drops incompatible model option overrides when another model is selected', async () => {

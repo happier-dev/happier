@@ -115,9 +115,13 @@ vi.mock('@/hooks/session/useUserMessageHistory', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    getAgentIconSvgXml: () => null,
+    getAgentIconSource: () => null,
+    getAgentIconTintColor: () => undefined,
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: () => null,
+    resolveAgentIdFromSessionMetadata: () => null,
     getAgentCore: () => ({ displayNameKey: 'agents.codex', toolRendering: { hideUnknownToolsByDefault: false } }),
 }));
 
@@ -427,8 +431,8 @@ describe('AgentInput (permission prompt surface)', () => {
                             status: 'open',
                             createdAtMs: 1,
                             updatedAtMs: 1,
-                            createdBy: { surface: 'session_agent', sessionId: 's1' },
-                            requestedSurface: 'session_agent',
+                            createdBy: { surface: 'agent', sessionId: 's1' },
+                            requestedSurface: 'agent',
                             actionId: 'session.list',
                             actionArgs: {},
                             summary: 'List sessions',
@@ -441,7 +445,7 @@ describe('AgentInput (permission prompt surface)', () => {
         act(() => tree.unmount());
     });
 
-    it('does not show explicit user action cards when surface is composer', async () => {
+    it('does not show user action cards in the composer when surface is composer', async () => {
         permissionPromptSurfaceSetting.value = 'composer';
         const { AgentInput } = await import('./AgentInput');
         let tree!: renderer.ReactTestRenderer;
@@ -453,7 +457,28 @@ describe('AgentInput (permission prompt surface)', () => {
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
                     sessionId="s1"
-                    userActionRequests={[{ id: 'q1', tool: 'AskUserQuestion', kind: 'user_action', arguments: { questions: [{ header: 'Mode', question: 'Create?', options: [{ label: 'Yes', description: 'Create it' }], multiSelect: false }] }, createdAt: 1 } as any]}
+                    {...({ userActionRequests: [{ id: 'q1', tool: 'AskUserQuestion', kind: 'user_action', arguments: { questions: [{ header: 'Mode', question: 'Create?', options: [{ label: 'Yes', description: 'Create it' }], multiSelect: false }] }, createdAt: 1 }] } as any)}
+                    connectionStatus={null as any}
+                />)).tree;
+
+        expect(tree.findAllByType('UserActionPromptCard' as any)).toHaveLength(0);
+        expect(tree.root.findAllByProps({ testID: 'agentInput.permissionRequests.chrome' })).toHaveLength(0);
+        act(() => tree.unmount());
+    });
+
+    it('does not show user action cards in the composer when surface is transcript', async () => {
+        permissionPromptSurfaceSetting.value = 'transcript';
+        const { AgentInput } = await import('./AgentInput');
+        let tree!: renderer.ReactTestRenderer;
+        tree = (await renderScreen(<AgentInput
+                    placeholder="x"
+                    value=""
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    autocompletePrefixes={[]}
+                    autocompleteSuggestions={async () => []}
+                    sessionId="s1"
+                    {...({ userActionRequests: [{ id: 'q1', tool: 'AskUserQuestion', kind: 'user_action', arguments: { questions: [{ header: 'Mode', question: 'Create?', options: [{ label: 'Yes', description: 'Create it' }], multiSelect: false }] }, createdAt: 1 }] } as any)}
                     connectionStatus={null as any}
                 />)).tree;
 
@@ -474,7 +499,7 @@ describe('AgentInput (permission prompt surface)', () => {
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
                     sessionId="s1"
-                    userActionRequests={[{ id: 'q1', tool: 'AskUserQuestion', arguments: { questions: [{ header: 'Mode', question: 'Create?', options: [{ label: 'Yes', description: 'Create it' }], multiSelect: false }] }, createdAt: 1 } as any]}
+                    {...({ userActionRequests: [{ id: 'q1', tool: 'AskUserQuestion', arguments: { questions: [{ header: 'Mode', question: 'Create?', options: [{ label: 'Yes', description: 'Create it' }], multiSelect: false }] }, createdAt: 1 }] } as any)}
                     connectionStatus={null as any}
                 />)).tree;
 

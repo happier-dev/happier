@@ -27,7 +27,12 @@ import {
     type DismissedCliWarnings,
 } from '@/agents/runtime/cliWarnings';
 import { canAgentResume } from '@/agents/runtime/resumeCapabilities';
-import { isAgentSelectableForNewSession, resolveProfileAvailabilityForNewSession } from '@/components/sessions/new/modules/newSessionAgentSelection';
+import {
+    isAgentSelectableForNewSession,
+    isBackendEntrySelectableForNewSession,
+    resolveBackendEntryUnavailabilityReasonForNewSession,
+    resolveProfileAvailabilityForNewSession,
+} from '@/components/sessions/new/modules/newSessionAgentSelection';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
@@ -209,15 +214,26 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     }, [cliAvailability.authStatus, cliAvailability.available, cliAvailability.timestamp, installableDepKeyCountByAgentId, selectableWithoutCliByAgentId]);
 
     const isBackendEntrySelectable = React.useCallback((entry: ResolvedBackendCatalogEntry): boolean => {
-        if (entry.kind === 'pluginBackend') {
-            // Plugin backends should not be gated on built-in CLI detection/auth probes.
-            return true;
-        }
-        if (entry.kind !== 'builtInAgent') {
-            return true;
-        }
-        return isAgentId(entry.builtInAgentId) ? isAgentSelectable(entry.builtInAgentId) : true;
-    }, [isAgentSelectable]);
+        return isBackendEntrySelectableForNewSession({
+            entry,
+            detectionTimestamp: cliAvailability.timestamp,
+            availabilityById: cliAvailability.available,
+            authStatusById: cliAvailability.authStatus,
+            installableDepKeyCountByAgentId,
+            selectableWithoutCliByAgentId,
+        });
+    }, [cliAvailability.authStatus, cliAvailability.available, cliAvailability.timestamp, installableDepKeyCountByAgentId, selectableWithoutCliByAgentId]);
+
+    const getBackendEntryUnavailabilityReason = React.useCallback((entry: ResolvedBackendCatalogEntry) => {
+        return resolveBackendEntryUnavailabilityReasonForNewSession({
+            entry,
+            detectionTimestamp: cliAvailability.timestamp,
+            availabilityById: cliAvailability.available,
+            authStatusById: cliAvailability.authStatus,
+            installableDepKeyCountByAgentId,
+            selectableWithoutCliByAgentId,
+        });
+    }, [cliAvailability.authStatus, cliAvailability.available, cliAvailability.timestamp, installableDepKeyCountByAgentId, selectableWithoutCliByAgentId]);
 
     const selectedMachineOnline = React.useMemo(() => {
         if (!params.selectedMachineId) return false;
@@ -405,6 +421,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         selectableWithoutCliByAgentId,
         isAgentSelectable,
         isBackendEntrySelectable,
+        getBackendEntryUnavailabilityReason,
         isCliBannerDismissed,
         dismissCliBanner,
         getCompatibleProfileBackendEntries,

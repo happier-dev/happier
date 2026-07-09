@@ -31,9 +31,10 @@ installSessionDetailsPanelCommonModuleMocks({
             },
         });
     },
-    icons: () => ({
-        Octicons: 'Octicons',
-    }),
+    icons: async () => {
+        const { createExpoVectorIconsMock } = await import('@/dev/testkit/mocks/icons');
+        return createExpoVectorIconsMock();
+    },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({ translate: (key) => key });
@@ -47,7 +48,11 @@ installSessionDetailsPanelCommonModuleMocks({
 });
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}) },
+    Typography: {
+        default: () => ({}),
+        mono: () => ({}),
+        tabular: () => ({}),
+    },
 }));
 
 vi.mock('@/utils/platform/deferOnWeb', () => ({
@@ -84,6 +89,12 @@ vi.mock('@/components/sessions/panes/agents/SessionRightPanelAgentsView', () => 
     SessionRightPanelAgentsView: () => React.createElement('AgentsView'),
 }));
 
+vi.mock('@/components/sessions/panes/SessionTranscriptNavigationPane', () => ({
+    SessionTranscriptNavigationPane: (props: Record<string, unknown>) => (
+        React.createElement('SessionTranscriptNavigationPane', props)
+    ),
+}));
+
 vi.mock('@/components/sessions/panes/terminal/SessionRightPanelTerminalView', () => ({
     SessionRightPanelTerminalView: () => React.createElement('TerminalView'),
 }));
@@ -111,23 +122,43 @@ describe('SessionRightPanel (core tabs)', () => {
         vi.clearAllMocks();
     });
 
-    it('renders git, files, and agents tabs and shows the git surface by default', async () => {
+    it('renders git, files, navigation, agents, and services tabs and shows the git surface by default', async () => {
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
         const screen = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
 
         expect(screen.findByTestId('session-rightpanel-tab:git')).toBeTruthy();
         expect(screen.findByTestId('session-rightpanel-tab:files')).toBeTruthy();
+        expect(screen.findByTestId('session-rightpanel-tab:navigation')).toBeTruthy();
         expect(screen.findByTestId('session-rightpanel-tab:agents')).toBeTruthy();
-        expect(screen.findByTestId('session-rightpanel-tab:reviews')).toBeTruthy();
+        expect(screen.findByTestId('session-rightpanel-tab:browser')).toBeNull();
+        expect(screen.findByTestId('session-rightpanel-tab:services')).toBeTruthy();
+        expect(screen.findByTestId('session-rightpanel-tab:reviews')).toBeNull();
         expect(screen.findByTestId('session-rightpanel-tab:terminal')).toBeNull();
 
         const gitSurface = findHostByTestId(screen, 'session-rightpanel-surface-git');
         expect(gitSurface).not.toBeNull();
         expect(gitSurface?.props.pointerEvents).toBe('auto');
         expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
+        expect(findHostByTestId(screen, 'session-rightpanel-surface-navigation')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-agents')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-reviews')).toBeNull();
+    });
+
+    it('renders the transcript navigation surface when the navigation tab is active', async () => {
+        scopeState = { right: { isOpen: true, activeTabId: 'navigation', tabState: {} } };
+        const { SessionRightPanel } = await import('./SessionRightPanel');
+
+        const screen = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
+
+        const navigationSurface = findHostByTestId(screen, 'session-rightpanel-surface-navigation');
+        expect(navigationSurface).not.toBeNull();
+        expect(navigationSurface?.props.pointerEvents).toBe('auto');
+        expect(screen.findAllByType('SessionTranscriptNavigationPane')).toHaveLength(1);
+        expect(screen.findByType('SessionTranscriptNavigationPane')?.props.sessionId).toBe('s1');
+        expect(findHostByTestId(screen, 'session-rightpanel-surface-git')).toBeNull();
+        expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
+        expect(findHostByTestId(screen, 'session-rightpanel-surface-agents')).toBeNull();
     });
 
     it('keeps a single agents surface test id when the agents tab is active', async () => {
@@ -143,17 +174,18 @@ describe('SessionRightPanel (core tabs)', () => {
         expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
     });
 
-    it('shows the review comments surface when the reviews tab is active', async () => {
+    it('falls back to git when persisted pane state points at an unregistered tab', async () => {
         scopeState = { right: { isOpen: true, activeTabId: 'reviews', tabState: {} } };
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
         const screen = await renderScreen(<SessionRightPanel sessionId="s1" scopeId="session:s1" />);
 
-        const reviewsSurface = findHostByTestId(screen, 'session-rightpanel-surface-reviews');
-        expect(reviewsSurface).not.toBeNull();
-        expect(reviewsSurface?.props.pointerEvents).toBe('auto');
-        expect(findHostByTestId(screen, 'session-rightpanel-surface-git')).toBeNull();
+        const gitSurface = findHostByTestId(screen, 'session-rightpanel-surface-git');
+        expect(gitSurface).not.toBeNull();
+        expect(gitSurface?.props.pointerEvents).toBe('auto');
+        expect(setRightTabSpy).toHaveBeenCalledWith('git');
         expect(findHostByTestId(screen, 'session-rightpanel-surface-files')).toBeNull();
         expect(findHostByTestId(screen, 'session-rightpanel-surface-agents')).toBeNull();
+        expect(findHostByTestId(screen, 'session-rightpanel-surface-reviews')).toBeNull();
     });
 });

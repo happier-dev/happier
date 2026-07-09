@@ -47,6 +47,36 @@ function createPanelProps(
 }
 
 describe('useNewSessionSimplePanelProps', () => {
+    it('preserves the route-owned bottom-anchor decision across the memoized panel model', async () => {
+        const hook = await renderHook((props: NewSessionSimplePanelProps) => useNewSessionSimplePanelProps(props), {
+            initialProps: createPanelProps({ shouldBottomAnchor: true }),
+        });
+
+        expect(hook.getCurrent().shouldBottomAnchor).toBe(true);
+
+        await hook.rerender(createPanelProps({ shouldBottomAnchor: false }));
+
+        expect(hook.getCurrent().shouldBottomAnchor).toBe(false);
+
+        await hook.unmount();
+    });
+
+    it('preserves launch status badge props across the memoized panel model', async () => {
+        const statusBadges = [{
+            key: 'new-session-launch-starting',
+            label: 'newSession.startingSession',
+            tone: 'active' as const,
+        }];
+
+        const hook = await renderHook((props: NewSessionSimplePanelProps) => useNewSessionSimplePanelProps(props), {
+            initialProps: createPanelProps({ statusBadges }),
+        });
+
+        expect(hook.getCurrent().statusBadges).toBe(statusBadges);
+
+        await hook.unmount();
+    });
+
     it('keeps shared popover configs stable while calling the latest render content', async () => {
         const firstMachineContent = React.createElement('MachineContent', { value: 'first' });
         const secondMachineContent = React.createElement('MachineContent', { value: 'second' });

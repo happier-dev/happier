@@ -46,6 +46,9 @@ vi.mock('@/constants/Typography', () => ({
         mono: () => ({}),
         eyebrow: () => ({}),
         keyHint: () => ({}),
+        rowTitle: () => ({}),
+        rowMeta: () => ({}),
+        pillLabel: () => ({}),
     },
 }));
 

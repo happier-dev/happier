@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { resetDynamicModelProbeCacheForTests } from '@/sync/domains/models/dynamicModelProbeCache';
 import { renderScreen } from '@/dev/testkit';
-import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
+import { NEW_SESSION_MODEL_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -137,7 +137,7 @@ describe('useNewSessionPreflightModelsState', () => {
     expect(latest.probe.phase).toBe('idle');
   });
 
-  it('uses a long enough timeout for slow ACP providers', async () => {
+  it('uses the extended model-probe timeout for slow provider model discovery', async () => {
     const { useNewSessionPreflightModelsState } = await import('./useNewSessionPreflightModelsState');
 
     machineCapabilitiesInvokeMock.mockClear();
@@ -162,7 +162,10 @@ describe('useNewSessionPreflightModelsState', () => {
 
     expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
     const request = machineCapabilitiesInvokeMock.mock.calls[0]?.[1];
-    expect(request?.params?.timeoutMs).toBe(NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS);
+    const options = machineCapabilitiesInvokeMock.mock.calls[0]?.[2];
+    expect(NEW_SESSION_MODEL_PROBE_TIMEOUT_MS).toBe(120_000);
+    expect(request?.params?.timeoutMs).toBe(NEW_SESSION_MODEL_PROBE_TIMEOUT_MS);
+    expect(options?.timeoutMs).toBe(NEW_SESSION_MODEL_PROBE_TIMEOUT_MS);
     const values = (latest?.modelOptions ?? []).map((option: any) => option.value);
     expect(values.slice(0, 2)).toEqual(['default', 'model-a']);
   });

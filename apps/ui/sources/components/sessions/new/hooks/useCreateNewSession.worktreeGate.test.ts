@@ -97,10 +97,24 @@ const saveSessionDraftsMock = vi.hoisted(() => vi.fn());
 const saveNewSessionDraftMock = vi.hoisted(() => vi.fn());
 const storeTempDataMock = vi.hoisted(() => vi.fn(() => 'temp-recovery-1'));
 const updateSessionDraftMock = vi.hoisted(() => vi.fn());
+const upsertPendingMessageMock = vi.hoisted(() => vi.fn());
+const markSessionOptimisticThinkingMock = vi.hoisted(() => vi.fn());
 const updateSessionPermissionModeMock = vi.hoisted(() => vi.fn());
 const updateSessionModelModeMock = vi.hoisted(() => vi.fn());
+const followUpSpawnedSessionWithServerScopeMock = vi.hoisted(() => vi.fn(async (_params?: unknown) => {}));
+const autoPressModalButtonTextState = vi.hoisted(() => ({ value: null as string | null }));
+const modalAlertMock = vi.hoisted(() => vi.fn((...args: unknown[]) => {
+    const targetText = autoPressModalButtonTextState.value;
+    const buttons = args[2];
+    if (!targetText || !Array.isArray(buttons)) {
+        return;
+    }
+    const target = buttons.find((button): button is { text?: string; onPress?: () => void } =>
+        button && typeof button === 'object' && (button as { text?: unknown }).text === targetText);
+    target?.onPress?.();
+}));
 const storedSessionsState = vi.hoisted(() => ({ sessions: {} as Record<string, Session> }));
-const ensureSessionVisibleForMessageRouteMock = vi.hoisted(() => vi.fn(async (sessionId?: unknown) => {
+const ensureSessionVisibleForMessageRouteMock = vi.hoisted(() => vi.fn(async (sessionId?: unknown, _options?: unknown) => {
     const hydratedSessionId = String(sessionId ?? '').trim();
     if (!hydratedSessionId) {
         return;
@@ -147,6 +161,14 @@ installNewSessionScreenModelCommonModuleMocks({
         navigation: {},
         pathname: '/new',
     },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        return createModalModuleMock({
+            spies: {
+                alert: modalAlertMock,
+            },
+        }).module;
+    },
     storage: async (importOriginal) => {
         const [
             { createStorageModuleStub, createStorageStoreMock },
@@ -161,6 +183,8 @@ installNewSessionScreenModelCommonModuleMocks({
                 settings: settingsDefaults,
                 sessions: storedSessionsState.sessions,
                 updateSessionDraft: updateSessionDraftMock,
+                upsertPendingMessage: upsertPendingMessageMock,
+                markSessionOptimisticThinking: markSessionOptimisticThinkingMock,
                 updateSessionPermissionMode: updateSessionPermissionModeMock,
                 updateSessionModelMode: updateSessionModelModeMock,
             }),
@@ -185,6 +209,18 @@ vi.mock('@/sync/ops', () => ({
 
 vi.mock('@/components/sessions/new/modules/materializeNewSessionCheckout', () => ({
     materializeNewSessionCheckout: (params: unknown) => materializeNewSessionCheckoutMock(params),
+}));
+
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', () => ({
+    followUpSpawnedSessionWithServerScope: (params: unknown) => followUpSpawnedSessionWithServerScopeMock(params),
+    readRecoverableFollowUpPayload: (error: unknown) => {
+        if (!(error instanceof Error)) {
+            return null;
+        }
+        return (error as Error & {
+            recoverableFollowUpPayload?: unknown;
+        }).recoverableFollowUpPayload ?? null;
+    },
 }));
 
 vi.mock('@/sync/domains/server/selection/serverSelectionResolver', () => ({
@@ -329,8 +365,14 @@ afterEach(() => {
     saveNewSessionDraftMock.mockClear();
     storeTempDataMock.mockClear();
     updateSessionDraftMock.mockClear();
+    upsertPendingMessageMock.mockClear();
+    markSessionOptimisticThinkingMock.mockClear();
     updateSessionPermissionModeMock.mockClear();
     updateSessionModelModeMock.mockClear();
+    followUpSpawnedSessionWithServerScopeMock.mockReset();
+    followUpSpawnedSessionWithServerScopeMock.mockImplementation(async (_params?: unknown) => {});
+    autoPressModalButtonTextState.value = null;
+    modalAlertMock.mockClear();
     ensureSessionVisibleForMessageRouteMock.mockClear();
     for (const key of Object.keys(storedSessionsState.sessions)) {
         delete storedSessionsState.sessions[key];
@@ -410,6 +452,7 @@ describe('useCreateNewSession (worktree gating)', () => {
             machineId: 'machine-1',
             selectedPath: '/repo',
             checkoutCreationDraft: undefined,
+            serverId: 'server-a',
         }));
         expect(machineSpawnNewSessionMock).toHaveBeenCalledWith(expect.objectContaining({
             directory: '/repo',
@@ -1259,6 +1302,15 @@ describe('useCreateNewSession (worktree gating)', () => {
         const typecheck = useCreateNewSession;
 
         ensureSessionVisibleForMessageRouteMock.mockImplementation(async () => {});
+        autoPressModalButtonTextState.value = 'common.cancel';
+        followUpSpawnedSessionWithServerScopeMock.mockImplementationOnce(async (params?: unknown) => {
+            const request = (params ?? {}) as { sessionId?: string; targetServerId?: string | null };
+            await ensureSessionVisibleForMessageRouteMock(request.sessionId, {
+                forceRefresh: true,
+                serverId: request.targetServerId || 'server-a',
+            });
+            throw new Error('Created session is not available locally yet');
+        });
 
         const routerReplace = vi.fn();
         const disableDraftPersistence = vi.fn();
@@ -1328,10 +1380,12 @@ describe('useCreateNewSession (worktree gating)', () => {
         expect(disableDraftPersistence).not.toHaveBeenCalled();
         expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
         expect(setIsCreating).toHaveBeenCalledWith(false);
-        expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith(
-            'common.error',
-            expect.stringContaining('Created session is not available locally yet'),
-        );
+        const retryAlertCall = vi.mocked(Modal.alert).mock.calls.find((call) => {
+            const buttons = call[2];
+            return Array.isArray(buttons) && buttons.some((button) => button?.text === 'common.retry');
+        });
+        expect(retryAlertCall).toBeTruthy();
+        expect(retryAlertCall?.[0]).toBe('errors.daemonUnavailableTitle');
     });
 
     it('keeps the new-session draft surface active when afterCreated fails after session creation', async () => {
@@ -1441,6 +1495,7 @@ describe('useCreateNewSession (worktree gating)', () => {
         const { readRecoverableFollowUpPayload } = await import('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession');
         const { Modal } = await import('@/modal');
 
+        autoPressModalButtonTextState.value = 'common.cancel';
         ensureSessionVisibleForMessageRouteMock.mockImplementationOnce(async (sessionId?: unknown) => {
             const hydratedSessionId = String(sessionId ?? '').trim();
             if (!hydratedSessionId) {
@@ -1531,6 +1586,11 @@ describe('useCreateNewSession (worktree gating)', () => {
         expect(disableDraftPersistence).not.toHaveBeenCalled();
         expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
         expect(routerReplace).not.toHaveBeenCalled();
-        expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith('common.error', 'Created session is not available locally yet');
+        const retryAlertCall = vi.mocked(Modal.alert).mock.calls.find((call) => {
+            const buttons = call[2];
+            return Array.isArray(buttons) && buttons.some((button) => button?.text === 'common.retry');
+        });
+        expect(retryAlertCall).toBeTruthy();
+        expect(retryAlertCall?.[0]).toBe('errors.daemonUnavailableTitle');
     });
 });

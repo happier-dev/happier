@@ -229,24 +229,34 @@ installSessionShellCommonModuleMocks({
             id: 's1',
             serverId: 'server-cache',
             seq: 0,
-            presence: Date.now() - 60_000,
-            active: false,
             accessLevel: 'edit',
             pendingVersion: 2,
-            metadata: {
-                machineId: 'm-stale',
-                flavor: 'codex',
-                version: '999.0.0',
-                path: '/tmp/target',
-                homeDir: '/tmp',
-                codexSessionId: 'codex-session-1',
-                ...sessionMetadataOverrides.current,
+            get presence() {
+                return sessionStateOverrides.current.presence ?? Date.now() - 60_000;
             },
-            agentState: {},
+            get active() {
+                return sessionStateOverrides.current.active ?? false;
+            },
+            get agentStateVersion() {
+                return sessionStateOverrides.current.agentStateVersion ?? 0;
+            },
+            get metadata() {
+                return {
+                    machineId: 'm-stale',
+                    flavor: 'codex',
+                    version: '999.0.0',
+                    path: '/tmp/target',
+                    homeDir: '/tmp',
+                    codexSessionId: 'codex-session-1',
+                    ...sessionMetadataOverrides.current,
+                };
+            },
+            get agentState() {
+                return sessionStateOverrides.current.agentState ?? {};
+            },
             get optimisticThinkingAt() {
                 return sessionOptimisticThinkingAt.current;
             },
-            ...sessionStateOverrides.current,
         };
 
         const localSettingsFixture: Partial<LocalSettings> = {
@@ -557,6 +567,9 @@ vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
 vi.mock('@/agents/runtime/resumeCapabilities', () => ({
     canResumeSessionWithOptions: (metadata: unknown, options: { machineId?: string | null } | null | undefined) =>
         canResumeSessionWithOptionsSpy(metadata, options),
+    canContinueSessionWithFreshSpawn: () => false,
+    canResumeOrContinueSessionWithOptions: (metadata: unknown, options: { machineId?: string | null } | null | undefined) =>
+        canResumeSessionWithOptionsSpy(metadata, options),
     getAgentVendorResumeId: () => null,
 }));
 vi.mock('@/sync/domains/input/slashCommands/resolveSessionComposerSend', () => ({
@@ -805,11 +818,11 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await screen.unmount();
     });
 
-    it('wakes a server-pending inactive session through the cached owning server when the route server id is stale', async () => {
+    it('wakes a server-pending inactive session through the cached owning server when the route server id is absent', async () => {
         sessionMetadataOverrides.current = { version: '0.1.0' };
         machineEncryptionAvailable.current = true;
 
-        const screen = await renderSessionView({ routeServerId: 'stale-route-server' });
+        const screen = await renderSessionView();
 
         pendingFireAndForget.length = 0;
 
@@ -842,6 +855,11 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
 
     it('bypasses server-pending enqueue when the send action is forced immediate', async () => {
         sessionMetadataOverrides.current = { version: '0.1.0' };
+        sessionStateOverrides.current = {
+            active: true,
+            presence: 'online',
+            agentStateVersion: 1,
+        };
         inactiveSessionUiState.current = {
             noticeKind: 'none',
             inactiveStatusTextKey: null,
@@ -891,6 +909,11 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
 
     it('restores the submitted draft when a direct handoff fails before durable acceptance', async () => {
         sessionMetadataOverrides.current = { version: '0.1.0' };
+        sessionStateOverrides.current = {
+            active: true,
+            presence: 'online',
+            agentStateVersion: 1,
+        };
         inactiveSessionUiState.current = {
             noticeKind: 'none',
             inactiveStatusTextKey: null,

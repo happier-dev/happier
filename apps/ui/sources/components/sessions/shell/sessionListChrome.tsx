@@ -761,6 +761,7 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
     collapsed: boolean;
     onPress: () => void;
     showOrderingMenu?: boolean;
+    testID?: string;
     headerControls?: Omit<React.ComponentProps<typeof SessionListHeaderControls>, 'onMenuOpenChange'>;
 }>) {
     const styles = sessionListStyles;
@@ -776,6 +777,7 @@ export const CollapsibleSectionHeader = React.memo(function CollapsibleSectionHe
         <Pressable
             style={isPrimaryHeader ? styles.headerSection : styles.groupHeaderSection}
             onPress={props.onPress}
+            testID={props.testID}
             onHoverIn={isWeb ? () => setIsHovered(true) : undefined}
             onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
         >

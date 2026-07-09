@@ -110,4 +110,49 @@ describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
             accountSettings: settings,
         });
     });
+
+    it('includes connected-service bindings in capability params and cache identity', async () => {
+        vi.resetModules();
+
+        const resolveAgentConfiguredRuntimeKind = vi.fn(() => 'appServer');
+        vi.doMock('@happier-dev/agents', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@happier-dev/agents')>();
+            return {
+                ...actual,
+                resolveAgentConfiguredRuntimeKind,
+            };
+        });
+
+        const { resolveNewSessionCapabilityProbeContext } = await import('./newSessionCapabilityProbeContext');
+
+        const settings = {} as any;
+        const backendTarget = { kind: 'builtInAgent', agentId: 'codex' } as any;
+        const connectedServices = {
+            v: 1,
+            bindingsByServiceId: {
+                'openai-codex': {
+                    source: 'connected',
+                    selection: 'profile',
+                    profileId: 'work',
+                },
+            },
+        };
+
+        const context = resolveNewSessionCapabilityProbeContext({
+            backendTarget,
+            settings,
+            connectedServices,
+        });
+
+        expect(context).toEqual({
+            cacheKeySuffixParts: [
+                'runtime:appServer',
+                'connectedServices:{"bindingsByServiceId":{"openai-codex":{"profileId":"work","selection":"profile","source":"connected"}},"v":1}',
+            ],
+            capabilityParams: {
+                runtimeKindOverride: 'appServer',
+                connectedServices,
+            },
+        });
+    });
 });

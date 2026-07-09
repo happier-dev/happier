@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 import { resolveNewSessionCheckoutChipModel } from './newSessionCheckoutChipModel';
+import { buildWorktreeCheckoutOptionId } from './worktreeCheckoutOptionId';
 
 function makeRepoSnapshot(partial?: Partial<ScmWorkingSnapshot>): ScmWorkingSnapshot {
     return {
@@ -129,6 +130,29 @@ describe('resolveNewSessionCheckoutChipModel', () => {
         ).toBe('checkout:/repo/payments-feature-auth');
     });
 
+    it('selects a macOS worktree when the selected path uses a private temp alias', () => {
+        const model = resolveNewSessionCheckoutChipModel({
+            selectedPath: '/private/tmp/payments-feature-auth/src/components',
+            machinePlatform: 'darwin',
+            machineHomeDir: null,
+            checkoutCreationDraft: null,
+            repoSnapshot: makeRepoSnapshot({
+                repo: {
+                    isRepo: true,
+                    rootPath: '/tmp/payments-feature-auth',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [
+                        { path: '/tmp/payments', branch: 'main', isCurrent: false, isMain: true },
+                        { path: '/tmp/payments-feature-auth', branch: 'feature/auth', isCurrent: true, isMain: false },
+                    ],
+                },
+            }),
+        });
+
+        expect(model.selectedOptionId).toBe('checkout:/tmp/payments-feature-auth');
+    });
+
     it('keeps an existing worktree selected when the scm snapshot root follows that linked worktree', () => {
         const model = resolveNewSessionCheckoutChipModel({
             selectedPath: '/repo/payments-feature-auth',
@@ -160,6 +184,35 @@ describe('resolveNewSessionCheckoutChipModel', () => {
             kind: 'current_path',
             path: '/repo/payments',
         });
+    });
+
+    it('derives the existing-worktree option id + selection through the shared canonical owner', () => {
+        // (b) A worktree path reported with a trailing slash must still produce
+        // the SAME canonical `checkout:` id the worktree-picker rows emit (both
+        // route through `buildWorktreeCheckoutOptionId`), so the current
+        // selection highlights / scrolls into view on reopen. Previously the chip
+        // model used the raw path while the picker rows used the normalized one,
+        // so they silently diverged for non-canonical paths.
+        const model = resolveNewSessionCheckoutChipModel({
+            selectedPath: '/repo/payments-feature-auth/',
+            checkoutCreationDraft: null,
+            repoSnapshot: makeRepoSnapshot({
+                repo: {
+                    isRepo: true,
+                    rootPath: '/repo/payments',
+                    backendId: 'git',
+                    mode: '.git',
+                    worktrees: [
+                        { path: '/repo/payments', branch: 'main', isCurrent: true, isMain: true },
+                        { path: '/repo/payments-feature-auth/', branch: 'feature/auth', isCurrent: false },
+                    ],
+                },
+            }),
+        });
+        const expectedId = buildWorktreeCheckoutOptionId('/repo/payments-feature-auth/');
+        expect(expectedId).toBe('checkout:/repo/payments-feature-auth');
+        expect(model.options.map((option) => option.id)).toContain(expectedId);
+        expect(model.selectedOptionId).toBe(expectedId);
     });
 
     it('keeps the worktree creation option selected when an in-memory draft exists', () => {

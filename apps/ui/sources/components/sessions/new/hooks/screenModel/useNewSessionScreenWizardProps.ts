@@ -129,6 +129,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'handleCreateSession'
         | 'canCreate'
         | 'isCreating'
+        | 'pendingLaunchAttempt'
         | 'submitAccessibilityLabel'
         | 'emptyAutocompletePrefixes'
         | 'emptyAutocompleteSuggestions'
@@ -142,6 +143,7 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'sessionPromptInputMaxHeight'
         | 'agentInputExtraActionChips'
         | 'attachmentFlowId'
+        | 'statusBadges'
     >;
 }>): ReturnType<typeof useNewSessionWizardProps> {
     const {

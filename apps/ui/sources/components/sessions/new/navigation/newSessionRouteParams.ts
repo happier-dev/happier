@@ -11,6 +11,25 @@ function buildNewSessionContextRouteParams(params: Readonly<{
     };
 }
 
+export function buildNewSessionLaunchRouteParams(params: Readonly<{
+    directory?: string | null;
+    machineId?: string | null;
+    targetServerId?: string | null;
+    worktree?: string | null;
+}>): Readonly<{
+    directory?: string;
+    machineId?: string;
+    spawnServerId?: string;
+    worktree?: string;
+}> {
+    return {
+        ...(params.machineId ? { machineId: params.machineId } : {}),
+        ...(params.directory ? { directory: params.directory } : {}),
+        ...(params.worktree ? { worktree: params.worktree } : {}),
+        ...(params.targetServerId ? { spawnServerId: params.targetServerId } : {}),
+    };
+}
+
 export function buildSecretRequirementRouteParams(params: Readonly<{
     dataId?: string | null;
     selectedMachineId: string | null;

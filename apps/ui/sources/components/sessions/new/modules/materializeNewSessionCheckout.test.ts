@@ -110,6 +110,7 @@ describe('materializeNewSessionCheckout', () => {
         const result = await materializeNewSessionCheckout({
             machineId: 'machine-1',
             selectedPath: '/repo/packages/app',
+            serverId: 'server-b',
             checkoutCreationDraft: {
                 kind: 'git_worktree',
                 displayName: 'feature/auth',
@@ -124,6 +125,7 @@ describe('materializeNewSessionCheckout', () => {
             displayName: 'feature/auth',
             baseRef: null,
             branchMode: 'existing',
+            serverId: 'server-b',
         });
         expect(result).toEqual({
             success: true,

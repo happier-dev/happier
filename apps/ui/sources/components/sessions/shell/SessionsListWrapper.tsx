@@ -42,6 +42,7 @@ export function SessionsListWrapper(props: Readonly<{
                 storageKind={storageKind}
                 fallbackGuidanceVariant="phone"
                 pathname={props.pathname}
+                surfaceRoutePathname={routePathname}
                 sessionListSurfaceDataActive={surfaceOwnership.dataActive}
                 surfaceOwnership={surfaceOwnership}
             />

@@ -12,6 +12,12 @@ import { treeRowId } from './drop-resolution/treeRowId';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+const setSessionFolderAssignmentSpy = vi.hoisted(() => vi.fn(async () => {}));
+const getCredentialsForServerUrlSpy = vi.hoisted(() => vi.fn(async () => ({
+    token: 'folder-token',
+    secret: 'folder-secret',
+})));
+
 vi.mock('react-native-reanimated', () => ({
     Easing: {
         bezier: () => () => 0,
@@ -23,6 +29,27 @@ vi.mock('react-native-reanimated', () => ({
 
 vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (action: () => Promise<void>) => [null, () => { void action(); }],
+}));
+
+vi.mock('@/auth/storage/tokenStorage', () => ({
+    TokenStorage: {
+        getCredentialsForServerUrl: getCredentialsForServerUrlSpy,
+    },
+}));
+
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    getServerProfileById: (serverId: string) => (serverId === 'server-a'
+        ? {
+            id: 'profile-a',
+            serverIdentityId: 'server-a',
+            legacyServerIds: ['legacy-a'],
+            serverUrl: 'https://server-a.example.test',
+        }
+        : null),
+}));
+
+vi.mock('@/sync/ops/sessionOrganization', () => ({
+    setSessionFolderAssignment: setSessionFolderAssignmentSpy,
 }));
 
 describe('useSessionListRowInteractions', () => {
@@ -82,11 +109,10 @@ describe('useSessionListRowInteractions', () => {
             setSessionListGroupOrderV1: vi.fn(),
             setSessionWorkspaceOrderV1: vi.fn(),
             setSessionFoldersV1: vi.fn(),
-            pinnedKeyList: [],
             pinnedKeySet: new Set(),
-            setPinnedSessionKeysV1: vi.fn(),
+            setSessionPinForKey: vi.fn(),
             sessionTags: {},
-            setSessionTagsV1: vi.fn(),
+            setSessionTagsForKey: vi.fn(),
             ...overrides,
         };
     }
@@ -94,6 +120,71 @@ describe('useSessionListRowInteractions', () => {
     function renderInteractions(overrides: Partial<UseSessionListRowInteractionsInput> = {}) {
         return renderHook(() => useSessionListRowInteractions(buildInteractionsInput(overrides)));
     }
+
+    it('persists drag folder assignments under the list projection server id', async () => {
+        setSessionFolderAssignmentSpy.mockClear();
+        getCredentialsForServerUrlSpy.mockClear();
+        const folderItems: SessionListIndexItem[] = [
+            listItems[0]!,
+            {
+                type: 'header',
+                title: 'Folder A',
+                headerKind: 'folder',
+                folderId: 'folder-a',
+                folderDepth: 0,
+                groupKey: 'folder:server-a:workspaceScope:server-a:machine-a:/repo/a:folder-a',
+                workspace,
+                serverId: 'server-a',
+            },
+            listItems[1]!,
+        ];
+        const hook = await renderInteractions({
+            listItems: folderItems,
+            sessionFoldersV1: {
+                v: 1,
+                folders: [{
+                    id: 'folder-a',
+                    workspace,
+                    parentId: null,
+                    name: 'Folder A',
+                    createdAt: 1,
+                    updatedAt: 1,
+                }],
+            },
+        });
+
+        await act(async () => {
+            hook.getCurrent().handleDragStart('server-a:s1');
+            hook.getCurrent().handleTreeDropResult({
+                sessionKey: 'server-a:s1',
+                groupKey: 'project-a',
+                dataIndex: 2,
+                result: {
+                    instruction: {
+                        kind: 'nest-into',
+                        targetId: treeRowId.folder('folder-a'),
+                        containerId: treeRowId.folder('folder-a'),
+                        parentId: treeRowId.folder('folder-a'),
+                        depth: 1,
+                    },
+                    visual: { kind: 'outline', targetId: treeRowId.folder('folder-a') },
+                },
+            });
+        });
+
+        await vi.waitFor(() => {
+            expect(setSessionFolderAssignmentSpy).toHaveBeenCalledWith({
+                credentials: { token: 'folder-token', secret: 'folder-secret' },
+                serverId: 'server-a',
+                serverUrl: 'https://server-a.example.test',
+                sessionId: 's1',
+                folderId: 'folder-a',
+            });
+        });
+        expect(getCredentialsForServerUrlSpy).toHaveBeenCalledWith('https://server-a.example.test', { serverId: 'profile-a' });
+
+        await hook.unmount();
+    });
 
     it('exposes only drag snapshot and numeric overlay state for pointer drag visuals', async () => {
         const hook = await renderInteractions();
@@ -175,35 +266,91 @@ describe('useSessionListRowInteractions', () => {
     });
 
     it('preserves pin and tag row actions while using the tree pipeline', async () => {
-        const setPinnedSessionKeysV1 = vi.fn();
-        const setSessionTagsV1 = vi.fn();
+        const setSessionPinForKey = vi.fn();
+        const setSessionTagsForKey = vi.fn();
         const hook = await renderInteractions({
-            pinnedKeyList: ['server-a:s1'],
             pinnedKeySet: new Set(['server-a:s1']),
-            setPinnedSessionKeysV1,
+            setSessionPinForKey,
             sessionTags: { 'server-a:s1': ['old'] },
-            setSessionTagsV1,
+            setSessionTagsForKey,
         });
 
         hook.getCurrent().handleTogglePinnedSessionKey('server-a:s1');
         hook.getCurrent().handleSetTagsSessionKey('server-a:s1', ['new']);
 
-        expect(setPinnedSessionKeysV1).toHaveBeenCalledWith([]);
-        expect(setSessionTagsV1).toHaveBeenCalledWith({ 'server-a:s1': ['new'] });
+        expect(setSessionPinForKey).toHaveBeenCalledWith('server-a:s1', false);
+        expect(setSessionTagsForKey).toHaveBeenCalledWith('server-a:s1', ['new']);
+
+        await hook.unmount();
+    });
+
+    it('suppresses exactly one folder-focus press immediately after a tree drag drop', async () => {
+        const folderItems: SessionListIndexItem[] = [
+            listItems[0]!,
+            {
+                type: 'header',
+                title: 'Folder A',
+                headerKind: 'folder',
+                folderId: 'folder-a',
+                folderDepth: 0,
+                groupKey: 'folder:server-a:workspaceScope:server-a:machine-a:/repo/a:folder-a',
+                workspace,
+                serverId: 'server-a',
+            },
+            listItems[1]!,
+        ];
+        const hook = await renderInteractions({
+            listItems: folderItems,
+            sessionFoldersV1: {
+                v: 1,
+                folders: [{
+                    id: 'folder-a',
+                    workspace,
+                    parentId: null,
+                    name: 'Folder A',
+                    createdAt: 1,
+                    updatedAt: 1,
+                }],
+            },
+        });
+
+        expect(hook.getCurrent().consumeFolderFocusPressAfterDrag()).toBe(false);
+
+        await act(async () => {
+            hook.getCurrent().handleDragStart('server-a:s1');
+            hook.getCurrent().handleTreeDropResult({
+                sessionKey: 'server-a:s1',
+                groupKey: 'project-a',
+                dataIndex: 2,
+                result: {
+                    instruction: {
+                        kind: 'nest-into',
+                        targetId: treeRowId.folder('folder-a'),
+                        containerId: treeRowId.folder('folder-a'),
+                        parentId: treeRowId.folder('folder-a'),
+                        depth: 1,
+                    },
+                    visual: { kind: 'outline', targetId: treeRowId.folder('folder-a') },
+                },
+            });
+        });
+
+        expect(hook.getCurrent().consumeFolderFocusPressAfterDrag()).toBe(true);
+        expect(hook.getCurrent().consumeFolderFocusPressAfterDrag()).toBe(false);
 
         await hook.unmount();
     });
 
     it('keeps row action handler identities stable across pin and tag state changes', async () => {
-        const setPinnedSessionKeysV1 = vi.fn();
-        const setSessionTagsV1 = vi.fn();
+        const setSessionPinForKey = vi.fn();
+        const setSessionTagsForKey = vi.fn();
         const hook = await renderHook(
             (input: UseSessionListRowInteractionsInput) => useSessionListRowInteractions(input),
             {
                 initialProps: buildInteractionsInput({
-                    setPinnedSessionKeysV1,
+                    setSessionPinForKey,
                     sessionTags: { 'server-a:s1': ['old'] },
-                    setSessionTagsV1,
+                    setSessionTagsForKey,
                 }),
             },
         );
@@ -212,11 +359,10 @@ describe('useSessionListRowInteractions', () => {
         const initialSetTags = hook.getCurrent().handleSetTagsSessionKey;
 
         await hook.rerender(buildInteractionsInput({
-            pinnedKeyList: ['server-a:s1'],
             pinnedKeySet: new Set(['server-a:s1']),
-            setPinnedSessionKeysV1,
+            setSessionPinForKey,
             sessionTags: { 'server-a:s1': ['old', 'new'] },
-            setSessionTagsV1,
+            setSessionTagsForKey,
         }));
 
         expect(hook.getCurrent().handleTogglePinnedSessionKey).toBe(initialTogglePinned);
@@ -225,8 +371,8 @@ describe('useSessionListRowInteractions', () => {
         hook.getCurrent().handleTogglePinnedSessionKey('server-a:s1');
         hook.getCurrent().handleSetTagsSessionKey('server-a:s1', ['latest']);
 
-        expect(setPinnedSessionKeysV1).toHaveBeenLastCalledWith([]);
-        expect(setSessionTagsV1).toHaveBeenLastCalledWith({ 'server-a:s1': ['latest'] });
+        expect(setSessionPinForKey).toHaveBeenLastCalledWith('server-a:s1', false);
+        expect(setSessionTagsForKey).toHaveBeenLastCalledWith('server-a:s1', ['latest']);
 
         await hook.unmount();
     });

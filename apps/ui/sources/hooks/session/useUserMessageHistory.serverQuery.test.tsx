@@ -1,44 +1,25 @@
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
-import type { FetchUserMessageHistoryPageResult } from '@/sync/engine/sessions/fetchUserMessageHistoryPage';
+import { createReducer } from '@/sync/reducer/reducer';
 import { storage } from '@/sync/domains/state/storageStore';
 
-import { useUserMessageHistory } from './useUserMessageHistory';
+import {
+    resetUserMessageHistoryRemoteEntriesForTests,
+    useUserMessageHistory,
+    useUserMessageHistoryRemoteEntries,
+} from './useUserMessageHistory';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-type FetchUserMessageHistoryPageForTest = (
-    sessionId: string,
-    opts?: { beforeSeq?: number | null; limit?: number },
-) => Promise<FetchUserMessageHistoryPageResult>;
-
-const fetchUserMessageHistoryPageMock = vi.hoisted(() =>
-    vi.fn<FetchUserMessageHistoryPageForTest>(async (_sessionId, _opts) => ({
-        status: 'unsupported' as const,
-    })),
-);
+const fetchUserMessageHistoryPageMock = vi.hoisted(() => vi.fn());
 const roleQuerySupportedState = vi.hoisted(() => ({ supported: true }));
 
 vi.mock('@/sync/sync', () => ({
     sync: {
-        fetchUserMessageHistoryPage: (
-            sessionId: string,
-            opts?: { beforeSeq?: number | null; limit?: number },
-        ) => fetchUserMessageHistoryPageMock(sessionId, opts),
+        fetchUserMessageHistoryPage: (...args: unknown[]) => fetchUserMessageHistoryPageMock(...args),
     },
-}));
-
-vi.mock('@/agents/catalog/catalog', () => ({
-    isAgentId: (value: unknown) => value === 'codex',
-}));
-
-vi.mock('@/agents/registry/registryUiBehavior', () => ({
-    resolveAgentUiBehavior: () => ({}),
-    resolveAgentUiBehaviorFromFlavor: () => ({}),
-    supportsDetectedMcpConfigScan: () => false,
-    supportsEditableSessionGoals: () => false,
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession', () => ({
@@ -61,13 +42,181 @@ vi.mock('@/sync/domains/features/featureDecisionRuntime', () => ({
 }));
 
 describe('useUserMessageHistory server role query', () => {
+    beforeEach(() => {
+        storage.setState((state) => ({
+            ...state,
+            profileScope: { serverId: 'server-1', accountId: 'account-1' },
+            sessionMessages: {},
+        }));
+    });
+
     afterEach(() => {
         vi.clearAllMocks();
+        resetUserMessageHistoryRemoteEntriesForTests();
         roleQuerySupportedState.supported = true;
         storage.setState((state) => ({
             ...state,
+            profileScope: { serverId: 'server-1', accountId: 'account-1' },
             sessionMessages: {},
         }));
+    });
+
+    it('shares one in-flight remote history page across same-scope consumers', async () => {
+        const page = createDeferred<{
+            status: 'loaded';
+            entries: Array<{ seq: number; createdAt: number; text: string }>;
+            hasMore: boolean;
+            nextBeforeSeq: number | null;
+        }>();
+        fetchUserMessageHistoryPageMock.mockReturnValueOnce(page.promise);
+
+        const hook = await renderHook(() => {
+            const first = useUserMessageHistoryRemoteEntries({
+                enabled: true,
+                initialBeforeSeq: null,
+                sessionId: 's1',
+            });
+            const second = useUserMessageHistoryRemoteEntries({
+                enabled: true,
+                initialBeforeSeq: null,
+                sessionId: 's1',
+            });
+            return { first, second };
+        });
+
+        await act(async () => {
+            hook.getCurrent().first.requestNextPage();
+            hook.getCurrent().second.requestNextPage();
+            await flushHookEffects();
+        });
+
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledTimes(1);
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledWith('s1', { limit: 25 });
+
+        await act(async () => {
+            page.resolve({
+                status: 'loaded',
+                entries: [{ seq: 5, createdAt: 50, text: 'shared prompt' }],
+                hasMore: false,
+                nextBeforeSeq: null,
+            });
+            await page.promise;
+            await flushHookEffects();
+        });
+
+        expect(hook.getCurrent().first.entries).toEqual([{ seq: 5, createdAt: 50, text: 'shared prompt' }]);
+        expect(hook.getCurrent().second.entries).toEqual([{ seq: 5, createdAt: 50, text: 'shared prompt' }]);
+        await hook.unmount();
+    });
+
+    it('keys shared remote history by active server account scope', async () => {
+        fetchUserMessageHistoryPageMock
+            .mockResolvedValueOnce({
+                status: 'loaded',
+                entries: [{ seq: 5, createdAt: 50, text: 'account one prompt' }],
+                hasMore: false,
+                nextBeforeSeq: null,
+            })
+            .mockResolvedValueOnce({
+                status: 'loaded',
+                entries: [{ seq: 5, createdAt: 50, text: 'account two prompt' }],
+                hasMore: false,
+                nextBeforeSeq: null,
+            });
+
+        const hook = await renderHook(() =>
+            useUserMessageHistoryRemoteEntries({
+                enabled: true,
+                initialBeforeSeq: null,
+                sessionId: 's1',
+            }),
+        );
+
+        await act(async () => {
+            hook.getCurrent().requestNextPage();
+            await flushHookEffects();
+        });
+        expect(hook.getCurrent().entries.map((entry) => entry.text)).toEqual(['account one prompt']);
+
+        await act(async () => {
+            storage.setState((state) => ({
+                ...state,
+                profileScope: { serverId: 'server-1', accountId: 'account-2' },
+            }));
+            await hook.rerender();
+        });
+
+        await act(async () => {
+            hook.getCurrent().requestNextPage();
+            await flushHookEffects();
+        });
+
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().entries.map((entry) => entry.text)).toEqual(['account two prompt']);
+        await hook.unmount();
+    });
+
+    it('reuses shared remote entries when composer history warms up later', async () => {
+        fetchUserMessageHistoryPageMock.mockResolvedValueOnce({
+            status: 'loaded',
+            entries: [{ seq: 5, createdAt: 50, text: 'cached remote prompt' }],
+            hasMore: false,
+            nextBeforeSeq: null,
+        });
+
+        const remoteHook = await renderHook(() =>
+            useUserMessageHistoryRemoteEntries({
+                enabled: true,
+                initialBeforeSeq: null,
+                sessionId: 's1',
+            }),
+        );
+        await act(async () => {
+            remoteHook.getCurrent().requestNextPage();
+            await flushHookEffects();
+        });
+        await remoteHook.unmount();
+
+        const historyHook = await renderHook(() =>
+            useUserMessageHistory({ scope: 'perSession', sessionId: 's1', maxEntries: 20 }),
+        );
+        await act(async () => {
+            historyHook.getCurrent().warmup();
+            await flushHookEffects();
+        });
+
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledTimes(1);
+        expect(historyHook.getCurrent().moveUp('draft')).toBe('cached remote prompt');
+        await historyHook.unmount();
+    });
+
+    it('preserves repeated remote prompt text as distinct seq-backed entries', async () => {
+        fetchUserMessageHistoryPageMock.mockResolvedValueOnce({
+            status: 'loaded',
+            entries: [
+                { seq: 8, createdAt: 80, text: 'repeat this' },
+                { seq: 4, createdAt: 40, text: 'repeat this' },
+            ],
+            hasMore: false,
+            nextBeforeSeq: null,
+        });
+
+        const hook = await renderHook(() =>
+            useUserMessageHistoryRemoteEntries({
+                enabled: true,
+                initialBeforeSeq: null,
+                sessionId: 's1',
+            }),
+        );
+
+        await act(async () => {
+            hook.getCurrent().requestNextPage();
+            await flushHookEffects();
+        });
+
+        expect(hook.getCurrent().entries.map((entry) => entry.seq)).toEqual([8, 4]);
+        expect(hook.getCurrent().entries.map((entry) => entry.text)).toEqual(['repeat this', 'repeat this']);
+        await hook.unmount();
     });
 
     it('loads server user messages on warmup when no local per-session history is loaded', async () => {
@@ -106,6 +255,40 @@ describe('useUserMessageHistory server role query', () => {
         });
 
         expect(fetchUserMessageHistoryPageMock).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
+    it('allows retrying the same remote history cursor after a transient error', async () => {
+        fetchUserMessageHistoryPageMock
+            .mockResolvedValueOnce({ status: 'error' })
+            .mockResolvedValueOnce({
+                status: 'loaded',
+                entries: [{ seq: 3, createdAt: 30, text: 'retried prompt' }],
+                hasMore: false,
+                nextBeforeSeq: null,
+            });
+
+        const hook = await renderHook(() =>
+            useUserMessageHistoryRemoteEntries({
+                enabled: true,
+                initialBeforeSeq: null,
+                sessionId: 's1',
+            }),
+        );
+
+        await act(async () => {
+            hook.getCurrent().requestNextPage();
+            await flushHookEffects();
+        });
+        expect(hook.getCurrent().entries).toEqual([]);
+
+        await act(async () => {
+            hook.getCurrent().requestNextPage();
+            await flushHookEffects();
+        });
+
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().entries.map((entry) => entry.text)).toEqual(['retried prompt']);
         await hook.unmount();
     });
 
@@ -180,6 +363,40 @@ describe('useUserMessageHistory server role query', () => {
             await flushHookEffects();
         });
 
+        storage.setState((state) => ({
+            ...state,
+            sessionMessages: {
+                s2: {
+                    messageIdsOldestFirst: ['s2-user'],
+                    messagesById: {
+                        's2-user': {
+                            kind: 'user-text',
+                            id: 's2-user',
+                            localId: null,
+                            createdAt: 40,
+                            text: 'session two prompt',
+                        },
+                    },
+                    messagesMap: {
+                        's2-user': {
+                            kind: 'user-text',
+                            id: 's2-user',
+                            localId: null,
+                            createdAt: 40,
+                            text: 'session two prompt',
+                        },
+                    },
+                    reducerState: createReducer(),
+                    latestThinkingMessageId: null,
+                    latestThinkingMessageActivityAtMs: null,
+                    latestReadyEventSeq: null,
+                    latestReadyEventAt: null,
+                    messagesVersion: 1,
+                    lastAppliedAgentStateVersion: null,
+                    isLoaded: true,
+                },
+            },
+        }));
         await hook.rerender({ sessionId: 's2' });
 
         await act(async () => {
@@ -199,7 +416,53 @@ describe('useUserMessageHistory server role query', () => {
             hasMore: false,
             nextBeforeSeq: null,
         });
-        expect(hook.getCurrent().moveUp('draft')).toBe(null);
+        expect(hook.getCurrent().moveUp('draft')).toBe('session two prompt');
+        await hook.unmount();
+    });
+
+    it('keeps active browsing state when role-query support becomes ready', async () => {
+        roleQuerySupportedState.supported = false;
+        storage.setState((state) => ({
+            ...state,
+            sessionMessages: {
+                s1: {
+                    messageIdsOldestFirst: ['older', 'newer'],
+                    messagesById: {
+                        older: { kind: 'user-text', id: 'older', localId: null, createdAt: 10, text: 'older prompt' },
+                        newer: { kind: 'user-text', id: 'newer', localId: null, createdAt: 20, text: 'newer prompt' },
+                    },
+                    messagesMap: {
+                        older: { kind: 'user-text', id: 'older', localId: null, createdAt: 10, text: 'older prompt' },
+                        newer: { kind: 'user-text', id: 'newer', localId: null, createdAt: 20, text: 'newer prompt' },
+                    },
+                    reducerState: createReducer(),
+                    latestThinkingMessageId: null,
+                    latestThinkingMessageActivityAtMs: null,
+                    latestReadyEventSeq: null,
+                    latestReadyEventAt: null,
+                    messagesVersion: 1,
+                    lastAppliedAgentStateVersion: null,
+                    isLoaded: true,
+                },
+            },
+        }));
+
+        const hook = await renderHook(() =>
+            useUserMessageHistory({ scope: 'perSession', sessionId: 's1', maxEntries: 20 }),
+        );
+
+        expect(hook.getCurrent().moveUp('draft')).toBe('newer prompt');
+
+        roleQuerySupportedState.supported = true;
+        fetchUserMessageHistoryPageMock.mockResolvedValue({
+            status: 'loaded',
+            entries: [],
+            hasMore: false,
+            nextBeforeSeq: null,
+        });
+        await hook.rerender();
+
+        expect(hook.getCurrent().moveUp('newer prompt')).toBe('older prompt');
         await hook.unmount();
     });
 });

@@ -26,24 +26,29 @@ let sessionState: any = { metadata: { machineId: 'machine-1', path: '/tmp' } };
 let projectState: any = null;
 
 installSessionDetailsPanelCommonModuleMocks({
-    storage: async () => ({
-        useLocalSetting: (key: string) => {
-            if (key === 'uiFontScale') return 1;
-            if (key === 'embeddedTerminalDockLocation') return 'sidebar';
-            return null;
-        },
-        useLocalSettingMutable: (key: string) => {
-            if (key === 'embeddedTerminalDockLocation') return ['sidebar', vi.fn()];
-            return [null, vi.fn()];
-        },
-        useAllMachines: () => Object.values(storageGetStateSpy()?.machines ?? {}),
-        useAllSessions: () => Object.values(storageGetStateSpy()?.sessions ?? {}),
-        useProjectForSession: () => projectState,
-        useSession: () => sessionState,
-        storage: {
-            getState: () => storageGetStateSpy(),
-        },
-    }),
+    storage: async () => {
+        const {
+            createLiveStorageStoreMock,
+            createStorageModuleStub,
+        } = await import('@/dev/testkit/mocks/storage');
+
+        return createStorageModuleStub({
+            storage: createLiveStorageStoreMock(() => storageGetStateSpy()),
+            useLocalSetting: (key: string) => {
+                if (key === 'uiFontScale') return 1;
+                if (key === 'embeddedTerminalDockLocation') return 'sidebar';
+                return null;
+            },
+            useLocalSettingMutable: (key: string) => {
+                if (key === 'embeddedTerminalDockLocation') return ['sidebar', vi.fn()];
+                return [null, vi.fn()];
+            },
+            useAllMachines: () => Object.values(storageGetStateSpy()?.machines ?? {}),
+            useAllSessions: () => Object.values(storageGetStateSpy()?.sessions ?? {}),
+            useProjectForSession: () => projectState,
+            useSession: () => sessionState,
+        });
+    },
 });
 
 async function renderAndFlush(element: React.ReactElement): Promise<RenderScreenResult> {
@@ -119,6 +124,10 @@ vi.mock('@/components/terminal/xterm/XtermTerminalView.web', () => ({
 
 vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
     useSessionMachineReachability: () => ({ machineReachable: true, machineRpcTargetAvailable: true }),
+}));
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: (featureId: string) => featureId !== 'terminal.transport.byteStream',
 }));
 
 vi.mock('@/utils/platform/responsive', () => ({
@@ -277,7 +286,7 @@ describe('SessionRightPanelTerminalView.web', () => {
         projectState = {
             key: {
                 machineId: 'm-project',
-                path: '/workspace/repo',
+                rootPath: '/workspace/repo',
             },
         };
         storageGetStateSpy.mockReturnValue({
@@ -288,6 +297,13 @@ describe('SessionRightPanelTerminalView.web', () => {
                 },
             },
             machines: {
+                'm-stale': {
+                    id: 'm-stale',
+                    active: false,
+                    activeAt: 1,
+                    replacedByMachineId: 'm-project',
+                    metadata: { host: 'mbp.local' },
+                },
                 'm-project': {
                     id: 'm-project',
                     active: true,
@@ -572,7 +588,7 @@ describe('SessionRightPanelTerminalView.web', () => {
         await flushHookEffects();
     });
 
-    it('preserves cached transcript without injecting output when a reused terminal reconnects without a cached terminal id', async () => {
+    it('clears cached transcript when a reused terminal reconnects without a cached terminal id', async () => {
         const cacheMod = await import('@/components/sessions/terminal/terminalSurfaceStateCache');
         cacheMod.replaceTerminalSurfaceState('session:s1:terminal', {
             terminalId: null,
@@ -598,11 +614,11 @@ describe('SessionRightPanelTerminalView.web', () => {
         const cached = cacheMod.readTerminalSurfaceState('session:s1:terminal');
         expect(cached).toEqual({
             terminalId: 't1',
-            cursor: 5,
-            output: 'hello',
+            cursor: 0,
+            output: '',
             detectedUrl: null,
         });
-        expect(terminalHandleInstances[0]?.write).toHaveBeenCalledWith('hello');
+        expect(terminalHandleInstances[0]?.write).not.toHaveBeenCalledWith('hello');
         expect(terminalHandleInstances[0]?.write).not.toHaveBeenCalledWith('\r\n[Reconnected]\r\n');
     });
 

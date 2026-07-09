@@ -5,6 +5,7 @@ import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSe
 export interface MaterializeNewSessionCheckoutParams {
     machineId: string;
     selectedPath: string;
+    serverId?: string | null;
     checkoutCreationDraft?: NewSessionCheckoutCreationDraft | null;
 }
 
@@ -38,6 +39,7 @@ export async function materializeNewSessionCheckout(
         displayName: params.checkoutCreationDraft?.displayName ?? null,
         baseRef: params.checkoutCreationDraft?.baseRef ?? null,
         branchMode: params.checkoutCreationDraft?.branchMode ?? 'new',
+        serverId: params.serverId,
     });
     if (!worktreeResult.success) {
         return {

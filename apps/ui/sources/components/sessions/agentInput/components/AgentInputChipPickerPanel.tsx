@@ -1,5 +1,5 @@
 import React from "react";
-import { useWindowDimensions, View } from 'react-native';
+import { ScrollView, useWindowDimensions, View } from 'react-native';
 import { StyleSheet } from "react-native-unistyles";
 
 import { Item } from "@/components/ui/lists/Item";
@@ -116,6 +116,10 @@ export function AgentInputChipPickerPanel(
       : styles.detailStackedWithSelector;
   const railWidth = props.railWidth ?? styles.railScroll.width;
   const railMaxWidth = props.railMaxWidth ?? styles.railScroll.maxWidth;
+  const railMaxHeight =
+    typeof props.maxHeight === "number"
+      ? props.maxHeight
+      : AGENT_INPUT_CHIP_PICKER_DETAIL_MIN_HEIGHT;
 
   const showCloseButton = props.showCloseButton !== false;
   const shouldRenderTitle = typeof props.title === "string" && props.title.trim().length > 0;
@@ -176,23 +180,37 @@ export function AgentInputChipPickerPanel(
             ]}
           >
             {showDetailedSelector ? (
-              <View
-                style={detailedLayout === "split"
-                  ? [styles.railScroll, { width: railWidth, maxWidth: railMaxWidth }]
-                  : null}
-              >
-                <View
-                  style={detailedLayout === "split" ? styles.railScrollContent : null}
+              detailedLayout === "split" ? (
+                <ScrollView
+                  testID="agent-input-chip-picker.option-rail-scroll"
+                  style={[
+                    styles.railScroll,
+                    { width: railWidth, maxWidth: railMaxWidth, maxHeight: railMaxHeight },
+                  ]}
+                  contentContainerStyle={styles.railScrollContent}
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled
+                  showsVerticalScrollIndicator={false}
                 >
                   <AgentInputChipPickerOptionSelector
                     sections={sections}
                     focusedOptionId={focusedOption?.id ?? null}
                     selectedOptionId={props.selectedOptionId}
                     onFocusOption={handleDetailedOptionFocus}
-                    variant={detailedLayout === "stacked" ? "stacked" : "rail"}
+                    variant="rail"
+                  />
+                </ScrollView>
+              ) : (
+                <View>
+                  <AgentInputChipPickerOptionSelector
+                    sections={sections}
+                    focusedOptionId={focusedOption?.id ?? null}
+                    selectedOptionId={props.selectedOptionId}
+                    onFocusOption={handleDetailedOptionFocus}
+                    variant="stacked"
                   />
                 </View>
-              </View>
+              )
             ) : null}
             {focusedOption ? (
               <View style={detailContainerStyle}>

@@ -36,7 +36,15 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}), mono: () => ({}), eyebrow: () => ({}), keyHint: () => ({}) },
+    Typography: {
+        default: () => ({}),
+        mono: () => ({}),
+        eyebrow: () => ({}),
+        keyHint: () => ({}),
+        rowTitle: () => ({}),
+        rowMeta: () => ({}),
+        pillLabel: () => ({}),
+    },
 }));
 
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({

@@ -7,6 +7,7 @@ import type { AgentInputChipPickerOption } from '@/components/sessions/agentInpu
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import type { NewSessionProfileAvailabilityReason } from '@/components/sessions/new/modules/newSessionAgentSelection';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
@@ -26,6 +27,7 @@ type BuildNewSessionAgentPickerResolvedOptionsParams = Readonly<{
     compatibleBackendTargetKeys: ReadonlySet<string>;
     resolvedBackendEntries: readonly ResolvedBackendCatalogEntry[];
     isBackendEntrySelectable: (entry: ResolvedBackendCatalogEntry) => boolean;
+    getBackendEntryUnavailabilityReason?: (entry: ResolvedBackendCatalogEntry) => NewSessionProfileAvailabilityReason | null;
     getEngineSelectionForTargetKey: (targetKey: string) => NewSessionAgentPickerSelection;
     selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: NewSessionAgentPickerSelection) => void;
     selectedMachineId: string | null;
@@ -58,12 +60,16 @@ export function buildNewSessionAgentPickerResolvedOptions(
     const favoriteBackendTargetKeySet = new Set(params.favoriteBackendTargetKeys ?? []);
     return params.resolvedBackendEntries.map((entry) => {
         const selectable = params.isBackendEntrySelectable(entry);
+        const unavailabilityReason = selectable
+            ? null
+            : params.getBackendEntryUnavailabilityReason?.(entry) ?? null;
         const isFavoriteBackend = favoriteBackendTargetKeySet.has(entry.backendTargetKey);
         const { subtitle, disabled, muted } = resolveNewSessionAgentPickerOptionPresentation({
             entry,
             profileForAgentSelection: params.profileForAgentSelection,
             compatibleBackendTargetKeys: params.compatibleBackendTargetKeys,
             selectable,
+            unavailabilityReason,
         });
         const displayAgentId = entry.iconAgentId ?? entry.providerAgentId ?? entry.builtInAgentId;
 

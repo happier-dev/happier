@@ -10,6 +10,7 @@ type SelectableWithoutCliByAgentId = Readonly<Partial<Record<AgentId, boolean>>>
 export type NewSessionSelectableBackendEntry = Pick<
     ResolvedBackendCatalogEntry,
     'backendTarget' | 'backendTargetKey' | 'builtInAgentId' | 'kind'
+    | 'capabilities'
 >;
 
 type BaseSelectionParams = Readonly<{
@@ -47,14 +48,17 @@ function resolveAgentUnavailabilityReasonForNewSession(params: Readonly<{
     return `cli-not-detected:${params.agentId}`;
 }
 
-function resolveBackendEntryUnavailabilityReasonForNewSession(params: Readonly<{
+export function resolveBackendEntryUnavailabilityReasonForNewSession(params: Readonly<{
     entry: NewSessionSelectableBackendEntry;
     detectionTimestamp: number;
     availabilityById: AgentAvailabilityById;
     authStatusById?: AgentAuthStatusById;
     installableDepKeyCountByAgentId: InstallableDepKeyCountByAgentId;
     selectableWithoutCliByAgentId?: SelectableWithoutCliByAgentId;
-}>): Exclude<NewSessionProfileAvailabilityReason, 'no-supported-cli' | 'cli-not-detected:any' | 'logged-out:any'> | null {
+}>): NewSessionProfileAvailabilityReason | null {
+    if (params.entry.capabilities?.session?.supported === false) {
+        return 'no-supported-cli';
+    }
     if (params.entry.kind !== 'builtInAgent') {
         return null;
     }
@@ -165,9 +169,13 @@ export function resolveProfileAvailabilityForNewSession(params: Readonly<{
             installableDepKeyCountByAgentId: params.installableDepKeyCountByAgentId,
             selectableWithoutCliByAgentId: params.selectableWithoutCliByAgentId,
         }))
-        .filter((reason): reason is Exclude<NewSessionProfileAvailabilityReason, 'no-supported-cli' | 'cli-not-detected:any' | 'logged-out:any'> => reason !== null);
+        .filter((reason): reason is NewSessionProfileAvailabilityReason => reason !== null);
     if (unavailabilityReasons.length === params.candidateBackendEntries.length) {
         const hasCliNotDetected = unavailabilityReasons.some((reason) => reason.startsWith('cli-not-detected:'));
+        const hasOnlyUnsupportedSessionBackends = unavailabilityReasons.every((reason) => reason === 'no-supported-cli');
+        if (hasOnlyUnsupportedSessionBackends) {
+            return { available: false, reason: 'no-supported-cli' };
+        }
         return { available: false, reason: hasCliNotDetected ? 'cli-not-detected:any' : 'logged-out:any' };
     }
     return { available: true };

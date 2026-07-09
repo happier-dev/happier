@@ -14,10 +14,11 @@ function layoutEvent(height: number) {
     };
 }
 
-function scrollEvent(offsetY: number, viewportHeight: number) {
+function scrollEvent(offsetY: number, viewportHeight: number, contentHeight = 1200) {
     return {
         nativeEvent: {
             contentOffset: { y: offsetY },
+            contentSize: { height: contentHeight },
             layoutMeasurement: { height: viewportHeight },
         },
     };
@@ -85,5 +86,41 @@ describe('useSessionListScrollRetention', () => {
         });
 
         expect(remountScrollToOffset).toHaveBeenCalledWith({ offset: 280, animated: false });
+    });
+
+    it('ignores native refresh bounce offsets instead of clearing the retained scroll position', async () => {
+        const scrollToOffset = vi.fn();
+        const hook = await renderHook(() => useSessionListScrollRetention({
+            retentionKey: 'persisted-refresh-bounce',
+            scrollToOffset,
+        }));
+
+        await act(async () => {
+            hook.getCurrent().handleLayout(layoutEvent(416));
+            hook.getCurrent().handleScroll(scrollEvent(280, 416));
+            hook.getCurrent().handleScroll(scrollEvent(-1_998_407, 416));
+            hook.getCurrent().handleLayout(layoutEvent(0));
+            hook.getCurrent().handleLayout(layoutEvent(416));
+        });
+
+        expect(scrollToOffset).toHaveBeenCalledWith({ offset: 280, animated: false });
+    });
+
+    it('ignores out-of-range native scroll offsets instead of poisoning the retained scroll position', async () => {
+        const scrollToOffset = vi.fn();
+        const hook = await renderHook(() => useSessionListScrollRetention({
+            retentionKey: 'persisted-out-of-range',
+            scrollToOffset,
+        }));
+
+        await act(async () => {
+            hook.getCurrent().handleLayout(layoutEvent(416));
+            hook.getCurrent().handleScroll(scrollEvent(280, 416, 1200));
+            hook.getCurrent().handleScroll(scrollEvent(1_999_543, 416, 1200));
+            hook.getCurrent().handleLayout(layoutEvent(0));
+            hook.getCurrent().handleLayout(layoutEvent(416));
+        });
+
+        expect(scrollToOffset).toHaveBeenCalledWith({ offset: 280, animated: false });
     });
 });

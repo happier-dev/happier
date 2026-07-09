@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { MetadataSchema } from '@/sync/domains/state/storageTypes';
@@ -5,6 +7,28 @@ import { MetadataSchema } from '@/sync/domains/state/storageTypes';
 import { resolveContextWarningWindowTokens, resolveContextWindowTokens } from './resolveContextWarningWindowTokens';
 
 describe('resolveContextWarningWindowTokens', () => {
+    it('prefers the canonical snapshot window over legacy live telemetry', () => {
+        expect(resolveContextWindowTokens({
+            agentId: 'codex',
+            metadata: null,
+            usageData: {
+                contextWindowTokens: 258_400,
+                contextSnapshot: {
+                    v: 1,
+                    modelId: 'gpt-5.4',
+                    usedTokens: 42_000,
+                    windowTokens: 400_000,
+                    totalProcessedTokens: 120_000,
+                    baselineTokens: 12_000,
+                    isAutoCompactEnabled: null,
+                    categories: null,
+                    observedAtMs: 1_000,
+                    source: 'provider_turn',
+                },
+            },
+        } as any)).toBe(400_000);
+    });
+
     it('prefers live usage telemetry over metadata when resolving the warning window', () => {
         const metadata = MetadataSchema.parse({
             path: '/tmp/project',
@@ -139,7 +163,7 @@ describe('resolveContextWarningWindowTokens', () => {
         } as any);
 
         expect(resolveContextWarningWindowTokens({
-            agentId: 'codex',
+            agentId: 'opencode',
             metadata,
         } as any)).toBeNull();
     });
@@ -196,11 +220,20 @@ describe('resolveContextWindowTokens observed-usage evidence bump (Claude)', () 
         } as any)).toBe(1_200_000);
     });
 
-    it('does not apply the Claude window ladder to other providers', () => {
+    it('does not apply the Claude window ladder to the Codex cold-start fallback', () => {
         expect(resolveContextWindowTokens({
             agentId: 'codex',
             metadata: null,
             usageData: { contextSize: 733_000 },
-        } as any)).toBeNull();
+        } as any)).toBe(372_000);
+    });
+});
+
+describe('resolveContextWindowTokens provider registry boundary', () => {
+    it('does not branch on Claude provider ids in the generic AgentInput resolver', () => {
+        const source = readFileSync(new URL('./resolveContextWarningWindowTokens.ts', import.meta.url), 'utf8');
+
+        expect(source).not.toMatch(/agentId\s*(?:={2,3}|!==?)\s*['"]claude['"]/);
+        expect(source).not.toMatch(/sessionModelsState\.provider\s*(?:={2,3}|!==?)\s*['"]claude['"]/);
     });
 });

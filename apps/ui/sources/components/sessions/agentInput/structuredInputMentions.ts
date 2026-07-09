@@ -122,31 +122,85 @@ function findChangedSpan(previousText: string, nextText: string): Readonly<{
     };
 }
 
+function clampSelection(
+    selection: Readonly<{ start: number; end: number }>,
+    textLength: number,
+): Readonly<{ start: number; end: number }> {
+    const start = Number.isFinite(selection.start)
+        ? Math.min(Math.max(0, Math.trunc(selection.start)), textLength)
+        : textLength;
+    const end = Number.isFinite(selection.end)
+        ? Math.min(Math.max(start, Math.trunc(selection.end)), textLength)
+        : start;
+    return { start, end };
+}
+
+function resolveSelectionChangedSpan(args: Readonly<{
+    previousText: string;
+    nextText: string;
+    previousSelection: Readonly<{ start: number; end: number }>;
+}>): Readonly<{
+    previousStart: number;
+    previousEnd: number;
+    nextEnd: number;
+    delta: number;
+}> | null {
+    const previousSelection = clampSelection(args.previousSelection, args.previousText.length);
+    const selectedLength = previousSelection.end - previousSelection.start;
+    const insertedLength = args.nextText.length - (args.previousText.length - selectedLength);
+    if (insertedLength < 0) return null;
+
+    const nextEnd = previousSelection.start + insertedLength;
+    if (nextEnd > args.nextText.length) return null;
+
+    if (
+        previousSelection.start > 0
+        && args.previousText.charCodeAt(previousSelection.start - 1)
+            !== args.nextText.charCodeAt(previousSelection.start - 1)
+    ) {
+        return null;
+    }
+
+    if (
+        previousSelection.end < args.previousText.length
+        && nextEnd < args.nextText.length
+        && args.previousText.charCodeAt(previousSelection.end) !== args.nextText.charCodeAt(nextEnd)
+    ) {
+        return null;
+    }
+
+    return {
+        previousStart: previousSelection.start,
+        previousEnd: previousSelection.end,
+        nextEnd,
+        delta: args.nextText.length - args.previousText.length,
+    };
+}
+
 function tokenSurvives(text: string, mention: ComposerStructuredInputMention): boolean {
     return text.slice(mention.start, mention.end) === mention.tokenText;
 }
 
-export function reconcileStructuredInputMentionsWithText(args: Readonly<{
-    previousText: string;
+function reconcileStructuredInputMentionsWithChangedSpan(args: Readonly<{
     nextText: string;
     mentions: readonly ComposerStructuredInputMention[];
+    change: Readonly<{
+        previousStart: number;
+        previousEnd: number;
+        nextEnd: number;
+        delta: number;
+    }>;
 }>): ComposerStructuredInputMention[] {
-    if (args.mentions.length === 0) return [];
-    if (args.previousText === args.nextText) {
-        return args.mentions.filter((mention) => tokenSurvives(args.nextText, mention));
-    }
-
-    const change = findChangedSpan(args.previousText, args.nextText);
     const nextMentions: ComposerStructuredInputMention[] = [];
 
     for (const mention of args.mentions) {
-        const changeBeforeMention = change.previousEnd <= mention.start;
-        const changeAfterMention = change.previousStart >= mention.end;
+        const changeBeforeMention = args.change.previousEnd <= mention.start;
+        const changeAfterMention = args.change.previousStart >= mention.end;
         if (changeBeforeMention) {
             const shifted = {
                 ...mention,
-                start: mention.start + change.delta,
-                end: mention.end + change.delta,
+                start: mention.start + args.change.delta,
+                end: mention.end + args.change.delta,
             };
             if (tokenSurvives(args.nextText, shifted)) {
                 nextMentions.push(shifted);
@@ -160,6 +214,48 @@ export function reconcileStructuredInputMentionsWithText(args: Readonly<{
     }
 
     return nextMentions;
+}
+
+export function reconcileStructuredInputMentionsWithText(args: Readonly<{
+    previousText: string;
+    nextText: string;
+    mentions: readonly ComposerStructuredInputMention[];
+}>): ComposerStructuredInputMention[] {
+    if (args.mentions.length === 0) return [];
+    if (args.previousText === args.nextText) {
+        return args.mentions.filter((mention) => tokenSurvives(args.nextText, mention));
+    }
+
+    const change = findChangedSpan(args.previousText, args.nextText);
+    return reconcileStructuredInputMentionsWithChangedSpan({
+        nextText: args.nextText,
+        mentions: args.mentions,
+        change,
+    });
+}
+
+export function reconcileStructuredInputMentionsWithTextChange(args: Readonly<{
+    previousText: string;
+    nextText: string;
+    previousSelection: Readonly<{ start: number; end: number }>;
+    mentions: readonly ComposerStructuredInputMention[];
+}>): ComposerStructuredInputMention[] {
+    if (args.mentions.length === 0) return [];
+    if (args.previousText === args.nextText) {
+        return args.mentions.filter((mention) => tokenSurvives(args.nextText, mention));
+    }
+
+    const change = resolveSelectionChangedSpan({
+        previousText: args.previousText,
+        nextText: args.nextText,
+        previousSelection: args.previousSelection,
+    }) ?? findChangedSpan(args.previousText, args.nextText);
+
+    return reconcileStructuredInputMentionsWithChangedSpan({
+        nextText: args.nextText,
+        mentions: args.mentions,
+        change,
+    });
 }
 
 export function createStructuredInputMentionFromSuggestion(args: Readonly<{

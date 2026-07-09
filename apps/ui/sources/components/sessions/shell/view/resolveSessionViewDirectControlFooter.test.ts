@@ -77,6 +77,39 @@ describe('resolveSessionViewDirectControlFooter', () => {
         expect(secondRequestTakeover).toHaveBeenCalledWith('direct');
     });
 
+    it('returns an awaitable takeover promise from footer callbacks without leaking internal results', async () => {
+        const requestTakeover = vi.fn(async () => true);
+        const footer = resolveSessionViewDirectControlFooter({
+            externalSessionLink: {
+                machineId: 'machine-1',
+            },
+            externalSessionRuntime: {
+                status: {
+                    machineOnline: true,
+                    runnerActive: false,
+                    activity: 'idle',
+                    canTakeOverDirect: true,
+                    canTakeOverPersist: true,
+                },
+            },
+            externalSessionTakeover: {
+                takeoverInFlight: null,
+                requestTakeover,
+            },
+            isHiddenSystemSessionSession: false,
+        });
+
+        const directResult = footer?.onRequestTakeOverDirect?.();
+        const persistedResult = footer?.onRequestTakeOverPersist?.();
+
+        expect(directResult).toBeInstanceOf(Promise);
+        expect(persistedResult).toBeInstanceOf(Promise);
+        await expect(directResult).resolves.toBeUndefined();
+        await expect(persistedResult).resolves.toBeUndefined();
+        expect(requestTakeover).toHaveBeenNthCalledWith(1, 'direct');
+        expect(requestTakeover).toHaveBeenNthCalledWith(2, 'persisted');
+    });
+
     it('keeps different session footers on their own takeover handlers even when their status matches', async () => {
         const firstRequestTakeover = vi.fn(async () => true);
         const secondRequestTakeover = vi.fn(async () => true);

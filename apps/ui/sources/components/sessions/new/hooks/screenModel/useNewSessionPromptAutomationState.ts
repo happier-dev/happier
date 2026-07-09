@@ -43,7 +43,25 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
     const hydratedSessionPrompt = React.useMemo(() => {
         return params.hydratedTempAuthoringDraft?.displayText || params.prompt || params.hydratedPersistedAuthoringDraft?.displayText || '';
     }, [params.hydratedPersistedAuthoringDraft?.displayText, params.hydratedTempAuthoringDraft?.displayText, params.prompt]);
-    const [sessionPrompt, setSessionPrompt] = React.useState(hydratedSessionPrompt);
+    const [sessionPrompt, setSessionPromptState] = React.useState(hydratedSessionPrompt);
+    // Once the user edits the prompt, their live text is the single source of truth for this
+    // screen instance. Later hydration echoes (debounced auto-persist read-backs, focus-driven
+    // draft reloads, or another mounted new-session screen writing the same scope key) must not
+    // clobber live typing — re-applying a stale snapshot resets the native input's text,
+    // selection, and scroll mid-keystroke. Mirrors hasUserEditedAutomationDraftRef below.
+    const hasUserEditedSessionPromptRef = React.useRef(false);
+    const setSessionPrompt = React.useCallback<React.Dispatch<React.SetStateAction<string>>>((next) => {
+        hasUserEditedSessionPromptRef.current = true;
+        setSessionPromptState(next);
+    }, []);
+    // Explicit re-entry (a fresh temp-draft handoff or a deep link carrying a prompt) is a
+    // deliberate hydration request, not a stale echo — let it apply over live text again.
+    const hydrationRequestKey = `${params.dataId ?? ''}\u0000${params.prompt ?? ''}`;
+    const lastHydrationRequestKeyRef = React.useRef(hydrationRequestKey);
+    if (lastHydrationRequestKeyRef.current !== hydrationRequestKey) {
+        lastHydrationRequestKeyRef.current = hydrationRequestKey;
+        hasUserEditedSessionPromptRef.current = false;
+    }
 
     const automationRequestedByRoute = React.useMemo(() => {
         if (typeof params.automationParam !== 'string') return false;
@@ -126,7 +144,8 @@ export function useNewSessionPromptAutomationState(params: Readonly<{
     }, [params.hydratedPersistedAuthoringDraft, params.hydratedTempAuthoringDraft, initialAutomationDraft]);
 
     React.useEffect(() => {
-        setSessionPrompt(hydratedSessionPrompt);
+        if (hasUserEditedSessionPromptRef.current) return;
+        setSessionPromptState(hydratedSessionPrompt);
     }, [hydratedSessionPrompt]);
 
     React.useEffect(() => {

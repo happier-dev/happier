@@ -18,6 +18,8 @@ type WebHoverablePressableState = Readonly<{
 type AgentInputProviderUsageBadgeProps = Readonly<{
     viewModel: ConnectedServiceQuotaGaugeViewModel;
     marginLeft?: number;
+    onRecoveryCreditPress?: () => void;
+    recoveryCreditActionPending?: boolean;
 }>;
 
 function mapQuotaToneToTokenTone(tone: ConnectedServiceQuotaGaugeViewModel['tone']): TokenUsageTone {
@@ -26,7 +28,64 @@ function mapQuotaToneToTokenTone(tone: ConnectedServiceQuotaGaugeViewModel['tone
     return 'neutral';
 }
 
-export function AgentInputProviderUsageBadge(props: AgentInputProviderUsageBadgeProps) {
+function quotaMeterRowsEqual(
+    left: ConnectedServiceQuotaGaugeViewModel['allMeterRows'],
+    right: ConnectedServiceQuotaGaugeViewModel['allMeterRows'],
+): boolean {
+    if (left === right) return true;
+    if (left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index += 1) {
+        const leftRow = left[index];
+        const rightRow = right[index];
+        if (!leftRow || !rightRow) return false;
+        if (
+            leftRow.detailRightLabel !== rightRow.detailRightLabel ||
+            leftRow.label !== rightRow.label ||
+            leftRow.meterId !== rightRow.meterId ||
+            leftRow.remainingPct !== rightRow.remainingPct ||
+            leftRow.resetLabel !== rightRow.resetLabel ||
+            leftRow.tone !== rightRow.tone ||
+            leftRow.usedPct !== rightRow.usedPct ||
+            leftRow.usedLimitLabel !== rightRow.usedLimitLabel
+        ) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function recoveryCreditSummariesEqual(
+    left: ConnectedServiceQuotaGaugeViewModel['recoveryCreditSummary'],
+    right: ConnectedServiceQuotaGaugeViewModel['recoveryCreditSummary'],
+): boolean {
+    if (left === right) return true;
+    if (!left || !right) return false;
+    return left.availableCount === right.availableCount &&
+        left.nextExpiresAtMs === right.nextExpiresAtMs &&
+        left.providerCreditId === right.providerCreditId;
+}
+
+function providerUsageBadgePropsEqual(
+    left: AgentInputProviderUsageBadgeProps,
+    right: AgentInputProviderUsageBadgeProps,
+): boolean {
+    return left.marginLeft === right.marginLeft &&
+        left.onRecoveryCreditPress === right.onRecoveryCreditPress &&
+        left.recoveryCreditActionPending === right.recoveryCreditActionPending &&
+        left.viewModel.badgeLabel === right.viewModel.badgeLabel &&
+        left.viewModel.detailRightLabel === right.viewModel.detailRightLabel &&
+        left.viewModel.remainingPct === right.viewModel.remainingPct &&
+        left.viewModel.resetLabel === right.viewModel.resetLabel &&
+        left.viewModel.ringValueLabel === right.viewModel.ringValueLabel &&
+        left.viewModel.tone === right.viewModel.tone &&
+        left.viewModel.usedPct === right.viewModel.usedPct &&
+        left.viewModel.usedLimitLabel === right.viewModel.usedLimitLabel &&
+        left.viewModel.valueLabel === right.viewModel.valueLabel &&
+        quotaMeterRowsEqual(left.viewModel.allMeterRows, right.viewModel.allMeterRows) &&
+        recoveryCreditSummariesEqual(left.viewModel.recoveryCreditSummary, right.viewModel.recoveryCreditSummary);
+}
+
+function AgentInputProviderUsageBadgeImpl(props: AgentInputProviderUsageBadgeProps) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const anchorRef = React.useRef(null);
@@ -36,6 +95,14 @@ export function AgentInputProviderUsageBadge(props: AgentInputProviderUsageBadge
     const accessibilityLabel = t('agentInput.providerUsage.accessibilityLabel', {
         value: props.viewModel.badgeLabel,
     });
+    const recoveryCreditSummary = props.viewModel.recoveryCreditSummary;
+    const recoveryCreditSubtitle = recoveryCreditSummary
+        ? typeof recoveryCreditSummary.nextExpiresAtMs === 'number'
+            ? t('connectedServices.quota.recoveryCreditExpires', {
+                time: new Date(recoveryCreditSummary.nextExpiresAtMs).toLocaleString(),
+            })
+            : t('connectedServices.quota.recoveryCreditSubtitle')
+        : null;
 
     return (
         <>
@@ -124,12 +191,55 @@ export function AgentInputProviderUsageBadge(props: AgentInputProviderUsageBadge
                                 ) : null}
                             </View>
                         ))}
+                        {recoveryCreditSummary ? (
+                            <View
+                                testID="agent-input-provider-usage-recovery-credit"
+                                style={styles.recoveryCreditBox}
+                            >
+                                <Text style={styles.recoveryCreditTitle}>
+                                    {t('connectedServices.quota.recoveryCreditTitle', {
+                                        count: recoveryCreditSummary.availableCount,
+                                    })}
+                                </Text>
+                                {recoveryCreditSubtitle ? (
+                                    <Text style={styles.recoveryCreditSubtitle}>
+                                        {recoveryCreditSubtitle}
+                                    </Text>
+                                ) : null}
+                                {props.onRecoveryCreditPress ? (
+                                    <Pressable
+                                        testID="agent-input-provider-usage-recovery-credit-action"
+                                        accessibilityRole="button"
+                                        disabled={props.recoveryCreditActionPending === true}
+                                        onPress={props.onRecoveryCreditPress}
+                                        style={(state) => [
+                                            styles.recoveryCreditAction,
+                                            state.pressed ? styles.recoveryCreditActionPressed : null,
+                                            props.recoveryCreditActionPending === true
+                                                ? styles.recoveryCreditActionDisabled
+                                                : null,
+                                        ]}
+                                    >
+                                        <Text style={styles.recoveryCreditActionText}>
+                                            {props.recoveryCreditActionPending === true
+                                                ? t('connectedServices.quota.recoveryCreditApplying')
+                                                : t('session.usageLimitRecovery.actions.consumeResetCredit')}
+                                        </Text>
+                                    </Pressable>
+                                ) : null}
+                            </View>
+                        ) : null}
                     </View>
                 )}
             />
         </>
     );
 }
+
+export const AgentInputProviderUsageBadge = React.memo(
+    AgentInputProviderUsageBadgeImpl,
+    providerUsageBadgePropsEqual,
+);
 
 const stylesheet = StyleSheet.create((theme) => ({
     badge: {
@@ -195,5 +305,39 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 12,
         color: theme.colors.text.secondary,
         ...Typography.default(),
+    },
+    recoveryCreditBox: {
+        gap: 6,
+        paddingTop: 2,
+    },
+    recoveryCreditTitle: {
+        fontSize: 12,
+        color: theme.colors.text.primary,
+        ...Typography.default('semiBold'),
+    },
+    recoveryCreditSubtitle: {
+        fontSize: 12,
+        color: theme.colors.text.secondary,
+        ...Typography.default(),
+    },
+    recoveryCreditAction: {
+        alignSelf: 'flex-start',
+        minHeight: 28,
+        paddingHorizontal: 10,
+        borderRadius: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: theme.colors.button.primary.background,
+    },
+    recoveryCreditActionPressed: {
+        opacity: 0.85,
+    },
+    recoveryCreditActionDisabled: {
+        opacity: 0.6,
+    },
+    recoveryCreditActionText: {
+        fontSize: 12,
+        color: theme.colors.button.primary.tint,
+        ...Typography.default('semiBold'),
     },
 }));

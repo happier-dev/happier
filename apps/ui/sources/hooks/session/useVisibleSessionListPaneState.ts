@@ -19,6 +19,8 @@ export type VisibleSessionListPaneState = Readonly<{
 
 export type VisibleSessionListPaneStateOptions = Readonly<{
     pathname?: string;
+    retainedPathname?: string | null;
+    retainedVisibleSessionListIndex?: ReadonlyArray<SessionListIndexItem> | null;
     sessionListSurfaceDataActive?: boolean;
 }>;
 
@@ -40,6 +42,8 @@ export function useVisibleSessionListPaneState(
     const { summary } = useVisibleSessionListSummaryState(storageFilter);
     const { visibleSessionListIndex, hasHiddenInactiveSessions, folderFocus } = useVisibleSessionListViewState(storageFilter, {
         pathname: options.pathname,
+        retainedPathname: options.retainedPathname,
+        retainedVisibleSessionListIndex: options.retainedVisibleSessionListIndex,
         sessionListSurfaceDataActive: options.sessionListSurfaceDataActive,
     });
     const visibleSessionCount = React.useMemo(

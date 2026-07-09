@@ -36,6 +36,7 @@ export function useAgentInputActionMenuControls(params: Readonly<{
     profileIcon: string;
     envVarsCount?: number;
     agentLabel?: string | null;
+    engineLabel?: string | null;
     machineName?: string | null;
     currentPath?: string | null;
     resumeSessionId?: string | null;
@@ -154,6 +155,7 @@ export function useAgentInputActionMenuControls(params: Readonly<{
         profileIcon: params.profileIcon,
         envVarsCount: params.envVarsCount,
         agentLabel: params.agentLabel,
+        engineLabel: params.engineLabel,
         machineName: params.machineName,
         currentPath: params.currentPath,
         resumeSessionId: params.resumeSessionId,

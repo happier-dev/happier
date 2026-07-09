@@ -57,7 +57,9 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
     onEnvVarsPress: () => void;
     hasAgentSelection: boolean;
     agentChipAnchorRef: React.RefObject<View | null>;
+    agentId: AgentId;
     agentLabel: string;
+    engineLabel: string;
     onAgentPress: () => void;
     machineChipAnchorRef: React.RefObject<View | null>;
     onMachinePress?: () => void;
@@ -135,7 +137,9 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
             onEnvVarsPress: params.onEnvVarsPress,
             hasAgentSelection: params.hasAgentSelection,
             agentChipAnchorRef: params.agentChipAnchorRef,
+            agentId: params.agentId,
             agentLabel: params.agentLabel,
+            engineLabel: params.engineLabel,
             onAgentPress: params.onAgentPress,
             machineChipAnchorRef: params.machineChipAnchorRef,
             onMachinePress: params.onMachinePress,
@@ -185,7 +189,9 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
         params.actionButtonStyle,
         params.actionMenuAnchorRef,
         params.agentChipAnchorRef,
+        params.agentId,
         params.agentLabel,
+        params.engineLabel,
         params.chipStyle,
         params.chipStyleAutoHide,
         params.chips,

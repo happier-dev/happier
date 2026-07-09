@@ -3,6 +3,7 @@ import type { AgentInputActionBarLayout } from '@/components/sessions/agentInput
 export type AgentInputControlId =
     | 'engine'
     | 'mode'
+    | 'goal'
     | 'permission'
     | 'actionMenu'
     | 'profile'

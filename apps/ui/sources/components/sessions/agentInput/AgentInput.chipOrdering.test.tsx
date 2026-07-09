@@ -68,6 +68,9 @@ vi.mock('@/hooks/ui/useKeyboardHeight', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    getAgentIconSvgXml: () => null,
+    getAgentIconSource: () => null,
+    getAgentIconTintColor: () => undefined,
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: () => null,
@@ -215,31 +218,11 @@ describe('AgentInput (chip ordering)', () => {
             return out;
         }
 
-        function pressableContainsIcon(
-            node: renderer.ReactTestRendererJSON,
-            iconType: string,
-            iconName: string,
-        ): boolean {
-            const stack = [...(node.children ?? [])] as unknown as JsonNode[];
-            while (stack.length > 0) {
-                const current = stack.shift();
-                if (!current) continue;
-                if (typeof current === 'string' || typeof current === 'number') continue;
-                if (Array.isArray(current)) {
-                    stack.unshift(...current);
-                    continue;
-                }
-                if (current.type === iconType && (current.props as any)?.name === iconName) return true;
-                if (current.children) stack.unshift(current.children as any);
-            }
-            return false;
-        }
-
         const allNodes = flattenJson(tree!.toJSON() as JsonNode);
         const pressables = allNodes.filter((n) => n.type === 'Pressable');
 
         const permissionIndex = pressables.findIndex((n) => (n.props as any)?.testID === 'agent-input-permission-chip');
-        const agentIndex = pressables.findIndex((n) => pressableContainsIcon(n, 'Octicons', 'cpu'));
+        const agentIndex = pressables.findIndex((n) => (n.props as any)?.testID === 'agent-input-agent-chip');
         const modeIndex = pressables.findIndex((n) => (n.props as any)?.testID === 'agent-input-session-mode-chip');
 
         expect(permissionIndex).toBeGreaterThanOrEqual(0);

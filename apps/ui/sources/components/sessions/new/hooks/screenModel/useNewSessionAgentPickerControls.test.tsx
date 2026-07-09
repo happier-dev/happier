@@ -1,12 +1,15 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 
 import { useNewSessionAgentPickerControls } from './useNewSessionAgentPickerControls';
+import { useNewSessionAgentAuthoringOptionsState } from './useNewSessionAgentAuthoringOptionsState';
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import type { AgentId } from '@/agents/catalog/catalog';
 
 const modalMockState = vi.hoisted(() => ({
     alert: vi.fn(),
@@ -89,7 +92,12 @@ function createBuiltInBackendEntry(backendId: 'claude' | 'codex', title: string,
     };
 }
 
-function createConfiguredBackendEntry(backendId: string, title: string, subtitle: string | null): ResolvedBackendCatalogEntry {
+function createConfiguredBackendEntry(
+    backendId: string,
+    title: string,
+    subtitle: string | null,
+    capabilities?: ResolvedBackendCatalogEntry['capabilities'],
+): ResolvedBackendCatalogEntry {
     const backendTarget = { kind: 'backend' as const, backendId, configuredBackendId: backendId };
     return {
         backendTarget,
@@ -100,6 +108,28 @@ function createConfiguredBackendEntry(backendId: string, title: string, subtitle
         providerAgentId: null,
         builtInAgentId: null,
         iconAgentId: null,
+        capabilities,
+        title,
+        subtitle,
+    };
+}
+
+function createPluginBackendEntry(
+    backendId: string,
+    providerAgentId: AgentId,
+    title: string,
+    subtitle: string | null,
+): ResolvedBackendCatalogEntry {
+    const backendTarget = { kind: 'backend' as const, backendId };
+    return {
+        backendTarget,
+        backendTargetKey: formatBackendTargetKeyV2(backendTarget),
+        kind: 'pluginBackend',
+        backendId,
+        providerId: providerAgentId,
+        providerAgentId,
+        builtInAgentId: null,
+        iconAgentId: providerAgentId,
         title,
         subtitle,
     };
@@ -411,7 +441,7 @@ describe('useNewSessionAgentPickerControls', () => {
         ]);
     });
 
-    it('keeps unavailable backends selectable (muted) and orders available entries first', async () => {
+    it('disables unavailable backend rows with a visible reason and blocks selection', async () => {
         const setBackendTarget = vi.fn();
         const claudeEntry = createBuiltInBackendEntry('claude', 'Claude', null);
         const codexEntry = createBuiltInBackendEntry('codex', 'Codex', null);
@@ -423,6 +453,9 @@ describe('useNewSessionAgentPickerControls', () => {
             resolvedBackendEntries: [claudeEntry, codexEntry],
             getCompatibleProfileBackendEntries: () => [],
             isBackendEntrySelectable: (entry) => entry.backendTargetKey !== codexEntry.backendTargetKey,
+            getBackendEntryUnavailabilityReason: (entry) => (
+                entry.backendTargetKey === codexEntry.backendTargetKey ? 'cli-not-detected:codex' : null
+            ),
             selectedBackendEntry: claudeEntry,
             selectedBackendTargetKey: claudeEntry.backendTargetKey,
             setBackendTarget,
@@ -443,13 +476,61 @@ describe('useNewSessionAgentPickerControls', () => {
             id: option.id,
             disabled: option.disabled ?? false,
             muted: (option as any).muted ?? false,
+            subtitle: option.subtitle ?? null,
         }))).toEqual([
-            { id: claudeEntry.backendTargetKey, disabled: false, muted: false },
-            { id: codexEntry.backendTargetKey, disabled: false, muted: true },
+            { id: claudeEntry.backendTargetKey, disabled: false, muted: false, subtitle: null },
+            {
+                id: codexEntry.backendTargetKey,
+                disabled: true,
+                muted: true,
+                subtitle: {
+                    key: 'newSession.aiBackendCliNotDetectedOnMachine',
+                    params: { cli: 'agentInput.agent.codex' },
+                },
+            },
         ]);
 
         hook.getCurrent().handleAgentPickerSelect(codexEntry.backendTargetKey);
-        expect(setBackendTarget).toHaveBeenCalledWith({ kind: 'backend', backendId: 'codex' });
+        expect(setBackendTarget).not.toHaveBeenCalled();
+    });
+
+    it('does not expose entries that explicitly do not support sessions in the new session picker', async () => {
+        const claudeEntry = createBuiltInBackendEntry('claude', 'Claude', null);
+        const reviewOnlyEntry = createConfiguredBackendEntry(
+            'review-only',
+            'Review Only',
+            'Code review runtime',
+            {
+                executionRun: { supported: true },
+                session: { supported: false },
+            },
+        );
+
+        const hook = await renderHook(() => useNewSessionAgentPickerControls({
+            useProfiles: false,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            resolvedBackendEntries: [claudeEntry, reviewOnlyEntry],
+            getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: (entry) => entry.capabilities?.session?.supported !== false,
+            selectedBackendEntry: claudeEntry,
+            selectedBackendTargetKey: claudeEntry.backendTargetKey,
+            setBackendTarget: vi.fn(),
+            modelMode: 'default',
+            setModelMode: vi.fn() as any,
+            acpSessionModeId: null,
+            setAcpSessionModeId: vi.fn() as any,
+            sessionConfigOptionOverrides: null,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            selectedPath: '/repo',
+            settings: {} as any,
+        }));
+
+        expect(hook.getCurrent().agentPickerOptions?.map((option) => option.id) ?? []).not.toContain(
+            reviewOnlyEntry.backendTargetKey,
+        );
     });
 
     it('exposes a configured ACP backend even when it is the only resolved backend entry', async () => {
@@ -483,6 +564,42 @@ describe('useNewSessionAgentPickerControls', () => {
         expect(setBackendTarget).toHaveBeenCalledWith(configuredEntry.backendTarget);
     });
 
+    it('passes plugin backend provider identity to engine detail probes', async () => {
+        const antigravityEntry = createPluginBackendEntry(
+            'antigravity-localharness',
+            'antigravity',
+            'Antigravity',
+            null,
+        );
+
+        const hook = await renderHook(() => useNewSessionAgentPickerControls({
+            useProfiles: false,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            resolvedBackendEntries: [antigravityEntry],
+            getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: () => true,
+            selectedBackendEntry: antigravityEntry,
+            selectedBackendTargetKey: antigravityEntry.backendTargetKey,
+            setBackendTarget: vi.fn(),
+            modelMode: 'default',
+            setModelMode: vi.fn() as any,
+            acpSessionModeId: null,
+            setAcpSessionModeId: vi.fn() as any,
+            sessionConfigOptionOverrides: null,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            selectedPath: '/repo',
+            settings: {} as any,
+        }));
+
+        const detailElement = hook.getCurrent().agentPickerOptions?.[0]
+            ?.renderDetailContent?.() as React.ReactElement<{ runtimeCarrierAgentId?: string | null }> | undefined;
+
+        expect(detailElement?.props.runtimeCarrierAgentId).toBe('antigravity');
+    });
+
     it('uses the single selectable backend when clicking the agent input', async () => {
         const setBackendTarget = vi.fn();
         const claudeEntry = createBuiltInBackendEntry('claude', 'Claude', null);
@@ -513,6 +630,39 @@ describe('useNewSessionAgentPickerControls', () => {
         hook.getCurrent().handleAgentClick();
 
         expect(setBackendTarget).toHaveBeenCalledWith({ kind: 'backend', backendId: 'codex' });
+    });
+
+    it('ignores a stale remembered backend view when the selected backend changes externally', async () => {
+        const claudeEntry = createBuiltInBackendEntry('claude', 'Claude', null);
+        const codexEntry = createBuiltInBackendEntry('codex', 'Codex', null);
+
+        const hook = await renderHook(() => useNewSessionAgentPickerControls({
+            useProfiles: false,
+            selectedProfileId: null,
+            profileMap: new Map(),
+            resolvedBackendEntries: [claudeEntry, codexEntry],
+            getCompatibleProfileBackendEntries: () => [],
+            isBackendEntrySelectable: () => true,
+            selectedBackendEntry: codexEntry,
+            selectedBackendTargetKey: codexEntry.backendTargetKey,
+            setBackendTarget: vi.fn(),
+            modelMode: 'default',
+            setModelMode: vi.fn() as any,
+            acpSessionModeId: null,
+            setAcpSessionModeId: vi.fn() as any,
+            sessionConfigOptionOverrides: null,
+            setSessionConfigOptionOverrides: vi.fn() as any,
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            selectedPath: '/repo',
+            settings: {} as any,
+            rememberedAgentPickerView: {
+                kind: 'backend',
+                backendTargetKey: claudeEntry.backendTargetKey,
+            },
+        }));
+
+        expect(hook.getCurrent().agentPickerSelectedOptionId).toBe(codexEntry.backendTargetKey);
     });
 
     it('publishes engine detail selection changes immediately for the focused backend option', async () => {
@@ -724,5 +874,106 @@ describe('useNewSessionAgentPickerControls', () => {
                 },
             },
         }));
+    });
+
+    it('propagates destination backend detail selections through target-scoped authoring state', async () => {
+        const claudeEntry = createBuiltInBackendEntry('claude', 'Claude', null);
+        const codexEntry = createBuiltInBackendEntry('codex', 'Codex', null);
+
+        function useHarness() {
+            const [backendTarget, setBackendTarget] = React.useState(claudeEntry.backendTarget);
+            const selectedEntry = backendTarget.backendId === 'codex' ? codexEntry : claudeEntry;
+            const authoring = useNewSessionAgentAuthoringOptionsState({
+                agentType: selectedEntry.providerAgentId as AgentId,
+                backendTargetKey: selectedEntry.backendTargetKey,
+                allowTargetlessDraftEngineSelection: false,
+                hydratedTempAuthoringDraft: null,
+                hydratedPersistedAuthoringDraft: null,
+                rememberedEngineSelection: null,
+            });
+            const picker = useNewSessionAgentPickerControls({
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                resolvedBackendEntries: [claudeEntry, codexEntry],
+                getCompatibleProfileBackendEntries: () => [],
+                isBackendEntrySelectable: () => true,
+                selectedBackendEntry: selectedEntry,
+                selectedBackendTargetKey: selectedEntry.backendTargetKey,
+                setBackendTarget,
+                modelMode: authoring.modelMode,
+                setModelMode: authoring.setModelMode,
+                acpSessionModeId: authoring.acpSessionModeId,
+                setAcpSessionModeId: authoring.setAcpSessionModeId,
+                sessionConfigOptionOverrides: authoring.sessionConfigOptionOverrides,
+                setSessionConfigOptionOverrides: authoring.setSessionConfigOptionOverrides,
+                setEngineSelectionForBackendTarget: authoring.setEngineSelectionForBackendTarget,
+                selectedMachineId: 'machine-1',
+                capabilityServerId: 'server-1',
+                selectedPath: '/repo',
+                settings: {} as any,
+            });
+
+            return {
+                selectedEntry,
+                authoring,
+                picker,
+            };
+        }
+
+        const hook = await renderHook(() => useHarness());
+
+        expect(hook.getCurrent().selectedEntry.backendTargetKey).toBe(claudeEntry.backendTargetKey);
+        expect(hook.getCurrent().authoring.modelMode).toBe('default');
+        expect(hook.getCurrent().authoring.acpSessionModeId).toBeNull();
+
+        const codexDetail = hook.getCurrent().picker.agentPickerOptions
+            ?.find((option) => option.id === codexEntry.backendTargetKey)
+            ?.renderDetailContent?.() as React.ReactElement<{
+                onSelectionChange?: (selection: {
+                    modelId: string;
+                    sessionModeId: string;
+                    configOverrides: Readonly<Record<string, string>>;
+                }) => void;
+            }> | undefined;
+
+        await act(async () => {
+            codexDetail?.props?.onSelectionChange?.({
+                modelId: 'gpt-5.4',
+                sessionModeId: 'plan',
+                configOverrides: {
+                    reasoning_effort: 'high',
+                    speed: 'fast',
+                },
+            });
+        });
+        await hook.rerender();
+
+        expect(hook.getCurrent().selectedEntry.backendTargetKey).toBe(codexEntry.backendTargetKey);
+        expect(hook.getCurrent().authoring.modelMode).toBe('gpt-5.4');
+        expect(hook.getCurrent().authoring.acpSessionModeId).toBe('plan');
+        expect(hook.getCurrent().authoring.sessionConfigOptionOverrides).toEqual(expect.objectContaining({
+            overrides: {
+                reasoning_effort: {
+                    updatedAt: expect.any(Number),
+                    value: 'high',
+                },
+                speed: {
+                    updatedAt: expect.any(Number),
+                    value: 'fast',
+                },
+            },
+        }));
+
+        await act(async () => {
+            hook.getCurrent().picker.handleAgentPickerSelect(codexEntry.backendTargetKey);
+        });
+        await hook.rerender();
+
+        expect(hook.getCurrent().selectedEntry.backendTargetKey).toBe(codexEntry.backendTargetKey);
+        expect(hook.getCurrent().authoring.modelMode).toBe('gpt-5.4');
+        expect(hook.getCurrent().authoring.acpSessionModeId).toBe('plan');
+        expect(hook.getCurrent().authoring.sessionConfigOptionOverrides?.overrides.reasoning_effort?.value).toBe('high');
+        expect(hook.getCurrent().authoring.sessionConfigOptionOverrides?.overrides.speed?.value).toBe('fast');
     });
 });

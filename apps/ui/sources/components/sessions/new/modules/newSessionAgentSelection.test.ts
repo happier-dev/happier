@@ -131,6 +131,32 @@ describe('newSessionAgentSelection', () => {
         })).toEqual([entry]);
     });
 
+    it('excludes backend entries that explicitly do not support session runtime', () => {
+        const entry = {
+            backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' } as const,
+            backendTargetKey: 'backend:review-bot:configured:review-bot',
+            builtInAgentId: null,
+            kind: 'configuredBackend' as const,
+            capabilities: {
+                session: { supported: false },
+                executionRun: { supported: true },
+            },
+        };
+
+        expect(isBackendEntrySelectableForNewSession({
+            entry,
+            detectionTimestamp: 1,
+            availabilityById: {},
+            installableDepKeyCountByAgentId: {},
+        })).toBe(false);
+        expect(getSelectableBackendEntriesForNewSession({
+            candidateBackendEntries: [entry],
+            detectionTimestamp: 1,
+            availabilityById: {},
+            installableDepKeyCountByAgentId: {},
+        })).toEqual([]);
+    });
+
     it('resolves profile availability from configured ACP backend targets', () => {
         expect(resolveProfileAvailabilityForNewSession({
             candidateBackendEntries: [

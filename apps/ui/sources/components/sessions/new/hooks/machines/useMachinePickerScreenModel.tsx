@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, Platform } from 'react-native';
+import { Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
@@ -21,6 +21,7 @@ import { NewSessionMachineSelectionContent } from '@/components/sessions/new/com
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/serverTarget/useNewSessionServerTargetState';
 import { useNewSessionActiveServerSource } from '@/components/sessions/new/hooks/serverTarget/useNewSessionActiveServerSource';
+import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 
 function useMachinePickerScreenOptions(params: Readonly<{
     title: string;
@@ -53,15 +54,16 @@ function useMachinePickerScreenOptions(params: Readonly<{
             onActionPress={params.onRefresh}
         />
     ), [params.isRefreshing, params.onRefresh, params.theme.colors.chrome.header.foreground, params.theme.colors.text.secondary, params.title]);
+    const presentation = useNewSessionPickerRoutePresentation();
 
     return React.useMemo(() => ({
         headerShown: true,
         title: params.title,
         headerTitle,
         headerBackTitle: t('common.back'),
-        presentation: Platform.OS === 'ios' ? ('containedModal' as const) : undefined,
+        presentation,
         headerLeft,
-    }), [headerLeft, headerTitle, params.title]);
+    }), [headerLeft, headerTitle, params.title, presentation]);
 }
 
 export function useMachinePickerScreenModel() {

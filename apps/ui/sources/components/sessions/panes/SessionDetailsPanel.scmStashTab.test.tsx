@@ -41,7 +41,13 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/constants/Typography', () => ({
-    Typography: { default: () => ({}), mono: () => ({}) },
+    Typography: {
+        default: () => ({}),
+        mono: () => ({}),
+        rowTitle: () => ({}),
+        rowMeta: () => ({}),
+        pillLabel: () => ({}),
+    },
 }));
 
 vi.mock('@/components/sessions/files/views/SessionFileDetailsView', () => ({

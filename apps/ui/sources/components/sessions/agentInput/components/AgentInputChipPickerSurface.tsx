@@ -37,6 +37,7 @@ export function AgentInputChipPickerSurface(props: AgentInputChipPickerSurfacePr
                 railWidth={props.railWidth}
                 railMaxWidth={props.railMaxWidth}
                 detailPaneHeaderAccessory={props.detailPaneHeaderAccessory}
+                maxHeight={props.maxHeight}
             />
         </PopoverScope>
     );

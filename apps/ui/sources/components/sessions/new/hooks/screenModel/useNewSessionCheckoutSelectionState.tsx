@@ -19,6 +19,8 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
     hydratedPersistedAuthoringDraft: HydratedCheckoutAuthoringDraft | null;
     selectedMachineId: string | null;
     selectedPath: string;
+    machineHomeDir?: string | null;
+    machinePlatform?: string | null;
     repoScmSnapshot: ScmWorkingSnapshot | null;
     autoOpenWorktreePickerKey?: string | null;
 }>): Readonly<{
@@ -74,11 +76,15 @@ export function useNewSessionCheckoutSelectionState(params: Readonly<{
     const checkoutChipModel = React.useMemo(() => {
         return resolveNewSessionCheckoutChipModel({
             selectedPath: params.selectedPath,
+            machineHomeDir: params.machineHomeDir ?? null,
+            machinePlatform: params.machinePlatform ?? null,
             checkoutCreationDraft,
             repoSnapshot: params.repoScmSnapshot,
         });
     }, [
         checkoutCreationDraft,
+        params.machineHomeDir,
+        params.machinePlatform,
         params.repoScmSnapshot,
         params.selectedPath,
     ]);

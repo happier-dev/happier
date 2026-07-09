@@ -1,17 +1,32 @@
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import React from 'react';
-import { Animated, Platform, Pressable, View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
-import { GestureDetector, Swipeable, type ComposedGesture, type GestureType } from 'react-native-gesture-handler';
-import { Ionicons, Octicons } from '@expo/vector-icons';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import {
+    Animated,
+    Platform,
+    Pressable,
+    View,
+    type GestureResponderEvent,
+    type LayoutChangeEvent } from 'react-native';
+import { GestureDetector,
+    Swipeable,
+    type ComposedGesture,
+    type GestureType } from 'react-native-gesture-handler';
+import { Ionicons,
+    Octicons } from '@expo/vector-icons';
+import { StyleSheet,
+    useUnistyles } from 'react-native-unistyles';
 
-import { Text, Text as RNText } from '@/components/ui/text/Text';
+import { Text,
+    Text as RNText } from '@/components/ui/text/Text';
 import {
     WEB_START_ELLIPSIS_CONTAINER_TEXT_STYLE,
     WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE,
-} from '@/components/ui/text/webStartEllipsisTextStyles';
+    } from '@/components/ui/text/webStartEllipsisTextStyles';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
-import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID,
+    getAgentCore,
+} from '@/agents/catalog/catalog';
 import { Typography } from '@/constants/Typography';
 import { formatPendingCountBadge } from '@/components/sessions/pendingBadge';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
@@ -27,6 +42,8 @@ import { PinIcon, PinSlashIcon } from './sessionPinIcons';
 import { TagIcon } from './sessionTagIcons';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ContextMenu } from '@/components/ui/forms/dropdown/ContextMenu';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import {
     resolveSessionRowAttentionState,
     resolveSessionRowPresentation,
@@ -40,6 +57,7 @@ import {
     SESSION_LIST_ROW_HEIGHT_COMPACT,
     SESSION_LIST_ROW_HEIGHT_DEFAULT,
     SESSION_LIST_ROW_HEIGHT_MINIMAL,
+    SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE,
 } from './sessionListRowHeights';
 import { resolveSessionRowInteractionPolicy } from './row/resolveSessionRowInteractionPolicy';
 import { resolveSessionItemTagCollections } from './sessionTagUtils';
@@ -68,6 +86,18 @@ import {
     SESSION_ROW_ACTION_OPEN_SPLIT_RIGHT_ID,
     SESSION_ROW_ACTION_REVEAL_IN_CURRENT_SPLIT_ID,
 } from './row/actionMenu/sessionRowActionMenuTypes';
+import {
+    buildSessionDebugInformation,
+    isSessionDebugInformationEnabled,
+    resolveProviderSessionIdForDebug,
+} from '@/components/sessions/debug/sessionDebugInformation';
+import { copySessionDebugInformationToClipboard } from '@/components/sessions/debug/sessionDebugClipboard';
+import {
+    createCopySessionDebugInformationMenuItem,
+    SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID,
+} from '@/components/sessions/debug/sessionDebugMenuItem';
+import { storage,
+    useLocalSetting } from '@/sync/domains/state/storage';
 
 const AVATAR_SIZE_DEFAULT = 48;
 const AVATAR_SIZE_COMPACT = 30;
@@ -142,6 +172,7 @@ type SessionItemContentProps = Omit<SessionItemBaseProps, 'subtitleOverride'> & 
     activityTimeLabel: string;
     hasUnreadMessages: boolean;
     workingIndicatorMode: SessionItemWorkingIndicatorMode;
+    workingIndicatorPaused?: boolean;
     rowAttentionAnimationEnabled: boolean;
     sessionListIdentityDisplay: SessionItemIdentityDisplay;
     sessionListActiveColorMode: SessionItemActiveColorMode;
@@ -168,11 +199,25 @@ function hasPendingPermissionRequests(session: Session | SessionListRenderableSe
     return 'hasPendingPermissionRequests' in session && session.hasPendingPermissionRequests === true;
 }
 
+function hasPendingBlockedRequests(session: Session | SessionListRenderableSession): boolean {
+    return (normalizeFiniteCount(session.pendingBlockedCount) ?? 0) > 0;
+}
+
 function resolveSessionItemEffectiveStatus(input: Readonly<{
     rowSession: SessionListRenderableSession;
     renderedSession: Session | SessionListRenderableSession;
     rowStatus: SessionStatus;
 }>): SessionStatus {
+    if (hasPendingBlockedRequests(input.renderedSession) && input.rowStatus.state !== 'action_required') {
+        return {
+            ...input.rowStatus,
+            state: 'action_required',
+            statusText: t('status.actionRequired'),
+            shouldShowStatus: true,
+            isPulsing: true,
+        };
+    }
+
     if (input.renderedSession === input.rowSession) {
         return input.rowStatus;
     }
@@ -206,6 +251,24 @@ function resolveSessionItemEffectiveStatus(input: Readonly<{
     return input.rowStatus;
 }
 
+function normalizeFiniteCount(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value)
+        ? Math.max(0, Math.trunc(value))
+        : null;
+}
+
+function mergePendingBlockedCount<T extends Session | SessionListRenderableSession>(
+    session: T,
+    pendingBlockedCount: number | null,
+): T {
+    if (pendingBlockedCount === null) return session;
+    if (normalizeFiniteCount(session.pendingBlockedCount) === pendingBlockedCount) return session;
+    return {
+        ...session,
+        pendingBlockedCount,
+    };
+}
+
 function resolveSessionItemEffectiveSession(input: Readonly<{
     rowSession: SessionListRenderableSession;
     providedSession: Session | SessionListRenderableSession;
@@ -213,19 +276,22 @@ function resolveSessionItemEffectiveSession(input: Readonly<{
     if (input.providedSession.id !== input.rowSession.id) {
         return input.rowSession;
     }
+    const providedBlockedCount = normalizeFiniteCount(input.providedSession.pendingBlockedCount);
+    const rowBlockedCount = normalizeFiniteCount(input.rowSession.pendingBlockedCount);
+    const pendingBlockedCount = providedBlockedCount ?? rowBlockedCount;
     if (
         hasPendingUserActionRequests(input.providedSession)
         && !hasPendingUserActionRequests(input.rowSession)
     ) {
-        return input.providedSession;
+        return mergePendingBlockedCount(input.providedSession, pendingBlockedCount);
     }
     if (
         hasPendingPermissionRequests(input.providedSession)
         && !hasPendingPermissionRequests(input.rowSession)
     ) {
-        return input.providedSession;
+        return mergePendingBlockedCount(input.providedSession, pendingBlockedCount);
     }
-    return input.rowSession;
+    return mergePendingBlockedCount(input.rowSession, pendingBlockedCount);
 }
 
 function resolveSessionFolderMoveTargetRowContainerStyle(depth: number) {
@@ -292,7 +358,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     sessionItemMinimal: {
         height: SESSION_LIST_ROW_HEIGHT_MINIMAL,
-        paddingHorizontal: 10,
+        paddingHorizontal: 8,
+    },
+    sessionItemMinimalNativePhone: {
+        height: SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE,
     },
     sessionItemSelected: {
         backgroundColor: theme.colors.surface.selected,
@@ -417,6 +486,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 14,
     },
     sessionTitleMinimal: {
+        fontSize: 12,
+        lineHeight: 16,
+    },
+    sessionTitleMinimalNativePhone: {
         fontSize: 14,
         lineHeight: 18,
     },
@@ -695,6 +768,7 @@ const SessionItemContent = React.memo(
         activityTimeLabel,
         hasUnreadMessages,
         workingIndicatorMode,
+        workingIndicatorPaused,
         rowAttentionAnimationEnabled,
         sessionListIdentityDisplay,
         sessionListActiveColorMode,
@@ -702,13 +776,20 @@ const SessionItemContent = React.memo(
     }: SessionItemContentProps) => {
         const styles = stylesheet;
         const { theme } = useUnistyles();
+        const localDevModeEnabled = useLocalSetting('devModeEnabled');
+        const devModeEnabled = isSessionDebugInformationEnabled(localDevModeEnabled);
         const resolvedSession = session;
         const sessionId = String(resolvedSession?.id ?? '').trim();
+        const agentId = React.useMemo(
+            () => resolveAgentIdFromSessionMetadata(resolvedSession.metadata) ?? DEFAULT_AGENT_ID,
+            [resolvedSession.metadata],
+        );
         const resolvedSelectionKey = selectionKey ?? '';
         const rowSelection = useOptionalSessionListSelectionRow(resolvedSelectionKey);
         const identitySkeletonOpacity = React.useRef(new Animated.Value(0.45)).current;
         React.useEffect(() => {
             if (!isSessionIdentityLoading) return;
+            if (!rowAttentionAnimationEnabled) return;
             if (typeof Animated.loop !== 'function' || typeof Animated.sequence !== 'function') return;
 
             const animation = Animated.loop(
@@ -729,7 +810,7 @@ const SessionItemContent = React.memo(
             return () => {
                 animation.stop();
             };
-        }, [isSessionIdentityLoading, identitySkeletonOpacity]);
+        }, [isSessionIdentityLoading, identitySkeletonOpacity, rowAttentionAnimationEnabled]);
         const navigateToSession = useNavigateToSession();
         const splitCanvasScope = React.useMemo(() => {
             return resolveSessionSplitCanvasScope(resolveWorkspaceTargetForSession(sessionId), {
@@ -757,6 +838,7 @@ const SessionItemContent = React.memo(
         const [tagMenuOpen, setTagMenuOpen] = React.useState(false);
         const [tagMenuEverOpened, setTagMenuEverOpened] = React.useState(false);
         const [moreMenuOpen, setMoreMenuOpen] = React.useState(false);
+        const copyFeedback = useTemporaryCopyFeedback();
         const [rowWidth, setRowWidth] = React.useState<number | null>(null);
         const isWeb = Platform.OS === 'web';
         const isNativeMobile = Platform.OS === 'ios' || Platform.OS === 'android';
@@ -764,6 +846,24 @@ const SessionItemContent = React.memo(
         const useReadableNativePhoneMinimalRow = isMinimal && isNativeMobile && !isTablet;
         const showRowActions = isWeb && (isRowHovered || isActionsHovered || tagMenuOpen || moreMenuOpen || isBeingDragged === true);
         const rowActionIconColor = theme.colors.text.secondary;
+        const resolveSessionDebugInformation = React.useCallback(() => {
+            const fullSession = storage.getState().sessions[resolvedSession.id];
+            const debugSession = fullSession ?? resolvedSession;
+            const debugMetadata = debugSession.metadata ?? resolvedSession.metadata;
+            const debugAgentId = resolveAgentIdFromSessionMetadata(debugMetadata)
+                ?? resolveAgentIdFromSessionMetadata(resolvedSession.metadata)
+                ?? DEFAULT_AGENT_ID;
+            const debugAgentCore = getAgentCore(debugAgentId);
+            const providerSessionId = resolveProviderSessionIdForDebug({
+                metadata: debugMetadata,
+                vendorResumeIdField: debugAgentCore.resume.vendorResumeIdField,
+            });
+            return buildSessionDebugInformation({
+                session: debugSession,
+                providerDisplayName: t(debugAgentCore.displayNameKey),
+                providerSessionId,
+            });
+        }, [resolvedSession]);
         const supportsPin = typeof onTogglePinned === 'function';
         const supportsTag = tagsEnabled === true && typeof onSetTags === 'function';
         const handleTogglePinnedAction = React.useCallback(() => {
@@ -895,6 +995,14 @@ const SessionItemContent = React.memo(
             }
             return [];
         }, [rowActionIconColor, splitCanvasRowActions.mode]);
+        const copyDebugMenuItems = React.useMemo((): DropdownMenuItem[] => {
+            if (!devModeEnabled) return [];
+            return [createCopySessionDebugInformationMenuItem({ iconColor: rowActionIconColor })];
+        }, [devModeEnabled, rowActionIconColor]);
+        const leadingMenuItems = React.useMemo(
+            () => [...copyDebugMenuItems, ...splitCanvasMenuItems],
+            [copyDebugMenuItems, splitCanvasMenuItems],
+        );
 
         const handleSelectSplitCanvasMenuItem = React.useCallback((itemId: string): boolean => {
             switch (itemId) {
@@ -911,6 +1019,16 @@ const SessionItemContent = React.memo(
                     return false;
             }
         }, [splitCanvasRowActions]);
+        const handleSelectLeadingMenuItem = React.useCallback(async (itemId: string): Promise<boolean> => {
+            if (itemId === SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID) {
+                const copied = await copySessionDebugInformationToClipboard(resolveSessionDebugInformation());
+                if (copied) {
+                    copyFeedback.markCopied(resolvedSession.id);
+                }
+                return true;
+            }
+            return handleSelectSplitCanvasMenuItem(itemId);
+        }, [copyFeedback, handleSelectSplitCanvasMenuItem, resolvedSession.id, resolveSessionDebugInformation]);
 
         const handleSelectFolderMoveMenuItem = React.useCallback(async (itemId: string) => {
             if (itemId === 'session-folder-move-root') {
@@ -1005,8 +1123,8 @@ const SessionItemContent = React.memo(
             tagsEnabled: tagsEnabled === true,
             onSetTags,
             onTogglePinned,
-            leadingMenuItems: splitCanvasMenuItems,
-            onSelectLeadingMenuItem: handleSelectSplitCanvasMenuItem,
+            leadingMenuItems,
+            onSelectLeadingMenuItem: handleSelectLeadingMenuItem,
             folderMoveMenuItems,
             onMoveToFolder,
             onSelectFolderMoveMenuItem: handleSelectFolderMoveMenuItem,
@@ -1124,6 +1242,7 @@ const SessionItemContent = React.memo(
 
         const avatarId = getSessionAvatarId(resolvedSession);
         const pendingCount = resolvedSession.pendingCount ?? 0;
+        const pendingBlockedCount = resolvedSession.pendingBlockedCount ?? 0;
         const pendingBadge = formatPendingCountBadge(pendingCount);
         const tagChipDensity: 'default' | 'compact' | 'minimal' = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
         const sourceTagChips = React.useMemo(() => {
@@ -1133,9 +1252,10 @@ const SessionItemContent = React.memo(
         const fallbackSecondaryLineMode: SessionListSecondaryLineMode = variant === 'no-path' ? 'status' : 'path';
         const requestedSecondaryLineMode = secondaryLineMode ?? fallbackSecondaryLineMode;
         const rowDensity = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
-        const rowAttentionState = resolveSessionRowAttentionState(deriveSessionListAttentionState({
+        const derivedRowAttentionState = resolveSessionRowAttentionState(deriveSessionListAttentionState({
             hasUnreadMessages,
             pendingCount,
+            pendingBlockedCount,
             sessionState: sessionStatus.state,
             latestTurnStatus: resolvedSession.latestTurnStatus ?? null,
             lastRuntimeIssue: resolvedSession.lastRuntimeIssue ?? null,
@@ -1144,24 +1264,44 @@ const SessionItemContent = React.memo(
             presence: resolvedSession.presence,
             thinking: resolvedSession.thinking,
             thinkingAt: resolvedSession.thinkingAt,
+            optimisticThinkingAt: resolvedSession.optimisticThinkingAt ?? null,
             seq: resolvedSession.seq,
             meaningfulActivityAt: resolvedSession.meaningfulActivityAt ?? null,
             latestTurnStatusObservedAt: resolvedSession.latestTurnStatusObservedAt ?? null,
+            runtimeActivityActiveCount: resolvedSession.runtimeActivityActiveCount ?? null,
+            runtimeActivityObservedAt: resolvedSession.runtimeActivityObservedAt ?? null,
+            runtimeActivityExpiresAt: resolvedSession.runtimeActivityExpiresAt ?? null,
+            runtimeActivitySourceClass: resolvedSession.runtimeActivitySourceClass ?? null,
             latestReadyEventSeq: resolvedSession.latestReadyEventSeq ?? null,
             lastViewedSessionSeq: resolvedSession.lastViewedSessionSeq ?? null,
             pendingRequestObservedAt: resolvedSession.pendingRequestObservedAt ?? null,
         }));
+        // Retained working placement holds the session in the working group
+        // while its live signals are stale. Present it as a PAUSED working
+        // row (working indicator without animation, dedicated status text)
+        // unless a more alerting state applies — otherwise the user sees a
+        // session in the working group with no indicator at all.
+        const presentsRetainedWorking = workingIndicatorPaused === true
+            && (
+                derivedRowAttentionState === 'quiet'
+                || derivedRowAttentionState === 'unread'
+                || derivedRowAttentionState === 'pending'
+            );
+        const rowAttentionState = presentsRetainedWorking ? 'working' : derivedRowAttentionState;
+        const attentionIndicatorAnimationEnabled = rowAttentionAnimationEnabled && !presentsRetainedWorking;
         const rowPresentation = resolveSessionRowPresentation({
             attentionState: rowAttentionState,
             density: rowDensity,
             requestedSecondaryLineMode,
             hasPathSubtitle: Boolean(sessionSubtitle),
+            workingRetained: presentsRetainedWorking,
         });
         const effectiveSecondaryLineMode: SessionListSecondaryLineMode = rowPresentation.secondaryLine === 'path' ? 'path' : 'status';
         const statusLineText = rowPresentation.statusTextKey ? t(rowPresentation.statusTextKey) : sessionStatus.statusText;
         const rowStatusColor = (() => {
             switch (rowAttentionState) {
                 case 'working':
+                case 'backgroundActive':
                     return theme.colors.state.info.foreground;
                 case 'ready':
                     return theme.colors.state.success.foreground;
@@ -1182,6 +1322,7 @@ const SessionItemContent = React.memo(
             rowAttentionState === 'failed'
                 ? t('status.error')
                 : rowPresentation.attentionIndicator === 'working'
+                    || rowPresentation.attentionIndicator === 'background'
                     || rowPresentation.attentionIndicator === 'permission'
                     || rowPresentation.attentionIndicator === 'action'
                     ? statusLineText
@@ -1235,7 +1376,7 @@ const SessionItemContent = React.memo(
                 ? AVATAR_SIZE_COMPACT
                 : AVATAR_SIZE_DEFAULT;
         const agentLogoSize = resolveSessionListAgentLogoSize(avatarSize);
-        const agentLogoId = resolveAgentIdFromFlavor(resolvedSession.metadata?.flavor) ?? DEFAULT_AGENT_ID;
+        const agentLogoId = agentId;
 
         const normalizedFolderDepth = Math.min(Math.max(Math.trunc(folderDepth ?? 0), 0), 3);
         const identityTitleLoadingStyle = isMinimal
@@ -1258,6 +1399,7 @@ const SessionItemContent = React.memo(
             styles.sessionTitle,
             compact ? styles.sessionTitleCompact : null,
             isMinimal ? styles.sessionTitleMinimal : null,
+            useReadableNativePhoneMinimalRow ? styles.sessionTitleMinimalNativePhone : null,
             shouldEmphasizeTitle ? styles.sessionTitleEmphasized : null,
             sessionStatus.isConnected ? styles.sessionTitleConnected : styles.sessionTitleDisconnected,
             selected || rowSelection.isSelected ? styles.sessionTitleSelected : null,
@@ -1315,6 +1457,7 @@ const SessionItemContent = React.memo(
                     isLast ? styles.sessionItemLast : null,
                     compact ? styles.sessionItemCompact : null,
                     isMinimal ? styles.sessionItemMinimal : null,
+                    useReadableNativePhoneMinimalRow ? styles.sessionItemMinimalNativePhone : null,
                     selected || rowSelection.isSelected ? styles.sessionItemSelected : null,
                     embedded && !embeddedIsLast ? styles.embeddedSeparator : null,
                 ]}
@@ -1460,7 +1603,7 @@ const SessionItemContent = React.memo(
                                             attentionState={rowAttentionState}
                                             accessibilityLabel={rowAttentionAccessibilityLabel}
                                             workingMode={workingIndicatorMode}
-                                            animationEnabled={rowAttentionAnimationEnabled}
+                                            animationEnabled={attentionIndicatorAnimationEnabled}
                                         />
                                     ) : null}
                                 </View>
@@ -1504,6 +1647,10 @@ const SessionItemContent = React.memo(
                     onPointerLeave={isWeb ? handleActionsHoverOut : undefined}
                 >
                     {showInlineTagChips ? renderTagChipRow('inline') : null}
+                    <CopiedPill
+                        visible={copyFeedback.isCopied(resolvedSession.id)}
+                        testID={`session-item-copy-debug-feedback:${resolvedSession.id}`}
+                    />
                     {showRowActions ? (
                         <View style={styles.rowActionsRow}>
                             {showSplitCanvasDragHandle ? (
@@ -1656,7 +1803,7 @@ const SessionItemContent = React.memo(
                                     accessibilityLabel={rowAttentionAccessibilityLabel}
                                     workingMode={workingIndicatorMode}
                                     workingSpinnerTone="neutral"
-                                    animationEnabled={rowAttentionAnimationEnabled}
+                                    animationEnabled={attentionIndicatorAnimationEnabled}
                                 />
                             ) : null}
                             {showTrailingActivityTime ? (
@@ -1816,7 +1963,7 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
             serverName={itemProps.serverName}
             showServerBadge={rowViewModel.showServerBadge}
             pinned={rowViewModel.pinned}
-            tags={[...rowViewModel.tags]}
+            tags={rowViewModel.tags}
             tagsEnabled={itemProps.tagsEnabled}
             selected={rowViewModel.selected}
             isFirst={rowViewModel.isFirst}
@@ -1830,6 +1977,7 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
             isSessionIdentityLoading={rowViewModel.isIdentityLoading}
             hasUnreadMessages={rowViewModel.hasUnreadMessages}
             workingIndicatorMode={rowViewModel.workingIndicatorMode}
+            workingIndicatorPaused={rowViewModel.workingPlacementRetained}
             rowAttentionAnimationEnabled={itemProps.rowAttentionAnimationEnabled !== false}
             sessionListIdentityDisplay={normalizeSessionItemIdentityDisplay(rowViewModel.identityDisplay)}
             sessionListActiveColorMode={normalizeSessionItemActiveColorMode(rowViewModel.activeColorMode)}

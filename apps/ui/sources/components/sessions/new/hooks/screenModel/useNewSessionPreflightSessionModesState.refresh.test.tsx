@@ -107,6 +107,58 @@ describe('useNewSessionPreflightSessionModesState (refresh)', () => {
         vi.useRealTimers();
     });
 
+    it('retries after an unavailable cooldown elapses so temporarily gated session modes can recover', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000_000);
+        vi.resetModules();
+        machineCapabilitiesInvokeMock.mockReset();
+        resetDynamicSessionModeProbeCacheForTests();
+        vi.doMock('@/sync/ops/capabilities', installCapabilitiesOpsModuleMock({
+            machineCapabilitiesInvoke: machineCapabilitiesInvokeMock,
+        }));
+
+        machineCapabilitiesInvokeMock
+            .mockImplementationOnce(async () => ({
+                supported: true as const,
+                response: {
+                    ok: true as const,
+                    result: { source: 'unavailable', availableModes: [] },
+                },
+            }))
+            .mockImplementationOnce(async () => ({
+                supported: true as const,
+                response: {
+                    ok: true as const,
+                    result: { availableModes: [{ id: 'mode1', name: 'Mode 1' }] },
+                },
+            }));
+
+        const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
+        const hook = await renderHook(() => useNewSessionPreflightSessionModesState({
+            backendTarget: { kind: 'backend', backendId: 'codex' },
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            cwd: '/repo-unavailable',
+        }));
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent().preflightModes).toEqual({
+            availableModes: [],
+            unavailable: true,
+        });
+        expect(hook.getCurrent().modeOptions.some((o) => o.id === 'mode1')).toBe(false);
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(DYNAMIC_SESSION_MODE_PROBE_ERROR_BACKOFF_MS + 1);
+        });
+
+        expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
+        expect(hook.getCurrent().modeOptions.some((o) => o.id === 'mode1')).toBe(true);
+
+        await hook.unmount();
+        vi.useRealTimers();
+    });
+
     it('does not enter a render loop when probeContext identity churns but cached values are stable by content', async () => {
         vi.resetModules();
         machineCapabilitiesInvokeMock.mockReset();

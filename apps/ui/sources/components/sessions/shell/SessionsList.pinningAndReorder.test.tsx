@@ -14,12 +14,16 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 import { buildSessionListIndexFromViewData, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionListReachabilityRenderable } from '@/sync/domains/state/storage';
+import { buildSessionOrganizationProjectionFromLegacyTestSettings } from './sessionOrganizationProjectionTestFixture';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let capturedRootFlatListProps: any | null = null;
+const capturedRootFlashListCompatProps = vi.hoisted(() => ({ current: null as any }));
 const routerPushSpy = vi.fn();
 let hideInactiveSessions = false;
+const setSessionPinOp = vi.hoisted(() => vi.fn(async () => undefined));
+const setSessionTagAssignmentsOp = vi.hoisted(() => vi.fn(async () => undefined));
 
 let pinnedSessionKeysV1: string[] = [];
 const setPinnedSessionKeysV1 = vi.fn();
@@ -34,6 +38,43 @@ const setWorkspaceRefsV1 = vi.fn();
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 const mockMachinesState = vi.hoisted(() => ({ current: [] as any[] }));
 const flatListMock = createCapturingFlatListMock({ renderItems: true });
+
+vi.mock('@/components/ui/lists/flashListCompat/FlashListCompat', async () => {
+    const ReactModule = await import('react');
+    const renderSlot = (slot: any) => {
+        if (!slot) return null;
+        return ReactModule.isValidElement(slot) ? slot : ReactModule.createElement(slot);
+    };
+    return {
+        FlashList: ReactModule.forwardRef<any, any>((props, ref) => {
+            capturedRootFlashListCompatProps.current = props;
+            if (typeof ref === 'function') {
+                ref({
+                    scrollToOffset: () => {},
+                    scrollToIndex: () => {},
+                });
+            } else if (ref && typeof ref === 'object') {
+                ref.current = {
+                    scrollToOffset: () => {},
+                    scrollToIndex: () => {},
+                };
+            }
+            return ReactModule.createElement(
+                'FlashListCompat',
+                props,
+                renderSlot(props.ListHeaderComponent),
+                ...(props.data ?? []).map((item: any, index: number) => (
+                    ReactModule.createElement(
+                        ReactModule.Fragment,
+                        { key: props.keyExtractor?.(item) ?? String(index) },
+                        props.renderItem({ item, index }),
+                    )
+                )),
+                renderSlot(props.ListFooterComponent),
+            );
+        }),
+    };
+});
 
 const groupKey = 'server:server_a:day:2026-02-17';
 
@@ -150,6 +191,12 @@ installSessionShellCommonModuleMocks({
                     if (key === 'workspaceRefsV1') return [workspaceRefsV1, setWorkspaceRefsV1];
                     return [null, vi.fn()];
                 },
+                useSessionOrganizationProjection: () => buildSessionOrganizationProjectionFromLegacyTestSettings({
+                    serverId: 'server_a',
+                    pinnedSessionKeysV1,
+                    sessionListGroupOrderV1,
+                    sessionTagsV1,
+                }),
                 useSessionListRenderableWithServerScope: (_serverId: any, sessionId: string) => {
                     return findSessionListRenderable(sessionId);
                 },
@@ -194,7 +241,7 @@ installSessionShellCommonModuleMocks({
                         if (!serverId || !sessionId) continue;
                         const session = findSessionListRenderable(sessionId);
                         if (!session) continue;
-                        renderables.set(`${serverId}:${sessionId}`, session);
+                        renderables.set(`${serverId}\u0000${sessionId}`, session);
                     }
                     return renderables;
                 },
@@ -287,6 +334,34 @@ vi.mock('@/sync/ops', async (importOriginal) => {
         },
     });
 });
+
+vi.mock('@/sync/ops/sessionOrganization', () => ({
+    deleteSessionFolder: vi.fn(async () => undefined),
+    deleteSessionLabel: vi.fn(async () => undefined),
+    moveSessionFolderAssignments: vi.fn(async () => undefined),
+    reorderSessionOrganization: vi.fn(async () => undefined),
+    setSessionFolderAssignment: vi.fn(async () => undefined),
+    setSessionPin: setSessionPinOp,
+    setSessionTagLabels: setSessionTagAssignmentsOp,
+    upsertSessionFolder: vi.fn(async () => undefined),
+    upsertSessionLabel: vi.fn(async () => undefined),
+}));
+
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+    const serverProfile = { id: 'server_a', serverUrl: 'https://server-a.example.test' };
+    return {
+        ...actual,
+        listServerProfiles: () => [serverProfile],
+        getServerProfileById: (serverId: string) => (serverId === serverProfile.id ? serverProfile : null),
+    };
+});
+
+vi.mock('@/auth/storage/tokenStorage', () => ({
+    TokenStorage: {
+        getCredentialsForServerUrl: vi.fn(async () => ({ token: 'test-token' })),
+    },
+}));
 
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
     readMachineTargetForSession: (sessionId: string) => readMachineTargetForSessionMock(sessionId),
@@ -385,6 +460,15 @@ vi.mock('./SessionItem', () => ({
     }),
 }));
 
+vi.mock('./sessionListRow', () => ({
+    SessionListRow: (props: any) => React.createElement('SessionListRow', {
+        ...props,
+        testID: `session-list-session:${String(props.session?.id ?? 'unknown')}`,
+        onSetTags: (tags: string[]) => props.onSetTagsSessionKey?.(props.sessionKey, tags),
+        onTogglePinned: () => props.onTogglePinnedSessionKey?.(props.sessionKey),
+    }),
+}));
+
 function resetVisibleSessionListViewData(): void {
     mockVisibleSessionListViewData = [
         {
@@ -444,9 +528,12 @@ describe('SessionsList pinning + per-group ordering', () => {
         setSessionListGroupOrderV1.mockClear();
         setSessionTagsV1.mockClear();
         setWorkspaceRefsV1.mockClear();
+        setSessionPinOp.mockClear();
+        setSessionTagAssignmentsOp.mockClear();
         routerPushSpy.mockReset();
         mockAllowedServerIds = ['server_a'];
         capturedRootFlatListProps = null;
+        capturedRootFlashListCompatProps.current = null;
         hideInactiveSessions = false;
         readMachineTargetForSessionMock.mockReset();
         mockMachinesState.current = [];
@@ -486,6 +573,20 @@ describe('SessionsList pinning + per-group ordering', () => {
         });
 
         expect(routerPushSpy).toHaveBeenCalledWith('/session/archived');
+    });
+
+    it('exposes stable test ids on primary section headers', async () => {
+        mockVisibleSessionListViewData = [
+            { type: 'header', title: 'Pinned', headerKind: 'pinned', groupKey: 'pinned-v1', serverId: 'server_a', serverName: 'Server A' },
+            { type: 'session', session: sessionA, groupKey: 'pinned-v1', groupKind: 'pinned', serverId: 'server_a', serverName: 'Server A' },
+            { type: 'header', title: 'Active', headerKind: 'active', serverId: 'server_a', serverName: 'Server A' },
+            { type: 'session', session: sessionLive1, groupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
+        ];
+
+        const screen = await renderSessionsList();
+
+        expect(screen.findByTestId('session-list-header:pinned-v1')).toBeTruthy();
+        expect(screen.findByTestId('session-list-header:active')).toBeTruthy();
     });
 
     it('stops wheel event propagation on web so session list scrolling is not blocked by document scroll-lock listeners', async () => {
@@ -538,7 +639,7 @@ describe('SessionsList pinning + per-group ordering', () => {
         expect(capturedRootFlatListProps?.disableVirtualization).toBe(true);
     });
 
-    it('keeps web FlatList virtualization enabled for large lists', async () => {
+    it('uses FlashListCompat for large web lists', async () => {
         const header = expectPresent(
             mockVisibleSessionListViewData.find((item) => item.type === 'header'),
             'expected header item',
@@ -561,10 +662,70 @@ describe('SessionsList pinning + per-group ordering', () => {
 
         await renderSessionsList();
 
-        expect(capturedRootFlatListProps?.disableVirtualization).toBe(false);
+        expect(capturedRootFlatListProps).toBeNull();
+        expect(capturedRootFlashListCompatProps.current).toBeTruthy();
+        expect(capturedRootFlashListCompatProps.current?.scrollEventThrottle).toBe(32);
     });
 
-    it('passes session tags from settings into session items when enabled', async () => {
+    it('renders the full priority prefix before inactive history on large web lists', async () => {
+        const makeHeader = (title: string, headerKind: string, groupKeyValue: string) => ({
+            type: 'header',
+            title,
+            headerKind,
+            groupKey: groupKeyValue,
+            serverId: 'server_a',
+            serverName: 'Server A',
+        });
+        const makeSession = (
+            id: string,
+            groupKeyValue: string,
+            groupKindValue: string,
+            section: 'active' | 'inactive',
+            index: number,
+        ) => ({
+            type: 'session',
+            session: {
+                ...sessionA,
+                id,
+                active: section === 'active',
+                updatedAt: sessionA.updatedAt + index,
+            },
+            groupKey: groupKeyValue,
+            groupKind: groupKindValue,
+            section,
+            serverId: 'server_a',
+            serverName: 'Server A',
+        });
+        const attentionRows = Array.from({ length: 6 }, (_, index) =>
+            makeSession(`sess_attention_${index}`, 'attention-promotion-v1', 'attention', 'active', index));
+        const workingRows = Array.from({ length: 10 }, (_, index) =>
+            makeSession(`sess_working_${index}`, 'working-placement-v1', 'working', 'active', 100 + index));
+        const pinnedRows = Array.from({ length: 205 }, (_, index) =>
+            makeSession(`sess_pinned_${index}`, 'pinned-v1', 'pinned', 'inactive', 200 + index));
+        const activeRows = Array.from({ length: 15 }, (_, index) =>
+            makeSession(`sess_active_${index}`, 'active', 'active', 'inactive', 500 + index));
+        const inactiveRows = Array.from({ length: 40 }, (_, index) =>
+            makeSession(`sess_inactive_${index}`, 'inactive', 'date', 'inactive', 700 + index));
+        mockVisibleSessionListViewData = [
+            makeHeader('Needs attention', 'attention', 'attention-promotion-v1'),
+            ...attentionRows,
+            makeHeader('Working', 'working', 'working-placement-v1'),
+            ...workingRows,
+            makeHeader('Pinned', 'pinned', 'pinned-v1'),
+            ...pinnedRows,
+            makeHeader('Active', 'active', 'active'),
+            ...activeRows,
+            makeHeader('Inactive', 'inactive', 'inactive'),
+            ...inactiveRows,
+        ];
+
+        await renderSessionsList();
+
+        expect(capturedRootFlatListProps).toBeNull();
+        expect(capturedRootFlashListCompatProps.current).toBeTruthy();
+    });
+
+    it('passes session tags from organization projection into session items when enabled', async () => {
         sessionTagsV1 = { 'server_a:sess_a': ['important'] };
         const screen = await renderSessionsList();
 
@@ -606,7 +767,7 @@ describe('SessionsList pinning + per-group ordering', () => {
         expect(updatedRow.props.allKnownTags).toEqual(['blocked', 'important', 'review']);
     });
 
-    it('writes updated session tags back to settings as a value (not an updater function)', async () => {
+    it('writes updated session tags through organization assignments', async () => {
         sessionTagsV1 = { 'server_a:sess_a': ['important'] };
         const screen = await renderSessionsList();
 
@@ -615,17 +776,22 @@ describe('SessionsList pinning + per-group ordering', () => {
             'expected sess_a session row',
         );
 
-        invokeTestInstanceHandler(row, 'onSetTags', ['urgent'], 'expected sess_a session row');
-
-        expect(setSessionTagsV1).toHaveBeenCalledTimes(1);
-        expect(setSessionTagsV1.mock.calls[0]?.[0]).toEqual({
-            'server_a:sess_a': ['urgent'],
+        await act(async () => {
+            invokeTestInstanceHandler(row, 'onSetTags', ['urgent'], 'expected sess_a session row');
+            await Promise.resolve();
         });
+
+        expect(setSessionTagAssignmentsOp).toHaveBeenCalledTimes(1);
+        expect(setSessionTagAssignmentsOp).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'server_a',
+            sessionId: 'sess_a',
+            tags: ['urgent'],
+        }));
     });
 
-    it('does not write session tags when the requested tags already match the current value', async () => {
+    it('does not write session tags when the requested tags already match the projected value', async () => {
         sessionTagsV1 = { 'server_a:sess_a': ['important'] };
-        setSessionTagsV1.mockClear();
+        setSessionTagAssignmentsOp.mockClear();
         const screen = await renderSessionsList();
 
         const row = expectPresent(
@@ -633,9 +799,12 @@ describe('SessionsList pinning + per-group ordering', () => {
             'expected sess_a session row',
         );
 
-        invokeTestInstanceHandler(row, 'onSetTags', ['important'], 'expected sess_a session row');
+        await act(async () => {
+            invokeTestInstanceHandler(row, 'onSetTags', ['important'], 'expected sess_a session row');
+            await Promise.resolve();
+        });
 
-        expect(setSessionTagsV1).not.toHaveBeenCalled();
+        expect(setSessionTagAssignmentsOp).not.toHaveBeenCalled();
     });
 
     it('shows pinned server badges only when multiple servers are selected', async () => {
@@ -660,8 +829,8 @@ describe('SessionsList pinning + per-group ordering', () => {
         expect(pinnedRow2.props.showServerBadge).toBe(true);
     });
 
-    it('wires pin toggling via pinnedSessionKeysV1', async () => {
-        setPinnedSessionKeysV1.mockClear();
+    it('wires pin toggling through organization pins', async () => {
+        setSessionPinOp.mockClear();
 
         const screen = await renderSessionsList();
 
@@ -672,10 +841,15 @@ describe('SessionsList pinning + per-group ordering', () => {
 
         await act(async () => {
             invokeTestInstanceHandler(row, 'onTogglePinned', undefined, 'expected sess_a session row');
+            await Promise.resolve();
         });
 
-        expect(setPinnedSessionKeysV1).toHaveBeenCalledTimes(1);
-        expect(setPinnedSessionKeysV1).toHaveBeenCalledWith(['server_a:sess_a']);
+        expect(setSessionPinOp).toHaveBeenCalledTimes(1);
+        expect(setSessionPinOp).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'server_a',
+            sessionId: 'sess_a',
+            pinned: true,
+        }));
     });
 
     it('does not render project headers and forces path/machine subtitles into rows', async () => {

@@ -140,6 +140,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
         } satisfies DropdownMenuItem,
         {
             id: 'sessionListFolderSortModeFoldersFirst',
+            testID: 'session-folder-sort-mode-folders-first',
             title: t('settingsSession.sessionList.folderSortModeFoldersFirstTitle'),
             subtitle: t('settingsSession.sessionList.folderSortModeFoldersFirstSubtitle'),
             category: t('settingsSession.sessionList.menuSections.folderSortMode'),
@@ -149,6 +150,7 @@ export function resolveSessionsListHeaderMenuItems(input: Readonly<{
         } satisfies DropdownMenuItem,
         {
             id: 'sessionListFolderSortModeMixed',
+            testID: 'session-folder-sort-mode-mixed',
             title: t('settingsSession.sessionList.folderSortModeMixedTitle'),
             subtitle: isDateOrderingMode
                 ? t('settingsSession.sessionList.folderSortModeMixedDisabledInDateModeSubtitle')

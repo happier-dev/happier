@@ -3,6 +3,7 @@ import {
     type SessionConfigOption,
     type SessionConfigOptionControl,
 } from '@/sync/domains/sessionControl/configOptionsControl';
+import { findModelOptionForEffectiveModelId } from '@/sync/domains/models/modelOptions';
 
 type NewSessionModelOptionWithConfigOptions = Readonly<{
     value: string;
@@ -65,7 +66,7 @@ export function sanitizeNewSessionConfigOverridesForModelSelection(params: Reado
         configOptions: params.configOptions,
         overrides: overrideRecords,
     }) ?? null);
-    const selectedModel = params.modelOptions.find((option) => option.value === params.selectedModelId) ?? null;
+    const selectedModel = findModelOptionForEffectiveModelId(params.modelOptions, params.selectedModelId);
     const selectedModelControls = controlsByOptionId(computeAcpConfigOptionControlsForProvider({
         providerId: params.providerId,
         configOptions: selectedModel?.modelOptions ?? null,

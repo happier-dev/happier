@@ -107,6 +107,8 @@ async function setupUseCreateNewSessionHarness() {
     const applySettingsSpy = vi.fn((..._args: unknown[]) => {});
     const updateAutomationSpy = vi.fn(async () => {});
     const updateSessionDraftSpy = vi.fn();
+    const upsertPendingMessageSpy = vi.fn();
+    const markSessionOptimisticThinkingSpy = vi.fn();
     const saveSessionDraftsSpy = vi.fn();
     const getMachineCapabilitiesSnapshotSpy = vi.fn(() => ({ supported: true, response: { protocolVersion: 1, results: {} } }));
     const prefetchMachineCapabilitiesSpy = vi.fn(async () => {});
@@ -192,6 +194,8 @@ async function setupUseCreateNewSessionHarness() {
                 updateSessionPermissionMode: vi.fn(),
                 updateSessionModelMode: vi.fn(),
                 updateSessionDraft: updateSessionDraftSpy,
+                upsertPendingMessage: upsertPendingMessageSpy,
+                markSessionOptimisticThinking: markSessionOptimisticThinkingSpy,
             }),
         },
     }));
@@ -371,6 +375,8 @@ async function setupUseCreateNewSessionHarness() {
         refreshAutomationsSpy,
         updateAutomationSpy,
         updateSessionDraftSpy,
+        upsertPendingMessageSpy,
+        markSessionOptimisticThinkingSpy,
         saveSessionDraftsSpy,
         applySettingsSpy,
         materializeNewSessionCheckoutSpy,
@@ -579,7 +585,10 @@ describe('useCreateNewSession permission seeding', () => {
             machineSpawnNewSessionSpy,
         } = await setupUseCreateNewSessionHarness();
 
-        machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_target' });
+        machineSpawnNewSessionSpy.mockResolvedValueOnce({
+            type: 'success',
+            sessionId: 'sess_target',
+        });
 
         let handleCreateSession: null | (() => Promise<void>) = null;
         const settings = { experiments: false } as unknown as Settings;
@@ -1020,7 +1029,7 @@ describe('useCreateNewSession permission seeding', () => {
         expect(captured.value?.serverId).toBe('server-a');
     });
 
-    it('routes post-spawn follow-up through the selected non-active server for repo-native worktree launches', async () => {
+    it('routes scoped repo-native first prompts through daemon spawn and post-spawn hydration', async () => {
         const {
             useCreateNewSession,
             refreshSessionsSpy,
@@ -1029,7 +1038,11 @@ describe('useCreateNewSession permission seeding', () => {
             machineSpawnNewSessionSpy,
         } = await setupUseCreateNewSessionHarness();
 
-        machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_target' });
+        machineSpawnNewSessionSpy.mockResolvedValueOnce({
+            type: 'success',
+            sessionId: 'sess_target',
+            usedInitialPrompt: true,
+        });
 
         let handleCreateSession: null | (() => Promise<void>) = null;
         const settings = { experiments: false } as unknown as Settings;
@@ -1085,10 +1098,19 @@ describe('useCreateNewSession permission seeding', () => {
             await handleCreateSession?.();
         });
 
+        expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'server-b',
+            initialPrompt: 'Ship the scoped follow-up fix',
+        }));
         expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess_target',
             targetServerId: 'server-b',
             initialMessageText: 'Ship the scoped follow-up fix',
+            messageLocalId: 'daemon-initial-prompt:sess_target',
+            metaOverrides: expect.objectContaining({
+                source: 'daemon-initial-prompt',
+                sentFrom: 'ui',
+            }),
             profileId: null,
         }));
         expect(refreshSessionsSpy).not.toHaveBeenCalled();
@@ -1108,7 +1130,11 @@ describe('useCreateNewSession permission seeding', () => {
             saveSessionDraftsSpy,
         } = await setupUseCreateNewSessionHarness();
 
-        machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_target' });
+        machineSpawnNewSessionSpy.mockResolvedValueOnce({
+            type: 'success',
+            sessionId: 'sess_target',
+            usedInitialPrompt: true,
+        });
         followUpSpawnedSessionWithServerScopeSpy.mockRejectedValueOnce(new Error('follow-up failed'));
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -1169,17 +1195,29 @@ describe('useCreateNewSession permission seeding', () => {
         });
 
         expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'follow-up failed');
+        expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'server-b',
+            initialPrompt: 'Ship the scoped follow-up fix',
+        }));
         expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess_target',
             targetServerId: 'server-b',
             initialMessageText: 'Ship the scoped follow-up fix',
+            messageLocalId: 'daemon-initial-prompt:sess_target',
+            metaOverrides: expect.objectContaining({
+                source: 'daemon-initial-prompt',
+                sentFrom: 'ui',
+            }),
         }));
         expect(saveSessionDraftsSpy).toHaveBeenCalledWith({ sess_target: 'Ship the scoped follow-up fix' });
         expect(updateSessionDraftSpy).not.toHaveBeenCalled();
         expect(disableDraftPersistence).not.toHaveBeenCalled();
         expect(clearNewSessionDraftSpy).not.toHaveBeenCalled();
-        expect(ensureSessionVisibleForMessageRouteSpy).toHaveBeenCalledWith('sess_target', { forceRefresh: true });
-        expect(routerReplace).toHaveBeenCalledWith('/session/sess_target?serverId=server-b', expect.anything());
+        expect(ensureSessionVisibleForMessageRouteSpy).toHaveBeenCalledWith('sess_target', {
+            forceRefresh: true,
+            serverId: 'server-b',
+        });
+        expect(routerReplace).not.toHaveBeenCalled();
     });
 
     it('clears and disables the /new draft before opening a hydrated created session when post-spawn follow-up fails', async () => {
@@ -1197,7 +1235,11 @@ describe('useCreateNewSession permission seeding', () => {
         } = await setupUseCreateNewSessionHarness();
         setLocalSearchParams({ server: 'http://localhost:3014' });
 
-        machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_target' });
+        machineSpawnNewSessionSpy.mockResolvedValueOnce({
+            type: 'success',
+            sessionId: 'sess_target',
+            usedInitialPrompt: true,
+        });
         followUpSpawnedSessionWithServerScopeSpy.mockRejectedValueOnce(new Error('follow-up failed'));
         ensureSessionVisibleForMessageRouteSpy.mockImplementationOnce(async (sessionId: string) => {
             sessions[sessionId] = { id: sessionId };
@@ -1256,10 +1298,19 @@ describe('useCreateNewSession permission seeding', () => {
         });
 
         expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'follow-up failed');
+        expect(machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'server-b',
+            initialPrompt: 'Ship the scoped follow-up fix',
+        }));
         expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess_target',
             targetServerId: 'server-b',
             initialMessageText: 'Ship the scoped follow-up fix',
+            messageLocalId: 'daemon-initial-prompt:sess_target',
+            metaOverrides: expect.objectContaining({
+                source: 'daemon-initial-prompt',
+                sentFrom: 'ui',
+            }),
         }));
         expect(saveSessionDraftsSpy).toHaveBeenCalledWith({ sess_target: 'Ship the scoped follow-up fix' });
         expect(updateSessionDraftSpy).toHaveBeenCalledWith('sess_target', 'Ship the scoped follow-up fix');
@@ -1800,8 +1851,10 @@ describe('useCreateNewSession permission seeding', () => {
             useCreateNewSession,
             syncSendMessageSpy,
             machineSpawnNewSessionSpy,
+            sessions,
         } = await setupUseCreateNewSessionHarness();
 
+        sessions.sess_new = { id: 'sess_new' };
         machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_new' });
 
         let handleCreateSession: null | (() => Promise<void>) = null;
@@ -1980,8 +2033,10 @@ describe('useCreateNewSession permission seeding', () => {
             useCreateNewSession,
             syncSendMessageSpy,
             machineSpawnNewSessionSpy,
+            sessions,
         } = await setupUseCreateNewSessionHarness();
 
+        sessions.sess_new = { id: 'sess_new' };
         machineSpawnNewSessionSpy.mockResolvedValueOnce({ type: 'success', sessionId: 'sess_new' });
 
         let handleCreateSession: null | ((opts?: any) => Promise<void>) = null;

@@ -478,7 +478,9 @@ describe('SessionView (data ready gating)', () => {
 
         expect(screen.findAllByTestId('session-route-loading')).toHaveLength(0);
         expect(screen.findAllByTestId('session-composer-input')).toHaveLength(1);
-        const latestChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
+        const latestChatListProps = chatListPropsSpy.mock.calls
+            .map((call) => call[0])
+            .find((props) => props?.session?.id === 's1');
         expect(latestChatListProps?.routeHydrationPending).not.toBe(true);
     });
 

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
 import { renderScreen } from '@/dev/testkit';
+import { TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT } from '@/components/ui/forms/largeTextInputPolicy';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 
@@ -16,6 +17,8 @@ const mocks = vi.hoisted(() => ({
     suggestionMoveDown: vi.fn(),
     activeSuggestions: [] as AutocompleteSuggestion[],
     activeSuggestionIndex: -1,
+    respectSuggestionQuery: false,
+    lastSuggestionQuery: undefined as string | null | undefined,
 }));
 
 const settingState = vi.hoisted(() => ({
@@ -26,6 +29,24 @@ const settingState = vi.hoisted(() => ({
 const hardwareShiftEnterState = vi.hoisted(() => ({
     listener: null as null | (() => void),
     remove: vi.fn(),
+}));
+
+type CommandMenuMockProps = {
+    open?: boolean;
+    query?: string;
+    items?: readonly { id: string; label: string }[];
+};
+
+type CommandMenuKeyboardMockInput = {
+    open?: boolean;
+    onMoveUp: () => void;
+    onMoveDown: () => void;
+    onSelect: () => void;
+    onClose: () => void;
+};
+
+const commandMenuState = vi.hoisted(() => ({
+    lastProps: null as null | CommandMenuMockProps,
 }));
 
 installAgentInputCommonModuleMocks({
@@ -93,6 +114,35 @@ vi.mock('@/sync/store/hooks', () => ({
     useSessionServerId: () => null,
 }));
 
+vi.mock('@/components/ui/commandMenu', () => ({
+    CommandMenu: (props: CommandMenuMockProps) => {
+        commandMenuState.lastProps = props;
+        return props.open ? React.createElement('CommandMenu', props, null) : null;
+    },
+    useCommandMenuKeyboard: (input: CommandMenuKeyboardMockInput) => ({
+        handleKey: (event: { key: string; shiftKey?: boolean }) => {
+            if (!input.open) return false;
+            if (event.key === 'ArrowUp') {
+                input.onMoveUp();
+                return true;
+            }
+            if (event.key === 'ArrowDown') {
+                input.onMoveDown();
+                return true;
+            }
+            if (event.key === 'Enter' || (event.key === 'Tab' && !event.shiftKey)) {
+                input.onSelect();
+                return true;
+            }
+            if (event.key === 'Escape') {
+                input.onClose();
+                return true;
+            }
+            return false;
+        },
+    }),
+}));
+
 vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props, null),
 }));
@@ -115,6 +165,9 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    getAgentIconSvgXml: () => null,
+    getAgentIconSource: () => null,
+    getAgentIconTintColor: () => undefined,
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: () => null,
@@ -168,7 +221,14 @@ vi.mock('@/components/autocomplete/useActiveWord', () => ({
 }));
 
 vi.mock('@/components/autocomplete/useActiveSuggestions', () => ({
-    useActiveSuggestions: () => [mocks.activeSuggestions, mocks.activeSuggestionIndex, mocks.suggestionMoveUp, mocks.suggestionMoveDown],
+    useActiveSuggestions: (query: string | null) => {
+        mocks.lastSuggestionQuery = query;
+        const suggestions = mocks.respectSuggestionQuery && query === null
+            ? []
+            : mocks.activeSuggestions;
+        const selected = suggestions.length > 0 ? mocks.activeSuggestionIndex : -1;
+        return [suggestions, selected, mocks.suggestionMoveUp, mocks.suggestionMoveDown];
+    },
 }));
 
 vi.mock('@/components/autocomplete/applySuggestion', () => ({
@@ -245,6 +305,9 @@ describe('AgentInput (enter to send on native)', () => {
         hardwareShiftEnterState.listener = null;
         mocks.activeSuggestions = [];
         mocks.activeSuggestionIndex = -1;
+        mocks.respectSuggestionQuery = false;
+        mocks.lastSuggestionQuery = undefined;
+        commandMenuState.lastProps = null;
         vi.clearAllMocks();
     });
 
@@ -280,6 +343,78 @@ describe('AgentInput (enter to send on native)', () => {
 
         expect(flattenStyle(findNativeTextInput(existingSessionScreen).props.style).fontSize).toBe(16);
         expect(flattenStyle(findNativeTextInput(newSessionScreen).props.style).fontSize).toBe(16);
+    });
+
+    it('keeps slash autocomplete active when focusing a large native input with an active trigger', async () => {
+        mocks.activeSuggestions = [{ key: 'cmd-run', text: '/run', label: '/run' }];
+        mocks.activeSuggestionIndex = 0;
+        mocks.respectSuggestionQuery = true;
+        const largePrompt = `${'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1)} /r`;
+        const { AgentInput } = await import('./AgentInput');
+        const screen = await renderScreen(
+            <AgentInput
+                sessionId="session-1"
+                value={largePrompt}
+                onChangeText={mocks.onChangeText}
+                placeholder="p"
+                onSend={mocks.onSend}
+                autocompletePrefixes={['/']}
+                autocompleteSuggestions={async () => mocks.activeSuggestions}
+                isSendDisabled={false}
+                disabled={false}
+                showAbortButton={false}
+            />
+        );
+
+        const input = findNativeTextInput(screen);
+        await act(async () => {
+            input.props.onFocus?.();
+        });
+
+        expect(mocks.lastSuggestionQuery).toBe('/r');
+        expect(commandMenuState.lastProps).toEqual(expect.objectContaining({
+            open: true,
+            query: '/r',
+            items: [expect.objectContaining({ label: '/run' })],
+        }));
+    });
+
+    it('keeps slash autocomplete active after a large native value is restored into an empty composer', async () => {
+        mocks.activeSuggestions = [{ key: 'cmd-run', text: '/run', label: '/run' }];
+        mocks.activeSuggestionIndex = 0;
+        mocks.respectSuggestionQuery = true;
+        const largePrompt = `${'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1)} /r`;
+        const { AgentInput } = await import('./AgentInput');
+        const render = (value: string) => (
+            <AgentInput
+                sessionId="session-1"
+                value={value}
+                onChangeText={mocks.onChangeText}
+                placeholder="p"
+                onSend={mocks.onSend}
+                autocompletePrefixes={['/']}
+                autocompleteSuggestions={async () => mocks.activeSuggestions}
+                isSendDisabled={false}
+                disabled={false}
+                showAbortButton={false}
+            />
+        );
+        const screen = await renderScreen(render(''));
+
+        await act(async () => {
+            screen.tree.update(render(largePrompt));
+        });
+        const input = findNativeTextInput(screen);
+        await act(async () => {
+            input.props.onFocus?.();
+        });
+
+        expect(mocks.lastSuggestionQuery).toBe('/r');
+        expect(commandMenuState.lastProps).toEqual(expect.objectContaining({
+            open: true,
+            query: '/r',
+            items: [expect.objectContaining({ label: '/run' })],
+        }));
     });
 
     it('lets owners handle autocomplete suggestion selection before default insertion', async () => {

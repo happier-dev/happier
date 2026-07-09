@@ -115,6 +115,9 @@ export function installSessionShellCommonModuleMocks(
             getNewSessionRelevantInstallableDepKeys: () => [],
             resolveAgentUiBehavior: () => ({}),
             resolveAgentUiBehaviorFromFlavor: () => ({}),
+            resolveAgentUiBehaviorFromSessionMetadata: () => ({}),
+            resolveSessionGoalActionCapabilityProfile: () => null,
+            classifyAgentSessionComposerNonSteerablePayload: () => null,
             supportsDetectedMcpConfigScan: () => false,
             supportsEditableSessionGoals: () => false,
         } satisfies Partial<RegistryUiBehaviorModule>;

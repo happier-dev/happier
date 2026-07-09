@@ -2,6 +2,8 @@ import { Ionicons, Octicons } from '@expo/vector-icons';
 import * as React from 'react';
 
 import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
 import { hapticsLight } from '@/components/ui/theme/haptics';
 import { t } from '@/text';
@@ -17,6 +19,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
     profileIcon: string;
     envVarsCount?: number;
     agentLabel?: string | null;
+    engineLabel?: string | null;
     machineName?: string | null;
     currentPath?: string | null;
     resumeSessionId?: string | null;
@@ -66,11 +69,20 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
         }];
     }
 
-    if (opts.agentLabel && opts.onAgentClick) {
+    const resolvedEngineLabel = opts.engineLabel ?? opts.agentLabel ?? t(getAgentCore(opts.agentId).displayNameKey);
+    if (resolvedEngineLabel && opts.onAgentClick) {
         controlActionsById.engine = [{
             id: 'agent',
-            label: opts.agentLabel,
-            icon: <Octicons name="cpu" size={16} color={opts.tint} />,
+            label: resolvedEngineLabel,
+            icon: (
+                <AgentIcon
+                    agentId={opts.agentId}
+                    size={16}
+                    color={opts.tint}
+                    style={{ transform: [{ scale: getAgentPickerIconScale(opts.agentId) }] }}
+                    testID="agent-input-agent-action-logo"
+                />
+            ),
             onPress: () => {
                 hapticsLight();
                 opts.dismiss();

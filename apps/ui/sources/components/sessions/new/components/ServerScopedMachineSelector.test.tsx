@@ -138,4 +138,45 @@ describe('ServerScopedMachineSelector', () => {
 
         expect(onSelect).toHaveBeenCalledWith(machine);
     });
+
+    it.each(['rpcUnavailable', 'keyUnavailable'] as const)(
+        'marks transport-online machines unavailable when exact spawn readiness is %s',
+        async (spawnReadinessStatus) => {
+        const { ServerScopedMachineSelector } = await import('./ServerScopedMachineSelector');
+        const onSelect = vi.fn();
+        const machine = {
+            id: `machine-${spawnReadinessStatus}`,
+            serverId: 'server-b',
+            serverName: 'Server B',
+            active: true,
+            spawnReadinessStatus,
+            metadata: { host: 'host-1', displayName: 'Machine 1', homeDir: '/home/me' },
+        } as ServerScopedMachine;
+
+        capturedItemProps.length = 0;
+
+        await renderScreen(React.createElement(ServerScopedMachineSelector, {
+            groups: [{
+                serverId: 'server-b',
+                serverName: 'Server B',
+                loading: false,
+                signedOut: false,
+                machines: [machine],
+            }],
+            selectedMachineId: null,
+            selectedServerId: null,
+            onSelect,
+            testIdPrefix: 'new-session-machine',
+        }));
+
+        const item = capturedItemProps.find((props) => props.testID === `new-session-machine-option:machine-${spawnReadinessStatus}`);
+        expect(item).toEqual(expect.objectContaining({
+            detail: 'common.unavailable',
+            disabled: true,
+        }));
+
+        (item?.onPress as (() => void) | undefined)?.();
+
+        expect(onSelect).not.toHaveBeenCalled();
+    });
 });

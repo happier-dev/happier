@@ -6,11 +6,14 @@ import { Modal } from '@/modal';
 import { useDaemonScopedMachineCapabilitiesCache } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
 import { DetectedClisModal } from '@/components/machines/DetectedClisModal';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
-import { getAgentCore, getAgentCliGlyph } from '@/agents/catalog/catalog';
+import { buildProviderCliCapabilityId } from '@/capabilities/cliCapabilityId';
+import type { AgentId } from '@/agents/catalog/catalog';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
-import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { useMachine } from '@/sync/domains/state/storage';
 import { Text } from '@/components/ui/text/Text';
+import { resolveMachineCliLogoDisplay } from './machineCliLogoDisplay';
 
 
 type Props = {
@@ -24,27 +27,42 @@ type Props = {
     autoDetect?: boolean;
 };
 
+// Small, monochrome provider marks — recognizable at a glance without widening the row.
+const CLI_LOGO_SIZE = 16;
+
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 2,
+        gap: 3,
         paddingHorizontal: 4,
         paddingVertical: 2,
         borderRadius: 6,
     },
-    glyph: {
-        color: theme.colors.text.secondary,
-        ...Typography.default(),
+    logoSlot: {
+        width: CLI_LOGO_SIZE,
+        height: CLI_LOGO_SIZE,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
-    glyphMuted: {
+    overflow: {
+        color: theme.colors.text.secondary,
+        fontSize: 11,
+        ...Typography.default('semiBold'),
+    },
+    placeholder: {
+        color: theme.colors.text.secondary,
         opacity: 0.35,
+        ...Typography.default(),
     },
 }));
 
-// iOS can render some dingbat glyphs as emoji; force text presentation (U+FE0E).
+function readCliAvailable(data: unknown): boolean {
+    return Boolean(data && typeof data === 'object' && !Array.isArray(data) && (data as { available?: unknown }).available === true);
+}
+
 export const MachineCliGlyphs = React.memo(({ machineId, isOnline, serverId, autoDetect = true }: Props) => {
-    useUnistyles(); // re-render on theme changes
+    const { theme } = useUnistyles();
     const styles = stylesheet;
     const enabledAgents = useEnabledAgentIds();
     const machine = useMachine(machineId);
@@ -70,32 +88,22 @@ export const MachineCliGlyphs = React.memo(({ machineId, isOnline, serverId, aut
         });
     }, [isOnline, machineId, serverId]);
 
-    const glyphs = React.useMemo(() => {
-        if (state.status !== 'loaded') {
-            return [{ key: 'unknown', glyph: '•', factor: 0.85, muted: true }];
-        }
-
-        const items: Array<{ key: string; glyph: string; factor: number; muted: boolean }> = [];
+    // Agents whose CLI is detected as available on this machine, in enabled-agent order.
+    const availableAgentIds = React.useMemo<ReadonlyArray<AgentId>>(() => {
+        if (state.status !== 'loaded') return [];
+        const ids: AgentId[] = [];
         const results = state.snapshot.response.results;
         for (const agentId of enabledAgents) {
-            const capId = `cli.${getAgentCore(agentId).cli.detectKey}` as CapabilityId;
-            const available = (results[capId]?.ok && (results[capId].data as any)?.available === true) ?? false;
-            if (!available) continue;
-            const core = getAgentCore(agentId);
-            items.push({
-                key: agentId,
-                glyph: getAgentCliGlyph(agentId),
-                factor: core.ui.cliGlyphScale ?? 1.0,
-                muted: false,
-            });
+            const result = results[buildProviderCliCapabilityId(agentId)];
+            if (result?.ok === true && readCliAvailable(result.data)) {
+                ids.push(agentId);
+            }
         }
-
-        if (items.length === 0) {
-            items.push({ key: 'none', glyph: '•', factor: 0.85, muted: true });
-        }
-
-        return items;
+        return ids;
     }, [enabledAgents, state]);
+
+    const display = React.useMemo(() => resolveMachineCliLogoDisplay(availableAgentIds), [availableAgentIds]);
+    const isLoading = state.status !== 'loaded';
 
     return (
         <Pressable
@@ -105,18 +113,26 @@ export const MachineCliGlyphs = React.memo(({ machineId, isOnline, serverId, aut
                 { opacity: !isOnline ? 0.5 : (pressed ? 0.7 : 1) },
             ]}
         >
-            {glyphs.map((item) => (
-                <Text
-                    key={item.key}
-                    style={[
-                        styles.glyph,
-                        item.muted ? styles.glyphMuted : null,
-                        { fontSize: Math.round(14 * item.factor), lineHeight: 16 },
-                    ]}
-                >
-                    {item.glyph}
-                </Text>
-            ))}
+            {isLoading || availableAgentIds.length === 0 ? (
+                <Text style={styles.placeholder}>•</Text>
+            ) : (
+                <>
+                    {display.visible.map((agentId) => (
+                        <View key={agentId} style={styles.logoSlot}>
+                            <AgentIcon
+                                agentId={agentId}
+                                size={CLI_LOGO_SIZE}
+                                color={theme.colors.text.secondary}
+                                style={{ transform: [{ scale: getAgentPickerIconScale(agentId) }] }}
+                                testID={`machine-cli-logo:${agentId}`}
+                            />
+                        </View>
+                    ))}
+                    {display.overflow > 0 ? (
+                        <Text style={styles.overflow}>{`+${display.overflow}`}</Text>
+                    ) : null}
+                </>
+            )}
         </Pressable>
     );
 });

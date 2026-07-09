@@ -13,6 +13,7 @@ import type {
   SessionConfigOptionControl,
   SessionConfigOptionValueId,
 } from "@/sync/domains/sessionControl/configOptionsControl";
+import { Text } from "@/components/ui/text/Text";
 import { t } from "@/text";
 
 import { AgentInputSessionConfigOptionsSection } from "./AgentInputSessionConfigOptionsSection";
@@ -45,6 +46,7 @@ type AgentInputEngineDetailProps = Readonly<{
   ) => void;
 
   configControls?: ReadonlyArray<SessionConfigOptionControl> | null;
+  configNotes?: ReadonlyArray<string>;
   configProbe?: OptionPickerProbeState;
   onSelectConfigValue?: (
     configId: string,
@@ -95,8 +97,13 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
   const sectionOrder = props.sectionOrder ?? ["model", "config"];
   const surfaceVariant = props.surfaceVariant ?? "carded";
   const hasModelSection =
-    (props.modelOptions?.length ?? 0) > 0 || props.canEnterCustomModel === true;
-  const hasConfigSection = (props.configControls?.length ?? 0) > 0;
+    (props.modelOptions?.length ?? 0) > 0
+    || props.canEnterCustomModel === true
+    || (props.modelNotes?.length ?? 0) > 0
+    || (props.modelProbe !== undefined && props.modelProbe.phase !== "idle");
+  const hasConfigSection =
+    (props.configControls?.length ?? 0) > 0
+    || (props.configNotes?.length ?? 0) > 0;
 
   if (!hasModelSection && !hasConfigSection) {
     return null;
@@ -179,6 +186,15 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
             surfaceVariant,
             "config",
             <View style={styles.configSection}>
+              {(props.configNotes ?? []).map((note, index) => (
+                <Text
+                  key={`${index}:${note}`}
+                  testID={index === 0 ? "agent-input-config-options-unavailable" : undefined}
+                  style={styles.configNote}
+                >
+                  {note}
+                </Text>
+              ))}
               <AgentInputSessionConfigOptionsSection
                 controls={props.configControls ?? []}
                 onSelectValue={props.onSelectConfigValue}
@@ -204,5 +220,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   configSection: {
     gap: 8,
+  },
+  configNote: {
+    fontSize: 12,
+    lineHeight: 16,
+    color: theme.colors.text.secondary,
   },
 }));

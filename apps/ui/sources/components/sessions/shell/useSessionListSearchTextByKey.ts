@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -81,7 +82,7 @@ export function useSessionListSearchTextByKey(
             appendText(parts, entry.sessionId);
             appendRenderableText(
                 parts,
-                state.sessionListRowStateByServerId?.[entry.serverId]?.[entry.sessionId]
+                readSessionListRowForServerId(state.sessionListRowStateByServerId, entry.serverId, entry.sessionId)
                     ?? state.sessionListRenderables?.[entry.sessionId]
                     ?? null,
             );

@@ -13,6 +13,7 @@ import {
     runDynamicConfigOptionsProbeDedupe,
     writeDynamicConfigOptionsProbeCacheError,
     writeDynamicConfigOptionsProbeCacheSuccess,
+    writeDynamicConfigOptionsProbeCacheUnavailable,
 } from '@/sync/domains/sessionControl/dynamicConfigOptionsProbeCache';
 import {
     buildNewSessionCapabilityProbeContextKey,
@@ -20,7 +21,11 @@ import {
     type NewSessionCapabilityProbeContext,
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
-import { scheduleProbedResourceRetryAfterExpiry } from './probedResourceRetrySchedule';
+import { buildProviderCliCapabilityId } from '@/capabilities/cliCapabilityId';
+import {
+    scheduleProbedResourceRetryAfterDelay,
+    scheduleProbedResourceRetryAfterExpiry,
+} from './probedResourceRetrySchedule';
 
 export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
     backendTarget: BackendTargetRefV2;
@@ -31,6 +36,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
     probeContext?: NewSessionCapabilityProbeContext | null;
 }>): Readonly<{
     configOptions: readonly AcpConfigOption[] | null;
+    unavailable: boolean;
     probe: Readonly<{
         phase: 'idle' | 'loading' | 'refreshing';
         refreshedAt: number | null;
@@ -38,6 +44,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
     }>;
 }> {
     const [configOptions, setConfigOptions] = React.useState<readonly AcpConfigOption[] | null>(null);
+    const [unavailable, setUnavailable] = React.useState(false);
     const [probePhase, setProbePhase] = React.useState<'idle' | 'loading' | 'refreshing'>('idle');
     const [refreshedAt, setRefreshedAt] = React.useState<number | null>(null);
     const [refreshNonce, setRefreshNonce] = React.useState(0);
@@ -106,6 +113,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
         if (!cacheKey || !agentType) {
             setConfigOptions(null);
             configOptionsRef.current = null;
+            setUnavailable(false);
             setProbePhase('idle');
             setRefreshedAt(null);
             refreshedAtRef.current = null;
@@ -126,12 +134,14 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
         if (cached) {
             setConfigOptions(cached);
             configOptionsRef.current = cached;
+            setUnavailable(cacheEntry?.kind === 'success' && cacheEntry.unavailable === true);
             const cachedUpdatedAt = cacheEntry?.updatedAt ?? null;
             setRefreshedAt(cachedUpdatedAt);
             refreshedAtRef.current = cachedUpdatedAt;
         } else if (!scopeStable) {
             setConfigOptions(null);
             configOptionsRef.current = null;
+            setUnavailable(false);
             setRefreshedAt(null);
             refreshedAtRef.current = null;
         }
@@ -149,17 +159,20 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
 
         let cancelled = false;
         const run = async () => {
+            const probeAgentType = agentType;
+            if (!probeAgentType) return;
             if (!params.selectedMachineId) return;
             setProbePhase(configOptionsRef.current ? 'refreshing' : 'loading');
             const cwd = typeof params.cwd === 'string' ? params.cwd.trim() : '';
             const attempt = await runDynamicConfigOptionsProbeDedupe<Readonly<{
                 value: readonly AcpConfigOption[];
                 cacheable: boolean;
+                unavailable?: boolean;
             }> | null>(cacheKey, async () => {
                 const response = await machineCapabilitiesInvoke(
                     params.selectedMachineId!,
                     {
-                        id: `cli.${agentType}` as any,
+                        id: buildProviderCliCapabilityId(probeAgentType),
                         method: 'probeConfigOptions',
                         params: {
                             timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
@@ -176,9 +189,12 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
                 if (!response.supported) return null;
                 if (!response.response.ok) return null;
                 const result = response.response.result as any;
+                const source = typeof result?.source === 'string' ? result.source : null;
+                if (source === 'unavailable') {
+                    return { value: [], cacheable: false, unavailable: true };
+                }
                 const normalized = normalizeAcpConfigOptionsArray(result?.configOptions);
                 if (!normalized) return null;
-                const source = typeof result?.source === 'string' ? result.source : null;
                 const cacheable = source !== 'static';
                 return { value: normalized, cacheable };
             });
@@ -186,26 +202,47 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             if (cancelled) return;
             const commitNowMs = Date.now();
             const value = attempt?.value ?? null;
+            const nextUnavailable = attempt?.unavailable === true;
 
             if (value && attempt?.cacheable !== false) {
                 writeDynamicConfigOptionsProbeCacheSuccess(cacheKey, value, commitNowMs);
                 setConfigOptions(value);
+                setUnavailable(false);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
+                return;
+            }
+
+            if (value && attempt?.cacheable === false && nextUnavailable) {
+                writeDynamicConfigOptionsProbeCacheUnavailable(cacheKey, commitNowMs);
+                setConfigOptions(value);
+                setUnavailable(true);
+                setRefreshedAt(commitNowMs);
+                setProbePhase('idle');
+                retryTimeout = scheduleProbedResourceRetryAfterDelay(DYNAMIC_CONFIG_OPTIONS_PROBE_ERROR_BACKOFF_MS, () => {
+                    setRefreshNonce((n) => n + 1);
+                });
                 return;
             }
 
             if (value && attempt?.cacheable === false && !cached) {
                 writeDynamicConfigOptionsProbeCacheError(cacheKey, commitNowMs);
                 setConfigOptions(value);
+                setUnavailable(false);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
                 return;
             }
 
             if (cached) {
-                writeDynamicConfigOptionsProbeCacheSuccess(cacheKey, cached, commitNowMs);
+                const cachedUnavailable = cacheEntry?.kind === 'success' && cacheEntry.unavailable === true;
+                if (cachedUnavailable) {
+                    writeDynamicConfigOptionsProbeCacheUnavailable(cacheKey, commitNowMs);
+                } else {
+                    writeDynamicConfigOptionsProbeCacheSuccess(cacheKey, cached, commitNowMs);
+                }
                 setConfigOptions(cached);
+                setUnavailable(cachedUnavailable);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
                 return;
@@ -216,12 +253,14 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             if (stale && staleUpdatedAt) {
                 writeDynamicConfigOptionsProbeCacheSuccess(cacheKey, stale, commitNowMs);
                 setConfigOptions(stale);
+                setUnavailable(false);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
                 return;
             }
 
             writeDynamicConfigOptionsProbeCacheError(cacheKey, commitNowMs);
+            setUnavailable(false);
             setProbePhase('idle');
             retryTimeout = setTimeout(() => {
                 setRefreshNonce((n) => n + 1);
@@ -237,6 +276,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
 
     return {
         configOptions,
+        unavailable,
         probe: {
             phase: probePhase,
             refreshedAt,

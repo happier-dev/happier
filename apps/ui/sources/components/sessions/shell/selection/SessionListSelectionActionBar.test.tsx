@@ -66,8 +66,7 @@ function ActionBarHarness() {
             <SessionListSelectionActionBarHost
                 targetsByKey={targetsByKey}
                 bulkActionContext={{
-                    pinnedSessionKeysV1: [],
-                    setPinnedSessionKeysV1: async () => undefined,
+                    setSessionPin: async () => undefined,
                     setManualReadState: async (target) => target.sessionId === 'session-b'
                         ? { success: false, message: 'failed' }
                         : { success: true },
@@ -129,7 +128,7 @@ describe('SessionListSelectionActionBarHost', () => {
             button.props.onPress();
         });
 
-        const actionBar = screen.findByProps({ testID: 'session-list-selection-action-bar' });
+        const actionBar = screen.findByTestId('session-list-selection-action-bar');
         expect(actionBar).toBeTruthy();
         const count = screen.findByProps({ testID: 'session-list-selection-count' });
         expect(count.props['data-selected-count']).toBe(1);
@@ -140,14 +139,14 @@ describe('SessionListSelectionActionBarHost', () => {
 
         await pressByTestId(screen, 'enter-selection-mode');
 
-        const actionBar = screen.findByProps({ testID: 'session-list-selection-action-bar' });
+        const actionBar = screen.findByTestId('session-list-selection-action-bar');
         expect(actionBar).toBeTruthy();
         const count = screen.findByProps({ testID: 'session-list-selection-count' });
         expect(count.props['data-selected-count']).toBe(0);
     });
 
     it('executes a bulk local action and renders a result selector before dismissing', async () => {
-        const pinnedWrites: string[][] = [];
+        const setSessionPin = vi.fn(async () => undefined);
         const targetsByKey = new Map<string, SessionBulkActionTarget>([
             ['session-a', {
                 key: 'session-a',
@@ -162,10 +161,7 @@ describe('SessionListSelectionActionBarHost', () => {
                 <SessionListSelectionActionBarHost
                     targetsByKey={targetsByKey}
                     bulkActionContext={{
-                        pinnedSessionKeysV1: [],
-                        setPinnedSessionKeysV1: async (next) => {
-                            pinnedWrites.push(next);
-                        },
+                        setSessionPin,
                     }}
                 />
             </SessionListSelectionProvider>,
@@ -174,7 +170,10 @@ describe('SessionListSelectionActionBarHost', () => {
         await pressByTestId(screen, 'select-session-a');
         await pressByTestId(screen, 'session-list-selection-action-session-pin');
 
-        expect(pinnedWrites).toEqual([['session-a']]);
+        expect(setSessionPin).toHaveBeenCalledWith({
+            target: expect.objectContaining({ key: 'session-a', sessionId: 'session-a' }),
+            pinned: true,
+        });
         const result = screen.findByProps({ testID: 'session-list-selection-result' });
         expect(result.props['data-action-id']).toBe(SESSION_BULK_ACTION_IDS.pin);
         expect(result.props['data-succeeded-count']).toBe(1);
@@ -312,7 +311,7 @@ describe('SessionListSelectionActionBarHost', () => {
         expect(result.props['data-succeeded-count']).toBe(1);
     });
 
-    it('anchors near the bottom on native screens instead of reserving tab-bar height twice', async () => {
+    it('floats above the measured bottom chrome so its actions are not hidden behind the tab bar', async () => {
         Platform.OS = 'ios';
         vi.mocked(useWindowDimensions).mockReturnValue({ width: 390, height: 840, scale: 1, fontScale: 1 });
         vi.mocked(useSessionCockpitBottomChromeHeight).mockReturnValue(80);
@@ -328,7 +327,7 @@ describe('SessionListSelectionActionBarHost', () => {
         const flattenedStyle = Array.isArray(host.props.style)
             ? Object.assign({}, ...host.props.style.filter(Boolean))
             : host.props.style;
-        expect(flattenedStyle.bottom).toBeLessThan(40);
+        expect(flattenedStyle.bottom).toBeGreaterThanOrEqual(80); // clears the mocked 80px tab bar (no overlap)
     });
 
     it('uses a compact horizontally scrollable action row on short native screens', async () => {
@@ -350,16 +349,16 @@ describe('SessionListSelectionActionBarHost', () => {
         await pressByTestId(screen, 'select-session-a');
 
         const host = screen.findByProps({ testID: 'session-list-selection-action-bar-host' });
-        const actionBar = screen.findByProps({ testID: 'session-list-selection-action-bar' });
+        const actionBar = screen.findByTestId('session-list-selection-action-bar');
         const actionScroll = screen.findByProps({ testID: 'session-list-selection-actions-scroll' });
 
         expect(flattenStyle(host.props.style)).toMatchObject({ alignItems: 'stretch' });
-        expect(flattenStyle(actionBar.props.style)).toMatchObject({ width: '100%' });
+        expect(flattenStyle(actionBar!.props.style)).toMatchObject({ width: '100%' });
         expect(flattenStyle(actionScroll.parent?.props.style)).toMatchObject({ width: '100%' });
     });
 
     it('executes actions for selected targets hidden by a collapsed group', async () => {
-        const setPinnedSessionKeysV1 = vi.fn();
+        const setSessionPin = vi.fn(async () => undefined);
         const targetsByKey = new Map<string, SessionBulkActionTarget>([
             ['session-a', {
                 key: 'session-a',
@@ -387,8 +386,7 @@ describe('SessionListSelectionActionBarHost', () => {
                 <SessionListSelectionActionBarHost
                     targetsByKey={targetsByKey}
                     bulkActionContext={{
-                        pinnedSessionKeysV1: [],
-                        setPinnedSessionKeysV1,
+                        setSessionPin,
                     }}
                 />
             );
@@ -406,6 +404,9 @@ describe('SessionListSelectionActionBarHost', () => {
 
         await pressByTestId(screen, 'session-list-selection-action-session-pin');
 
-        expect(setPinnedSessionKeysV1).toHaveBeenCalledWith(['session-b']);
+        expect(setSessionPin).toHaveBeenCalledWith({
+            target: expect.objectContaining({ key: 'session-b', sessionId: 'session-b' }),
+            pinned: true,
+        });
     });
 });

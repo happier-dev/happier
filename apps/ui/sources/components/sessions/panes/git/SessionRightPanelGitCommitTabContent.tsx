@@ -1,11 +1,14 @@
 import * as React from 'react';
-import { View } from 'react-native';
 import { computeExpandedPathsForReveal } from '@/components/workspaces/files/repositoryTree/computeExpandedPathsForReveal';
 import { SessionRightPanelGitCommitTab } from '@/components/sessions/panes/git/SessionRightPanelGitCommitTab';
-import { ScmChangeDiscardButton } from '@/components/sessions/sourceControl/changes/ScmChangeDiscardButton';
 import { ScmCommitSelectionToggleButton } from '@/components/sessions/sourceControl/commitSelection/ScmCommitSelectionToggleButton';
 import { ScmChangeOverflowMenu } from '@/components/workspaces/scm/changes/ScmChangeOverflowMenu';
+import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
+import { applyFileDiscardAction } from '@/scm/operations/applyFileDiscardAction';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
+import { filterDirectoryLikeScmFileStatuses, isDirectoryLikeScmFileStatus } from '@/scm/isDirectoryLikeScmFileStatus';
 import {
     getPreferredChangedFilesViewMode,
     resolveChangedFilesViewMode,
@@ -61,6 +64,7 @@ export type SessionRightPanelGitCommitTabContentProps = Readonly<{
 }>;
 
 export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRightPanelGitCommitTabContentProps) => {
+    const copyFeedback = useTemporaryCopyFeedback();
     const commitSelectionUiEnabled = props.commitSelectionUiEnabled === true;
     const { latestTurnChangeSet, latestTurnScopedChangeSet, sessionChangeSet } = useDerivedSessionChangeSet(props.sessionId);
 
@@ -79,6 +83,29 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
         sessionChangeSet,
     });
 
+    const visibleRepositoryChangedFiles = React.useMemo(
+        () => filterDirectoryLikeScmFileStatuses(changed.allRepositoryChangedFiles),
+        [changed.allRepositoryChangedFiles],
+    );
+    const turnAgentReportedFiles = changed.turnAgentReportedFiles ?? [];
+    const turnCheckpointFiles = changed.turnCheckpointFiles ?? [];
+    const visibleTurnAttributedFiles = React.useMemo(
+        () => changed.turnAttributedFiles.filter((entry) => !isDirectoryLikeScmFileStatus(entry.file)),
+        [changed.turnAttributedFiles],
+    );
+    const visibleTurnAgentReportedFiles = React.useMemo(
+        () => turnAgentReportedFiles.filter((entry) => !isDirectoryLikeScmFileStatus(entry.file)),
+        [turnAgentReportedFiles],
+    );
+    const visibleTurnCheckpointFiles = React.useMemo(
+        () => turnCheckpointFiles.filter((entry) => !isDirectoryLikeScmFileStatus(entry.file)),
+        [turnCheckpointFiles],
+    );
+    const visibleSessionAttributedFiles = React.useMemo(
+        () => changed.sessionAttributedFiles.filter((entry) => !isDirectoryLikeScmFileStatus(entry.file)),
+        [changed.sessionAttributedFiles],
+    );
+
     const {
         repositorySelectedCount,
         isSelectedForCommit,
@@ -96,12 +123,20 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
         scmCommitStrategy: props.scmCommitStrategy,
         commitSelectionPaths: props.commitSelectionPaths,
         commitSelectionPatches: props.commitSelectionPatches,
-        changedFiles: changed.allRepositoryChangedFiles,
+        changedFiles: visibleRepositoryChangedFiles,
     });
 
+    const [selectionModeUserOn, setSelectionModeUserOn] = React.useState(false);
+    // Selection mode is an explicit opt-in: rows stay free of the per-file "+" until the
+    // user taps "Select files to commit". A non-empty selection always forces it on so a
+    // pending selection can never be silently hidden.
+    const selectionModeActive = commitSelectionUiEnabled && (selectionModeUserOn || repositorySelectedCount > 0);
+    const enterSelectionMode = React.useCallback(() => setSelectionModeUserOn(true), []);
+    const exitSelectionMode = React.useCallback(() => setSelectionModeUserOn(false), []);
+
     const selectedRepositoryChangedFiles = React.useMemo(() => {
-        return changed.allRepositoryChangedFiles.filter((file) => isSelectedForCommit(file));
-    }, [changed.allRepositoryChangedFiles, isSelectedForCommit]);
+        return visibleRepositoryChangedFiles.filter((file) => isSelectedForCommit(file));
+    }, [isSelectedForCommit, visibleRepositoryChangedFiles]);
 
     const showSelectedViewToggle = selectedRepositoryChangedFiles.length > 0;
 
@@ -135,26 +170,26 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
     const currentScopeChangedFiles = React.useMemo<readonly ScmFileStatus[]>(() => {
         if (scopedChangedFilesViewMode === 'selected') return selectedRepositoryChangedFiles;
         if (scopedChangedFilesViewMode === 'turn') {
-            return changed.turnAttributedFiles.map((entry) => entry.file);
+            return visibleTurnAttributedFiles.map((entry) => entry.file);
         }
         if (scopedChangedFilesViewMode === 'turn_agent_reported') {
-            return changed.turnAgentReportedFiles.map((entry) => entry.file);
+            return visibleTurnAgentReportedFiles.map((entry) => entry.file);
         }
         if (scopedChangedFilesViewMode === 'turn_checkpoint') {
-            return changed.turnCheckpointFiles.map((entry) => entry.file);
+            return visibleTurnCheckpointFiles.map((entry) => entry.file);
         }
         if (scopedChangedFilesViewMode === 'session') {
-            return changed.sessionAttributedFiles.map((entry) => entry.file);
+            return visibleSessionAttributedFiles.map((entry) => entry.file);
         }
-        return changed.allRepositoryChangedFiles;
+        return visibleRepositoryChangedFiles;
     }, [
-        changed.allRepositoryChangedFiles,
-        changed.sessionAttributedFiles,
-        changed.turnAgentReportedFiles,
-        changed.turnAttributedFiles,
-        changed.turnCheckpointFiles,
         scopedChangedFilesViewMode,
         selectedRepositoryChangedFiles,
+        visibleRepositoryChangedFiles,
+        visibleSessionAttributedFiles,
+        visibleTurnAgentReportedFiles,
+        visibleTurnAttributedFiles,
+        visibleTurnCheckpointFiles,
     ]);
 
     const bulkSelectCurrentScope = React.useCallback(() => {
@@ -181,31 +216,36 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
     const renderTrailingActions = React.useCallback((file: ScmFileStatus) => {
         const discardEnabled = props.scmWriteEnabled && props.scmSnapshot?.capabilities?.writeDiscard === true;
         return (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                {discardEnabled ? (
-                    <ScmChangeDiscardButton
-                        sessionId={props.sessionId}
-                        sessionPath={props.sessionPath}
-                        snapshot={props.scmSnapshot}
-                        scmWriteEnabled={props.scmWriteEnabled}
-                        commitStrategy={props.scmCommitStrategy}
-                        file={file}
-                        surface="files"
-                    />
-                ) : null}
+            <>
+                <CopiedPill
+                    visible={copyFeedback.isCopied(file.fullPath)}
+                    testID={`scm-change-copy-feedback:${file.fullPath}`}
+                />
                 <ScmChangeOverflowMenu
                     title={file.fileName}
                     filePath={file.fullPath}
+                    onCopyPathSuccess={() => copyFeedback.markCopied(file.fullPath)}
                     onRevealInTree={() => {
                         revealInTree(file.fullPath);
                     }}
+                    onDiscard={discardEnabled ? () => {
+                        fireAndForget(applyFileDiscardAction({
+                            sessionId: props.sessionId,
+                            sessionPath: props.sessionPath,
+                            file,
+                            snapshot: props.scmSnapshot,
+                            scmWriteEnabled: props.scmWriteEnabled,
+                            commitStrategy: props.scmCommitStrategy,
+                            surface: 'files',
+                        }), { tag: 'SessionRightPanelGitCommitTab.discard' });
+                    } : undefined}
                 />
-            </View>
+            </>
         );
-    }, [props.scmCommitStrategy, props.scmSnapshot, props.scmWriteEnabled, props.sessionId, props.sessionPath, revealInTree]);
+    }, [copyFeedback, props.scmCommitStrategy, props.scmSnapshot, props.scmWriteEnabled, props.sessionId, props.sessionPath, revealInTree]);
 
     const renderFileActions = React.useCallback((file: ScmFileStatus) => {
-        if (!commitSelectionUiEnabled || !props.scmWriteEnabled) return null;
+        if (!selectionModeActive || !props.scmWriteEnabled) return null;
         return (
             <ScmCommitSelectionToggleButton
                 sessionId={props.sessionId}
@@ -219,7 +259,7 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
             />
         );
     }, [
-        commitSelectionUiEnabled,
+        selectionModeActive,
         isSelectedForCommit,
         props.scmCommitStrategy,
         props.scmSnapshot,
@@ -287,6 +327,10 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
             onGenerateCommitMessageSuggestion={props.onGenerateCommitMessageSuggestion}
             commitAdjacentPushAction={props.commitAdjacentPushAction}
             onClearSelection={commitSelectionUiEnabled && repositorySelectedCount > 0 ? bulkSelectNone : undefined}
+            commitSelectionAvailable={commitSelectionUiEnabled}
+            selectionModeActive={selectionModeActive}
+            onEnterSelectionMode={enterSelectionMode}
+            onExitSelectionMode={exitSelectionMode}
             scmStatusFiles={changed.scmStatusFiles}
             showBranchSummary={props.showBranchSummary}
             showCommitComposer={props.commitWriteEnabled}

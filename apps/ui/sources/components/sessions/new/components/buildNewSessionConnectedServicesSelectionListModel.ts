@@ -7,12 +7,17 @@ import {
 } from '@/components/ui/selectionList';
 import { connectedServiceProfileKey, resolveConnectedServiceDefaultProfileId } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import type { ConnectedServicesServiceBinding } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
+import {
+    formatConnectedServiceIdentityVisibleLabel,
+    resolveConnectedServiceProfileIdentityDisplay,
+} from '@/components/settings/connectedServices/model/resolveConnectedServiceProfileIdentityDisplay';
 
 import type {
     ConnectedServicesAccountGroupOptionsByServiceId,
     ConnectedServicesProfileOption,
     ConnectedServicesProfileOptionsByServiceId,
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
+import { isConnectedServiceProfileOptionSelectable } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 
 export type ConnectedServicesSelectionListBadge = Readonly<{
     meterId: string;
@@ -30,11 +35,17 @@ export type ConnectedServicesSelectionListTranslationKey =
     | 'connectedServices.authModal.nativeAuthTitle'
     | 'connectedServices.authModal.nativeAuthSubtitle'
     | 'connectedServices.authModal.groupSubtitle'
+    | 'connectedServices.detail.groups.activeMember'
     | 'connectedServices.authModal.notConnectedTitle'
     | 'connectedServices.authModal.notConnectedSubtitle'
     | 'connectedServices.title'
     | 'connectedServices.defaultAuth.warning.connected_service_unsupported'
     | 'connectedServices.detail.connectSetupTokenSubtitle';
+
+type ConnectedServicesSelectionListActiveMemberTranslate = (
+    key: 'connectedServices.detail.groups.activeMember',
+    params: { profileId: string },
+) => string;
 
 export type NewSessionConnectedServicesSelectionListModel = Readonly<{
     rootStep: SelectionListStep;
@@ -104,6 +115,27 @@ function resolveProfileSubtitle(option: ConnectedServicesProfileOption): string 
     return undefined;
 }
 
+function resolveGroupSubtitle(params: Readonly<{
+    serviceId: string;
+    activeProfileId: string;
+    profiles: ReadonlyArray<ConnectedServicesProfileOption>;
+    translate: (key: ConnectedServicesSelectionListTranslationKey) => string;
+}>): string {
+    const activeProfile = params.profiles.find((option) => option.profileId.trim() === params.activeProfileId) ?? null;
+    if (!activeProfile) return params.translate('connectedServices.authModal.groupSubtitle');
+
+    const display = resolveConnectedServiceProfileIdentityDisplay({
+        serviceId: params.serviceId,
+        profileId: params.activeProfileId,
+        labelsByKey: {},
+        profile: activeProfile,
+    });
+    const translateActiveMember = params.translate as typeof params.translate & ConnectedServicesSelectionListActiveMemberTranslate;
+    return translateActiveMember('connectedServices.detail.groups.activeMember', {
+        profileId: formatConnectedServiceIdentityVisibleLabel(display),
+    });
+}
+
 function resolveServiceOptionAccessibilityLabel(params: Readonly<{
     serviceTitle: string;
     optionLabel: string;
@@ -135,8 +167,8 @@ export function buildNewSessionConnectedServicesSelectionListModel(
         const serviceTitle = params.resolveServiceTitle(serviceId);
         const serviceOptions = params.profileOptionsByServiceId[serviceId] ?? [];
         const groupOptions = params.groupOptionsByServiceId[serviceId] ?? [];
-        const connectedProfiles = serviceOptions.filter((option) => option.status === 'connected');
-        const needsReauthProfiles = serviceOptions.filter((option) => option.status !== 'connected');
+        const connectedProfiles = serviceOptions.filter(isConnectedServiceProfileOptionSelectable);
+        const needsReauthProfiles = serviceOptions.filter((option) => !isConnectedServiceProfileOptionSelectable(option));
         const connectedProfileIds = connectedProfiles.map((option) => option.profileId.trim()).filter(Boolean);
         const binding = params.bindingsByServiceId[serviceId];
         const explicitProfileId = (binding?.profileId ?? '').trim();
@@ -176,12 +208,21 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             if (selected && firstSelectedOptionId === null) firstSelectedOptionId = optionId;
             if (selected) usesConnectedGroup = true;
             const label = group.label.trim() || groupId;
+            const activeProfile = connectedProfiles.find((profile) => profile.profileId.trim() === activeProfileId) ?? null;
             options.push({
                 id: optionId,
                 label,
-                subtitle: availability.subtitle ?? params.translate('connectedServices.authModal.groupSubtitle'),
+                subtitle: availability.subtitle ?? resolveGroupSubtitle({
+                    serviceId,
+                    activeProfileId,
+                    profiles: connectedProfiles,
+                    translate: params.translate,
+                }),
                 accessibilityLabel: resolveServiceOptionAccessibilityLabel({ serviceTitle, optionLabel: label }),
-                icon: params.renderSelectionIcon({ selected, variant: availability.disabled ? 'warning' : 'default' }),
+                icon: params.renderSelectionIcon({
+                    selected,
+                    variant: availability.disabled || activeProfile?.status !== 'connected' ? 'warning' : 'default',
+                }),
                 disabled: availability.disabled === true,
                 onSelect: () => params.setBindingForService(serviceId, optionBinding),
             });

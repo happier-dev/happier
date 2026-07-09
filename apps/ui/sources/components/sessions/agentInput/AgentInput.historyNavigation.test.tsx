@@ -2,6 +2,10 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import {
+  TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS,
+  TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT,
+} from '@/components/ui/forms/largeTextInputPolicy';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 
@@ -21,6 +25,7 @@ const mocks = vi.hoisted(() => ({
 
   onChangeText: vi.fn(),
   onSend: vi.fn(),
+  recordLargeTextInputDiagnostic: vi.fn(),
 }));
 
 const localSettingState = vi.hoisted(() => ({
@@ -102,6 +107,10 @@ vi.mock('@/sync/store/hooks', () => ({
     useLocalSetting: (key: keyof typeof localSettingState.values) => localSettingState.values[key] ?? 1,
 }));
 
+vi.mock('@/utils/system/userInteractionDiagnostics', () => ({
+  recordLargeTextInputDiagnostic: (...args: unknown[]) => mocks.recordLargeTextInputDiagnostic(...args),
+}));
+
 vi.mock('expo-image', () => ({
     Image: (props: Record<string, unknown>) => React.createElement('Image', props, null),
 }));
@@ -123,6 +132,9 @@ vi.mock('@/hooks/session/useUserMessageHistory', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    getAgentIconSvgXml: () => null,
+    getAgentIconSource: () => null,
+    getAgentIconTintColor: () => undefined,
   AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
   DEFAULT_AGENT_ID: 'codex',
   resolveAgentIdFromFlavor: () => null,
@@ -174,6 +186,8 @@ vi.mock('@/components/ui/forms/MultiTextInput', () => {
         props.onStateChange?.({ text, selection });
         props.onSelectionChange?.(selection);
       },
+      getText: () => (typeof props.value === 'string' ? props.value : ''),
+      flushPendingTextChange: () => (typeof props.value === 'string' ? props.value : ''),
       focus: () => {},
       blur: () => {},
     }));
@@ -260,6 +274,7 @@ function findAllByTestID(screen: Awaited<ReturnType<typeof renderScreen>>, testI
 
 describe('AgentInput (history navigation)', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     mocks.historyIsBrowsing.mockReturnValue(false);
     mocks.historyHasRetainedSession.mockReturnValue(false);
@@ -299,6 +314,40 @@ describe('AgentInput (history navigation)', () => {
     expect(handled).toBe(true);
     expect(mocks.onSend).toHaveBeenCalledTimes(1);
     expect(mocks.historyReset).toHaveBeenCalledTimes(1);
+  });
+
+  it('records large-text send flush metadata before sending', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const largePrompt = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
+    const screen = await renderScreen(
+      <AgentInput
+        value={largePrompt}
+        onChangeText={mocks.onChangeText}
+        placeholder="p"
+        onSend={mocks.onSend}
+        autocompletePrefixes={[]}
+        autocompleteSuggestions={async () => []}
+        isSendDisabled={false}
+        disabled={false}
+        showAbortButton={false}
+      />
+    );
+
+    const input = findMultiTextInput(screen);
+
+    await act(async () => {
+      input.props.onKeyPress?.({ key: 'Enter', shiftKey: false });
+    });
+
+    expect(mocks.recordLargeTextInputDiagnostic).toHaveBeenCalledWith({
+      phase: 'send-flush',
+      platform: 'web',
+      surface: 'agentInput',
+      textLength: largePrompt.length,
+      selection: { start: largePrompt.length, end: largePrompt.length },
+      valueLength: largePrompt.length,
+      liveTextLength: largePrompt.length,
+    });
   });
 
   it('does not send on Enter when sending is disabled', async () => {
@@ -996,6 +1045,123 @@ describe('AgentInput (history navigation)', () => {
     });
 
     expect(onSelectionChangePersist).toHaveBeenCalledWith({ start: 2, end: 4 }, 5);
+  });
+
+  it('records large-text selection restore metadata without prompt contents', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const largePrompt = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
+    await renderScreen(<AgentInput
+          value={largePrompt}
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompletePrefixes={[]}
+          autocompleteSuggestions={async () => []}
+          disabled={false}
+          showAbortButton={false}
+          inputPersistence={{
+            initialSelection: { start: 4, end: 4 },
+            restoreToken: 'session:s1:restore',
+            onScrollYChange: vi.fn(),
+            onSelectionChangePersist: vi.fn(),
+          }}
+        />);
+
+    expect(mocks.recordLargeTextInputDiagnostic).toHaveBeenCalledWith({
+      phase: 'selection-restore',
+      platform: 'web',
+      surface: 'agentInput',
+      textLength: largePrompt.length,
+      selection: { start: 4, end: 4 },
+      valueLength: largePrompt.length,
+    });
+    expect(JSON.stringify(mocks.recordLargeTextInputDiagnostic.mock.calls)).not.toContain(largePrompt);
+  });
+
+  it('buffers continuous oversized edits from parent state while keeping the full local input value', async () => {
+    vi.useFakeTimers();
+    const { AgentInput } = await import('./AgentInput');
+    const largePrompt = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
+    const editedPrompt = `${largePrompt}y`;
+    const renderElement = (abortVisible: boolean) => (
+      <AgentInput
+        value={largePrompt}
+        onChangeText={mocks.onChangeText}
+        placeholder="p"
+        onSend={mocks.onSend}
+        autocompletePrefixes={[]}
+        autocompleteSuggestions={async () => []}
+        isSendDisabled={false}
+        disabled={false}
+        showAbortButton={abortVisible}
+      />
+    );
+    const screen = await renderScreen(renderElement(false));
+    let input = findMultiTextInput(screen);
+
+    await act(async () => {
+      input.props.onStateChange?.({
+        text: editedPrompt,
+        selection: { start: editedPrompt.length, end: editedPrompt.length },
+      });
+      input.props.onChangeText?.(editedPrompt);
+    });
+
+    expect(mocks.onChangeText).not.toHaveBeenCalled();
+
+    await act(async () => {
+      screen.tree.update(renderElement(true));
+    });
+
+    input = findMultiTextInput(screen);
+    expect(input.props.value).toBe(editedPrompt);
+
+    await act(async () => {
+      vi.advanceTimersByTime(TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS);
+    });
+
+    expect(mocks.onChangeText).toHaveBeenCalledTimes(1);
+    expect(mocks.onChangeText).toHaveBeenCalledWith(editedPrompt);
+  });
+
+  it('flushes the latest oversized local edit before sending', async () => {
+    vi.useFakeTimers();
+    const { AgentInput } = await import('./AgentInput');
+    const largePrompt = 'x'.repeat(TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1);
+    const editedPrompt = `${largePrompt}y`;
+    const screen = await renderScreen(
+      <AgentInput
+        value={largePrompt}
+        onChangeText={mocks.onChangeText}
+        placeholder="p"
+        onSend={mocks.onSend}
+        autocompletePrefixes={[]}
+        autocompleteSuggestions={async () => []}
+        isSendDisabled={false}
+        disabled={false}
+        showAbortButton={false}
+      />
+    );
+    const input = findMultiTextInput(screen);
+
+    await act(async () => {
+      input.props.onStateChange?.({
+        text: editedPrompt,
+        selection: { start: editedPrompt.length, end: editedPrompt.length },
+      });
+      input.props.onChangeText?.(editedPrompt);
+    });
+
+    expect(mocks.onChangeText).not.toHaveBeenCalled();
+
+    await act(async () => {
+      input.props.onKeyPress?.({ key: 'Enter', shiftKey: false });
+    });
+
+    expect(mocks.onChangeText).toHaveBeenCalledTimes(1);
+    expect(mocks.onChangeText).toHaveBeenCalledWith(editedPrompt);
+    expect(mocks.onSend).toHaveBeenCalledTimes(1);
+    expect(mocks.onSend).toHaveBeenCalledWith({ inputTextOverride: editedPrompt });
   });
 
   it('shows an expansion toggle when persisted expansion is available and input content overflows', async () => {

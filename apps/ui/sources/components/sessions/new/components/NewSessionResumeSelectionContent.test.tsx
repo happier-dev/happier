@@ -73,6 +73,7 @@ installNewSessionComponentsCommonModuleMocks({
 });
 
 vi.mock('@react-navigation/native', () => ({
+    useIsFocused: () => true,
     useFocusEffect: () => undefined,
 }));
 

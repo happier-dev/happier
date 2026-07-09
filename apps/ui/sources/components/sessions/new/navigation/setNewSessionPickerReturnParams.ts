@@ -57,6 +57,7 @@ const NEW_SESSION_PARAM_KEYS = new Set([
     'secretRequirementResultId',
     'secretSessionOnlyId',
     'spawnServerId',
+    'worktree',
 ]);
 
 function isNonEmptyString(value: unknown): value is string {

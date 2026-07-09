@@ -85,6 +85,10 @@ vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 800, headerMaxWidth: 800 },
 }));
 
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => false,
+}));
+
 vi.mock('@/sync/domains/state/storageStore', async () => {
     const { createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
     const store = createStorageStoreMock({ sessionMessages: {} } as any);
@@ -94,6 +98,9 @@ vi.mock('@/sync/domains/state/storageStore', async () => {
 });
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    getAgentIconSvgXml: () => null,
+    getAgentIconSource: () => null,
+    getAgentIconTintColor: () => undefined,
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: () => null,
@@ -176,16 +183,20 @@ type CapturedPopoverProps = Record<string, unknown> & {
 const captured: { last: CapturedPopoverProps | null } = { last: null };
 const capturedOverlay: { last: Record<string, unknown> | null } = { last: null };
 
-vi.mock('@/components/ui/popover', () => ({
-    Popover: (props: CapturedPopoverProps) => {
-        captured.last = props;
-        const renderedChildren = typeof (props as any).children === 'function'
-            ? (props as any).children({ maxHeight: props.maxHeightCap ?? 360 })
-            : (props as any).children ?? null;
-        return React.createElement('Popover', props, renderedChildren);
-    },
-    PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
+vi.mock('@/components/ui/popover', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/ui/popover')>();
+    return {
+        ...actual,
+        Popover: (props: CapturedPopoverProps) => {
+            captured.last = props;
+            const renderedChildren = typeof (props as any).children === 'function'
+                ? (props as any).children({ maxHeight: props.maxHeightCap ?? 360 })
+                : (props as any).children ?? null;
+            return React.createElement('Popover', props, renderedChildren);
+        },
+        PopoverScope: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    };
+});
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
     FloatingOverlay: (props: Record<string, unknown> & { children?: React.ReactNode }) => {

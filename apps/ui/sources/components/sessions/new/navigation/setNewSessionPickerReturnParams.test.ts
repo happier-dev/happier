@@ -272,6 +272,50 @@ describe('setNewSessionPickerReturnParams', () => {
         });
     });
 
+    it('preserves worktree when replace fallback returns to /new', () => {
+        const dispatch = vi.fn();
+        const replace = vi.fn();
+
+        const mode = setNewSessionPickerReturnParams({
+            navigation: {
+                dispatch,
+                getState: () => ({
+                    index: 1,
+                    routes: [
+                        { key: 'session-route', name: '(app)/session/[id]', path: '/session/s1', params: { id: 's1' } },
+                        {
+                            key: 'picker-route',
+                            name: '(app)/new/pick/path',
+                            path: '/new/pick/path',
+                            params: {
+                                dataId: 'draft-1',
+                                worktree: 'new',
+                            },
+                        },
+                    ],
+                }),
+            },
+            router: { replace },
+            routeParams: { directory: '/repo/selected' },
+            replaceParams: {
+                machineId: 'm1',
+                directory: '/repo/selected',
+            },
+        });
+
+        expect(mode).toBe('replace');
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(replace).toHaveBeenCalledWith({
+            pathname: '/new',
+            params: {
+                dataId: 'draft-1',
+                machineId: 'm1',
+                directory: '/repo/selected',
+                worktree: 'new',
+            },
+        });
+    });
+
     it('preserves canonical backend target params from the current picker route during replace fallback', () => {
         const dispatch = vi.fn();
         const replace = vi.fn();

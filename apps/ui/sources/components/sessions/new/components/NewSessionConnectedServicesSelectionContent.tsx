@@ -19,6 +19,7 @@ import type {
     ConnectedServicesAccountGroupOptionsByServiceId,
     ConnectedServicesProfileOptionsByServiceId,
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
+import { isConnectedServiceProfileOptionSelectable } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { buildNewSessionConnectedServicesSelectionListModel } from './buildNewSessionConnectedServicesSelectionListModel';
 
 export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
@@ -34,15 +35,18 @@ export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
         binding: ConnectedServicesServiceBinding;
     }>) => Readonly<{ disabled?: boolean; subtitle?: string }>;
     onReconnectProfile?: (serviceId: string, profileId: string) => void;
-    onOpenSettings: () => void;
+    // Widened to carry the service: the builder already invokes it with the
+    // serviceId, and modal hosts (default-auth picker) route per service.
+    // Existing `() => void` callers stay assignable.
+    onOpenSettings: (serviceId: string) => void;
+    /** Close the hosting surface (popover/modal) — e.g. Escape inside the list. */
+    requestClose?: () => void;
     maxHeight: number;
 }>;
 
 function SelectionStateIcon(props: Readonly<{ selected: boolean; variant?: 'default' | 'warning' }>) {
     const { theme } = useUnistyles();
-    const color = props.variant === 'warning'
-        ? theme.colors.accent.orange
-        : theme.colors.accent.blue;
+    const color = props.selected ? theme.colors.text.primary : theme.colors.text.secondary;
 
     return normalizeNodeForView(
         <Ionicons
@@ -73,7 +77,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         for (const serviceId of props.supportedServiceIds) {
             const options = props.profileOptionsByServiceId[serviceId] ?? [];
             for (const option of options) {
-                if (option.status !== 'connected') continue;
+                if (!isConnectedServiceProfileOptionSelectable(option)) continue;
                 const profileId = option.profileId.trim();
                 if (!profileId) continue;
                 next.push({ serviceId, profileId });
@@ -136,7 +140,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
                 maxHeight={props.maxHeight}
                 heightBehavior={resolvePopoverSelectionListHeightBehavior()}
                 keyboardHintsEnabled={false}
-                onRequestClose={() => {}}
+                onRequestClose={props.requestClose ?? (() => {})}
                 onSelect={() => {}}
             />
         </View>

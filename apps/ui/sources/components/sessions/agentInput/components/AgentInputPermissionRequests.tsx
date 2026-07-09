@@ -58,7 +58,6 @@ export const AgentInputPermissionRequests = React.memo(function AgentInputPermis
     sessionId: string;
     permissionRequests: readonly PendingPermissionRequest[];
     approvalRequests?: readonly OpenApprovalArtifactForSession[];
-    userActionRequests?: readonly PendingPermissionRequest[];
     permissionLocationsById: ReadonlyMap<string, PermissionToolCallMessageLocation | null>;
     approvalLocationsByArtifactId?: ReadonlyMap<string, PermissionToolCallMessageLocation | null>;
     metadata: Metadata | null;

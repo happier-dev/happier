@@ -8,6 +8,7 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 import { buildSessionListIndexFromViewData } from '@/sync/domains/sessionList/sessionListIndex';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { clearSessionListHeaderFilterRetentionForTests } from './search/useSessionListHeaderFilterRetention';
+import { buildSessionOrganizationProjectionFromLegacyTestSettings } from './sessionOrganizationProjectionTestFixture';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -18,8 +19,11 @@ const setSessionMruOrderV1 = vi.fn();
 const readMachineTargetForSessionMock = vi.hoisted(() => vi.fn());
 const navigateToSessionSpy = vi.hoisted(() => vi.fn());
 const fetchMoreSessionsMock = vi.hoisted(() => vi.fn(async () => undefined));
+const refreshSessionsMock = vi.hoisted(() => vi.fn<() => Promise<undefined>>(async () => undefined));
 const markSessionListScrollActivityMock = vi.hoisted(() => vi.fn());
 const preloadEnrichedMarkdownRuntimeSpy = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+const setSessionPinOp = vi.hoisted(() => vi.fn(async () => undefined));
+const setSessionTagAssignmentsOp = vi.hoisted(() => vi.fn(async () => undefined));
 const keyboardShortcutHandlersRef = vi.hoisted(() => ({
     current: null as Record<string, (() => void)> | null,
 }));
@@ -346,7 +350,7 @@ installSessionShellCommonModuleMocks({
                 const sessionId = typeof item.sessionId === 'string' ? item.sessionId.trim() : '';
                 if (!serverId || !sessionId) continue;
                 const row = resolveRowRenderableForTest(serverId, sessionId);
-                if (row) next.set(`${serverId}:${sessionId}`, row);
+                if (row) next.set(`${serverId}\u0000${sessionId}`, row);
             }
             return next;
         };
@@ -383,20 +387,27 @@ installSessionShellCommonModuleMocks({
                 useSettingMutable: (key: string) => {
                     if (key === 'pinnedSessionKeysV1') return [pinnedSessionKeysV1, setPinnedSessionKeysV1];
                     if (key === 'sessionMruOrderV1') throw new Error('sessionMruOrderV1 must stay in local settings');
+                    if (key === 'collapsedGroupKeysV1') throw new Error('collapsedGroupKeysV1 must stay in local settings');
                     if (key === 'sessionTagsV1') return [sessionTagsV1, setSessionTagsV1];
                     if (key === 'sessionListOrderingModeV1') return [sessionListOrderingModeV1, setSessionListOrderingModeV1];
                     if (key === 'workspaceLabelsV1') return [workspaceLabelsV1, setWorkspaceLabelsV1];
                     if (key === 'workspaceRefsV1') return [workspaceRefsV1, setWorkspaceRefsV1];
-                    if (key === 'collapsedGroupKeysV1') return [collapsedGroupKeysV1, setCollapsedGroupKeysV1];
                     if (key === 'sessionListGroupOrderV1') return [{}, vi.fn()];
                     return [null, vi.fn()];
                 },
                 useLocalSettingMutable: <K extends keyof LocalSettings>(key: K): [LocalSettings[K], (value: LocalSettings[K]) => void] => {
                     const value = key === 'sessionMruOrderV1'
                         ? [sessionMruOrderV1, setSessionMruOrderV1]
-                        : [null, vi.fn()];
+                        : key === 'collapsedGroupKeysV1'
+                            ? [collapsedGroupKeysV1, setCollapsedGroupKeysV1]
+                            : [null, vi.fn()];
                     return value as unknown as [LocalSettings[K], (value: LocalSettings[K]) => void];
                 },
+                useSessionOrganizationProjection: () => buildSessionOrganizationProjectionFromLegacyTestSettings({
+                    serverId: 'server_a',
+                    pinnedSessionKeysV1,
+                    sessionTagsV1,
+                }),
                 useSessionListRenderableWithServerScope: (_serverId: any, sessionId: string) => {
                     if (sessionId === 'sess_a') return sessionA as any;
                     if (sessionId === 'sess_b') return sessionB as any;
@@ -434,12 +445,41 @@ vi.mock('@/sync/ops', async (importOriginal) => {
 vi.mock('@/sync/sync', () => ({
     sync: {
         fetchMoreSessions: fetchMoreSessionsMock,
+        refreshSessions: refreshSessionsMock,
         markSessionListScrollActivity: markSessionListScrollActivityMock,
     },
 }));
 
 vi.mock('@/components/markdown/enriched/preloadEnrichedMarkdownRuntime', () => ({
     preloadEnrichedMarkdownRuntime: preloadEnrichedMarkdownRuntimeSpy,
+}));
+
+vi.mock('@/sync/ops/sessionOrganization', () => ({
+    deleteSessionFolder: vi.fn(async () => undefined),
+    deleteSessionLabel: vi.fn(async () => undefined),
+    moveSessionFolderAssignments: vi.fn(async () => undefined),
+    reorderSessionOrganization: vi.fn(async () => undefined),
+    setSessionFolderAssignment: vi.fn(async () => undefined),
+    setSessionPin: setSessionPinOp,
+    setSessionTagLabels: setSessionTagAssignmentsOp,
+    upsertSessionFolder: vi.fn(async () => undefined),
+    upsertSessionLabel: vi.fn(async () => undefined),
+}));
+
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+    const serverProfile = { id: 'server_a', serverUrl: 'https://server-a.example.test' };
+    return {
+        ...actual,
+        listServerProfiles: () => [serverProfile],
+        getServerProfileById: (serverId: string) => (serverId === serverProfile.id ? serverProfile : null),
+    };
+});
+
+vi.mock('@/auth/storage/tokenStorage', () => ({
+    TokenStorage: {
+        getCredentialsForServerUrl: vi.fn(async () => ({ token: 'test-token' })),
+    },
 }));
 
 vi.mock('@/sync/ops/sessionMachineTarget', () => ({
@@ -629,7 +669,7 @@ function findRecordedGestureDetectors(
 }
 
 describe('SessionsList (native virtualization)', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         sessionListOrderingModeV1 = 'custom';
         mockPathname = '';
         pinnedSessionKeysV1 = [];
@@ -645,12 +685,18 @@ describe('SessionsList (native virtualization)', () => {
         setWorkspaceLabelsV1.mockClear();
         setWorkspaceRefsV1.mockClear();
         setCollapsedGroupKeysV1.mockClear();
+        setSessionPinOp.mockClear();
+        setSessionTagAssignmentsOp.mockClear();
         navigateToSessionSpy.mockClear();
         fetchMoreSessionsMock.mockClear();
+        refreshSessionsMock.mockReset();
+        refreshSessionsMock.mockResolvedValue(undefined);
         markSessionListScrollActivityMock.mockClear();
         preloadEnrichedMarkdownRuntimeSpy.mockClear();
         keyboardShortcutHandlersRef.current = null;
         clearSessionListHeaderFilterRetentionForTests();
+        const { resetSessionListPaneRetentionForTests } = await import('./sessionListPaneRetention');
+        resetSessionListPaneRetentionForTests();
         mockAllowedServerIds = ['server_a'];
         platformOs = 'ios';
         workspacePathDisplayModeV1 = null;
@@ -1240,6 +1286,16 @@ describe('SessionsList (native virtualization)', () => {
         expect(typeof flashListCompatState.current?.props?.getItemType).toBe('function');
     });
 
+    it('disables native FlashList maintain-visible-content-position for the session list surface', async () => {
+        await renderSessionsListWithSurfaceOwnership({
+            visible: true,
+            interactive: true,
+            dataActive: true,
+        });
+
+        expect(flashListCompatState.current?.props?.maintainVisibleContentPosition).toEqual({ disabled: true });
+    });
+
     it('passes scroll and viewport events to session-list drag autoscroll on native lists', async () => {
         await renderSessionsList();
 
@@ -1316,6 +1372,79 @@ describe('SessionsList (native virtualization)', () => {
         expect(flashListCompatState.current?.props?.extraData).toBe(initialExtraData);
     });
 
+    it('does not invalidate native virtualized rows when viewability changes for the profiled session-list size', async () => {
+        platformOs = 'ios';
+        const header = expectPresent(
+            mockVisibleSessionListViewData.find((item) => item.type === 'header'),
+            'expected header item',
+        );
+        mockVisibleSessionListViewData = [
+            header,
+            ...Array.from({ length: 145 }, (_, index) => ({
+                type: 'session',
+                session: {
+                    ...sessionA,
+                    id: `sess_profiled_${index}`,
+                    updatedAt: sessionA.updatedAt + index,
+                },
+                groupKey,
+                groupKind: 'date',
+                serverId: 'server_a',
+                serverName: 'Server A',
+            })),
+        ];
+
+        await renderSessionsList();
+        const { syncPerformanceTelemetry } = await import('@/sync/runtime/syncPerformanceTelemetry');
+        syncPerformanceTelemetry.configure({ enabled: true, slowThresholdMs: 0 });
+        syncPerformanceTelemetry.reset();
+        try {
+            const initialProps = flashListCompatState.current?.props;
+            expect(initialProps).toBeTruthy();
+            expect(typeof initialProps?.onViewableItemsChanged).toBe('function');
+            const initialExtraData = initialProps?.extraData;
+            const initialData = initialProps?.data;
+            const initialSessionNodes = Array.isArray(initialData)
+                ? initialData.filter((node) => String(node.id).includes('sess_profiled_'))
+                : [];
+
+            syncPerformanceTelemetry.reset();
+            await act(async () => {
+                initialProps?.onViewableItemsChanged({
+                    changed: [],
+                    viewableItems: initialSessionNodes.slice(75, 88).map((item, index) => ({
+                        index: 76 + index,
+                        isViewable: true,
+                        item,
+                        key: item.id,
+                    })),
+                });
+                await Promise.resolve();
+            });
+
+            expect(flashListCompatState.current?.props?.extraData).toBe(initialExtraData);
+            expect(flashListCompatState.current?.props?.data).toBe(initialData);
+            const events = syncPerformanceTelemetry.snapshot().events;
+            expect(events.find((event) => event.name === 'ui.sessionsList.viewableRows.changed')?.fields).toEqual(expect.objectContaining({
+                changed: 1,
+                nextVisibleRows: 13,
+                previousKnown: 0,
+                previousVisibleRows: 0,
+            }));
+            expect(events.find((event) => event.name === 'ui.sessionsList.rowStoreSubscriptions')?.fields).toEqual(expect.objectContaining({
+                allRenderedRowsSubscribed: 1,
+                dataActive: 1,
+                priorityRows: 0,
+                subscribedRows: 145,
+                totalRows: 145,
+                visibleRows: 13,
+            }));
+        } finally {
+            syncPerformanceTelemetry.configure({ enabled: false });
+            syncPerformanceTelemetry.reset();
+        }
+    });
+
     it('keeps native virtualized node data stable when an equivalent session-list refresh only replaces data objects', async () => {
         platformOs = 'android';
 
@@ -1336,6 +1465,36 @@ describe('SessionsList (native virtualization)', () => {
         const updatedData = flashListCompatState.current?.props?.data;
         expect(updatedData).toBe(initialData);
         expect(Array.isArray(updatedData) ? updatedData[0] : null).toBe(initialFirstNode);
+    });
+
+    it('keeps native virtualized node data stable when one row renderable updates', async () => {
+        platformOs = 'ios';
+
+        const screen = await renderSessionsList();
+        const initialProps = flashListCompatState.current?.props;
+        expect(initialProps).toBeTruthy();
+        const initialData = initialProps?.data;
+        const initialExtraData = initialProps?.extraData;
+        const { SessionsList } = await import('./SessionsList');
+
+        storageState.sessionListRowStateByServerId = {
+            ...storageState.sessionListRowStateByServerId,
+            server_a: {
+                ...storageState.sessionListRowStateByServerId.server_a,
+                sess_a: {
+                    ...sessionA,
+                    active: true,
+                    activeAt: 100,
+                    thinking: true,
+                    thinkingAt: 100,
+                    presence: 'online',
+                },
+            },
+        };
+        await screen.update(<SessionsList />);
+
+        expect(flashListCompatState.current?.props?.data).toBe(initialData);
+        expect(flashListCompatState.current?.props?.extraData).toBe(initialExtraData);
     });
 
     it('keeps row move action props stable when an equivalent session-list refresh only replaces data objects', async () => {
@@ -1522,19 +1681,24 @@ describe('SessionsList (native virtualization)', () => {
         expect(findFirstDropdownMenuItems(screen)).toEqual([]);
     });
 
-    it('wires pin toggling via pinnedSessionKeysV1', async () => {
-        setPinnedSessionKeysV1.mockClear();
-
+    it('wires pin toggling through session organization', async () => {
         const screen = await renderSessionsList();
         const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected first session item');
         expect(typeof first.props.onTogglePinned).toBe('function');
 
         await act(async () => {
             first.props.onTogglePinned();
+            await Promise.resolve();
+            await Promise.resolve();
         });
 
-        expect(setPinnedSessionKeysV1).toHaveBeenCalledTimes(1);
-        expect(setPinnedSessionKeysV1).toHaveBeenCalledWith(['server_a:sess_a']);
+        expect(setSessionPinOp).toHaveBeenCalledTimes(1);
+        expect(setSessionPinOp).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'server_a',
+            serverUrl: 'https://server-a.example.test',
+            sessionId: 'sess_a',
+            pinned: true,
+        }));
     });
 
     it('records active session changes into the server-scoped MRU order', async () => {
@@ -1597,6 +1761,70 @@ describe('SessionsList (native virtualization)', () => {
         expect(keyboardShortcutHandlersRef.current).toEqual({});
     });
 
+    it('keeps the last active render data while the surface is visible but inactive', async () => {
+        const screen = await renderSessionsListWithSurfaceOwnership({
+            visible: true,
+            interactive: true,
+            dataActive: true,
+        });
+        const activeData = expectPresent(
+            flashListCompatState.current?.props?.data,
+            'expected active FlashList data',
+        );
+        mockVisibleSessionListViewData = [
+            ...mockVisibleSessionListViewData,
+            {
+                type: 'session',
+                session: {
+                    id: 'sess_hidden_refresh',
+                    active: true,
+                    updatedAt: 20,
+                    metadata: {
+                        machineId: 'machine-target',
+                        path: '/Users/test/hidden-refresh',
+                        homeDir: '/Users/test',
+                        host: 'target.local',
+                    },
+                },
+                serverId: 'server_a',
+                section: 'active',
+                groupKind: 'active',
+            },
+        ];
+
+        const { SessionsList } = await import('./SessionsList');
+        await screen.update(
+            <SessionsList
+                surfaceOwnership={{
+                    visible: true,
+                    interactive: false,
+                    dataActive: false,
+                }}
+            />,
+        );
+        const inactiveData = expectPresent(
+            flashListCompatState.current?.props?.data,
+            'expected inactive visible FlashList data',
+        );
+        expect(inactiveData).toBe(activeData);
+
+        await screen.update(
+            <SessionsList
+                surfaceOwnership={{
+                    visible: true,
+                    interactive: true,
+                    dataActive: true,
+                }}
+            />,
+        );
+        const reactivatedData = expectPresent(
+            flashListCompatState.current?.props?.data,
+            'expected reactivated FlashList data',
+        );
+        expect(reactivatedData).not.toBe(activeData);
+        expect(reactivatedData.some((item: any) => item.id === 'session:server_a:sess_hidden_refresh')).toBe(true);
+    });
+
     it('does not expose load-more work while the surface is not data-active', async () => {
         await renderSessionsListWithSurfaceOwnership({
             visible: false,
@@ -1605,6 +1833,114 @@ describe('SessionsList (native virtualization)', () => {
         });
 
         expect(flashListCompatState.current?.props?.onEndReached).toBeUndefined();
+    });
+
+    it('refreshes sessions from native pull-to-refresh and keeps the indicator active while pending', async () => {
+        let resolveRefresh: (() => void) | null = null;
+        const refreshPromise = new Promise<undefined>((resolve) => {
+            resolveRefresh = () => resolve(undefined);
+        });
+        refreshSessionsMock.mockReturnValueOnce(refreshPromise);
+        await renderSessionsListWithSurfaceOwnership({
+            visible: true,
+            interactive: true,
+            dataActive: true,
+        });
+
+        const refreshControl = expectPresent(
+            flashListCompatState.current?.props?.refreshControl,
+            'expected native refresh control',
+        );
+        const onRefresh = expectPresent(
+            refreshControl.props.onRefresh,
+            'expected native refresh handler',
+        );
+
+        expect(String(refreshControl.type)).toBe('RefreshControl');
+        expect(refreshControl.props.refreshing).toBe(false);
+
+        await act(async () => {
+            void onRefresh();
+            await Promise.resolve();
+        });
+
+        expect(refreshSessionsMock).toHaveBeenCalledTimes(1);
+        expect(flashListCompatState.current?.props?.refreshControl?.props?.refreshing).toBe(true);
+
+        await act(async () => {
+            resolveRefresh?.();
+            await refreshPromise;
+        });
+
+        expect(flashListCompatState.current?.props?.refreshControl?.props?.refreshing).toBe(false);
+    });
+
+    it('does not expose native pull-to-refresh when the surface is not data-active', async () => {
+        await renderSessionsListWithSurfaceOwnership({
+            visible: false,
+            interactive: false,
+            dataActive: false,
+        });
+
+        expect(flashListCompatState.current?.props?.refreshControl).toBeUndefined();
+    });
+
+    it('deduplicates native pull-to-refresh while a session refresh is already pending', async () => {
+        let resolveRefresh: (() => void) | null = null;
+        const refreshPromise = new Promise<undefined>((resolve) => {
+            resolveRefresh = () => resolve(undefined);
+        });
+        refreshSessionsMock.mockReturnValueOnce(refreshPromise);
+        await renderSessionsListWithSurfaceOwnership({
+            visible: true,
+            interactive: true,
+            dataActive: true,
+        });
+        const onRefresh = expectPresent(
+            flashListCompatState.current?.props?.refreshControl?.props?.onRefresh,
+            'expected active native refresh handler',
+        );
+
+        await act(async () => {
+            void onRefresh();
+            void onRefresh();
+            await Promise.resolve();
+        });
+
+        expect(refreshSessionsMock).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            resolveRefresh?.();
+            await refreshPromise;
+        });
+    });
+
+    it('ignores stale native pull-to-refresh callbacks after the surface becomes inactive', async () => {
+        const screen = await renderSessionsListWithSurfaceOwnership({
+            visible: true,
+            interactive: true,
+            dataActive: true,
+        });
+        const staleOnRefresh = expectPresent(
+            flashListCompatState.current?.props?.refreshControl?.props?.onRefresh,
+            'expected active native refresh handler',
+        );
+        const { SessionsList } = await import('./SessionsList');
+
+        await screen.update(
+            <SessionsList
+                surfaceOwnership={{
+                    visible: false,
+                    interactive: false,
+                    dataActive: false,
+                }}
+            />,
+        );
+        await act(async () => {
+            await staleOnRefresh();
+        });
+
+        expect(refreshSessionsMock).not.toHaveBeenCalled();
     });
 
     it('loads more sessions from native scroll proximity when FlashList does not emit onEndReached', async () => {
@@ -1656,19 +1992,25 @@ describe('SessionsList (native virtualization)', () => {
         expect(fetchMoreSessionsMock).not.toHaveBeenCalled();
     });
 
-    it('writes session tags back to settings as a value (not an updater function)', async () => {
+    it('writes session tags through session organization assignments', async () => {
         sessionTagsV1 = { 'server_a:sess_a': ['important'] };
-        setSessionTagsV1.mockClear();
 
         const screen = await renderSessionsList();
         const first = expectPresent(findSessionItem(screen, 'sess_a'), 'expected first session item');
         expect(typeof first.props.onSetTags).toBe('function');
-        first.props.onSetTags(['urgent']);
-
-        expect(setSessionTagsV1).toHaveBeenCalledTimes(1);
-        expect(setSessionTagsV1.mock.calls[0]?.[0]).toEqual({
-            'server_a:sess_a': ['urgent'],
+        await act(async () => {
+            first.props.onSetTags(['urgent']);
+            await Promise.resolve();
+            await Promise.resolve();
         });
+
+        expect(setSessionTagAssignmentsOp).toHaveBeenCalledTimes(1);
+        expect(setSessionTagAssignmentsOp).toHaveBeenCalledWith(expect.objectContaining({
+            serverId: 'server_a',
+            serverUrl: 'https://server-a.example.test',
+            sessionId: 'sess_a',
+            tags: ['urgent'],
+        }));
     });
 
     it('shows pinned server badges only when multiple servers are selected', async () => {

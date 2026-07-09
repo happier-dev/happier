@@ -185,19 +185,19 @@ vi.mock('@/agents/registry/registryCore', () => ({
   isAgentId: (value: unknown) => value === 'codex',
   resolveAgentIdFromFlavor: () => 'codex',
 }));
-vi.mock('@/agents/providers/registry/providerUniverse', () => ({
+vi.mock('@/agents/catalog/providerUniverse', () => ({
   buildProviderUniverseBackendTargetKey: (providerId: string) => `provider:${providerId}`,
   listProviderUniverseIds: () => ['codex'],
 }));
-vi.mock('@/agents/catalog/providerSettingsCatalog', () => ({
-  PROVIDER_SETTINGS_BEHAVIORS: [],
-  PROVIDER_SETTINGS_DESCRIPTORS: [],
-  PROVIDER_SETTINGS_PLUGINS: [],
-  getCompatProviderSettingsPlugin: () => null,
-  getProviderSettingsBehavior: () => null,
-  getProviderSettingsDescriptor: () => null,
-  getProviderSettingsPlugin: () => null,
-  resolveProviderSettingsRegistryEntry: () => ({
+vi.mock('@/agents/catalog/agentSettingsCatalog', () => ({
+  AGENT_SETTINGS_BEHAVIORS: [],
+  AGENT_SETTINGS_DESCRIPTORS: [],
+  AGENT_SETTINGS_PLUGINS: [],
+  getCompatPluginAgentSettingsPlugin: () => null,
+  getPluginAgentSettingsBehavior: () => null,
+  getPluginAgentSettingsDescriptor: () => null,
+  getPluginAgentSettingsPlugin: () => null,
+  resolvePluginAgentSettingsRegistryEntry: () => ({
     providerId: '',
     plugin: null,
     descriptor: null,
@@ -499,23 +499,6 @@ describe('SessionView header action menu visibility', () => {
 
     expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
     expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/automations?serverId=server-1');
-  });
-
-  it('opens the review comments pane from the visible header badge', async () => {
-    platformState.os = 'web';
-    responsiveState.deviceType = 'phone';
-    responsiveState.isLandscape = false;
-    windowDimensionsState.width = 800;
-
-    const screen = await renderSessionView();
-    const openReviewCommentsButton = findPressableByAccessibilityLabel(screen, 'review.comments.headerA11y');
-
-    expect(openReviewCommentsButton).toBeDefined();
-
-    pressTestInstance(openReviewCommentsButton, 'review.comments.headerA11y');
-
-    expect(paneOpenRightSpy).toHaveBeenCalledWith({ tabId: 'reviews' });
-    expect(paneSetRightTabSpy).toHaveBeenCalledWith('reviews');
   });
 
   it('folds runs and automations buttons into the header action menu when the header is narrow', async () => {

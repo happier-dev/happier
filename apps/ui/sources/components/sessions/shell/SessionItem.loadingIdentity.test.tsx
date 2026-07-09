@@ -270,6 +270,39 @@ describe('SessionItem loading identity', () => {
         expect(flattenStyle((subtitleStyle as readonly unknown[])[1])).toHaveProperty('opacity');
     });
 
+    it('does not start the identity skeleton animation while row attention animations are disabled', async () => {
+        const { Animated } = await import('react-native');
+        const loopSpy = vi.spyOn(Animated, 'loop').mockReturnValue({
+            start: vi.fn(),
+            stop: vi.fn(),
+        } as any);
+        const { SessionItem } = await import('./SessionItem');
+        const session = createMetadataPendingSession('sess_offscreen_loading');
+
+        await renderScreen(
+            <SessionItem
+                session={session}
+                rowViewModel={createSessionItemRowViewModel({
+                    session,
+                    overrides: {
+                        isIdentityLoading: true,
+                    },
+                })}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                compact={false}
+                rowAttentionAnimationEnabled={false}
+            />,
+        );
+
+        expect(loopSpy).not.toHaveBeenCalled();
+    });
+
     it('renders settled unknown identity instead of placeholders when metadata is unavailable', async () => {
         const { SessionItem } = await import('./SessionItem');
         const session = createMetadataUnavailableSession('sess_unavailable');

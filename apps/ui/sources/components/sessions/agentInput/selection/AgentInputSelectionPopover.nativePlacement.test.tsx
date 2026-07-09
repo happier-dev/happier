@@ -97,7 +97,7 @@ describe('AgentInputSelectionPopover (native placement)', () => {
         );
 
         expect(capturedPopoverProps.current?.placement).toBe('top');
-        expect(capturedPopoverProps.current?.gap).toBe(32);
+        expect(capturedPopoverProps.current?.gap).toBe(8);
     });
 
     it('keeps native chip popovers above the anchor when the keyboard is visible', async () => {
@@ -113,7 +113,7 @@ describe('AgentInputSelectionPopover (native placement)', () => {
 
         expect(capturedPopoverProps.current?.placement).toBe('top');
         expect(capturedPopoverProps.current?.keyboardBottomInset).toBe(320);
-        expect(capturedPopoverProps.current?.gap).toBe(32);
+        expect(capturedPopoverProps.current?.gap).toBe(8);
         expect(capturedPopoverProps.current?.backdrop?.blockOutsidePointerEvents).toBe('above-anchor');
     });
 

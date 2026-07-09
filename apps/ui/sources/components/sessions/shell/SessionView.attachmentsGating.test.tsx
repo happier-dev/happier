@@ -104,6 +104,7 @@ installSessionShellCommonModuleMocks({
     getNewSessionRelevantInstallableDepKeys: () => [],
     resolveAgentUiBehavior: () => ({}),
     resolveAgentUiBehaviorFromFlavor: () => ({}),
+    resolveAgentUiBehaviorFromSessionMetadata: () => ({}),
     supportsDetectedMcpConfigScan: () => false,
     supportsEditableSessionGoals: supportsEditableSessionGoalsMock,
   }),
@@ -134,6 +135,8 @@ installSessionShellCommonModuleMocks({
       useSessionMessages: () => ({ messages: [], isLoaded: true }),
       useSessionSubagentSourceMessages: () => [],
       useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
+      useOpenApprovalArtifactsForSession: () => [],
+      useEnabledAutomationsCountForSession: () => 0,
       useLocalSetting: (key: string) => {
         if (key === 'uiMultiPanePanelsEnabled') return false;
         if (key === 'acknowledgedCliVersions') return [];
@@ -381,13 +384,20 @@ const { SessionView } = await import('./SessionView');
 
 describe('SessionView attachments gating', () => {
   beforeEach(() => {
+    sessionState.session = {
+      id: 's1',
+      metadata: null,
+      accessLevel: 'edit',
+      canApprovePermissions: true,
+      agentState: { controlledByUser: true },
+    } as any;
     executeSessionComposerResolutionMock.mockReset();
     modalAlertSpy.mockReset();
     resolveSessionComposerSendMock.mockReset();
     resolveSessionComposerSendMock.mockImplementation(() => ({ kind: 'noop' }));
     supportsEditableSessionGoalsMock.mockReset();
     supportsEditableSessionGoalsMock.mockReturnValue(false);
-    featureEnabledState['providers.codex.appServer.goals'] = false;
+    featureEnabledState['agent.goals'] = false;
   });
 
   it('does not wire drag/drop/paste attachments when attachments.uploads is disabled', async () => {
@@ -422,6 +432,7 @@ describe('SessionView attachments gating', () => {
     attachmentsFeatureScopeState.enabledForServerId = 'server-1';
     featureEnabledState['attachments.uploads'] = true;
     attachmentsTransferAvailableState.value = true;
+    sessionState.session.serverId = 'server-2';
 
     let tree!: renderer.ReactTestRenderer;
     tree = (await renderScreen(<AppPaneProvider>
@@ -461,8 +472,9 @@ describe('SessionView attachments gating', () => {
   });
 
   it('passes native goal mutation callbacks to the command executor when editable goals are enabled', async () => {
-    featureEnabledState['providers.codex.appServer.goals'] = true;
+    featureEnabledState['agent.goals'] = true;
     supportsEditableSessionGoalsMock.mockReturnValue(true);
+    sessionState.session.metadata = { flavor: 'codex' };
     resolveSessionComposerSendMock.mockReturnValue({ kind: 'goal', command: 'set', objective: 'Ship goal UI' } as any);
     executeSessionComposerResolutionMock.mockResolvedValue(true);
 

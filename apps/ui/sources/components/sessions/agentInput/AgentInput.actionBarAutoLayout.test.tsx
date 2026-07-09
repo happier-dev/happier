@@ -435,6 +435,39 @@ describe('AgentInput (action bar auto layout)', () => {
         expect(findExpansionToggleButtons().length).toBeGreaterThan(0);
     });
 
+    it('keeps the composer height reporter stable across web layout-only rerenders', async () => {
+        layoutMockState.platform = 'web';
+        layoutMockState.width = 900;
+        layoutMockState.height = 700;
+        vi.resetModules();
+        const { act } = await import('react-test-renderer');
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(
+            <AgentInput
+                sessionId="session-1"
+                value=""
+                placeholder="Type"
+                onChangeText={() => {}}
+                onSend={() => {}}
+                autocompletePrefixes={[]}
+                autocompleteSuggestions={async () => []}
+                inputMaxHeight={200}
+                maxPanelHeight={700}
+            />,
+        );
+
+        const firstInput = screen.tree.root.findByProps({ testID: 'session-composer-input' });
+        const firstHeightReporter = firstInput.props.onContentHeightChange;
+
+        await act(async () => {
+            firstInput.parent?.props.onLayout({ nativeEvent: { layout: { height: 60 } } });
+        });
+
+        const nextInput = screen.tree.root.findByProps({ testID: 'session-composer-input' });
+        expect(nextInput.props.onContentHeightChange).toBe(firstHeightReporter);
+    });
+
     it('keeps the provided existing-session input max height as a hard cap after native panel measurement', async () => {
         layoutMockState.platform = 'ios';
         layoutMockState.width = 420;

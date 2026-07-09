@@ -19,6 +19,10 @@ import {
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const machineContributionRegistryProjectionDescribeMock = vi.hoisted(() => vi.fn());
+const builtInProfileMockState = vi.hoisted(() => ({
+    defaultProfiles: [] as Array<{ id: string; name: string; isBuiltIn?: boolean }>,
+    profilesById: new Map<string, any>(),
+}));
 
 type TestWorkspace = {
     id: string;
@@ -528,6 +532,7 @@ vi.mock('@/components/automations/editor/AutomationSettingsForm', () => ({
 }));
 
 vi.mock('@react-navigation/native', () => ({
+    useIsFocused: () => true,
     useFocusEffect: (fn: any) => {
         focusEffectRef.current.push(fn);
     },
@@ -849,8 +854,8 @@ vi.mock('@/sync/domains/profiles/profileCompatibility', async (importOriginal) =
 });
 
 vi.mock('@/sync/domains/profiles/profileUtils', () => ({
-    getBuiltInProfile: () => null,
-    DEFAULT_PROFILES: [],
+    getBuiltInProfile: (id: string) => builtInProfileMockState.profilesById.get(id) ?? null,
+    DEFAULT_PROFILES: builtInProfileMockState.defaultProfiles,
     getProfilePrimaryCli: () => null,
     isProfileEnabled: (profile: { id: string; defaultEnabled?: boolean }, profileEnabledById?: Record<string, boolean> | null) => {
         const override = profileEnabledById?.[profile.id];
@@ -942,6 +947,8 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         interactionQueueState.callbacks = [];
         focusEffectRef.current = [];
         activeServerAccountScopeState.value = { serverId: 'server-a', accountId: 'account-a' };
+        builtInProfileMockState.defaultProfiles.splice(0);
+        builtInProfileMockState.profilesById.clear();
         routerPushMock.mockClear();
         routerSetParamsMock.mockClear();
         featureFlags.mcpServersEnabled = false;
@@ -1155,7 +1162,17 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         return (textNode as any)?.props?.children;
     }
 
+    function expectNewWorktreeCheckoutChip(model: any, displayName: string): void {
+        const label = String(getCheckoutChipLabel(model) ?? '');
+        expect(label).toContain('newSession.checkout.newWorktree');
+        expect(label).toContain(displayName);
+    }
+
     async function flushInteractionQueue() {
+        // Settle next-tick fallbacks first: runAfterInteractionsWithFallback
+        // schedules a 0ms timeout on web instead of InteractionManager.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        await settleNewSessionScreenModel();
         while (interactionQueueState.callbacks.length > 0) {
             const callback = interactionQueueState.callbacks.shift();
             callback?.();
@@ -1389,6 +1406,21 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect((model?.simpleProps?.agentPickerOptions ?? []).map((o: any) => o?.label)).not.toContain('Codex (Projected)');
     });
 
+    it('ignores stale built-in profile catalog entries that no longer resolve', async () => {
+        builtInProfileMockState.defaultProfiles.push({
+            id: 'missing-built-in-profile',
+            name: 'Missing built-in profile',
+            isBuiltIn: true,
+        });
+
+        let model: any = null;
+        await expect(renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        })).resolves.toBeTruthy();
+
+        expect(model?.simpleProps ?? model?.wizardProps).toBeTruthy();
+    });
+
     it('clears remembered Claude plan mode when the user switches the new-session mode back to build', async () => {
         const backendTarget = { kind: 'backend' as const, backendId: 'claude' as const };
         const scopeKey = buildRememberedEngineSelectionScopeKey({
@@ -1428,6 +1460,45 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect((settingsState as any).lastEngineSelectionsByScopeV1?.[scopeKey]?.acpSessionModeId).toBeNull();
     });
 
+    it('does not remember stale engine state when route params select a different backend', async () => {
+        const codexTarget = { kind: 'backend' as const, backendId: 'codex' as const };
+        const opencodeTarget = { kind: 'backend' as const, backendId: 'opencode' as const };
+        const codexScopeKey = buildRememberedEngineSelectionScopeKey({
+            serverId: null,
+            backendTarget: codexTarget,
+        });
+        const opencodeScopeKey = buildRememberedEngineSelectionScopeKey({
+            serverId: null,
+            backendTarget: opencodeTarget,
+        });
+        (settingsState as any).rememberLastEngineSelectionsV1 = true;
+        (settingsState as any).lastEngineSelectionsByScopeV1 = {
+            [codexScopeKey]: {
+                v: 1,
+                modelId: 'gpt-5.5',
+                acpSessionModeId: 'plan',
+                sessionConfigOptionOverrides: null,
+                updatedAt: 1,
+            },
+        };
+        persistedDraft.agentType = 'codex';
+        persistedDraft.backendTarget = codexTarget as any;
+        persistedDraft.modelMode = 'gpt-5.5';
+        persistedDraft.acpSessionModeId = 'plan';
+        searchParamsState.value = {
+            backendTarget: JSON.stringify(opencodeTarget),
+            backendTargetKey: 'backend:opencode',
+        };
+
+        await renderNewSessionScreenModel(() => {});
+        await settleNewSessionScreenModel();
+
+        standardCleanup();
+
+        expect((settingsState as any).lastEngineSelectionsByScopeV1?.[opencodeScopeKey]).toBeUndefined();
+        expect((settingsState as any).lastEngineSelectionsByScopeV1?.[codexScopeKey]?.modelId).toBe('gpt-5.5');
+    });
+
     it('hydrates permission, agent, and path from the persisted draft', async () => {
         let model: any = null;
         await renderNewSessionScreenModel((nextModel) => {
@@ -1454,7 +1525,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             baseRef: 'main',
             branchMode: 'new',
         });
-        expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.newWorktree');
+        expectNewWorktreeCheckoutChip(model, 'feature/auth');
 
         await act(async () => {
             persistDraftNowRef.current?.();
@@ -1635,7 +1706,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             baseRef: 'main',
             branchMode: 'new',
         });
-        expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.newWorktree');
+        expectNewWorktreeCheckoutChip(model, 'feature/first-render-fix');
         const getServerChip = () => model?.simpleProps?.agentInputExtraActionChips?.find((chip: any) => chip?.key === 'new-session-target-server');
         expect(getServerChip()?.controlId).toBe('server');
         expect(getServerChip()?.collapsedContentPopover).toEqual(expect.objectContaining({
@@ -1933,6 +2004,31 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
         expect(loadNewSessionDraftMock).toHaveBeenCalled();
     });
 
+    it('drops a persisted Claude model when a route-selected Codex backend owns the new session', async () => {
+        searchParamsState.value = {
+            backendTarget: JSON.stringify({ kind: 'backend', backendId: 'codex' }),
+            backendTargetKey: 'backend:codex',
+        };
+        persistedDraft.agentType = 'claude';
+        persistedDraft.backendTarget = { kind: 'backend', backendId: 'claude' } as any;
+        persistedDraft.modelMode = 'claude-opus-4-8';
+
+        let model: any = null;
+        await renderNewSessionScreenModel((nextModel) => {
+            model = nextModel;
+        });
+
+        expect(model?.simpleProps?.agentType).toBe('codex');
+        expect(model?.simpleProps?.modelMode).toBe('default');
+        expect(useCreateNewSessionArgsRef.current).toEqual(expect.objectContaining({
+            authoringDraft: expect.objectContaining({
+                agentId: 'codex',
+                backendTarget: { kind: 'backend', backendId: 'codex' },
+                modelId: null,
+            }),
+        }));
+    });
+
     it('persists configured backend autosave drafts with the canonical backend target carrier', async () => {
         settingsState.lastUsedAgent = 'codex';
         settingsState.acpCatalogSettingsV1 = {
@@ -2063,7 +2159,7 @@ describe('useNewSessionScreenModel (draft hydration)', () => {
             displayName: 'feature/focused-browser-fix',
             baseRef: 'main',
         });
-        expect(getCheckoutChipLabel(model)).toBe('newSession.checkout.newWorktree');
+        expectNewWorktreeCheckoutChip(model, 'feature/focused-browser-fix');
     });
 
     it('re-hydrates prompt and resume selection coherently when a newer draft is loaded on focus', async () => {

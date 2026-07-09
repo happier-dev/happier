@@ -31,4 +31,51 @@ describe('getContextWarning', () => {
         );
         expect(warning?.text).toContain('100');
     });
+
+    it('uses baseline-adjusted canonical percentage math and the distinct warning color at 15% remaining', () => {
+        const warning = getContextWarning({
+            contextSize: 865,
+            contextWindowTokens: 1_000,
+            contextSnapshot: {
+                v: 1,
+                modelId: 'gpt-5.4',
+                usedTokens: 865,
+                windowTokens: 1_000,
+                totalProcessedTokens: null,
+                baselineTokens: 100,
+                isAutoCompactEnabled: null,
+                categories: null,
+                observedAtMs: 1_000,
+                source: 'provider_turn',
+            },
+            theme: lightTheme,
+        });
+
+        expect(warning).toEqual(expect.objectContaining({
+            color: lightTheme.colors.state.warning.foreground,
+        }));
+        expect(warning?.text).toContain('15');
+    });
+
+    it('suppresses percentages for a snapshot made stale by a model switch', () => {
+        expect(getContextWarning({
+            contextSize: 950,
+            contextWindowTokens: 1_000,
+            contextSnapshot: {
+                v: 1,
+                modelId: 'model-a',
+                usedTokens: 950,
+                windowTokens: 1_000,
+                totalProcessedTokens: null,
+                baselineTokens: null,
+                isAutoCompactEnabled: null,
+                categories: null,
+                observedAtMs: 1_000,
+                source: 'provider_turn',
+            },
+            contextSnapshotStale: true,
+            alwaysShow: true,
+            theme: lightTheme,
+        })).toBeNull();
+    });
 });

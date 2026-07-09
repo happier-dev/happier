@@ -53,8 +53,8 @@ export function SessionsListEmptyState(props: SessionsListEmptyStateProps) {
         }) as never);
     }, [router]);
     const setupSubtitle = props.kind === 'connect_machine'
-        ? t('sessionsList.emptyState.reconnectMachineActionSubtitle')
-        : t('sessionsList.emptyState.startDaemonActionSubtitle');
+        ? t('sessionsList.emptyState.connectMachineActionSubtitle')
+        : t('sessionsList.emptyState.reconnectMachineActionSubtitle');
 
     return (
         <ItemList testID="sessions-empty-state-list" containerStyle={{ paddingTop: 12 }}>

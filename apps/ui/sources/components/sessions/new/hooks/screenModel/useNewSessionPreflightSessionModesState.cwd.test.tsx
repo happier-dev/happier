@@ -195,6 +195,166 @@ describe('useNewSessionPreflightSessionModesState (cwd)', () => {
     expect((latest?.modeOptions ?? []).map((option: any) => option.id)).toEqual(['default', 'plan']);
   });
 
+  it('does not expose the synthetic Default mode when preflight mode discovery is unavailable', async () => {
+    vi.resetModules();
+    machineCapabilitiesInvokeMock.mockClear();
+    resetDynamicSessionModeProbeCacheForTests();
+
+    const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
+
+    machineCapabilitiesInvokeMock.mockImplementationOnce(async () => ({
+      supported: true as const,
+      response: {
+        ok: true as const,
+        result: { availableModes: [], source: 'unavailable' },
+      },
+    }));
+
+    let latest: ReturnType<typeof useNewSessionPreflightSessionModesState> | null = null;
+    const readLatest = () => {
+      const value = latest as ReturnType<typeof useNewSessionPreflightSessionModesState> | null;
+      if (!value) throw new Error('Expected preflight session modes state to render');
+      return value;
+    };
+    function Harness() {
+      latest = useNewSessionPreflightSessionModesState({
+        backendTarget: { kind: 'backend', backendId: 'codex' },
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo-unavailable',
+      });
+      return null;
+    }
+
+    let root!: renderer.ReactTestRenderer;
+    root = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      await Promise.resolve();
+      root.unmount();
+    });
+
+    expect(readLatest().preflightModes).toEqual({
+      availableModes: [],
+      unavailable: true,
+    });
+    expect(readLatest().modeOptions).toEqual([]);
+  });
+
+  it('keeps mode discovery unavailable fail-closed across a same-scope remount during cooldown', async () => {
+    vi.resetModules();
+    machineCapabilitiesInvokeMock.mockClear();
+    resetDynamicSessionModeProbeCacheForTests();
+
+    const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
+
+    machineCapabilitiesInvokeMock.mockImplementationOnce(async () => ({
+      supported: true as const,
+      response: {
+        ok: true as const,
+        result: { availableModes: [], source: 'unavailable' },
+      },
+    }));
+
+    let latest: ReturnType<typeof useNewSessionPreflightSessionModesState> | null = null;
+    const readLatest = () => {
+      const value = latest as ReturnType<typeof useNewSessionPreflightSessionModesState> | null;
+      if (!value) throw new Error('Expected preflight session modes state to render');
+      return value;
+    };
+    function Harness() {
+      latest = useNewSessionPreflightSessionModesState({
+        backendTarget: { kind: 'backend', backendId: 'codex' },
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo-unavailable-remount',
+      });
+      return null;
+    }
+
+    let root!: renderer.ReactTestRenderer;
+    root = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      await Promise.resolve();
+      root.unmount();
+    });
+
+    latest = null;
+    root = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      await Promise.resolve();
+      root.unmount();
+    });
+
+    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+    expect(readLatest().preflightModes).toEqual({
+      availableModes: [],
+      unavailable: true,
+    });
+    expect(readLatest().modeOptions).toEqual([]);
+  });
+
+  it('replaces a previous successful mode list when a forced refresh reports unavailable', async () => {
+    vi.resetModules();
+    machineCapabilitiesInvokeMock.mockClear();
+    resetDynamicSessionModeProbeCacheForTests();
+
+    const { useNewSessionPreflightSessionModesState } = await import('./useNewSessionPreflightSessionModesState');
+
+    machineCapabilitiesInvokeMock
+      .mockImplementationOnce(async () => ({
+        supported: true as const,
+        response: {
+          ok: true as const,
+          result: { availableModes: [{ id: 'plan', name: 'Plan' }] },
+        },
+      }))
+      .mockImplementationOnce(async () => ({
+        supported: true as const,
+        response: {
+          ok: true as const,
+          result: { availableModes: [], source: 'unavailable' },
+        },
+      }));
+
+    let latest: ReturnType<typeof useNewSessionPreflightSessionModesState> | null = null;
+    const readLatest = () => {
+      const value = latest as ReturnType<typeof useNewSessionPreflightSessionModesState> | null;
+      if (!value) throw new Error('Expected preflight session modes state to render');
+      return value;
+    };
+    function Harness() {
+      latest = useNewSessionPreflightSessionModesState({
+        backendTarget: { kind: 'backend', backendId: 'codex' },
+        selectedMachineId: 'machine-1',
+        capabilityServerId: 'server-1',
+        cwd: '/repo-success-to-unavailable',
+      });
+      return null;
+    }
+
+    const root = (await renderScreen(React.createElement(Harness))).tree;
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(readLatest().modeOptions.map((option) => option.id)).toEqual(['default', 'plan']);
+
+    await act(async () => {
+      readLatest().probe.onRefresh?.();
+      await Promise.resolve();
+    });
+
+    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(2);
+    expect(readLatest().preflightModes).toEqual({
+      availableModes: [],
+      unavailable: true,
+    });
+    expect(readLatest().modeOptions).toEqual([]);
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
   it('forwards probeContext.capabilityParams to capabilities.invoke(cli.* probeModes)', async () => {
     vi.resetModules();
     machineCapabilitiesInvokeMock.mockClear();

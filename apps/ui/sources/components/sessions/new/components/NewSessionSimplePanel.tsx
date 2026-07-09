@@ -15,6 +15,11 @@ import {
     useComposerAvailablePanelHeight,
 } from '@/components/sessions/keyboardAvoidance';
 import { computeNewSessionComposerPanelMaxHeight } from '@/components/sessions/agentInput/inputMaxHeight';
+import {
+    NewSessionLaunchPendingPreview,
+    shouldRenderNewSessionLaunchPendingPreview,
+} from '@/components/sessions/new/components/NewSessionLaunchPendingPreview';
+import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
 
 const SIMPLE_NEW_SESSION_MIN_TOP_GAP = 8;
 
@@ -33,6 +38,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     canCreate: boolean;
     isCreating: boolean;
+    pendingLaunchAttempt?: NewSessionLaunchAttempt | null;
     emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
     onAutocompleteSuggestionSelect?: React.ComponentProps<typeof AgentInput>['onAutocompleteSuggestionSelect'];
@@ -63,6 +69,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     acpConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
     setAcpConfigOptionOverride?: (configId: string, value: string) => void;
     connectionStatus: React.ComponentProps<typeof AgentInput>['connectionStatus'];
+    statusBadges?: React.ComponentProps<typeof AgentInput>['statusBadges'];
     machineName: string | undefined;
     machinePopover?: React.ComponentProps<typeof AgentInput>['machinePopover'];
     selectedPath: string;
@@ -113,6 +120,8 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
 
     const composerReservedHeight = props.newSessionBottomPadding
         + (shouldBottomAnchor ? 0 : props.safeAreaTop + props.newSessionTopPadding);
+    const showPendingLaunchPreview = props.isCreating
+        && shouldRenderNewSessionLaunchPendingPreview(props.pendingLaunchAttempt);
     const shellStyle = [
         props.containerStyle,
         ...(shouldBottomAnchor
@@ -188,6 +197,20 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                         style={{ flex: 1, width: '100%', minHeight: minimumTopGap }}
                         onPress={handleDismissKeyboard}
                     />
+                ) : null}
+                {showPendingLaunchPreview ? (
+                    <View
+                        style={{
+                            width: '100%',
+                            alignSelf: 'stretch',
+                            paddingHorizontal: props.newSessionSidePadding,
+                            paddingBottom: 8,
+                        }}
+                    >
+                        <View style={{ width: '100%', alignSelf: 'center' }}>
+                            <NewSessionLaunchPendingPreview launchAttempt={props.pendingLaunchAttempt} />
+                        </View>
+                    </View>
                 ) : null}
             </View>
         </ComposerKeyboardScaffold>
@@ -293,6 +316,7 @@ function NewSessionSimplePanelComposer({
                         acpConfigOptionOverridesOverride={props.acpConfigOptionOverrides ?? null}
                         onAcpConfigOptionChange={props.setAcpConfigOptionOverride}
                         connectionStatus={props.connectionStatus}
+                        statusBadges={props.statusBadges}
                         machineName={props.machineName}
                         machinePopover={props.machinePopover}
                         onMachineClick={undefined}
@@ -304,7 +328,6 @@ function NewSessionSimplePanelComposer({
                         resumePopover={props.showResumePicker ? props.resumePopover : undefined}
                         resumeIsChecking={props.isResumeSupportChecking}
                         contentPaddingHorizontal={0}
-                        maxWidthCap={null}
                         {...(props.useProfiles
                             ? {
                                 profileId: props.selectedProfileId,

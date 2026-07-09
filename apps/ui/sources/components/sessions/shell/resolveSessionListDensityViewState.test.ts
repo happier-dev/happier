@@ -4,6 +4,7 @@ import {
     SESSION_LIST_ROW_HEIGHT_COMPACT,
     SESSION_LIST_ROW_HEIGHT_DEFAULT,
     SESSION_LIST_ROW_HEIGHT_MINIMAL,
+    SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE,
 } from './sessionListRowHeights';
 import { resolveSessionListDensityViewState } from './resolveSessionListDensityViewState';
 
@@ -44,5 +45,34 @@ describe('resolveSessionListDensityViewState', () => {
             rowHeight: SESSION_LIST_ROW_HEIGHT_MINIMAL,
         });
         expect(first).toBe(second);
+    });
+
+    it('keeps native phone narrow rows readable without changing web/tablet row height', () => {
+        expect(resolveSessionListDensityViewState('narrow', {
+            isTablet: false,
+            platform: 'ios',
+        })).toEqual({
+            compact: true,
+            compactMinimal: true,
+            rowHeight: SESSION_LIST_ROW_HEIGHT_MINIMAL_NATIVE_PHONE,
+        });
+
+        expect(resolveSessionListDensityViewState('narrow', {
+            isTablet: false,
+            platform: 'web',
+        })).toEqual({
+            compact: true,
+            compactMinimal: true,
+            rowHeight: SESSION_LIST_ROW_HEIGHT_MINIMAL,
+        });
+
+        expect(resolveSessionListDensityViewState('narrow', {
+            isTablet: true,
+            platform: 'ios',
+        })).toEqual({
+            compact: true,
+            compactMinimal: true,
+            rowHeight: SESSION_LIST_ROW_HEIGHT_MINIMAL,
+        });
     });
 });

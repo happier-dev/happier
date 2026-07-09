@@ -5,7 +5,11 @@ import { getAgentCore, isAgentId, type AgentId } from '@/agents/catalog/catalog'
 import { resolveProviderAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
-import { getModelOptionsForAgentTypeOrPreflight, type PreflightModelList } from '@/sync/domains/models/modelOptions';
+import {
+    createUnavailablePreflightModelList,
+    getModelOptionsForAgentTypeOrPreflight,
+    type PreflightModelList,
+} from '@/sync/domains/models/modelOptions';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import { parsePreflightModelListFromProbeModelsResult } from '@/sync/domains/models/parsePreflightModelListFromProbeModelsResult';
 import {
@@ -16,15 +20,30 @@ import {
     writeDynamicModelProbeCacheError,
     writeDynamicModelProbeCacheSuccess,
     writeDynamicModelProbeCacheTransientSuccess,
+    writeDynamicModelProbeCacheUnavailable,
 } from '@/sync/domains/models/dynamicModelProbeCache';
 import {
     buildNewSessionCapabilityProbeContextKey,
     normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts,
     type NewSessionCapabilityProbeContext,
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
-import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
-import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { NEW_SESSION_MODEL_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
+import { buildProviderCliCapabilityId } from '@/capabilities/cliCapabilityId';
 import { scheduleProbedResourceRetryAfterExpiry } from './probedResourceRetrySchedule';
+
+type DynamicModelProbeAttempt = Readonly<{
+    list: PreflightModelList;
+    cacheable: boolean;
+    retryDelayMs?: number;
+}>;
+
+function createUnavailableModelProbeAttempt(retryDelayMs: number): DynamicModelProbeAttempt {
+    return {
+        list: createUnavailablePreflightModelList(),
+        cacheable: false,
+        retryDelayMs,
+    };
+}
 
 export function useNewSessionPreflightModelsState(params: Readonly<{
     backendTarget: BackendTargetRefV2 | null | undefined;
@@ -216,7 +235,9 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
         let cancelled = false;
         const run = async () => {
-            const core = getAgentCore(agentType);
+            const probeAgentType = agentType;
+            if (!probeAgentType) return;
+            const core = getAgentCore(probeAgentType);
             if (core.model.supportsSelection !== true || !params.selectedMachineId) {
                 if (!cancelled) {
                     setProbePhase('idle');
@@ -227,29 +248,33 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
 
             const hasExisting = Boolean(preflightModelsRef.current);
             setProbePhase(hasExisting ? 'refreshing' : 'loading');
-            const attempt = await runDynamicModelProbeDedupe<Readonly<{
-                list: PreflightModelList;
-                cacheable: boolean;
-            }> | null>(preflightModelsKey, async () => {
-                const capabilityId: CapabilityId = `cli.${agentType}`;
+            const attempt = await runDynamicModelProbeDedupe<DynamicModelProbeAttempt | null>(preflightModelsKey, async () => {
+                const capabilityId = buildProviderCliCapabilityId(probeAgentType);
                 const res = await machineCapabilitiesInvoke(params.selectedMachineId!, {
                     id: capabilityId,
                     method: 'probeModels',
                     params: {
-                        timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
+                        timeoutMs: NEW_SESSION_MODEL_PROBE_TIMEOUT_MS,
                         ...(backendTargetForProbe ? { backendTarget: backendTargetForProbe } : {}),
                         ...(probeContextCapabilityParams ? probeContextCapabilityParams : {}),
                         ...(cwd ? { cwd } : {}),
                     },
                 }, {
                     serverId: params.capabilityServerId,
+                    timeoutMs: NEW_SESSION_MODEL_PROBE_TIMEOUT_MS,
                 });
 
-                if (!res.supported) return null;
-                if (!res.response.ok) return null;
+                if (!res.supported) {
+                    return createUnavailableModelProbeAttempt(DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS);
+                }
+                if (!res.response.ok) {
+                    return createUnavailableModelProbeAttempt(DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS);
+                }
 
                 const list = parsePreflightModelListFromProbeModelsResult(res.response.result);
-                if (!list) return null;
+                if (!list) {
+                    return createUnavailableModelProbeAttempt(DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS);
+                }
 
                 const result = res.response.result;
                 const source = result && typeof result === 'object' && !Array.isArray(result)
@@ -257,8 +282,16 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                     : null;
                 // When the CLI probe returns a static fallback (dynamic probe failed), do not persist it
                 // for a full day. Persisting it long-lived is what causes “Thinking/Speed only appear after refresh”.
-                const cacheable = source !== 'static';
-                return { list, cacheable };
+                const cacheable = source !== 'static' && source !== 'unavailable';
+                return {
+                    list,
+                    cacheable,
+                    ...(cacheable ? {} : {
+                        retryDelayMs: source === 'static'
+                            ? DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS
+                            : DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS,
+                    }),
+                };
             });
 
             if (cancelled) return;
@@ -272,6 +305,18 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                 setPreflightModelsTargetKey(backendTargetKey);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
+                return;
+            }
+            if (list?.unavailable === true && attempt?.cacheable === false) {
+                writeDynamicModelProbeCacheUnavailable(preflightModelsKey, commitNowMs);
+                setPreflightModels(list);
+                preflightModelsCacheableRef.current = false;
+                setPreflightModelsTargetKey(backendTargetKey);
+                setRefreshedAt(commitNowMs);
+                setProbePhase('idle');
+                retryTimeout = setTimeout(() => {
+                    setRefreshNonce((n) => n + 1);
+                }, attempt.retryDelayMs ?? DYNAMIC_MODEL_PROBE_ERROR_BACKOFF_MS);
                 return;
             }
             if (list && attempt?.cacheable === false && !cached) {
@@ -293,7 +338,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
                     staticFallbackRetryRef.current = { scopeKey, attempts: attempts + 1 };
                     retryTimeout = setTimeout(() => {
                         setRefreshNonce((n) => n + 1);
-                    }, DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS);
+                    }, attempt.retryDelayMs ?? DYNAMIC_MODEL_PROBE_STATIC_FALLBACK_RETRY_MS);
                 }
                 return;
             }
@@ -346,9 +391,14 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             if (!agentType) {
                 return [] as ReturnType<typeof getModelOptionsForAgentTypeOrPreflight>;
             }
-            return getModelOptionsForAgentTypeOrPreflight({ agentType, preflight: preflightModels });
+            return getModelOptionsForAgentTypeOrPreflight({
+                agentType,
+                preflight: preflightModels,
+                preflightTargetKey: preflightModelsTargetKey,
+                currentTargetKey: backendTargetKey,
+            });
         },
-        [agentType, preflightModels],
+        [agentType, backendTargetKey, preflightModels, preflightModelsTargetKey],
     );
 
     return {

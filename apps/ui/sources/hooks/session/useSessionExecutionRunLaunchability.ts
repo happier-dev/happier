@@ -1,6 +1,7 @@
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import * as React from 'react';
 
-import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { canResumeSessionWithOptions } from '@/agents/runtime/resumeCapabilities';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
@@ -40,8 +41,8 @@ export function useSessionExecutionRunLaunchability(
         metadata: session?.metadata,
     });
     const agentId = React.useMemo(
-        () => resolveAgentIdFromFlavor(session?.metadata?.flavor) ?? DEFAULT_AGENT_ID,
-        [session?.metadata?.flavor],
+        () => resolveAgentIdFromSessionMetadata(session?.metadata) ?? DEFAULT_AGENT_ID,
+        [session?.metadata],
     );
     const { resumeCapabilityOptions } = useResumeCapabilityOptions({
         agentId,

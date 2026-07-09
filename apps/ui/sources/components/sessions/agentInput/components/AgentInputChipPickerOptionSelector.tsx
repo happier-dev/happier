@@ -8,11 +8,11 @@ import { Text } from "@/components/ui/text/Text";
 import { normalizeNodeForView } from "@/components/ui/rendering/normalizeNodeForView";
 import { AgentInputChipPickerTopSelector } from "./AgentInputChipPickerTopSelector";
 import {
-  AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE,
   AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
   createAgentInputChipPickerOptionTransientStyles,
   type AgentInputChipPickerOptionTransientStyles,
 } from "./agentInputChipPickerOptionStyles";
+import { normalizeAgentInputChipPickerOptionIcon } from "./agentInputChipPickerOptionIcon";
 
 import type {
   AgentInputChipPickerOption,
@@ -136,6 +136,7 @@ function AgentInputChipPickerOptionButton(
 ) {
   const styles = stylesheet;
   const testID = `agent-input-chip-picker.option:${props.option.id}`;
+  const disabled = props.option.disabled === true;
   const normalizedSubtitle = props.option.subtitle?.trim();
   const [hovered, setHovered] = React.useState(false);
   const shouldShowSubtitle =
@@ -159,13 +160,13 @@ function AgentInputChipPickerOptionButton(
       Platform.OS === "web"
         && rowHovered
         && !props.focused
-        && !props.option.disabled
+        && !disabled
         && !props.option.muted
         ? props.transientStyles.optionRowHovered
         : null,
       props.focused ? props.transientStyles.optionRowFocused : null,
       pressed ? props.transientStyles.optionRowPressed : null,
-      (props.option.disabled || props.option.muted) ? props.transientStyles.optionRowDisabled : null,
+      (disabled || props.option.muted) ? props.transientStyles.optionRowDisabled : null,
     ];
   };
   const activateFromWebEvent = (event?: unknown) => {
@@ -175,17 +176,14 @@ function AgentInputChipPickerOptionButton(
     } | undefined;
     try { maybeEvent?.stopPropagation?.(); } catch {}
     try { maybeEvent?.nativeEvent?.stopPropagation?.(); } catch {}
+    if (disabled) return;
     props.onPress();
   };
 
   const content = (
     <>
       <View style={styles.optionLeft}>
-        {props.option.icon ? (
-          <View style={styles.optionIcon}>
-            {normalizeNodeForView(props.option.icon)}
-          </View>
-        ) : null}
+        {props.option.icon ? normalizeAgentInputChipPickerOptionIcon(props.option.icon) : null}
         <View style={styles.optionTextBlock}>
           <Text style={[styles.optionLabel, props.focused ? styles.optionLabelFocused : null]}>{props.option.label}</Text>
           {shouldShowSubtitle ? (
@@ -232,6 +230,10 @@ function AgentInputChipPickerOptionButton(
       <WebClickableView
         testID={testID}
         accessibilityLabel={props.option.label}
+        accessibilityState={{
+          disabled,
+          selected: props.selected,
+        }}
         onClick={activateFromWebEvent}
         onKeyDown={(event) => {
           const key = String(event?.key ?? "");
@@ -241,7 +243,7 @@ function AgentInputChipPickerOptionButton(
         }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
-        tabIndex={0}
+        tabIndex={disabled ? -1 : 0}
         style={buildOptionRowStyle({ pressed: false })}
       >
         {content}
@@ -254,7 +256,15 @@ function AgentInputChipPickerOptionButton(
       testID={testID}
       accessibilityRole="button"
       accessibilityLabel={props.option.label}
-      onPress={props.onPress}
+      accessibilityState={{
+        disabled,
+        selected: props.selected,
+      }}
+      disabled={disabled}
+      onPress={() => {
+        if (disabled) return;
+        props.onPress();
+      }}
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}
       style={(state) => buildOptionRowStyle(state as WebHoverablePressableState)}
@@ -303,12 +313,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-  },
-  optionIcon: {
-    width: AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE,
-    height: AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE,
-    alignItems: "center",
-    justifyContent: "center",
   },
   optionTextBlock: {
     flex: 1,

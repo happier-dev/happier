@@ -18,6 +18,18 @@ import { installNewSessionComponentsCommonModuleMocks } from './newSessionCompon
 
 let optionPickerOverlayProps: OptionPickerOverlayProps[] = [];
 
+function getOptionIconAgentId(icon: React.ReactNode): string | null {
+    return React.isValidElement<{ agentId?: string }>(icon)
+        ? icon.props.agentId ?? null
+        : null;
+}
+
+function getOptionIconSize(icon: React.ReactNode): number | null {
+    return React.isValidElement<{ size?: number }>(icon)
+        ? icon.props.size ?? null
+        : null;
+}
+
 installNewSessionComponentsCommonModuleMocks({
     reactNative: () => createReactNativeWebMock({
         View: 'View',
@@ -155,6 +167,14 @@ describe('NewSessionFavoriteModelsDetail', () => {
         }))).toEqual([
             { label: 'Opus 4.6', description: 'Claude' },
             { label: 'GPT 5.5', description: 'Codex' },
+        ]);
+        expect(latestPickerProps?.options.map((option) => getOptionIconAgentId(option.icon))).toEqual([
+            'claude',
+            'codex',
+        ]);
+        expect(latestPickerProps?.options.map((option) => getOptionIconSize(option.icon))).toEqual([
+            20,
+            20,
         ]);
     });
 
@@ -507,11 +527,19 @@ describe('NewSessionFavoriteModelsDetail', () => {
         />);
 
         const latestPickerProps = optionPickerOverlayProps.at(-1);
-        expect(latestPickerProps?.options).toEqual([
+        expect(latestPickerProps?.options.map((option) => ({
+            value: option.value,
+            label: option.label,
+            description: option.description,
+            iconAgentId: getOptionIconAgentId(option.icon),
+            iconSize: getOptionIconSize(option.icon),
+        }))).toEqual([
             {
                 value: 'agent:claude\x1fretired-model',
                 label: 'Retired model',
                 description: 'Claude',
+                iconAgentId: 'claude',
+                iconSize: 20,
             },
         ]);
         expect(latestPickerProps?.favoriteOptions?.values.has('agent:claude\x1fretired-model')).toBe(true);

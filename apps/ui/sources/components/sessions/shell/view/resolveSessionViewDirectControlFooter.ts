@@ -29,6 +29,15 @@ function normalizeDirectControlActivity(value: string | null | undefined): Direc
     return 'unknown';
 }
 
+function createTakeoverCallback(
+    input: Input,
+    kind: 'direct' | 'persisted',
+): () => Promise<void> {
+    return async () => {
+        await input.externalSessionTakeover.requestTakeover(kind);
+    };
+}
+
 export function resolveSessionViewDirectControlFooter(input: Input): SessionViewDirectControlFooter | null {
     if (input.isHiddenSystemSessionSession) {
         return null;
@@ -46,10 +55,10 @@ export function resolveSessionViewDirectControlFooter(input: Input): SessionView
         canTakeOverPersist: status?.canTakeOverPersist ?? false,
         takeoverInFlight: input.externalSessionTakeover.takeoverInFlight,
         onRequestTakeOverDirect: (status?.canTakeOverDirect ?? false)
-            ? () => { void input.externalSessionTakeover.requestTakeover('direct'); }
+            ? createTakeoverCallback(input, 'direct')
             : undefined,
         onRequestTakeOverPersist: (status?.canTakeOverPersist ?? false)
-            ? () => { void input.externalSessionTakeover.requestTakeover('persisted'); }
+            ? createTakeoverCallback(input, 'persisted')
             : undefined,
     };
 }

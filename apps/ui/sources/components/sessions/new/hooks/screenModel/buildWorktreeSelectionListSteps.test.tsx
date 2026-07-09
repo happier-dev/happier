@@ -31,6 +31,7 @@ import type {
 } from '@/components/ui/selectionList';
 
 const TEST_ROW_ICON_COLOR = '#456DEF';
+const WORKTREE_NAME_SUGGESTION = 'clever-ocean';
 
 function makeSnapshot(overrides?: Partial<ScmWorkingSnapshot['repo']>): ScmWorkingSnapshot {
     return {
@@ -84,6 +85,42 @@ function requireOpenStep(option: SelectionListOption): SelectionListStep {
     return openStep;
 }
 
+/** The "name your worktree" value step pushed when a branch is chosen for a new worktree. */
+function requireNameStep(option: SelectionListOption): SelectionListStep {
+    const nameStep = requireOpenStep(option);
+    if (nameStep.id !== 'worktree-name') throw new Error(`${option.id} must open the worktree-name step`);
+    return nameStep;
+}
+
+/** The single "use suggested name" row inside the name step. */
+function requireSuggestedNameRow(nameStep: SelectionListStep): SelectionListOption {
+    const section = nameStep.sections.find((candidate) => candidate.id === 'worktree:name:suggested');
+    if (section?.kind !== 'static') throw new Error('name step must expose a static suggested-name section');
+    const row = section.options.find((candidate) => candidate.id === 'worktree-name-suggested');
+    if (!row) throw new Error('suggested-name row must exist');
+    return row;
+}
+
+/** The reuse-or-create choice step opened by a branch that already has a worktree. */
+function requireReuseOrCreateStep(option: SelectionListOption): SelectionListStep {
+    const step = requireOpenStep(option);
+    if (step.id !== 'worktree-reuse-or-create') throw new Error(`${option.id} must open the reuse-or-create step`);
+    return step;
+}
+
+function requireReuseOrCreateRow(option: SelectionListOption, rowId: string): SelectionListOption {
+    const section = requireReuseOrCreateStep(option).sections.find((s) => s.id === 'worktree:reuse-or-create');
+    if (section?.kind !== 'static') throw new Error('reuse-or-create must expose a static section');
+    const row = section.options.find((o) => o.id === rowId);
+    if (!row) throw new Error(`${rowId} row must exist`);
+    return row;
+}
+
+/** The "use existing worktree" row inside the reuse-or-create step. */
+function requireReuseExistingRow(option: SelectionListOption): SelectionListOption {
+    return requireReuseOrCreateRow(option, 'worktree-reuse-existing');
+}
+
 function requireCreateWorktreeStep(rootStep: SelectionListStep): SelectionListStep {
     const quickActions = requireStaticSection(rootStep, 'worktree:quick-actions');
     return requireOpenStep(requireOption(quickActions, 'create_git_worktree'));
@@ -100,7 +137,7 @@ describe('buildWorktreeSelectionListSteps', () => {
         const { buildWorktreeSelectionListSteps } = await import('./buildWorktreeSelectionListSteps');
         const onSelectCurrentDir = vi.fn();
         const onSelectExistingWorktree = vi.fn();
-        const onSelectBranchForNewWorktree = vi.fn();
+        const onCreateWorktreeWithName = vi.fn();
         const onReuseExistingWorktreeForBranch = vi.fn();
 
         const rootStep = buildWorktreeSelectionListSteps({
@@ -117,7 +154,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir,
             onSelectExistingWorktree,
-            onSelectBranchForNewWorktree,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
             onReuseExistingWorktreeForBranch,
         });
 
@@ -150,10 +188,88 @@ describe('buildWorktreeSelectionListSteps', () => {
         expect(onSelectExistingWorktree).toHaveBeenCalledWith('/repo/.worktrees/release');
     });
 
+    it('surfaces a selected "New worktree: <name>" row at the very top when a creation is pending', async () => {
+        const { buildWorktreeSelectionListSteps } = await import('./buildWorktreeSelectionListSteps');
+        const onSelectPendingWorktree = vi.fn();
+        const rootStep = buildWorktreeSelectionListSteps({
+            snapshot: makeSnapshot(),
+            currentDirPath: '/repo',
+            rowIconColor: TEST_ROW_ICON_COLOR,
+            machineId: 'machine-1',
+            machinePath: '/repo',
+            nowMs: 1_700_000_000_000,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            pendingWorktreeName: 'clever-cloud',
+            onSelectPendingWorktree,
+            onSelectCurrentDir: vi.fn(),
+            onSelectExistingWorktree: vi.fn(),
+            onCreateWorktreeWithName: vi.fn(),
+            onReuseExistingWorktreeForBranch: vi.fn(),
+        });
+
+        // The pending row is the FIRST section so it sits at the top of the list.
+        expect(rootStep.sections[0]?.id).toBe('worktree:pending');
+        const pendingSection = requireStaticSection(rootStep, 'worktree:pending');
+        const pendingRow = requireOption(pendingSection, 'pending_git_worktree');
+        expect(pendingRow.label).toContain('clever-cloud');
+        // With no base ref the subtitle is the predicted on-disk location alone,
+        // derived from the shared `.dev/worktree/<name>` convention + repo root.
+        expect(pendingRow.subtitle).toBe('/repo/.dev/worktree/clever-cloud');
+        pendingRow.onSelect?.();
+        expect(onSelectPendingWorktree).toHaveBeenCalled();
+    });
+
+    it('threads the base branch + predicted worktree path into the pending row subtitle', async () => {
+        const { buildWorktreeSelectionListSteps } = await import('./buildWorktreeSelectionListSteps');
+        const rootStep = buildWorktreeSelectionListSteps({
+            snapshot: makeSnapshot(),
+            currentDirPath: '/repo',
+            rowIconColor: TEST_ROW_ICON_COLOR,
+            machineId: 'machine-1',
+            machinePath: '/repo',
+            nowMs: 1_700_000_000_000,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            pendingWorktreeName: 'clever-cloud',
+            pendingWorktreeBaseRef: 'main',
+            onSelectPendingWorktree: vi.fn(),
+            onSelectCurrentDir: vi.fn(),
+            onSelectExistingWorktree: vi.fn(),
+            onCreateWorktreeWithName: vi.fn(),
+            onReuseExistingWorktreeForBranch: vi.fn(),
+        });
+        const pendingSection = requireStaticSection(rootStep, 'worktree:pending');
+        const pendingRow = requireOption(pendingSection, 'pending_git_worktree');
+        // The subtitle threads the base branch + the predicted on-disk location
+        // (from the shared convention) into the localized "From <branch> · <path>"
+        // template — verified via the test text-mock's {key, params} echo.
+        const subtitle = pendingRow.subtitle as unknown as { key?: string; params?: { branch?: string; path?: string } };
+        expect(subtitle.key).toBe('newSession.checkout.pendingWorktreeSubtitle');
+        expect(subtitle.params).toEqual({ branch: 'main', path: '/repo/.dev/worktree/clever-cloud' });
+    });
+
+    it('omits the pending row when no worktree creation is pending', async () => {
+        const { buildWorktreeSelectionListSteps } = await import('./buildWorktreeSelectionListSteps');
+        const rootStep = buildWorktreeSelectionListSteps({
+            snapshot: makeSnapshot(),
+            currentDirPath: '/repo',
+            rowIconColor: TEST_ROW_ICON_COLOR,
+            machineId: 'machine-1',
+            machinePath: '/repo',
+            nowMs: 1_700_000_000_000,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onSelectCurrentDir: vi.fn(),
+            onSelectExistingWorktree: vi.fn(),
+            onCreateWorktreeWithName: vi.fn(),
+            onReuseExistingWorktreeForBranch: vi.fn(),
+        });
+        expect(rootStep.sections.find((section) => section.id === 'worktree:pending')).toBeUndefined();
+        expect(rootStep.sections[0]?.id).toBe('worktree:quick-actions');
+    });
+
     it('routes branch selection through the reuse callback when a worktree already exists for the branch', async () => {
         const { buildWorktreeSelectionListSteps } = await import('./buildWorktreeSelectionListSteps');
 
-        const onSelectBranchForNewWorktree = vi.fn();
+        const onCreateWorktreeWithName = vi.fn();
         const onReuseExistingWorktreeForBranch = vi.fn();
 
         const rootStep = buildWorktreeSelectionListSteps({
@@ -170,7 +286,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
             onReuseExistingWorktreeForBranch,
         });
 
@@ -197,21 +314,136 @@ describe('buildWorktreeSelectionListSteps', () => {
             }),
             currentDirPath: '/repo',
             rowIconColor: TEST_ROW_ICON_COLOR,
-            onSelectBranchForNewWorktree,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
             onReuseExistingWorktreeForBranch,
         });
 
-        reuseOption.onSelect?.();
+        requireReuseExistingRow(reuseOption).onSelect?.();
         expect(onReuseExistingWorktreeForBranch).toHaveBeenCalledWith({
             worktreePath: '/repo/.worktrees/feature-auth',
             branch: 'feature/auth',
         });
-        expect(onSelectBranchForNewWorktree).not.toHaveBeenCalled();
+        expect(onCreateWorktreeWithName).not.toHaveBeenCalled();
+    });
+
+    it('lets a branch with an existing worktree create a new worktree from that branch instead of reusing', async () => {
+        const { buildWorktreeBranchOption } = await import('./buildWorktreeSelectionListSteps');
+        const onCreateWorktreeWithName = vi.fn();
+        const onReuseExistingWorktreeForBranch = vi.fn();
+
+        const option = buildWorktreeBranchOption({
+            branch: { name: 'feature/auth', type: 'local', upstream: null },
+            snapshot: makeSnapshot({
+                worktrees: [
+                    { path: '/repo', branch: 'main', isCurrent: true, isMain: true },
+                    { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
+                ],
+            }),
+            currentDirPath: '/repo',
+            rowIconColor: TEST_ROW_ICON_COLOR,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
+            onReuseExistingWorktreeForBranch,
+        });
+
+        const createFromBranch = requireReuseOrCreateRow(option, 'worktree-create-from-branch');
+        const nameStep = requireOpenStep(createFromBranch);
+        expect(nameStep.id).toBe('worktree-name');
+        nameStep.onCommitInputValue?.('feature-auth-dup');
+        expect(onCreateWorktreeWithName).toHaveBeenCalledWith({
+            baseRef: 'feature/auth',
+            sourceKind: 'local',
+            name: 'feature-auth-dup',
+        });
+        expect(onReuseExistingWorktreeForBranch).not.toHaveBeenCalled();
+    });
+
+    it('flags a branch that has a worktree with a badge AND keeps the chevron (it navigates to reuse-or-create)', async () => {
+        const { buildWorktreeBranchOption } = await import('./buildWorktreeSelectionListSteps');
+        const option = buildWorktreeBranchOption({
+            branch: { name: 'feature/auth', type: 'local', upstream: null },
+            snapshot: makeSnapshot({
+                worktrees: [
+                    { path: '/repo', branch: 'main', isCurrent: true, isMain: true },
+                    { path: '/repo/.worktrees/feature-auth', branch: 'feature/auth', isCurrent: false },
+                ],
+            }),
+            currentDirPath: '/repo',
+            rowIconColor: TEST_ROW_ICON_COLOR,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
+            onReuseExistingWorktreeForBranch: vi.fn(),
+        });
+        // The row carries a "has worktree" badge (rightAccessory) AND navigates to
+        // the reuse-or-create choice step — so the chevron MUST stay visible
+        // alongside the badge (the badge alone read as a terminal "open it" action).
+        expect(option.rightAccessory).toBeDefined();
+        expect(option.keepChevronWithAccessory).toBe(true);
+        expect(requireOpenStep(option).id).toBe('worktree-reuse-or-create');
+    });
+
+    it('makes the empty input row a prompt and the typed row a sanitized create, with input-driven default focus', async () => {
+        const { buildWorktreeBranchOption } = await import('./buildWorktreeSelectionListSteps');
+        const onCreateWorktreeWithName = vi.fn();
+
+        const option = buildWorktreeBranchOption({
+            branch: { name: 'feature/new', type: 'local', upstream: null },
+            snapshot: makeSnapshot({
+                worktrees: [{ path: '/repo', branch: 'main', isCurrent: true, isMain: true }],
+            }),
+            currentDirPath: '/repo',
+            rowIconColor: TEST_ROW_ICON_COLOR,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
+            onReuseExistingWorktreeForBranch: vi.fn(),
+        });
+
+        const nameStep = requireNameStep(option);
+        expect(nameStep.buildInputRow).toBeTypeOf('function');
+        // The input is the candidate NAME, not a search query: rows are not
+        // filtered by it, and default focus follows the input — the suggested
+        // row while empty, the live "create" row once the user types.
+        expect(nameStep.disableInputFilter).toBe(true);
+        expect(nameStep.resolveDefaultFocusedOptionId?.('')).toBe('worktree-name-suggested');
+        expect(nameStep.resolveDefaultFocusedOptionId?.('   ')).toBe('worktree-name-suggested');
+        expect(nameStep.resolveDefaultFocusedOptionId?.('feat')).toBe('worktree-name-create');
+
+        // Empty input → the row is a PROMPT, not a commit: it carries
+        // `requiresInputValue` (SelectionList focuses + shakes the input) and has
+        // NO onSelect, so activating it must NOT silently create the suggestion.
+        const emptyRow = nameStep.buildInputRow!('   ');
+        expect(emptyRow).not.toBeNull();
+        expect(emptyRow!.disabled).not.toBe(true);
+        expect(emptyRow!.requiresInputValue).toBe(true);
+        expect(emptyRow!.onSelect).toBeUndefined();
+        expect(onCreateWorktreeWithName).not.toHaveBeenCalled();
+
+        // Typing → the SAME row transforms into a sanitized "create" row whose
+        // activation creates the custom-named worktree (no requiresInputValue).
+        const createRow = nameStep.buildInputRow!('My Fix!!');
+        expect(createRow).not.toBeNull();
+        expect(createRow!.id).toBe(emptyRow!.id);
+        expect(createRow!.label).not.toBe(emptyRow!.label);
+        expect(createRow!.requiresInputValue).not.toBe(true);
+        createRow!.onSelect?.();
+        expect(onCreateWorktreeWithName).toHaveBeenCalledWith({
+            baseRef: 'feature/new',
+            sourceKind: 'local',
+            name: 'My-Fix!!',
+        });
+
+        // The suggested section holds only the suggestion (no disabled filler).
+        const suggestedSection = nameStep.sections.find((s) => s.id === 'worktree:name:suggested');
+        expect(suggestedSection?.kind).toBe('static');
+        if (suggestedSection?.kind === 'static') {
+            expect(suggestedSection.options.some((o) => o.disabled === true)).toBe(false);
+        }
     });
 
     it('routes branch selection through the create callback when no worktree exists for the branch yet', async () => {
         const { buildWorktreeBranchOption } = await import('./buildWorktreeSelectionListSteps');
-        const onSelectBranchForNewWorktree = vi.fn();
+        const onCreateWorktreeWithName = vi.fn();
         const onReuseExistingWorktreeForBranch = vi.fn();
 
         const option = buildWorktreeBranchOption({
@@ -223,16 +455,82 @@ describe('buildWorktreeSelectionListSteps', () => {
             }),
             currentDirPath: '/repo',
             rowIconColor: TEST_ROW_ICON_COLOR,
-            onSelectBranchForNewWorktree,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
             onReuseExistingWorktreeForBranch,
         });
 
-        option.onSelect?.();
-        expect(onSelectBranchForNewWorktree).toHaveBeenCalledWith({
-            branchName: 'feature/new',
+        // Choosing a branch with no existing worktree opens the value-mode
+        // "name your worktree" step rather than creating immediately.
+        expect(option.onSelect).toBeUndefined();
+        const nameStep = requireNameStep(option);
+        expect(nameStep.inputMode).toBe('value');
+        nameStep.onCommitInputValue?.('my-feature');
+        expect(onCreateWorktreeWithName).toHaveBeenCalledWith({
+            baseRef: 'feature/new',
             sourceKind: 'local',
+            name: 'my-feature',
         });
         expect(onReuseExistingWorktreeForBranch).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the suggested name when the name step is committed empty', async () => {
+        const { buildWorktreeBranchOption } = await import('./buildWorktreeSelectionListSteps');
+        const onCreateWorktreeWithName = vi.fn();
+
+        const option = buildWorktreeBranchOption({
+            branch: { name: 'feature/new', type: 'local', upstream: null },
+            snapshot: makeSnapshot({
+                worktrees: [{ path: '/repo', branch: 'main', isCurrent: true, isMain: true }],
+            }),
+            currentDirPath: '/repo',
+            rowIconColor: TEST_ROW_ICON_COLOR,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
+            onReuseExistingWorktreeForBranch: vi.fn(),
+        });
+
+        const nameStep = requireNameStep(option);
+        // Empty input commits the generated suggestion.
+        nameStep.onCommitInputValue?.('   ');
+        expect(onCreateWorktreeWithName).toHaveBeenCalledWith({
+            baseRef: 'feature/new',
+            sourceKind: 'local',
+            name: WORKTREE_NAME_SUGGESTION,
+        });
+
+        // The suggested-name row commits the suggestion directly (mobile/tap path).
+        onCreateWorktreeWithName.mockClear();
+        requireSuggestedNameRow(nameStep).onSelect?.();
+        expect(onCreateWorktreeWithName).toHaveBeenCalledWith({
+            baseRef: 'feature/new',
+            sourceKind: 'local',
+            name: WORKTREE_NAME_SUGGESTION,
+        });
+    });
+
+    it('sanitizes a typed worktree name into a git-safe ref before creating', async () => {
+        const { buildWorktreeBranchOption } = await import('./buildWorktreeSelectionListSteps');
+        const onCreateWorktreeWithName = vi.fn();
+
+        const option = buildWorktreeBranchOption({
+            branch: { name: 'main', type: 'local', upstream: null },
+            snapshot: makeSnapshot({
+                worktrees: [{ path: '/repo', branch: 'main', isCurrent: true, isMain: true }],
+            }),
+            currentDirPath: '/repo',
+            rowIconColor: TEST_ROW_ICON_COLOR,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
+            onReuseExistingWorktreeForBranch: vi.fn(),
+        });
+
+        requireNameStep(option).onCommitInputValue?.('  My Fix!!  ');
+        expect(onCreateWorktreeWithName).toHaveBeenCalledWith({
+            baseRef: 'main',
+            sourceKind: 'local',
+            name: 'My-Fix!!',
+        });
     });
 
     it('resolves worktree status variants from changeCount and lastActivityAt', async () => {
@@ -266,7 +564,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
 
@@ -293,7 +592,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
 
@@ -321,7 +621,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
 
@@ -332,7 +633,7 @@ describe('buildWorktreeSelectionListSteps', () => {
 
     it('R10: branch row routes to reuse only when the existing worktree is not the canonical current dir', async () => {
         const { buildWorktreeBranchOption } = await import('./buildWorktreeSelectionListSteps');
-        const onSelectBranchForNewWorktree = vi.fn();
+        const onCreateWorktreeWithName = vi.fn();
         const onReuseExistingWorktreeForBranch = vi.fn();
 
         // Existing worktree path differs from currentDirPath only by trailing slash & separator.
@@ -347,15 +648,18 @@ describe('buildWorktreeSelectionListSteps', () => {
             }),
             currentDirPath: '/repo/.worktrees/feature',
             rowIconColor: TEST_ROW_ICON_COLOR,
-            onSelectBranchForNewWorktree,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
             onReuseExistingWorktreeForBranch,
         });
 
-        option.onSelect?.();
         expect(onReuseExistingWorktreeForBranch).not.toHaveBeenCalled();
-        expect(onSelectBranchForNewWorktree).toHaveBeenCalledWith({
-            branchName: 'feature/auth',
+        expect(option.onSelect).toBeUndefined();
+        requireNameStep(option).onCommitInputValue?.('feat');
+        expect(onCreateWorktreeWithName).toHaveBeenCalledWith({
+            baseRef: 'feature/auth',
             sourceKind: 'local',
+            name: 'feat',
         });
     });
 
@@ -383,7 +687,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
 
@@ -437,7 +742,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
         const quickActions = requireStaticSection(rootStep, 'worktree:quick-actions');
@@ -459,7 +765,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
         const quickActions = requireStaticSection(rootStep, 'worktree:quick-actions');
@@ -487,7 +794,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
         const existing = requireStaticSection(rootStep, 'worktree:existing');
@@ -506,7 +814,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             snapshot: makeSnapshot(),
             currentDirPath: '/repo',
             rowIconColor: TEST_ROW_ICON_COLOR,
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
         const iconProps = getIconProps(option);
@@ -522,7 +831,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             snapshot: makeSnapshot(),
             currentDirPath: '/repo',
             rowIconColor: TEST_ROW_ICON_COLOR,
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
         const iconProps = getIconProps(option);
@@ -535,7 +845,7 @@ describe('buildWorktreeSelectionListSteps', () => {
 
     it('F5: remote row "origin/feature" routes to reuse when a local worktree exists on "feature"', async () => {
         const { buildWorktreeBranchOption } = await import('./buildWorktreeSelectionListSteps');
-        const onSelectBranchForNewWorktree = vi.fn();
+        const onCreateWorktreeWithName = vi.fn();
         const onReuseExistingWorktreeForBranch = vi.fn();
 
         const option = buildWorktreeBranchOption({
@@ -552,21 +862,22 @@ describe('buildWorktreeSelectionListSteps', () => {
             currentDirPath: '/repo',
             remoteNames: ['origin'],
             rowIconColor: TEST_ROW_ICON_COLOR,
-            onSelectBranchForNewWorktree,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
             onReuseExistingWorktreeForBranch,
         });
 
-        option.onSelect?.();
+        requireReuseExistingRow(option).onSelect?.();
         expect(onReuseExistingWorktreeForBranch).toHaveBeenCalledWith({
             worktreePath: '/repo/.worktrees/feature',
             branch: 'feature',
         });
-        expect(onSelectBranchForNewWorktree).not.toHaveBeenCalled();
+        expect(onCreateWorktreeWithName).not.toHaveBeenCalled();
     });
 
     it('F5: remote row from a non-origin remote ("upstream/feature") routes to reuse against local "feature"', async () => {
         const { buildWorktreeBranchOption } = await import('./buildWorktreeSelectionListSteps');
-        const onSelectBranchForNewWorktree = vi.fn();
+        const onCreateWorktreeWithName = vi.fn();
         const onReuseExistingWorktreeForBranch = vi.fn();
 
         const option = buildWorktreeBranchOption({
@@ -584,21 +895,22 @@ describe('buildWorktreeSelectionListSteps', () => {
             currentDirPath: '/repo',
             remoteNames: ['origin', 'upstream'],
             rowIconColor: TEST_ROW_ICON_COLOR,
-            onSelectBranchForNewWorktree,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
             onReuseExistingWorktreeForBranch,
         });
 
-        option.onSelect?.();
+        requireReuseExistingRow(option).onSelect?.();
         expect(onReuseExistingWorktreeForBranch).toHaveBeenCalledWith({
             worktreePath: '/repo/.worktrees/feature',
             branch: 'feature',
         });
-        expect(onSelectBranchForNewWorktree).not.toHaveBeenCalled();
+        expect(onCreateWorktreeWithName).not.toHaveBeenCalled();
     });
 
     it('F5: remote row "origin/feature/login" (slashed branch) routes to reuse against local "feature/login"', async () => {
         const { buildWorktreeBranchOption } = await import('./buildWorktreeSelectionListSteps');
-        const onSelectBranchForNewWorktree = vi.fn();
+        const onCreateWorktreeWithName = vi.fn();
         const onReuseExistingWorktreeForBranch = vi.fn();
 
         const option = buildWorktreeBranchOption({
@@ -615,21 +927,22 @@ describe('buildWorktreeSelectionListSteps', () => {
             currentDirPath: '/repo',
             remoteNames: ['origin'],
             rowIconColor: TEST_ROW_ICON_COLOR,
-            onSelectBranchForNewWorktree,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
             onReuseExistingWorktreeForBranch,
         });
 
-        option.onSelect?.();
+        requireReuseExistingRow(option).onSelect?.();
         expect(onReuseExistingWorktreeForBranch).toHaveBeenCalledWith({
             worktreePath: '/repo/.worktrees/feature-login',
             branch: 'feature/login',
         });
-        expect(onSelectBranchForNewWorktree).not.toHaveBeenCalled();
+        expect(onCreateWorktreeWithName).not.toHaveBeenCalled();
     });
 
     it('F5: remote row "origin/bar" with no matching local worktree routes to create (no false-positive reuse)', async () => {
         const { buildWorktreeBranchOption } = await import('./buildWorktreeSelectionListSteps');
-        const onSelectBranchForNewWorktree = vi.fn();
+        const onCreateWorktreeWithName = vi.fn();
         const onReuseExistingWorktreeForBranch = vi.fn();
 
         const option = buildWorktreeBranchOption({
@@ -646,15 +959,18 @@ describe('buildWorktreeSelectionListSteps', () => {
             currentDirPath: '/repo',
             remoteNames: ['origin'],
             rowIconColor: TEST_ROW_ICON_COLOR,
-            onSelectBranchForNewWorktree,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
             onReuseExistingWorktreeForBranch,
         });
 
-        option.onSelect?.();
         expect(onReuseExistingWorktreeForBranch).not.toHaveBeenCalled();
-        expect(onSelectBranchForNewWorktree).toHaveBeenCalledWith({
-            branchName: 'origin/bar',
+        expect(option.onSelect).toBeUndefined();
+        requireNameStep(option).onCommitInputValue?.('bar-wt');
+        expect(onCreateWorktreeWithName).toHaveBeenCalledWith({
+            baseRef: 'origin/bar',
             sourceKind: 'remote',
+            name: 'bar-wt',
         });
     });
 
@@ -671,7 +987,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
         const quickActions = rootStep.sections.find((s) => s.id === 'worktree:quick-actions');
@@ -701,7 +1018,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
 
@@ -717,7 +1035,7 @@ describe('buildWorktreeSelectionListSteps', () => {
 
     it("RV-10/F5: defaults to 'origin' when snapshot has empty remotes", async () => {
         const { buildWorktreeSelectionListSteps } = await import('./buildWorktreeSelectionListSteps');
-        const onSelectBranchForNewWorktree = vi.fn();
+        const onCreateWorktreeWithName = vi.fn();
         const onReuseExistingWorktreeForBranch = vi.fn();
         const fetchBranchesForMachinePath = vi.fn(async () => [
             { name: 'origin/feature', type: 'remote', upstream: null },
@@ -745,7 +1063,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
             onReuseExistingWorktreeForBranch,
         });
 
@@ -755,17 +1074,17 @@ describe('buildWorktreeSelectionListSteps', () => {
         const ac = new AbortController();
         const result = await remoteSection.resolve('', ac.signal);
         expect(result.options.length).toBe(1);
-        result.options[0]!.onSelect?.();
+        requireReuseExistingRow(result.options[0]!).onSelect?.();
         expect(onReuseExistingWorktreeForBranch).toHaveBeenCalledWith({
             worktreePath: '/repo/.worktrees/feature',
             branch: 'feature',
         });
-        expect(onSelectBranchForNewWorktree).not.toHaveBeenCalled();
+        expect(onCreateWorktreeWithName).not.toHaveBeenCalled();
     });
 
     it("RV-10/F5: defaults to 'origin' when snapshot.repo.remotes is undefined (schema permits omission)", async () => {
         const { buildWorktreeSelectionListSteps } = await import('./buildWorktreeSelectionListSteps');
-        const onSelectBranchForNewWorktree = vi.fn();
+        const onCreateWorktreeWithName = vi.fn();
         const onReuseExistingWorktreeForBranch = vi.fn();
         const fetchBranchesForMachinePath = vi.fn(async () => [
             { name: 'origin/feature', type: 'remote', upstream: null },
@@ -812,7 +1131,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
             onReuseExistingWorktreeForBranch,
         });
 
@@ -822,17 +1142,17 @@ describe('buildWorktreeSelectionListSteps', () => {
         const ac = new AbortController();
         const result = await remoteSection.resolve('', ac.signal);
         expect(result.options.length).toBe(1);
-        result.options[0]!.onSelect?.();
+        requireReuseExistingRow(result.options[0]!).onSelect?.();
         expect(onReuseExistingWorktreeForBranch).toHaveBeenCalledWith({
             worktreePath: '/repo/.worktrees/feature',
             branch: 'feature',
         });
-        expect(onSelectBranchForNewWorktree).not.toHaveBeenCalled();
+        expect(onCreateWorktreeWithName).not.toHaveBeenCalled();
     });
 
     it('F5: a remote row whose canonical name matches the current dir worktree does NOT route to reuse (avoid self-row)', async () => {
         const { buildWorktreeBranchOption } = await import('./buildWorktreeSelectionListSteps');
-        const onSelectBranchForNewWorktree = vi.fn();
+        const onCreateWorktreeWithName = vi.fn();
         const onReuseExistingWorktreeForBranch = vi.fn();
 
         const option = buildWorktreeBranchOption({
@@ -850,15 +1170,18 @@ describe('buildWorktreeSelectionListSteps', () => {
             currentDirPath: '/repo/.worktrees/feature',
             remoteNames: ['origin'],
             rowIconColor: TEST_ROW_ICON_COLOR,
-            onSelectBranchForNewWorktree,
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName,
             onReuseExistingWorktreeForBranch,
         });
 
-        option.onSelect?.();
         expect(onReuseExistingWorktreeForBranch).not.toHaveBeenCalled();
-        expect(onSelectBranchForNewWorktree).toHaveBeenCalledWith({
-            branchName: 'origin/feature',
+        expect(option.onSelect).toBeUndefined();
+        requireNameStep(option).onCommitInputValue?.('feature-wt');
+        expect(onCreateWorktreeWithName).toHaveBeenCalledWith({
+            baseRef: 'origin/feature',
             sourceKind: 'remote',
+            name: 'feature-wt',
         });
     });
 
@@ -876,7 +1199,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
         const createStepA = requireCreateWorktreeStep(stepForMachineA);
@@ -902,7 +1226,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
         const createStepB = requireCreateWorktreeStep(stepForMachineB);
@@ -923,7 +1248,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
         const stepForRepoB = buildWorktreeSelectionListSteps({
@@ -935,7 +1261,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
         const getLocalResolverKey = (rootStep: SelectionListStep): string | undefined => {
@@ -962,7 +1289,8 @@ describe('buildWorktreeSelectionListSteps', () => {
                 nowMs: 1_700_000_000_000,
                 onSelectCurrentDir: vi.fn(),
                 onSelectExistingWorktree: vi.fn(),
-                onSelectBranchForNewWorktree: vi.fn(),
+                worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
                 onReuseExistingWorktreeForBranch: vi.fn(),
             });
             const createStep = requireCreateWorktreeStep(rootStep);
@@ -1002,7 +1330,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
 
@@ -1049,7 +1378,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
 
@@ -1080,7 +1410,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
 
@@ -1119,7 +1450,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
 
@@ -1163,7 +1495,8 @@ describe('buildWorktreeSelectionListSteps', () => {
             nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
-            onSelectBranchForNewWorktree: vi.fn(),
+            worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
+            onCreateWorktreeWithName: vi.fn(),
             onReuseExistingWorktreeForBranch: vi.fn(),
         });
         const createStep = requireCreateWorktreeStep(rootStep);

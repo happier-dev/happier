@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { buildSessionListReachabilitySummary } from './buildSessionListReachabilitySummary';
+import {
+    buildSessionListReachabilitySummary,
+    createSessionListReachabilitySummaryCache,
+} from './buildSessionListReachabilitySummary';
 
 const getStateSpy = vi.fn();
 
@@ -94,6 +97,68 @@ describe('buildSessionListReachabilitySummary', () => {
             machineLabel: 'machine-a.local',
             workspaceSubtitle: 'repo-a',
             workspaceSubtitleEllipsizeMode: 'tail',
+        });
+    });
+
+    it('reuses cached display rows when unrelated session rows refresh', () => {
+        const renderablesById = {
+            'sess-unchanged': {
+                metadata: {
+                    machineId: 'machine-a',
+                    host: 'machine-a.local',
+                    path: '/repo-unchanged',
+                    homeDir: '/home/user',
+                },
+            },
+            'sess-refreshed': {
+                metadata: {
+                    machineId: 'machine-a',
+                    host: 'machine-a.local',
+                    path: '/repo-refreshed',
+                    homeDir: '/home/user',
+                },
+            },
+        } as any;
+        const machinesById = new Map([
+            ['machine-a', { id: 'machine-a', metadata: { host: 'machine-a.local' } }],
+        ]);
+        const listItems = [
+            {
+                type: 'session',
+                sessionId: 'sess-unchanged',
+                serverId: 'server-a',
+            },
+            {
+                type: 'session',
+                sessionId: 'sess-refreshed',
+                serverId: 'server-a',
+            },
+        ] as any;
+        const workspaceRefs: ReadonlyArray<never> = [];
+        const cache = createSessionListReachabilitySummaryCache();
+        const first = buildSessionListReachabilitySummary({
+            cache,
+            listItems,
+            machinesById,
+            workspaceRefs,
+            resolveSessionRenderable: (item: any) => renderablesById[item.sessionId] ?? null,
+        });
+        const unchangedDisplay = first.displayByKey.get('server-a:sess-unchanged');
+        const second = buildSessionListReachabilitySummary({
+            cache,
+            listItems,
+            machinesById,
+            workspaceRefs,
+            resolveSessionRenderable: (item: any) => item.sessionId === 'sess-refreshed'
+                ? { ...renderablesById['sess-refreshed'], presence: 1 }
+                : renderablesById[item.sessionId] ?? null,
+        });
+
+        expect(second).not.toBe(first);
+        expect(second.displayByKey.get('server-a:sess-unchanged')).toBe(unchangedDisplay);
+        expect(second.displayByKey.get('server-a:sess-refreshed')).toMatchObject({
+            machineId: 'machine-a',
+            workspaceSubtitle: 'repo-refreshed',
         });
     });
 

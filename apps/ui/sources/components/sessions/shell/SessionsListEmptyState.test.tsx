@@ -163,11 +163,37 @@ describe('SessionsListEmptyState', () => {
         });
     });
 
-    it('renders the reconnect action below the tile and routes it to the setup wizard', async () => {
+    it('renders the connect action below the tile for never-connected accounts and routes it to the setup wizard', async () => {
         const { SessionsListEmptyState } = await import('./SessionsListEmptyState');
         const screen = await renderScreen(<SessionsListEmptyState kind="connect_machine" targetLabel="leeroy-mbp" />);
 
         expect(screen.findByProps({ testID: 'session-getting-started-kind-connect_machine' })).toBeTruthy();
+        expect(
+            screen.findAllByType('Text' as never)
+                .some((node) => flattenTextValue(node.props.children) === 'sessionsList.emptyState.connectMachineActionSubtitle'),
+        ).toBe(true);
+        expect(
+            screen.findAllByType('Text' as never)
+                .some((node) => flattenTextValue(node.props.children) === 'sessionsList.emptyState.reconnectMachineActionSubtitle'),
+        ).toBe(false);
+
+        await screen.pressByTestIdAsync('sessions-empty-state-open-setup');
+
+        expect(routerPushSpy).toHaveBeenCalledWith(buildMachineSetupWizardHref({
+            action: 'local',
+            step: 'setup_this_computer',
+        }));
+    });
+
+    it('renders the reconnect action below the tile when a machine exists but is offline', async () => {
+        machinesMock = [
+            createMachine({ id: 'm-offline', host: 'leeroy-mbp', active: false, activeAt: Date.now() - (10 * 60_000) }),
+        ];
+
+        const { SessionsListEmptyState } = await import('./SessionsListEmptyState');
+        const screen = await renderScreen(<SessionsListEmptyState kind="start_daemon" targetLabel="leeroy-mbp" />);
+
+        expect(screen.findByProps({ testID: 'session-getting-started-kind-start_daemon' })).toBeTruthy();
         expect(
             screen.findAllByType('Text' as never)
                 .some((node) => flattenTextValue(node.props.children) === 'sessionsList.emptyState.reconnectMachineActionSubtitle'),

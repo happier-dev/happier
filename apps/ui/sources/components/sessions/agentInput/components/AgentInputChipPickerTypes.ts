@@ -66,6 +66,7 @@ export type AgentInputChipPickerPanelProps = Readonly<{
     railWidth?: number;
     railMaxWidth?: number | `${number}%`;
     detailPaneHeaderAccessory?: React.ReactNode;
+    maxHeight?: number | null;
 }>;
 
 export type AgentInputChipPickerOptionSection = Readonly<{

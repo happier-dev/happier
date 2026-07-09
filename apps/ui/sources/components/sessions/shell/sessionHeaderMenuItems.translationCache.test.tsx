@@ -78,6 +78,31 @@ describe('session header menu item translation caching', () => {
         ]));
     });
 
+    it('exposes stable folder sort selectors', () => {
+        const items = resolveSessionsListHeaderMenuItems({
+            orderingMode: 'custom',
+            sectionMode: 'activity',
+            activeGrouping: 'project',
+            inactiveGrouping: 'date',
+            isHideInactiveSessionsEnabled: false,
+            showFolderViewMode: true,
+            folderViewMode: 'tree',
+            folderSortMode: 'foldersFirst',
+            actionIconColor: '#000',
+        });
+
+        expect(items).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                id: 'sessionListFolderSortModeFoldersFirst',
+                testID: 'session-folder-sort-mode-folders-first',
+            }),
+            expect.objectContaining({
+                id: 'sessionListFolderSortModeMixed',
+                testID: 'session-folder-sort-mode-mixed',
+            }),
+        ]));
+    });
+
     it('refreshes project group header labels after the preferred language changes', () => {
         setPreferredLanguageFromSettings('en');
         const englishAddFolderTitle = t('sessionsList.addFolder');

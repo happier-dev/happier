@@ -591,4 +591,92 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
         expect(after.extraData).toBe(before.extraData);
         expect(after.ListHeaderComponent).toBe(before.ListHeaderComponent);
     });
+
+    it('flows a changed per-row action renderer into FlatList extraData so cached cells re-render', async () => {
+        // Regression: entering "select files for commit" (or toggling a single
+        // file's selection) changes `renderFileActions` identity, but the "+"
+        // buttons only appeared after some *unrelated* state change flushed the
+        // cached cells. Root cause: `renderItem` is intentionally stable (reads
+        // from a ref for perf), so RN's FlatList only re-renders cells when `data`
+        // or `extraData` change — and `extraData` omitted the per-row action
+        // renderers. The fix threads them into `extraData`; this test locks that
+        // signal (and that `renderItem` stays referentially stable).
+        const { SessionRightPanelGitCommitTab } = await import('./SessionRightPanelGitCommitTab');
+        const files = [
+            {
+                fullPath: 'src/file-0.ts',
+                path: 'src/file-0.ts',
+                kind: 'modified',
+                stats: { pendingAdded: 1, pendingRemoved: 0, includedAdded: 0, includedRemoved: 0, isBinary: false },
+            },
+        ];
+        const actionsA = () => null;
+        const actionsB = () => null;
+
+        function Wrapper() {
+            const [useB, setUseB] = React.useState(false);
+            return (
+                <>
+                    <SessionRightPanelGitCommitTab
+                        theme={makeGitTheme()}
+                        sessionId="s1"
+                        sessionPath="/workspace"
+                        backendLabel="Git"
+                        commitActionLabel="Commit"
+                        scmSnapshot={null}
+                        hasConflicts={false}
+                        scmOperationBusy={false}
+                        scmOperationStatus={null}
+                        hasGlobalOperationInFlight={false}
+                        inFlightScmOperation={null}
+                        commitAllowed={false}
+                        commitBlockedMessage={null}
+                        changedFilesViewMode="repository"
+                        attributionReliability="high"
+                        allRepositoryChangedFiles={files as any}
+                        sessionAttributedFiles={[] as any}
+                        repositoryOnlyFiles={[] as any}
+                        suppressedInferredCount={0}
+                        repositorySelectedCount={0}
+                        onSelectAll={() => {}}
+                        onSelectNone={() => {}}
+                        disableSelectAll={true}
+                        disableSelectNone={true}
+                        onFilePress={() => {}}
+                        onFilePressPinned={() => {}}
+                        onToggleSelectionForFile={() => {}}
+                        renderFileActions={useB ? actionsB : actionsA}
+                        renderFileTrailingActions={() => null}
+                        commitDraftMessage=""
+                        onCommitDraftMessageChange={() => {}}
+                        onCommitFromMessage={() => {}}
+                        commitMessageGeneratorEnabled={false}
+                        onGenerateCommitMessageSuggestion={async () => ({ ok: true, message: '' })}
+                        scmStatusFiles={null}
+                        showCommitComposer={false}
+                    />
+                    {React.createElement('Pressable' as any, {
+                        testID: 'toggle-actions',
+                        onPress: () => setUseB(true),
+                    })}
+                </>
+            );
+        }
+
+        const screen = await renderScreen(<Wrapper />);
+        const firstFlatListProps = screen.tree.findByType('FlatList' as any).props;
+        expect(firstFlatListProps.extraData.renderFileActions).toBe(actionsA);
+
+        await renderer.act(async () => {
+            screen.pressByTestId('toggle-actions');
+        });
+
+        const nextFlatListProps = screen.tree.findByType('FlatList' as any).props;
+        // `renderItem` MUST stay stable (perf), and `extraData` MUST change to a
+        // new object carrying the new renderer — that is the documented FlatList
+        // re-render signal that surfaces the "+" on already-rendered rows.
+        expect(nextFlatListProps.renderItem).toBe(firstFlatListProps.renderItem);
+        expect(nextFlatListProps.extraData).not.toBe(firstFlatListProps.extraData);
+        expect(nextFlatListProps.extraData.renderFileActions).toBe(actionsB);
+    });
 });

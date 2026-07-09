@@ -92,6 +92,13 @@ type ProviderSessionUnavailableDiagnosticActionState = Readonly<{
 
 type SetBindingForServiceOptions = Readonly<{
     rematerializeServiceId?: ConnectedServiceId;
+    /**
+     * Re-apply even when the target equals the current optimistic binding — used
+     * by the partial hot-apply Revert: the optimistic binding was already reset
+     * to the previous account on the failed attempt, so a plain re-apply would be
+     * a no-op while the live session may still be diverged.
+     */
+    forceReapply?: boolean;
 }>;
 
 function presentAuthSwitchDiagnosticAlert(params: Readonly<{
@@ -559,9 +566,10 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     const setBindingForService = React.useCallback((serviceId: string, binding: ConnectedServicesServiceBinding, options?: SetBindingForServiceOptions) => {
         const agentId = typeof params.agentId === 'string' ? params.agentId.trim() : '';
         const rematerializeServiceId = options?.rematerializeServiceId;
+        const forceReapply = options?.forceReapply ?? false;
         if (!params.machineId || !agentId) return;
-        if (!rematerializeServiceId && areServiceBindingsEqual(optimisticBindingsByServiceId[serviceId], binding)) return;
-        if (!agentSupportsSessionAuthSwitchTransition({
+        if (!forceReapply && !rematerializeServiceId && areServiceBindingsEqual(optimisticBindingsByServiceId[serviceId], binding)) return;
+        if (!forceReapply && !agentSupportsSessionAuthSwitchTransition({
             agentCore: params.agentCore,
             agentId: params.agentId,
             serviceId,
@@ -624,7 +632,12 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             setPendingRestart(null);
             setRestartRetryState(null);
             setManualRestartSignal(null);
-            setPartialApplicationNotice(resolvePartialAuthSwitchApplicationNotice(result));
+            const partialNotice = resolvePartialAuthSwitchApplicationNotice(result, {
+                primaryServiceId: serviceId,
+                attemptedBindingsByServiceId: nextBindings,
+                previousBindingsByServiceId: previousBindings,
+            });
+            setPartialApplicationNotice(partialNotice);
             setProviderSessionDiagnosticActionState(null);
             setOptimisticBindingsByServiceId(previousBindings);
             const nextActionableState = resolveSessionConnectedServiceAuthSwitchActionableState(result);
@@ -723,6 +736,11 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                 });
                 return;
             }
+            // A partial hot-apply is surfaced by the actionable Retry/Revert status
+            // badge (the session-scope mirror of the pool divergence surface).
+            // Suppress the generic one-shot error alert so the failure is not
+            // double-surfaced and stays recoverable.
+            if (partialNotice) return;
             Modal.alert(
                 t('common.error'),
                 t(resolveSessionConnectedServiceAuthSwitchErrorMessageKey(result.errorCode)),
@@ -760,6 +778,38 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         router,
         supportedConnectedServiceIds,
     ]);
+
+    /**
+     * Session-scope reconcile for a partial hot-apply — the mirror of the pool-level
+     * Retry/Revert divergence surface. Both actions re-run the canonical
+     * {@link setBindingForService} apply path (never a parallel apply): Retry
+     * re-converges the running session on the attempted account, Revert re-converges
+     * it on the previous account. `forceReapply` is required because the optimistic
+     * bindings were already reset to the previous account on the failed attempt, so
+     * a plain re-apply would be a no-op while the live session may still be diverged.
+     */
+    const handlePartialApplicationReconcile = React.useCallback(() => {
+        const notice = partialApplicationNotice;
+        if (!notice) return;
+        const serviceId = notice.primaryServiceId;
+        const attemptedBinding = notice.attemptedBindingsByServiceId[serviceId];
+        const previousBinding = notice.previousBindingsByServiceId[serviceId] ?? { source: 'native' as const };
+        Modal.alert(
+            t('connectedServices.authSwitch.partialApply.title'),
+            t('connectedServices.authSwitch.partialApply.body'),
+            [
+                ...(attemptedBinding ? [{
+                    text: t('connectedServices.authSwitch.partialApply.retry'),
+                    onPress: () => setBindingForService(serviceId, attemptedBinding, { forceReapply: true }),
+                }] : []),
+                {
+                    text: t('connectedServices.authSwitch.partialApply.revert'),
+                    onPress: () => setBindingForService(serviceId, previousBinding, { forceReapply: true }),
+                },
+                { text: t('common.cancel'), style: 'cancel' as const },
+            ],
+        );
+    }, [partialApplicationNotice, setBindingForService]);
 
     const resolveOptionAvailability = React.useCallback((optionParams: Readonly<{
         serviceId: string;
@@ -998,9 +1048,10 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                     tone: 'warning',
                     emphasis: 'prominent',
                 }]
-                : buildPartialAuthSwitchApplicationStatusBadges(partialApplicationNotice);
+                : buildPartialAuthSwitchApplicationStatusBadges(partialApplicationNotice, handlePartialApplicationReconcile);
     }, [
         actionableState,
+        handlePartialApplicationReconcile,
         partialApplicationNotice,
         pendingRestart,
         providerSessionDiagnosticActionState,

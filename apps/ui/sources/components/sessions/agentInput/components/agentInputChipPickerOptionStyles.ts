@@ -2,7 +2,7 @@ import Color from "color";
 
 import { shadowLevelStyle, type ShadowElevationToken } from "@/shadowElevation";
 
-export const AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE = 18;
+export const AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE = 16;
 export const AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS = 12;
 
 type AgentInputChipPickerOptionStyleTheme = Readonly<{

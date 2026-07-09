@@ -2,7 +2,10 @@ import * as React from 'react';
 
 import { useSessionListSelectionState } from './useSessionListSelectionState';
 import { useSessionListIndexByServerId } from '@/sync/domains/state/storage';
-import { resolveSessionListSourceIndex } from '@/sync/domains/session/listing/sessionListIndexPresentation';
+import {
+    readSessionListIndexForServerId,
+    resolveSessionListSourceIndex,
+} from '@/sync/domains/session/listing/sessionListIndexPresentation';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 export type VisibleSessionListSourceState = Readonly<{
@@ -34,7 +37,7 @@ export function useVisibleSessionListSourceState(): VisibleSessionListSourceStat
     const activeIndex = React.useMemo(() => {
         const activeServerId = String(selection.activeServerId ?? '').trim();
         if (!activeServerId) return null;
-        const index = byServerId[activeServerId] ?? null;
+        const index = readSessionListIndexForServerId(byServerId, activeServerId) ?? null;
         return Array.isArray(index) ? index : null;
     }, [byServerId, selection.activeServerId]);
 

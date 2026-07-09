@@ -36,6 +36,7 @@ installSessionDetailsPanelCommonModuleMocks({
             useSessionProjectScmInFlightOperation: () => null,
             useSessionProjectScmCommitSelectionPaths: () => [],
             useSessionProjectScmCommitSelectionPatches: () => [],
+            useSessionRealtimeScmTranscriptConsumer: () => {},
             useSetting: (key: string) => {
                 if (key === 'scmCommitStrategy') return 'atomic';
                 if (key === 'scmRemoteConfirmPolicy') return 'always';
@@ -43,7 +44,7 @@ installSessionDetailsPanelCommonModuleMocks({
                 return undefined;
             },
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
-            useProjectForSession: () => ({ id: 'p1' }),
+            useProjectForSession: () => null,
             useProjectSessions: () => [],
             storage: { getState: () => ({ sessions: {}, settings: {}, concurrentSessionListCacheByServerId: {} }) },
         });
@@ -55,11 +56,35 @@ installSessionDetailsPanelCommonModuleMocks({
 });
 
 const invalidateFromUserAndAwaitSpy = vi.fn();
+const invalidateFromAutoRefreshAndAwaitSpy = vi.fn(async () => {});
 const loadCommitHistorySpy = vi.fn();
 const useChangedFilesDataSpy = vi.fn();
 let sessionPathMock: string | null = '/workspace';
 let scmSnapshotMock: any = null;
 let scmWriteEnabledMock = true;
+
+function buildChangedFilesDataMock(overrides: Record<string, unknown> = {}) {
+    return {
+        attributionReliability: 'explicit',
+        showTurnViewToggle: false,
+        showTurnAgentReportedViewToggle: false,
+        showTurnCheckpointViewToggle: false,
+        turnCheckpointMetadata: null,
+        showSessionViewToggle: false,
+        scmStatusFiles: null,
+        changedFilesCount: 0,
+        shouldShowAllFiles: true,
+        allRepositoryChangedFiles: [],
+        turnAttributedFiles: [],
+        turnAgentReportedFiles: [],
+        turnCheckpointFiles: [],
+        turnRepositoryOnlyFiles: [],
+        sessionAttributedFiles: [],
+        repositoryOnlyFiles: [],
+        suppressedInferredCount: 0,
+        ...overrides,
+    };
+}
 
 function buildScmSnapshotMock(capabilities: any) {
     return {
@@ -128,7 +153,11 @@ vi.mock('@/scm/registry/scmUiBackendRegistry', () => ({
 }));
 
 vi.mock('@/scm/scmStatusSync', () => ({
-    scmStatusSync: { invalidateFromUserAndAwait: invalidateFromUserAndAwaitSpy },
+    scmStatusSync: {
+        invalidateFromUserAndAwait: invalidateFromUserAndAwaitSpy,
+        invalidateFromAutoRefreshAndAwait: invalidateFromAutoRefreshAndAwaitSpy,
+        invalidateFromMutationAndAwait: vi.fn(async () => {}),
+    },
 }));
 
 vi.mock('@/components/workspaces/scm/commitComposer/ScmCommitComposerCard', () => ({
@@ -173,6 +202,7 @@ vi.mock('@/components/sessions/files/views/SessionRepositoryTreeBrowserView', ()
 
 vi.mock('@/scm/scmAttribution', () => ({
     getDefaultChangedFilesViewMode: () => 'session',
+    getPreferredChangedFilesViewMode: () => 'session',
     resolveChangedFilesViewMode: (input: {
         mode: 'repository' | 'selected' | 'turn' | 'session';
         showTurnViewToggle: boolean;
@@ -225,20 +255,15 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
 describe('SessionRightPanel git sub-tabs', () => {
     beforeEach(() => {
         useChangedFilesDataSpy.mockReset();
-        useChangedFilesDataSpy.mockImplementation(() => ({
-            attributionReliability: 'explicit',
-            scmStatusFiles: null,
-            allRepositoryChangedFiles: [],
-            sessionAttributedFiles: [],
-            repositoryOnlyFiles: [],
-            suppressedInferredCount: 0,
-        }));
+        invalidateFromUserAndAwaitSpy.mockClear();
+        invalidateFromAutoRefreshAndAwaitSpy.mockClear();
+        useChangedFilesDataSpy.mockImplementation(() => buildChangedFilesDataMock());
     });
 
     it('refreshes SCM snapshot without preloading commit history when mounted', async () => {
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
-        invalidateFromUserAndAwaitSpy.mockClear();
+        invalidateFromAutoRefreshAndAwaitSpy.mockClear();
         loadCommitHistorySpy.mockClear();
         sessionPathMock = '/workspace';
         scmSnapshotMock = buildScmSnapshotMock({
@@ -261,14 +286,14 @@ describe('SessionRightPanel git sub-tabs', () => {
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        expect(invalidateFromUserAndAwaitSpy).toHaveBeenCalledWith('s1');
+        expect(invalidateFromAutoRefreshAndAwaitSpy).toHaveBeenCalledWith('s1');
         expect(loadCommitHistorySpy).not.toHaveBeenCalled();
     });
 
     it('refreshes SCM snapshot even when sessionPath is missing', async () => {
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
-        invalidateFromUserAndAwaitSpy.mockClear();
+        invalidateFromAutoRefreshAndAwaitSpy.mockClear();
         loadCommitHistorySpy.mockClear();
         sessionPathMock = null;
         scmSnapshotMock = buildScmSnapshotMock({
@@ -291,7 +316,7 @@ describe('SessionRightPanel git sub-tabs', () => {
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        expect(invalidateFromUserAndAwaitSpy).toHaveBeenCalledWith('s1');
+        expect(invalidateFromAutoRefreshAndAwaitSpy).toHaveBeenCalledWith('s1');
         expect(loadCommitHistorySpy).not.toHaveBeenCalled();
     });
 
@@ -299,8 +324,7 @@ describe('SessionRightPanel git sub-tabs', () => {
         const { SessionRightPanel } = await import('./SessionRightPanel');
 
         let observedState: any = null;
-        useChangedFilesDataSpy.mockImplementation(() => ({
-            attributionReliability: 'explicit',
+        useChangedFilesDataSpy.mockImplementation(() => buildChangedFilesDataMock({
             scmStatusFiles: {
                 includedFiles: [],
                 pendingFiles: [],
@@ -313,10 +337,6 @@ describe('SessionRightPanel git sub-tabs', () => {
                 totalIncluded: 0,
                 totalPending: 0,
             },
-            allRepositoryChangedFiles: [],
-            sessionAttributedFiles: [],
-            repositoryOnlyFiles: [],
-            suppressedInferredCount: 0,
         }));
         const Probe = () => {
             const { state } = useAppPaneContext();
@@ -380,6 +400,13 @@ describe('SessionRightPanel git sub-tabs', () => {
         const screen = await renderScreen(<AppPaneProvider>
                     <SessionRightPanel sessionId="s1" scopeId="session:s1" />
                 </AppPaneProvider>);
+        await act(async () => {
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
+        await screen.pressByTestIdAsync('session-rightpanel-git-subtab:commit');
+        await act(async () => {
+            await flushHookEffects({ cycles: 1, turns: 1 });
+        });
         // Ensure the initial commit tab render has invoked the hook.
         const initialCalls = useChangedFilesDataSpy.mock.calls.length;
         expect(initialCalls).toBeGreaterThan(0);

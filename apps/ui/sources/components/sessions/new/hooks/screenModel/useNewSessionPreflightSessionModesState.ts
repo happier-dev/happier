@@ -18,6 +18,7 @@ import {
     runDynamicSessionModeProbeDedupe,
     writeDynamicSessionModeProbeCacheError,
     writeDynamicSessionModeProbeCacheSuccess,
+    writeDynamicSessionModeProbeCacheUnavailable,
 } from '@/sync/domains/sessionModes/dynamicSessionModeProbeCache';
 import {
     buildNewSessionCapabilityProbeContextKey,
@@ -25,7 +26,11 @@ import {
     type NewSessionCapabilityProbeContext,
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
-import { scheduleProbedResourceRetryAfterExpiry } from './probedResourceRetrySchedule';
+import { buildProviderCliCapabilityId } from '@/capabilities/cliCapabilityId';
+import {
+    scheduleProbedResourceRetryAfterDelay,
+    scheduleProbedResourceRetryAfterExpiry,
+} from './probedResourceRetrySchedule';
 
 export function useNewSessionPreflightSessionModesState(params: Readonly<{
     backendTarget: BackendTargetRefV2;
@@ -203,7 +208,8 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
 
         let cancelled = false;
         const run = async () => {
-            if (!supportsPreflightModeProbe) return;
+            const probeAgentType = agentType;
+            if (!probeAgentType || !supportsPreflightModeProbe) return;
             if (!params.selectedMachineId) return;
             const cwd = typeof params.cwd === 'string' ? params.cwd.trim() : '';
 
@@ -215,7 +221,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
                 const res = await machineCapabilitiesInvoke(
                     params.selectedMachineId!,
                     {
-                        id: `cli.${agentType}` as any,
+                        id: buildProviderCliCapabilityId(probeAgentType),
                         method: 'probeModes',
                         params: {
                             timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
@@ -235,21 +241,24 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
                 const result = res.response.result;
                 if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
                 const rec = result as Record<string, unknown>;
-                const modesRaw = (rec as { availableModes?: unknown }).availableModes;
-                if (!Array.isArray(modesRaw) || modesRaw.length === 0) return null;
-
-                const parsed: PreflightSessionModeList = {
-                    availableModes: modesRaw
-                        .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
-                        .map((m: any) => ({
-                            id: String(m.id),
-                            name: String(m.name),
-                            ...(typeof m.description === 'string' ? { description: m.description } : {}),
-                        })),
-                };
-                if (parsed.availableModes.length === 0) return null;
                 const source = typeof rec.source === 'string' ? rec.source : null;
-                const cacheable = source !== 'static';
+                const unavailable = source === 'unavailable';
+                const modesRaw = (rec as { availableModes?: unknown }).availableModes;
+                if (!Array.isArray(modesRaw)) return null;
+
+                const availableModes = modesRaw
+                    .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
+                    .map((m: any) => ({
+                        id: String(m.id),
+                        name: String(m.name),
+                        ...(typeof m.description === 'string' ? { description: m.description } : {}),
+                    }));
+                if (availableModes.length === 0 && !unavailable) return null;
+                const parsed: PreflightSessionModeList = {
+                    availableModes,
+                    ...(unavailable ? { unavailable: true } : {}),
+                };
+                const cacheable = source !== 'static' && source !== 'unavailable';
                 return { list: parsed, cacheable };
             });
 
@@ -263,6 +272,17 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
                 setProbePhase('idle');
                 return;
             }
+            if (list?.unavailable === true && attempt?.cacheable === false) {
+                writeDynamicSessionModeProbeCacheUnavailable(preflightModesKey, list, commitNowMs);
+                setPreflightModes(list);
+                setRefreshedAt(commitNowMs);
+                setProbePhase('idle');
+                retryTimeout = scheduleProbedResourceRetryAfterDelay(DYNAMIC_SESSION_MODE_PROBE_ERROR_BACKOFF_MS, () => {
+                    setRefreshNonce((n) => n + 1);
+                });
+                return;
+            }
+
             if (list && attempt?.cacheable === false && !cached) {
                 writeDynamicSessionModeProbeCacheError(preflightModesKey, commitNowMs);
                 setPreflightModes(list);
@@ -273,7 +293,11 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
 
             if (cached) {
                 // Keep stale-but-usable mode lists sticky if a refresh probe fails.
-                writeDynamicSessionModeProbeCacheSuccess(preflightModesKey, cached, commitNowMs);
+                if (cached.unavailable === true) {
+                    writeDynamicSessionModeProbeCacheUnavailable(preflightModesKey, cached, commitNowMs);
+                } else {
+                    writeDynamicSessionModeProbeCacheSuccess(preflightModesKey, cached, commitNowMs);
+                }
                 setPreflightModes(cached);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
@@ -305,7 +329,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
 
     const modeOptions = React.useMemo(() => {
         if (staticModeOptions.length > 0) return staticModeOptions;
-        if (preflightModes && Array.isArray(preflightModes.availableModes) && preflightModes.availableModes.length > 0) {
+        if (preflightModes) {
             return getSessionModeOptionsForPreflightModeList(preflightModes);
         }
         if (supportsPreflightModeProbe && params.selectedMachineId) {

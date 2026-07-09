@@ -2,6 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { collectUnexpectedRawTextNodes, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
+import type { NewSessionLaunchAttempt } from '@/components/sessions/new/modules/newSessionLaunchAttempt';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
@@ -267,6 +268,7 @@ vi.mock('@/components/sessions/attachments/useAttachmentDraftManager', () => ({
     useAttachmentDraftManager: () => ({
         filePickerRef: { current: null },
         drafts: [],
+        getDraftsSnapshot: () => [],
         hasSendableAttachments: false,
         agentInputAttachments: [],
         addWebFiles: vi.fn(),
@@ -308,6 +310,119 @@ describe('NewSessionSimplePanel', () => {
         if (typeof style === 'object') return style as Record<string, any>;
         return {};
     }
+
+    it('passes launch status badges through to the composer input', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+        const statusBadges = [{
+            key: 'new-session-launch-starting',
+            label: 'newSession.startingSession',
+            testID: 'new-session-launch-status',
+            tone: 'active' as const,
+        }];
+
+        await renderScreen(
+            <NewSessionSimplePanel
+                popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
+                headerHeight={44}
+                safeAreaTop={0}
+                safeAreaBottom={0}
+                newSessionTopPadding={20}
+                newSessionSidePadding={16}
+                newSessionBottomPadding={8}
+                sessionPrompt="hello"
+                setSessionPrompt={() => {}}
+                handleCreateSession={() => {}}
+                canCreate={false}
+                isCreating={true}
+                statusBadges={statusBadges}
+                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteSuggestions={async () => []}
+                sessionPromptInputMaxHeight={200}
+                agentInputExtraActionChips={[]}
+                agentType="codex"
+                handleAgentClick={() => {}}
+                permissionMode="default"
+                handlePermissionModeChange={() => {}}
+                modelMode="default"
+                setModelMode={() => {}}
+                modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
+                connectionStatus={undefined}
+                machineName={undefined}
+                selectedPath=""
+                showResumePicker={false}
+                resumeSessionId={null}
+                isResumeSupportChecking={false}
+                useProfiles={false}
+                selectedProfileId={null}
+                containerStyle={{ flex: 0 }}
+            />,
+        );
+
+        expect(agentInputPropsRef.current?.statusBadges).toBe(statusBadges);
+    });
+
+    it('renders the submitted prompt as pending launch content while creation is unresolved', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+        const pendingLaunchAttempt: NewSessionLaunchAttempt = {
+            attemptId: 'attempt-1',
+            spawnNonce: 'spawn-1',
+            spawnAttemptKey: null,
+            scopeKey: 'scope-1',
+            createdSessionId: null,
+            daemonInitialPromptUsed: false,
+            firstTurnLocalId: 'first-turn-1',
+            attachmentMessageLocalId: 'attachment-1',
+            status: 'spawning',
+            prompt: {
+                prompt: 'Build the pending launch state',
+                displayText: 'Build the pending launch state',
+                meta: null,
+            },
+            phaseErrors: {},
+        };
+
+        const screen = await renderScreen(
+            <NewSessionSimplePanel
+                popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
+                headerHeight={44}
+                safeAreaTop={0}
+                safeAreaBottom={0}
+                newSessionTopPadding={20}
+                newSessionSidePadding={16}
+                newSessionBottomPadding={8}
+                sessionPrompt="Build the pending launch state"
+                setSessionPrompt={() => {}}
+                handleCreateSession={() => {}}
+                canCreate={false}
+                isCreating={true}
+                pendingLaunchAttempt={pendingLaunchAttempt}
+                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteSuggestions={async () => []}
+                sessionPromptInputMaxHeight={200}
+                agentInputExtraActionChips={[]}
+                agentType="codex"
+                handleAgentClick={() => {}}
+                permissionMode="default"
+                handlePermissionModeChange={() => {}}
+                modelMode="default"
+                setModelMode={() => {}}
+                modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
+                connectionStatus={undefined}
+                machineName={undefined}
+                selectedPath=""
+                showResumePicker={false}
+                resumeSessionId={null}
+                isResumeSupportChecking={false}
+                useProfiles={false}
+                selectedProfileId={null}
+                containerStyle={{ flex: 0 }}
+            />,
+        );
+
+        expect(screen.findByProps({ testID: 'new-session-launch-pending-preview' })).toBeTruthy();
+        expect(screen.findByProps({ testID: 'new-session-launch-pending-preview-prompt' }).props.children)
+            .toBe('Build the pending launch state');
+    });
 
     it('does not force the composer shell to full-height on wide web layouts', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
@@ -400,6 +515,51 @@ describe('NewSessionSimplePanel', () => {
         expect(paddedViews).toHaveLength(1);
         expect(flattenStyle(paddedViews[0].props.style).width).toBe('100%');
         expect(flattenStyle(paddedViews[0].props.style).alignSelf).toBe('stretch');
+    });
+
+    it('lets AgentInput apply the shared composer max-width cap in simple screen mode', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+        mockEnv.windowWidth = 1200;
+
+        await renderScreen(
+            <NewSessionSimplePanel
+                popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
+                headerHeight={44}
+                safeAreaTop={0}
+                safeAreaBottom={0}
+                newSessionTopPadding={20}
+                newSessionSidePadding={16}
+                newSessionBottomPadding={8}
+                containerStyle={{ flex: 1 }}
+                sessionPrompt="hello"
+                setSessionPrompt={() => {}}
+                handleCreateSession={() => {}}
+                canCreate={true}
+                isCreating={false}
+                emptyAutocompletePrefixes={[]}
+                emptyAutocompleteSuggestions={async () => []}
+                sessionPromptInputMaxHeight={200}
+                agentInputExtraActionChips={[]}
+                agentType="codex"
+                handleAgentClick={() => {}}
+                permissionMode="default"
+                handlePermissionModeChange={() => {}}
+                modelMode="default"
+                setModelMode={() => {}}
+                modelOptions={[{ value: 'default', label: 'Default', description: '' }]}
+                connectionStatus={undefined}
+                machineName={undefined}
+                selectedPath=""
+                showResumePicker={false}
+                resumeSessionId={null}
+                isResumeSupportChecking={false}
+                useProfiles={false}
+                selectedProfileId={null}
+                shouldBottomAnchor={true}
+            />,
+        );
+
+        expect(agentInputPropsRef.current?.maxWidthCap).toBeUndefined();
     });
 
     it('anchors the composer to the bottom on narrow mobile web layouts', async () => {

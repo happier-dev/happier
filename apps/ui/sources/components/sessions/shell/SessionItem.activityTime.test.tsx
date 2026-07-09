@@ -514,7 +514,8 @@ describe('SessionItem activity time', () => {
         expect(screen.findByType('Avatar' as any)?.props.monochrome).toBe(true);
     });
 
-    it('uses readable title metrics in very compact rows', async () => {
+    it('uses a tighter fixed row height and readable title metrics in very compact web rows', async () => {
+        platformOs = 'web';
         const SessionItem = await importSessionItem();
 
         const screen = await renderScreen(
@@ -533,12 +534,12 @@ describe('SessionItem activity time', () => {
         );
 
         const rowStyle = flattenStyle(screen.findByTestId('session-list-item-sess_compact_title')?.props.style);
-        expect(rowStyle.height).toBe(42);
+        expect(rowStyle.height).toBe(34);
 
         const title = screen.findAllByType('Text').find((node) => node.props.children === 'Session');
         const titleStyle = flattenStyle(title?.props.style);
-        expect(titleStyle.fontSize).toBe(14);
-        expect(titleStyle.lineHeight).toBe(18);
+        expect(titleStyle.fontSize).toBe(12);
+        expect(titleStyle.lineHeight).toBe(16);
     });
 
     it('renders an 18px micro avatar in very compact web rows with title spacing', async () => {
@@ -587,6 +588,12 @@ describe('SessionItem activity time', () => {
         );
 
         expect(screen.findByType('Avatar' as any)?.props.size).toBe(20);
+        const rowStyle = flattenStyle(screen.findByTestId('session-list-item-sess_compact_avatar_phone')?.props.style);
+        expect(rowStyle.height).toBe(42);
+        const title = screen.findAllByType('Text').find((node) => node.props.children === 'Session');
+        const titleStyle = flattenStyle(title?.props.style);
+        expect(titleStyle.fontSize).toBe(14);
+        expect(titleStyle.lineHeight).toBe(18);
         expect(findRowContentStyle(screen, 'sess_compact_avatar_phone').marginLeft).toBe(8);
     });
 
@@ -1010,6 +1017,7 @@ describe('SessionItem activity time', () => {
                     selected: true,
                     tags: [],
                     secondaryLineMode: 'path',
+                    workingPlacementRetained: false,
                 }}
                 serverId="server_a"
                 serverName="Server A"
@@ -1100,6 +1108,7 @@ describe('SessionItem activity time', () => {
                     overrides: {
                         sessionStatus: mockSessionStatus,
                         secondaryLineMode: 'status',
+                        workingPlacementRetained: false,
                     },
                 })}
                 serverId="server_a"
@@ -1118,6 +1127,106 @@ describe('SessionItem activity time', () => {
         expect(screen.findByTestId(
             'session-list-attention-indicator-sess_row_model_overlay_permission-secondary-permission_required',
         )).toBeTruthy();
+    });
+
+    it('uses row-model blocked pending count when the provided session omits it', async () => {
+        const rowSession = {
+            ...createSession('sess_row_model_overlay_blocked_pending'),
+            pendingCount: 1,
+            pendingBlockedCount: 1,
+        };
+        const providedSession = {
+            ...createSession('sess_row_model_overlay_blocked_pending'),
+            pendingCount: 1,
+        };
+        mockSessionStatus = {
+            state: 'waiting',
+            isConnected: true,
+            statusText: 'Online',
+            shouldShowStatus: false,
+            statusColor: '#34C759',
+            statusDotColor: '#34C759',
+            isPulsing: false,
+        };
+        const SessionItem = await importSessionItem();
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={providedSession}
+                rowViewModel={createSessionItemRowViewModel({
+                    session: rowSession,
+                    overrides: {
+                        sessionStatus: mockSessionStatus,
+                        secondaryLineMode: 'status',
+                        workingPlacementRetained: false,
+                    },
+                })}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                secondaryLineMode="status"
+                compact={false}
+            />,
+        );
+
+        expect(screen.getTextContent()).toContain('status.actionRequired');
+        expect(screen.findByTestId(
+            'session-list-attention-indicator-sess_row_model_overlay_blocked_pending-secondary-action_required',
+        )).toBeTruthy();
+    });
+
+    it('uses explicit provided-session zero blocked pending count over stale row-model state', async () => {
+        const rowSession = {
+            ...createSession('sess_row_model_overlay_blocked_pending_zero'),
+            pendingCount: 1,
+            pendingBlockedCount: 1,
+        };
+        const providedSession = {
+            ...createSession('sess_row_model_overlay_blocked_pending_zero'),
+            pendingCount: 0,
+            pendingBlockedCount: 0,
+        };
+        mockSessionStatus = {
+            state: 'waiting',
+            isConnected: true,
+            statusText: 'Online',
+            shouldShowStatus: false,
+            statusColor: '#34C759',
+            statusDotColor: '#34C759',
+            isPulsing: false,
+        };
+        const SessionItem = await importSessionItem();
+
+        const screen = await renderScreen(
+            <SessionItem
+                session={providedSession}
+                rowViewModel={createSessionItemRowViewModel({
+                    session: rowSession,
+                    overrides: {
+                        sessionStatus: mockSessionStatus,
+                        secondaryLineMode: 'status',
+                        workingPlacementRetained: false,
+                    },
+                })}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                isFirst={true}
+                isLast={true}
+                isSingle={true}
+                variant="default"
+                secondaryLineMode="status"
+                compact={false}
+            />,
+        );
+
+        expect(screen.findAllByTestId(
+            'session-list-attention-indicator-sess_row_model_overlay_blocked_pending_zero-secondary-action_required',
+        )).toHaveLength(0);
     });
 
     it('uses list placement action flags when the row view model session is stale', async () => {
@@ -1153,6 +1262,7 @@ describe('SessionItem activity time', () => {
                     overrides: {
                         sessionStatus: mockSessionStatus,
                         secondaryLineMode: 'status',
+                        workingPlacementRetained: false,
                     },
                 })}
                 rowHeight={42}

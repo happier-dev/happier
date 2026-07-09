@@ -354,6 +354,25 @@ describe('useNewSessionCheckoutActionChip', () => {
         expect(ids).toContain('checkout:/Users/leeroy/repo/.worktrees/release');
     });
 
+    it('selects a "New worktree: <name>" pending row at the top when a creation draft is set', async () => {
+        const chip = await renderCheckoutChip({
+            repoScmSnapshot: makeSnapshot([
+                { path: '/repo', branch: 'main', isCurrent: true, isMain: true },
+            ]),
+            checkoutChipModel: makeCheckoutChipModel([
+                { id: 'current_path', kind: 'current_path', path: '/repo' },
+                { id: 'create_git_worktree', kind: 'create_git_worktree' },
+            ], 'create_git_worktree'),
+            selectedPath: '/repo',
+            checkoutCreationDraft: { kind: 'git_worktree', displayName: 'clever-cloud', baseRef: 'main', branchMode: 'new' },
+        });
+
+        expect(chip?.collapsedOptionsPopover?.selectedOptionId).toBe('pending_git_worktree');
+        expect(chip?.collapsedOptionsPopover?.label).toContain('clever-cloud');
+        const pendingRow = findCheckoutChipOptionFromChip(chip, 'worktree:pending', 'pending_git_worktree');
+        expect(pendingRow?.label).toContain('clever-cloud');
+    });
+
     it('returns null when the SCM snapshot does not indicate a git repository', async () => {
         const chip = await renderCheckoutChip({
             repoScmSnapshot: null,

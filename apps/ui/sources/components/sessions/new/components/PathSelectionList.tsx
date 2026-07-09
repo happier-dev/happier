@@ -221,6 +221,30 @@ function buildRecentOptions(
         });
 }
 
+function resolveSavedPathOptionId(params: Readonly<{
+    path: string;
+    favorites: ReadonlyArray<PathSelectionListFavorite>;
+    recents: ReadonlyArray<PathSelectionListRecent>;
+    machineHomeDir: string;
+}>): string | null {
+    const trimmedPath = params.path.trim();
+    if (trimmedPath.length === 0) return null;
+    const selectedKey = resolveDirectoryFavoriteComparisonKey(trimmedPath, params.machineHomeDir);
+    const favoriteMatch = params.favorites.find((entry) =>
+        resolveDirectoryFavoriteComparisonKey(entry.path, params.machineHomeDir) === selectedKey,
+    );
+    if (favoriteMatch) {
+        return `favorite:${resolveAbsolutePath(favoriteMatch.path, params.machineHomeDir)}`;
+    }
+    const recentMatch = params.recents.find((entry) =>
+        resolveDirectoryFavoriteComparisonKey(entry.path, params.machineHomeDir) === selectedKey,
+    );
+    if (recentMatch) {
+        return `recent:${resolveAbsolutePath(recentMatch.path, params.machineHomeDir)}`;
+    }
+    return null;
+}
+
 export function PathSelectionList(props: PathSelectionListProps): React.ReactElement {
     // Destructure cleanly so memo deps aren't fed `props` itself (which would
     // re-run effects on every parent render).
@@ -357,6 +381,15 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
             return true;
         });
     }, [machineHomeDir, recents, visibleFavoriteKeys]);
+    const selectedSavedPathOptionId = React.useMemo(() => {
+        if (hasUserEditedInput) return null;
+        return resolveSavedPathOptionId({
+            path: initialValue,
+            favorites: visibleFavorites,
+            recents: visibleRecents,
+            machineHomeDir,
+        });
+    }, [hasUserEditedInput, initialValue, machineHomeDir, visibleFavorites, visibleRecents]);
 
     // Path-domain input behavior bound to the machine's platform (NEVER the
     // local browser's platform). When `machinePlatform === 'auto'`, the
@@ -644,6 +677,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
             )}
             inputValue={inputValue}
             onChangeInputValue={handleChangeInputValue}
+            selectedOptionId={selectedSavedPathOptionId}
             // Bug 4a fix: SelectionList's row already invokes
             // `option.onSelect()` directly (see PlanOptionRow.handlePress),
             // so this top-level `onSelect` MUST be a no-op. Returning the

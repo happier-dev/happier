@@ -61,6 +61,7 @@ export function buildNewSessionAgentPickerOptionInteractions(
             const selection = params.getEngineSelectionForTargetKey(params.entry.backendTargetKey);
             return buildNewSessionAgentPickerDetailContent({
                 backendTarget: params.entry.backendTarget,
+                runtimeCarrierAgentId: params.entry.providerAgentId,
                 selectedMachineId: params.selectedMachineId,
                 capabilityServerId: params.capabilityServerId,
                 cwd: params.selectedPath,

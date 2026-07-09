@@ -47,6 +47,10 @@ vi.mock('@/components/ui/layout/useChromeSafeAreaInsets', () => ({
     useChromeSafeAreaInsets: () => ({ top: 19, bottom: 0, left: 0, right: 0 }),
 }));
 
+vi.mock('@/hooks/server/useFeatureDecision', () => ({
+    useFeatureDecision: () => ({ state: 'enabled' }),
+}));
+
 vi.mock('@/utils/platform/deferOnWeb', () => ({
     deferOnWeb: (cb: any) => cb(),
 }));
@@ -163,5 +167,15 @@ describe('SessionDetailsPanel (mobile screen chrome)', () => {
 
         expect(screen.findByTestId('session-details-close')).toBeNull();
         expect(screen.findByTestId('session-details-focus-toggle')).toBeNull();
+        expect(screen.findByTestId('session-details-open-browser')).not.toBeNull();
+    });
+
+    it('keeps the browser opener discoverable on native screen presentations', async () => {
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+        const screen = await renderScreen(
+            <SessionDetailsPanel sessionId="s1" scopeId="session:s1" presentation="screen" />,
+        );
+
+        expect(screen.findByTestId('session-details-open-browser')).not.toBeNull();
     });
 });

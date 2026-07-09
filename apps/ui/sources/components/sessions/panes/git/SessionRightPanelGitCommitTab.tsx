@@ -79,6 +79,10 @@ export type SessionRightPanelGitCommitTabProps = Readonly<{
     >;
     commitAdjacentPushAction?: ScmCommitComposerCardProps['pushShortcut'];
     onClearSelection?: () => void;
+    commitSelectionAvailable?: boolean;
+    selectionModeActive?: boolean;
+    onEnterSelectionMode?: () => void;
+    onExitSelectionMode?: () => void;
 
     scmStatusFiles: ScmStatusFiles | null;
     showBranchSummary?: boolean;
@@ -184,6 +188,10 @@ export const SessionRightPanelGitCommitTab = React.memo((props: SessionRightPane
                         selectionCount={props.repositorySelectedCount}
                         onClearSelection={props.onClearSelection}
                         onSelectAllSelection={props.onSelectAll}
+                        commitSelectionAvailable={props.commitSelectionAvailable}
+                        selectionModeActive={props.selectionModeActive}
+                        onEnterSelectionMode={props.onEnterSelectionMode}
+                        onExitSelectionMode={props.onExitSelectionMode}
                     />
                 </View>
             ) : null}
@@ -210,6 +218,10 @@ const CommitComposerFooter = React.memo((props: Readonly<{
     selectionCount: number;
     onClearSelection?: () => void;
     onSelectAllSelection?: () => void;
+    commitSelectionAvailable?: boolean;
+    selectionModeActive?: boolean;
+    onEnterSelectionMode?: () => void;
+    onExitSelectionMode?: () => void;
 }>) => {
     const [localDraftMessage, setLocalDraftMessage] = React.useState(() => String(props.externalDraftMessage ?? ''));
     const dirtyRef = React.useRef(false);
@@ -261,6 +273,10 @@ const CommitComposerFooter = React.memo((props: Readonly<{
             selectionCount={props.selectionCount}
             onClearSelection={props.onClearSelection}
             onSelectAllSelection={props.onSelectAllSelection}
+            commitSelectionAvailable={props.commitSelectionAvailable}
+            selectionModeActive={props.selectionModeActive}
+            onEnterSelectionMode={props.onEnterSelectionMode}
+            onExitSelectionMode={props.onExitSelectionMode}
             variant="railFooter"
         />
     );
@@ -693,16 +709,29 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
         virtualizedChangedFilesLength: virtualizedChangedFiles.length,
         virtualizedStatsColumnWidth,
     };
+    // RN's FlatList only re-renders cells when `data` or `extraData` change —
+    // NOT when `renderItem` (or a ref it reads) changes. So `extraData` MUST
+    // carry every dynamic value that affects a row's rendered output, including
+    // the per-row render callbacks. Omitting `renderFileActions` is what made the
+    // commit-selection "+" appear only after an unrelated data change flushed the
+    // cached cells. `renderFileActions` / `renderFileTrailingActions` change
+    // identity on selection-mode entry/exit AND on every per-file selection
+    // toggle, so including them keeps the "+" and its checked state in sync
+    // immediately.
     const virtualizedRowExtraData = React.useMemo(() => ({
         statsColumnWidth: virtualizedStatsColumnWidth,
         textPrimary: themeTextPrimary,
         textSecondary: themeTextSecondary,
         virtualizedChangedFilesLength: virtualizedChangedFiles.length,
+        renderFileActions: props.renderFileActions,
+        renderFileTrailingActions: props.renderFileTrailingActions,
     }), [
         themeTextPrimary,
         themeTextSecondary,
         virtualizedChangedFiles.length,
         virtualizedStatsColumnWidth,
+        props.renderFileActions,
+        props.renderFileTrailingActions,
     ]);
 
     const renderVirtualizedRow = React.useCallback(({ item: file, index }: { item: ScmFileStatus; index: number }) => {

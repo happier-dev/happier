@@ -11,36 +11,39 @@ export type NewSessionCapabilityProbeContext = Readonly<{
     capabilityParams?: Readonly<Record<string, unknown>> | null;
 }>;
 
-const MAX_CACHED_RUNTIME_KINDS = 32;
-const probeContextByRuntimeKind = new Map<string, NewSessionCapabilityProbeContext>();
+const MAX_CACHED_PROBE_CONTEXTS = 32;
+const probeContextByKey = new Map<string, NewSessionCapabilityProbeContext>();
 
-function getOrCreateProbeContextForRuntimeKind(runtimeKind: string): NewSessionCapabilityProbeContext {
-    const key = runtimeKind.trim();
-    const existing = probeContextByRuntimeKind.get(key);
+function getOrCreateProbeContext(params: Readonly<{
+    key: string;
+    cacheKeySuffixParts: readonly string[];
+    capabilityParams: Readonly<Record<string, unknown>>;
+}>): NewSessionCapabilityProbeContext {
+    const key = params.key.trim();
+    const existing = probeContextByKey.get(key);
     if (existing) {
-        probeContextByRuntimeKind.delete(key);
-        probeContextByRuntimeKind.set(key, existing);
+        probeContextByKey.delete(key);
+        probeContextByKey.set(key, existing);
         return existing;
     }
 
-    const cacheKeySuffixParts = Object.freeze([key]);
-    const capabilityParams = Object.freeze({
-        runtimeKindOverride: key,
-    }) as Readonly<Record<string, unknown>>;
-
     const created: NewSessionCapabilityProbeContext = Object.freeze({
-        cacheKeySuffixParts,
-        capabilityParams,
+        cacheKeySuffixParts: Object.freeze([...params.cacheKeySuffixParts]),
+        capabilityParams: Object.freeze({ ...params.capabilityParams }),
     });
 
-    probeContextByRuntimeKind.set(key, created);
-    while (probeContextByRuntimeKind.size > MAX_CACHED_RUNTIME_KINDS) {
-        const oldest = probeContextByRuntimeKind.keys().next();
+    probeContextByKey.set(key, created);
+    while (probeContextByKey.size > MAX_CACHED_PROBE_CONTEXTS) {
+        const oldest = probeContextByKey.keys().next();
         if (oldest.done) break;
-        probeContextByRuntimeKind.delete(oldest.value);
+        probeContextByKey.delete(oldest.value);
     }
 
     return created;
+}
+
+function hasConnectedServicesPayload(value: unknown): boolean {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 export function normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts(
@@ -63,6 +66,7 @@ export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
     backendTarget: BackendTargetRefV2;
     settings: Settings;
     runtimeCarrierAgentId?: AgentId | null;
+    connectedServices?: unknown;
 }>): NewSessionCapabilityProbeContext | null {
     const backendTarget = readBackendTargetRefV2(params.backendTarget);
     const agentId = isAgentId(params.runtimeCarrierAgentId)
@@ -76,7 +80,30 @@ export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
         agentId,
         accountSettings: params.settings as unknown as Record<string, unknown>,
     });
-    if (!runtimeKind) return null;
+    const hasConnectedServices = hasConnectedServicesPayload(params.connectedServices);
+    if (!runtimeKind && !hasConnectedServices) return null;
 
-    return getOrCreateProbeContextForRuntimeKind(runtimeKind);
+    if (runtimeKind && !hasConnectedServices) {
+        return getOrCreateProbeContext({
+            key: `runtime:${runtimeKind}`,
+            cacheKeySuffixParts: [runtimeKind],
+            capabilityParams: { runtimeKindOverride: runtimeKind },
+        });
+    }
+
+    const connectedServicesKey = hasConnectedServices ? stableJsonStringify(params.connectedServices) : '';
+    const cacheKeySuffixParts = [
+        ...(runtimeKind ? [`runtime:${runtimeKind}`] : []),
+        ...(hasConnectedServices ? [`connectedServices:${connectedServicesKey}`] : []),
+    ];
+    const capabilityParams = {
+        ...(runtimeKind ? { runtimeKindOverride: runtimeKind } : {}),
+        ...(hasConnectedServices ? { connectedServices: params.connectedServices } : {}),
+    };
+
+    return getOrCreateProbeContext({
+        key: cacheKeySuffixParts.join('|'),
+        cacheKeySuffixParts,
+        capabilityParams,
+    });
 }

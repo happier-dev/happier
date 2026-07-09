@@ -1,16 +1,24 @@
 import * as React from 'react';
 import { Platform, type ViewToken } from 'react-native';
 import { usePathname } from 'expo-router';
-import { useSetting, useSettingMutable, useMachineDisplayById, useProfile, useLocalSettingMutable } from '@/sync/domains/state/storage';
+import {
+    useSetting,
+    useSettingMutable,
+    useMachineDisplayById,
+    useProfile,
+    useLocalSettingMutable,
+    useSessionListRowRenderablesForItems,
+    useSessionOrganizationProjection,
+} from '@/sync/domains/state/storage';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { useSessionListSelectionState } from '@/hooks/session/useSessionListSelectionState';
-import { getAllKnownTags, sessionTagKey } from './sessionTagUtils';
+import { getAllKnownTags, getTagsForSession, sessionTagKey } from './sessionTagUtils';
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import { resolveSessionListShellFlags } from './resolveSessionListShellFlags';
 import { resolveSessionListDensityViewState } from './resolveSessionListDensityViewState';
 import { resolveSessionListOrderingPersistenceState } from './resolveSessionListOrderingPersistenceState';
 import { SessionListHeaderItem } from './sessionListHeaderItem';
-import { SessionListSessionItem } from './sessionListSessionItem';
+import { SessionListRowViewModelBoundary } from './SessionListRowViewModelBoundary';
 import { useSessionListRenderModels } from './useSessionListRenderModels';
 import { useSessionListSearchTextByKey } from './useSessionListSearchTextByKey';
 import { useSessionListNavigationActions } from './useSessionListNavigationActions';
@@ -49,14 +57,22 @@ import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
+import type { TranslationKey } from '@/text';
+import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { TreeDropMeasurableRef } from '@/components/ui/treeDragDrop';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
-    moveSessionFolderAssignments,
+    deleteSessionFolder as deleteSessionOrganizationFolder,
+    deleteSessionLabel as deleteSessionOrganizationLabel,
+    reorderSessionOrganization,
     setSessionFolderAssignment as setSessionFolderAssignmentOp,
-} from '@/sync/ops/sessionFolders';
+    setSessionPin as setSessionOrganizationPin,
+    setSessionTagLabels as setSessionOrganizationTagLabels,
+    upsertSessionFolder as upsertSessionOrganizationFolder,
+    upsertSessionLabel as upsertSessionOrganizationLabel,
+} from '@/sync/ops/sessionOrganization';
 import {
     sessionArchiveWithServerScope,
     sessionSetManualReadStateWithServerScope,
@@ -72,16 +88,19 @@ import {
     compareSessionFolderWorkspaceRefs,
     createSessionFolder,
     deleteSessionFolder,
-    DEFAULT_SESSION_FOLDERS_V1,
-    normalizeSessionFolders,
     renameSessionFolder,
+    type SessionFolderV1,
     type SessionFolderMoveTarget,
     type SessionFolderWorkspaceRefV1,
     resolveDurableWorkspaceRefForSessionListHeader,
     type SessionFoldersV1,
 } from '@/sync/domains/session/folders';
+import {
+    buildSessionOrganizationListViewState,
+    buildSessionOrganizationReorderRequestFromGroupOrder,
+    buildSessionOrganizationReorderRequestFromWorkspaceOrder,
+} from '@/sync/domains/session/organization/viewState';
 import { resolveWorkspaceRootTreeRowId, treeRowId } from './drop-resolution/treeRowId';
-import type { SessionListRowViewModel } from './sessionListRowViewModels';
 import { isSessionListPrimaryHeaderKind } from './sessionListPrimaryHeader';
 import {
     getSessionListHeaderControlsAnchorKey,
@@ -94,13 +113,19 @@ import {
 } from './search/useSessionListMemorySearchAugmentation';
 import { useSessionListHeaderFilterRetention } from './search/useSessionListHeaderFilterRetention';
 import { buildSessionListRetentionKey } from './scroll/sessionListRetentionKey';
-import type { SessionListVirtualizedNode } from './sessionListVirtualizedContent';
+import {
+    SessionListFilteredNoResultsMessage,
+    SESSION_LIST_FILTERED_NO_RESULTS_MESSAGE_KEY,
+    type SessionListVirtualizedNode,
+} from './sessionListVirtualizedContent';
 import {
     buildSessionListRowStorePriorityKeys,
     isSessionListRowStorePriorityItem,
     resolveSessionListRowStoreScopeKey,
-    resolveSessionListRowStoreSubscriptionKeys,
+    resolveSessionListRowStoreSubscriptionKeysForViewport,
+    reuseSessionListRowStoreKeySet,
 } from './row/sessionListVisibleRowStoreScopes';
+import { useSessionListRuntimePriorityRowKeysForItems } from '@/sync/store/hooks';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import type {
     SessionBulkActionExecutionContext,
@@ -113,8 +138,10 @@ import {
 import {
     useSessionListSelectionController,
 } from './selection/SessionListSelectionContext';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
 
 const SEARCH_FOCUS_TRANSFER_SETTLE_MS = 50;
+const NATIVE_LIST_ALL_RENDERED_ROW_STORE_MAX_ITEMS = 200;
 const EMPTY_MEMORY_MATCHED_SESSION_KEYS: ReadonlySet<string> = new Set();
 const EMPTY_VIEWABLE_SESSION_ROW_KEYS: ReadonlySet<string> = new Set();
 const EMPTY_SESSION_FOLDER_MOVE_TARGETS: readonly SessionFolderMoveTarget[] = [];
@@ -150,6 +177,19 @@ function buildSessionListMemoryCandidateKeySet(items: ReadonlyArray<SessionListI
     return keys;
 }
 
+function mergeSessionListRowStoreKeySets(
+    primary: ReadonlySet<string>,
+    secondary: ReadonlySet<string>,
+): ReadonlySet<string> {
+    if (secondary.size === 0) return primary;
+    if (primary.size === 0) return secondary;
+    const merged = new Set(primary);
+    for (const key of secondary) {
+        merged.add(key);
+    }
+    return merged;
+}
+
 function resolveSessionTreeRowId(sessionKey: string | null): string | null {
     if (!sessionKey) return null;
     const separatorIndex = sessionKey.indexOf(':');
@@ -177,19 +217,24 @@ function resolveAdjacentSessionSelectionKey(params: Readonly<{
     return params.visibleKeys[targetIndex] ?? null;
 }
 
-function buildSessionBulkActionTargetFromRowViewModel(
-    rowViewModel: SessionListRowViewModel,
-    currentUserId: string | null,
-): SessionBulkActionTarget | null {
-    if (!rowViewModel.session || !rowViewModel.sessionKey || !rowViewModel.sessionStatus) return null;
-    const separatorIndex = rowViewModel.sessionKey.indexOf(':');
-    const serverId = separatorIndex > 0 ? rowViewModel.sessionKey.slice(0, separatorIndex) : null;
+function buildSessionBulkActionTargetFromSessionItem(params: Readonly<{
+    item: Extract<SessionListIndexItem, { type: 'session' }>;
+    session: SessionListRenderableSession;
+    currentUserId: string | null;
+    pinnedKeySet: ReadonlySet<string>;
+    sessionTags: Record<string, string[]>;
+}>): SessionBulkActionTarget | null {
+    const selectionKey = buildServerScopedSessionKey(params.item.sessionId, params.item.serverId);
+    if (!selectionKey) return null;
+    const serverId = typeof params.item.serverId === 'string' && params.item.serverId.trim()
+        ? params.item.serverId.trim()
+        : null;
+    const isPinned = params.item.pinned === true || params.pinnedKeySet.has(selectionKey);
     const actionTarget = createSessionActionTarget({
-        session: rowViewModel.session,
+        session: params.session,
         serverId,
-        currentUserId,
-        isConnected: rowViewModel.sessionStatus.isConnected,
-        isPinned: rowViewModel.pinned,
+        currentUserId: params.currentUserId,
+        isPinned,
     });
     const readState = actionTarget.readStateAction.visible
         ? actionTarget.readStateAction.targetState === 'read'
@@ -198,8 +243,8 @@ function buildSessionBulkActionTargetFromRowViewModel(
         : undefined;
 
     return {
-        key: rowViewModel.sessionKey,
-        sessionId: rowViewModel.session.id,
+        key: selectionKey,
+        sessionId: params.session.id,
         serverId,
         active: actionTarget.isActive,
         archived: actionTarget.isArchived,
@@ -207,7 +252,7 @@ function buildSessionBulkActionTargetFromRowViewModel(
         hasAdminAccess: actionTarget.hasAdminAccess,
         canStop: actionTarget.canStop,
         canArchive: actionTarget.canArchive,
-        tags: rowViewModel.tags,
+        tags: getTagsForSession(params.sessionTags, selectionKey),
         readState,
     };
 }
@@ -215,12 +260,6 @@ function buildSessionBulkActionTargetFromRowViewModel(
 function buildStringListSignature(values: ReadonlyArray<string> | null | undefined): string {
     if (!values || values.length === 0) return '';
     return values.join('\u0001');
-}
-
-function buildStringSetSignature(values: ReadonlySet<string> | null | undefined): string {
-    if (!values) return '*';
-    if (values.size === 0) return '';
-    return Array.from(values).sort((left, right) => left.localeCompare(right)).join('\u0001');
 }
 
 function buildStringRecordSignature(value: Readonly<Record<string, string>> | null | undefined): string {
@@ -273,6 +312,50 @@ function buildSessionFoldersSignature(value: SessionFoldersV1): string {
         .join('\u0002');
 }
 
+function parseServerScopedSessionKey(serverId: string, keyRaw: unknown): string | null {
+    const key = typeof keyRaw === 'string' ? keyRaw.trim() : '';
+    const prefix = `${serverId}:`;
+    if (!key.startsWith(prefix)) return null;
+    const sessionId = key.slice(prefix.length).trim();
+    return sessionId || null;
+}
+
+function normalizeStringArray(values: readonly string[] | null | undefined): string[] {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const value of values ?? []) {
+        const normalized = typeof value === 'string' ? value.trim() : '';
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        out.push(normalized);
+    }
+    return out;
+}
+
+function buildFolderDisplay(folder: SessionFolderV1): { t: 'plain'; v: { name: string; workspace: SessionFolderV1['workspace'] } } {
+    return {
+        t: 'plain',
+        v: {
+            name: folder.name,
+            workspace: folder.workspace,
+        },
+    };
+}
+
+function areFolderDefinitionsEqual(left: SessionFolderV1, right: SessionFolderV1): boolean {
+    return left.name === right.name
+        && left.parentId === right.parentId
+        && (left.sortKey ?? null) === (right.sortKey ?? null)
+        && JSON.stringify(left.workspace) === JSON.stringify(right.workspace);
+}
+
+type SessionOrganizationMutationContext = Readonly<{
+    credentials: AuthCredentials;
+    serverId: string;
+    serverIdAliases: readonly string[];
+    serverUrl?: string;
+}>;
+
 function buildRowLabelSignature(labels: ReadonlyMap<string, string>): string {
     if (labels.size === 0) return '';
     return Array.from(labels.entries())
@@ -294,12 +377,72 @@ function stringSetsEqual(left: ReadonlySet<string> | null, right: ReadonlySet<st
     return true;
 }
 
+function buildSessionListRowStoreSubscriptionTelemetryFields(params: Readonly<{
+    dataActive: boolean;
+    platformOS: string;
+    priorityRowKeys: ReadonlySet<string>;
+    rowSubscriptionKeys: ReadonlySet<string> | null;
+    totalRows: number;
+    visibleRowKeys: ReadonlySet<string> | null;
+}>): Record<string, number> {
+    const allRenderedRowsSubscribed = params.rowSubscriptionKeys === null;
+    return {
+        allRenderedRowsSubscribed: allRenderedRowsSubscribed ? 1 : 0,
+        dataActive: params.dataActive ? 1 : 0,
+        nativeAllRenderedRowsSubscribed: allRenderedRowsSubscribed && params.platformOS !== 'web' ? 1 : 0,
+        priorityRows: params.priorityRowKeys.size,
+        subscribedRows: allRenderedRowsSubscribed ? params.totalRows : params.rowSubscriptionKeys.size,
+        totalRows: params.totalRows,
+        visibleRows: params.visibleRowKeys?.size ?? 0,
+    };
+}
+
+function useStableSessionListRowStoreKeySet<T extends ReadonlySet<string>>(value: T): T {
+    const previousRef = React.useRef<T | null>(null);
+    const stableValue = reuseSessionListRowStoreKeySet(previousRef.current, value);
+    previousRef.current = stableValue;
+    return stableValue;
+}
+
+function useStableNullableSessionListRowStoreKeySet<T extends ReadonlySet<string>>(
+    value: T | null,
+): T | null {
+    const previousRef = React.useRef<T | null>(null);
+    if (value === null) {
+        return null;
+    }
+    const stableValue = reuseSessionListRowStoreKeySet(previousRef.current, value);
+    previousRef.current = stableValue;
+    return stableValue;
+}
+
 function areVirtualizedNodeArraysReferenceEqual(
     left: ReadonlyArray<SessionListVirtualizedNode>,
     right: ReadonlyArray<SessionListVirtualizedNode>,
 ): boolean {
     if (left.length !== right.length) return false;
     return left.every((node, index) => node === right[index]);
+}
+
+function shouldInsertFilteredNoResultsAfterHeader(params: Readonly<{
+    item: SessionListIndexItem;
+    itemIndex: number;
+    items: ReadonlyArray<SessionListIndexItem>;
+    filtersActive: boolean;
+    headerControlsAnchorKey: string | null;
+}>): boolean {
+    if (!params.filtersActive) return false;
+    if (!params.headerControlsAnchorKey) return false;
+    const item = params.item;
+    if (item.type !== 'header' || !isSessionListPrimaryHeaderKind(item.headerKind)) return false;
+    if (getSessionListHeaderControlsAnchorKey(item) !== params.headerControlsAnchorKey) return false;
+
+    for (let index = params.itemIndex + 1; index < params.items.length; index += 1) {
+        const candidate = params.items[index];
+        if (candidate.type === 'session') return false;
+        if (candidate.type === 'header' && isSessionListPrimaryHeaderKind(candidate.headerKind)) break;
+    }
+    return true;
 }
 
 export type SessionListViewStateOptions = Readonly<{
@@ -330,6 +473,7 @@ export function useSessionListViewStateFromPaneState(
     const pathname = usePathname();
     const effectivePathname = options.pathname ?? pathname;
     const surfaceOwnership = normalizeSessionListSurfaceOwnership(options.surfaceOwnership);
+    const renderPaneState = sessionListPaneState;
     const retentionKey = React.useMemo(
         () => buildSessionListRetentionKey(storageKind),
         [storageKind],
@@ -341,27 +485,18 @@ export function useSessionListViewStateFromPaneState(
         setSelectedHeaderTags,
     } = useSessionListHeaderFilterRetention(retentionKey);
     const isTablet = useIsTablet();
-    const [pinnedSessionKeysV1, setPinnedSessionKeysV1] = useSettingMutable('pinnedSessionKeysV1');
-    const [sessionListGroupOrderV1, setSessionListGroupOrderV1] = useSettingMutable('sessionListGroupOrderV1');
-    const [sessionWorkspaceOrderV1, setSessionWorkspaceOrderV1] = useSettingMutable('sessionWorkspaceOrderV1');
     const [sessionListOrderingModeV1] = useSettingMutable('sessionListOrderingModeV1');
     const sessionListSectionModeV1 = useSetting('sessionListSectionModeV1') === 'single'
         ? 'single'
         : 'activity';
     const sessionListFolderSortModeV1 = useSetting('sessionListFolderSortModeV1') === 'mixed' ? 'mixed' : 'foldersFirst';
     const sessionFolderViewModeV1 = useSetting('sessionFolderViewModeV1') === 'tree' ? 'tree' : 'off';
-    const [sessionTagsV1, setSessionTagsV1] = useSettingMutable('sessionTagsV1');
     const sessionTagsEnabled = useSetting('sessionTagsEnabled');
-    const [workspaceLabelsV1, setWorkspaceLabelsV1] = useSettingMutable('workspaceLabelsV1');
     const [workspaceRefsV1, setWorkspaceRefsV1] = useSettingMutable('workspaceRefsV1');
     const workspacePathDisplayModeV1 = useSetting('workspacePathDisplayModeV1');
     const workspaceFaviconsEnabled = useSetting('workspaceFaviconsEnabled') !== false;
     const workspaceMachineSubtitlesEnabled = useSetting('workspaceMachineSubtitlesEnabled') !== false;
-    const [sessionFoldersV1Raw, setSessionFoldersV1] = useSettingMutable('sessionFoldersV1') as [
-        SessionFoldersV1 | null | undefined,
-        (value: SessionFoldersV1) => void,
-    ];
-    const [collapsedGroupKeysV1, setCollapsedGroupKeysV1] = useSettingMutable('collapsedGroupKeysV1');
+    const [collapsedGroupKeysV1, setCollapsedGroupKeysV1] = useLocalSettingMutable('collapsedGroupKeysV1');
     const [sessionMruOrderV1, setSessionMruOrderV1] = useLocalSettingMutable('sessionMruOrderV1');
     const [sessionListFocusedFolderV1, setSessionListFocusedFolderV1] = useLocalSettingMutable('sessionListFocusedFolderV1');
     const [activeSearchHeaderControlsAnchorKey, setActiveSearchHeaderControlsAnchorKey] = React.useState<string | null>(null);
@@ -379,9 +514,26 @@ export function useSessionListViewStateFromPaneState(
     const navigateToSession = useNavigateToSession();
     const { openMoveSheet } = useSessionListMoveSheet();
     const sessionListA11y = useSessionListA11yAnnouncements();
-    const densityViewState = resolveSessionListDensityViewState(sessionListDensity);
+    const densityViewState = resolveSessionListDensityViewState(sessionListDensity, {
+        isTablet,
+        platform: Platform.OS,
+    });
     const currentUserId = typeof profile?.id === 'string' ? profile.id : null;
     const selection = useSessionListSelectionState();
+    const activeOrganizationServerId = typeof selection.activeServerId === 'string'
+        ? selection.activeServerId.trim()
+        : '';
+    const organizationProjection = useSessionOrganizationProjection(activeOrganizationServerId);
+    const organizationListViewState = React.useMemo(() => buildSessionOrganizationListViewState({
+        serverId: activeOrganizationServerId,
+        projection: organizationProjection,
+    }), [activeOrganizationServerId, organizationProjection]);
+    const pinnedSessionKeysV1 = organizationListViewState.pinnedSessionKeysV1 as string[];
+    const sessionListGroupOrderV1 = organizationListViewState.sessionListGroupOrderV1 as Record<string, string[]>;
+    const sessionWorkspaceOrderV1 = organizationListViewState.sessionWorkspaceOrderV1 as Record<string, string[]>;
+    const sessionTagsV1 = organizationListViewState.sessionTagsV1 as Record<string, string[]>;
+    const workspaceLabelsV1 = organizationListViewState.workspaceLabelsV1;
+    const sessionFoldersV1 = organizationListViewState.sessionFoldersV1;
     const orderingPersistenceState = resolveSessionListOrderingPersistenceState({
         pinnedSessionKeysV1,
         sessionListGroupOrderV1,
@@ -392,16 +544,13 @@ export function useSessionListViewStateFromPaneState(
             : {}
     ), [sessionWorkspaceOrderV1]);
     const machineDisplayById = useMachineDisplayById();
+    const renderMachineDisplayById = machineDisplayById;
     const normalizedShellState = normalizeSessionListShellState({
         collapsedGroupKeys: collapsedGroupKeysV1,
         sessionTags: sessionTagsV1,
         workspaceLabels: workspaceLabelsV1,
         workspaceRefs: workspaceRefsV1,
     });
-    const sessionFoldersV1 = React.useMemo(
-        () => normalizeSessionFolders(sessionFoldersV1Raw ?? DEFAULT_SESSION_FOLDERS_V1),
-        [sessionFoldersV1Raw],
-    );
     const shellFlags = resolveSessionListShellFlags({
         selectedServerCount: selection.selectedServerCount,
         selectionEnabled: selection.enabled,
@@ -413,9 +562,188 @@ export function useSessionListViewStateFromPaneState(
         hasAnySessionFolderInAccount: sessionFoldersV1.folders.length > 0,
     });
     const allKnownTags = getAllKnownTags(normalizedShellState.sessionTags);
+    const getOrganizationMutationContext = React.useCallback(async (
+        serverIdRaw?: string | null,
+    ): Promise<SessionOrganizationMutationContext | null> => {
+        const serverId = typeof serverIdRaw === 'string' && serverIdRaw.trim()
+            ? serverIdRaw.trim()
+            : activeOrganizationServerId;
+        if (!serverId) return null;
+        const profile = getServerProfileById(serverId);
+        if (!profile) return null;
+        const credentials = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId });
+        if (!credentials) return null;
+        const serverIdAliases = [profile.id, profile.serverIdentityId, ...(profile.legacyServerIds ?? [])]
+            .map((id) => typeof id === 'string' ? id.trim() : '')
+            .filter((id) => id && id !== serverId);
+        return { credentials, serverId, serverIdAliases, serverUrl: profile.serverUrl };
+    }, [activeOrganizationServerId]);
+    const runOrganizationMutation = React.useCallback((mutation: () => Promise<void>) => {
+        void mutation().catch(() => undefined);
+    }, []);
+    const setSessionPinForTarget = React.useCallback(async (
+        target: SessionBulkActionTarget,
+        pinned: boolean,
+    ) => {
+        const mutation = await getOrganizationMutationContext(target.serverId ?? null);
+        if (!mutation) {
+            throw new Error('Session pin requires an available server profile');
+        }
+        await setSessionOrganizationPin({
+            ...mutation,
+            sessionId: target.sessionId,
+            pinned,
+        });
+    }, [getOrganizationMutationContext]);
+    const setSessionTagAssignmentsForTarget = React.useCallback(async (
+        target: SessionBulkActionTarget,
+        tags: readonly string[],
+    ) => {
+        const mutation = await getOrganizationMutationContext(target.serverId ?? null);
+        if (!mutation) {
+            throw new Error('Session tags require an available server profile');
+        }
+        await setSessionOrganizationTagLabels({
+            ...mutation,
+            sessionId: target.sessionId,
+            tags: normalizeStringArray(tags),
+        });
+    }, [getOrganizationMutationContext]);
+    const setSessionPinForSessionKey = React.useCallback((sessionKey: string, pinned: boolean) => {
+        runOrganizationMutation(async () => {
+            const separatorIndex = sessionKey.indexOf(':');
+            const serverId = separatorIndex > 0 ? sessionKey.slice(0, separatorIndex) : activeOrganizationServerId;
+            const mutation = await getOrganizationMutationContext(serverId);
+            if (!mutation) return;
+            const sessionId = parseServerScopedSessionKey(mutation.serverId, sessionKey);
+            if (!sessionId) return;
+            await setSessionOrganizationPin({
+                ...mutation,
+                sessionId,
+                pinned,
+            });
+        });
+    }, [activeOrganizationServerId, getOrganizationMutationContext, runOrganizationMutation]);
+    const setSessionTagsForSessionKey = React.useCallback((sessionKey: string, tags: readonly string[]) => {
+        runOrganizationMutation(async () => {
+            const separatorIndex = sessionKey.indexOf(':');
+            const serverId = separatorIndex > 0 ? sessionKey.slice(0, separatorIndex) : activeOrganizationServerId;
+            const mutation = await getOrganizationMutationContext(serverId);
+            if (!mutation) return;
+            const sessionId = parseServerScopedSessionKey(mutation.serverId, sessionKey);
+            if (!sessionId) return;
+            await setSessionOrganizationTagLabels({
+                ...mutation,
+                sessionId,
+                tags: normalizeStringArray(tags),
+            });
+        });
+    }, [activeOrganizationServerId, getOrganizationMutationContext, runOrganizationMutation]);
+    const setSessionListGroupOrderV1 = React.useCallback((nextOrder: Record<string, readonly string[] | undefined>) => {
+        runOrganizationMutation(async () => {
+            const mutation = await getOrganizationMutationContext(activeOrganizationServerId);
+            if (!mutation) return;
+            const requests = Object.entries(nextOrder ?? {})
+                .map(([scopeKey, itemKeys]) => buildSessionOrganizationReorderRequestFromGroupOrder({
+                    serverId: mutation.serverId,
+                    serverIdAliases: mutation.serverIdAliases,
+                    scopeKey,
+                    itemKeys: itemKeys ?? [],
+                }))
+                .filter((request): request is NonNullable<typeof request> => request != null);
+            await Promise.all(requests.map((request) => reorderSessionOrganization({ ...mutation, request })));
+        });
+    }, [activeOrganizationServerId, getOrganizationMutationContext, runOrganizationMutation]);
+    const setSessionWorkspaceOrderV1 = React.useCallback((nextOrder: Record<string, readonly string[] | undefined>) => {
+        runOrganizationMutation(async () => {
+            const mutation = await getOrganizationMutationContext(activeOrganizationServerId);
+            if (!mutation) return;
+            const requests = Object.entries(nextOrder ?? {})
+                .map(([scopeKey, itemKeys]) => buildSessionOrganizationReorderRequestFromWorkspaceOrder({
+                    serverId: mutation.serverId,
+                    scopeKey,
+                    itemKeys: itemKeys ?? [],
+                }))
+                .filter((request): request is NonNullable<typeof request> => request != null);
+            await Promise.all(requests.map((request) => reorderSessionOrganization({ ...mutation, request })));
+        });
+    }, [activeOrganizationServerId, getOrganizationMutationContext, runOrganizationMutation]);
+    const setSessionFoldersV1 = React.useCallback((nextFolders: SessionFoldersV1) => {
+        runOrganizationMutation(async () => {
+            const mutation = await getOrganizationMutationContext(activeOrganizationServerId);
+            if (!mutation) return;
+            const currentById = new Map((sessionFoldersV1.folders ?? []).map((folder) => [folder.id, folder]));
+            const nextById = new Map((nextFolders.folders ?? []).map((folder) => [folder.id, folder]));
+            const tasks: Promise<void>[] = [];
+            for (const folder of nextById.values()) {
+                const current = currentById.get(folder.id);
+                if (current && areFolderDefinitionsEqual(current, folder)) continue;
+                tasks.push(upsertSessionOrganizationFolder({
+                    ...mutation,
+                    request: {
+                        folderId: folder.id,
+                        folderKey: folder.id,
+                        parentFolderId: folder.parentId,
+                        parentFolderKey: folder.parentId,
+                        sortKey: folder.sortKey ?? null,
+                        display: buildFolderDisplay(folder),
+                    },
+                }));
+            }
+            for (const folder of currentById.values()) {
+                if (nextById.has(folder.id)) continue;
+                tasks.push(deleteSessionOrganizationFolder({
+                    ...mutation,
+                    request: {
+                        folderId: folder.id,
+                        assignmentBehavior: 'moveAssignmentsToParent',
+                    },
+                }));
+            }
+            await Promise.all(tasks);
+        });
+    }, [activeOrganizationServerId, getOrganizationMutationContext, runOrganizationMutation, sessionFoldersV1]);
+    const setWorkspaceLabelsV1 = React.useCallback((nextLabelsRaw: Record<string, string>) => {
+        runOrganizationMutation(async () => {
+            const mutation = await getOrganizationMutationContext(activeOrganizationServerId);
+            if (!mutation) return;
+            const keys = new Set([...Object.keys(workspaceLabelsV1 ?? {}), ...Object.keys(nextLabelsRaw ?? {})]);
+            const tasks: Promise<void>[] = [];
+            for (const keyRaw of keys) {
+                const scopeKey = typeof keyRaw === 'string' ? keyRaw.trim() : '';
+                if (!scopeKey) continue;
+                const current = typeof workspaceLabelsV1?.[scopeKey] === 'string'
+                    ? workspaceLabelsV1[scopeKey].trim()
+                    : '';
+                const next = typeof nextLabelsRaw?.[scopeKey] === 'string'
+                    ? nextLabelsRaw[scopeKey].trim()
+                    : '';
+                if (current === next) continue;
+                if (next) {
+                    tasks.push(upsertSessionOrganizationLabel({
+                        ...mutation,
+                        request: {
+                            labelKind: 'workspace',
+                            scopeKey,
+                            display: { t: 'plain', v: { label: next } },
+                        },
+                    }));
+                } else {
+                    tasks.push(deleteSessionOrganizationLabel({
+                        ...mutation,
+                        request: {
+                            labelKind: 'workspace',
+                            scopeKey,
+                        },
+                    }));
+                }
+            }
+            await Promise.all(tasks);
+        });
+    }, [activeOrganizationServerId, getOrganizationMutationContext, runOrganizationMutation, workspaceLabelsV1]);
     const sessionListMemoryCandidateKeys = React.useMemo(
-        () => buildSessionListMemoryCandidateKeySet(sessionListPaneState.visibleSessionListIndex ?? []),
-        [sessionListPaneState.visibleSessionListIndex],
+        () => buildSessionListMemoryCandidateKeySet(renderPaneState.visibleSessionListIndex ?? []),
+        [renderPaneState.visibleSessionListIndex],
     );
     const memorySearch = useSessionListMemorySearchAugmentation({
         searchQuery,
@@ -430,7 +758,7 @@ export function useSessionListViewStateFromPaneState(
         return memorySearch.memoryMatchedSessionKeys;
     }, [memorySearch.lastSuccessfulQuery, memorySearch.memoryMatchedSessionKeys, searchQuery]);
     const searchableTextBySessionKey = useSessionListSearchTextByKey(
-        sessionListPaneState.visibleSessionListIndex ?? [],
+        renderPaneState.visibleSessionListIndex ?? [],
         searchQuery.trim().length > 0,
     );
     const searchTrailingAccessory = React.useMemo(() => {
@@ -515,20 +843,56 @@ export function useSessionListViewStateFromPaneState(
         focusedSessionId,
     }), [effectivePathname, focusedSessionId]);
     const [viewableSessionRowKeys, setViewableSessionRowKeys] = React.useState<ReadonlySet<string> | null>(null);
-    const prioritySessionRowKeys = React.useMemo(() => buildSessionListRowStorePriorityKeys(
-        sessionListPaneState.visibleSessionListIndex ?? [],
+    const viewableSessionRowKeysRef = React.useRef<ReadonlySet<string> | null>(null);
+    React.useEffect(() => {
+        viewableSessionRowKeysRef.current = viewableSessionRowKeys;
+    }, [viewableSessionRowKeys]);
+    const indexPrioritySessionRowKeysRaw = React.useMemo(() => buildSessionListRowStorePriorityKeys(
+        renderPaneState.visibleSessionListIndex ?? [],
         { selectedSessionId },
-    ), [selectedSessionId, sessionListPaneState.visibleSessionListIndex]);
-    const rowSubscriptionKeys = React.useMemo(() => (
+    ), [selectedSessionId, renderPaneState.visibleSessionListIndex]);
+    const runtimePrioritySessionRowKeysRaw = useSessionListRuntimePriorityRowKeysForItems(
+        renderPaneState.visibleSessionListIndex,
+    );
+    const prioritySessionRowKeysRaw = React.useMemo(() => mergeSessionListRowStoreKeySets(
+        indexPrioritySessionRowKeysRaw,
+        runtimePrioritySessionRowKeysRaw,
+    ), [indexPrioritySessionRowKeysRaw, runtimePrioritySessionRowKeysRaw]);
+    const prioritySessionRowKeys = useStableSessionListRowStoreKeySet(prioritySessionRowKeysRaw);
+    const rowSubscriptionKeysRaw = React.useMemo(() => (
         surfaceOwnership.dataActive
-            ? resolveSessionListRowStoreSubscriptionKeys(viewableSessionRowKeys, prioritySessionRowKeys)
+            ? resolveSessionListRowStoreSubscriptionKeysForViewport({
+                nativeAllRenderedMaxRows: NATIVE_LIST_ALL_RENDERED_ROW_STORE_MAX_ITEMS,
+                platformOS: Platform.OS,
+                priorityRowKeys: prioritySessionRowKeys,
+                renderedSessionRows: renderPaneState.summary.sessionCount,
+                visibleRowKeys: viewableSessionRowKeys,
+            })
             : EMPTY_VIEWABLE_SESSION_ROW_KEYS
-    ), [prioritySessionRowKeys, surfaceOwnership.dataActive, viewableSessionRowKeys]);
+    ), [prioritySessionRowKeys, renderPaneState.summary.sessionCount, surfaceOwnership.dataActive, viewableSessionRowKeys]);
+    const rowSubscriptionKeys = useStableNullableSessionListRowStoreKeySet(rowSubscriptionKeysRaw);
+    React.useEffect(() => {
+        if (!syncPerformanceTelemetry.isEnabled()) return;
+        syncPerformanceTelemetry.count('ui.sessionsList.rowStoreSubscriptions', buildSessionListRowStoreSubscriptionTelemetryFields({
+            dataActive: surfaceOwnership.dataActive,
+            platformOS: Platform.OS,
+            priorityRowKeys: prioritySessionRowKeys,
+            rowSubscriptionKeys,
+            totalRows: renderPaneState.summary.sessionCount,
+            visibleRowKeys: viewableSessionRowKeys,
+        }));
+    }, [
+        prioritySessionRowKeys,
+        renderPaneState.summary.sessionCount,
+        rowSubscriptionKeys,
+        surfaceOwnership.dataActive,
+        viewableSessionRowKeys,
+    ]);
 
     const renderModels = useSessionListRenderModels({
-        paneState: sessionListPaneState,
+        paneState: renderPaneState,
         collapsedGroupKeys: normalizedShellState.collapsedGroupKeys,
-        machineDisplayById,
+        machineDisplayById: renderMachineDisplayById,
         workspaceLabels: normalizedShellState.workspaceLabels,
         workspaceRefs: normalizedShellState.workspaceRefs,
         workspacePathDisplayModeV1,
@@ -548,6 +912,7 @@ export function useSessionListViewStateFromPaneState(
         hideInactiveSessions: hideInactiveSessions === true,
         rowSubscriptionKeys,
         clocksActive: surfaceOwnership.dataActive,
+        rowViewModelMode: 'deferred',
         workingTextMode: sessionListWorkingStatusAnimatedTextEnabled === false ? 'static' : 'animated',
     });
 
@@ -562,6 +927,9 @@ export function useSessionListViewStateFromPaneState(
                 }]
                 : [])
     ), [renderModels.listItems]);
+    const filteredNoResultsMessage: TranslationKey | undefined = hasActiveSessionListHeaderFilters(headerFilters) && visibleSessionNavigationEntries.length === 0
+        ? SESSION_LIST_FILTERED_NO_RESULTS_MESSAGE_KEY
+        : undefined;
     const selectionScopeSessionNavigationEntries = React.useMemo<VisibleSessionNavigationEntry[]>(() => (
         renderModels.selectionScopeListItems
             .flatMap((item, index) => item.type === 'session'
@@ -604,7 +972,7 @@ export function useSessionListViewStateFromPaneState(
         () => readSessionListSelectionKeysFromVisibleEntries(selectionScopeSessionNavigationEntries),
         [selectionScopeSessionNavigationEntries],
     );
-    const focusedFolderId = sessionListPaneState.folderFocus?.folder.id ?? sessionListFocusedFolderV1?.folderId ?? null;
+    const focusedFolderId = renderPaneState.folderFocus?.folder.id ?? sessionListFocusedFolderV1?.folderId ?? null;
     const sessionListSelectionScopeKey = React.useMemo(() => buildSessionListSelectionScopeKey({
         storageKind,
         activeServerId: selection.activeServerId ?? null,
@@ -793,7 +1161,7 @@ export function useSessionListViewStateFromPaneState(
         serverId: string,
         folderId: string | null,
     ) => {
-        const profile = listServerProfiles().find((candidate) => candidate.id === serverId);
+        const profile = getServerProfileById(serverId);
         if (!profile) {
             Modal.alert(t('common.error'), t('sessionsList.failedToMoveSessionToFolder'));
             return;
@@ -839,11 +1207,10 @@ export function useSessionListViewStateFromPaneState(
         setSessionListGroupOrderV1,
         setSessionWorkspaceOrderV1,
         setSessionFoldersV1,
-        pinnedKeyList: orderingPersistenceState.pinnedKeyList,
         pinnedKeySet: orderingPersistenceState.pinnedKeySet,
-        setPinnedSessionKeysV1,
         sessionTags: normalizedShellState.sessionTags,
-        setSessionTagsV1,
+        setSessionPinForKey: setSessionPinForSessionKey,
+        setSessionTagsForKey: setSessionTagsForSessionKey,
         scrollToOffset: scrollToTreeOffset,
     });
     const frozenListProjection = useFrozenSessionListItemsDuringDrag({
@@ -851,29 +1218,47 @@ export function useSessionListViewStateFromPaneState(
         liveViewItems: renderModels.listItems,
     });
     const renderedListItems = frozenListProjection.viewItems;
-    const rowViewModelByNodeId = React.useMemo(() => {
-        const map = new Map<string, SessionListRowViewModel | null>();
-        for (let index = 0; index < renderModels.listItems.length; index += 1) {
-            const item = renderModels.listItems[index];
-            if (!item || item.type !== 'session') continue;
-            map.set(buildSessionListIndexNodeId(item), renderModels.rowViewModels[index] ?? null);
+    const selectedSessionListItems = React.useMemo(() => {
+        if (!sessionListSelectionSnapshot.isSelectionMode || sessionListSelectionSnapshot.selectedKeys.size === 0) {
+            return [] as Array<Extract<SessionListIndexItem, { type: 'session' }>>;
         }
-        return map;
-    }, [renderModels.listItems, renderModels.rowViewModels]);
-    const renderedRowViewModels = React.useMemo(() => (
-        renderedListItems.map((item) => item.type === 'session'
-            ? rowViewModelByNodeId.get(buildSessionListIndexNodeId(item)) ?? null
-            : null)
-    ), [renderedListItems, rowViewModelByNodeId]);
+        return renderModels.selectionScopeListItems.filter((item): item is Extract<SessionListIndexItem, { type: 'session' }> => (
+            item.type === 'session'
+            && sessionListSelectionSnapshot.selectedKeys.has(buildServerScopedSessionKey(item.sessionId, item.serverId))
+        ));
+    }, [
+        renderModels.selectionScopeListItems,
+        sessionListSelectionSnapshot.isSelectionMode,
+        sessionListSelectionSnapshot.selectedKeys,
+    ]);
+    const selectedRowRenderableByKey = useSessionListRowRenderablesForItems(selectedSessionListItems);
     const sessionListSelectionTargetsByKey = React.useMemo(() => {
+        if (selectedSessionListItems.length === 0) return new Map<string, SessionBulkActionTarget>();
         const targets = new Map<string, SessionBulkActionTarget>();
-        for (const rowViewModel of renderModels.selectionScopeRowViewModels) {
-            if (!rowViewModel) continue;
-            const target = buildSessionBulkActionTargetFromRowViewModel(rowViewModel, currentUserId);
+        for (const item of selectedSessionListItems) {
+            const rowKey = resolveSessionListRowStoreScopeKey({
+                sessionId: item.sessionId,
+                serverId: item.serverId ?? null,
+            });
+            const session = selectedRowRenderableByKey.get(rowKey);
+            if (!session) continue;
+            const target = buildSessionBulkActionTargetFromSessionItem({
+                item,
+                session,
+                currentUserId,
+                pinnedKeySet: orderingPersistenceState.pinnedKeySet,
+                sessionTags: normalizedShellState.sessionTags,
+            });
             if (target) targets.set(target.key, target);
         }
         return targets;
-    }, [currentUserId, renderModels.selectionScopeRowViewModels]);
+    }, [
+        currentUserId,
+        normalizedShellState.sessionTags,
+        orderingPersistenceState.pinnedKeySet,
+        selectedRowRenderableByKey,
+        selectedSessionListItems,
+    ]);
     const sessionListItemBySelectionKey = React.useMemo(() => {
         const map = new Map<string, Extract<SessionListIndexItem, { type: 'session' }>>();
         for (const item of renderedListItems) {
@@ -1043,12 +1428,13 @@ export function useSessionListViewStateFromPaneState(
 
     const handleFocusSessionFolder = React.useCallback((item: Extract<SessionListIndexItem, { type: 'header' }>) => {
         if (!item.folderId || !item.workspace) return;
+        if (rowInteractions.consumeFolderFocusPressAfterDrag()) return;
         setSessionListFocusedFolderV1({
             folderId: item.folderId,
             workspace: item.workspace,
             serverId: item.serverId ?? item.workspace.serverId ?? null,
         });
-    }, [setSessionListFocusedFolderV1]);
+    }, [rowInteractions.consumeFolderFocusPressAfterDrag, setSessionListFocusedFolderV1]);
 
     const handleCreateSessionFromFolder = React.useCallback((item: Extract<SessionListIndexItem, { type: 'header' }>) => {
         if (!item.workspaceScopeHint) return;
@@ -1116,20 +1502,6 @@ export function useSessionListViewStateFromPaneState(
             folderId: item.folderId,
         });
         if (deleted.deletedFolderIds.length === 0) return;
-        const serverId = String(item.serverId ?? item.workspace?.serverId ?? '').trim();
-        const profile = serverId ? listServerProfiles().find((candidate) => candidate.id === serverId) : null;
-        if (profile) {
-            const credentials = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId: profile.id });
-            if (credentials) {
-                await moveSessionFolderAssignments({
-                    credentials,
-                    serverId: profile.id,
-                    serverUrl: profile.serverUrl,
-                    fromFolderIds: deleted.deletedFolderIds,
-                    toFolderId: deleted.replacementFolderId,
-                });
-            }
-        }
         setSessionFoldersV1(deleted.next);
         if (
             sessionListFocusedFolderV1
@@ -1169,10 +1541,12 @@ export function useSessionListViewStateFromPaneState(
         return value;
     }, [sessionFoldersSignature, sessionFoldersV1, storageKind]);
     const sessionListBulkActionContext = React.useMemo<SessionBulkActionExecutionContext>(() => ({
-        pinnedSessionKeysV1: orderingPersistenceState.pinnedKeyList,
-        setPinnedSessionKeysV1,
-        sessionTagsV1: normalizedShellState.sessionTags,
-        setSessionTagsV1,
+        setSessionPin: async ({ target, pinned }) => {
+            await setSessionPinForTarget(target, pinned);
+        },
+        setSessionTagAssignments: async ({ target, tags }) => {
+            await setSessionTagAssignmentsForTarget(target, tags);
+        },
         hideInactiveSessions: hideInactiveSessions === true,
         foldersFeatureDecision: { state: folderActionsEnabled ? 'enabled' : 'disabled' },
         stopErrorMessage: t('sessionInfo.failedToStopSession'),
@@ -1204,33 +1578,22 @@ export function useSessionListViewStateFromPaneState(
             });
         },
         setSessionFolderAssignment: async ({ target, folderId }) => {
-            const serverId = typeof target.serverId === 'string' ? target.serverId.trim() : '';
-            if (!serverId) {
-                throw new Error('Session folder assignment requires a server id');
-            }
-            const profile = listServerProfiles().find((candidate) => candidate.id === serverId);
-            if (!profile) {
+            const scope = await getOrganizationMutationContext(target.serverId);
+            if (!scope) {
                 throw new Error('Session folder assignment requires an available server profile');
             }
-            const credentials = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl, { serverId });
-            if (!credentials) {
-                throw new Error('Session folder assignment requires server credentials');
-            }
             await setSessionFolderAssignmentOp({
-                credentials,
-                serverId,
-                serverUrl: profile.serverUrl,
+                ...scope,
                 sessionId: target.sessionId,
                 folderId,
             });
         },
     }), [
         folderActionsEnabled,
+        getOrganizationMutationContext,
         hideInactiveSessions,
-        normalizedShellState.sessionTags,
-        orderingPersistenceState.pinnedKeyList,
-        setPinnedSessionKeysV1,
-        setSessionTagsV1,
+        setSessionPinForTarget,
+        setSessionTagAssignmentsForTarget,
     ]);
     const handleRequestBulkMoveToFolder = React.useCallback(async (targets: readonly SessionBulkActionTarget[]) => {
         if (!folderActionsEnabled || targets.length === 0) return null;
@@ -1386,9 +1749,7 @@ export function useSessionListViewStateFromPaneState(
     const renderSessionItem = React.useCallback((
         item: Extract<SessionListIndexItem, { type: 'session' }>,
         index: number,
-        nodeRowViewModel?: SessionListRowViewModel | null,
     ) => {
-        const rowViewModel = nodeRowViewModel ?? rowViewModelByNodeId.get(buildSessionListIndexNodeId(item)) ?? null;
         const treeRowIdForItem = resolveTreeRowIdForSessionItem(item);
         const rowScopeKey = resolveSessionListRowStoreScopeKey({
             sessionId: item.sessionId,
@@ -1403,10 +1764,11 @@ export function useSessionListViewStateFromPaneState(
             item,
         });
         return (
-            <SessionListSessionItem
+            <SessionListRowViewModelBoundary
                 item={item}
-                rowViewModel={rowViewModel}
+                items={renderedListItems}
                 rowHeight={densityViewState.rowHeight}
+                dataActive={surfaceOwnership.dataActive}
                 dragEnabled={shellFlags.canDragSessionRows}
                 treeRowId={treeRowIdForItem}
                 onDragStart={rowInteractions.handleDragStart}
@@ -1425,9 +1787,26 @@ export function useSessionListViewStateFromPaneState(
                 currentUserId={currentUserId}
                 allKnownTags={allKnownTags}
                 tagsEnabled={sessionTagsEnabled === true}
+                activeColorMode={sessionListActiveColorMode === 'attentionOnly' || sessionListActiveColorMode === 'allActive'
+                    ? sessionListActiveColorMode
+                    : 'activityAndAttention'}
                 compact={Boolean(densityViewState.compact)}
                 compactMinimal={Boolean(densityViewState.compact && densityViewState.compactMinimal)}
+                hasMultipleMachines={renderModels.hasMultipleMachines}
+                hideInactiveSessions={hideInactiveSessions === true}
+                identityDisplay={sessionListIdentityDisplay === 'agentLogo' || sessionListIdentityDisplay === 'none'
+                    ? sessionListIdentityDisplay
+                    : 'avatar'}
+                pinnedSessionKeys={orderingPersistenceState.pinnedKeySet}
+                reachableSessionDisplayById={renderModels.reachableSessionDisplayById}
+                reachableSessionDisplayByKey={renderModels.reachableSessionDisplayByKey}
                 rowAttentionAnimationEnabled={rowAttentionAnimationEnabled}
+                selectedSessionId={selectedSessionId}
+                sessionTags={normalizedShellState.sessionTags}
+                showPinnedServerBadge={shellFlags.showPinnedServerBadge}
+                showServerBadge={shellFlags.showServerBadge}
+                workingIndicatorMode={sessionListWorkingIndicatorStyle === 'pulse' ? 'pulse' : 'spinner'}
+                workingTextMode={sessionListWorkingStatusAnimatedTextEnabled === false ? 'static' : 'animated'}
                 folderMoveTargets={resolveFolderMoveTargetsForItem(item)}
                 onMoveToSessionFolder={folderActionsEnabled ? moveActionHandlers.onMoveToSessionFolder : undefined}
                 onMoveToFolder={folderActionsEnabled ? moveActionHandlers.onMoveToFolder : undefined}
@@ -1442,10 +1821,16 @@ export function useSessionListViewStateFromPaneState(
         densityViewState.compact,
         densityViewState.compactMinimal,
         densityViewState.rowHeight,
-        rowViewModelByNodeId,
         rowSubscriptionKeys,
         selectedSessionId,
         folderActionsEnabled,
+        hideInactiveSessions,
+        normalizedShellState.sessionTags,
+        orderingPersistenceState.pinnedKeySet,
+        renderModels.hasMultipleMachines,
+        renderModels.reachableSessionDisplayById,
+        renderModels.reachableSessionDisplayByKey,
+        renderedListItems,
         rowInteractions.draggingSessionKey,
         rowInteractions.dropOverlayShared,
         rowInteractions.handleDragCancel,
@@ -1459,14 +1844,20 @@ export function useSessionListViewStateFromPaneState(
         rowInteractions.unregisterTreeRowBounds,
         resolveFolderMoveTargetsForItem,
         sessionTagsEnabled,
+        sessionListActiveColorMode,
+        sessionListIdentityDisplay,
+        sessionListWorkingIndicatorStyle,
+        sessionListWorkingStatusAnimatedTextEnabled,
         shellFlags.canDragSessionRows,
+        shellFlags.showPinnedServerBadge,
+        shellFlags.showServerBadge,
+        surfaceOwnership.dataActive,
         getRowMoveActionHandlers,
         rowLabelByTreeRowId,
     ]);
 
     const virtualizedNodeCacheRef = React.useRef(new Map<string, Readonly<{
         item: SessionListIndexItem;
-        rowViewModel: SessionListRowViewModel | null;
         node: SessionListVirtualizedNode;
     }>>());
     const previousVirtualizedNodesRef = React.useRef<ReadonlyArray<SessionListVirtualizedNode>>([]);
@@ -1474,34 +1865,46 @@ export function useSessionListViewStateFromPaneState(
         const previous = virtualizedNodeCacheRef.current;
         const next = new Map<string, Readonly<{
             item: SessionListIndexItem;
-            rowViewModel: SessionListRowViewModel | null;
             node: SessionListVirtualizedNode;
         }>>();
-        const nodes = renderedListItems.map((item, index) => {
+        const filtersActive = hasActiveSessionListHeaderFilters(headerFilters);
+        const nodes: SessionListVirtualizedNode[] = [];
+        renderedListItems.forEach((item, index) => {
             const id = buildSessionListIndexNodeId(item);
-            const rowViewModel = renderedRowViewModels[index] ?? null;
             const cached = previous.get(id);
-            if (cached && areSessionListIndexItemsEqual(cached.item, item) && cached.rowViewModel === rowViewModel) {
+            if (cached && areSessionListIndexItemsEqual(cached.item, item)) {
                 next.set(id, cached);
-                return cached.node;
+                nodes.push(cached.node);
+            } else {
+                const entry = {
+                    item,
+                    node: {
+                        id,
+                    },
+                };
+                next.set(id, entry);
+                nodes.push(entry.node);
             }
-            const entry = {
+            if (shouldInsertFilteredNoResultsAfterHeader({
                 item,
-                rowViewModel,
-                node: {
-                    id,
-                    rowViewModel,
-                },
-            };
-            next.set(id, entry);
-            return entry.node;
+                itemIndex: index,
+                items: renderedListItems,
+                filtersActive,
+                headerControlsAnchorKey,
+            })) {
+                nodes.push({
+                    id: `filtered-no-results:${id}`,
+                    kind: 'filteredNoResults',
+                    rowViewModel: null,
+                });
+            }
         });
         virtualizedNodeCacheRef.current = next;
         const previousNodes = previousVirtualizedNodesRef.current;
         const output = areVirtualizedNodeArraysReferenceEqual(previousNodes, nodes) ? previousNodes : nodes;
         previousVirtualizedNodesRef.current = output;
         return output;
-    }, [renderedListItems, renderedRowViewModels]);
+    }, [headerControlsAnchorKey, headerFilters, renderedListItems]);
 
     const nodeIds = React.useMemo(() => (
         virtualizedNodes.map((node) => node.id)
@@ -1509,13 +1912,13 @@ export function useSessionListViewStateFromPaneState(
 
     const nodeById = React.useMemo(() => {
         const map = new Map<string, SessionListIndexItem>();
-        for (let index = 0; index < renderedListItems.length; index += 1) {
-            map.set(nodeIds[index], renderedListItems[index]);
+        for (const item of renderedListItems) {
+            map.set(buildSessionListIndexNodeId(item), item);
         }
         return map;
-    }, [nodeIds, renderedListItems]);
+    }, [renderedListItems]);
     const folderFocusRootTitle = React.useMemo(() => {
-        const folderFocus = sessionListPaneState.folderFocus;
+        const folderFocus = renderPaneState.folderFocus;
         if (!folderFocus) return null;
         for (const item of renderedListItems) {
             if (item.type !== 'header' || item.headerKind !== 'project') continue;
@@ -1525,7 +1928,7 @@ export function useSessionListViewStateFromPaneState(
             }
         }
         return null;
-    }, [renderedListItems, sessionListPaneState.folderFocus]);
+    }, [renderedListItems, renderPaneState.folderFocus]);
 
     const nodeByIdRef = React.useRef(nodeById);
     nodeByIdRef.current = nodeById;
@@ -1542,7 +1945,21 @@ export function useSessionListViewStateFromPaneState(
                 serverId: item.serverId ?? null,
             }));
         }
-        setViewableSessionRowKeys((current) => stringSetsEqual(current, nextKeys) ? current : nextKeys);
+        const previousKeys = viewableSessionRowKeysRef.current;
+        if (stringSetsEqual(previousKeys, nextKeys)) return;
+        if (syncPerformanceTelemetry.isEnabled()) {
+            syncPerformanceTelemetry.count('ui.sessionsList.viewableRows.changed', {
+                changed: 1,
+                nextVisibleRows: nextKeys.size,
+                previousKnown: previousKeys === null ? 0 : 1,
+                previousVisibleRows: previousKeys?.size ?? 0,
+            });
+        }
+        viewableSessionRowKeysRef.current = nextKeys;
+        setViewableSessionRowKeys((current) => {
+            if (stringSetsEqual(current, nextKeys)) return current;
+            return nextKeys;
+        });
     });
     const listItemsRef = React.useRef(renderedListItems);
     listItemsRef.current = renderedListItems;
@@ -1552,10 +1969,6 @@ export function useSessionListViewStateFromPaneState(
     renderSessionItemRef.current = renderSessionItem;
     const allKnownTagsSignature = React.useMemo(() => buildStringListSignature(allKnownTags), [allKnownTags]);
     const rowLabelsSignature = React.useMemo(() => buildRowLabelSignature(rowLabelByTreeRowId), [rowLabelByTreeRowId]);
-    const viewableSessionRowKeysSignature = React.useMemo(
-        () => buildStringSetSignature(viewableSessionRowKeys),
-        [viewableSessionRowKeys],
-    );
     const sessionTagsSignature = React.useMemo(
         () => buildStringArrayRecordSignature(normalizedShellState.sessionTags),
         [normalizedShellState.sessionTags],
@@ -1579,7 +1992,6 @@ export function useSessionListViewStateFromPaneState(
         sessionFoldersSignature,
         sessionTagsEnabled: sessionTagsEnabled === true,
         sessionTagsSignature,
-        viewableSessionRowKeysSignature,
         workspaceLabelsSignature,
     }), [
         allKnownTagsSignature,
@@ -1596,28 +2008,30 @@ export function useSessionListViewStateFromPaneState(
         sessionTagsEnabled,
         sessionTagsSignature,
         shellFlags.canDragSessionRows,
-        viewableSessionRowKeysSignature,
         workspaceLabelsSignature,
     ]);
 
     const renderVirtualizedItem = React.useCallback((params: { item: SessionListVirtualizedNode; index: number }) => {
+        if (params.item.kind === 'filteredNoResults') {
+            return <SessionListFilteredNoResultsMessage />;
+        }
         const item = nodeByIdRef.current.get(params.item.id) ?? listItemsRef.current[params.index] ?? null;
         if (!item) return null;
         if (item.type === 'header') return renderHeaderItemRef.current(item, params.index);
-        return renderSessionItemRef.current(item, params.index, params.item.rowViewModel);
+        return renderSessionItemRef.current(item, params.index);
     }, []);
     const handleClearFolderFocus = React.useCallback(() => {
         setSessionListFocusedFolderV1(null);
     }, [setSessionListFocusedFolderV1]);
     const handleSelectFolderBreadcrumb = React.useCallback((folderId: string) => {
-        const folder = sessionListPaneState.folderFocus?.breadcrumbs.find((candidate) => candidate.id === folderId) ?? null;
+        const folder = renderPaneState.folderFocus?.breadcrumbs.find((candidate) => candidate.id === folderId) ?? null;
         if (!folder) return;
         setSessionListFocusedFolderV1({
             folderId: folder.id,
             workspace: folder.workspace,
             serverId: folder.workspace.serverId ?? null,
         });
-    }, [sessionListPaneState.folderFocus?.breadcrumbs, setSessionListFocusedFolderV1]);
+    }, [renderPaneState.folderFocus?.breadcrumbs, setSessionListFocusedFolderV1]);
     const handleTreeViewportLayout = React.useCallback((event: { nativeEvent?: { layout?: { y?: number; height?: number } } }) => {
         rowInteractions.handleTreeListLayout(event);
         rowInteractions.handleTreeViewportMeasure(treeViewportRef.current);
@@ -1646,6 +2060,10 @@ export function useSessionListViewStateFromPaneState(
         nodes: virtualizedNodes,
         nodeIds,
         rowHeight: densityViewState.rowHeight,
+        rowDensity: (densityViewState.compact
+            ? (densityViewState.compactMinimal ? 'minimal' : 'compact')
+            : 'default') as 'default' | 'compact' | 'minimal',
+        filteredNoResultsMessage,
         renderVirtualizedItem,
         scrollToOffset: scrollToRetainedOffset,
         virtualizedRowExtraData,
@@ -1665,7 +2083,7 @@ export function useSessionListViewStateFromPaneState(
         sessionListBulkActionContext,
         onRequestBulkMoveToFolder: folderActionsEnabled ? handleRequestBulkMoveToFolder : undefined,
         tagsEnabled: sessionTagsEnabled === true,
-        folderFocus: sessionListPaneState.folderFocus,
+        folderFocus: renderPaneState.folderFocus,
         folderFocusRootTitle,
         dropOverlayShared: rowInteractions.dropOverlayShared,
         onClearFolderFocus: handleClearFolderFocus,

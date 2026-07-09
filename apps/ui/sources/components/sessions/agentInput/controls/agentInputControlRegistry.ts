@@ -3,6 +3,7 @@ import type { AgentInputControlDescriptor } from './agentInputControlTypes';
 export const AGENT_INPUT_CONTROL_REGISTRY = [
     { id: 'engine', line: 'primary' },
     { id: 'mode', line: 'primary' },
+    { id: 'goal', line: 'primary' },
     { id: 'permission', line: 'primary' },
     { id: 'actionMenu', line: 'primary' },
     { id: 'profile', line: 'primary' },

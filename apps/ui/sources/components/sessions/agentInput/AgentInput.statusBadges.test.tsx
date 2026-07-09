@@ -14,6 +14,13 @@ const capturedFloatingOverlayProps = vi.hoisted(() => ({
 }));
 
 installAgentInputCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string) => key,
+            translateLoose: (key: string) => key,
+        });
+    },
     storage: async (importOriginal) => {
         const actual = await importOriginal<Record<string, unknown>>();
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
@@ -66,6 +73,9 @@ vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
 }));
 
 vi.mock('@/agents/catalog/catalog', () => ({
+    getAgentIconSvgXml: () => null,
+    getAgentIconSource: () => null,
+    getAgentIconTintColor: () => undefined,
     AGENT_IDS: ['codex', 'claude', 'opencode', 'gemini'],
     DEFAULT_AGENT_ID: 'codex',
     resolveAgentIdFromFlavor: () => null,
@@ -123,6 +133,11 @@ describe('AgentInput status badges', () => {
             resetLabel: null,
             tone: 'warning',
             isStale: false,
+            recoveryCreditSummary: {
+                availableCount: 1,
+                nextExpiresAtMs: null,
+                providerCreditId: null,
+            },
             effectiveMeter: {
                 meterId: 'weekly',
                 label: 'Weekly',
@@ -148,6 +163,7 @@ describe('AgentInput status badges', () => {
                 tone: 'warning',
             }],
         };
+        const onProviderUsageRecoveryCreditPress = vi.fn();
 
         try {
             const screen = await renderScreen(
@@ -159,6 +175,7 @@ describe('AgentInput status badges', () => {
                     autocompletePrefixes={[]}
                     autocompleteSuggestions={async () => []}
                     providerUsageGauge={providerUsageGauge}
+                    onProviderUsageRecoveryCreditPress={onProviderUsageRecoveryCreditPress}
                 />,
             );
 
@@ -172,6 +189,12 @@ describe('AgentInput status badges', () => {
 
             expect(screen.findByTestId('agent-input-provider-usage-popover')).toBeTruthy();
             expect(screen.findByTestId('agent-input-provider-usage-meter:weekly')).toBeTruthy();
+            const recoveryCreditAction = screen.findByTestId('agent-input-provider-usage-recovery-credit-action');
+            expect(recoveryCreditAction).toBeTruthy();
+            act(() => {
+                recoveryCreditAction?.props.onPress?.({} as never);
+            });
+            expect(onProviderUsageRecoveryCreditPress).toHaveBeenCalledTimes(1);
             expect(capturedFloatingOverlayProps.last?.scrollEnabled).toBe(false);
         } finally {
             if (previousWindowDescriptor) {

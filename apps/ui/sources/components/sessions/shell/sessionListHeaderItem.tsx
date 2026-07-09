@@ -192,12 +192,18 @@ export const SessionListHeaderItem = React.memo((props: SessionListHeaderItemPro
         );
     }
 
+    const isPrimaryHeader = isSessionListPrimaryHeaderKind(props.item.headerKind);
+    const headerTestIdKey = isPrimaryHeader
+        ? (props.item.groupKey ?? props.item.headerKind)
+        : props.item.headerKind;
+
     return (
         <CollapsibleSectionHeader
             title={headerViewState.title}
             collapsed={headerViewState.collapsed}
             onPress={headerActionHandlers.onToggleCollapse}
-            showOrderingMenu={isSessionListPrimaryHeaderKind(props.item.headerKind)}
+            showOrderingMenu={isPrimaryHeader}
+            testID={headerTestIdKey ? `session-list-header:${headerTestIdKey}` : undefined}
             headerControls={props.headerControls}
         />
     );

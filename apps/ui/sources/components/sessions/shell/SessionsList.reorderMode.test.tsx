@@ -2,7 +2,13 @@ import React, { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPartialStorageModuleMock, findGestureByKind, renderScreen } from '@/dev/testkit';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
-import { buildSessionListIndexFromViewData } from '@/sync/domains/sessionList/sessionListIndex';
+import {
+    buildSessionListIndexFromViewData,
+    type SessionListIndexItem,
+} from '@/sync/domains/sessionList/sessionListIndex';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import type { SessionListReachabilityRenderable } from '@/sync/domains/state/storage';
+import { buildSessionOrganizationProjectionFromLegacyTestSettings } from './sessionOrganizationProjectionTestFixture';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -20,9 +26,14 @@ vi.mock('react-native-worklets', () => ({
     scheduleOnRN: (fn: (...args: any[]) => void, ...args: any[]) => fn(...args),
 }));
 
-vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
+vi.mock('react-native-safe-area-context', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('react-native-safe-area-context')>();
+    return {
+        ...actual,
+        SafeAreaInsetsContext: actual.SafeAreaInsetsContext ?? React.createContext({ top: 0, bottom: 0, left: 0, right: 0 }),
+        useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+    };
+});
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => vi.fn(),
@@ -128,11 +139,48 @@ installSessionShellCommonModuleMocks({
                 sess_b: sessionB,
             },
         }) as any,
-        useSessionListRenderableWithServerScope: (_serverId: any, sessionId: string) => {
-            if (sessionId === 'sess_a') return sessionA;
-            if (sessionId === 'sess_b') return sessionB;
-            return null;
+        useSessionListRenderableWithServerScope: (_serverId: any, sessionId: string) =>
+            findSessionListRenderable(sessionId),
+        useSessionListReachabilityRenderablesForItems: (
+            items: readonly SessionListIndexItem[] | null | undefined,
+        ): ReadonlyMap<string, SessionListReachabilityRenderable> => {
+            const renderables = new Map<string, SessionListReachabilityRenderable>();
+            for (const item of items ?? []) {
+                if (item?.type !== 'session') continue;
+                const serverId = String(item.serverId ?? '').trim();
+                const sessionId = String(item.sessionId ?? '').trim();
+                if (!serverId || !sessionId) continue;
+                const session = findSessionListRenderable(sessionId);
+                if (!session) continue;
+                renderables.set(`${serverId}\u0000${sessionId}`, {
+                    id: sessionId,
+                    metadata: session.metadata ?? null,
+                });
+            }
+            return renderables;
         },
+        useSessionListRowRenderablesForItems: (
+            items: readonly SessionListIndexItem[] | null | undefined,
+        ): ReadonlyMap<string, SessionListRenderableSession> => {
+            const renderables = new Map<string, SessionListRenderableSession>();
+            for (const item of items ?? []) {
+                if (item?.type !== 'session') continue;
+                const serverId = String(item.serverId ?? '').trim();
+                const sessionId = String(item.sessionId ?? '').trim();
+                if (!serverId || !sessionId) continue;
+                const session = findSessionListRenderable(sessionId);
+                if (!session) continue;
+                renderables.set(`${serverId}\u0000${sessionId}`, session);
+            }
+            return renderables;
+        },
+        useSessionOrganizationProjection: () => buildSessionOrganizationProjectionFromLegacyTestSettings({
+            serverId: 'server_a',
+            pinnedSessionKeysV1,
+            sessionListGroupOrderV1,
+            sessionFoldersV1,
+            sessionTagsV1,
+        }),
         useSetting: (key: string) => {
             if (key === 'compactSessionView') return false;
             if (key === 'compactSessionViewMinimal') return false;
@@ -185,19 +233,21 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     },
 }));
 
-vi.mock('@/sync/domains/server/serverProfiles', () => ({
-    getActiveServerSnapshot: () => ({
-        activeServerId: 'server_a',
-        profiles: [
-            { id: 'server_a', name: 'Server A', serverUrl: 'https://server-a.example.test' },
-        ],
-    }),
-    listServerProfiles: () => [
-        { id: 'server_a', name: 'Server A', serverUrl: 'https://server-a.example.test' },
-    ],
-}));
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>();
+    const serverProfile = { id: 'server_a', name: 'Server A', serverUrl: 'https://server-a.example.test' };
+    return {
+        ...actual,
+        getActiveServerSnapshot: () => ({
+            activeServerId: 'server_a',
+            profiles: [serverProfile],
+        }),
+        listServerProfiles: () => [serverProfile],
+        getServerProfileById: (serverId: string) => (serverId === serverProfile.id ? serverProfile : null),
+    };
+});
 
-vi.mock('@/sync/ops/sessionFolders', () => ({
+vi.mock('@/sync/ops/sessionOrganization', () => ({
     setSessionFolderAssignment: setSessionFolderAssignmentSpy,
 }));
 
@@ -227,7 +277,24 @@ vi.mock('@/components/ui/text/Text', () => ({
 }));
 
 vi.mock('@/utils/sessions/sessionUtils', () => ({
+    getSessionName: () => 'Session',
+    getSessionSubtitle: () => 'Subtitle',
     formatPathRelativeToHome: (path: string) => path,
+    getSessionAvatarId: () => 'avatar',
+    getSessionStatus: () => ({
+        isConnected: true,
+        statusText: 'Connected',
+        statusColor: '#000',
+        statusDotColor: '#0f0',
+        isPulsing: false,
+    }),
+    useSessionStatus: () => ({
+        isConnected: true,
+        statusText: 'Connected',
+        statusColor: '#000',
+        statusDotColor: '#0f0',
+        isPulsing: false,
+    }),
 }));
 
 vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
@@ -246,6 +313,13 @@ const groupKey = 'active:server_a';
 const inactiveGroupKey = 'inactive:server_a';
 const sessionA = { id: 'sess_a', createdAt: 1, active: true, presence: 'online', metadata: { host: 'h', path: '/p', homeDir: '/h' } } as any;
 const sessionB = { id: 'sess_b', createdAt: 2, active: false, presence: 'offline', metadata: { host: 'h', path: '/p', homeDir: '/h' } } as any;
+
+function findSessionListRenderable(sessionId: string): SessionListRenderableSession | null {
+    if (sessionId === 'sess_a') return sessionA;
+    if (sessionId === 'sess_b') return sessionB;
+    return null;
+}
+
 const mockVisibleSessionListViewData: any[] = [
     { type: 'header', title: 'Active', headerKind: 'active', groupKey, serverId: 'server_a', serverName: 'Server A' },
     { type: 'session', session: sessionA, groupKey, groupKind: 'date', serverId: 'server_a', serverName: 'Server A' },
