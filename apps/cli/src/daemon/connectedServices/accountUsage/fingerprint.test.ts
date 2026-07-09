@@ -30,7 +30,6 @@ function createSnapshot(overrides: Partial<ProviderAccountUsageSnapshotV1> = {})
         recordKey,
         providerId: 'codex',
         accountSubject: { kind: 'providerSubject', id: 'acct_123' },
-        aliases: [{ kind: 'appServerNative', providerId: 'codex', accountSubjectId: 'acct_123' }],
         observedAtMs: 1_000,
         fetchedAtMs: 1_000,
         staleAfterMs: 300_000,

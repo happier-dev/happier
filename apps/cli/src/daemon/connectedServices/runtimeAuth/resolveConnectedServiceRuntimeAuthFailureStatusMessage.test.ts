@@ -3,6 +3,22 @@ import { describe, expect, it } from 'vitest';
 import { resolveConnectedServiceRuntimeAuthFailureStatusMessage } from './resolveConnectedServiceRuntimeAuthFailureStatusMessage';
 
 describe('resolveConnectedServiceRuntimeAuthFailureStatusMessage', () => {
+  it('does not imply a restart when credential refresh is awaiting provider confirmation', () => {
+    const status = resolveConnectedServiceRuntimeAuthFailureStatusMessage({
+      ok: true,
+      result: {
+        status: 'credential_refreshed',
+        restartRequested: false,
+      },
+    });
+
+    expect(status).toMatchObject({
+      code: 'credential_refreshed_awaiting_provider_outcome',
+      message: expect.stringContaining('provider confirmation'),
+    });
+    expect(status?.message).not.toContain('restart');
+  });
+
   it('returns a visible scheduled status note when daemon-lifetime temporary-throttle recovery is armed', () => {
     const status = resolveConnectedServiceRuntimeAuthFailureStatusMessage({
       ok: true,

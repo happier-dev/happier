@@ -138,7 +138,30 @@ describe('connectedAccountDescriptors', () => {
             'user:mcp_servers',
             'user:file_upload',
         ]);
-        expect(descriptorExports.getConnectedAccountDescriptor?.('gemini')?.oauth?.refresh.body).toBe('form');
+        const gemini = descriptorExports.getConnectedAccountDescriptor?.('gemini');
+        expect(gemini).toMatchObject({
+            aliases: ['gemini'],
+            credentialKinds: ['token'],
+            defaultCredentialKind: 'token',
+            connectModes: [
+                expect.objectContaining({
+                    targetId: 'gemini',
+                    mode: 'api-key',
+                    credentialKind: 'token',
+                    tokenKind: 'api-key',
+                    default: true,
+                }),
+            ],
+            tokenSetup: {
+                tokenKind: 'api-key',
+                promptLabelKey: 'connectedServices.tokenPrompts.geminiApiKey',
+                missingValueErrorKey: 'connectedServices.tokenPrompts.errors.missingApiKey',
+            },
+            materialization: {
+                materializationKinds: ['agent_runtime_env'],
+            },
+        });
+        expect(gemini?.oauth).toBeUndefined();
 
         const github = descriptorExports.getConnectedAccountDescriptor?.('github');
         expect(github).toMatchObject({

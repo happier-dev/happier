@@ -9,6 +9,158 @@ import { summarizeValueShapeForLog } from '@/diagnostics/eventShapeForLog';
 import { detectSessionTurnLifecycleEvent } from '@/session/shared/sessionTurnLifecycle';
 
 type ConnectedServiceTurnLifecycleEvent = 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled';
+type UserPromptCandidateDeliveryResult = Readonly<{ resolved: boolean }>;
+
+function readCommittedUserMessageSeq(value: unknown): number | null {
+    return Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : null;
+}
+
+function readCommittedUserMessageLocalId(message: UserMessage, transportLocalId: string | null): string | null {
+    if (transportLocalId) return transportLocalId;
+    return typeof message.localId === 'string' && message.localId.trim().length > 0 ? message.localId : null;
+}
+
+function observeCommittedUserMessageSeq(params: Readonly<{
+    message: UserMessage;
+    transportLocalId: string | null;
+    msgSeq: unknown;
+    observe?: (params: { localId: string | null | undefined; seq: number }) => void;
+}>): void {
+    const seq = readCommittedUserMessageSeq(params.msgSeq);
+    if (seq === null) return;
+    params.observe?.({
+        localId: readCommittedUserMessageLocalId(params.message, params.transportLocalId),
+        seq,
+    });
+}
+
+function deliverUserMessageToAgentQueue(params: Readonly<{
+    message: UserMessage;
+    pendingMessageCallback: ((message: UserMessage) => boolean | void) | null;
+    pendingMessages: UserMessage[];
+}>): boolean {
+    if (params.pendingMessageCallback) {
+        return params.pendingMessageCallback(params.message) !== false;
+    }
+    params.pendingMessages.push(params.message);
+    return true;
+}
+
+function deliverUserPromptCandidate(params: Readonly<{
+    message: UserMessage;
+    update: Update;
+    localId: string | null;
+    msgSeq: unknown;
+    isSelfEchoSuppressedLocalId: boolean;
+    isAgentQueueEchoSuppressedLocalId: boolean;
+    isAgentQueueDeliveredLocalId: boolean;
+    isPendingQueueMaterializedLocalId: boolean;
+    pendingMessageCallback: ((message: UserMessage) => boolean | void) | null;
+    pendingMessages: UserMessage[];
+    shouldDeliverUserMessageToAgentQueue?: (message: UserMessage, update: Update) => boolean;
+    shouldResolveSkippedUserMessage?: (message: UserMessage, update: Update) => boolean;
+    markMessageIdAsReceived: () => void;
+    unmarkMessageIdAsReceived: () => void;
+    markAgentQueueEchoSuppressedLocalId: (localId: string) => void;
+    markAgentQueueDeliveredLocalId: (localId: string) => void;
+    clearAgentQueueEchoSuppressedLocalId: (localId: string) => void;
+    clearAgentQueueDeliveredLocalId: (localId: string) => void;
+    onUserMessageDeliveredToAgentQueue?: (seq: number) => void;
+    onUserMessageDeliveryProvenByLocalEcho?: (seq: number) => void;
+    debug: (message: string, data?: unknown) => void;
+    skippedDebugMessage: string;
+}>): UserPromptCandidateDeliveryResult {
+    const sentFrom = params.message.meta?.sentFrom;
+    const source = params.message.meta?.source;
+    const finiteMsgSeq = typeof params.msgSeq === 'number' && Number.isFinite(params.msgSeq)
+        ? params.msgSeq
+        : null;
+    const isSelfEchoSuppressedCliWrite =
+        params.isSelfEchoSuppressedLocalId && source === 'cli';
+    const isUncommittedPendingQueueMaterialization =
+        params.isPendingQueueMaterializedLocalId && finiteMsgSeq === null;
+    const shouldRespectAgentQueueEchoSuppression =
+        params.isAgentQueueDeliveredLocalId && !isUncommittedPendingQueueMaterialization;
+    const isEffectivelyAgentQueueEchoSuppressedLocalId =
+        shouldRespectAgentQueueEchoSuppression && params.isAgentQueueEchoSuppressedLocalId;
+    const shouldDeliverToAgentQueue =
+        (!params.isAgentQueueDeliveredLocalId || isUncommittedPendingQueueMaterialization)
+        && !isEffectivelyAgentQueueEchoSuppressedLocalId
+        && !isSelfEchoSuppressedCliWrite
+        && (params.shouldDeliverUserMessageToAgentQueue?.(params.message, params.update) ?? true);
+    const isResolvedBySkippedDelivery =
+        !shouldDeliverToAgentQueue
+        && finiteMsgSeq !== null
+        && (params.shouldResolveSkippedUserMessage?.(params.message, params.update) ?? false);
+
+    if (shouldDeliverToAgentQueue) {
+        const hasAgentQueueCallback = params.pendingMessageCallback !== null;
+        params.markMessageIdAsReceived();
+        const markedLocalId = params.localId;
+        if (markedLocalId) {
+            params.markAgentQueueEchoSuppressedLocalId(markedLocalId);
+            params.markAgentQueueDeliveredLocalId(markedLocalId);
+        }
+        let deliveredToAgentQueue: boolean;
+        try {
+            deliveredToAgentQueue = deliverUserMessageToAgentQueue({
+                message: params.message,
+                pendingMessageCallback: params.pendingMessageCallback,
+                pendingMessages: params.pendingMessages,
+            });
+        } catch (error) {
+            if (markedLocalId) {
+                params.clearAgentQueueEchoSuppressedLocalId(markedLocalId);
+                params.clearAgentQueueDeliveredLocalId(markedLocalId);
+            }
+            params.unmarkMessageIdAsReceived();
+            throw error;
+        }
+        if (!deliveredToAgentQueue) {
+            if (markedLocalId) {
+                params.clearAgentQueueEchoSuppressedLocalId(markedLocalId);
+                params.clearAgentQueueDeliveredLocalId(markedLocalId);
+            }
+            params.unmarkMessageIdAsReceived();
+            return { resolved: false };
+        }
+        if (hasAgentQueueCallback && finiteMsgSeq !== null) {
+            params.onUserMessageDeliveredToAgentQueue?.(finiteMsgSeq);
+        }
+        return { resolved: true };
+    }
+
+    // A provider-native CLI self echo proves local provider delivery; an agent-queue echo
+    // only proves server commit, so keep it on the queue hook for deferred launchers.
+    const isResolvedEchoSuppressedPrompt =
+        finiteMsgSeq !== null
+        && (isSelfEchoSuppressedCliWrite || isEffectivelyAgentQueueEchoSuppressedLocalId);
+    if (isResolvedBySkippedDelivery) {
+        params.markMessageIdAsReceived();
+    }
+    if (isSelfEchoSuppressedCliWrite && finiteMsgSeq !== null) {
+        (params.onUserMessageDeliveryProvenByLocalEcho ?? params.onUserMessageDeliveredToAgentQueue)?.(finiteMsgSeq);
+    } else if (isEffectivelyAgentQueueEchoSuppressedLocalId && finiteMsgSeq !== null) {
+        params.onUserMessageDeliveredToAgentQueue?.(finiteMsgSeq);
+    }
+    if (isResolvedEchoSuppressedPrompt) {
+        params.markMessageIdAsReceived();
+    }
+    params.debug(params.skippedDebugMessage, {
+        source: source ?? null,
+        sentFrom: sentFrom ?? null,
+        localId: params.localId,
+        isSelfEchoSuppressedLocalId: params.isSelfEchoSuppressedLocalId,
+        isAgentQueueEchoSuppressedLocalId: params.isAgentQueueEchoSuppressedLocalId,
+        isAgentQueueDeliveredLocalId: params.isAgentQueueDeliveredLocalId,
+        isPendingQueueMaterializedLocalId: params.isPendingQueueMaterializedLocalId,
+        isUncommittedPendingQueueMaterialization,
+        isSelfEchoSuppressedCliWrite,
+        shouldRespectAgentQueueEchoSuppression,
+        isResolvedBySkippedDelivery,
+    });
+    return { resolved: isResolvedEchoSuppressedPrompt || isResolvedBySkippedDelivery };
+}
 
 function mapSessionTurnLifecycleToConnectedServiceEvent(value: unknown): ConnectedServiceTurnLifecycleEvent | null {
     const event = detectSessionTurnLifecycleEvent(value);
@@ -38,15 +190,34 @@ export function handleSessionNewMessageUpdate(params: {
     lastObservedUserMessageSeq: number;
     hasSelfEchoSuppressedLocalId: (localId: string) => boolean;
     hasAgentQueueEchoSuppressedLocalId: (localId: string) => boolean;
+    hasAgentQueueDeliveredLocalId?: (localId: string) => boolean;
     markAgentQueueEchoSuppressedLocalId: (localId: string) => void;
+    markAgentQueueDeliveredLocalId?: (localId: string) => void;
+    clearAgentQueueEchoSuppressedLocalId?: (localId: string) => void;
+    clearAgentQueueDeliveredLocalId?: (localId: string) => void;
     hasPendingQueueMaterializedLocalId: (localId: string) => boolean;
     deleteMaterializedLocalId: (localId: string) => void;
-    pendingMessageCallback: ((message: UserMessage) => void) | null;
+    pendingMessageCallback: ((message: UserMessage) => boolean | void) | null;
     pendingMessages: UserMessage[];
     shouldDeliverUserMessageToAgentQueue?: (message: UserMessage, update: Update) => boolean;
+    shouldResolveSkippedUserMessage?: (message: UserMessage, update: Update) => boolean;
+    /**
+     * Owed-delivery watermark hook: fired with the user row's seq when the row is handed to the
+     * agent queue, or when a later agent-queue echo proves a locally handed prompt is committed.
+     * Launchers with a provider-acceptance seam may defer persisting this leg until the provider
+     * proves acceptance (HF-1).
+     */
+    onUserMessageDeliveredToAgentQueue?: (seq: number) => void;
+    /**
+     * Echo leg (HF-1 split): a local echo proves a provider-native terminal transcript row is no
+     * longer owed to the runner without handing it through the queue in this update. Falls back to
+     * the queue-handoff hook when unset (legacy single-hook callers).
+     */
+    onUserMessageDeliveryProvenByLocalEcho?: (seq: number) => void;
     onConnectedServiceTurnLifecycleEvent?: (event: ConnectedServiceTurnLifecycleEvent) => void;
     emit: (event: 'user-message' | 'message', payload: unknown) => void;
     observeMessage?: (message: unknown, seq: number | null) => void;
+    observeCommittedUserMessageSeq?: (params: { localId: string | null | undefined; seq: number }) => void;
     debug: (message: string, data?: unknown) => void;
     debugLargeJson: (message: string, data: unknown) => void;
 }): {
@@ -74,6 +245,11 @@ export function handleSessionNewMessageUpdate(params: {
     const markMessageIdAsReceived = () => {
         if (hasMessageId) {
             params.receivedMessageIds.add(messageId);
+        }
+    };
+    const unmarkMessageIdAsReceived = () => {
+        if (hasMessageId) {
+            params.receivedMessageIds.delete(messageId);
         }
     };
     if (hasMessageId && params.receivedMessageIds.has(messageId)) {
@@ -114,9 +290,11 @@ export function handleSessionNewMessageUpdate(params: {
     const localId = params.update.body.message.localId ?? null;
     const isSelfEchoSuppressedLocalId = Boolean(localId && params.hasSelfEchoSuppressedLocalId(localId));
     const isAgentQueueEchoSuppressedLocalId = Boolean(localId && params.hasAgentQueueEchoSuppressedLocalId(localId));
+    const isAgentQueueDeliveredLocalId = Boolean(localId && (params.hasAgentQueueDeliveredLocalId?.(localId) ?? false));
     const isPendingQueueMaterializedLocalId = Boolean(localId && params.hasPendingQueueMaterializedLocalId(localId));
-    if (localId && (isSelfEchoSuppressedLocalId || isPendingQueueMaterializedLocalId)) {
-        // We observed the broadcast for a message we materialized; cancel any recovery path.
+    if (localId && isSelfEchoSuppressedLocalId && !isPendingQueueMaterializedLocalId) {
+        // We observed the broadcast for a message we wrote locally; cancel commit recovery. Pending-queue
+        // materialized messages keep their marker until provider acceptance proves runtime custody.
         params.deleteMaterializedLocalId(localId);
     }
 
@@ -171,42 +349,41 @@ export function handleSessionNewMessageUpdate(params: {
     // Try to parse as user message first.
     const userResult = UserMessageSchema.safeParse(bodyWithTransportFields);
     if (userResult.success) {
-        const sentFrom = userResult.data.meta?.sentFrom;
-        const source = userResult.data.meta?.source;
-        const isSelfEchoSuppressedCliWrite =
-            isSelfEchoSuppressedLocalId && source === 'cli';
-        const shouldRespectAgentQueueEchoSuppression = Boolean(params.pendingMessageCallback);
-        const isEffectivelyAgentQueueEchoSuppressedLocalId =
-            shouldRespectAgentQueueEchoSuppression && isAgentQueueEchoSuppressedLocalId;
-        const shouldDeliverToAgentQueue =
-            !isEffectivelyAgentQueueEchoSuppressedLocalId
-            && !isSelfEchoSuppressedCliWrite
-            && (params.shouldDeliverUserMessageToAgentQueue?.(userResult.data, params.update) ?? true);
-        if (shouldDeliverToAgentQueue) {
-            markMessageIdAsReceived();
-            shouldMarkReceivedMessageId = false;
-            if (params.pendingMessageCallback) {
-                params.pendingMessageCallback(userResult.data);
-            } else {
-                params.pendingMessages.push(userResult.data);
-            }
-            if (localId) {
-                params.markAgentQueueEchoSuppressedLocalId(localId);
-            }
-        } else {
-            shouldMarkReceivedMessageId = false;
-            params.debug('[SOCKET] [UPDATE] Skipped user-message delivery to agent queue', {
-                source: source ?? null,
-                sentFrom: sentFrom ?? null,
-                localId,
-                isSelfEchoSuppressedLocalId,
-                isAgentQueueEchoSuppressedLocalId,
-                isPendingQueueMaterializedLocalId,
-                isSelfEchoSuppressedCliWrite,
-                shouldRespectAgentQueueEchoSuppression,
-            });
+        shouldMarkReceivedMessageId = false;
+        observeCommittedUserMessageSeq({
+            message: userResult.data,
+            transportLocalId: localId,
+            msgSeq,
+            observe: params.observeCommittedUserMessageSeq,
+        });
+        const deliveryResult = deliverUserPromptCandidate({
+            message: userResult.data,
+            update: params.update,
+            localId,
+            msgSeq,
+            isSelfEchoSuppressedLocalId,
+            isAgentQueueEchoSuppressedLocalId,
+            isAgentQueueDeliveredLocalId,
+            isPendingQueueMaterializedLocalId,
+            pendingMessageCallback: params.pendingMessageCallback,
+            pendingMessages: params.pendingMessages,
+            shouldDeliverUserMessageToAgentQueue: params.shouldDeliverUserMessageToAgentQueue,
+            shouldResolveSkippedUserMessage: params.shouldResolveSkippedUserMessage,
+            markMessageIdAsReceived,
+            unmarkMessageIdAsReceived,
+            markAgentQueueEchoSuppressedLocalId: params.markAgentQueueEchoSuppressedLocalId,
+            markAgentQueueDeliveredLocalId: params.markAgentQueueDeliveredLocalId ?? (() => undefined),
+            clearAgentQueueEchoSuppressedLocalId: params.clearAgentQueueEchoSuppressedLocalId ?? (() => undefined),
+            clearAgentQueueDeliveredLocalId: params.clearAgentQueueDeliveredLocalId ?? (() => undefined),
+            onUserMessageDeliveredToAgentQueue: params.onUserMessageDeliveredToAgentQueue,
+            onUserMessageDeliveryProvenByLocalEcho: params.onUserMessageDeliveryProvenByLocalEcho,
+            debug: params.debug,
+            skippedDebugMessage: '[SOCKET] [UPDATE] Skipped user-message delivery to agent queue',
+        });
+        if (!deliveryResult.resolved) {
+            nextLastObservedMessageSeq = params.lastObservedMessageSeq;
         }
-        if (typeof msgSeq === 'number' && Number.isFinite(msgSeq)) {
+        if (deliveryResult.resolved && typeof msgSeq === 'number' && Number.isFinite(msgSeq)) {
             nextLastObservedUserMessageSeq = Math.max(nextLastObservedUserMessageSeq, msgSeq);
         }
         params.emit('user-message', userResult.data);
@@ -223,28 +400,41 @@ export function handleSessionNewMessageUpdate(params: {
             };
             const parsedCandidate = UserMessageSchema.safeParse(candidate);
             if (parsedCandidate.success) {
-                const shouldDeliverToAgentQueue =
-                    params.shouldDeliverUserMessageToAgentQueue?.(parsedCandidate.data, params.update) ?? true;
-                if (shouldDeliverToAgentQueue) {
-                    markMessageIdAsReceived();
-                    shouldMarkReceivedMessageId = false;
-                    if (params.pendingMessageCallback) {
-                        params.pendingMessageCallback(parsedCandidate.data);
-                    } else {
-                        params.pendingMessages.push(parsedCandidate.data);
-                    }
-                    if (localId) {
-                        params.markAgentQueueEchoSuppressedLocalId(localId);
-                    }
-                } else {
-                    shouldMarkReceivedMessageId = false;
-                    params.debug('[SOCKET] [UPDATE] Skipped coerced user-message delivery to agent queue', {
-                        localId,
-                        source: parsedCandidate.data.meta?.source ?? null,
-                        sentFrom: parsedCandidate.data.meta?.sentFrom ?? null,
-                    });
+                shouldMarkReceivedMessageId = false;
+                observeCommittedUserMessageSeq({
+                    message: parsedCandidate.data,
+                    transportLocalId: localId,
+                    msgSeq,
+                    observe: params.observeCommittedUserMessageSeq,
+                });
+                const deliveryResult = deliverUserPromptCandidate({
+                    message: parsedCandidate.data,
+                    update: params.update,
+                    localId,
+                    msgSeq,
+                    isSelfEchoSuppressedLocalId,
+                    isAgentQueueEchoSuppressedLocalId,
+                    isAgentQueueDeliveredLocalId,
+                    isPendingQueueMaterializedLocalId,
+                    pendingMessageCallback: params.pendingMessageCallback,
+                    pendingMessages: params.pendingMessages,
+                    shouldDeliverUserMessageToAgentQueue: params.shouldDeliverUserMessageToAgentQueue,
+                    shouldResolveSkippedUserMessage: params.shouldResolveSkippedUserMessage,
+                    markMessageIdAsReceived,
+                    unmarkMessageIdAsReceived,
+                    markAgentQueueEchoSuppressedLocalId: params.markAgentQueueEchoSuppressedLocalId,
+                    markAgentQueueDeliveredLocalId: params.markAgentQueueDeliveredLocalId ?? (() => undefined),
+                    clearAgentQueueEchoSuppressedLocalId: params.clearAgentQueueEchoSuppressedLocalId ?? (() => undefined),
+                    clearAgentQueueDeliveredLocalId: params.clearAgentQueueDeliveredLocalId ?? (() => undefined),
+                    onUserMessageDeliveredToAgentQueue: params.onUserMessageDeliveredToAgentQueue,
+                    onUserMessageDeliveryProvenByLocalEcho: params.onUserMessageDeliveryProvenByLocalEcho,
+                    debug: params.debug,
+                    skippedDebugMessage: '[SOCKET] [UPDATE] Skipped coerced user-message delivery to agent queue',
+                });
+                if (!deliveryResult.resolved) {
+                    nextLastObservedMessageSeq = params.lastObservedMessageSeq;
                 }
-                if (typeof msgSeq === 'number' && Number.isFinite(msgSeq)) {
+                if (deliveryResult.resolved && typeof msgSeq === 'number' && Number.isFinite(msgSeq)) {
                     nextLastObservedUserMessageSeq = Math.max(nextLastObservedUserMessageSeq, msgSeq);
                 }
                 params.emit('user-message', parsedCandidate.data);

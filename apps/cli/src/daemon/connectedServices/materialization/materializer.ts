@@ -32,6 +32,17 @@ export type ConnectedServicesMaterialization = Readonly<{
   diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
 }>;
 
+export type ConnectedServiceMaterializationCredentialRefreshFailureCategory =
+  | 'invalid_grant'
+  | 'invalid_client'
+  | 'provider_401'
+  | 'provider_403'
+  | 'network_error'
+  | 'malformed_response'
+  | 'missing_access_token'
+  | 'missing_refresh_token'
+  | 'unknown';
+
 export type ConnectedServicesMaterializationDiagnostic = Readonly<{
   code: string;
   providerId?: string;
@@ -41,6 +52,11 @@ export type ConnectedServicesMaterializationDiagnostic = Readonly<{
   effectiveStateMode?: string;
   reason?: string;
   entryName?: string;
+  credentialRefreshFailure?: Readonly<{
+    category: ConnectedServiceMaterializationCredentialRefreshFailureCategory;
+    providerStatus?: number;
+    providerErrorCode?: string;
+  }>;
 }>;
 
 export function isBlockingConnectedServicesMaterializationDiagnostic(

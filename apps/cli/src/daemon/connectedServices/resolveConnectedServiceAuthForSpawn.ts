@@ -1,12 +1,11 @@
 import type {
   AccountSettings,
   ConnectedServiceAuthGroupV1,
-  ConnectedServiceCredentialHealthV1,
   ConnectedServiceCredentialRecordV1,
   ConnectedServiceId,
 } from '@happier-dev/protocol';
 
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { ApiClient } from '@/api/api';
 import type { Credentials } from '@/persistence';
 
@@ -33,13 +32,26 @@ import {
   type ConnectedServiceAuthGroupMemberRuntimeState,
 } from './accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds } from './accountGroups/selection/resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds';
-import { buildConnectedServiceAuthGroupSwitchState } from './accountGroups/switching/buildConnectedServiceAuthGroupSwitchState';
-import type { ConnectedServiceAuthGroupMemberRuntimeStateOverride } from './accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
-import type { ConnectedServiceCredentialRefreshResult } from './refresh/ConnectedServiceRefreshCoordinator';
+import {
+  buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState,
+} from './accountGroups/switching/buildConnectedServiceAuthGroupSwitchState';
+import {
+  buildConnectedServiceAuthGroupSwitchStateFromAccountUsage,
+  type AccountUsageStoreForAuthGroupSwitchState,
+} from './accountGroups/switching/buildConnectedServiceAuthGroupSwitchStateFromAccountUsage';
+import type {
+  ConnectedServiceAuthGroupMemberRuntimeStateOverride,
+  ConnectedServiceAuthGroupSwitchState,
+} from './accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import {
+  persistConnectedServiceCredentialHealthForMaterializationFailure,
+  type ConnectedServiceCredentialRefreshResult,
+} from './refresh/ConnectedServiceRefreshCoordinator';
 import type {
   ConnectedServiceRecoverySoftSwitchGuardInput,
   ConnectedServiceRecoverySoftSwitchGuardResult,
 } from './recovery/connectedServiceRecoverySwitchGuard';
+import { decideConnectedServiceRecovery } from './runtimeAuth/ConnectedServiceRecoveryPolicy';
 
 type ConnectedServiceAuthGroupResponse = Readonly<{
   v?: number;
@@ -82,20 +94,12 @@ type ConnectedServiceProfilesHealthApi = Readonly<{
   }>>;
 }>;
 
-type ConnectedServiceCredentialHealthUpdateApi = Readonly<{
-  updateConnectedServiceCredentialHealth?: (params: Readonly<{
-    serviceId: ConnectedServiceId;
-    profileId: string;
-    health: ConnectedServiceCredentialHealthV1;
-  }>) => Promise<void>;
-}>;
-
 type ConnectedServiceAuthGroupPreTurnSwitchCoordinator = Readonly<{
   switchBeforeTurn(params: Readonly<{
     sessionId?: string;
     serviceId: string;
     groupId: string;
-    reason: 'usage_limit' | 'soft_threshold' | 'auth_expired' | 'account_changed' | 'refresh_failed';
+    reason: 'usage_limit' | 'soft_threshold' | 'same_provider_account_exhausted' | 'auth_expired' | 'account_changed' | 'refresh_failed';
     memberStateOverridesByProfileId?: ReadonlyArray<ConnectedServiceAuthGroupMemberRuntimeStateOverride>;
   }>): Promise<Readonly<{
     status: string;
@@ -303,7 +307,7 @@ function isFullAuthGroup(value: ConnectedServiceAuthGroupResponse): value is Con
 }
 
 function resolveActiveGroupProfileIssueReason(
-  state: ReturnType<typeof buildConnectedServiceAuthGroupSwitchState>,
+  state: ConnectedServiceAuthGroupSwitchState,
   memberStatesByProfileId: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState>,
   nowMs: number,
 ): 'usage_limit' | 'soft_threshold' | 'auth_expired' {
@@ -322,12 +326,33 @@ function resolveActiveGroupProfileIssueReason(
   return activeAuthInvalid ? 'auth_expired' : activeExhausted ? 'usage_limit' : 'soft_threshold';
 }
 
+function buildSpawnSwitchState(params: Readonly<{
+  group: ConnectedServiceAuthGroupV1;
+  accountUsageStore: AccountUsageStoreForAuthGroupSwitchState | null;
+  runtimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore | null;
+  nowMs: number;
+  allowPersistedOnly: boolean;
+}>): ConnectedServiceAuthGroupSwitchState | null {
+  if (params.accountUsageStore) {
+    return buildConnectedServiceAuthGroupSwitchStateFromAccountUsage({
+      group: params.group,
+      accountUsageStore: params.accountUsageStore,
+    })?.state ?? buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState({
+      group: params.group,
+    });
+  }
+  return params.allowPersistedOnly
+    ? buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState({ group: params.group })
+    : null;
+}
+
 async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   agentId: CatalogAgentId;
   group: ConnectedServiceAuthGroupResponse;
   serviceId: ConnectedServiceId;
   groupId: string;
   api: ConnectedServiceAuthGroupApi;
+  accountUsageStore: AccountUsageStoreForAuthGroupSwitchState | null;
   runtimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore | null;
   profileStatusByProfileId: ReadonlyMap<string, ConnectedServiceProfileStatus> | null;
   quotaFreshnessMs: number;
@@ -338,17 +363,20 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
 }>): Promise<ConnectedServiceAuthGroupResponse> {
   const hasUnhealthyProfile = [...(params.profileStatusByProfileId?.values() ?? [])]
     .some((status) => status === 'needs_reauth');
-  if ((!params.runtimeQuotaSnapshots && !hasUnhealthyProfile) || !isFullAuthGroup(params.group)) return params.group;
+  if ((!params.accountUsageStore && !params.runtimeQuotaSnapshots && !hasUnhealthyProfile) || !isFullAuthGroup(params.group)) return params.group;
   if (
     !params.authGroupSwitchCoordinator
     && typeof params.api.updateConnectedServiceAuthGroupActiveProfile !== 'function'
   ) return params.group;
 
-  const state = buildConnectedServiceAuthGroupSwitchState({
+  const state = buildSpawnSwitchState({
     group: params.group,
-    runtimeQuotaSnapshots: params.runtimeQuotaSnapshots ?? new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+    accountUsageStore: params.accountUsageStore,
+    runtimeQuotaSnapshots: params.runtimeQuotaSnapshots,
     nowMs: params.nowMs,
+    allowPersistedOnly: hasUnhealthyProfile,
   });
+  if (!state) return params.group;
   if (!state.policy.autoSwitch) return params.group;
   const memberStatesByProfileId = new Map(state.memberStatesByProfileId);
   const memberStateOverridesByProfileId: ConnectedServiceAuthGroupMemberRuntimeStateOverride[] = [];
@@ -368,7 +396,8 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   }
 
   const activeIssueReason = resolveActiveGroupProfileIssueReason(state, memberStatesByProfileId, params.nowMs);
-    const currentActiveProfileId = readProfileId(state.activeProfileId);
+  if (activeIssueReason === 'soft_threshold' && !params.accountUsageStore) return params.group;
+  const currentActiveProfileId = readProfileId(state.activeProfileId);
   if (params.sessionId && params.softSwitchRecoveryGuard && currentActiveProfileId) {
     const guardResult = await params.softSwitchRecoveryGuard({
       sessionId: params.sessionId,
@@ -381,8 +410,7 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
     if (guardResult.status === 'suppress') return params.group;
   }
   if (
-    params.runtimeQuotaSnapshots
-    && params.authGroupSwitchCoordinator
+    params.authGroupSwitchCoordinator
     && resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds({
       activeProfileId: state.activeProfileId,
       members: state.members,
@@ -458,6 +486,7 @@ async function resolveCredentialBindings(params: Readonly<{
   agentId: CatalogAgentId;
   api: ApiClient;
   selections: ReadonlyArray<ConnectedServiceBindingSelection>;
+  accountUsageStore: AccountUsageStoreForAuthGroupSwitchState | null;
   runtimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore | null;
   quotaFreshnessMs: number;
   nowMs: number;
@@ -506,6 +535,7 @@ async function resolveCredentialBindings(params: Readonly<{
       serviceId: selection.serviceId,
       groupId: selection.groupId,
       api: groupApi,
+      accountUsageStore: params.accountUsageStore,
       runtimeQuotaSnapshots: params.runtimeQuotaSnapshots,
       profileStatusByProfileId,
       quotaFreshnessMs: params.quotaFreshnessMs,
@@ -548,95 +578,87 @@ type ConnectedServiceResolvedGroupSelection = Readonly<{
   memberProfileIds: readonly string[];
 }>;
 
-async function maybeSwitchGroupAfterSpawnPreflightRefreshFailure(params: Readonly<{
+function decideSpawnCredentialFailureRecovery(params: Readonly<{
+  serviceId: ConnectedServiceId;
+  group: ConnectedServiceResolvedGroupSelection;
+  profileId: string;
+}>) {
+  return decideConnectedServiceRecovery({
+    actor: 'automatic',
+    issue: {
+      kind: 'refresh_failed',
+      serviceId: params.serviceId,
+      profileId: params.profileId,
+      groupId: params.group.groupId,
+      resetsAtMs: null,
+      planType: null,
+      rateLimits: null,
+      source: 'provider_runtime_marker',
+    },
+    selection: {
+      kind: 'group',
+      serviceId: params.serviceId,
+      groupId: params.group.groupId,
+      activeProfileId: params.group.activeProfileId,
+    },
+    credentialHealth: {
+      liveEvidence: 'auth_failed',
+    },
+    credentialRefresh: {
+      status: 'not_refreshable',
+    },
+  });
+}
+
+async function maybeRecoverGroupAfterSpawnPreflightRefreshFailure(params: Readonly<{
   error: ConnectedServiceSpawnCredentialRefreshError;
   groupSelections: Map<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>;
-  recordsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
-  credentials: Credentials;
-  api: ApiClient;
-  sessionId?: string;
-  authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
-  refreshService: ConnectedServiceSpawnCredentialRefreshService | null;
 }>): Promise<boolean> {
   if (params.error.kind !== 'reconnect_required') return false;
   const group = params.groupSelections.get(params.error.serviceId);
   if (!group || group.activeProfileId !== params.error.profileId) return false;
 
-  if (typeof params.authGroupSwitchCoordinator?.switchAfterClassifiedFailure !== 'function') return false;
-
-  const switched = await params.authGroupSwitchCoordinator.switchAfterClassifiedFailure({
-    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+  const decision = decideSpawnCredentialFailureRecovery({
     serviceId: params.error.serviceId,
-    groupId: group.groupId,
-    reason: 'refresh_failed',
-    observedProfileId: params.error.profileId,
+    group,
+    profileId: params.error.profileId,
   });
-  const activeProfileId = readProfileId(switched.activeProfileId);
-  if (!activeProfileId || activeProfileId === group.activeProfileId) return false;
-
-  const switchedRecords = await resolveConnectedServiceCredentials({
-    credentials: params.credentials,
-    api: params.api,
-    bindings: [{ serviceId: params.error.serviceId, profileId: activeProfileId }],
-  });
-  const switchedRecord = switchedRecords.get(params.error.serviceId);
-  if (!switchedRecord) return false;
-
-  params.recordsByServiceId.set(params.error.serviceId, switchedRecord);
-  params.groupSelections.set(params.error.serviceId, {
-    ...group,
-    activeProfileId,
-    generation: typeof switched.generation === 'number' && Number.isFinite(switched.generation)
-      ? switched.generation
-      : group.generation,
-  });
-
-  await applySpawnPreflightRefresh({
-    recordsByServiceId: params.recordsByServiceId,
-    credentialBindings: [{ serviceId: params.error.serviceId, profileId: activeProfileId }],
-    refreshService: params.refreshService,
-  });
-  return true;
+  return decision.action === 'no_op';
 }
 
-async function persistMaterializationFailureCredentialHealthForSpawn(params: Readonly<{
+/**
+ * CS-FIX-2: the spawn-path materialization-failure health write must PROPAGATE the real failure
+ * category from the diagnostic instead of fabricating `provider_403`/`needs_reauth` for every
+ * blocking diagnostic. A non-auth blocking failure (e.g. a shared-state link/disk/manifest class)
+ * would otherwise silently mis-latch the profile `needs_reauth` with a synthesized HTTP 403 that no
+ * provider ever returned — the exact silent wrong-latch class that hides healthy accounts.
+ *
+ * This routes through the single canonical health-write owner
+ * (`persistConnectedServiceCredentialHealthForMaterializationFailure`), which classifies the
+ * diagnostic via the shared taxonomy and only latches `needs_reauth` for genuinely auth/permission
+ * diagnostics; other blocking reasons keep their true category as a non-latching
+ * `refresh_failed_retryable` status.
+ */
+export async function persistMaterializationFailureCredentialHealthForSpawn(params: Readonly<{
   api: ApiClient;
   serviceId: ConnectedServiceId;
   profileId: string;
   diagnostic: ConnectedServicesMaterializationDiagnostic;
   nowMs: number;
 }>): Promise<void> {
-  const updateHealth = (params.api as ConnectedServiceCredentialHealthUpdateApi).updateConnectedServiceCredentialHealth;
-  if (typeof updateHealth !== 'function') return;
-  const providerErrorCode = typeof params.diagnostic.code === 'string' && params.diagnostic.code.trim().length > 0
-    ? params.diagnostic.code.trim().slice(0, 128)
-    : undefined;
-  await updateHealth.call(params.api, {
-    serviceId: params.serviceId,
-    profileId: params.profileId,
-    health: {
-      v: 1,
-      status: 'needs_reauth',
-      reconnectRequired: true,
-      lastRefreshAttemptAt: params.nowMs,
-      lastRefreshFailureAt: params.nowMs,
-      lastRefreshFailureKind: 'provider_403',
-      providerHttpStatus: 403,
-      ...(providerErrorCode ? { providerErrorCode } : {}),
-    },
+  await persistConnectedServiceCredentialHealthForMaterializationFailure({
+    api: params.api,
+    binding: { serviceId: params.serviceId, profileId: params.profileId },
+    diagnostic: params.diagnostic,
+    now: params.nowMs,
   });
 }
 
-async function maybeSwitchGroupAfterSpawnMaterializationFailure(params: Readonly<{
+async function maybeRecoverGroupAfterSpawnMaterializationFailure(params: Readonly<{
   error: ConnectedServiceMaterializationBlockedError;
   groupSelections: Map<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>;
-  recordsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
-  credentials: Credentials;
   api: ApiClient;
   nowMs: number;
-  sessionId?: string;
-  authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
-  refreshService: ConnectedServiceSpawnCredentialRefreshService | null;
 }>): Promise<boolean> {
   const diagnostic = params.error.diagnostics.find((candidate) => {
     if (!candidate.serviceId) return false;
@@ -647,8 +669,6 @@ async function maybeSwitchGroupAfterSpawnMaterializationFailure(params: Readonly
 
   const group = params.groupSelections.get(serviceId);
   if (!group) return false;
-  if (typeof params.authGroupSwitchCoordinator?.switchAfterClassifiedFailure !== 'function') return false;
-
   await persistMaterializationFailureCredentialHealthForSpawn({
     api: params.api,
     serviceId,
@@ -657,39 +677,12 @@ async function maybeSwitchGroupAfterSpawnMaterializationFailure(params: Readonly
     nowMs: params.nowMs,
   });
 
-  const switched = await params.authGroupSwitchCoordinator.switchAfterClassifiedFailure({
-    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+  const decision = decideSpawnCredentialFailureRecovery({
     serviceId,
-    groupId: group.groupId,
-    reason: 'refresh_failed',
-    observedProfileId: group.activeProfileId,
+    group,
+    profileId: group.activeProfileId,
   });
-  const activeProfileId = readProfileId(switched.activeProfileId);
-  if (!activeProfileId || activeProfileId === group.activeProfileId) return false;
-
-  const switchedRecords = await resolveConnectedServiceCredentials({
-    credentials: params.credentials,
-    api: params.api,
-    bindings: [{ serviceId, profileId: activeProfileId }],
-  });
-  const switchedRecord = switchedRecords.get(serviceId);
-  if (!switchedRecord) return false;
-
-  params.recordsByServiceId.set(serviceId, switchedRecord);
-  params.groupSelections.set(serviceId, {
-    ...group,
-    activeProfileId,
-    generation: typeof switched.generation === 'number' && Number.isFinite(switched.generation)
-      ? switched.generation
-      : group.generation,
-  });
-
-  await applySpawnPreflightRefresh({
-    recordsByServiceId: params.recordsByServiceId,
-    credentialBindings: [{ serviceId, profileId: activeProfileId }],
-    refreshService: params.refreshService,
-  });
-  return true;
+  return decision.action === 'no_op';
 }
 
 function buildSelectionsByServiceIdForSpawn(params: Readonly<{
@@ -816,6 +809,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   credentials: Credentials;
   api: ApiClient;
   allowGroupBindingProfileFallback?: boolean;
+  accountUsageStore?: AccountUsageStoreForAuthGroupSwitchState | null;
   runtimeQuotaSnapshots?: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore | null;
   quotaFreshnessMs?: number;
   nowMs?: () => number;
@@ -858,6 +852,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
     agentId: params.agentId,
     api: params.api,
     selections,
+    accountUsageStore: params.accountUsageStore ?? null,
     runtimeQuotaSnapshots: params.runtimeQuotaSnapshots ?? null,
     quotaFreshnessMs: params.quotaFreshnessMs ?? 5 * 60_000,
     nowMs,
@@ -881,17 +876,11 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
     });
   } catch (error) {
     if (!(error instanceof ConnectedServiceSpawnCredentialRefreshError)) throw error;
-    const switched = await maybeSwitchGroupAfterSpawnPreflightRefreshFailure({
+    const recovered = await maybeRecoverGroupAfterSpawnPreflightRefreshFailure({
       error,
       groupSelections,
-      recordsByServiceId,
-      credentials: params.credentials,
-      api: params.api,
-      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
-      authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
-      refreshService: params.credentialRefreshService ?? null,
     });
-    if (!switched) throw error;
+    if (!recovered) throw error;
   }
   const maxMaterializationAttempts = resolveSpawnMaterializationAttemptLimit(groupSelections);
   for (let attempt = 0; attempt < maxMaterializationAttempts; attempt += 1) {
@@ -928,18 +917,13 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
     } catch (error) {
       if (!(error instanceof ConnectedServiceMaterializationBlockedError)) throw error;
       if (attempt >= maxMaterializationAttempts - 1) throw error;
-      const switched = await maybeSwitchGroupAfterSpawnMaterializationFailure({
+      const recovered = await maybeRecoverGroupAfterSpawnMaterializationFailure({
         error,
         groupSelections,
-        recordsByServiceId,
-        credentials: params.credentials,
         api: params.api,
         nowMs,
-        ...(params.sessionId ? { sessionId: params.sessionId } : {}),
-        authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
-        refreshService: params.credentialRefreshService ?? null,
       });
-      if (!switched) throw error;
+      if (!recovered) throw error;
     }
   }
 

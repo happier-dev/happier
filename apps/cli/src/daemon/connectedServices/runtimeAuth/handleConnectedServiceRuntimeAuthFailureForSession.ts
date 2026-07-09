@@ -3,7 +3,6 @@ import type { ConnectedServiceBindingsV1, ConnectedServiceId } from '@happier-de
 
 import {
   SESSION_SWITCH_LIMIT_WINDOW_MS,
-  type ConnectedServiceAuthGroupSwitchEvent,
   type ConnectedServiceAuthGroupSwitchResult,
 } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import { handleConnectedServiceRuntimeAuthFailure } from './handleConnectedServiceRuntimeAuthFailure';
@@ -53,6 +52,7 @@ type RuntimeAuthSwitchContinuation = (input: Readonly<{
 type RuntimeAuthCredentialRefresh = (input: Readonly<{
   serviceId: ConnectedServiceId;
   profileId: string;
+  sessionId: string;
 }>) => Promise<ConnectedServiceCredentialRefreshResult>;
 type RuntimeAuthRecoveryInvocationSource = 'daemon_report' | 'scheduler_retry';
 
@@ -106,33 +106,6 @@ function normalizeSessionId(value: unknown): string {
 function normalizeNullableProfileId(value: unknown): string | null {
   const normalized = normalizeSessionId(value);
   return normalized.length > 0 ? normalized : null;
-}
-
-function emitRuntimeGroupSwitchSessionEvent(input: Readonly<{
-  emitSessionEvent?: (sessionId: string, event: unknown) => void;
-  sessionId: string;
-  serviceId: string;
-  groupId: string;
-  fromProfileId: unknown;
-  reason: string;
-  result: ConnectedServiceAuthGroupSwitchResult;
-}>): void {
-  if (input.result.status !== 'switched' && input.result.status !== 'observed_generation') return;
-  const event = {
-    type: 'connected_service_auth_group_switch',
-    serviceId: input.serviceId,
-    groupId: input.groupId,
-    fromProfileId: normalizeNullableProfileId(input.fromProfileId),
-    toProfileId: input.result.activeProfileId,
-    reason: input.reason,
-    ...(input.result.mode ? { mode: input.result.mode } : {}),
-    fromGeneration: 0,
-    toGeneration: input.result.generation,
-    resultStatus: input.result.status,
-    success: true,
-    latencyMs: 0,
-  } satisfies ConnectedServiceAuthGroupSwitchEvent;
-  input.emitSessionEvent?.(input.sessionId, event);
 }
 
 function findTrackedSession(
@@ -200,16 +173,16 @@ async function maybeContinueAfterObservedRuntimeGeneration(input: Readonly<{
   });
 }
 
-async function maybeContinueAfterRuntimeCredentialRefresh(input: Readonly<{
+async function continueAfterRuntimeCredentialRefresh(input: Readonly<{
   tracked: TrackedSession | null;
   sessionId: string;
   serviceId: ConnectedServiceId;
   groupId: string;
   profileId: string;
   continueAfterRuntimeAuthSwitch?: RuntimeAuthSwitchContinuation | null;
-}>): Promise<boolean> {
-  if (!input.tracked) return false;
-  if (!input.continueAfterRuntimeAuthSwitch) return false;
+}>): Promise<void> {
+  if (!input.tracked) return;
+  if (!input.continueAfterRuntimeAuthSwitch) return;
   const normalizedBindings = {
     v: 1,
     bindingsByServiceId: {
@@ -236,13 +209,18 @@ async function maybeContinueAfterRuntimeCredentialRefresh(input: Readonly<{
     action: 'hot_applied',
     switchReason: 'automatic_runtime_failure',
   });
-  return true;
 }
 
 function isActiveProfileRefreshRuntimeFailure(
   classification: ConnectedServiceRuntimeFailureClassification,
 ): boolean {
   return classification.kind === 'auth_expired';
+}
+
+function requiresProfileReconnectWithoutGroupSwitch(
+  classification: ConnectedServiceRuntimeFailureClassification,
+): boolean {
+  return classification.kind === 'account_changed';
 }
 
 function hasPendingProviderProofForRuntimeAuthIdentity(input: Readonly<{
@@ -329,8 +307,12 @@ function shouldCoalescePendingProofTargetReplay(input: Readonly<{
 export async function handleConnectedServiceRuntimeAuthFailureForSession(input: Readonly<{
   getChildren: () => ReadonlyArray<TrackedSession>;
   resolveInactiveSession?(input: Readonly<{ sessionId: string }>): Promise<Readonly<{
+    agentId?: string | null;
     connectedServices: ConnectedServiceBindingsV1;
     connectedServiceMaterializationIdentityV1?: unknown;
+    vendorResumeId?: string | null;
+    cwd?: string | null;
+    candidatePersistedSessionFile?: string | null;
   }> | null>;
   switchCoordinator: SwitchCoordinatorLike | null;
   temporaryThrottleRecovery?: TemporaryThrottleRecoveryLike | null;
@@ -451,6 +433,15 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
     };
   }
 
+  if (requiresProfileReconnectWithoutGroupSwitch(classification)) {
+    return reconnectProfileAction({
+      serviceId: selection.serviceId,
+      profileId: observedProfileId,
+      groupId: activeGroupId,
+      reason: classification.kind,
+    });
+  }
+
   if (
     isActiveProfileRefreshRuntimeFailure(classification)
     && input.refreshConnectedServiceCredentialForRuntimeAuthFailure
@@ -474,6 +465,7 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
     const refresh = await input.refreshConnectedServiceCredentialForRuntimeAuthFailure({
       serviceId: selection.serviceId,
       profileId: activeProfileId,
+      sessionId: input.sessionId,
     });
     if (refresh.status !== 'refreshed') {
       return reconnectProfileAction({
@@ -483,7 +475,7 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
         reason: classification.kind,
       });
     }
-    const restartRequested = await maybeContinueAfterRuntimeCredentialRefresh({
+    await continueAfterRuntimeCredentialRefresh({
       tracked,
       sessionId: input.sessionId,
       serviceId: selection.serviceId,
@@ -497,7 +489,7 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
       profileId: activeProfileId,
       groupId: activeGroupId,
       refresh,
-      restartRequested,
+      restartRequested: false,
     };
   }
 
@@ -548,15 +540,6 @@ export async function handleConnectedServiceRuntimeAuthFailureForSession(input: 
     },
   });
   if (result.status === 'switch_attempted') {
-    emitRuntimeGroupSwitchSessionEvent({
-      emitSessionEvent: input.emitSessionEvent,
-      sessionId: input.sessionId,
-      serviceId: selection.serviceId,
-      groupId: activeGroupId,
-      fromProfileId: observedProfileId,
-      reason: classification.kind,
-      result: result.result,
-    });
     input.switchAttemptTracker?.recordSwitchResult({
       sessionId: input.sessionId,
       serviceId: selection.serviceId,

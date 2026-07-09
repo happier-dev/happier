@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
+import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION } from './voiceAgentRunMetadataV1';
@@ -157,6 +158,143 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     expect(getPermissionRequestStore()).toBe(requestStore);
   });
 
+  it('passes simulator preview routes into execution-run handlers when the session runtime owns them', async () => {
+    const simulatorPreview = {
+      getSnapshot: vi.fn(async () => ({
+        v: 1 as const,
+        machineId: 'machine_1',
+        generatedAt: 2_000,
+        refreshState: 'idle' as const,
+        resources: [],
+        diagnostics: [],
+      })),
+      dispatchAction: vi.fn(),
+    };
+
+    registerSessionClientRuntimeHandlers({
+      rpcHandlerManager: new RpcHandlerManager({
+        scopePrefix: 's1',
+        encryptionKey: new Uint8Array(32),
+        encryptionVariant: 'dataKey',
+        encryptionMode: 'plain',
+        logger: () => undefined,
+      }),
+      token: 'token-1',
+      metadataPath: '/tmp/project',
+      metadata: createTestMetadata({ path: '/tmp/project' }),
+      sessionId: 's1',
+      getSessionMetadata: () => createTestMetadata({ path: '/tmp/project' }),
+      enqueueSessionUserMessage: vi.fn(),
+      sendUserTextMessage: vi.fn(),
+      sendAgentMessage: vi.fn(),
+      sendUserTextMessageCommitted: vi.fn(async () => {}),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+      sendAgentMessageEphemeral: vi.fn(),
+      getTranscriptQueryContext: () => ({
+        encryptionKey: new Uint8Array(32),
+        encryptionVariant: 'dataKey',
+      }),
+      getSimulatorPreviewRoutes: () => simulatorPreview,
+      persistVoiceAgentRunMetadataFromPublicRun: vi.fn(),
+      socketEmitExecutionRunUpdated: vi.fn(),
+    });
+
+    expect(sessionSocketStubState.executionRunHandlerContext?.simulatorPreview).toBe(simulatorPreview);
+  });
+
+  it('passes local-service runtime-action routes into execution-run handlers when the session runtime owns them', async () => {
+    const localServices = {
+      inventoryRoutes: {
+        getSnapshot: vi.fn(),
+        refreshSnapshot: vi.fn(),
+      },
+      launcherRoutes: {
+        getSnapshot: vi.fn(),
+      },
+      previewRoutes: {
+        getSnapshot: vi.fn(),
+      },
+      actionRoutes: {
+        execute: vi.fn(),
+      },
+    };
+
+    registerSessionClientRuntimeHandlers({
+      rpcHandlerManager: new RpcHandlerManager({
+        scopePrefix: 's1',
+        encryptionKey: new Uint8Array(32),
+        encryptionVariant: 'dataKey',
+        encryptionMode: 'plain',
+        logger: () => undefined,
+      }),
+      token: 'token-1',
+      metadataPath: '/tmp/project',
+      metadata: createTestMetadata({ path: '/tmp/project' }),
+      sessionId: 's1',
+      getSessionMetadata: () => createTestMetadata({ path: '/tmp/project' }),
+      enqueueSessionUserMessage: vi.fn(),
+      sendUserTextMessage: vi.fn(),
+      sendAgentMessage: vi.fn(),
+      sendUserTextMessageCommitted: vi.fn(async () => {}),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+      sendAgentMessageEphemeral: vi.fn(),
+      getTranscriptQueryContext: () => ({
+        encryptionKey: new Uint8Array(32),
+        encryptionVariant: 'dataKey',
+      }),
+      getLocalServicesRuntimeActionRoutes: () => localServices,
+      persistVoiceAgentRunMetadataFromPublicRun: vi.fn(),
+      socketEmitExecutionRunUpdated: vi.fn(),
+    });
+
+    expect(sessionSocketStubState.executionRunHandlerContext?.localServices).toBe(localServices);
+  });
+
+  it('passes browser recording routes and composer attach callback into execution-run handlers', async () => {
+    const browserRecording = {
+      startRecording: vi.fn(),
+      stopRecording: vi.fn(),
+      cancelRecording: vi.fn(),
+      getRecordingStatus: vi.fn(),
+      listRecordingsForView: vi.fn(),
+      cleanupExpiredRecordings: vi.fn(),
+    };
+    const attachBrowserRecordingToComposer = vi.fn();
+    const params = {
+      rpcHandlerManager: new RpcHandlerManager({
+        scopePrefix: 's1',
+        encryptionKey: new Uint8Array(32),
+        encryptionVariant: 'dataKey',
+        encryptionMode: 'plain' as const,
+        logger: () => undefined,
+      }),
+      token: 'token-1',
+      metadataPath: '/tmp/project',
+      metadata: createTestMetadata({ path: '/tmp/project' }),
+      sessionId: 's1',
+      getSessionMetadata: () => createTestMetadata({ path: '/tmp/project' }),
+      enqueueSessionUserMessage: vi.fn(),
+      sendUserTextMessage: vi.fn(),
+      sendAgentMessage: vi.fn(),
+      sendUserTextMessageCommitted: vi.fn(async () => {}),
+      sendAgentMessageCommitted: vi.fn(async () => {}),
+      sendAgentMessageEphemeral: vi.fn(),
+      getTranscriptQueryContext: () => ({
+        encryptionKey: new Uint8Array(32),
+        encryptionVariant: 'dataKey' as const,
+      }),
+      getBrowserRecordingRoutes: () => browserRecording,
+      attachBrowserRecordingToComposer,
+      persistVoiceAgentRunMetadataFromPublicRun: vi.fn(),
+      socketEmitExecutionRunUpdated: vi.fn(),
+    };
+
+    registerSessionClientRuntimeHandlers(params);
+
+    expect(sessionSocketStubState.executionRunHandlerContext?.browserRecording).toBe(browserRecording);
+    expect(sessionSocketStubState.executionRunHandlerContext?.attachBrowserRecordingToComposer).toBe(attachBrowserRecordingToComposer);
+  });
+
   it('derives the execution-run parent provider from runtimeDescriptorV1 when flavor is absent', async () => {
     const metadata = createTestMetadata({
       path: '/tmp/project',
@@ -175,6 +313,25 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     );
 
     expect(sessionSocketStubState.executionRunHandlerContext?.parentProvider).toBe('codex');
+
+    await client.close();
+  });
+
+  it('derives the execution-run parent provider from configured ACP backend metadata', async () => {
+    const metadata = createTestMetadata({
+      path: '/tmp/project',
+      flavor: 'acp:acme.plugin-backed-acp.backend',
+      ...buildConfiguredAcpBackendSessionMetadata({
+        backendId: 'acme.plugin-backed-acp.backend',
+        title: 'Plugin backed ACP',
+      }),
+    });
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's1', metadata }),
+    );
+
+    expect(sessionSocketStubState.executionRunHandlerContext?.parentProvider).toBe('acme.plugin-backed-acp.backend');
 
     await client.close();
   });
@@ -278,6 +435,56 @@ describe('ApiSessionClient execution-run backend wiring', () => {
         encryptionKey: expect.any(Uint8Array),
       }),
     }));
+
+    await client.close();
+  });
+
+  it('passes constructor-provided simulator preview routes into the execution-run registrar', async () => {
+    const simulatorPreview = {
+      getSnapshot: vi.fn(async () => ({
+        v: 1 as const,
+        machineId: 'machine_1',
+        generatedAt: 2_000,
+        refreshState: 'idle' as const,
+        resources: [],
+        diagnostics: [],
+      })),
+      dispatchAction: vi.fn(),
+    };
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's1', metadata: createTestMetadata({ path: '/tmp/project' }) }),
+      { getSimulatorPreviewRoutes: () => simulatorPreview },
+    );
+
+    expect(sessionSocketStubState.executionRunHandlerContext?.simulatorPreview).toBe(simulatorPreview);
+
+    await client.close();
+  });
+
+  it('passes constructor-provided local-service runtime-action routes into the execution-run registrar', async () => {
+    const localServices = {
+      inventoryRoutes: {
+        getSnapshot: vi.fn(),
+        refreshSnapshot: vi.fn(),
+      },
+      launcherRoutes: {
+        getSnapshot: vi.fn(),
+      },
+      previewRoutes: {
+        getSnapshot: vi.fn(),
+      },
+      actionRoutes: {
+        execute: vi.fn(),
+      },
+    };
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's1', metadata: createTestMetadata({ path: '/tmp/project' }) }),
+      { getLocalServicesRuntimeActionRoutes: () => localServices },
+    );
+
+    expect(sessionSocketStubState.executionRunHandlerContext?.localServices).toBe(localServices);
 
     await client.close();
   });

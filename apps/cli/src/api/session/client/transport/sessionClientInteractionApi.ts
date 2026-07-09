@@ -15,6 +15,8 @@ import {
     discardPendingQueueV2Messages,
     listPendingQueueV2LocalIdsFromServer,
     materializeNextPendingQueueV2Message,
+    type PendingMaterializationDeliveryState,
+    type PendingMaterializationDeliveryTiming,
     type PendingQueueMaterializedMessage,
     type PendingQueueMaterializeNextResult,
 } from '../../pendingQueueV2Transport';
@@ -28,11 +30,15 @@ import type { KnownPendingQueueState, PendingQueueState } from '../../pendingQue
 import type { MaterializeNextPendingResult } from '../../sessionClientPort';
 import { serializeAxiosErrorForLog } from '../../../client/serializeAxiosErrorForLog';
 import type { SessionSnapshotRefreshReason } from '../../sessionSnapshotRefreshReason';
+import type { PendingMaterializationActiveTurnPolicy } from '../../pendingMaterializationActiveTurnPolicy';
+import type { SessionCatchUpRequest } from '../../sessionChangesSyncOnConnect';
 
 function arePendingQueueStatesEqual(left: PendingQueueState, right: PendingQueueState): boolean {
     if (left.known !== right.known) return false;
     if (!left.known || !right.known) return true;
-    return left.pendingCount === right.pendingCount && left.pendingVersion === right.pendingVersion;
+    return left.pendingCount === right.pendingCount
+        && left.pendingBlockedCount === right.pendingBlockedCount
+        && left.pendingVersion === right.pendingVersion;
 }
 
 function createMaterializedPendingQueueUpdate(params: {
@@ -40,18 +46,21 @@ function createMaterializedPendingQueueUpdate(params: {
     message: PendingQueueMaterializedMessage | null | undefined;
 }): Update | null {
     const { message, sessionId } = params;
-    if (!message?.id || !message.content) return null;
+    if (!message?.content) return null;
     const createdAt = message.createdAt ?? Date.now();
     const updatedAt = message.updatedAt ?? createdAt;
+    const syntheticMessageId = message.id
+        ?? (message.localId ? `pending-claim:${message.localId}:${updatedAt}` : null);
+    if (!syntheticMessageId) return null;
     return {
-        id: `pending-materialized-${message.id}`,
+        id: `pending-materialized-${syntheticMessageId}`,
         seq: 0,
         createdAt,
         body: {
             t: 'new-message',
             sid: sessionId,
             message: {
-                id: message.id,
+                id: syntheticMessageId,
                 seq: message.seq,
                 content: message.content,
                 localId: message.localId,
@@ -63,8 +72,15 @@ function createMaterializedPendingQueueUpdate(params: {
     } as Update;
 }
 
+function readPlannedServerRestartRetryAfterMs(payload: unknown): number | undefined {
+    if (!payload || typeof payload !== 'object') return undefined;
+    const raw = (payload as { retryAfterMs?: unknown }).retryAfterMs;
+    if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return undefined;
+    return Math.trunc(raw);
+}
+
 export type SessionClientInteractionApi = Readonly<{
-    onUserMessage: (callback: (data: UserMessage) => void) => void;
+    onUserMessage: (callback: (data: UserMessage) => boolean | void) => void;
     waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
     ensureMetadataSnapshot: (opts?: { timeoutMs?: number; abortSignal?: AbortSignal }) => Promise<Metadata | null>;
     refreshSessionSnapshotFromServerBestEffort: (opts?: { reason?: SessionSnapshotRefreshReason }) => Promise<void>;
@@ -77,6 +93,8 @@ export type SessionClientInteractionApi = Readonly<{
     discardCommittedMessageLocalIds: (opts: { localIds: string[]; reason: 'switch_to_local' | 'manual' }) => Promise<number>;
     materializeNextPendingMessageSafely: (opts?: {
         reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
+        activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
+        deliveryTiming?: PendingMaterializationDeliveryTiming;
     }) => Promise<MaterializeNextPendingResult>;
     popPendingMessage: () => Promise<boolean>;
 }>;
@@ -100,16 +118,17 @@ export function createSessionClientInteractionApi(
         getAgentStateVersion: () => number;
         getPendingWakeSeq: () => number;
         getPendingMessages: () => UserMessage[];
-        getPendingMessageCallback: () => ((message: UserMessage) => void) | null;
-        setPendingMessageCallback: (callback: ((message: UserMessage) => void) | null) => void;
+        getPendingMessageCallback: () => ((message: UserMessage) => boolean | void) | null;
+        setPendingMessageCallback: (callback: ((message: UserMessage) => boolean | void) | null) => void;
         getUserMessageCallbackAttachedAtMs: () => number | null;
         setUserMessageCallbackAttachedAtMs: (value: number | null) => void;
         clearUserSocketDisconnectTimer: () => void;
         kickUserSocketConnect: () => void;
-        catchUpSessionMessages: (afterSeq: number, opts?: { afterSeqIsExplicit?: boolean }) => Promise<void>;
+        catchUpSessionMessages: (request: SessionCatchUpRequest) => Promise<void>;
         scheduleNextStartupMessageCatchUpRetry: () => void;
         getLastObservedMessageSeq: () => number;
         getStartupMessageCatchUpExplicitAfterSeq: () => number | null;
+        getStartupMessageCatchUpInitialAuthorization?: () => SessionCatchUpRequest['authorization'];
         getStartedByDaemonProcess: () => boolean;
         getMetadataStartedBy: () => string | null;
         getMetadataStartedFromDaemon: () => boolean | null;
@@ -121,22 +140,47 @@ export function createSessionClientInteractionApi(
         setDaemonInitialPrompt: (value: string | null) => void;
         getDaemonInitialPromptSeeded: () => boolean;
         setDaemonInitialPromptSeeded: (value: boolean) => void;
-        enqueueSessionUserMessage: (params: Readonly<{ text: string; localId?: string; meta?: Record<string, unknown> }>) => void;
+        enqueueSessionUserMessage: (params: Readonly<{ text: string; localId?: string; meta?: Record<string, unknown> }>) => Promise<void> | void;
         syncSessionSnapshotFromServer: (opts: { reason: SessionSnapshotRefreshReason }) => Promise<void>;
         reconcileTurnStatusBeforePendingMaterialization: () => Promise<boolean>;
+        logPendingMaterializationSkip?: (stage: string) => void;
         maybeScheduleUserSocketDisconnect: () => void;
-        handleSessionScopedUpdate: (data: Update) => void;
+        handleSessionScopedUpdate: (data: Update, opts?: {
+            pendingMaterializationActiveTurnPolicy?: PendingMaterializationActiveTurnPolicy;
+        }) => void;
         clearStartupMessageCatchUpRetryTimer: () => void;
         stopStaleSafety: () => void;
         clearCommittedLocalIdCleanupTimers: () => void;
-        clearAgentQueueEchoSuppressedLocalIdCleanupTimers: () => void;
         clearPendingMaterializedState: () => void;
+        blockProviderDeliveriesBeforeClose?: () => Promise<void>;
         getPendingQueueMaterializedLocalIdsSize: () => number;
-        shouldAttemptPendingMaterialization: () => boolean;
+        markPendingQueueMaterializedLocalId: (localId: string) => void;
+        shouldAttemptPendingMaterialization: (opts?: {
+            activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
+        }) => boolean;
+        shouldDeferPendingQueueDrainForRuntimeActivity?: (opts: Readonly<{
+            deliveryTiming?: PendingMaterializationDeliveryTiming;
+        }>) => boolean;
         getPendingQueueState: () => PendingQueueState;
         applyPendingQueueState: (state: KnownPendingQueueState) => boolean;
         observePendingMaterializeResult: (params: Readonly<{ didMaterialize: boolean; pendingQueueState?: KnownPendingQueueState | null }>) => boolean;
+        shouldRequestProviderDeliveryState?: () => boolean;
+        getAcceptedUserMessageDeliverySeqForPendingReconciliation?: () => number | null;
+        reconcileAcceptedPendingDeliveriesThroughSeq?: (maxAcceptedSeq: number) => Promise<Readonly<{ pendingQueueState?: KnownPendingQueueState | null; resolvedLocalIds?: readonly string[] }>>;
+        retryAcceptedCanonicalPendingDeliveryResolutions?: () => Promise<void>;
+        getUnresolvedCanonicalPendingDeliveryCount?: () => number;
+        recoverInheritedProviderDeliveryClaimsBeforeMaterialization?: () => Promise<void>;
+        blockMalformedPendingDelivery?: (params: Readonly<{
+            localId: string;
+            reason: 'unknown';
+        }>) => Promise<Readonly<{ pendingQueueState?: KnownPendingQueueState | null }>>;
+        observeMaterializedPendingDeliveryState?: (params: Readonly<{
+            localId: string;
+            deliveryState: PendingMaterializationDeliveryState | null;
+            malformed?: boolean;
+        }>) => void;
         onPendingQueueStateChanged: () => void;
+        onPendingMaterializeFailure?: () => void;
         scheduleMaterializationRecovery: (localId: string) => void;
         getMetadataLock: () => { inLock: <T>(fn: () => Promise<T>) => Promise<T> };
         getSessionEncryptionMode: () => 'e2ee' | 'plain';
@@ -147,7 +191,48 @@ export function createSessionClientInteractionApi(
     let pendingQueueStateReconcileInFlight: Promise<boolean> | null = null;
     let lastPendingQueueStateReconcileAt = 0;
 
-    const runMaterializeNextPendingMessageInner = async (): Promise<{
+    const applyDeliveryActionPendingQueueState = (state: KnownPendingQueueState | null | undefined): void => {
+        if (!state) return;
+        const changed = deps.applyPendingQueueState(state);
+        if (changed) {
+            deps.onPendingQueueStateChanged();
+        }
+    };
+
+    const reconcileAcceptedDeliveriesBeforeMaterialization = async (): Promise<void> => {
+        const maxAcceptedSeq = deps.getAcceptedUserMessageDeliverySeqForPendingReconciliation?.() ?? null;
+        if (maxAcceptedSeq === null || !Number.isInteger(maxAcceptedSeq) || maxAcceptedSeq <= 0) {
+            return;
+        }
+        const reconcile = deps.reconcileAcceptedPendingDeliveriesThroughSeq;
+        if (!reconcile) return;
+        try {
+            const result = await reconcile(maxAcceptedSeq);
+            applyDeliveryActionPendingQueueState(result.pendingQueueState ?? null);
+        } catch (error) {
+            logger.debug('[pendingQueue] accepted-through-seq reconciliation failed', {
+                sessionId: deps.sessionId,
+                maxAcceptedSeq,
+                error: serializeAxiosErrorForLog(error),
+            });
+        }
+    };
+
+    const hasUnresolvedCanonicalPendingDelivery = (stage: string): boolean => {
+        const unresolvedCount = deps.getUnresolvedCanonicalPendingDeliveryCount?.() ?? 0;
+        if (unresolvedCount <= 0) return false;
+        logger.debug('[pendingQueue] materialization skipped while canonical pending delivery is unresolved', {
+            sessionId: deps.sessionId,
+            stage,
+            unresolvedCanonicalPendingDeliveryCount: unresolvedCount,
+        });
+        return true;
+    };
+
+    const runMaterializeNextPendingMessageInner = async (opts: {
+        activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
+        deliveryTiming?: PendingMaterializationDeliveryTiming;
+    } = {}): Promise<{
         didMaterialize: boolean;
         result: MaterializeNextPendingResult;
     }> => {
@@ -168,6 +253,8 @@ export function createSessionClientInteractionApi(
                         sessionId: deps.sessionId,
                         socket: deps.getSocket(),
                         knownPendingVersion: pendingQueueState.known ? pendingQueueState.pendingVersion : undefined,
+                        deliveryStateOptIn: deps.shouldRequestProviderDeliveryState?.() === true,
+                        deliveryTiming: opts.deliveryTiming,
                     });
                 },
             });
@@ -177,8 +264,9 @@ export function createSessionClientInteractionApi(
             }
             logger.debug('[pendingQueue] materialize request failed', {
                 sessionId: deps.sessionId,
-                errorName: error instanceof Error ? error.name : typeof error,
+                error: serializeAxiosErrorForLog(error),
             });
+            deps.onPendingMaterializeFailure?.();
             return { didMaterialize: false, result: { type: 'no_pending' } };
         }
         const pendingStateChanged = deps.observePendingMaterializeResult({
@@ -193,27 +281,108 @@ export function createSessionClientInteractionApi(
             logger.debug('[pendingQueue] materialize result', {
                 sessionId: deps.sessionId,
                 didMaterialize: false,
+                deliveryStateMode: materializeResult.deliveryState?.mode ?? null,
                 pendingCount: state.known ? state.pendingCount : undefined,
                 pendingVersion: state.known ? state.pendingVersion : undefined,
             });
+            if (materializeResult.deliveryState?.mode === 'awaiting_runtime_idle') {
+                return {
+                    didMaterialize: false,
+                    result: { type: 'deferred', reason: 'runtime_activity_active' },
+                };
+            }
             return { didMaterialize: false, result: { type: 'no_pending' } };
         }
+        if (materializeResult.message?.deliveryStateMalformed) {
+            const localId = materializeResult.localId ?? materializeResult.message.localId ?? null;
+            logger.debug('[pendingQueue] materialize result ignored malformed pending delivery state', {
+                sessionId: deps.sessionId,
+                localId,
+                messageSeq: materializeResult.message.seq,
+            });
+            if (localId) {
+                try {
+                    const result = await deps.blockMalformedPendingDelivery?.({
+                        localId,
+                        reason: 'unknown',
+                    });
+                    applyDeliveryActionPendingQueueState(result?.pendingQueueState ?? null);
+                } catch (error) {
+                    logger.debug('[pendingQueue] failed to block malformed provider delivery state', {
+                        sessionId: deps.sessionId,
+                        localId,
+                        error: serializeAxiosErrorForLog(error),
+                    });
+                }
+            }
+            return { didMaterialize: false, result: { type: 'no_pending' } };
+        }
+        const materializedLocalId = materializeResult.message?.localId ?? materializeResult.localId ?? null;
+        const materializedMessageWithLocalId =
+            materializeResult.message && !materializeResult.message.localId && materializedLocalId
+                ? { ...materializeResult.message, localId: materializedLocalId }
+                : materializeResult.message;
+        const materializedProviderClaimState =
+            materializeResult.didWrite === false
+            && materializedMessageWithLocalId
+            && materializedMessageWithLocalId.deliveryStateMalformed !== true
+            && typeof materializedMessageWithLocalId.localId === 'string'
+            && materializedMessageWithLocalId.localId.length > 0
+            && materializedMessageWithLocalId.seq === null
+                ? { mode: 'provider' as const, unresolved: true as const }
+                : null;
+        const explicitUnresolvedProviderDeliveryState =
+            materializedMessageWithLocalId?.deliveryState?.unresolved === true
+                ? materializedMessageWithLocalId.deliveryState
+                : null;
+        const inferredProviderDeliveryState =
+            materializedProviderClaimState
+            && !explicitUnresolvedProviderDeliveryState
+                ? materializedProviderClaimState
+                : null;
+        const materializedMessage: PendingQueueMaterializedMessage | null | undefined = inferredProviderDeliveryState && materializedMessageWithLocalId
+            ? { ...materializedMessageWithLocalId, deliveryState: inferredProviderDeliveryState }
+            : materializedMessageWithLocalId;
         const materializedUpdate = createMaterializedPendingQueueUpdate({
             sessionId: deps.sessionId,
-            message: materializeResult.message,
+            message: materializedMessage,
         });
+        if (
+            materializedMessage
+            && typeof materializedMessage.localId === 'string'
+            && materializedMessage.localId.length > 0
+            && materializedMessage.deliveryState !== undefined
+        ) {
+            deps.observeMaterializedPendingDeliveryState?.({
+                localId: materializedMessage.localId,
+                deliveryState: materializedMessage.deliveryState ?? null,
+            });
+        }
+        if (materializedLocalId) {
+            deps.markPendingQueueMaterializedLocalId(materializedLocalId);
+        }
         if (materializedUpdate) {
-            deps.handleSessionScopedUpdate(materializedUpdate);
+            deps.handleSessionScopedUpdate(materializedUpdate, {
+                pendingMaterializationActiveTurnPolicy: opts.activeTurnDeliveryPolicy,
+            });
         }
         const state = deps.getPendingQueueState();
         logger.debug('[pendingQueue] materialize result', {
             sessionId: deps.sessionId,
             didMaterialize: true,
-            localId: materializeResult.localId ?? materializeResult.message?.localId ?? null,
+            localId: materializedLocalId,
             didWrite: materializeResult.didWrite,
-            messageSeq: materializeResult.message?.seq ?? null,
-            messageRole: materializeResult.message?.messageRole ?? null,
+            messageSeq: materializedMessage?.seq ?? null,
+            messageSeqKind: materializedMessage
+                ? materializedMessage.seq === null
+                    ? 'null'
+                    : typeof materializedMessage.seq
+                : 'missing',
+            messageRole: materializedMessage?.messageRole ?? null,
             deliveredMaterializedMessage: materializedUpdate !== null,
+            providerDeliveryStateUnresolved: materializedMessageWithLocalId?.deliveryState?.unresolved ?? null,
+            providerDeliveryStateMalformed: materializedMessageWithLocalId?.deliveryStateMalformed === true,
+            providerDeliveryStateInferred: inferredProviderDeliveryState !== null,
             pendingCount: state.known ? state.pendingCount : undefined,
             pendingVersion: state.known ? state.pendingVersion : undefined,
         });
@@ -221,14 +390,19 @@ export function createSessionClientInteractionApi(
             deps.scheduleMaterializationRecovery(materializeResult.localId);
         }
 
-        const message = materializeResult.message;
+        const message = materializedMessage;
         if (
             message
             && typeof message.localId === 'string'
             && message.localId.length > 0
-            && typeof message.seq === 'number'
-            && Number.isSafeInteger(message.seq)
-            && message.seq >= 0
+            && (
+                message.seq === null
+                || (
+                    typeof message.seq === 'number'
+                    && Number.isSafeInteger(message.seq)
+                    && message.seq >= 0
+                )
+            )
         ) {
             return {
                 didMaterialize: true,
@@ -239,6 +413,7 @@ export function createSessionClientInteractionApi(
                     content: message.content ?? null,
                     ...(typeof message.createdAt === 'number' ? { createdAt: message.createdAt } : {}),
                     ...(typeof message.updatedAt === 'number' ? { updatedAt: message.updatedAt } : {}),
+                    ...(message.deliveryState ? { deliveryState: message.deliveryState } : {}),
                 },
             };
         }
@@ -266,16 +441,36 @@ export function createSessionClientInteractionApi(
                     ? explicitStartupAfterSeq
                     : deps.getLastObservedMessageSeq();
             const startupCatchUpInitialAfterSeqIsExplicit = explicitStartupAfterSeq !== null;
+            const startupCatchUpInitialAuthorization = deps.getStartupMessageCatchUpInitialAuthorization?.()
+                ?? (startupCatchUpInitialAfterSeqIsExplicit ? 'explicit_cursor' : 'startup_recovery');
             const pendingMessages = deps.getPendingMessages();
             while (pendingMessages.length > 0) {
                 callback(pendingMessages.shift()!);
             }
-            if (!deps.getStartupMessageCatchUpStarted()) {
+            const shouldStartStartupCatchUp = !deps.getStartupMessageCatchUpStarted();
+            if (shouldStartStartupCatchUp) {
                 deps.setStartupMessageCatchUpStarted(true);
                 deps.setStartupMessageCatchUpRetryIndex(0);
                 deps.setStartupMessageCatchUpInitialAfterSeq(startupCatchUpInitialAfterSeq);
-                void deps.catchUpSessionMessages(startupCatchUpInitialAfterSeq, {
-                    afterSeqIsExplicit: startupCatchUpInitialAfterSeqIsExplicit,
+            }
+            if (!deps.getDaemonInitialPromptSeeded() && typeof deps.getDaemonInitialPrompt() === 'string') {
+                deps.setDaemonInitialPromptSeeded(true);
+                const initialPrompt = deps.getDaemonInitialPrompt();
+                const initialPromptLocalId = buildDaemonInitialPromptLocalId(deps.sessionId);
+                deps.setDaemonInitialPrompt(null);
+                deps.enqueueSessionUserMessage({
+                    text: initialPrompt!,
+                    ...(initialPromptLocalId ? { localId: initialPromptLocalId } : {}),
+                    meta: {
+                        source: 'daemon-initial-prompt',
+                        sentFrom: 'cli',
+                    },
+                });
+            }
+            if (shouldStartStartupCatchUp) {
+                void deps.catchUpSessionMessages({
+                    afterSeq: startupCatchUpInitialAfterSeq,
+                    authorization: startupCatchUpInitialAuthorization,
                 })
                     .catch((error) => {
                         if (isAuthenticationError(error)) {
@@ -294,20 +489,6 @@ export function createSessionClientInteractionApi(
                             deps.scheduleNextStartupMessageCatchUpRetry();
                         }
                     });
-            }
-            if (!deps.getDaemonInitialPromptSeeded() && typeof deps.getDaemonInitialPrompt() === 'string') {
-                deps.setDaemonInitialPromptSeeded(true);
-                const initialPrompt = deps.getDaemonInitialPrompt();
-                const initialPromptLocalId = buildDaemonInitialPromptLocalId(deps.sessionId);
-                deps.setDaemonInitialPrompt(null);
-                deps.enqueueSessionUserMessage({
-                    text: initialPrompt!,
-                    ...(initialPromptLocalId ? { localId: initialPromptLocalId } : {}),
-                    meta: {
-                        source: 'daemon-initial-prompt',
-                        sentFrom: 'cli',
-                    },
-                });
             }
         },
 
@@ -329,6 +510,17 @@ export function createSessionClientInteractionApi(
                     cleanup();
                     resolve(false);
                 };
+                const onConnect = () => {
+                    void deps.syncSessionSnapshotFromServer({ reason: 'waitForMetadataUpdate' })
+                        .catch((error) => {
+                            logger.debug('[API] Session snapshot sync on user-socket connect failed (non-fatal)', {
+                                error: serializeAxiosErrorForLog(error),
+                            });
+                        })
+                        .finally(() => {
+                            onUpdate();
+                        });
+                };
                 const onDisconnect = () => {
                     cleanup();
                     resolve(false);
@@ -338,11 +530,13 @@ export function createSessionClientInteractionApi(
                     cleanedUp = true;
                     deps.offMetadataUpdated(onUpdate);
                     abortSignal?.removeEventListener('abort', onAbort);
+                    deps.getUserSocket().off('connect', onConnect);
                     deps.getUserSocket().off('disconnect', onDisconnect);
                     deps.maybeScheduleUserSocketDisconnect();
                 };
 
                 deps.onMetadataUpdated(onUpdate);
+                deps.getUserSocket().on('connect', onConnect);
                 deps.getUserSocket().on('disconnect', onDisconnect);
                 abortSignal?.addEventListener('abort', onAbort, { once: true });
                 deps.kickUserSocketConnect();
@@ -427,13 +621,20 @@ export function createSessionClientInteractionApi(
 
         async close() {
             logger.debug('[API] socket.close() called');
-            deps.setClosed(true);
             deps.clearStartupMessageCatchUpRetryTimer();
             deps.stopStaleSafety();
             deps.clearUserSocketDisconnectTimer();
+            try {
+                await deps.blockProviderDeliveriesBeforeClose?.();
+            } catch (error) {
+                logger.debug('[pendingQueue] provider delivery close cleanup failed', {
+                    sessionId: deps.sessionId,
+                    error: serializeAxiosErrorForLog(error),
+                });
+            }
+            deps.setClosed(true);
             deps.clearPendingMaterializedState();
             deps.clearCommittedLocalIdCleanupTimers();
-            deps.clearAgentQueueEchoSuppressedLocalIdCleanupTimers();
             try {
                 deps.getUserSocket().close();
             } catch {
@@ -443,6 +644,15 @@ export function createSessionClientInteractionApi(
         },
 
         installSessionSocketEventHandlers(socket) {
+            socket.on('server:restarting', (payload: unknown) => {
+                deps.getSessionConnectionSupervisor()?.reportProbeResult?.({
+                    status: 'retry_later',
+                    retryAfterMs: readPlannedServerRestartRetryAfterMs(payload),
+                    reason: 'server_restarting',
+                    errorMessage: 'Server restart in progress',
+                });
+            });
+
             socket.on(SOCKET_RPC_EVENTS.REQUEST, async (data: { method: string; params: unknown }, callback: (response: unknown) => void) => {
                 callback(await deps.getRpcHandlerManager().handleRequest(data));
             });
@@ -639,15 +849,21 @@ export function createSessionClientInteractionApi(
 
         async materializeNextPendingMessageSafely(opts: {
             reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
+            activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
+            deliveryTiming?: PendingMaterializationDeliveryTiming;
         } = {}) {
             const supervisorState = deps.getSessionConnectionSupervisor()?.getState();
             if (supervisorState?.phase === 'auth_failed') {
                 return { type: 'deferred', reason: 'supervisor_auth_failed' };
             }
             if (supervisorState && supervisorState.phase !== 'online') {
-                return { type: 'deferred', reason: 'supervisor_offline' };
+                logger.debug('[pendingQueue] materializing with degraded session supervisor', {
+                    sessionId: deps.sessionId,
+                    phase: supervisorState.phase,
+                });
             }
 
+            await reconcileAcceptedDeliveriesBeforeMaterialization();
             const policy = opts.reconcileWhenEmpty ?? 'force';
             const pendingQueueState = deps.getPendingQueueState();
             if (!pendingQueueState.known) {
@@ -659,30 +875,64 @@ export function createSessionClientInteractionApi(
                     await this.reconcilePendingQueueState({ force: false });
                 }
             }
-            if (!deps.shouldAttemptPendingMaterialization()) {
+            await deps.recoverInheritedProviderDeliveryClaimsBeforeMaterialization?.();
+            await deps.retryAcceptedCanonicalPendingDeliveryResolutions?.();
+            if (hasUnresolvedCanonicalPendingDelivery('materialize_safely_provider_delivery')) {
                 return { type: 'no_pending' };
             }
-            const refreshedTurnStatus = await deps.reconcileTurnStatusBeforePendingMaterialization();
-            if (!refreshedTurnStatus) {
-                return { type: 'no_pending' };
-            }
-            if (!deps.shouldAttemptPendingMaterialization()) {
-                return { type: 'no_pending' };
+            const attemptOpts = { activeTurnDeliveryPolicy: opts.activeTurnDeliveryPolicy };
+            const materializeOpts = {
+                activeTurnDeliveryPolicy: opts.activeTurnDeliveryPolicy,
+                deliveryTiming: opts.deliveryTiming,
+            };
+            if (!deps.shouldAttemptPendingMaterialization(attemptOpts)) {
+                // The gate may be blocked by a stale turn-status snapshot: reconcile (which can
+                // self-heal a stale busy gate) before concluding there is nothing to drain.
+                const healedTurnStatus = await deps.reconcileTurnStatusBeforePendingMaterialization();
+                if (!healedTurnStatus || !deps.shouldAttemptPendingMaterialization(attemptOpts)) {
+                    deps.logPendingMaterializationSkip?.('materialize_safely_gate');
+                    return { type: 'no_pending' };
+                }
+            } else {
+                const refreshedTurnStatus = await deps.reconcileTurnStatusBeforePendingMaterialization();
+                if (!refreshedTurnStatus) {
+                    deps.logPendingMaterializationSkip?.('materialize_safely_turn_status_refresh');
+                    return { type: 'no_pending' };
+                }
+                if (!deps.shouldAttemptPendingMaterialization(attemptOpts)) {
+                    deps.logPendingMaterializationSkip?.('materialize_safely_post_refresh_gate');
+                    return { type: 'no_pending' };
+                }
             }
 
-            const inner = await runMaterializeNextPendingMessageInner();
+            if (deps.shouldDeferPendingQueueDrainForRuntimeActivity?.({ deliveryTiming: opts.deliveryTiming }) === true) {
+                deps.logPendingMaterializationSkip?.('runtime_activity_active');
+                return { type: 'deferred', reason: 'runtime_activity_active' };
+            }
+
+            const inner = await runMaterializeNextPendingMessageInner(materializeOpts);
             return inner.result;
         },
 
         async popPendingMessage() {
+            await reconcileAcceptedDeliveriesBeforeMaterialization();
+            await deps.retryAcceptedCanonicalPendingDeliveryResolutions?.();
+            if (hasUnresolvedCanonicalPendingDelivery('pop_pending_provider_delivery')) {
+                return false;
+            }
             if (!deps.shouldAttemptPendingMaterialization()) {
                 await this.reconcilePendingQueueState({ force: !deps.getPendingQueueState().known });
             }
             const refreshedTurnStatus = await deps.reconcileTurnStatusBeforePendingMaterialization();
             if (!refreshedTurnStatus) {
+                deps.logPendingMaterializationSkip?.('pop_pending_turn_status_refresh');
+                return false;
+            }
+            if (hasUnresolvedCanonicalPendingDelivery('pop_pending_post_refresh_provider_delivery')) {
                 return false;
             }
             if (!deps.shouldAttemptPendingMaterialization()) {
+                deps.logPendingMaterializationSkip?.('pop_pending_gate');
                 return false;
             }
             const inner = await runMaterializeNextPendingMessageInner();

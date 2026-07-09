@@ -74,6 +74,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       credentials,
       api: api as unknown as ApiClient,
       input: {
+        mode: 'apply',
         tracked,
         sessionId: 'sess_1',
         agentId: 'claude',
@@ -155,6 +156,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       credentials,
       api: api as unknown as ApiClient,
       input: {
+        mode: 'apply',
         tracked,
         sessionId: 'sess_1',
         agentId: 'claude',
@@ -257,6 +259,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       credentials,
       api: api as unknown as ApiClient,
       input: {
+        mode: 'apply',
         tracked,
         sessionId: 'sess_1',
         agentId: 'claude',
@@ -349,6 +352,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       credentials,
       api: api as unknown as ApiClient,
       input: {
+        mode: 'apply',
         tracked,
         sessionId: 'sess_1',
         agentId: 'claude',
@@ -459,6 +463,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       api: api as unknown as ApiClient,
       activeServerDir,
       input: {
+        mode: 'apply',
         tracked,
         sessionId: 'sess_1',
         agentId: 'claude',

@@ -2,15 +2,26 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+import { registerSessionControlHandlers } from '@/rpc/handlers/sessionControls';
 import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
 import {
   type ApiSessionSocketStub,
   createApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
+import { ApiSessionClient } from './sessionClient';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
-const createdClients: Array<{ close: () => Promise<void> }> = [];
+type CapturedRuntimeHandlerRegistration = {
+  rpcHandlerManager: Parameters<typeof registerSessionControlHandlers>[0];
+  getSessionMetadata: NonNullable<Parameters<typeof registerSessionControlHandlers>[1]['getSessionMetadata']>;
+  sessionRuntimeControls: Parameters<typeof registerSessionControlHandlers>[1]['sessionRuntimeControls'];
+};
+const runtimeHandlerRegistrations = vi.hoisted(() => [] as Array<{
+  rpcHandlerManager: Parameters<typeof registerSessionControlHandlers>[0];
+  getSessionMetadata: NonNullable<Parameters<typeof registerSessionControlHandlers>[1]['getSessionMetadata']>;
+  sessionRuntimeControls: Parameters<typeof registerSessionControlHandlers>[1]['sessionRuntimeControls'];
+}>);
 
 vi.mock('@/features/usageLimitRecoveryFeatureGate', () => ({
   resolveUsageLimitRecoveryEnabled: async () => true,
@@ -48,82 +59,96 @@ vi.mock('./connection/createSessionSocketTransport', () => ({
 
 vi.mock('@happier-dev/connection-supervisor', () => ({
   DEFAULT_MANAGED_CONNECTION_POLICY: {},
-  createManagedConnectionSupervisor: (params: { createTransport: () => unknown; onConnected?: () => Promise<void> | void }) => ({
+  createManagedConnectionSupervisor: (params: { createTransport: () => unknown }) => ({
     start: async () => {
       params.createTransport();
-      await params.onConnected?.();
     },
     stop: async () => {},
   }),
 }));
 
+vi.mock('./client/executionRuns/registerSessionClientRuntimeHandlers', () => ({
+  registerSessionClientRuntimeHandlers: vi.fn((params: CapturedRuntimeHandlerRegistration) => {
+    runtimeHandlerRegistrations.push({
+      rpcHandlerManager: params.rpcHandlerManager,
+      getSessionMetadata: params.getSessionMetadata,
+      sessionRuntimeControls: params.sessionRuntimeControls,
+    });
+  }),
+}));
+
+function installSessionControlHandlersFromLatestClient(): void {
+  const params = runtimeHandlerRegistrations.at(-1);
+  if (!params) throw new Error('Missing runtime handler registration');
+  registerSessionControlHandlers(params.rpcHandlerManager, {
+    getSessionMetadata: params.getSessionMetadata,
+    sessionRuntimeControls: params.sessionRuntimeControls,
+    isUsageLimitRecoveryEnabled: async () => true,
+  });
+}
+
 describe('ApiSessionClient runtime controls', () => {
-  afterEach(async () => {
-    for (const client of createdClients.splice(0)) {
-      await client.close().catch(() => undefined);
-    }
+  afterEach(() => {
     sessionSocketStub = null;
     userSocketStub = null;
+    runtimeHandlerRegistrations.length = 0;
   });
 
-  it('routes usage-limit recovery RPCs through installed runtime controls', async () => {
+  it('routes pending queue materialize-next RPCs through the session client guard', async () => {
     sessionSocketStub = createApiSessionSocketStub({ connected: true });
     userSocketStub = createApiSessionSocketStub({ connected: true });
-    const { ApiSessionClient } = await import('./sessionClient');
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
-    createdClients.push(client);
-    const enableUsageLimitWaitResume = vi.fn(async () => ({ ok: true, recovery: { status: 'waiting' } }));
-    const cancelUsageLimitWaitResume = vi.fn(async () => ({ ok: true, recovery: { status: 'cancelled' } }));
-    const checkUsageLimitRecoveryNow = vi.fn(async () => ({ ok: true, status: 'resumed' }));
+    installSessionControlHandlersFromLatestClient();
+    const materializeNextPendingMessageSafely = vi
+      .spyOn(client, 'materializeNextPendingMessageSafely')
+      .mockResolvedValue({ type: 'no_pending' });
 
-    client.setSessionRuntimeControls({
-      enableUsageLimitWaitResume,
-      cancelUsageLimitWaitResume,
-      checkUsageLimitRecoveryNow,
-    });
+    await expect(client.rpcHandlerManager.invokeLocal(
+      SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_MATERIALIZE_NEXT,
+      { reconcileWhenEmpty: 'force' },
+    )).resolves.toEqual({ type: 'no_pending' });
 
-    await expect(client.rpcHandlerManager.handleRequest({
-      method: `s1:${SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE}`,
-      params: { sessionId: 's1', issueFingerprint: 'usage-limit:s1:reset', rememberPreference: true },
-    })).resolves.toEqual({ ok: true, recovery: { status: 'waiting' } });
-    await expect(client.rpcHandlerManager.handleRequest({
-      method: `s1:${SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL}`,
-      params: { sessionId: 's1', issueFingerprint: 'usage-limit:s1:reset' },
-    })).resolves.toEqual({ ok: true, recovery: { status: 'cancelled' } });
-    await expect(client.rpcHandlerManager.handleRequest({
-      method: `s1:${SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW}`,
-      params: { sessionId: 's1' },
-    })).resolves.toEqual({ ok: true, status: 'resumed' });
+    expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
+      reconcileWhenEmpty: 'force',
+    });
+  });
 
-    expect(enableUsageLimitWaitResume).toHaveBeenCalledWith({
-      sessionId: 's1',
-      issueFingerprint: 'usage-limit:s1:reset',
-      rememberPreference: true,
-    });
-    expect(cancelUsageLimitWaitResume).toHaveBeenCalledWith({
-      sessionId: 's1',
-      issueFingerprint: 'usage-limit:s1:reset',
-    });
-    expect(checkUsageLimitRecoveryNow).toHaveBeenCalledWith({ sessionId: 's1' });
+  it('does not treat a live steer callback as permission to materialize durable pending rows mid-turn', () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({
+      id: 's1',
+      pendingCount: 1,
+      pendingVersion: 7,
+      latestTurnStatus: 'in_progress',
+      agentState: {
+        capabilities: {
+          inFlightSteerAvailable: true,
+        },
+      },
+    }));
+    client.onUserMessage(() => undefined);
+
+    expect(client.shouldAttemptPendingMaterialization()).toBe(false);
   });
 
   it('routes connected-service auth invalidation RPCs through installed runtime controls', async () => {
     sessionSocketStub = createApiSessionSocketStub({ connected: true });
     userSocketStub = createApiSessionSocketStub({ connected: true });
-    const { ApiSessionClient } = await import('./sessionClient');
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
-    createdClients.push(client);
+    installSessionControlHandlersFromLatestClient();
     const invalidateConnectedServiceAuthTransports = vi.fn(async () => undefined);
 
     client.setSessionRuntimeControls({
       invalidateConnectedServiceAuthTransports,
     });
 
-    await expect(client.rpcHandlerManager.handleRequest({
-      method: `s1:${SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_INVALIDATE_TRANSPORTS}`,
-      params: {},
-    })).resolves.toEqual({ ok: true });
+    await expect(client.rpcHandlerManager.invokeLocal(
+      SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_INVALIDATE_TRANSPORTS,
+      {},
+    )).resolves.toEqual({ ok: true });
 
     expect(invalidateConnectedServiceAuthTransports).toHaveBeenCalledTimes(1);
   });
+
 });

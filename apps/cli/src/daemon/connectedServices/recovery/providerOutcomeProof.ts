@@ -11,9 +11,10 @@
 // This module is the single source of truth for "what counts as proof". It is
 // intentionally PROVIDER-AGNOSTIC: it contains no provider-name branching. Each
 // provider/scheduler maps its own domain-specific result onto one of these
-// evidence classes in its OWN owner module (backends/<provider>/**,
-// runtimeAuth/**, usageLimitRecovery/**), then asks this module whether the
-// evidence is proof. Provider specifics never leak in here.
+// evidence classes in its OWN owner module (for example
+// packages/plugins/<provider>/src/agent/**, runtimeAuth/**, or
+// usageLimitRecovery/**), then asks this module whether the evidence is proof.
+// Provider specifics never leak in here.
 //
 // Wave-1 lanes intentionally kept this logic local to avoid parallel-edit
 // collisions. This module is the wave-2 consolidation of those local guards
@@ -40,8 +41,9 @@
  *   genuinely DIFFERENT from the exhausted/failed one (and not known-exhausted
  *   for the same fingerprint). This is useful evidence, but it is still
  *   INTERMEDIATE: the provider has not yet accepted work under the new account.
- * - `account_adoption_verified`: a post-switch account-adoption verification
- *   confirmed the adopted account (verified / weakly_verified).
+ * - `account_adoption_verified`: a post-switch verification accepted the new auth surface.
+ *   `verified` may carry exact account proof; `weakly_verified` is provenance/auth-surface
+ *   proof only and must not be treated as exact runtime-account identity.
  * - `terminal_action_required`: no automatic path is valid; a visible user action
  *   state is emitted.
  * - `terminal_exhausted`: retry/dead-letter budget reached and visible.

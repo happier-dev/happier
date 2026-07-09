@@ -2,13 +2,10 @@ import type { SessionContinuationResumePromptModeV1 } from '@happier-dev/protoco
 
 /**
  * Standard resume prompt sent after a recovered provider-context switch/restart.
- * States the fact that a turn WAS interrupted (a directive wake signal — a purely
- * permissive prompt lets an agent whose visible context looks "settled" treat the
- * wake as a no-op, incident cmq8171vw 2026-06-12) while staying neutral: no
- * "recovered provider context" framing and no "do not repeat" bias — the provider
- * context already contains the interrupted work.
+ * Keep this short and neutral: the provider context already contains the
+ * interrupted work, and recovery proof comes from provider-visible activity.
  */
-export const STANDARD_CONTINUATION_RESUME_PROMPT = 'The interrupted turn was recovered. Continue from where you left off.';
+export const STANDARD_CONTINUATION_RESUME_PROMPT = 'Continue where you left off';
 
 /**
  * Resolves the prompt text for a continuation attempt. `custom` uses the

@@ -23,7 +23,6 @@ export function resolveConnectedServiceNotificationProfileLabel(
   const profile = profilesById.get(profileId);
   return readConnectedServiceNotificationDisplayText(profile?.displayName)
     ?? readConnectedServiceNotificationDisplayText(profile?.providerEmail)
-    ?? readConnectedServiceNotificationDisplayText(profile?.providerAccountId)
     ?? readConnectedServiceNotificationDisplayText(profileId);
 }
 

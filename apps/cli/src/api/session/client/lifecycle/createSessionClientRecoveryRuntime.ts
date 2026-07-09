@@ -8,8 +8,13 @@ import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLo
 import { waitForTranscriptEncryptedMessageByLocalId } from '../../transcriptMessageLookup';
 import { catchUpSessionMessagesAfterSeq } from '../../sessionMessageCatchUp';
 import { createKeyedSingleFlightScheduler } from '../../../connection/scheduling/createKeyedSingleFlightScheduler';
-import { isV2ChangesSyncEnabled, runSessionChangesSyncOnConnect } from '../../sessionChangesSyncOnConnect';
+import {
+    isV2ChangesSyncEnabled,
+    runSessionChangesSyncOnConnect,
+    type SessionCatchUpRequest,
+} from '../../sessionChangesSyncOnConnect';
 import { fetchChangesAccountId } from '../../../changes';
+import { readAccountChangesCursor } from '@/persistence';
 import type { KnownPendingQueueState } from '../../pendingQueueState';
 import type { SessionSnapshotRefreshReason } from '../../sessionSnapshotRefreshReason';
 import { createSessionSocketStaleSafetyScheduler } from '../../sessionSocketStaleSafety';
@@ -25,7 +30,7 @@ export class UnsupportedTranscriptLookupError extends Error {
 }
 
 export type SessionClientRecoveryRuntime = Readonly<{
-    catchUpSessionMessages: (afterSeq: number, opts?: { afterSeqIsExplicit?: boolean }) => Promise<void>;
+    catchUpSessionMessages: (request: SessionCatchUpRequest) => Promise<void>;
     scheduleNextStartupMessageCatchUpRetry: () => void;
     clearStartupMessageCatchUpRetryTimer: () => void;
     syncChangesOnConnect: (opts: { reason: 'connect' | 'reconnect' | 'stale-safety' }) => Promise<void>;
@@ -50,16 +55,18 @@ export function createSessionClientRecoveryRuntime(
         setStartupMessageCatchUpRetryIndex: (value: number) => void;
         getStartupMessageCatchUpInitialAfterSeq: () => number;
         getStartupMessageCatchUpInitialAfterSeqIsExplicit: () => boolean;
+        getStartupMessageCatchUpInitialAuthorization?: () => SessionCatchUpRequest['authorization'];
         getLastObservedMessageSeq: () => number;
         getHasMaterializedLocalId: (localId: string) => boolean;
         deleteMaterializedLocalId: (localId: string) => void;
-        handleUpdate: (update: Update, opts: { source: 'session-scoped' | 'user-scoped'; catchUpAfterSeq?: number; catchUpAfterSeqIsExplicit?: boolean }) => void;
+        handleUpdate: (update: Update, opts: { source: 'session-scoped' | 'user-scoped'; catchUpAfterSeq?: number; catchUpAuthorization?: SessionCatchUpRequest['authorization'] }) => void;
         syncSessionSnapshotFromServer: (opts: { reason: SessionSnapshotRefreshReason }) => Promise<void>;
         applyPendingQueueState: (state: KnownPendingQueueState) => void;
     }>,
 ): SessionClientRecoveryRuntime {
     let accountIdPromise: Promise<string> | null = null;
     let changesSyncInFlight: Promise<void> | null = null;
+    const sessionChangesCursorByAccountId = new Map<string, number>();
     let startupMessageCatchUpRetryTimer: ReturnType<typeof setTimeout> | null = null;
     const materializationRecoveryScheduler = createKeyedSingleFlightScheduler({
         delayMs: configuration.transcriptRecoveryDelayMs,
@@ -99,15 +106,15 @@ export function createSessionClientRecoveryRuntime(
         transcriptRecoveryErrorStateByLocalId.set(localId, state);
     };
 
-    const catchUpSessionMessages = async (afterSeq: number, opts: { afterSeqIsExplicit?: boolean } = {}): Promise<void> => {
+    const catchUpSessionMessages = async (catchUpRequest: SessionCatchUpRequest): Promise<void> => {
         const request = () => catchUpSessionMessagesAfterSeq({
             token: params.token,
             sessionId: params.sessionId,
-            afterSeq,
+            afterSeq: catchUpRequest.afterSeq,
             onUpdate: (update) => params.handleUpdate(update, {
                 source: 'session-scoped',
-                catchUpAfterSeq: afterSeq,
-                catchUpAfterSeqIsExplicit: opts.afterSeqIsExplicit,
+                catchUpAfterSeq: catchUpRequest.afterSeq,
+                catchUpAuthorization: catchUpRequest.authorization,
             }),
         });
         const supervisor = params.getSessionConnectionSupervisor();
@@ -161,8 +168,12 @@ export function createSessionClientRecoveryRuntime(
                 afterSeq: params.getStartupMessageCatchUpInitialAfterSeq(),
                 afterSeqIsExplicit: params.getStartupMessageCatchUpInitialAfterSeqIsExplicit(),
             });
-            void catchUpSessionMessages(params.getStartupMessageCatchUpInitialAfterSeq(), {
-                afterSeqIsExplicit: params.getStartupMessageCatchUpInitialAfterSeqIsExplicit(),
+            void catchUpSessionMessages({
+                afterSeq: params.getStartupMessageCatchUpInitialAfterSeq(),
+                authorization: params.getStartupMessageCatchUpInitialAuthorization?.()
+                    ?? (params.getStartupMessageCatchUpInitialAfterSeqIsExplicit()
+                        ? 'explicit_cursor'
+                        : 'startup_recovery'),
             })
                 .catch((error) => {
                     if (isAuthenticationError(error)) {
@@ -227,6 +238,31 @@ export function createSessionClientRecoveryRuntime(
         }
     };
 
+    const readSessionChangesCursor = async (accountId: string): Promise<number> => {
+        const existing = sessionChangesCursorByAccountId.get(accountId);
+        if (typeof existing === 'number' && Number.isSafeInteger(existing) && existing >= 0) {
+            return existing;
+        }
+
+        let initialCursor = 0;
+        try {
+            initialCursor = await readAccountChangesCursor(accountId);
+        } catch {
+            initialCursor = 0;
+        }
+        const normalized = Number.isSafeInteger(initialCursor) && initialCursor >= 0 ? initialCursor : 0;
+        sessionChangesCursorByAccountId.set(accountId, normalized);
+        return normalized;
+    };
+
+    const writeSessionChangesCursor = async (accountId: string, cursor: number): Promise<void> => {
+        const normalized = Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0;
+        const existing = sessionChangesCursorByAccountId.get(accountId) ?? 0;
+        if (normalized > existing) {
+            sessionChangesCursorByAccountId.set(accountId, normalized);
+        }
+    };
+
     const syncChangesOnConnect = async (opts: { reason: 'connect' | 'reconnect' | 'stale-safety' }): Promise<void> => {
         if (!isV2ChangesSyncEnabled(process.env.HAPPY_ENABLE_V2_CHANGES)) {
             return;
@@ -243,7 +279,9 @@ export function createSessionClientRecoveryRuntime(
             sessionId: params.sessionId,
             lastObservedMessageSeq: params.getLastObservedMessageSeq(),
             getAccountId,
-            catchUpSessionMessages: (afterSeq) => catchUpSessionMessages(afterSeq),
+            readChangesCursor: readSessionChangesCursor,
+            writeChangesCursor: writeSessionChangesCursor,
+            catchUpSessionMessages: (request) => catchUpSessionMessages(request),
             syncSessionSnapshotFromServer: (syncOpts) => params.syncSessionSnapshotFromServer(syncOpts),
             applyPendingQueueState: (state) => params.applyPendingQueueState(state),
             connectionSupervisor: params.getSessionConnectionSupervisor(),

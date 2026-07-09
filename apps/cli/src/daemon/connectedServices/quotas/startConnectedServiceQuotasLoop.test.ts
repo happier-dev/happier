@@ -94,4 +94,47 @@ describe('startConnectedServiceQuotasLoop', () => {
     await Promise.resolve();
     expect(coordinator.tickOnce).toHaveBeenCalledTimes(1);
   });
+
+  it('waits for an in-flight tick when stopped', async () => {
+    let releaseTick!: () => void;
+    let markTickStarted!: () => void;
+    const tickStarted = new Promise<void>((resolve) => {
+      markTickStarted = resolve;
+    });
+    const coordinator: { tickOnce: () => Promise<void> } = {
+      tickOnce: vi.fn(async () => {
+        markTickStarted();
+        await new Promise<void>((release) => {
+          releaseTick = release;
+        });
+      }),
+    };
+
+    let captured: (() => void) = () => {};
+    const handle = startConnectedServiceQuotasLoop({
+      enabled: true,
+      tickMs: 10,
+      coordinator,
+      onTickError: vi.fn(),
+      setIntervalFn: (fn: () => void) => {
+        captured = fn;
+        return 123;
+      },
+      clearIntervalFn: vi.fn(),
+    });
+
+    captured();
+
+    await tickStarted;
+    const stopPromise = handle?.stop();
+    let stopped = false;
+    void stopPromise?.then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+    releaseTick();
+    await stopPromise;
+    expect(stopped).toBe(true);
+  });
 });

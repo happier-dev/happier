@@ -2,7 +2,7 @@ import { join } from 'node:path';
 
 import type { ConnectedServiceId, ConnectedServiceProfileId } from '@happier-dev/protocol';
 
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { normalizeMaterializationKeyForPath } from '../materialize/normalizeMaterializationKeyForPath';
 
 type JoinPath = (...paths: string[]) => string;

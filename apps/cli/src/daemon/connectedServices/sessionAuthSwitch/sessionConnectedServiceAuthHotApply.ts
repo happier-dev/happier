@@ -1,13 +1,20 @@
 import type { ConnectedServiceBindingsV1, ConnectedServiceId } from '@happier-dev/protocol';
 
-import { getConnectedServiceRuntimeAuthAdapter } from '@/backends/catalog';
-import type { CatalogAgentId } from '@/backends/types';
-import { resolveDaemonCatalogAgentIdFromBackendTarget } from '@/daemon/backendTargetRouting';
+import { getConnectedServiceRuntimeAuthAdapter } from '@/daemon/connectedServices/catalogHooks';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
+import { resolveTrackedSessionCatalogAgentId } from '@/daemon/sessions/resolveTrackedSessionCatalogAgentId';
 import type { TrackedSession } from '@/daemon/types';
 import type { ConnectedServiceProviderRuntimeAuthAdapter } from '../runtimeAuth/types';
+import type {
+  AcceptedConnectedServiceAccountVerification,
+  AcceptedConnectedServiceAccountVerificationByServiceId,
+} from '../accountTransitions/acceptedConnectedServiceAccountVerification';
 
 type HotApplyResult =
-  | Readonly<{ ok: true }>
+  | Readonly<{
+      ok: true;
+      verificationByServiceId?: AcceptedConnectedServiceAccountVerificationByServiceId;
+    }>
   | Readonly<{
       ok: false;
       errorCode:
@@ -25,6 +32,71 @@ export type SessionConnectedServiceAuthSwitchServiceResult = Readonly<{
 
 function resultApplied(result: Readonly<Record<string, unknown>>): boolean {
   return result.applied === true || result.status === 'applied';
+}
+
+function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>>
+    : null;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readAcceptedVerificationFromHotApplyResult(
+  result: Readonly<Record<string, unknown>>,
+): AcceptedConnectedServiceAccountVerification | null {
+  const verification = readRecord(result.verification);
+  if (!verification) return null;
+
+  const status = verification.status === 'verified' || verification.status === 'weakly_verified'
+    ? verification.status
+    : null;
+  const proofStrength = verification.proofStrength === 'exact'
+    || verification.proofStrength === 'weak'
+    || verification.proofStrength === 'diagnostic'
+    ? verification.proofStrength
+    : null;
+  const providerAccountId = readString(verification.providerAccountId);
+  const activeAccountId = readString(verification.activeAccountId);
+  const sharedAuthSurfaceId = readString(verification.sharedAuthSurfaceId);
+  const source = readString(verification.source);
+  const reason = readString(verification.reason);
+
+  const hasExactIdentityMaterial = providerAccountId !== null
+    || activeAccountId !== null
+    || sharedAuthSurfaceId !== null;
+
+  if (status === 'verified' && proofStrength === 'exact' && !hasExactIdentityMaterial) {
+    return null;
+  }
+
+  if (status) {
+    return {
+      status,
+      ...(providerAccountId !== null ? { providerAccountId } : {}),
+      ...(activeAccountId !== null ? { activeAccountId } : {}),
+      ...(sharedAuthSurfaceId !== null ? { sharedAuthSurfaceId } : {}),
+      ...(proofStrength !== null ? { proofStrength } : {}),
+      ...(source !== null ? { source } : {}),
+      ...(reason !== null ? { reason } : {}),
+    };
+  }
+
+  if (proofStrength === 'exact' && hasExactIdentityMaterial) {
+    return {
+      status: 'verified',
+      ...(providerAccountId !== null ? { providerAccountId } : {}),
+      ...(activeAccountId !== null ? { activeAccountId } : {}),
+      ...(sharedAuthSurfaceId !== null ? { sharedAuthSurfaceId } : {}),
+      proofStrength: 'exact',
+      ...(source !== null ? { source } : {}),
+      ...(reason !== null ? { reason } : {}),
+    };
+  }
+
+  return null;
 }
 
 function readHotApplyFailureErrorCode(
@@ -47,7 +119,7 @@ export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
     serviceIds?: ReadonlySet<ConnectedServiceId>;
     runtimeAuthSelectionsByServiceId?: ReadonlyMap<ConnectedServiceId, unknown>;
   }>): Promise<HotApplyResult> {
-    const agentId = resolveDaemonCatalogAgentIdFromBackendTarget(input.tracked.spawnOptions?.backendTarget);
+    const agentId = resolveTrackedSessionCatalogAgentId(input.tracked);
     if (!agentId) return { ok: false, errorCode: 'hot_apply_unavailable' };
     const adapter = await resolveRuntimeAuthAdapter(agentId);
     if (!adapter) return { ok: false, errorCode: 'hot_apply_unavailable' };
@@ -60,6 +132,7 @@ export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
         return [{ serviceId, binding }];
       });
     const serviceResultsByServiceId: Record<string, SessionConnectedServiceAuthSwitchServiceResult> = {};
+    const acceptedVerificationsByServiceId: Record<string, AcceptedConnectedServiceAccountVerification> = {};
 
     for (const [index, { serviceId, binding }] of targetBindings.entries()) {
       const materializedSelection = input.runtimeAuthSelectionsByServiceId?.get(serviceId);
@@ -89,8 +162,17 @@ export function createSessionConnectedServiceAuthHotApply(deps?: Readonly<{
         };
       }
       serviceResultsByServiceId[serviceId] = { status: 'applied' };
+      const acceptedVerification = readAcceptedVerificationFromHotApplyResult(result);
+      if (acceptedVerification) {
+        acceptedVerificationsByServiceId[serviceId] = acceptedVerification;
+      }
     }
 
-    return { ok: true };
+    return {
+      ok: true,
+      ...(Object.keys(acceptedVerificationsByServiceId).length > 0
+        ? { verificationByServiceId: acceptedVerificationsByServiceId }
+        : {}),
+    };
   };
 }

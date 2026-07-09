@@ -48,7 +48,7 @@ describe('mergeVoiceAgentRunMetadataFromExecutionRun', () => {
     });
   });
 
-  it('preserves existing welcomedEpoch and streamId until an explicit welcome update arrives', () => {
+  it('preserves existing welcomedEpoch and never re-emits a legacy streamId', () => {
     const next = mergeVoiceAgentRunMetadataFromExecutionRun({
       metadata: {
         voiceAgentRunV1: {
@@ -89,13 +89,12 @@ describe('mergeVoiceAgentRunMetadataFromExecutionRun', () => {
       nowMs: 456,
     });
 
-    expect(next).toMatchObject({
-      voiceAgentRunV1: {
-        runId: 'run_new',
-        welcomedEpoch: 9,
-        streamId: 'stream_old',
-      },
+    const voiceAgentRunV1 = (next as { voiceAgentRunV1: Record<string, unknown> }).voiceAgentRunV1;
+    expect(voiceAgentRunV1).toMatchObject({
+      runId: 'run_new',
+      welcomedEpoch: 9,
     });
+    expect('streamId' in voiceAgentRunV1).toBe(false);
   });
 
   it('updates welcomedEpoch when the daemon welcome path reports a new epoch', () => {

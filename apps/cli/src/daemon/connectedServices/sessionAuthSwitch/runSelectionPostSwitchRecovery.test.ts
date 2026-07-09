@@ -30,6 +30,7 @@ describe('runSelectionPostSwitchRecovery', () => {
       ]),
       countTrackedClaimsForStatePath: () => 0,
       hasUnknownTrackedClaims: false,
+      hasInFlightTurnForStatePath: () => true,
     });
 
     expect(result).toEqual({ ok: true });
@@ -39,6 +40,7 @@ describe('runSelectionPostSwitchRecovery', () => {
       action: 'restart_requested',
       countTrackedClaimsForStatePath: expect.any(Function),
       hasUnknownTrackedClaims: false,
+      hasInFlightTurnForStatePath: expect.any(Function),
     }));
   });
 

@@ -1,25 +1,28 @@
 import type { ConnectedServiceId } from '@happier-dev/protocol';
 
-import { resolveDaemonCatalogAgentIdFromBackendTarget } from '../../backendTargetRouting';
+import { resolveTrackedSessionCatalogAgentId } from '../../sessions/resolveTrackedSessionCatalogAgentId';
 import type { TrackedSession } from '../../types';
-import { parseConnectedServiceBindingSelections } from '../parseConnectedServicesBindings';
-import { ConnectedServiceGroupHomeCleanupScheduler } from './ConnectedServiceGroupHomeCleanupScheduler';
+import { hasTrackedConnectedServiceGroupBinding } from '../trackedSessionConnectedServiceBindings';
+import {
+  ConnectedServiceGroupHomeCleanupScheduler,
+  type ConnectedServiceGroupDeletionAuthority,
+} from './ConnectedServiceGroupHomeCleanupScheduler';
 
 export function createConnectedServiceGroupHomeCleanupScheduler(params: Readonly<{
   activeServerDir: string;
   pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
   groupExists?: (target: Readonly<{ serviceId: ConnectedServiceId; groupId: string }>) => Promise<boolean>;
+  resolveGroupDeletionAuthority?: (target: Readonly<{ serviceId: ConnectedServiceId; groupId: string }>) => Promise<ConnectedServiceGroupDeletionAuthority>;
 }>): ConnectedServiceGroupHomeCleanupScheduler {
   return new ConnectedServiceGroupHomeCleanupScheduler({
     activeServerDir: params.activeServerDir,
     groupExists: params.groupExists,
+    resolveGroupDeletionAuthority: params.resolveGroupDeletionAuthority,
     hasLiveTarget: ({ serviceId, groupId, agentId }) => {
       for (const tracked of params.pidToTrackedSession.values()) {
-        const trackedAgentId = resolveDaemonCatalogAgentIdFromBackendTarget(tracked.spawnOptions?.backendTarget);
+        const trackedAgentId = resolveTrackedSessionCatalogAgentId(tracked);
         if (trackedAgentId !== agentId) continue;
-        const hasMatchingSelection = parseConnectedServiceBindingSelections(tracked.spawnOptions?.connectedServices)
-          .some((selection) => selection.kind === 'group' && selection.serviceId === serviceId && selection.groupId === groupId);
-        if (hasMatchingSelection) {
+        if (hasTrackedConnectedServiceGroupBinding({ tracked, serviceId, groupId })) {
           return true;
         }
       }

@@ -88,6 +88,7 @@ describe('handleSessionStateUpdate', () => {
 
   it('returns pending queue state from pending-changed updates', () => {
     const onMetadataUpdated = vi.fn();
+    const onPendingChangedDrainTrigger = vi.fn();
 
     const result = handleSessionStateUpdate({
       update: {
@@ -107,13 +108,25 @@ describe('handleSessionStateUpdate', () => {
       encryptionKey: new Uint8Array(),
       encryptionVariant: 'dataKey',
       onMetadataUpdated,
+      onPendingChangedDrainTrigger,
       onWarning: () => {},
     });
 
     expect(result.handled).toBe(true);
     expect(result.pendingWakeSeq).toBe(4);
-    expect(result.pendingQueueState).toEqual({ known: true, pendingCount: 0, pendingVersion: 12 });
+    expect(result.pendingQueueState).toEqual({
+      known: true,
+      pendingCount: 0,
+      pendingBlockedCount: 0,
+      pendingVersion: 12,
+    });
     expect(onMetadataUpdated).toHaveBeenCalledTimes(1);
+    expect(onPendingChangedDrainTrigger).toHaveBeenCalledWith({
+      known: true,
+      pendingCount: 0,
+      pendingBlockedCount: 0,
+      pendingVersion: 12,
+    });
   });
 
   it('does not advance metadataVersion when an encrypted metadata update cannot be decrypted', () => {

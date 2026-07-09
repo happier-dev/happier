@@ -8,7 +8,9 @@ import {
 } from '../selection/selectConnectedServiceAuthGroupCandidate';
 import type { ConnectedServiceAuthGroupSwitchState } from './ConnectedServiceAuthGroupSwitchCoordinator';
 
-function normalizePolicy(value: ConnectedServiceAuthGroupV1['policy']): ConnectedServiceAuthGroupPolicyV1 {
+export function normalizeConnectedServiceAuthGroupPolicy(
+    value: ConnectedServiceAuthGroupV1['policy'],
+): ConnectedServiceAuthGroupPolicyV1 {
     return {
         ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
         ...value,
@@ -27,6 +29,17 @@ function readNumberState(value: unknown): number | null | undefined {
 function readStringState(value: unknown): string | null | undefined {
     if (value === null || value === undefined) return value;
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+export function mergePersistedMemberRuntimeState(
+    runtimeState: ConnectedServiceAuthGroupMemberRuntimeState | null,
+    persistedState: ConnectedServiceAuthGroupV1['members'][number]['state'],
+): ConnectedServiceAuthGroupMemberRuntimeState {
+    const persisted = memberStateFromApiState(persistedState);
+    return {
+        ...persisted,
+        ...(runtimeState ?? {}),
+    };
 }
 
 function memberStateFromApiState(
@@ -53,32 +66,48 @@ export function buildConnectedServiceAuthGroupSwitchState(input: Readonly<{
     runtimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore;
     nowMs: number;
 }>): ConnectedServiceAuthGroupSwitchState {
-    const runtimeStates = new Map(input.runtimeQuotaSnapshots.buildMemberStates({
-        serviceId: input.group.serviceId,
-        groupId: input.group.groupId,
-        capturedAtMs: input.nowMs,
-    }));
-    for (const member of input.group.members) {
-        const persisted = memberStateFromApiState(member.state);
-        if (Object.keys(persisted).length === 0) continue;
-        runtimeStates.set(member.profileId, {
-            ...persisted,
-            ...runtimeStates.get(member.profileId),
-        });
-    }
+    return buildConnectedServiceAuthGroupSwitchStateFromMemberRuntimeStates({
+        group: input.group,
+        runtimeMemberStates: new Map(input.runtimeQuotaSnapshots.buildMemberStates({
+            serviceId: input.group.serviceId,
+            groupId: input.group.groupId,
+            capturedAtMs: input.nowMs,
+        })),
+    });
+}
 
+export function buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState(input: Readonly<{
+    group: ConnectedServiceAuthGroupV1;
+}>): ConnectedServiceAuthGroupSwitchState {
+    return buildConnectedServiceAuthGroupSwitchStateFromMemberRuntimeStates({
+        group: input.group,
+        runtimeMemberStates: new Map(),
+    });
+}
+
+function buildConnectedServiceAuthGroupSwitchStateFromMemberRuntimeStates(input: Readonly<{
+    group: ConnectedServiceAuthGroupV1;
+    runtimeMemberStates: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState>;
+}>): ConnectedServiceAuthGroupSwitchState {
+    const memberStatesByProfileId = new Map<string, ConnectedServiceAuthGroupMemberRuntimeState>();
+    for (const member of input.group.members) {
+        memberStatesByProfileId.set(
+            member.profileId,
+            mergePersistedMemberRuntimeState(input.runtimeMemberStates.get(member.profileId) ?? null, member.state),
+        );
+    }
     return {
         serviceId: input.group.serviceId,
         groupId: input.group.groupId,
         activeProfileId: input.group.activeProfileId,
         generation: input.group.generation,
-        policy: normalizePolicy(input.group.policy),
+        policy: normalizeConnectedServiceAuthGroupPolicy(input.group.policy),
         members: input.group.members.map((member) => ({
             profileId: member.profileId,
             priority: member.priority,
             enabled: member.enabled,
             createdAtMs: member.createdAt,
         })),
-        memberStatesByProfileId: runtimeStates,
+        memberStatesByProfileId,
     };
 }

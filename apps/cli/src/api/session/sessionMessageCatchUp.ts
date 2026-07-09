@@ -1,8 +1,7 @@
 import axios, { type AxiosResponse } from 'axios';
 
-import { configuration } from '@/configuration';
 import { SessionMessageContentSchema, type Update } from '../types';
-import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
+import { resolveServerHttpBaseUrl } from '../client/serverHttpBaseUrl';
 import {
     createAuthenticationHttpStatusError,
     isAuthenticationStatus,
@@ -20,7 +19,7 @@ export async function catchUpSessionMessagesAfterSeq(params: {
     onUpdate: (update: Update) => void;
 }): Promise<void> {
     let cursor = Number.isFinite(params.afterSeq) && params.afterSeq >= 0 ? Math.floor(params.afterSeq) : 0;
-    const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+    const serverUrl = resolveServerHttpBaseUrl();
     for (let page = 0; page < 10; page++) {
         let response: AxiosResponse<unknown>;
         try {

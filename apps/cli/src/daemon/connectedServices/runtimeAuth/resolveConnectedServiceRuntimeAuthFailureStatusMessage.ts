@@ -22,6 +22,24 @@ function toStatusNote(code: string, message: string): ConnectedServiceRuntimeAut
   return { code, message };
 }
 
+export function isRetryableConnectedServiceRuntimeAuthFailureReportDelivery(value: unknown): boolean {
+  const envelope = readRecord(value);
+  if (!envelope) return false;
+  if (envelope.ok === false || envelope.success === false) return true;
+  if (typeof envelope.error === 'string' && envelope.error.trim().length > 0) return true;
+  if (
+    typeof envelope.errorCode === 'string'
+    && envelope.errorCode.trim().length > 0
+    && envelope.ok !== true
+  ) {
+    return true;
+  }
+  const result = readRecord(envelope.result);
+  return envelope.ok === true
+    && result?.status === 'daemon_lifecycle_unavailable'
+    && result.reason === 'recovery_deferred_shutdown';
+}
+
 export function resolveConnectedServiceRuntimeAuthFailureStatusMessage(
   value: unknown,
 ): ConnectedServiceRuntimeAuthFailureStatusNote | null {
@@ -35,8 +53,8 @@ export function resolveConnectedServiceRuntimeAuthFailureStatusMessage(
         'Connected-service credential refreshed; restarting session.',
       )
       : toStatusNote(
-        'credential_refreshed_restart_maybe_required',
-        'Connected-service credential refreshed; restart may be required.',
+        'credential_refreshed_awaiting_provider_outcome',
+        'Connected-service credential refreshed; waiting for provider confirmation.',
       );
   }
   if (outerResult?.status === 'recovery_action_required') {

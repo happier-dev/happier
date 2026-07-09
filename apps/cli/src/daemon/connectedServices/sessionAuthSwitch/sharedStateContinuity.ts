@@ -5,7 +5,7 @@ import {
 import { AGENTS_CORE } from '@happier-dev/agents';
 import { canResumeFromMaterializedState } from '@/daemon/connectedServices/stateSharing/canResumeFromMaterializedState';
 
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 
 import type { SessionConnectedServiceSwitchContinuity } from './switchSessionConnectedServiceAuth';
 

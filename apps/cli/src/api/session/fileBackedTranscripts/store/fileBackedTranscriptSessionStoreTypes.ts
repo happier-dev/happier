@@ -28,6 +28,7 @@ export type FileBackedTranscriptReadAfterResult<TItem = unknown> = Readonly<{
 
 export type FileBackedTranscriptSubscriptionListener<TItem = unknown> = (event: Readonly<{
     items: readonly TItem[];
+    fromCursor?: string | null;
     nextCursor: string | null;
     truncated: boolean;
 }>) => void | Promise<void>;

@@ -1,8 +1,7 @@
 import axios from 'axios';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
-import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
-import { configuration } from '@/configuration';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveSessionControlSocketAckTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
 
@@ -70,6 +69,7 @@ export type SessionTurnMutationDeliveryResult =
         reason: 'unsupported_capability';
         diagnostic: UnsupportedSessionTurnMutationDiagnostic;
     }>
+    | Readonly<{ delivered: false; reason: 'ignored_lossy' }>
     | Readonly<{ delivered: false; reason: string }>;
 
 function readHttpErrorStatus(error: unknown): number | null {
@@ -172,7 +172,7 @@ export async function deliverSessionTurnMutation(params: Readonly<{
     socket: SessionClientDurableMutationSocket | null;
     mutation: SessionTurnMutationV1;
 }>): Promise<SessionTurnMutationDeliveryResult> {
-    const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+    const serverUrl = resolveServerHttpBaseUrl();
     const socketResult = params.socket?.connected === true
         ? await trySocketSessionTurnMutation({ socket: params.socket, mutation: params.mutation })
         : { status: 'failed' as const };
@@ -195,6 +195,9 @@ export async function deliverSessionTurnMutation(params: Readonly<{
                 http: httpResult.evidence,
             }),
         };
+    }
+    if (httpResult.status === 'incompatible' && params.mutation.action === 'touch_active') {
+        return { delivered: false, reason: 'ignored_lossy' };
     }
     if (httpResult.status === 'incompatible') {
         return { delivered: false, reason: `incompatible_session_turn_mutation_http_${httpResult.statusCode}` };

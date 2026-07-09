@@ -7,7 +7,7 @@ import {
   type SpawnSessionResult,
 } from '@happier-dev/protocol';
 
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { ConnectedServicesMaterializationDiagnostic } from '../materialization/materializer';
 import { buildConnectedServiceUxDiagnostic } from './connectedServiceUxDiagnostics';
 
@@ -19,6 +19,13 @@ type ConnectedServiceCredentialRefreshSpawnError = Readonly<{
   serviceId?: unknown;
   profileId?: unknown;
   diagnostic?: unknown;
+}>;
+
+type ConnectedServiceCredentialMissingSpawnError = Readonly<{
+  name?: unknown;
+  kind?: unknown;
+  serviceId?: unknown;
+  profileId?: unknown;
 }>;
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -51,6 +58,17 @@ function readCredentialRefreshSpawnError(error: unknown): ConnectedServiceCreden
   return null;
 }
 
+function readCredentialMissingSpawnError(error: unknown): ConnectedServiceCredentialMissingSpawnError | null {
+  const record = readRecord(error);
+  if (!record) return null;
+  if (readString(record.name) !== 'ConnectedServiceCredentialResolutionError') return null;
+  if (readString(record.kind) !== 'missing_credential') return null;
+  const serviceId = readString(record.serviceId);
+  const profileId = readString(record.profileId);
+  if (!serviceId || !profileId) return null;
+  return record;
+}
+
 export function buildConnectedServiceDiagnosticSpawnValidationErrorResult(input: Readonly<{
   errorMessage: string;
   uxDiagnostic: ConnectedServiceUxDiagnosticV1;
@@ -64,6 +82,33 @@ export function buildConnectedServiceDiagnosticSpawnValidationErrorResult(input:
       uxDiagnostic: input.uxDiagnostic,
     },
   };
+}
+
+export function buildConnectedServiceCredentialSpawnErrorResult(input: Readonly<{
+  agentId: CatalogAgentId;
+  error: unknown;
+}>): Extract<SpawnSessionResult, { type: 'error' }> | null {
+  const missingCredential = readCredentialMissingSpawnError(input.error);
+  if (missingCredential) {
+    const code = CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired;
+    return buildConnectedServiceDiagnosticSpawnValidationErrorResult({
+      errorMessage: code,
+      uxDiagnostic: buildConnectedServiceUxDiagnostic({
+        code,
+        failurePhase: 'materialization',
+        source: 'spawn_resume',
+        agentId: input.agentId,
+        serviceId: readString(missingCredential.serviceId),
+        profileId: readString(missingCredential.profileId),
+        retryable: false,
+        diagnostics: {
+          reason: 'missing_credential',
+        },
+      }),
+    });
+  }
+
+  return buildConnectedServiceCredentialRefreshSpawnErrorResult(input);
 }
 
 export function buildConnectedServiceCredentialRefreshSpawnErrorResult(input: Readonly<{

@@ -4,6 +4,9 @@ import {
   ConnectedServiceUxDiagnosticCodeV1Schema,
   ConnectedServiceIdSchema,
   ConnectedServiceMaterializationIdentityV1Schema,
+  isConnectedServiceCredentialHealthStatusReconnectRequired,
+  isConnectedServiceCredentialHealthStatusUsable,
+  normalizeConnectedServiceCredentialHealthStatus,
   type ConnectedServiceUxDiagnosticV1,
   type ConnectedServiceAuthGroupV1,
   type ConnectedServiceBindingsV1,
@@ -12,8 +15,8 @@ import {
 } from '@happier-dev/protocol';
 import { AGENTS_CORE } from '@happier-dev/agents';
 
-import type { CatalogAgentId, ConnectedServiceResumeContinuityDiagnostics } from '@/backends/types';
-import { resolveDaemonCatalogAgentIdFromBackendTarget } from '@/daemon/backendTargetRouting';
+import type { CatalogAgentId, ConnectedServiceResumeContinuityDiagnostics } from '@/agent/catalog/types';
+import { resolveTrackedSessionCatalogAgentId } from '@/daemon/sessions/resolveTrackedSessionCatalogAgentId';
 import type { TrackedSession } from '@/daemon/types';
 import type { ConnectedServiceAccountTransitionVerificationResult } from '../runtimeAuth/types';
 import { buildConnectedServiceUxDiagnostic } from '@/daemon/connectedServices/diagnostics/connectedServiceUxDiagnostics';
@@ -21,6 +24,7 @@ import {
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
   readConnectedServiceChildSelectionsFromEnv,
 } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
+import { resolveTrackedConnectedServiceBindingsRaw } from '@/daemon/connectedServices/trackedSessionConnectedServiceBindings';
 import {
   generateConnectedServiceMaterializationIdentityV1,
   readConnectedServiceMaterializationIdentityFromSpawnOptions,
@@ -36,6 +40,7 @@ import {
   type ConnectedServiceSessionAuthSwitchCore,
   type ConnectedServiceSessionAuthSwitchReason,
 } from '../runtimeAuth/connectedServiceSessionAuthSwitchCore';
+import { shouldCommitAutomaticGroupApplySessionEvent } from '../runtimeAuth/automaticGroupApplySessionEvents';
 import { sanitizeConnectedServiceDiagnosticString } from '../runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import type { SessionConnectedServiceAuthSwitchServiceResult } from './sessionConnectedServiceAuthHotApply';
 import type { ConnectedServiceTransitionLockMode } from './locking/connectedServiceTransitionLockMode';
@@ -107,12 +112,31 @@ type NextConnectedServiceChildSelection =
 	    }>;
 
 type ConnectedServiceAccountSwitchMode = 'hot_apply' | 'restart_resume' | 'spawn_next_turn';
+export type SessionConnectedServiceRuntimeAuthSelectionMaterializerMode = 'apply' | 'preflight';
+export type ConnectedServiceRuntimeAuthApplyReason =
+  | 'usage_limit'
+  | 'soft_threshold'
+  | 'same_provider_account_exhausted'
+  | 'auth_expired'
+  | 'account_changed'
+  | 'refresh_failed'
+  | 'manual'
+  | 'diagnostic';
 type ConnectedServiceSwitchAttemptAction = 'restart_requested' | 'hot_applied' | 'metadata_updated';
+type ConnectedServiceSwitchAttemptPublicReason =
+  | 'usage_limit'
+  | 'same_provider_account_exhausted'
+  | 'soft_threshold'
+  | 'auth_expired'
+  | 'account_changed'
+  | 'refresh_failed'
+  | 'manual';
 
 export type SessionConnectedServiceAuthSwitchErrorCode =
   | 'session_not_found'
   | 'agent_mismatch'
   | 'unsupported_service'
+  | 'continuity_unsupported'
   | 'profile_missing'
   | 'profile_disconnected'
   | 'profile_action_required'
@@ -197,6 +221,7 @@ export type SessionConnectedServiceSwitchContinuity =
         | 'provider_state_sharing_unavailable'
         | 'provider_state_sharing_settings_unavailable'
         | 'provider_session_state_unavailable_for_resume'
+        | 'continuity_unsupported'
         | 'unsupported_service'
       >;
       warnings?: readonly string[];
@@ -469,12 +494,16 @@ type EffectiveBinding = Readonly<{
 }>;
 type ConnectedServiceGroupRuntimeMetadata = Readonly<{
   groupId: string;
+  groupLabel?: string;
   activeProfileId: string;
   fallbackProfileId: string;
   generation: number;
 }>;
 
 export type SessionConnectedServiceRuntimeAuthSelectionMaterializerInput = Readonly<{
+  mode: SessionConnectedServiceRuntimeAuthSelectionMaterializerMode;
+  runtimeAuthApplyReason?: ConnectedServiceRuntimeAuthApplyReason;
+  requireDirectLiveHotApply?: boolean;
   tracked: TrackedSession;
   sessionId: string;
   agentId: CatalogAgentId;
@@ -547,7 +576,10 @@ export type SwitchSessionConnectedServiceAuthInput = Readonly<{
 	    serviceIds?: ReadonlySet<ConnectedServiceId>;
 	    runtimeAuthSelectionsByServiceId?: RuntimeAuthSelectionsByServiceId;
 	  }>): Promise<
-	    | Readonly<{ ok: true }>
+	    | Readonly<{
+	        ok: true;
+	        verificationByServiceId?: AcceptedConnectedServiceAccountVerificationByServiceId;
+	      }>
 	    | Readonly<{
 	        ok: false;
 	        errorCode?: string;
@@ -583,7 +615,9 @@ export type SwitchSessionConnectedServiceAuthInput = Readonly<{
   }>;
   registerHotApplyTargets(tracked: TrackedSession): void;
   emitSessionEvent(sessionId: string, event: unknown): void;
+  dryRun?: boolean;
   reason?: ConnectedServiceSessionAuthSwitchReason;
+  runtimeAuthApplyReason?: ConnectedServiceRuntimeAuthApplyReason;
   request: SessionConnectedServiceAuthSwitchRequest;
 }>;
 
@@ -764,6 +798,15 @@ function resolveGroupFallbackProfileId(input: Readonly<{
   return input.activeProfileId;
 }
 
+function groupHasEnabledMember(input: Readonly<{
+  group: ConnectedServiceAuthGroupV1;
+  profileId: string;
+}>): boolean {
+  return input.group.members.some((member) =>
+    member.profileId === input.profileId && member.enabled !== false
+  );
+}
+
 function findTrackedSession(children: ReadonlyArray<TrackedSession>, sessionId: string): TrackedSession | null {
   const normalized = normalizeSessionId(sessionId);
   if (!normalized) return null;
@@ -771,7 +814,7 @@ function findTrackedSession(children: ReadonlyArray<TrackedSession>, sessionId: 
 }
 
 function resolveTrackedAgentId(tracked: TrackedSession): CatalogAgentId | null {
-  return resolveDaemonCatalogAgentIdFromBackendTarget(tracked.spawnOptions?.backendTarget);
+  return resolveTrackedSessionCatalogAgentId(tracked);
 }
 
 function readExpectedGeneration(
@@ -781,6 +824,37 @@ function readExpectedGeneration(
   const value = expectedByServiceId?.[serviceId];
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return null;
   return value;
+}
+
+function shouldRequireDirectLiveHotApplyForRuntimeAuthReason(
+  reason: ConnectedServiceRuntimeAuthApplyReason | undefined,
+): boolean {
+  return reason === 'same_provider_account_exhausted';
+}
+
+function normalizeSwitchAttemptEventReason(
+  reason: ConnectedServiceRuntimeAuthApplyReason | undefined,
+): ConnectedServiceSwitchAttemptPublicReason {
+  switch (reason) {
+    case 'usage_limit':
+    case 'same_provider_account_exhausted':
+    case 'soft_threshold':
+    case 'auth_expired':
+    case 'account_changed':
+    case 'refresh_failed':
+    case 'manual':
+      return reason;
+    case 'diagnostic':
+    case undefined:
+      return 'manual';
+  }
+}
+
+function resolveAuthGroupLabel(group: ConnectedServiceAuthGroupV1): string {
+  const displayName = typeof group.displayName === 'string'
+    ? group.displayName.replace(/\s+/g, ' ').trim()
+    : '';
+  return displayName || group.groupId;
 }
 
 function toEffectiveBinding(
@@ -1011,6 +1085,7 @@ async function runPostSwitchVerificationRecoveryAndContinuation(
     reason: ConnectedServiceSessionAuthSwitchReason;
     agentId: CatalogAgentId;
     nextByServiceId: ReadonlyMap<ConnectedServiceId, EffectiveBinding>;
+    acceptedVerificationByServiceId?: AcceptedConnectedServiceAccountVerificationByServiceId;
   }>,
 ): Promise<SessionConnectedServiceAuthSwitchPostSwitchOutcome> {
   if (input.action === 'hot_applied') {
@@ -1025,6 +1100,9 @@ async function runPostSwitchVerificationRecoveryAndContinuation(
       nextByServiceId: input.nextByServiceId,
       serviceIds: input.serviceIds,
       action: input.action,
+      ...(input.acceptedVerificationByServiceId
+        ? { acceptedVerificationByServiceId: input.acceptedVerificationByServiceId }
+        : {}),
       buildVerificationFailure: verificationFailureResult,
       ...(input.runtimeAuthSelectionsByServiceId ? { runtimeAuthSelectionsByServiceId: input.runtimeAuthSelectionsByServiceId } : {}),
     });
@@ -1078,15 +1156,20 @@ async function runPostSwitchVerificationRecoveryAndContinuation(
   };
 }
 
-function isRetryableProviderAccountAdoptionMismatch(
+function isRetryableHotApplyPostSwitchVerificationFailure(
   failure: SessionConnectedServiceAuthSwitchFailure,
 ): boolean {
+  if (
+    failure.diagnostics?.failurePhase !== 'post_switch_verification'
+    || failure.diagnostics.retryable !== true
+  ) {
+    return false;
+  }
   return failure.errorCode === 'provider_account_adoption_mismatch'
-    && failure.diagnostics?.failurePhase === 'post_switch_verification'
-    && failure.diagnostics.retryable === true;
+    || failure.errorCode === 'post_switch_verification_failed';
 }
 
-async function restartAfterRetryableHotApplyAdoptionMismatch(input: Readonly<{
+async function restartAfterRetryableHotApplyVerificationFailure(input: Readonly<{
   tracked: TrackedSession;
   sessionId: string;
   restartSession: SwitchSessionConnectedServiceAuthInput['restartSession'];
@@ -1142,18 +1225,19 @@ async function validateConnectedProfile(input: Readonly<{
   if (!profile) {
     return { ok: false, errorCode: 'profile_missing', serviceId: input.serviceId };
   }
-  if (profile.status === 'needs_reauth') {
+  const healthStatus = normalizeConnectedServiceCredentialHealthStatus(profile.status);
+  if (isConnectedServiceCredentialHealthStatusReconnectRequired(healthStatus)) {
     return failureResult('profile_action_required', {
       serviceId: input.serviceId,
       failurePhase: 'normalization',
       actionRequired: {
         kind: 'reconnect_profile',
         profileId: input.profileId,
-        healthStatus: profile.status,
+        healthStatus: 'needs_reauth',
       },
     });
   }
-  if (profile.status !== 'connected') {
+  if (!isConnectedServiceCredentialHealthStatusUsable(healthStatus)) {
     return { ok: false, errorCode: 'profile_disconnected', serviceId: input.serviceId };
   }
   return null;
@@ -1163,6 +1247,7 @@ async function normalizeRequestedBindings(input: Readonly<{
   api: ConnectedServiceProfilesApi;
   agentId: CatalogAgentId;
   request: SessionConnectedServiceAuthSwitchRequest;
+  dryRun?: boolean;
 }>): Promise<
   | Readonly<{
     ok: true;
@@ -1213,10 +1298,19 @@ async function normalizeRequestedBindings(input: Readonly<{
         return { ok: false, errorCode: 'group_missing', serviceId };
       }
       const expectedGeneration = readExpectedGeneration(input.request.expectedGroupGenerationByServiceId, serviceId);
-      if (expectedGeneration !== null && expectedGeneration !== group.generation) {
+      const currentGeneration = readGroupGeneration(group.generation);
+      const prospectiveProfileId = readNonEmptyString(binding.profileId);
+      const isProspectiveDryRunGeneration = input.dryRun === true
+        && expectedGeneration !== null
+        && expectedGeneration === currentGeneration + 1
+        && prospectiveProfileId.length > 0
+        && groupHasEnabledMember({ group, profileId: prospectiveProfileId });
+      if (expectedGeneration !== null && expectedGeneration !== currentGeneration && !isProspectiveDryRunGeneration) {
         return { ok: false, errorCode: 'group_generation_conflict', serviceId };
       }
-      const activeProfileId = typeof group.activeProfileId === 'string' ? group.activeProfileId.trim() : '';
+      const activeProfileId = isProspectiveDryRunGeneration
+        ? prospectiveProfileId
+        : typeof group.activeProfileId === 'string' ? group.activeProfileId.trim() : '';
       if (!activeProfileId) {
         return { ok: false, errorCode: 'profile_missing', serviceId };
       }
@@ -1247,9 +1341,12 @@ async function normalizeRequestedBindings(input: Readonly<{
       });
       groupMetadataByServiceId.set(serviceId, {
         groupId: binding.groupId,
+        groupLabel: resolveAuthGroupLabel(group),
         activeProfileId,
         fallbackProfileId,
-        generation: readGroupGeneration(group.generation),
+        generation: isProspectiveDryRunGeneration && expectedGeneration !== null
+          ? expectedGeneration
+          : currentGeneration,
       });
       continue;
     }
@@ -1346,19 +1443,28 @@ function emitSwitchEvents(input: Readonly<{
   mode: ConnectedServiceAccountSwitchMode;
   previousByServiceId: ReadonlyMap<ConnectedServiceId, EffectiveBinding>;
   nextByServiceId: ReadonlyMap<ConnectedServiceId, EffectiveBinding>;
+  groupMetadataByServiceId?: ReadonlyMap<ConnectedServiceId, ConnectedServiceGroupRuntimeMetadata>;
 }>): void {
+  const commitAccountSwitchEvents = input.reason !== 'pre_turn_group_policy';
   for (const [serviceId, next] of input.nextByServiceId.entries()) {
     const previous = input.previousByServiceId.get(serviceId) ?? null;
     if (!effectiveBindingChanged(previous, next)) continue;
-    input.emitSessionEvent(input.sessionId, {
+    const groupId = next.groupId ?? previous?.groupId ?? null;
+    const groupLabel = groupId
+      ? input.groupMetadataByServiceId?.get(serviceId)?.groupLabel ?? groupId
+      : null;
+    const event = {
       type: 'connected_service_account_switch',
       serviceId,
-      groupId: next.groupId ?? previous?.groupId ?? null,
+      groupId,
+      ...(groupLabel ? { groupLabel } : {}),
       fromProfileId: previous?.profileId ?? null,
       toProfileId: next.profileId,
       reason: input.reason,
       mode: input.mode,
-    });
+    };
+    if (!shouldCommitAutomaticGroupApplySessionEvent(event, { commitAccountSwitchEvents })) continue;
+    input.emitSessionEvent(input.sessionId, event);
   }
 }
 
@@ -1429,6 +1535,7 @@ function emitFailedSwitchAttemptEvent(input: Readonly<{
   emitSessionEvent: (sessionId: string, event: unknown) => void;
   sessionId: string;
   result: SessionConnectedServiceAuthSwitchResult;
+  reason?: ConnectedServiceRuntimeAuthApplyReason;
 }>): void {
   if (input.result.ok) return;
   const projection = resolveFailedSwitchAttemptEventProjection(input.result);
@@ -1437,6 +1544,7 @@ function emitFailedSwitchAttemptEvent(input: Readonly<{
     type: 'connected_service_account_switch_attempt',
     ok: false,
     action: projection.action,
+    reason: normalizeSwitchAttemptEventReason(input.reason),
     attemptedContinuityMode: projection.attemptedContinuityMode,
     outcome: projection.outcome,
     outcomeAction: projection.outcomeAction,
@@ -1459,9 +1567,16 @@ async function maybeMaterializeRuntimeAuthSelection(input: Readonly<{
   previousBindings: ConnectedServiceBindingsV1;
   normalizedBindings: ConnectedServiceBindingsV1;
   groupMetadataByServiceId?: ReadonlyMap<ConnectedServiceId, ConnectedServiceGroupRuntimeMetadata>;
+  mode: SessionConnectedServiceRuntimeAuthSelectionMaterializerMode;
+  runtimeAuthApplyReason?: ConnectedServiceRuntimeAuthApplyReason;
 }>): Promise<unknown | null> {
   if (!input.materializeRuntimeAuthSelection || input.next.source !== 'connected') return null;
   return await input.materializeRuntimeAuthSelection({
+    mode: input.mode,
+    ...(input.runtimeAuthApplyReason ? { runtimeAuthApplyReason: input.runtimeAuthApplyReason } : {}),
+    ...(shouldRequireDirectLiveHotApplyForRuntimeAuthReason(input.runtimeAuthApplyReason)
+      ? { requireDirectLiveHotApply: true }
+      : {}),
     tracked: input.tracked,
     sessionId: input.sessionId,
     agentId: input.agentId,
@@ -1505,7 +1620,9 @@ function hasTrackedRuntimeAlreadyAdoptedExpectedGroupGeneration(input: Readonly<
   tracked: TrackedSession;
   serviceId: ConnectedServiceId;
   next: EffectiveBinding;
+  runtimeAuthApplyReason?: ConnectedServiceRuntimeAuthApplyReason;
 }>): boolean {
+  if (shouldRequireDirectLiveHotApplyForRuntimeAuthReason(input.runtimeAuthApplyReason)) return false;
   if (input.request.rematerializeServiceId) return false;
   if (input.next.source !== 'connected' || input.next.selection !== 'group') return false;
   const expectedGeneration = readExpectedGroupGenerationForService({
@@ -1543,6 +1660,8 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
   postSwitchVerificationMode: SwitchSessionConnectedServiceAuthInput['postSwitchVerificationMode'];
   diagnosticSource: ConnectedServiceUxDiagnosticV1['source'];
   registerHotApplyTargets: SwitchSessionConnectedServiceAuthInput['registerHotApplyTargets'];
+  dryRun?: boolean;
+  runtimeAuthApplyReason?: ConnectedServiceRuntimeAuthApplyReason;
 }>): Promise<SessionConnectedServiceAuthSwitchResult | null> {
   const serviceId = resolveUnchangedRematerializeServiceId({
     request: input.request,
@@ -1565,6 +1684,7 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
     tracked: input.tracked,
     serviceId,
     next,
+    runtimeAuthApplyReason: input.runtimeAuthApplyReason,
   })) {
     return {
       ok: true,
@@ -1576,7 +1696,9 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
   }
 
   const previous = input.previousByServiceId.get(serviceId) ?? null;
-  const previousBindings = readConnectedServiceBindingsOrEmpty(input.tracked.spawnOptions?.connectedServices);
+  const previousBindings = readConnectedServiceBindingsOrEmpty(
+    resolveTrackedConnectedServiceBindingsRaw(input.tracked),
+  );
   const runtimeAuthSelection = await maybeMaterializeRuntimeAuthSelection({
     materializeRuntimeAuthSelection: input.materializeRuntimeAuthSelection,
     tracked: input.tracked,
@@ -1588,6 +1710,8 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
     previousBindings,
     normalizedBindings: input.normalizedBindings,
     groupMetadataByServiceId: input.groupMetadataByServiceId,
+    mode: input.dryRun ? 'preflight' : 'apply',
+    runtimeAuthApplyReason: input.runtimeAuthApplyReason,
   });
   const blockingMaterializationDiagnostics = readRuntimeAuthSelectionBlockingMaterializationDiagnostics(
     runtimeAuthSelection,
@@ -1630,6 +1754,15 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
       diagnosticSource: input.diagnosticSource,
       ...(continuity.diagnostics ? { continuity: continuity.diagnostics } : {}),
     });
+  }
+  if (input.dryRun) {
+    return {
+      ok: true,
+      action: continuity.mode === 'hot_apply' ? 'hot_applied' : 'restart_requested',
+      normalizedBindings: input.normalizedBindings,
+      continuityByServiceId: { [serviceId]: continuity.mode },
+      warnings: continuity.warnings ?? [],
+    };
   }
 
   const runtimeAuthSelectionsByServiceId = runtimeAuthSelection === null || runtimeAuthSelection === undefined
@@ -1765,17 +1898,20 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
         nextByServiceId: input.nextByServiceId,
         serviceIds,
         action: 'hot_applied',
+        ...(hotApplyResult.verificationByServiceId
+          ? { acceptedVerificationByServiceId: hotApplyResult.verificationByServiceId }
+          : {}),
         ...(runtimeAuthSelectionsByServiceId ? { runtimeAuthSelectionsByServiceId } : {}),
       });
       if (continuationOutcome.failure) {
-        if (!isRetryableProviderAccountAdoptionMismatch(continuationOutcome.failure)) return continuationOutcome.failure;
+        if (!isRetryableHotApplyPostSwitchVerificationFailure(continuationOutcome.failure)) return continuationOutcome.failure;
         const restartContinuationAttemptId = buildConnectedServiceSwitchContinuationAttemptId({
           action: 'restart_requested',
           serviceIds,
           normalizedBindings: input.normalizedBindings,
           expectedGroupGenerationByServiceId: input.request.expectedGroupGenerationByServiceId,
         });
-        const restartOutcome = await restartAfterRetryableHotApplyAdoptionMismatch({
+        const restartOutcome = await restartAfterRetryableHotApplyVerificationFailure({
           restartSession: input.restartSession,
           recoverAfterRuntimeAuthSwitch: input.recoverAfterRuntimeAuthSwitch,
           continueAfterRuntimeAuthSwitch: input.continueAfterRuntimeAuthSwitch,
@@ -1879,6 +2015,7 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
       api: input.api,
       agentId: inactive.agentId,
       request: input.request,
+      dryRun: input.dryRun === true,
     });
     if (!normalized.ok) return normalized;
 
@@ -1966,6 +2103,7 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
       mode: 'spawn_next_turn',
       previousByServiceId,
       nextByServiceId,
+      groupMetadataByServiceId: normalized.groupMetadataByServiceId,
     });
 
     return {
@@ -1986,10 +2124,13 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
     api: input.api,
     agentId: trackedAgentId,
     request: input.request,
+    dryRun: input.dryRun === true,
   });
   if (!normalized.ok) return normalized;
 
-  const previousBindings = readConnectedServiceBindingsOrEmpty(tracked.spawnOptions?.connectedServices);
+  const previousBindings = readConnectedServiceBindingsOrEmpty(
+    resolveTrackedConnectedServiceBindingsRaw(tracked),
+  );
   const previousByServiceId = previousEffectiveBindings(previousBindings);
   const nextByServiceId = resolveNextEffectiveBindings({
     previousByServiceId,
@@ -2020,6 +2161,8 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
       diagnosticSource,
       registerHotApplyTargets: input.registerHotApplyTargets,
       groupMetadataByServiceId: normalized.groupMetadataByServiceId,
+      dryRun: input.dryRun,
+      runtimeAuthApplyReason: input.runtimeAuthApplyReason,
     });
     if (rematerialized) return rematerialized;
     return {
@@ -2059,6 +2202,8 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
       previousBindings,
       normalizedBindings: normalized.normalized,
       groupMetadataByServiceId: normalized.groupMetadataByServiceId,
+      mode: input.dryRun ? 'preflight' : 'apply',
+      runtimeAuthApplyReason: input.runtimeAuthApplyReason,
     });
     const blockingMaterializationDiagnostics = readRuntimeAuthSelectionBlockingMaterializationDiagnostics(
       runtimeAuthSelection,
@@ -2107,6 +2252,15 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
     ? 'hot_applied'
     : 'restart_requested';
   const changedServiceIdSet = new Set<ConnectedServiceId>(changedServiceIds);
+  if (input.dryRun) {
+    return {
+      ok: true,
+      action,
+      normalizedBindings: normalized.normalized,
+      continuityByServiceId,
+      warnings,
+    };
+  }
   const postSwitchVerificationByServiceId: AcceptedConnectedServiceAccountVerificationByServiceId = {};
   const continuationAttemptId = buildConnectedServiceSwitchContinuationAttemptId({
     action,
@@ -2256,10 +2410,13 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
           nextByServiceId,
           serviceIds: changedServiceIdSet,
           action: 'hot_applied',
+          ...(hotApplyResult.verificationByServiceId
+            ? { acceptedVerificationByServiceId: hotApplyResult.verificationByServiceId }
+            : {}),
           ...(runtimeAuthSelectionsByServiceId.size === 0 ? {} : { runtimeAuthSelectionsByServiceId }),
         });
         if (continuationOutcome.failure) {
-          if (!isRetryableProviderAccountAdoptionMismatch(continuationOutcome.failure)) return continuationOutcome.failure;
+          if (!isRetryableHotApplyPostSwitchVerificationFailure(continuationOutcome.failure)) return continuationOutcome.failure;
           try {
             await input.restartSession(tracked);
           } catch (error) {
@@ -2398,6 +2555,7 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
     mode: action === 'hot_applied' ? 'hot_apply' : 'restart_resume',
     previousByServiceId,
     nextByServiceId,
+    groupMetadataByServiceId: normalized.groupMetadataByServiceId,
   });
 
   return {
@@ -2425,10 +2583,13 @@ export async function switchSessionConnectedServiceAuth(
       reason: switchReason,
     }),
   });
-  emitFailedSwitchAttemptEvent({
-    emitSessionEvent: input.emitSessionEvent,
-    sessionId: input.request.sessionId,
-    result,
-  });
+  if (!input.dryRun) {
+    emitFailedSwitchAttemptEvent({
+      emitSessionEvent: input.emitSessionEvent,
+      sessionId: input.request.sessionId,
+      result,
+      reason: input.runtimeAuthApplyReason,
+    });
+  }
   return result;
 }

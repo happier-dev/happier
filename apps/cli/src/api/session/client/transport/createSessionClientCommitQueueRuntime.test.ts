@@ -7,6 +7,7 @@ import {
 
 function createRuntime(overrides: Partial<Parameters<typeof createSessionClientCommitQueueRuntime>[0]> = {}) {
     return createSessionClientCommitQueueRuntime({
+        token: 'token-1',
         sessionId: 'session-1',
         transcriptStorage: 'persisted',
         sessionEncryptionMode: 'plain',

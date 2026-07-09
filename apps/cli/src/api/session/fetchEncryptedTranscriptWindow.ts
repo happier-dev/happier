@@ -2,7 +2,7 @@ import axios from 'axios';
 
 import { createAuthenticationHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { configuration } from '@/configuration';
-import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { SessionMessageContentSchema, type SessionMessageContent } from '../types';
 
 export type TranscriptRow = Readonly<{
@@ -20,6 +20,14 @@ type RawTranscriptRow = Readonly<{
   createdAt?: unknown;
   content?: unknown;
 }>;
+
+const DEFAULT_TRANSCRIPT_FETCH_TIMEOUT_MS = 10_000;
+
+function resolveTranscriptFetchTimeoutMs(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.max(1, Math.trunc(value))
+    : DEFAULT_TRANSCRIPT_FETCH_TIMEOUT_MS;
+}
 
 export type FetchEncryptedTranscriptRangeResult =
   | Readonly<{ ok: true; rows: TranscriptRow[] }>
@@ -53,15 +61,16 @@ export async function fetchEncryptedTranscriptPageAfterSeq(params: Readonly<{
   sessionId: string;
   afterSeq: number;
   limit: number;
+  timeoutMs?: number;
 }>): Promise<TranscriptRow[]> {
-  const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+  const serverUrl = resolveServerHttpBaseUrl();
   const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
     headers: {
       Authorization: `Bearer ${params.token}`,
       'Content-Type': 'application/json',
     },
     params: { afterSeq: params.afterSeq, limit: params.limit },
-    timeout: 10_000,
+    timeout: resolveTranscriptFetchTimeoutMs(params.timeoutMs),
     validateStatus: () => true,
   });
 
@@ -79,15 +88,16 @@ export async function fetchEncryptedTranscriptPageLatest(params: Readonly<{
   token: string;
   sessionId: string;
   limit: number;
+  timeoutMs?: number;
 }>): Promise<TranscriptRow[]> {
-  const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+  const serverUrl = resolveServerHttpBaseUrl();
   const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
     headers: {
       Authorization: `Bearer ${params.token}`,
       'Content-Type': 'application/json',
     },
     params: { limit: params.limit },
-    timeout: 10_000,
+    timeout: resolveTranscriptFetchTimeoutMs(params.timeoutMs),
     validateStatus: () => true,
   });
 

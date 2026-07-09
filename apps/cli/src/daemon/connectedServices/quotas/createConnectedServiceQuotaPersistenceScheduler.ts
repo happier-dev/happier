@@ -19,6 +19,7 @@ type PausedQuotaPersistencePayload<TPayload extends ConnectedServiceQuotaPersist
   lastTouchedAtMs: number;
   materialFingerprint: string;
   payload: TPayload;
+  reason: 'retryable_failures' | 'nonretryable_failure';
 };
 
 class QuotaPersistenceRetryControlError extends Error {
@@ -88,12 +89,18 @@ export function createConnectedServiceQuotaPersistenceScheduler<
     }
   }
 
-  function rememberPausedPayload(key: TKey, payload: TPayload, consecutiveFailures: number): void {
+  function rememberPausedPayload(
+    key: TKey,
+    payload: TPayload,
+    consecutiveFailures: number,
+    reason: PausedQuotaPersistencePayload<TPayload>['reason'],
+  ): void {
     pausedByKey.set(key, {
       consecutiveFailures,
       lastTouchedAtMs: now(),
       materialFingerprint: payload.materialFingerprint,
       payload,
+      reason,
     });
     evictOldestPausedKeys(key);
   }
@@ -106,14 +113,14 @@ export function createConnectedServiceQuotaPersistenceScheduler<
         await options.run(key, payload);
         pausedByKey.delete(key);
       } catch (error) {
-        if (!shouldRetry(error)) {
-          pausedByKey.delete(key);
-          throw new QuotaPersistenceRetryControlError(false, error);
-        }
-
         if (options.shouldPauseAfterFailure?.(error) === false) {
           pausedByKey.delete(key);
           throw error;
+        }
+
+        if (!shouldRetry(error)) {
+          rememberPausedPayload(key, payload, maxConsecutiveFailures, 'nonretryable_failure');
+          throw new QuotaPersistenceRetryControlError(false, error);
         }
 
         const previous = pausedByKey.get(key);
@@ -124,11 +131,11 @@ export function createConnectedServiceQuotaPersistenceScheduler<
         const consecutiveFailures = forced ? maxConsecutiveFailures : previousFailures + 1;
 
         if (consecutiveFailures >= maxConsecutiveFailures) {
-          rememberPausedPayload(key, payload, maxConsecutiveFailures);
+          rememberPausedPayload(key, payload, maxConsecutiveFailures, 'retryable_failures');
           throw new QuotaPersistenceRetryControlError(false, error);
         }
 
-        rememberPausedPayload(key, payload, consecutiveFailures);
+        rememberPausedPayload(key, payload, consecutiveFailures, 'retryable_failures');
         throw error;
       }
     },
@@ -136,6 +143,7 @@ export function createConnectedServiceQuotaPersistenceScheduler<
   });
 
   function enqueuePausedPayloadForFlush(key: TKey, paused: PausedQuotaPersistencePayload<TPayload>): void {
+    if (paused.reason === 'nonretryable_failure') return;
     forceFlushKeys.add(key);
     scheduler.enqueue(key, paused.payload);
   }
@@ -146,8 +154,11 @@ export function createConnectedServiceQuotaPersistenceScheduler<
       if (paused && paused.materialFingerprint === payload.materialFingerprint) {
         paused.payload = payload;
         paused.lastTouchedAtMs = now();
-        emitSuppressed(key, 'paused_after_failures');
-        return { type: 'suppressed', reason: 'paused_after_failures' };
+        const reason = paused.reason === 'nonretryable_failure'
+          ? 'paused_after_nonretryable_failure'
+          : 'paused_after_failures';
+        emitSuppressed(key, reason);
+        return { type: 'suppressed', reason };
       }
       if (paused && paused.materialFingerprint !== payload.materialFingerprint) {
         pausedByKey.delete(key);

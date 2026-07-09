@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { logger } from '@/ui/logger';
-import { deriveVoiceAgentTurnLocalId, readVoiceAgentTurnPayloadFromMeta } from '@happier-dev/protocol';
+import { deriveVoiceAgentTurnLocalId, readVoiceAgentTurnPayloadFromMeta, validatePluginHookPayloadV1 } from '@happier-dev/protocol';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 
@@ -25,6 +25,7 @@ import {
     recordAcpToolTraceEventIfNeeded,
 } from '../../toolTrace';
 import {
+    sendAgentMessageEphemeralDeltaViaPort,
     sendAgentMessageEphemeralViaPort,
     sendAgentMessageViaPort,
     sendSessionEventViaPort,
@@ -66,6 +67,7 @@ type CommitSessionMessageParams = Readonly<{
     sessionEventType?: SessionEventType;
     requireCommit: boolean;
     markAsUserMessage?: boolean;
+    refreshAgentQueueEchoSuppression?: boolean;
 }>;
 
 type EnqueueCommittedTranscriptMessageParams = Readonly<{
@@ -78,6 +80,18 @@ type EnqueueCommittedTranscriptMessageParams = Readonly<{
     updatedAt: number;
 }>;
 
+type SessionAliveMode = 'local' | 'remote';
+type SessionAlivePayload = Readonly<{
+    sid: string;
+    time: number;
+    thinking: boolean;
+    mode: SessionAliveMode;
+}>;
+type SessionPresenceSnapshot = Readonly<{
+    thinking: boolean;
+    mode: SessionAliveMode;
+}>;
+
 export type SessionClientTranscriptApiDeps = Readonly<{
     token: string;
     sessionId: string;
@@ -87,7 +101,7 @@ export type SessionClientTranscriptApiDeps = Readonly<{
     };
     getSocket: () => {
         connected: boolean;
-        emit: (event: 'session-alive' | 'session-end' | 'transcript-stream-segment', payload: unknown) => void;
+        emit: (event: 'session-alive' | 'session-end' | 'transcript-stream-segment' | 'transcript-stream-segment-delta', payload: unknown) => void;
         volatile?: {
             emit?: (event: 'session-alive', payload: unknown) => void;
         };
@@ -112,15 +126,25 @@ export type SessionClientTranscriptApiDeps = Readonly<{
         messageRole: SessionMessageRole;
         sessionEventType?: SessionEventType;
         markAsUserMessage?: boolean;
-    }>) => void;
+        refreshAgentQueueEchoSuppression?: boolean;
+    }>) => Promise<void>;
     enqueueMessageCommit: <T>(fn: () => Promise<T>) => Promise<T>;
+    trackProviderTranscriptDispatch?: (update: Promise<unknown>) => void;
     commitSessionMessage: (params: CommitSessionMessageParams) => Promise<void>;
     logSendWhileDisconnected: (context: string, details?: Record<string, unknown>) => void;
+    hasAgentQueueEchoSuppressedLocalId: (localId: string) => boolean;
     markAgentQueueEchoSuppressedLocalId: (localId: string) => void;
+    clearAgentQueueEchoSuppressedLocalId: (localId: string) => void;
+    markAgentQueueDeliveredLocalId: (localId: string) => void;
+    clearAgentQueueDeliveredLocalId: (localId: string) => void;
+    getCommittedUserMessageSeq: (localId: string) => number | null;
+    recordUserMessageDeliveredToAgentQueue: (seq: number) => void;
     toolCallCanonicalNameByProviderAndId: Map<string, { rawToolName: string; canonicalToolName: string }>;
     permissionToolCallRawInputByProviderAndId: Map<string, unknown>;
     toolCallInputByProviderAndId: Map<string, unknown>;
-    deliverUserMessageToAgentQueue: (prompt: UserMessage) => void;
+    maxToolCallCacheEntries?: number | undefined;
+    transformSessionInputBeforeCommit?: (payload: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown>;
+    deliverUserMessageToAgentQueue: (prompt: UserMessage) => boolean;
     getTranscriptQueryContext: () => Readonly<{
         encryptionKey: Uint8Array;
         encryptionVariant: 'legacy' | 'dataKey';
@@ -134,7 +158,7 @@ export type SessionClientTranscriptApi = Readonly<{
         body: ACPMessageData,
         opts?: { localId?: string; meta?: Record<string, unknown> },
     ) => void;
-    sendUserTextMessage: (text: string, opts?: { localId?: string; meta?: Record<string, unknown> }) => void;
+    sendUserTextMessage: (text: string, opts?: { localId?: string; meta?: Record<string, unknown>; refreshAgentQueueEchoSuppression?: boolean }) => void;
     sendUserTextMessageCommitted: (
         text: string,
         opts: { localId: string; meta?: Record<string, unknown> },
@@ -143,7 +167,7 @@ export type SessionClientTranscriptApi = Readonly<{
         text: string;
         localId?: string;
         meta?: Record<string, unknown>;
-    }>) => void;
+    }>) => Promise<void>;
     sendAgentMessageCommitted: (
         provider: ACPProvider,
         body: ACPMessageData,
@@ -161,7 +185,12 @@ export type SessionClientTranscriptApi = Readonly<{
     sendAgentMessageEphemeral: (
         provider: ACPProvider,
         body: ACPMessageData,
-        opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> },
+        opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; tick?: number },
+    ) => void;
+    sendAgentMessageEphemeralDelta: (
+        provider: ACPProvider,
+        body: ACPMessageData,
+        opts: { localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> },
     ) => void;
     fetchRecentTranscriptTextItemsForAcpImport: (
         opts?: { take?: number },
@@ -170,13 +199,45 @@ export type SessionClientTranscriptApi = Readonly<{
         opts?: { take?: number },
     ) => Promise<{ intent: import('../../../types').PermissionMode; updatedAt: number } | null>;
     sendSessionEvent: (event: SessionEventMessage, id?: string) => void;
-    keepAlive: (thinking: boolean, mode: 'local' | 'remote') => void;
+    keepAlive: (thinking: boolean, mode: SessionAliveMode) => void;
+    replayLatestPresence: () => void;
     sendSessionDeath: () => void;
 }>;
 
 export function createSessionClientTranscriptApi(
     deps: SessionClientTranscriptApiDeps,
 ): SessionClientTranscriptApi {
+    let latestSessionPresence: SessionPresenceSnapshot | null = null;
+
+    const createSessionAlivePayload = (presence: SessionPresenceSnapshot): SessionAlivePayload => ({
+        sid: deps.sessionId,
+        time: Date.now(),
+        thinking: presence.thinking,
+        mode: presence.mode,
+    });
+
+    const emitSessionAlive = (
+        payload: SessionAlivePayload,
+        { volatileWhenIdle }: { volatileWhenIdle: boolean },
+    ): boolean => {
+        const socket = deps.getSocket();
+        if (!socket.connected) return false;
+
+        if (payload.thinking || !volatileWhenIdle) {
+            socket.emit('session-alive', payload);
+            return true;
+        }
+
+        const volatileEmit = socket.volatile?.emit;
+        if (typeof volatileEmit === 'function') {
+            volatileEmit.call(socket.volatile, 'session-alive', payload);
+            return true;
+        }
+
+        socket.emit('session-alive', payload);
+        return true;
+    };
+
     const getTranscriptSendPort = (): SessionClientTranscriptSendPort => ({
         sessionId: deps.sessionId,
         turnAssistantTextSnapshotStore: deps.turnAssistantTextSnapshotStore,
@@ -197,6 +258,7 @@ export function createSessionClientTranscriptApi(
         toolCallCanonicalNameByProviderAndId: deps.toolCallCanonicalNameByProviderAndId,
         permissionToolCallRawInputByProviderAndId: deps.permissionToolCallRawInputByProviderAndId,
         toolCallInputByProviderAndId: deps.toolCallInputByProviderAndId,
+        maxToolCallCacheEntries: deps.maxToolCallCacheEntries,
     });
 
     const getPostSendReactionPort = (): PostSendReactionPort => ({
@@ -209,7 +271,7 @@ export function createSessionClientTranscriptApi(
 
     const sendUserTextMessage = (
         text: string,
-        opts?: { localId?: string; meta?: Record<string, unknown> },
+        opts?: { localId?: string; meta?: Record<string, unknown>; refreshAgentQueueEchoSuppression?: boolean },
     ): void => {
         sendUserTextMessageViaPort(getTranscriptSendPort(), text, opts);
     };
@@ -242,6 +304,114 @@ export function createSessionClientTranscriptApi(
                 localId,
                 source: 'committed',
             });
+        }
+    };
+
+    const commitUserTextMessage = async (
+        text: string,
+        opts: { localId: string; meta?: Record<string, unknown>; refreshAgentQueueEchoSuppression: boolean },
+    ): Promise<void> => {
+        const { payload, localId } = prepareCommittedUserTextMessageViaPort(
+            getTranscriptSendPort(),
+            text,
+            opts,
+        );
+        if (opts.refreshAgentQueueEchoSuppression) {
+            deps.markAgentQueueEchoSuppressedLocalId(localId);
+        }
+        await deps.enqueueMessageCommit(() =>
+            deps.commitSessionMessage({
+                message: payload,
+                localId,
+                sidechainId: null,
+                messageRole: 'user',
+                requireCommit: true,
+                markAsUserMessage: true,
+                refreshAgentQueueEchoSuppression: opts.refreshAgentQueueEchoSuppression,
+            }),
+        );
+    };
+
+    const commitUserTextMessageBeforeAgentQueueHandoff = async (
+        text: string,
+        prompt: UserMessage,
+        opts: { localId: string; meta: Record<string, unknown>; failureLogMessage: string },
+    ): Promise<void> => {
+        const { localId, meta } = opts;
+        try {
+            await commitUserTextMessage(text, {
+                localId,
+                meta,
+                refreshAgentQueueEchoSuppression: false,
+            });
+        } catch (error) {
+            deps.clearAgentQueueEchoSuppressedLocalId(localId);
+            deps.clearAgentQueueDeliveredLocalId(localId);
+            logger.debug(opts.failureLogMessage, { error });
+            return;
+        }
+
+        if (deps.hasAgentQueueEchoSuppressedLocalId(localId)) {
+            return;
+        }
+
+        const deliveredToAgentQueue = deps.deliverUserMessageToAgentQueue(prompt);
+        if (deliveredToAgentQueue) {
+            deps.markAgentQueueEchoSuppressedLocalId(localId);
+            deps.markAgentQueueDeliveredLocalId(localId);
+            const committedSeq = deps.getCommittedUserMessageSeq(localId);
+            if (committedSeq !== null) {
+                deps.recordUserMessageDeliveredToAgentQueue(committedSeq);
+            }
+        } else {
+            deps.clearAgentQueueEchoSuppressedLocalId(localId);
+            deps.clearAgentQueueDeliveredLocalId(localId);
+        }
+    };
+
+    const transformSessionInputPayloadBeforeCommit = async (
+        payload: Readonly<{
+            localId: string;
+            text: string;
+            meta: Record<string, unknown>;
+            timestampMs: number;
+        }>,
+    ): Promise<Readonly<{
+        text: string;
+        meta: Record<string, unknown>;
+    }>> => {
+        if (!deps.transformSessionInputBeforeCommit) {
+            return { text: payload.text, meta: payload.meta };
+        }
+        try {
+            const transformed = await deps.transformSessionInputBeforeCommit({
+                sessionId: deps.sessionId,
+                localId: payload.localId,
+                text: payload.text,
+                meta: payload.meta,
+                timestampMs: payload.timestampMs,
+            });
+            const validation = validatePluginHookPayloadV1({
+                hookId: 'session.input.transform',
+                payload: transformed,
+            });
+            if (!validation.success) {
+                logger.debug('[plugins] session.input.transform returned an invalid payload; using original input', {
+                    error: validation.message,
+                });
+                return { text: payload.text, meta: payload.meta };
+            }
+            const parsed = validation.payload as Record<string, unknown>;
+            const transformedMeta = parsed.meta && typeof parsed.meta === 'object' && !Array.isArray(parsed.meta)
+                ? parsed.meta as Record<string, unknown>
+                : payload.meta;
+            return {
+                text: typeof parsed.text === 'string' ? parsed.text : payload.text,
+                meta: transformedMeta,
+            };
+        } catch (error) {
+            logger.debug('[plugins] session.input.transform failed; using original input', { error });
+            return { text: payload.text, meta: payload.meta };
         }
     };
 
@@ -298,12 +468,14 @@ export function createSessionClientTranscriptApi(
 
     return {
         sendProviderMessage(request) {
-            void dispatchProviderTranscriptMessage(getTranscriptSendPort(), request, {
+            const update = dispatchProviderTranscriptMessage(getTranscriptSendPort(), request, {
                 sessionId: deps.sessionId,
                 postSendReactionPort: getPostSendReactionPort(),
             }).catch((error) => {
                 logger.debug('[SOCKET] Failed to dispatch provider transcript message (non-fatal)', { error });
             });
+            deps.trackProviderTranscriptDispatch?.(update);
+            void update;
         },
 
         sendAgentMessage(provider, body, opts) {
@@ -328,27 +500,15 @@ export function createSessionClientTranscriptApi(
         sendUserTextMessage,
 
         async sendUserTextMessageCommitted(text, opts) {
-            const { payload, localId } = prepareCommittedUserTextMessageViaPort(
-                getTranscriptSendPort(),
-                text,
-                opts,
-            );
-            deps.markAgentQueueEchoSuppressedLocalId(localId);
-            await deps.enqueueMessageCommit(() =>
-                deps.commitSessionMessage({
-                    message: payload,
-                    localId,
-                    sidechainId: null,
-                    messageRole: 'user',
-                    requireCommit: true,
-                    markAsUserMessage: true,
-                }),
-            );
+            await commitUserTextMessage(text, {
+                ...opts,
+                refreshAgentQueueEchoSuppression: true,
+            });
         },
 
-        enqueueSessionUserMessage(params) {
-            const text = String(params.text ?? '');
-            if (text.length === 0) return;
+        async enqueueSessionUserMessage(params) {
+            const originalText = String(params.text ?? '');
+            if (originalText.length === 0) return;
             const localId = typeof params.localId === 'string' && params.localId.length > 0 ? params.localId : randomUUID();
 
             const meta: Record<string, unknown> = params.meta && typeof params.meta === 'object' ? { ...params.meta } : {};
@@ -358,18 +518,37 @@ export function createSessionClientTranscriptApi(
             if (typeof meta.sentFrom !== 'string' || meta.sentFrom.trim().length === 0) {
                 meta.sentFrom = 'ui';
             }
+            const createdAt = Date.now();
+            const transformed = await transformSessionInputPayloadBeforeCommit({
+                localId,
+                text: originalText,
+                meta,
+                timestampMs: createdAt,
+            });
+            const text = transformed.text;
 
             const prompt = {
                 role: 'user',
                 content: { type: 'text', text },
                 localId,
-                meta,
-                createdAt: Date.now(),
+                meta: transformed.meta,
+                createdAt,
             } satisfies UserMessage;
 
-            deps.deliverUserMessageToAgentQueue(prompt);
-            deps.markAgentQueueEchoSuppressedLocalId(localId);
-            sendUserTextMessage(text, { localId, meta });
+            if (transformed.meta.source === 'daemon-initial-prompt') {
+                await commitUserTextMessageBeforeAgentQueueHandoff(text, prompt, {
+                    localId,
+                    meta: transformed.meta,
+                    failureLogMessage: '[SOCKET] Failed to commit daemon initial prompt before provider handoff',
+                });
+                return;
+            }
+
+            await commitUserTextMessageBeforeAgentQueueHandoff(text, prompt, {
+                localId,
+                meta: transformed.meta,
+                failureLogMessage: '[SOCKET] Failed to commit session user prompt before provider handoff',
+            });
         },
 
         sendAgentMessageCommitted,
@@ -417,6 +596,10 @@ export function createSessionClientTranscriptApi(
 
         sendAgentMessageEphemeral(provider, body, opts) {
             sendAgentMessageEphemeralViaPort(getTranscriptSendPort(), provider, body, opts);
+        },
+
+        sendAgentMessageEphemeralDelta(provider, body, opts) {
+            sendAgentMessageEphemeralDeltaViaPort(getTranscriptSendPort(), provider, body, opts);
         },
 
         async fetchRecentTranscriptTextItemsForAcpImport(opts) {
@@ -469,33 +652,13 @@ export function createSessionClientTranscriptApi(
             if (process.env.DEBUG) {
                 logger.debug(`[API] Sending keep alive message: ${thinking}`);
             }
-            const socket = deps.getSocket();
-            const payload = {
-                sid: deps.sessionId,
-                time: Date.now(),
-                thinking,
-                mode,
-            };
+            latestSessionPresence = { thinking, mode };
+            emitSessionAlive(createSessionAlivePayload(latestSessionPresence), { volatileWhenIdle: true });
+        },
 
-            if (thinking) {
-                if (!socket.connected) {
-                    return;
-                }
-                socket.emit('session-alive', payload);
-                return;
-            }
-
-            if (!socket.connected) {
-                return;
-            }
-
-            const volatileEmit = socket.volatile?.emit;
-            if (typeof volatileEmit === 'function') {
-                volatileEmit.call(socket.volatile, 'session-alive', payload);
-                return;
-            }
-
-            socket.emit('session-alive', payload);
+        replayLatestPresence() {
+            if (!latestSessionPresence) return;
+            emitSessionAlive(createSessionAlivePayload(latestSessionPresence), { volatileWhenIdle: false });
         },
 
         sendSessionDeath() {

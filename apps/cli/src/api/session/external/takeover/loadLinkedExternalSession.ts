@@ -7,11 +7,11 @@ import {
   readRuntimeDescriptorV1,
   RuntimeDescriptorV1Schema,
   type RuntimeDescriptorV1,
+  type CodexBackendMode,
 } from '@happier-dev/protocol';
 import {
   resolvePersistedCodexRuntimeIdentity,
-  type CodexBackendMode,
-} from '@happier-dev/agents';
+} from '@happier-dev/plugins-codex/agent/identity/runtimeDescriptor';
 import { applyRuntimeDescriptorSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import * as z from 'zod';
 

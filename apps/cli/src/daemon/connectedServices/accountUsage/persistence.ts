@@ -1,5 +1,9 @@
 import {
+  ConnectedServiceUsageSourceV1Schema,
+  ProviderAccountUsageRecordIdSchema,
+  ProviderAccountUsageSnapshotV1Schema,
   sealProviderAccountUsageSnapshotCiphertext,
+  type ConnectedServiceUsageSourceV1,
   type ProviderAccountUsageRecordId,
   type ProviderAccountUsageSnapshotV1,
   type SealedProviderAccountUsageSnapshotV1,
@@ -23,6 +27,7 @@ type AccountUsageApi = Readonly<{
   getAccountEncryptionMode: () => Promise<'plain' | 'e2ee' | 'unknown'>;
   registerProviderAccountUsageSnapshotPlain?: (args: Readonly<{
     recordId: ProviderAccountUsageRecordId;
+    source?: ConnectedServiceUsageSourceV1;
     content: { t: 'plain'; v: ProviderAccountUsageSnapshotV1 };
     metadata: {
       fetchedAt: number;
@@ -33,6 +38,8 @@ type AccountUsageApi = Readonly<{
   }>) => Promise<void>;
   registerProviderAccountUsageSnapshotSealed?: (args: Readonly<{
     recordId: ProviderAccountUsageRecordId;
+    recordKey: ProviderAccountUsageSnapshotV1['recordKey'];
+    source?: ConnectedServiceUsageSourceV1;
     sealed: SealedProviderAccountUsageSnapshotV1;
     metadata: {
       fetchedAt: number;
@@ -46,13 +53,17 @@ type AccountUsageApi = Readonly<{
 type ProviderAccountUsagePersistencePayload = Readonly<{
   recordId: ProviderAccountUsageRecordId;
   snapshot: ProviderAccountUsageSnapshotV1;
+  source?: ConnectedServiceUsageSourceV1;
   status: 'ok' | 'unavailable' | 'estimated' | 'error';
   materialFingerprint: string;
   materialState: QuotaPersistenceMaterialState;
 }>;
 
 export type ProviderAccountUsagePersistenceScheduler = Readonly<{
-  recordInBandSnapshot(snapshot: ProviderAccountUsageSnapshotV1): Promise<
+  recordInBandSnapshot(
+    snapshot: ProviderAccountUsageSnapshotV1,
+    options?: Readonly<{ source?: ConnectedServiceUsageSourceV1; sources?: readonly ConnectedServiceUsageSourceV1[] }>,
+  ): Promise<
     | Readonly<{ status: 'enqueued'; enqueue: 'accepted' | 'coalesced' }>
     | Readonly<{ status: 'suppressed'; reason: string }>
   >;
@@ -70,6 +81,37 @@ function deriveProviderAccountUsageStatus(
   if (statuses.every((status) => status === 'unavailable')) return 'unavailable';
   if (statuses.some((status) => status === 'estimated')) return 'estimated';
   return 'ok';
+}
+
+function sourcePersistenceKey(source: ConnectedServiceUsageSourceV1 | undefined): string {
+  if (!source) return 'record';
+  if (source.bindingKind === 'group_member') {
+    return JSON.stringify([
+      'group_member',
+      source.serviceId,
+      source.profileId,
+      source.groupId ?? '',
+      source.groupGeneration ?? null,
+    ]);
+  }
+  return JSON.stringify(['profile', source.serviceId, source.profileId]);
+}
+
+function normalizePersistenceSources(
+  options: Readonly<{ source?: ConnectedServiceUsageSourceV1; sources?: readonly ConnectedServiceUsageSourceV1[] }> | undefined,
+): readonly (ConnectedServiceUsageSourceV1 | undefined)[] {
+  const sources = [
+    ...(options?.source ? [options.source] : []),
+    ...(options?.sources ?? []),
+  ];
+  if (sources.length === 0) return [undefined];
+
+  const byKey = new Map<string, ConnectedServiceUsageSourceV1>();
+  for (const source of sources) {
+    const parsed = ConnectedServiceUsageSourceV1Schema.parse(source);
+    byKey.set(sourcePersistenceKey(parsed), parsed);
+  }
+  return [...byKey.values()];
 }
 
 function resolveFingerprintKey(params: Readonly<{
@@ -104,13 +146,14 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
     0,
     Math.trunc(params.minFreshnessMs ?? DEFAULT_PROVIDER_ACCOUNT_USAGE_PERSISTENCE_MIN_FRESHNESS_MS),
   );
-  const stateByRecordId = new Map<string, QuotaPersistenceMaterialState>();
+  const stateByPersistenceKey = new Map<string, QuotaPersistenceMaterialState>();
 
   async function persistPayload(_key: string, payload: ProviderAccountUsagePersistencePayload): Promise<void> {
     const accountMode = await params.api.getAccountEncryptionMode();
     if (accountMode === 'plain' && params.api.registerProviderAccountUsageSnapshotPlain) {
       await params.api.registerProviderAccountUsageSnapshotPlain({
         recordId: payload.recordId,
+        ...(payload.source ? { source: payload.source } : {}),
         content: { t: 'plain', v: payload.snapshot },
         metadata: {
           fetchedAt: payload.snapshot.fetchedAtMs,
@@ -119,7 +162,7 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
           materialFingerprint: payload.materialFingerprint,
         },
       });
-      stateByRecordId.set(payload.recordId, payload.materialState);
+      stateByPersistenceKey.set(_key, payload.materialState);
       return;
     }
     if (accountMode !== 'e2ee' || !params.api.registerProviderAccountUsageSnapshotSealed) {
@@ -140,6 +183,8 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
     });
     await params.api.registerProviderAccountUsageSnapshotSealed({
       recordId: payload.recordId,
+      recordKey: payload.snapshot.recordKey,
+      ...(payload.source ? { source: payload.source } : {}),
       sealed: { format: 'account_scoped_v1', ciphertext },
       metadata: {
         fetchedAt: payload.snapshot.fetchedAtMs,
@@ -148,7 +193,7 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
         materialFingerprint: payload.materialFingerprint,
       },
     });
-    stateByRecordId.set(payload.recordId, payload.materialState);
+    stateByPersistenceKey.set(_key, payload.materialState);
   }
 
   const scheduler = createConnectedServiceQuotaPersistenceScheduler<string, ProviderAccountUsagePersistencePayload>({
@@ -162,7 +207,8 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
   });
 
   return {
-    recordInBandSnapshot: async (snapshot) => {
+    recordInBandSnapshot: async (inputSnapshot, options) => {
+      const snapshot = ProviderAccountUsageSnapshotV1Schema.parse(inputSnapshot);
       const status = deriveProviderAccountUsageStatus(snapshot);
       const materialFingerprint = computeProviderAccountUsageSnapshotFingerprint(snapshot, fingerprintKey);
       const materialState: QuotaPersistenceMaterialState = {
@@ -171,22 +217,35 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
         staleAfterMs: snapshot.staleAfterMs,
         status,
       };
-      const decision = shouldPersistQuotaSnapshot({
-        previous: stateByRecordId.get(snapshot.recordId) ?? null,
-        next: materialState,
-        nowMs: Math.max(0, Math.trunc(params.now())),
-        minFreshnessMs,
-      });
-      if (!decision.persist) return { status: 'suppressed', reason: decision.reason };
-      const enqueue = scheduler.enqueue(snapshot.recordId, {
-        recordId: snapshot.recordId,
-        snapshot,
-        status,
-        materialFingerprint,
-        materialState,
-      });
-      if (enqueue.type === 'suppressed') return { status: 'suppressed', reason: enqueue.reason };
-      return { status: 'enqueued', enqueue: enqueue.type };
+      let accepted = false;
+      let coalesced = false;
+      let lastSuppressionReason = 'unchanged_fresh';
+      for (const source of normalizePersistenceSources(options)) {
+        const persistenceKey = `${snapshot.recordId}\u0000${sourcePersistenceKey(source)}`;
+        const decision = shouldPersistQuotaSnapshot({
+          previous: stateByPersistenceKey.get(persistenceKey) ?? null,
+          next: materialState,
+          nowMs: Math.max(0, Math.trunc(params.now())),
+          minFreshnessMs,
+        });
+        if (!decision.persist) {
+          lastSuppressionReason = decision.reason;
+          continue;
+        }
+        const enqueue = scheduler.enqueue(persistenceKey, {
+          recordId: snapshot.recordId,
+          snapshot,
+          ...(source ? { source } : {}),
+          status,
+          materialFingerprint,
+          materialState,
+        });
+        if (enqueue.type === 'accepted') accepted = true;
+        if (enqueue.type === 'coalesced') coalesced = true;
+        if (enqueue.type === 'suppressed') lastSuppressionReason = enqueue.reason;
+      }
+      if (accepted || coalesced) return { status: 'enqueued', enqueue: accepted ? 'accepted' : 'coalesced' };
+      return { status: 'suppressed', reason: lastSuppressionReason };
     },
     flush: async (timeoutMs) => {
       await scheduler.flushAll(timeoutMs);

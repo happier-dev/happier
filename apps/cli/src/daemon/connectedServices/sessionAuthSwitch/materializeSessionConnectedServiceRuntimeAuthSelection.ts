@@ -1,5 +1,5 @@
 import type { ApiClient } from '@/api/api';
-import { materializeConnectedServiceRuntimeAuthSelectionThroughCatalog } from '@/backends/catalog';
+import { materializeConnectedServiceRuntimeAuthSelectionThroughCatalog } from '@/daemon/connectedServices/catalogHooks';
 import { resolveConnectedServiceCredentials } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import type { Credentials } from '@/persistence';
 import {
@@ -70,6 +70,12 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
     serviceId: params.input.serviceId,
     binding,
     profileId,
+    ...(params.input.runtimeAuthApplyReason
+      ? { applyReason: params.input.runtimeAuthApplyReason }
+      : {}),
+    ...(params.input.requireDirectLiveHotApply
+      ? { requireDirectLiveHotApply: true }
+      : {}),
     ...(binding.selection === 'group'
       ? {
           groupId: binding.groupId,

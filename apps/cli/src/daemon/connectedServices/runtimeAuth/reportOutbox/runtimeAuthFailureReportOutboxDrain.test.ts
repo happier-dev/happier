@@ -76,4 +76,33 @@ describe('runtimeAuthFailureReportOutboxDrain', () => {
       await removeTempDir(outboxDir);
     }
   });
+
+  it('keeps reports when daemon shutdown defers runtime-auth intake', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-daemon-shutdown-retry-');
+    try {
+      await enqueueRuntimeAuthFailureReportOutboxItem({
+        outboxDir,
+        report: {
+          sessionId: 'sess_shutdown_retry',
+          switchesThisTurn: 0,
+          classification: classifiedFailure,
+        },
+        nowMs: () => 1_700_000_000_000,
+      });
+      const notify = vi.fn(async () => ({
+        ok: true,
+        result: {
+          status: 'daemon_lifecycle_unavailable',
+          reason: 'recovery_deferred_shutdown',
+        },
+      }));
+
+      const result = await drainRuntimeAuthFailureReportOutboxToDaemon({ outboxDir, notify });
+
+      expect(result).toEqual({ delivered: 0, dropped: 0, retried: 1 });
+      expect(await readRuntimeAuthFailureReportOutboxItems({ outboxDir })).toHaveLength(1);
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
 });

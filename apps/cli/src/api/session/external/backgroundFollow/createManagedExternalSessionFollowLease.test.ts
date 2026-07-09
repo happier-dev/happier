@@ -123,12 +123,14 @@ describe('createManagedExternalSessionFollowLease', () => {
                     },
                 },
             }],
+            fromCursor: 'cursor-0',
             nextCursor: 'cursor-1',
             truncated: false,
         });
 
         expect(emitExternalSessionTranscriptUpdate).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess-managed-follow',
+            fromCursor: 'cursor-0',
             nextCursor: 'cursor-1',
         }));
         expect(updateSessionMetadataWithObservedExternalSessionProgressMock).not.toHaveBeenCalled();
@@ -263,12 +265,14 @@ describe('createManagedExternalSessionFollowLease', () => {
                     },
                 },
             }],
+            fromCursor: 'cursor-before-suppressed',
             nextCursor: 'cursor-suppressed',
             truncated: false,
         });
 
         expect(emitExternalSessionTranscriptUpdate).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess-managed-follow',
+            fromCursor: 'cursor-before-suppressed',
             nextCursor: 'cursor-suppressed',
         }));
         expect(updateSessionMetadataWithObservedExternalSessionProgressMock).not.toHaveBeenCalled();

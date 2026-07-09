@@ -1,4 +1,4 @@
-import { mkdir, rm, stat } from 'node:fs/promises';
+import { mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -41,6 +41,36 @@ describe('ConnectedServiceGroupHomeCleanupScheduler', () => {
       });
       await expect(stat(home)).rejects.toMatchObject({ code: 'ENOENT' });
       expect(home).toBe(join(root, 'daemon', 'connected-services', 'homes', 'openai-codex', '__groups', 'main', 'codex'));
+    } finally {
+      await removeTempDir(root);
+    }
+  });
+
+  it('quarantines deleted durable group homes instead of recursively deleting them immediately', async () => {
+    const root = await createTempDir('happier-connected-service-group-home-cleanup-quarantine-');
+    try {
+      const home = resolveConnectedServiceGroupHomeDir({
+        activeServerDir: root,
+        serviceId: 'openai-codex',
+        groupId: 'main',
+        agentId: 'codex',
+      });
+      await mkdir(home, { recursive: true });
+      const scheduler = new ConnectedServiceGroupHomeCleanupScheduler({
+        activeServerDir: root,
+        hasLiveTarget: () => false,
+      });
+
+      await expect(scheduler.scheduleDeletedGroupCleanup({
+        serviceId: 'openai-codex',
+        groupId: 'main',
+        agentId: 'codex',
+      })).resolves.toMatchObject({ cleaned: true, path: home });
+
+      await expect(stat(home)).rejects.toMatchObject({ code: 'ENOENT' });
+      const quarantineRoot = join(root, 'daemon', 'connected-services', 'homes', 'openai-codex', '__groups', 'main', '.quarantine');
+      const entries = await readdir(quarantineRoot);
+      expect(entries.some((entry) => /^\d+-codex(?:-\d+)?$/.test(entry))).toBe(true);
     } finally {
       await removeTempDir(root);
     }
@@ -184,7 +214,9 @@ describe('ConnectedServiceGroupHomeCleanupScheduler', () => {
       });
 
       await expect(scheduler.reconcileDeletedGroupHomes({
-        groupExists: async ({ groupId }) => groupId === 'existing',
+        resolveGroupDeletionAuthority: async ({ groupId }) => ({
+          status: groupId === 'existing' ? 'exists' : 'deleted',
+        }),
       })).resolves.toEqual(expect.arrayContaining([
         expect.objectContaining({ cleaned: true, path: deletedHome }),
         expect.objectContaining({ cleaned: false, pending: true, path: liveDeletedHome }),
@@ -192,6 +224,30 @@ describe('ConnectedServiceGroupHomeCleanupScheduler', () => {
       await expect(stat(deletedHome)).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(stat(liveDeletedHome)).resolves.toBeTruthy();
       await expect(stat(existingHome)).resolves.toBeTruthy();
+    } finally {
+      await removeTempDir(root);
+    }
+  });
+
+  it('keeps existing group homes when deletion is not positively confirmed', async () => {
+    const root = await createTempDir('happier-connected-service-group-home-cleanup-unknown-');
+    try {
+      const home = resolveConnectedServiceGroupHomeDir({
+        activeServerDir: root,
+        serviceId: 'openai-codex',
+        groupId: 'gate-off',
+        agentId: 'codex',
+      });
+      await mkdir(home, { recursive: true });
+      const scheduler = new ConnectedServiceGroupHomeCleanupScheduler({
+        activeServerDir: root,
+        hasLiveTarget: () => false,
+      });
+
+      await expect(scheduler.reconcileDeletedGroupHomes({
+        groupExists: async () => false,
+      })).resolves.toEqual([]);
+      await expect(stat(home)).resolves.toBeTruthy();
     } finally {
       await removeTempDir(root);
     }

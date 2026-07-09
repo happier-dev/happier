@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockGet = vi.fn();
 
@@ -22,6 +22,11 @@ import { fetchEncryptedTranscriptPageAfterSeq, fetchEncryptedTranscriptPageLates
 describe('fetchEncryptedTranscriptWindow', () => {
   beforeEach(() => {
     mockGet.mockReset();
+    vi.stubEnv('HAPPIER_LOCAL_SERVER_URL', 'http://localhost:1234');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('builds afterSeq/limit params for page fetch', async () => {
@@ -70,6 +75,55 @@ describe('fetchEncryptedTranscriptWindow', () => {
     expect(rows).toHaveLength(1);
     const [_url, opts] = mockGet.mock.calls.at(-1)!;
     expect(opts.params).toEqual({ limit: 2 });
+  });
+
+  it('applies sanitized caller timeouts to page fetches', async () => {
+    mockGet.mockResolvedValue({
+      status: 200,
+      data: { messages: [] },
+    });
+
+    await fetchEncryptedTranscriptPageLatest({
+      token: 't',
+      sessionId: 'sess_1',
+      limit: 2,
+      timeoutMs: 250.9,
+    });
+
+    await fetchEncryptedTranscriptPageAfterSeq({
+      token: 't',
+      sessionId: 'sess_1',
+      afterSeq: 4,
+      limit: 3,
+      timeoutMs: 0.5,
+    });
+
+    expect(mockGet.mock.calls[0]![1].timeout).toBe(250);
+    expect(mockGet.mock.calls[1]![1].timeout).toBe(1);
+  });
+
+  it('uses the safe default timeout when caller timeout is absent or unsafe', async () => {
+    mockGet.mockResolvedValue({
+      status: 200,
+      data: { messages: [] },
+    });
+
+    await fetchEncryptedTranscriptPageLatest({
+      token: 't',
+      sessionId: 'sess_1',
+      limit: 2,
+    });
+
+    await fetchEncryptedTranscriptPageAfterSeq({
+      token: 't',
+      sessionId: 'sess_1',
+      afterSeq: 4,
+      limit: 3,
+      timeoutMs: Number.POSITIVE_INFINITY,
+    });
+
+    expect(mockGet.mock.calls[0]![1].timeout).toBe(10_000);
+    expect(mockGet.mock.calls[1]![1].timeout).toBe(10_000);
   });
 
   it('parses plaintext transcript rows (no filtering)', async () => {

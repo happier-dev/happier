@@ -3,8 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
-import { resolveConnectedServiceCredentials } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
-import type { ApiClient } from '@/api/api';
+import {
+  ConnectedServiceCredentialResolutionError,
+  resolveConnectedServiceCredentials,
+} from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
+import type { ConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
 import type { Credentials } from '@/persistence';
 
 describe('resolveConnectedServiceCredentials', () => {
@@ -47,7 +50,7 @@ describe('resolveConnectedServiceCredentials', () => {
 
     const opened = await resolveConnectedServiceCredentials({
       credentials,
-      api: api as unknown as ApiClient,
+      api: api as unknown as ConnectedServiceCredentialApi,
       bindings: [{ serviceId: 'openai-codex', profileId: 'work' }],
     });
 
@@ -86,7 +89,7 @@ describe('resolveConnectedServiceCredentials', () => {
 
     await expect(resolveConnectedServiceCredentials({
       credentials,
-      api: api as unknown as ApiClient,
+      api: api as unknown as ConnectedServiceCredentialApi,
       bindings: [{ serviceId: 'openai-codex', profileId: 'work' }],
     })).resolves.toEqual(new Map([['openai-codex', record]]));
 
@@ -95,6 +98,36 @@ describe('resolveConnectedServiceCredentials', () => {
       profileId: 'work',
     });
     expect(api.getConnectedServiceCredentialSealed).not.toHaveBeenCalled();
+  });
+
+  it('throws a structured missing-credential error with service/profile identity', async () => {
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    };
+
+    const credentials: Credentials = {
+      token: 't',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(9) },
+    };
+
+    await expect(resolveConnectedServiceCredentials({
+      credentials,
+      api: api as unknown as ConnectedServiceCredentialApi,
+      bindings: [{ serviceId: 'claude-subscription', profileId: 'batiplus' }],
+    })).rejects.toMatchObject({
+      name: 'ConnectedServiceCredentialResolutionError',
+      kind: 'missing_credential',
+      serviceId: 'claude-subscription',
+      profileId: 'batiplus',
+    });
+
+    await expect(resolveConnectedServiceCredentials({
+      credentials,
+      api: api as unknown as ConnectedServiceCredentialApi,
+      bindings: [{ serviceId: 'claude-subscription', profileId: 'batiplus' }],
+    })).rejects.toBeInstanceOf(ConnectedServiceCredentialResolutionError);
   });
 
   it('falls back to plaintext credentials when the account-mode probe errors', async () => {
@@ -130,7 +163,7 @@ describe('resolveConnectedServiceCredentials', () => {
 
     await expect(resolveConnectedServiceCredentials({
       credentials,
-      api: api as unknown as ApiClient,
+      api: api as unknown as ConnectedServiceCredentialApi,
       bindings: [{ serviceId: 'openai-codex', profileId: 'work' }],
     })).resolves.toEqual(new Map([['openai-codex', record]]));
 
@@ -187,7 +220,7 @@ describe('resolveConnectedServiceCredentials', () => {
 
     await expect(resolveConnectedServiceCredentials({
       credentials,
-      api: api as unknown as ApiClient,
+      api: api as unknown as ConnectedServiceCredentialApi,
       bindings: [{ serviceId: 'openai-codex', profileId: 'work' }],
     })).resolves.toEqual(new Map([['openai-codex', record]]));
 

@@ -1,4 +1,3 @@
-import { connectedServiceQuotaFetcherDescriptors } from '@/backends/connectedServiceQuotaFetchers';
 import type { ConnectedServiceQuotaFetcher, ConnectedServiceQuotaFetcherDescriptor } from './types';
 
 function parsePositiveIntEnv(raw: string | undefined, fallback: number, bounds: Readonly<{ min: number; max: number }>): number {
@@ -16,7 +15,7 @@ function parseNonEmptyStringEnv(raw: string | undefined): string | undefined {
 
 export function createConnectedServiceQuotaFetchers(
   env: NodeJS.ProcessEnv,
-  descriptors: readonly ConnectedServiceQuotaFetcherDescriptor[] = connectedServiceQuotaFetcherDescriptors,
+  descriptors: readonly ConnectedServiceQuotaFetcherDescriptor[],
 ): Array<ConnectedServiceQuotaFetcher> {
   const staleAfterMs = parsePositiveIntEnv(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_STALE_AFTER_MS, 30 * 60_000, {
     min: 5_000,
@@ -24,11 +23,14 @@ export function createConnectedServiceQuotaFetchers(
   });
   const userAgent = parseNonEmptyStringEnv(env.HAPPIER_CONNECTED_SERVICES_QUOTAS_USER_AGENT);
 
-  return descriptors.map((descriptor) => (
-    descriptor.createFetcher({
+  return descriptors.map((descriptor) => {
+    const fetcher = descriptor.createFetcher({
       env,
       staleAfterMs,
       userAgent,
-    })
-  ));
+    });
+    return descriptor.terminalAuthFailureProviderCodes
+      ? { ...fetcher, terminalAuthFailureProviderCodes: descriptor.terminalAuthFailureProviderCodes }
+      : fetcher;
+  });
 }

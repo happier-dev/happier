@@ -235,9 +235,9 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
 
   /**
    * Stop all armed timers and short-circuit further scheduling/wakes. Called from the daemon
-   * shutdown path so a re-hydrated waiting intent's timer cannot fire switch/restart work into a
-   * tearing-down daemon. The persisted intent stays `waiting` on disk so a healthy future daemon
-   * re-hydrates and re-drives it.
+   * shutdown path so recovery timers cannot fire switch/restart work into a tearing-down daemon.
+   * Any optional store is left untouched; caller wiring decides whether those records outlive the
+   * process.
    */
   dispose(): void {
     this.#disposed = true;

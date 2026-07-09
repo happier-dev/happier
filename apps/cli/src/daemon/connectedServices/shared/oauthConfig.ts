@@ -2,8 +2,6 @@ import type { ConnectedServiceId } from '@happier-dev/protocol';
 
 import { resolveConnectedAccountOauthConfig } from '../descriptors/connectedAccountOauthConfig';
 
-const DEFAULT_GEMINI_CLIENT_SECRET = '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l';
-
 function resolveOauthConfigValue(serviceId: ConnectedServiceId, env: NodeJS.ProcessEnv): Readonly<{
   clientId: string;
   tokenUrl: string;
@@ -22,7 +20,6 @@ function resolveHostConfidentialClientValue(
 ): string {
   const raw = env[envKey];
   if (typeof raw === 'string' && raw.trim()) return raw.trim();
-  if (resolverKey === 'connectedServices.gemini.oauthConfidentialClient') return DEFAULT_GEMINI_CLIENT_SECRET;
   throw new Error(`Unsupported connected-service confidential OAuth resolver: ${resolverKey}`);
 }
 
@@ -40,20 +37,4 @@ export function resolveClaudeSubscriptionOauthClientId(env: NodeJS.ProcessEnv): 
 
 export function resolveClaudeSubscriptionOauthTokenUrl(env: NodeJS.ProcessEnv): string {
   return resolveOauthConfigValue('claude-subscription', env).tokenUrl;
-}
-
-export function resolveGeminiOauthClientId(env: NodeJS.ProcessEnv): string {
-  return resolveOauthConfigValue('gemini', env).clientId;
-}
-
-export function resolveGeminiOauthClientSecret(env: NodeJS.ProcessEnv): string {
-  return resolveHostConfidentialClientValue(
-    'connectedServices.gemini.oauthConfidentialClient',
-    'HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_SECRET',
-    env,
-  );
-}
-
-export function resolveGeminiOauthTokenUrl(env: NodeJS.ProcessEnv): string {
-  return resolveOauthConfigValue('gemini', env).tokenUrl;
 }

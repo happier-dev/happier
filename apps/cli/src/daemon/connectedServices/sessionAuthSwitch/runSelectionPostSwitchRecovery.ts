@@ -15,6 +15,7 @@ type ProviderPostSwitchRecoverContext = Readonly<{
   action: 'hot_applied' | 'restart_requested';
   countTrackedClaimsForStatePath?: (statePath: string) => number;
   hasUnknownTrackedClaims?: boolean;
+  hasInFlightTurnForStatePath?: (statePath: string) => boolean;
 }>;
 
 type ProviderPostSwitchRecover = (input: ProviderPostSwitchRecoverContext) => Promise<void> | void;
@@ -28,6 +29,7 @@ type RunSelectionPostSwitchRecoveryInput = Readonly<{
   runtimeAuthSelectionsByServiceId?: RuntimeAuthSelectionsByServiceId;
   countTrackedClaimsForStatePath?: (statePath: string) => number;
   hasUnknownTrackedClaims?: boolean;
+  hasInFlightTurnForStatePath?: (statePath: string) => boolean;
 }>;
 
 type RunSelectionPostSwitchRecoveryResult =
@@ -81,6 +83,9 @@ export async function runSelectionPostSwitchRecovery(
           : {}),
         ...(typeof input.hasUnknownTrackedClaims === 'boolean'
           ? { hasUnknownTrackedClaims: input.hasUnknownTrackedClaims }
+          : {}),
+        ...(input.hasInFlightTurnForStatePath
+          ? { hasInFlightTurnForStatePath: input.hasInFlightTurnForStatePath }
           : {}),
       });
     } catch {

@@ -396,53 +396,19 @@ export const CONNECTED_ACCOUNT_DESCRIPTORS = Object.freeze([
         version: '1',
         displayKey: 'connectedServices.serviceNames.gemini',
         aliases: ['gemini'],
-        credentialKinds: ['oauth'],
-        defaultCredentialKind: 'oauth',
+        credentialKinds: ['token'],
+        defaultCredentialKind: 'token',
         connectModes: [
-            { targetId: 'gemini', mode: 'oauth', credentialKind: 'oauth', default: true },
+            { targetId: 'gemini', mode: 'api-key', credentialKind: 'token', tokenKind: 'api-key', default: true },
         ],
-        oauth: {
-            publicClientId: {
-                envKey: 'HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_ID',
-                defaultValue: '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com',
-            },
-            tokenUrl: {
-                envKey: 'HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_TOKEN_URL',
-                defaultValue: 'https://oauth2.googleapis.com/token',
-            },
-            confidentialClient: {
-                envKey: 'HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_SECRET',
-                hostDefaultResolverKey: 'connectedServices.gemini.oauthConfidentialClient',
-            },
-            authorization: {
-                endpointUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
-                defaultRedirectUri: 'http://localhost:54545/oauth2callback',
-                scopes: [
-                    'https://www.googleapis.com/auth/cloud-platform',
-                    'https://www.googleapis.com/auth/userinfo.email',
-                    'https://www.googleapis.com/auth/userinfo.profile',
-                ],
-                pkce: true,
-                query: {
-                    responseType: 'code',
-                    accessType: 'offline',
-                    prompt: 'consent',
-                    extraParams: {},
-                },
-            },
-            refresh: { body: 'form', hookKey: 'standard-oauth-refresh' },
-            payloadMapping: {
-                accessTokenField: 'access_token',
-                refreshTokenField: 'refresh_token',
-                idTokenField: 'id_token',
-                scopeField: 'scope',
-                tokenTypeField: 'token_type',
-                expiresAt: { expiresInField: 'expires_in' },
-            },
+        tokenSetup: {
+            tokenKind: 'api-key',
+            promptLabelKey: 'connectedServices.tokenPrompts.geminiApiKey',
+            missingValueErrorKey: 'connectedServices.tokenPrompts.errors.missingApiKey',
         },
         ui: {
             connectCommand: 'happier connect gemini',
-            oauthAddActionModes: ['paste', 'browser'],
+            oauthAddActionModes: [],
             shortName: 'Gemini',
         },
         materialization: {

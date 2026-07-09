@@ -4,7 +4,7 @@ import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import { readConnectedServiceChildSelectionsFromEnv } from '../connectedServiceChildEnvironment';
 
-vi.mock('@/backends/catalog', () => ({
+vi.mock('@/daemon/connectedServices/catalogHooks', () => ({
   getConnectedServicesMaterializer: vi.fn(async () => async (params: {
     selectionsByServiceId?: ReadonlyMap<string, unknown>;
     recordsByServiceId: ReadonlyMap<string, unknown>;

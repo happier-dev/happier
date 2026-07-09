@@ -954,3 +954,338 @@ describe('createStreamedTranscriptWriter', () => {
     }
   });
 });
+
+type LiveDeltaCall = {
+  provider: string;
+  localId: string;
+  meta: Record<string, unknown> | undefined;
+  body: unknown;
+  tick: number;
+  baseLength: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+function createDeltaSessionStub() {
+  const liveCalls: Array<DurableCall & { createdAt: number; updatedAt: number; tick?: number }> = [];
+  const deltaCalls: LiveDeltaCall[] = [];
+  const durableCalls: DurableCall[] = [];
+  let connectionEpoch = 1;
+
+  const session = {
+    sendAgentMessageCommitted: async (provider: any, body: any, opts: any) => {
+      durableCalls.push({
+        provider: String(provider),
+        localId: String(opts.localId),
+        meta: opts.meta,
+        body,
+      });
+    },
+    sendAgentMessageEphemeral: (provider: any, body: any, opts: any) => {
+      liveCalls.push({
+        provider: String(provider),
+        localId: String(opts.localId),
+        meta: opts?.meta,
+        body,
+        createdAt: Number(opts.createdAt),
+        updatedAt: Number(opts.updatedAt),
+        ...(typeof opts.tick === 'number' ? { tick: opts.tick } : {}),
+      });
+    },
+    sendAgentMessageEphemeralDelta: (provider: any, body: any, opts: any) => {
+      deltaCalls.push({
+        provider: String(provider),
+        localId: String(opts.localId),
+        meta: opts?.meta,
+        body,
+        tick: Number(opts.tick),
+        baseLength: Number(opts.baseLength),
+        createdAt: Number(opts.createdAt),
+        updatedAt: Number(opts.updatedAt),
+      });
+    },
+    getEphemeralStreamConnectionEpoch: () => connectionEpoch,
+  };
+
+  return {
+    session,
+    liveCalls,
+    deltaCalls,
+    durableCalls,
+    bumpConnectionEpoch: () => {
+      connectionEpoch += 1;
+    },
+  };
+}
+
+describe('createStreamedTranscriptWriter delta live streaming', () => {
+  function createDeltaWriter(session: unknown, overrides: Record<string, unknown> = {}) {
+    return createStreamedTranscriptWriter({
+      provider: 'codex' as any,
+      session: session as any,
+      makeLocalId: () => 'segment-1',
+      initialCheckpointDelayMs: 10_000,
+      checkpointIntervalMs: 10_000,
+      checkpointMinChars: 999,
+      liveSnapshotIntervalMs: 40,
+      liveSnapshotMinChars: 1,
+      liveCheckpointIntervalMs: 1_000,
+      ...overrides,
+    });
+  }
+
+  it('emits a full snapshot first, then append-only deltas with chained ticks and base lengths', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    try {
+      const { session, liveCalls, deltaCalls } = createDeltaSessionStub();
+      const writer = createDeltaWriter(session);
+
+      writer.appendAssistantDelta('Hello');
+      await settleCommittedSnapshot();
+
+      expect(liveCalls).toHaveLength(1);
+      expect(deltaCalls).toHaveLength(0);
+      expect(liveCalls[0]).toMatchObject({
+        localId: 'segment-1',
+        body: { type: 'message', message: 'Hello' },
+      });
+      expect(liveCalls[0]!.tick).toBe(1);
+
+      vi.advanceTimersByTime(40);
+      writer.appendAssistantDelta(' wor');
+      await settleCommittedSnapshot();
+
+      expect(liveCalls).toHaveLength(1);
+      expect(deltaCalls).toHaveLength(1);
+      expect(deltaCalls[0]).toMatchObject({
+        provider: 'codex',
+        localId: 'segment-1',
+        body: { type: 'message', message: ' wor' },
+        tick: 2,
+        baseLength: 5,
+      });
+      expect(deltaCalls[0]!.meta).toMatchObject({
+        happierStreamSegmentV1: expect.objectContaining({ segmentState: 'streaming' }),
+      });
+
+      vi.advanceTimersByTime(40);
+      writer.appendAssistantDelta('ld');
+      await settleCommittedSnapshot();
+
+      expect(deltaCalls).toHaveLength(2);
+      expect(deltaCalls[1]).toMatchObject({
+        body: { type: 'message', message: 'ld' },
+        tick: 3,
+        baseLength: 9,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('avoids prefix scans on append-only live delta checks', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    const originalStartsWith = String.prototype.startsWith;
+    const startsWithSpy = vi.spyOn(String.prototype, 'startsWith').mockImplementation(function startsWith(this: string, searchString: string, position?: number) {
+      return originalStartsWith.call(this, searchString, position);
+    });
+    try {
+      const { session, deltaCalls } = createDeltaSessionStub();
+      const writer = createDeltaWriter(session, {
+        durableCommitsRequireExplicitEnable: true,
+      });
+
+      writer.appendAssistantDelta('Hello');
+      await settleCommittedSnapshot();
+      startsWithSpy.mockClear();
+
+      vi.advanceTimersByTime(40);
+      writer.appendAssistantDelta(' world');
+      await settleCommittedSnapshot();
+
+      expect(deltaCalls).toHaveLength(1);
+      expect(startsWithSpy).not.toHaveBeenCalled();
+    } finally {
+      startsWithSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits a full-snapshot checkpoint once the live checkpoint interval elapses, then resumes deltas', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    try {
+      const { session, liveCalls, deltaCalls } = createDeltaSessionStub();
+      const writer = createDeltaWriter(session);
+
+      writer.appendAssistantDelta('Hello');
+      await settleCommittedSnapshot();
+      vi.advanceTimersByTime(40);
+      writer.appendAssistantDelta(' world');
+      await settleCommittedSnapshot();
+      expect(liveCalls).toHaveLength(1);
+      expect(deltaCalls).toHaveLength(1);
+
+      vi.advanceTimersByTime(1_000);
+      writer.appendAssistantDelta('!');
+      await settleCommittedSnapshot();
+
+      expect(deltaCalls).toHaveLength(1);
+      expect(liveCalls).toHaveLength(2);
+      expect(liveCalls[1]).toMatchObject({
+        body: { type: 'message', message: 'Hello world!' },
+      });
+      expect(liveCalls[1]!.tick).toBe(3);
+
+      vi.advanceTimersByTime(40);
+      writer.appendAssistantDelta('?');
+      await settleCommittedSnapshot();
+      expect(deltaCalls).toHaveLength(2);
+      expect(deltaCalls[1]).toMatchObject({
+        body: { type: 'message', message: '?' },
+        tick: 4,
+        baseLength: 12,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to a full snapshot when segment text is rewritten (non-append override)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    try {
+      const { session, liveCalls, deltaCalls } = createDeltaSessionStub();
+      const writer = createDeltaWriter(session);
+
+      writer.appendAssistantDelta('Hello world');
+      await settleCommittedSnapshot();
+      expect(liveCalls).toHaveLength(1);
+
+      vi.advanceTimersByTime(40);
+      writer.overrideAssistantText('Rewritten');
+      await settleCommittedSnapshot();
+
+      expect(deltaCalls).toHaveLength(0);
+      expect(liveCalls).toHaveLength(2);
+      expect(liveCalls[1]).toMatchObject({
+        body: { type: 'message', message: 'Rewritten' },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resets to a full snapshot after the ephemeral connection epoch changes (socket reconnect)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    try {
+      const { session, liveCalls, deltaCalls, bumpConnectionEpoch } = createDeltaSessionStub();
+      const writer = createDeltaWriter(session);
+
+      writer.appendAssistantDelta('Hello');
+      await settleCommittedSnapshot();
+      vi.advanceTimersByTime(40);
+      writer.appendAssistantDelta(' world');
+      await settleCommittedSnapshot();
+      expect(deltaCalls).toHaveLength(1);
+      expect(liveCalls).toHaveLength(1);
+
+      bumpConnectionEpoch();
+      vi.advanceTimersByTime(40);
+      writer.appendAssistantDelta('!');
+      await settleCommittedSnapshot();
+
+      expect(deltaCalls).toHaveLength(1);
+      expect(liveCalls).toHaveLength(2);
+      expect(liveCalls[1]).toMatchObject({
+        body: { type: 'message', message: 'Hello world!' },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('ends segments with a full snapshot (never a delta) on flushAll state transitions', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    try {
+      const { session, liveCalls, deltaCalls, durableCalls } = createDeltaSessionStub();
+      const writer = createDeltaWriter(session);
+
+      writer.appendAssistantDelta('Hello');
+      await settleCommittedSnapshot();
+      vi.advanceTimersByTime(40);
+      writer.appendAssistantDelta(' world');
+      await settleCommittedSnapshot();
+      expect(deltaCalls).toHaveLength(1);
+
+      await writer.flushAll({ reason: 'turn-end' });
+      await settleCommittedSnapshot();
+
+      expect(deltaCalls).toHaveLength(1);
+      const lastLive = liveCalls[liveCalls.length - 1]!;
+      expect(lastLive).toMatchObject({
+        body: { type: 'message', message: 'Hello world' },
+      });
+      expect(lastLive.meta).toMatchObject({
+        happierStreamSegmentV1: expect.objectContaining({ segmentState: 'complete' }),
+      });
+      expect(durableCalls[durableCalls.length - 1]).toMatchObject({
+        body: { type: 'message', message: 'Hello world' },
+        meta: expect.objectContaining({
+          happierStreamSegmentV1: expect.objectContaining({ segmentState: 'complete' }),
+        }),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps emitting full snapshots when the session does not support deltas', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    try {
+      const { session, liveCalls } = createSessionStub();
+      const writer = createDeltaWriter(session);
+
+      writer.appendAssistantDelta('Hello');
+      await settleCommittedSnapshot();
+      vi.advanceTimersByTime(40);
+      writer.appendAssistantDelta(' world');
+      await settleCommittedSnapshot();
+
+      expect(liveCalls).toHaveLength(2);
+      expect(liveCalls[1]).toMatchObject({
+        body: { type: 'message', message: 'Hello world' },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('disables deltas entirely when the live checkpoint interval is zero (snapshot-only mode)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    try {
+      const { session, liveCalls, deltaCalls } = createDeltaSessionStub();
+      const writer = createDeltaWriter(session, { liveCheckpointIntervalMs: 0 });
+
+      writer.appendAssistantDelta('Hello');
+      await settleCommittedSnapshot();
+      vi.advanceTimersByTime(40);
+      writer.appendAssistantDelta(' world');
+      await settleCommittedSnapshot();
+
+      expect(deltaCalls).toHaveLength(0);
+      expect(liveCalls).toHaveLength(2);
+      expect(liveCalls[1]).toMatchObject({
+        body: { type: 'message', message: 'Hello world' },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

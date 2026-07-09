@@ -1,7 +1,7 @@
 import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
 
-import type { ConnectedServiceStateSharingDescriptor, ConnectedServiceStateSharingDescriptorEntry } from '@/backends/types';
+import type { ConnectedServiceStateSharingDescriptor, ConnectedServiceStateSharingDescriptorEntry } from '@/agent/catalog/types';
 import type {
   ConnectedServiceStateSharingManifestV1,
   ConnectedServiceStateSharingSessionFileMappingV1,
@@ -77,10 +77,47 @@ export type ApplyConnectedServiceStateSharingDescriptorResult = Readonly<{
   importedSessionFileMappings: readonly ConnectedServiceStateSharingSessionFileMappingV1[];
 }>;
 
+function isWin32ShapedPath(path: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(path)
+    || path.startsWith('\\\\?\\')
+    || path.startsWith('\\\\')
+    || path.startsWith('//')
+    || path.includes('\\');
+}
+
+function stripWin32NamespacePrefix(path: string): string {
+  if (path.startsWith('\\\\?\\UNC\\')) return `\\\\${path.slice('\\\\?\\UNC\\'.length)}`;
+  if (path.startsWith('\\\\?\\')) return path.slice('\\\\?\\'.length);
+  return path;
+}
+
+function usesWin32Comparison(path: string, root: string): boolean {
+  return isWin32ShapedPath(path) || isWin32ShapedPath(root);
+}
+
+function resolvePathForComparison(path: string): string {
+  return isWin32ShapedPath(path)
+    ? win32.resolve(stripWin32NamespacePrefix(path))
+    : resolve(path);
+}
+
+function relativePathForComparison(root: string, path: string): string {
+  if (usesWin32Comparison(path, root)) {
+    return win32.relative(
+      win32.resolve(stripWin32NamespacePrefix(root)),
+      win32.resolve(stripWin32NamespacePrefix(path)),
+    );
+  }
+  return relative(root, path);
+}
+
 function isPathWithin(path: string, root: string): boolean {
-  const rel = relative(root, path);
+  const rel = relativePathForComparison(root, path);
   if (rel.length === 0) return true;
-  return !rel.startsWith('..') && !rel.startsWith(sep) && !rel.includes(`..${sep}`);
+  if (usesWin32Comparison(path, root)) {
+    return !rel.startsWith('..') && !win32.isAbsolute(rel) && !rel.includes(`..${win32.sep}`);
+  }
+  return !rel.startsWith('..') && !isAbsolute(rel) && !rel.includes(`..${sep}`);
 }
 
 function normalizeRelativePath(path: string): string {
@@ -92,9 +129,9 @@ function isAllowedMigrationSource(params: Readonly<{
   existingMaterializedStateContext?: ExistingMaterializedStateContext;
 }>): boolean {
   if (!params.existingMaterializedStateContext) return false;
-  const previousRoot = resolve(params.existingMaterializedStateContext.previousMaterializedRoot);
+  const previousRoot = resolvePathForComparison(params.existingMaterializedStateContext.previousMaterializedRoot);
   if (!isPathWithin(params.sourceRoot, previousRoot)) return false;
-  const relativeToPrevious = normalizeRelativePath(relative(previousRoot, params.sourceRoot));
+  const relativeToPrevious = normalizeRelativePath(relativePathForComparison(previousRoot, params.sourceRoot));
   if (!relativeToPrevious || relativeToPrevious.startsWith('..') || relativeToPrevious.startsWith('/')) return false;
   return params.existingMaterializedStateContext.allowedRelativePaths.some((allowed) => {
     const normalizedAllowed = normalizeRelativePath(allowed);
@@ -105,8 +142,8 @@ function isAllowedMigrationSource(params: Readonly<{
 
 function assertNativeSourceRootInvariant(input: ApplyConnectedServiceStateSharingDescriptorInput): void {
   if (process.env.NODE_ENV === 'production') return;
-  const sourceRoot = resolve(input.nativeSourceContext.sourceRoot);
-  const targetRoot = resolve(input.target.targetMaterializedRoot);
+  const sourceRoot = resolvePathForComparison(input.nativeSourceContext.sourceRoot);
+  const targetRoot = resolvePathForComparison(input.target.targetMaterializedRoot);
   if (!isPathWithin(sourceRoot, targetRoot)) return;
   if (isAllowedMigrationSource({ sourceRoot, existingMaterializedStateContext: input.existingMaterializedStateContext })) return;
   throw new Error('nativeSourceContext.sourceRoot must not be nested under target.targetMaterializedRoot');

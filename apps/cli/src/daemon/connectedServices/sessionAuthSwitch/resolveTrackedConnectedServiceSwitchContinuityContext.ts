@@ -3,8 +3,8 @@ import { isAbsolute } from 'node:path';
 import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
 import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 
-import { resolveConnectedServiceCandidatePersistedSessionFile } from '@/backends/catalog';
-import type { CatalogAgentId } from '@/backends/types';
+import { resolveConnectedServiceCandidatePersistedSessionFile } from '@/daemon/connectedServices/catalogHooks';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { TrackedSession } from '@/daemon/types';
 import {
   readConnectedServiceMaterializationIdentityFromMetadata,
@@ -134,6 +134,7 @@ export function resolveTrackedConnectedServiceSwitchContinuityContext(input: Rea
   vendorResumeId?: string | null;
   cwd?: string | null;
   candidatePersistedSessionFile?: string | null;
+  runtimeAuthSelection?: unknown;
 }>): Readonly<{
   connectedServiceMaterializationIdentityV1: ConnectedServiceMaterializationIdentityV1 | null;
   targetMaterializedRoot: string | null;
@@ -162,6 +163,7 @@ export function resolveTrackedConnectedServiceSwitchContinuityContext(input: Rea
       baseDir: input.baseDir,
       inheritedEnv: input.tracked?.spawnOptions?.environmentVariables ?? null,
       effectiveIdentity,
+      runtimeAuthSelection: input.runtimeAuthSelection,
     });
   return {
     connectedServiceMaterializationIdentityV1: effectiveIdentity,

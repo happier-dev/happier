@@ -5,6 +5,8 @@ import { encodeBase64, encrypt } from '../../../encryption';
 import { MessageAckResponseSchema, type ClientToServerEvents, type ServerToClientEvents } from '../../../types';
 import type { Socket } from 'socket.io-client';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
+import { deliverTranscriptMessageMutation } from './mutations/deliverTranscriptMessageMutation';
+import { createTranscriptMessageAppendMutation } from './mutations/sessionClientDurableMutationTypes';
 
 type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
 type SessionMessageRole = 'user' | 'agent' | 'event' | 'unknown';
@@ -26,6 +28,7 @@ type CommitSessionMessageParams = Readonly<{
     sessionEventType?: SessionEventType;
     requireCommit: boolean;
     markAsUserMessage?: boolean;
+    refreshAgentQueueEchoSuppression?: boolean;
 }>;
 
 export class DefinitiveSessionMessageCommitError extends Error {
@@ -65,12 +68,14 @@ export type SessionClientCommitQueueRuntime = Readonly<{
         messageRole: SessionMessageRole;
         sessionEventType?: SessionEventType;
         markAsUserMessage?: boolean;
-    }>) => void;
+        refreshAgentQueueEchoSuppression?: boolean;
+    }>) => Promise<void>;
     clearState: () => void;
 }>;
 
 export function createSessionClientCommitQueueRuntime(
     deps: Readonly<{
+        token: string;
         sessionId: string;
         transcriptStorage: 'persisted' | 'direct';
         sessionEncryptionMode: 'e2ee' | 'plain';
@@ -84,7 +89,7 @@ export function createSessionClientCommitQueueRuntime(
         deleteMaterializedLocalId: (localId: string) => void;
         scheduleMaterializationRecovery: (localId: string) => void;
         recoverMaterializedLocalId: (localId: string, opts?: { maxWaitMs?: number }) => Promise<boolean>;
-        observeCommittedAck: (params: { seq: number; localId?: string | null; markAsUserMessage?: boolean }) => void;
+        observeCommittedAck: (params: { seq: number; localId?: string | null; markAsUserMessage?: boolean; refreshAgentQueueEchoSuppression?: boolean }) => void;
         requestReconnect?: (localId: string) => void;
     }>,
 ): SessionClientCommitQueueRuntime {
@@ -172,6 +177,35 @@ export function createSessionClientCommitQueueRuntime(
         timer.unref?.();
     };
 
+    const tryRequiredCommitFallback = async (
+        params: CommitSessionMessageParams,
+    ): Promise<boolean> => {
+        const result = await deliverTranscriptMessageMutation({
+            token: deps.token,
+            socket: null,
+            mutation: createTranscriptMessageAppendMutation({
+                sessionId: deps.sessionId,
+                localId: params.localId,
+                content: params.message,
+                sidechainId: params.sidechainId,
+                ...(params.messageRole ? { messageRole: params.messageRole } : {}),
+                ...(params.sessionEventType ? { sessionEventType: params.sessionEventType } : {}),
+            }),
+        });
+        if (!result.delivered || !result.ack) {
+            return false;
+        }
+        pendingCommitRetryAttemptsByLocalId.delete(params.localId);
+        deps.markCommittedLocalIdAwaitingEcho(params.localId);
+        deps.observeCommittedAck({
+            seq: result.ack.seq,
+            localId: result.ack.localId ?? params.localId,
+            markAsUserMessage: params.markAsUserMessage,
+            refreshAgentQueueEchoSuppression: params.refreshAgentQueueEchoSuppression,
+        });
+        return true;
+    };
+
     const commitExternalSessionMessage = async (params: CommitSessionMessageParams): Promise<void> => {
         const localId = params.localId;
         if (!deps.getSocket().connected) {
@@ -203,7 +237,12 @@ export function createSessionClientCommitQueueRuntime(
         if (ack && ack.ok === true) {
             pendingCommitRetryAttemptsByLocalId.delete(localId);
             deps.markCommittedLocalIdAwaitingEcho(localId);
-            deps.observeCommittedAck({ seq: ack.seq, localId, markAsUserMessage: params.markAsUserMessage });
+            deps.observeCommittedAck({
+                seq: ack.seq,
+                localId,
+                markAsUserMessage: params.markAsUserMessage,
+                refreshAgentQueueEchoSuppression: params.refreshAgentQueueEchoSuppression,
+            });
             return;
         }
 
@@ -233,6 +272,9 @@ export function createSessionClientCommitQueueRuntime(
         const localId = params.localId;
         if (!deps.getSocket().connected) {
             if (params.requireCommit) {
+                if (await tryRequiredCommitFallback(params)) {
+                    return;
+                }
                 throw new Error('Socket not connected');
             }
             queueSessionMessageUntilReconnect({
@@ -257,7 +299,12 @@ export function createSessionClientCommitQueueRuntime(
         if (ack && ack.ok === true) {
             pendingCommitRetryAttemptsByLocalId.delete(localId);
             deps.markCommittedLocalIdAwaitingEcho(localId);
-            deps.observeCommittedAck({ seq: ack.seq, localId, markAsUserMessage: params.markAsUserMessage });
+            deps.observeCommittedAck({
+                seq: ack.seq,
+                localId,
+                markAsUserMessage: params.markAsUserMessage,
+                refreshAgentQueueEchoSuppression: params.refreshAgentQueueEchoSuppression,
+            });
             return;
         }
 
@@ -271,6 +318,9 @@ export function createSessionClientCommitQueueRuntime(
         }
 
         if (params.requireCommit) {
+            if (await tryRequiredCommitFallback(params)) {
+                return;
+            }
             let recovered = false;
             try {
                 recovered = await deps.recoverMaterializedLocalId(localId, { maxWaitMs: 12_000 });
@@ -366,7 +416,7 @@ export function createSessionClientCommitQueueRuntime(
         commitSessionMessage,
 
         commitSessionMessageBestEffort(params) {
-            void enqueueMessageCommit(() =>
+            return enqueueMessageCommit(() =>
                 commitSessionMessage({
                     message: params.message,
                     localId: params.localId,
@@ -375,6 +425,7 @@ export function createSessionClientCommitQueueRuntime(
                     sessionEventType: params.sessionEventType,
                     requireCommit: false,
                     markAsUserMessage: params.markAsUserMessage,
+                    refreshAgentQueueEchoSuppression: params.refreshAgentQueueEchoSuppression,
                 }),
             ).catch((error) => {
                 logger.debug(params.logErrorMessage, { error });

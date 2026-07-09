@@ -128,6 +128,123 @@ describe('buildConnectedServiceRuntimeAuthSwitchAttemptLogContext', () => {
     });
   });
 
+  it('surfaces sanitized candidate decision evidence for no-eligible-member switch attempts', () => {
+    const context = buildConnectedServiceRuntimeAuthSwitchAttemptLogContext({
+      sessionId: 'sess_1',
+      classification,
+      result: {
+        status: 'switch_attempted',
+        result: {
+          status: 'no_eligible_member',
+          generation: 58,
+          groupExhausted: true,
+          retryAtMs: 1_700_000_200_000,
+          excluded: [
+            {
+              profileId: 'backup',
+              reason: 'quota_exhausted',
+              retryAtMs: 1_700_000_200_000,
+              accountLabel: 'backup@example.test',
+              accessToken: 'secret-backup-token',
+            },
+            {
+              profileId: 'reauth',
+              reason: 'auth_invalid',
+              credentialPayload: { refreshToken: 'secret-refresh-token' },
+            },
+          ],
+          diagnostics: {
+            decisionTrace: {
+              activeProfileId: 'primary',
+              reason: 'no_eligible_members',
+              accountLabel: 'primary@example.test',
+              candidates: [
+                {
+                  profileId: 'backup',
+                  decision: 'excluded',
+                  exclusionReason: 'quota_exhausted',
+                  retryAtMs: 1_700_000_200_000,
+                  quotaEvidence: {
+                    status: 'fresh',
+                    remainingPercent: 0,
+                    capturedAtMs: 1_700_000_100_000,
+                    exhausted: true,
+                  },
+                  accessToken: 'secret-backup-token',
+                },
+                {
+                  profileId: 'reauth',
+                  decision: 'excluded',
+                  exclusionReason: 'auth_invalid',
+                  quotaEvidence: {
+                    status: 'stale_or_missing',
+                  },
+                  sourceAccountLabel: 'reauth@example.test',
+                },
+              ],
+            },
+          },
+        },
+      },
+      routedThroughFsm: true,
+      startedAtMs: 100,
+      finishedAtMs: 140,
+    });
+
+    expect(context).toMatchObject({
+      resultStatus: 'no_eligible_member',
+      failurePhase: 'selection',
+      excludedSummary: [
+        {
+          profileId: 'backup',
+          reason: 'quota_exhausted',
+          retryAtMs: 1_700_000_200_000,
+        },
+        {
+          profileId: 'reauth',
+          reason: 'auth_invalid',
+          retryAtMs: null,
+        },
+      ],
+      decisionTraceSummary: {
+        activeProfileId: 'primary',
+        reason: 'no_eligible_members',
+        candidates: [
+          {
+            profileId: 'backup',
+            decision: 'excluded',
+            exclusionReason: 'quota_exhausted',
+            retryAtMs: 1_700_000_200_000,
+            quotaEvidence: {
+              status: 'fresh',
+              remainingPercent: 0,
+              capturedAtMs: 1_700_000_100_000,
+              exhausted: true,
+            },
+          },
+          {
+            profileId: 'reauth',
+            decision: 'excluded',
+            exclusionReason: 'auth_invalid',
+            retryAtMs: null,
+            quotaEvidence: {
+              status: 'stale_or_missing',
+              remainingPercent: null,
+              capturedAtMs: null,
+              exhausted: null,
+            },
+          },
+        ],
+      },
+    });
+    const raw = JSON.stringify(context);
+    expect(raw).not.toContain('backup@example.test');
+    expect(raw).not.toContain('primary@example.test');
+    expect(raw).not.toContain('reauth@example.test');
+    expect(raw).not.toContain('secret-backup-token');
+    expect(raw).not.toContain('secret-refresh-token');
+  });
+
   it.each([
     ['provider_session_state_unavailable_for_resume', 'continuity'],
     ['connected_service_materialization_identity_missing', 'continuity'],

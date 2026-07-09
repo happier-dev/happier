@@ -3,9 +3,11 @@ import {
     writeSessionStateFieldToMetadata,
 } from '@happier-dev/agents/session/state/metadataWriters';
 import {
+    SessionRunnerRuntimeStateV1Schema,
     SessionStateUsageLimitRecoveryValueSchema,
     SessionStateWorkStateValueSchema,
 } from '@happier-dev/protocol';
+import { SessionRuntimeActivityProjectionV1Schema } from '@happier-dev/protocol/sessions';
 
 import type { Metadata } from '@/api/types';
 import type { RegisteredSessionStateFieldMutationV1 } from './sessionClientDurableMutationTypes';
@@ -18,15 +20,23 @@ export function applyRegisteredSessionStateFieldMutationToMetadata(
         return clearSessionStateFieldFromMetadata(metadata, mutation.fieldId) as Metadata;
     }
 
+    let value = mutation.op.value;
+
     if (mutation.fieldId === 'runtime.workState') {
-        const parsed = SessionStateWorkStateValueSchema.parse(mutation.op.value);
-        return writeSessionStateFieldToMetadata(metadata, 'runtime.workState', parsed) as Metadata;
+        value = SessionStateWorkStateValueSchema.parse(value);
+    }
+
+    if (mutation.fieldId === 'runtime.activity') {
+        value = SessionRuntimeActivityProjectionV1Schema.parse(value);
     }
 
     if (mutation.fieldId === 'runtime.usageLimitRecovery') {
-        const parsed = SessionStateUsageLimitRecoveryValueSchema.parse(mutation.op.value);
-        return writeSessionStateFieldToMetadata(metadata, 'runtime.usageLimitRecovery', parsed) as Metadata;
+        value = SessionStateUsageLimitRecoveryValueSchema.parse(value);
     }
 
-    return metadata;
+    if (mutation.fieldId === 'runtime.sessionRunner') {
+        value = SessionRunnerRuntimeStateV1Schema.parse(value);
+    }
+
+    return writeSessionStateFieldToMetadata(metadata, mutation.fieldId, value as never) as Metadata;
 }

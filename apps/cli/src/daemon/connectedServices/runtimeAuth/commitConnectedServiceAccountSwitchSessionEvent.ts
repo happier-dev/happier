@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto';
-
 import {
+  agentEventAttentionImpact,
+  buildAgentEventLocalId,
   normalizeConnectedServiceUxDiagnosticV1,
   type ConnectedServiceId,
   type ConnectedServiceUxDiagnosticV1,
@@ -13,6 +13,7 @@ import {
   resolveConnectedServiceNotificationProfileLabel,
   type ConnectedServiceNotificationProfileSummary,
 } from '../notifications/connectedServiceNotificationLabels';
+import { isBackgroundConnectedServiceSwitchReason } from '../connectedServiceSwitchEventVisibility';
 import {
   encryptSessionPayload,
   resolveSessionEncryptionContextFromCredentials,
@@ -27,6 +28,7 @@ type ConnectedServiceRuntimeSwitchSessionEvent = Readonly<{
   type: 'connected_service_account_switch' | 'connected_service_auth_group_switch';
   serviceId: string;
   groupId: string | null;
+  groupLabel: string | null;
   fromProfileId: string | null;
   toProfileId: string | null;
   reason: string;
@@ -61,6 +63,8 @@ type ConnectedServiceRuntimeSwitchAttemptSessionEvent = Readonly<{
   type: 'connected_service_account_switch_attempt';
   ok: boolean;
   action: 'restart_requested' | 'hot_applied' | 'metadata_updated';
+  rawReason?: string;
+  reason?: TranscriptSwitchReason;
   attemptedContinuityMode?: 'hot_apply' | 'restart' | 'metadata_only' | 'credential_refresh';
   outcome?: 'succeeded' | 'failed' | 'observed' | 'scheduled_retry' | 'terminal';
   outcomeAction?: 'hot_applied' | 'restarted' | 'metadata_updated' | 'credential_refreshed' | 'none';
@@ -108,6 +112,12 @@ function parseSwitchMode(value: unknown): ConnectedServiceAccountSwitchMode {
   }
 }
 
+function parseDisplayLabel(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
 function parseRuntimeSwitchEvent(value: unknown): ConnectedServiceRuntimeSwitchSessionEvent | null {
   const record = asRecord(value);
   if (
@@ -119,6 +129,7 @@ function parseRuntimeSwitchEvent(value: unknown): ConnectedServiceRuntimeSwitchS
   ) return null;
   const serviceId = typeof record.serviceId === 'string' ? record.serviceId.trim() : '';
   const rawGroupId = typeof record.groupId === 'string' ? record.groupId.trim() : '';
+  const groupLabel = parseDisplayLabel(record.groupLabel);
   const rawFromProfileId = typeof record.fromProfileId === 'string' ? record.fromProfileId.trim() : '';
   const rawToProfileId = typeof record.toProfileId === 'string' ? record.toProfileId.trim() : '';
   const reason = typeof record.reason === 'string' ? record.reason.trim() : '';
@@ -133,12 +144,21 @@ function parseRuntimeSwitchEvent(value: unknown): ConnectedServiceRuntimeSwitchS
     type: record.type,
     serviceId,
     groupId: rawGroupId || null,
+    groupLabel,
     fromProfileId: rawFromProfileId || null,
     toProfileId: rawToProfileId || null,
     reason,
     mode: parseSwitchMode(record.mode),
     ...(generation === undefined ? {} : { generation }),
   };
+}
+
+function isSameProfileRuntimeSwitchEvent(event: ConnectedServiceRuntimeSwitchSessionEvent): boolean {
+  return Boolean(
+    event.fromProfileId
+    && event.toProfileId
+    && event.fromProfileId === event.toProfileId,
+  );
 }
 
 function parseDeferralPolicy(value: unknown): 'defer_until_turn_boundary' | 'defer_until_idle' | null {
@@ -286,10 +306,14 @@ function parseRuntimeSwitchAttemptEvent(value: unknown): ConnectedServiceRuntime
   const groupGeneration = parseNonNegativeInteger(record.groupGeneration);
   const sessionAdoption = parseSwitchAttemptSessionAdoption(record.sessionAdoption);
   const sessionAdoptedGeneration = parseNonNegativeInteger(record.sessionAdoptedGeneration);
+  const rawReason = typeof record.reason === 'string' ? record.reason.trim() : '';
+  const reason = rawReason ? mapSwitchReason(rawReason) : null;
   return {
     type: 'connected_service_account_switch_attempt',
     ok: record.ok,
     action,
+    ...(rawReason ? { rawReason } : {}),
+    ...(reason ? { reason } : {}),
     ...(attemptedContinuityMode ? { attemptedContinuityMode } : {}),
     ...(outcome ? { outcome } : {}),
     ...(outcomeAction ? { outcomeAction } : {}),
@@ -327,6 +351,7 @@ function mapSwitchReason(reason: string): TranscriptSwitchReason | null {
     case 'usage_limit':
     case 'rate_limit':
     case 'capacity':
+    case 'same_provider_account_exhausted':
       return 'usage_limit';
     case 'soft_threshold':
       return 'soft_threshold';
@@ -345,6 +370,77 @@ function mapSwitchReason(reason: string): TranscriptSwitchReason | null {
     default:
       return null;
   }
+}
+
+function buildSwitchDeferralEventId(deferral: ConnectedServiceRuntimeSwitchDeferralSessionEvent): string {
+  return buildAgentEventLocalId('connected-service-account-switch-deferral', [
+    deferral.policy,
+    deferral.awaitingBoundary ? 'awaiting-boundary' : 'awaiting-idle',
+    deferral.timeoutMs,
+  ]);
+}
+
+function buildSwitchDeferralCompletionEventId(
+  deferralCompletion: ConnectedServiceRuntimeSwitchDeferralCompletionSessionEvent,
+): string {
+  return buildAgentEventLocalId('connected-service-account-switch-deferral-completed', [
+    deferralCompletion.policy,
+    deferralCompletion.reason,
+  ]);
+}
+
+function buildSwitchDeferralSupersededEventId(
+  superseded: ConnectedServiceRuntimeSwitchDeferralSupersededSessionEvent,
+): string {
+  return buildAgentEventLocalId('connected-service-account-switch-deferral-superseded', [
+    superseded.policy ?? 'unknown',
+  ]);
+}
+
+function buildSwitchAttemptEventId(attempt: ConnectedServiceRuntimeSwitchAttemptSessionEvent): string {
+  return buildAgentEventLocalId('connected-service-account-switch-attempt', [
+    attempt.ok ? 'ok' : 'failed',
+    attempt.action,
+    attempt.reason ?? attempt.rawReason ?? 'unknown',
+    attempt.attemptedContinuityMode ?? 'unknown',
+    attempt.outcome ?? 'unknown',
+    attempt.outcomeAction ?? 'unknown',
+    attempt.errorCode ?? 'none',
+  ]);
+}
+
+function buildProviderStateSharingDegradedEventId(
+  degraded: ConnectedServiceRuntimeStateSharingDegradedSessionEvent,
+): string {
+  return buildAgentEventLocalId('provider-state-sharing-degraded', [
+    degraded.serviceId,
+    degraded.requestedStateMode,
+    degraded.effectiveStateMode,
+    degraded.code,
+    degraded.reason,
+  ]);
+}
+
+function buildConnectedServiceAccountSwitchEventId(
+  parsed: ConnectedServiceRuntimeSwitchSessionEvent,
+  reason: TranscriptSwitchReason,
+): string {
+  const groupPart = parsed.groupId ?? 'direct';
+  if (parsed.generation !== undefined) {
+    return buildAgentEventLocalId('connected-service-account-switch', [
+      parsed.serviceId,
+      groupPart,
+      parsed.generation,
+    ]);
+  }
+  return buildAgentEventLocalId('connected-service-account-switch', [
+    parsed.serviceId,
+    groupPart,
+    parsed.fromProfileId ?? 'none',
+    parsed.toProfileId ?? 'none',
+    reason,
+    parsed.mode,
+  ]);
 }
 
 function buildStoredContent(params: Readonly<{
@@ -379,6 +475,7 @@ async function commitConnectedServiceLifecycleEvent(params: Readonly<{
     sessionId: params.sessionId,
     localId: params.eventId,
     messageRole: 'event',
+    attentionImpact: agentEventAttentionImpact(params.data),
     content: buildStoredContent({
       credentials: params.credentials,
       rawSession,
@@ -405,15 +502,11 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
 }>): Promise<void> {
   const deferral = parseRuntimeSwitchDeferralEvent(params.event);
   if (deferral) {
+    const eventId = buildSwitchDeferralEventId(deferral);
     await commitConnectedServiceLifecycleEvent({
       credentials: params.credentials,
       sessionId: params.sessionId,
-      eventId: [
-        'connected-service-account-switch-deferral',
-        deferral.policy,
-        deferral.awaitingBoundary ? 'awaiting-boundary' : 'awaiting-idle',
-        randomUUID(),
-      ].join(':'),
+      eventId,
       data: {
         type: 'connected-service-account-switch-deferral',
         policy: deferral.policy,
@@ -426,15 +519,11 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
 
   const deferralCompletion = parseRuntimeSwitchDeferralCompletionEvent(params.event);
   if (deferralCompletion) {
+    const eventId = buildSwitchDeferralCompletionEventId(deferralCompletion);
     await commitConnectedServiceLifecycleEvent({
       credentials: params.credentials,
       sessionId: params.sessionId,
-      eventId: [
-        'connected-service-account-switch-deferral-completed',
-        deferralCompletion.policy,
-        deferralCompletion.reason,
-        randomUUID(),
-      ].join(':'),
+      eventId,
       data: {
         type: 'connected-service-account-switch-deferral-completed',
         policy: deferralCompletion.policy,
@@ -446,14 +535,11 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
 
   const superseded = parseRuntimeSwitchDeferralSupersededEvent(params.event);
   if (superseded) {
+    const eventId = buildSwitchDeferralSupersededEventId(superseded);
     await commitConnectedServiceLifecycleEvent({
       credentials: params.credentials,
       sessionId: params.sessionId,
-      eventId: [
-        'connected-service-account-switch-deferral-superseded',
-        superseded.policy ?? 'unknown',
-        randomUUID(),
-      ].join(':'),
+      eventId,
       data: {
         type: 'connected-service-account-switch-deferral-superseded',
         ...(superseded.policy ? { policy: superseded.policy } : {}),
@@ -464,18 +550,17 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
 
   const attempt = parseRuntimeSwitchAttemptEvent(params.event);
   if (attempt) {
+    if (isBackgroundConnectedServiceSwitchReason(attempt.rawReason ?? attempt.reason)) return;
+    const eventId = buildSwitchAttemptEventId(attempt);
     await commitConnectedServiceLifecycleEvent({
       credentials: params.credentials,
       sessionId: params.sessionId,
-      eventId: [
-        'connected-service-account-switch-attempt',
-        attempt.ok ? 'ok' : 'failed',
-        randomUUID(),
-      ].join(':'),
+      eventId,
       data: {
         type: 'connected-service-account-switch-attempt',
         ok: attempt.ok,
         action: attempt.action,
+        ...(attempt.reason ? { reason: attempt.reason } : {}),
         ...(attempt.attemptedContinuityMode ? { attemptedContinuityMode: attempt.attemptedContinuityMode } : {}),
         ...(attempt.outcome ? { outcome: attempt.outcome } : {}),
         ...(attempt.outcomeAction ? { outcomeAction: attempt.outcomeAction } : {}),
@@ -493,14 +578,11 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
 
   const degraded = parseRuntimeStateSharingDegradedEvent(params.event);
   if (degraded) {
+    const eventId = buildProviderStateSharingDegradedEventId(degraded);
     await commitConnectedServiceLifecycleEvent({
       credentials: params.credentials,
       sessionId: params.sessionId,
-      eventId: [
-        'provider-state-sharing-degraded',
-        degraded.serviceId,
-        randomUUID(),
-      ].join(':'),
+      eventId,
       data: {
         type: 'provider-state-sharing-degraded',
         serviceId: degraded.serviceId,
@@ -514,8 +596,10 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
   }
 
   const parsed = parseRuntimeSwitchEvent(params.event);
+  if (parsed && isBackgroundConnectedServiceSwitchReason(parsed.reason)) return;
   const reason = parsed ? mapSwitchReason(parsed.reason) : null;
   if (!parsed || !reason) return;
+  if (isSameProfileRuntimeSwitchEvent(parsed)) return;
 
   // Event-carried labels are the contract for clients without hydrated profile-label
   // settings; the UI prefers them over settings labels and falls back to raw ids.
@@ -531,16 +615,12 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
   await commitConnectedServiceLifecycleEvent({
     credentials: params.credentials,
     sessionId: params.sessionId,
-    eventId: [
-      'connected-service-account-switch',
-      parsed.serviceId,
-      parsed.groupId ?? 'direct',
-      parsed.generation ?? randomUUID(),
-    ].join(':'),
+    eventId: buildConnectedServiceAccountSwitchEventId(parsed, reason),
     data: {
       type: 'connected-service-account-switch',
       serviceId: parsed.serviceId,
       groupId: parsed.groupId,
+      ...(parsed.groupLabel ? { groupLabel: parsed.groupLabel } : {}),
       fromProfileId: parsed.fromProfileId,
       toProfileId: parsed.toProfileId,
       ...(fromProfileLabel ? { fromProfileLabel } : {}),

@@ -27,6 +27,31 @@ describe('startConnectedServiceRefreshLoop', () => {
         }
     });
 
+    it('runs one startup freshness tick when requested', async () => {
+        vi.useFakeTimers();
+        try {
+            const coordinator = {
+                tickOnce: vi.fn(async () => {}),
+            };
+
+            const handle = startConnectedServiceRefreshLoop({
+                enabled: true,
+                tickMs: 50,
+                coordinator,
+                onTickError: vi.fn(),
+                runImmediately: true,
+            });
+
+            expect(handle).not.toBeNull();
+            await Promise.resolve();
+            expect(coordinator.tickOnce).toHaveBeenCalledTimes(1);
+
+            handle?.stop();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('pauses ticks until resume() is called', async () => {
         vi.useFakeTimers();
         try {
@@ -48,6 +73,39 @@ describe('startConnectedServiceRefreshLoop', () => {
             handle?.resume();
             await vi.advanceTimersByTimeAsync(50);
             expect(coordinator.tickOnce).toHaveBeenCalledTimes(1);
+
+            handle?.stop();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('backs off repeated refresh attempts while the server is unavailable', async () => {
+        vi.useFakeTimers();
+        try {
+            const coordinator = {
+                tickOnce: vi.fn(async () => {
+                    throw new Error('server unavailable');
+                }),
+            };
+            const onTickError = vi.fn();
+
+            const handle = startConnectedServiceRefreshLoop({
+                enabled: true,
+                tickMs: 50,
+                coordinator,
+                onTickError,
+            });
+
+            await vi.advanceTimersByTimeAsync(50);
+            expect(coordinator.tickOnce).toHaveBeenCalledTimes(1);
+            expect(onTickError).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(1000);
+            expect(coordinator.tickOnce).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(4000);
+            expect(coordinator.tickOnce).toHaveBeenCalledTimes(2);
 
             handle?.stop();
         } finally {

@@ -202,4 +202,55 @@ describe('createConnectedServiceRecoverySwitchGuard', () => {
       reason: 'predictive_soft_switch_turn_in_flight',
     });
   });
+
+  it('allows predictive soft-threshold switching in flight when provider runtime apply supports it', async () => {
+    const guard = createConnectedServiceRecoverySwitchGuard({
+      runtimeAuthRecovery: null,
+      usageLimitRecovery: null,
+      resolvePredictiveSoftSwitchMode: vi.fn(async () => 'supported' as const),
+      runtimeAuthApplyCapabilityResolver: vi.fn(async () => ({
+        directLiveHotAuth: {
+          supportsInTurnApply: true,
+          requiresExactRuntimeIdentity: true,
+          refreshSelectionResync: 'required',
+          authMode: {
+            kind: 'external_token_injection',
+            surface: 'codex_chatgpt_auth_tokens',
+          },
+        },
+      } as const)),
+      readTurnState: vi.fn(() => ({ inFlight: true })),
+    });
+
+    await expect(guard({
+      sessionId: 'session-1',
+      serviceId: SERVICE_ID,
+      groupId: 'team',
+      activeProfileId: 'active',
+      reason: 'soft_threshold',
+    })).resolves.toEqual({ status: 'allow' });
+  });
+
+  it('suppresses predictive soft-threshold switching for a partial runtime apply capability', async () => {
+    const guard = createConnectedServiceRecoverySwitchGuard({
+      runtimeAuthRecovery: null,
+      usageLimitRecovery: null,
+      resolvePredictiveSoftSwitchMode: vi.fn(async () => 'supported' as const),
+      runtimeAuthApplyCapabilityResolver: vi.fn(async () => ({
+        directLiveHotAuth: { supportsInTurnApply: true },
+      }) as never),
+      readTurnState: vi.fn(() => ({ inFlight: true })),
+    });
+
+    await expect(guard({
+      sessionId: 'session-1',
+      serviceId: SERVICE_ID,
+      groupId: 'team',
+      activeProfileId: 'active',
+      reason: 'soft_threshold',
+    })).resolves.toEqual({
+      status: 'suppress',
+      reason: 'predictive_soft_switch_turn_in_flight',
+    });
+  });
 });

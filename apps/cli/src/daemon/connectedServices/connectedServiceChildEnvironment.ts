@@ -35,6 +35,7 @@ export type ConnectedServiceRuntimeAuthContext = Readonly<{
   serviceId: ConnectedServiceId;
   profileId: string | null;
   groupId: string | null;
+  groupGeneration?: number | null;
 }>;
 
 export type ConnectedServiceRuntimeAuthMetadataSession = Readonly<{
@@ -66,6 +67,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function readNonnegativeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.trunc(value)
+    : null;
 }
 
 function parseSelection(value: unknown): SerializedConnectedServiceSelection | null {
@@ -166,10 +173,12 @@ export function resolveConnectedServiceRuntimeAuthContextFromSelection(
   }
   const serviceId = (readTrimmedString(selection.serviceId) || fallbackServiceId) as ConnectedServiceId;
   if (selection.kind === 'group') {
+    const groupGeneration = readNonnegativeInteger(selection.generation);
     return {
       serviceId,
       profileId: readTrimmedString(selection.activeProfileId) || null,
       groupId: readTrimmedString(selection.groupId) || null,
+      ...(groupGeneration !== null ? { groupGeneration } : {}),
     };
   }
   if (selection.kind === 'profile') {
@@ -219,10 +228,12 @@ export function resolveConnectedServiceRuntimeAuthContextFromSessionMetadata(
   }
 
   if (binding.selection === 'group') {
+    const groupGeneration = readNonnegativeInteger((binding as Record<string, unknown>).groupGeneration);
     return {
       serviceId,
       profileId: binding.profileId ?? null,
       groupId: binding.groupId,
+      ...(groupGeneration !== null ? { groupGeneration } : {}),
     };
   }
 

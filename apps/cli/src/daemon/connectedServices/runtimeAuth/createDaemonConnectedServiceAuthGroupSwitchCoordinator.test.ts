@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ConnectedServiceAuthGroupV1 } from '@happier-dev/protocol';
+import {
+    buildProviderAccountUsageRecordId,
+    type ConnectedServiceAuthGroupV1,
+    type ProviderAccountUsageRecordKeyV1,
+    type ProviderAccountUsageSnapshotV1,
+} from '@happier-dev/protocol';
 
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
@@ -22,6 +27,45 @@ function group(activeProfileId: string, generation: number): ConnectedServiceAut
         ],
         createdAt: 1,
         updatedAt: 1,
+    };
+}
+
+function providerAccountUsageSnapshot(profileId: string, remainingPct: number): ProviderAccountUsageSnapshotV1 {
+    const recordKey: ProviderAccountUsageRecordKeyV1 = {
+        providerId: 'openai-codex',
+        accountSubjectId: `acct-${profileId}`,
+        subjectKind: 'subscription',
+        quotaScope: 'account',
+    };
+    return {
+        v: 1,
+        recordId: buildProviderAccountUsageRecordId(recordKey),
+        recordKey,
+        providerId: 'openai-codex',
+        accountSubject: { kind: 'providerSubject', id: recordKey.accountSubjectId },
+        observedAtMs: 1_000,
+        fetchedAtMs: 1_000,
+        staleAfterMs: 300_000,
+        source: 'runtimeSignal',
+        confidence: 'confirmed',
+        state: 'loaded_data',
+        meters: [{
+            meterId: 'weekly',
+            label: 'Weekly',
+            used: 100 - remainingPct,
+            limit: 100,
+            remaining: remainingPct,
+            remainingPct,
+            usedPct: 100 - remainingPct,
+            utilizationPct: 100 - remainingPct,
+            resetsAt: null,
+            resetAtMs: null,
+            unit: 'credits',
+            status: 'ok',
+            limitScope: 'account',
+            confidence: 'exact',
+            details: { limitCategory: 'usage_limit' },
+        }],
     };
 }
 
@@ -57,13 +101,161 @@ describe('createDaemonConnectedServiceAuthGroupSwitchCoordinator', () => {
             groupId: 'main',
             activeProfileId: 'backup',
             expectedGeneration: 1,
+            overrideRuntimeCooldown: true,
         });
         expect(restartSession).toHaveBeenCalledWith({
+            sessionId: 'sess_1',
             serviceId: 'openai-codex',
             groupId: 'main',
             activeProfileId: 'backup',
             generation: 2,
+            reason: 'usage_limit',
         });
+    });
+
+    it('loads switch state from source-backed provider account usage before runtime quota snapshots', async () => {
+        const accountUsageStore = {
+            resolveBySource: vi.fn((source: { serviceId: string; profileId: string; groupId?: string | null; groupGeneration?: number | null }) => {
+                if (
+                    source.serviceId !== 'openai-codex'
+                    || source.groupId !== 'main'
+                    || source.groupGeneration !== 1
+                ) {
+                    return null;
+                }
+                if (source.profileId === 'primary') return providerAccountUsageSnapshot('primary', 0);
+                if (source.profileId === 'backup') return providerAccountUsageSnapshot('backup', 80);
+                return null;
+            }),
+        };
+        const api = {
+            getConnectedServiceAuthGroup: vi.fn(async () => group('primary', 1)),
+            updateConnectedServiceAuthGroupActiveProfile: vi.fn(async () => group('backup', 2)),
+        };
+        const restartSession = vi.fn(async () => ({ ok: true as const }));
+        const hydratePersistedQuotaSnapshotsForGroup = vi.fn(async () => {
+            throw new Error('runtime snapshot hydration should not run for source-backed account usage');
+        });
+        const coordinator = createDaemonConnectedServiceAuthGroupSwitchCoordinator({
+            api,
+            accountUsageStore,
+            runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+            quotaFreshnessMs: 60_000,
+            nowMs: () => 1_000,
+            restartSession,
+            hydratePersistedQuotaSnapshotsForGroup,
+        });
+
+        await expect(coordinator.switchAfterClassifiedFailure({
+            sessionId: 'sess_1',
+            serviceId: 'openai-codex',
+            groupId: 'main',
+            reason: 'usage_limit',
+            switchesThisTurn: 0,
+        })).resolves.toEqual({
+            status: 'switched',
+            activeProfileId: 'backup',
+            generation: 2,
+            mode: 'restart_resume',
+        });
+        expect(accountUsageStore.resolveBySource).toHaveBeenCalled();
+        expect(hydratePersistedQuotaSnapshotsForGroup).not.toHaveBeenCalled();
+    });
+
+    it('preflights predictive session generation apply before committing the auth group', async () => {
+        const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+        runtimeQuotaSnapshots.recordProfileSnapshot({
+            serviceId: 'openai-codex',
+            profileId: 'primary',
+            snapshot: {
+                v: 1,
+                serviceId: 'openai-codex',
+                profileId: 'primary',
+                fetchedAt: 1_000,
+                staleAfterMs: 60_000,
+                planLabel: null,
+                accountLabel: null,
+                meters: [{
+                    meterId: 'weekly',
+                    label: 'Weekly',
+                    used: null,
+                    limit: null,
+                    unit: 'unknown',
+                    utilizationPct: 100,
+                    remainingPct: 0,
+                    resetsAt: null,
+                    status: 'estimated',
+                    details: {},
+                }],
+            },
+        });
+        runtimeQuotaSnapshots.recordProfileSnapshot({
+            serviceId: 'openai-codex',
+            profileId: 'backup',
+            snapshot: {
+                v: 1,
+                serviceId: 'openai-codex',
+                profileId: 'backup',
+                fetchedAt: 1_000,
+                staleAfterMs: 60_000,
+                planLabel: null,
+                accountLabel: null,
+                meters: [{
+                    meterId: 'weekly',
+                    label: 'Weekly',
+                    used: null,
+                    limit: null,
+                    unit: 'unknown',
+                    utilizationPct: 20,
+                    remainingPct: 80,
+                    resetsAt: null,
+                    status: 'ok',
+                    details: {},
+                }],
+            },
+        });
+        const api = {
+            getConnectedServiceAuthGroup: vi.fn(async () => group('primary', 1)),
+            updateConnectedServiceAuthGroupActiveProfile: vi.fn(async () => group('backup', 2)),
+        };
+        const restartSession = vi.fn(async () => ({ ok: true as const, mode: 'hot_apply' as const }));
+        const preflightConnectedServiceAuthGeneration = vi.fn(async () => ({ ok: true as const, mode: 'restart_resume' as const }));
+        const deps = {
+            api,
+            runtimeQuotaSnapshots,
+            quotaFreshnessMs: 60_000,
+            nowMs: () => 1_000,
+            restartSession,
+            preflightConnectedServiceAuthGeneration,
+        };
+        const coordinator = createDaemonConnectedServiceAuthGroupSwitchCoordinator(deps);
+
+        await expect(coordinator.switchBeforeTurn({
+            sessionId: 'sess_1',
+            serviceId: 'openai-codex',
+            groupId: 'main',
+            reason: 'same_provider_account_exhausted',
+            observedProfileId: 'primary',
+        })).resolves.toEqual({
+            status: 'generation_apply_failed',
+            activeProfileId: 'backup',
+            generation: 2,
+            errorCode: 'hot_apply_restart_required',
+            diagnostics: {
+                attemptedMode: 'restart_resume',
+                policyReason: 'predictive_soft_switch_hot_apply_required',
+            },
+        });
+        expect(preflightConnectedServiceAuthGeneration).toHaveBeenCalledWith({
+            sessionId: 'sess_1',
+            serviceId: 'openai-codex',
+            groupId: 'main',
+            activeProfileId: 'backup',
+            generation: 2,
+            reason: 'same_provider_account_exhausted',
+        });
+        expect(api.updateConnectedServiceAuthGroupActiveProfile).not.toHaveBeenCalled();
+        expect(restartSession).not.toHaveBeenCalled();
     });
 
     it('retries a transient auth-group load failure with backoff before switching', async () => {
@@ -242,7 +434,7 @@ describe('createDaemonConnectedServiceAuthGroupSwitchCoordinator', () => {
         })).resolves.toMatchObject({ status: 'switched', activeProfileId: 'tertiary' });
     });
 
-    it('hydrates persisted quota snapshots for group members before selection', async () => {
+    it('does not hydrate persisted quota snapshots for group members before selection', async () => {
         const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
         const hydratePersistedQuotaSnapshotsForGroup = vi.fn(async () => {
             runtimeQuotaSnapshots.recordProfileSnapshot({
@@ -291,11 +483,12 @@ describe('createDaemonConnectedServiceAuthGroupSwitchCoordinator', () => {
             reason: 'usage_limit',
         })).resolves.toMatchObject({ status: 'switched', activeProfileId: 'backup' });
 
-        expect(hydratePersistedQuotaSnapshotsForGroup).toHaveBeenCalledWith({
-            serviceId: 'openai-codex',
-            groupId: 'main',
-            profileIds: ['primary', 'backup'],
-        });
+        expect(hydratePersistedQuotaSnapshotsForGroup).not.toHaveBeenCalled();
+        expect(api.updateConnectedServiceAuthGroupActiveProfile).toHaveBeenCalledWith(expect.objectContaining({
+            activeProfileId: 'backup',
+            expectedGeneration: 1,
+            overrideRuntimeCooldown: true,
+        }));
     });
 
     it('excludes server-known reconnect-required profiles before selecting an automatic fallback', async () => {
@@ -554,6 +747,43 @@ describe('createDaemonConnectedServiceAuthGroupSwitchCoordinator', () => {
                 type: 'connected_service_auth_group_switch',
                 serviceId: 'openai-codex',
                 groupId: 'main',
+                groupLabel: 'Main',
+                fromProfileId: 'primary',
+                toProfileId: 'backup',
+                success: true,
+            }),
+        ]);
+    });
+
+    it('falls back to the group id when emitting switch events for unlabeled groups', async () => {
+        const events: unknown[] = [];
+        const coordinator = createDaemonConnectedServiceAuthGroupSwitchCoordinator({
+            api: {
+                getConnectedServiceAuthGroup: vi.fn(async () => ({ ...group('primary', 1), displayName: null })),
+                updateConnectedServiceAuthGroupRuntimeState: vi.fn(async () => ({ ...group('primary', 1), displayName: null })),
+                updateConnectedServiceAuthGroupActiveProfile: vi.fn(async () => ({ ...group('backup', 2), displayName: null })),
+            },
+            runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+            quotaFreshnessMs: 60_000,
+            nowMs: () => 1_000,
+            restartSession: async () => ({ ok: true as const }),
+            emitEvent: (event) => events.push(event),
+        });
+
+        await coordinator.switchAfterClassifiedFailure({
+            sessionId: 'session-1',
+            serviceId: 'openai-codex',
+            groupId: 'main',
+            reason: 'usage_limit',
+            observedProfileId: 'primary',
+        });
+
+        expect(events).toEqual([
+            expect.objectContaining({
+                type: 'connected_service_auth_group_switch',
+                serviceId: 'openai-codex',
+                groupId: 'main',
+                groupLabel: 'main',
                 fromProfileId: 'primary',
                 toProfileId: 'backup',
                 success: true,

@@ -62,6 +62,39 @@ describe('ConnectedServiceRecoveryPolicy', () => {
     });
   });
 
+  it('delegates account-scoped capacity failures to group account switching', () => {
+    expect(decideConnectedServiceRecovery({
+      actor: 'automatic',
+      issue: {
+        kind: 'capacity',
+        ...baseIssue,
+        limitCategory: 'capacity',
+        quotaScope: 'account',
+        retryAfterMs: 30_000,
+      },
+      selection: {
+        kind: 'group',
+        serviceId: 'openai-codex',
+        groupId: 'main',
+        activeProfileId: 'primary',
+      },
+      groupCandidate: {
+        status: 'selected',
+        profileId: 'backup',
+        applyMode: 'restart_rematerialize',
+      },
+    })).toEqual({
+      action: 'switch_account',
+      mode: 'restart_rematerialize',
+      serviceId: 'openai-codex',
+      groupId: 'main',
+      fromProfileId: 'primary',
+      toProfileId: 'backup',
+      reason: 'capacity',
+      actor: 'automatic',
+    });
+  });
+
   it('returns reconnect-required for manual selection of a cached unhealthy profile', () => {
     expect(decideConnectedServiceRecovery({
       actor: 'manual',
@@ -135,6 +168,67 @@ describe('ConnectedServiceRecoveryPolicy', () => {
         profileId: 'primary',
         status: 'connected',
       },
+    });
+  });
+
+  it('does not route auth-invalid credential failures through group account switching', () => {
+    expect(decideConnectedServiceRecovery({
+      actor: 'automatic',
+      issue: {
+        kind: 'auth_expired',
+        ...baseIssue,
+      },
+      selection: {
+        kind: 'group',
+        serviceId: 'openai-codex',
+        groupId: 'main',
+        activeProfileId: 'primary',
+      },
+      credentialHealth: {
+        liveEvidence: 'auth_failed',
+      },
+      groupCandidate: {
+        status: 'selected',
+        profileId: 'backup',
+        applyMode: 'restart_rematerialize',
+      },
+    })).toEqual({
+      action: 'reconnect_required',
+      serviceId: 'openai-codex',
+      profileId: 'primary',
+      groupId: 'main',
+      reason: 'auth_expired',
+      actor: 'automatic',
+    });
+  });
+
+  it('routes account-changed reports to action-required instead of refreshing or switching the stale account', () => {
+    expect(decideConnectedServiceRecovery({
+      actor: 'automatic',
+      issue: {
+        kind: 'account_changed',
+        ...baseIssue,
+      },
+      selection: {
+        kind: 'group',
+        serviceId: 'openai-codex',
+        groupId: 'main',
+        activeProfileId: 'primary',
+      },
+      credentialRefresh: {
+        status: 'refreshable',
+      },
+      groupCandidate: {
+        status: 'selected',
+        profileId: 'backup',
+        applyMode: 'hot_apply',
+      },
+    })).toEqual({
+      action: 'profile_action_required',
+      serviceId: 'openai-codex',
+      profileId: 'primary',
+      groupId: 'main',
+      reason: 'account_changed',
     });
   });
 

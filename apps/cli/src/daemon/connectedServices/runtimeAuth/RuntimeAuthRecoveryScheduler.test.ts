@@ -14,13 +14,6 @@ type RuntimeAuthRecoveryModule = Readonly<{
     maxDegradedAttempts?: number;
     degradedBackoffMs?: number;
     providerOutcomePendingWaitMs?: number;
-	    store?: {
-	      read: (sessionId: string) => unknown | null;
-	      readAll?: () => ReadonlyArray<readonly [string, unknown]>;
-	      write: (sessionId: string, intent: unknown) => Promise<void> | void;
-	      remove?: (sessionId: string) => Promise<void> | void;
-	      prune?: (predicate: (entry: Readonly<{ sessionId: string; value: unknown }>) => boolean) => Promise<ReadonlyArray<string>> | ReadonlyArray<string>;
-	    };
     recover: (input: {
       sessionId: string;
       switchesThisTurn: number;
@@ -51,7 +44,6 @@ type RuntimeAuthRecoveryModule = Readonly<{
     }) => Promise<{ status: string; retryable: boolean; nextRetryAtMs?: number | null }>;
     read: (sessionId: string) => unknown | null;
     readForSession: (sessionId: string) => ReadonlyArray<unknown>;
-    hydrate: () => ReadonlyArray<unknown>;
     wake: (input: { sessionId: string; reason: 'timer' | 'manual' }) => Promise<{ status: string }>;
     cancel: (input: { sessionId: string }) => Promise<unknown | null>;
     cancelByKey: (input: {
@@ -359,9 +351,147 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     ]));
   });
 
-  it('sanitizes runtime classifications before durable scheduler persistence', async () => {
+  it('classifies missing resume-state continuity as retryable until durable reconstruction is exhausted', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
-    const stored = new Map<string, unknown>();
+    const diagnostics: unknown[] = [];
+    const scheduler = new RuntimeAuthRecoveryScheduler({
+      nowMs: () => 1_000,
+      baseBackoffMs: 100,
+      maxBackoffMs: 1_000,
+      jitterMs: () => 0,
+      recover: async () => applyFailedResult('provider_session_state_unavailable_for_resume'),
+      recordDiagnostic: (event) => {
+        diagnostics.push(event);
+      },
+    });
+
+    await expect(scheduler.enqueueApplyFailure({
+      sessionId: 'sess_resume_gap',
+      switchesThisTurn: 0,
+      classification: usageLimitClassification(),
+      result: applyFailedResult('provider_session_state_unavailable_for_resume', {
+        failurePhase: 'continuity',
+        durableContinuity: {
+          trackedSession: null,
+          trackedSpawnOptions: null,
+          persistedSessionMetadata: null,
+          vendorResumeId: null,
+          candidatePersistedSessionFile: null,
+          materializationIdentity: null,
+        },
+      }),
+    })).resolves.toMatchObject({
+      status: 'scheduled',
+      retryable: true,
+    });
+    expect(scheduler.read('sess_resume_gap')).toMatchObject({
+      status: 'waiting',
+      failurePhase: 'apply',
+      failureReason: 'durable_continuity_reconstruction_retrying',
+      lastError: 'provider_session_state_unavailable_for_resume',
+      lastErrorClassification: expect.objectContaining({ kind: 'dependency_unavailable', retryable: true }),
+    });
+    expect(diagnostics).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ event: 'runtime_auth_recovery_terminal', sessionId: 'sess_resume_gap' }),
+    ]));
+  });
+
+  it('terminalizes missing resume-state continuity only after durable reconstruction is exhausted', async () => {
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    const diagnostics: unknown[] = [];
+    const scheduler = new RuntimeAuthRecoveryScheduler({
+      nowMs: () => 1_000,
+      baseBackoffMs: 100,
+      maxBackoffMs: 1_000,
+      jitterMs: () => 0,
+      recover: async () => applyFailedResult('provider_session_state_unavailable_for_resume'),
+      recordDiagnostic: (event) => {
+        diagnostics.push(event);
+      },
+    });
+
+    await expect(scheduler.enqueueApplyFailure({
+      sessionId: 'sess_resume_exhausted',
+      switchesThisTurn: 0,
+      classification: usageLimitClassification(),
+      result: applyFailedResult('provider_session_state_unavailable_for_resume', {
+        failurePhase: 'continuity',
+        durableContinuity: {
+          status: 'exhausted',
+          trackedSession: null,
+          trackedSpawnOptions: null,
+          persistedSessionMetadata: null,
+          vendorResumeId: null,
+          candidatePersistedSessionFile: null,
+          materializationIdentity: null,
+        },
+      }),
+    })).resolves.toMatchObject({
+      status: 'terminal_non_retry',
+      retryable: false,
+      reason: 'provider_session_state_unavailable_after_reconstruction',
+    });
+    expect(scheduler.read('sess_resume_exhausted')).toBeNull();
+    expect(diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        event: 'runtime_auth_recovery_terminal',
+        sessionId: 'sess_resume_exhausted',
+        reason: 'provider_session_state_unavailable_after_reconstruction',
+        failurePhase: 'apply',
+      }),
+    ]));
+  });
+
+  it('keeps missing resume-state continuity retryable on wake until reconstruction reports exhausted', async () => {
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    let nowMs = 1_000;
+    const scheduler = new RuntimeAuthRecoveryScheduler({
+      nowMs: () => nowMs,
+      baseBackoffMs: 100,
+      maxBackoffMs: 1_000,
+      jitterMs: () => 0,
+      recover: async () => applyFailedResult('provider_session_state_unavailable_for_resume', {
+        failurePhase: 'continuity',
+        durableContinuity: {
+          status: 'exhausted',
+          trackedSession: null,
+          trackedSpawnOptions: null,
+          persistedSessionMetadata: null,
+          vendorResumeId: null,
+          candidatePersistedSessionFile: null,
+          materializationIdentity: null,
+        },
+      }),
+    });
+
+    await expect(scheduler.enqueueApplyFailure({
+      sessionId: 'sess_resume_wake',
+      switchesThisTurn: 0,
+      classification: usageLimitClassification(),
+      result: applyFailedResult('provider_session_state_unavailable_for_resume', {
+        failurePhase: 'continuity',
+        durableContinuity: {
+          trackedSession: null,
+          trackedSpawnOptions: null,
+          persistedSessionMetadata: null,
+          vendorResumeId: null,
+          candidatePersistedSessionFile: null,
+          materializationIdentity: null,
+        },
+      }),
+    })).resolves.toMatchObject({ status: 'scheduled', retryable: true });
+
+    nowMs = 1_100;
+    await expect(scheduler.wake({ sessionId: 'sess_resume_wake', reason: 'manual' }))
+      .resolves.toEqual({ status: 'terminal' });
+    expect(scheduler.read('sess_resume_wake')).toMatchObject({
+      status: 'cancelled',
+      terminalReason: 'provider_session_state_unavailable_after_reconstruction',
+    });
+  });
+
+  it('sanitizes runtime classifications before retaining recovery state', async () => {
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
     const unsafeClassification = {
       ...usageLimitClassification({
         providerLimitId: 'Bearer secret-provider-limit-token',
@@ -381,12 +511,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       baseBackoffMs: 100,
       maxBackoffMs: 1_000,
       jitterMs: () => 0,
-      store: {
-        read: (key) => stored.get(key) ?? null,
-        write: (key, intent) => {
-          stored.set(key, intent);
-        },
-      },
       recover: vi.fn(),
     });
 
@@ -400,7 +524,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       retryable: true,
     });
 
-    const persisted = [...stored.values()][0];
+    const persisted = scheduler.read('sess_sanitized');
     const persistedText = JSON.stringify(persisted);
     expect(persisted).toMatchObject({
       classification: {
@@ -421,9 +545,8 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     expect(persistedText).not.toContain('accessToken');
   });
 
-  it('persists transient handler failures and retries through the canonical handler', async () => {
+  it('retains transient handler failures and retries through the canonical handler', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
-    const stored = new Map<string, unknown>();
     const diagnostics: unknown[] = [];
     let nowMs = 1_000;
     const classification = usageLimitClassification();
@@ -436,15 +559,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       nowMs: () => nowMs,
       baseBackoffMs: 1_000,
       maxBackoffMs: 10_000,
-	      store: {
-	        read: (sessionId) => stored.get(sessionId) ?? null,
-	        write: (sessionId, intent) => {
-	          stored.set(sessionId, intent);
-	        },
-	        remove: (sessionId) => {
-	          stored.delete(sessionId);
-	        },
-	      },
       recover,
       recordDiagnostic: (event) => diagnostics.push(event),
     });
@@ -459,7 +573,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       retryable: true,
       nextRetryAtMs: 2_000,
     });
-    expect([...stored.values()][0]).toMatchObject({
+    expect(scheduler.read('sess_1')).toMatchObject({
       status: 'waiting',
       attemptCount: 0,
       failurePhase: 'handler',
@@ -502,21 +616,10 @@ describe('RuntimeAuthRecoveryScheduler', () => {
 
   it('marks only the matching composite recovery intent succeeded for a multi-service session', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
-    const stored = new Map<string, unknown>();
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
       baseBackoffMs: 1_000,
       maxBackoffMs: 10_000,
-      store: {
-        read: (key) => stored.get(key) ?? null,
-        readAll: () => [...stored.entries()],
-	        write: (key, intent) => {
-	          stored.set(key, intent);
-	        },
-	        remove: (key) => {
-	          stored.delete(key);
-	        },
-	      },
       recover: vi.fn(),
     });
 
@@ -551,7 +654,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       serviceId: 'openai-codex',
     });
 
-    expect([...stored.values()]).toEqual([
+    expect(scheduler.readForSession('sess_1')).toEqual([
       expect.objectContaining({
         status: 'waiting',
         serviceId: 'anthropic',
@@ -561,22 +664,11 @@ describe('RuntimeAuthRecoveryScheduler', () => {
 
   it('clears matching active intents on provider-activity proof and leaves non-matching intents untouched', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
-    const stored = new Map<string, unknown>();
     const diagnostics: unknown[] = [];
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
       baseBackoffMs: 1_000,
       maxBackoffMs: 10_000,
-      store: {
-        read: (key) => stored.get(key) ?? null,
-        readAll: () => [...stored.entries()],
-        write: (key, intent) => {
-          stored.set(key, intent);
-        },
-        remove: (key) => {
-          stored.delete(key);
-        },
-      },
       recover: vi.fn(),
       recordDiagnostic: (event) => diagnostics.push(event),
     });
@@ -615,7 +707,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     expect(cleared).toEqual([
       expect.objectContaining({ serviceId: 'openai-codex', groupId: 'codex-main' }),
     ]);
-    expect([...stored.values()]).toEqual([
+    expect(scheduler.readForSession('sess_1')).toEqual([
       expect.objectContaining({ status: 'waiting', serviceId: 'anthropic' }),
     ]);
     expect(diagnostics).toEqual(expect.arrayContaining([
@@ -628,24 +720,64 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     ]));
   });
 
+  it('keeps duplicate group recovery intents separate when the failing access-token fingerprint differs', async () => {
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    const scheduler = new RuntimeAuthRecoveryScheduler({
+      nowMs: () => 1_000,
+      baseBackoffMs: 1_000,
+      maxBackoffMs: 10_000,
+      recover: vi.fn(),
+    });
+
+    await scheduler.enqueueHandlerFailure({
+      sessionId: 'sess_1',
+      switchesThisTurn: 1,
+      classification: {
+        ...usageLimitClassification({
+          serviceId: 'openai-codex',
+          profileId: 'primary',
+          groupId: 'codex-main',
+        }),
+        failingAccessTokenFingerprint: 'token-before-refresh',
+      } as ConnectedServiceRuntimeFailureClassification,
+      error: new Error('Failed to get connected service auth group: timeout of 5000ms exceeded'),
+    });
+    await scheduler.enqueueHandlerFailure({
+      sessionId: 'sess_1',
+      switchesThisTurn: 1,
+      classification: {
+        ...usageLimitClassification({
+          serviceId: 'openai-codex',
+          profileId: 'backup',
+          groupId: 'codex-main',
+        }),
+        failingAccessTokenFingerprint: 'token-after-refresh',
+      } as ConnectedServiceRuntimeFailureClassification,
+      error: new Error('Failed to get connected service auth group: timeout of 5000ms exceeded'),
+    });
+
+    expect(scheduler.readForSession('sess_1')).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        status: 'waiting',
+        profileId: 'primary',
+        classification: expect.objectContaining({ failingAccessTokenFingerprint: 'token-before-refresh' }),
+      }),
+      expect.objectContaining({
+        status: 'waiting',
+        profileId: 'backup',
+        classification: expect.objectContaining({ failingAccessTokenFingerprint: 'token-after-refresh' }),
+      }),
+    ]));
+    expect(scheduler.readForSession('sess_1')).toHaveLength(2);
+  });
+
   it('does not clear intents for non-recovered proof kinds or terminal intents', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
-    const stored = new Map<string, unknown>();
     const diagnostics: unknown[] = [];
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
       baseBackoffMs: 1_000,
       maxBackoffMs: 10_000,
-      store: {
-        read: (key) => stored.get(key) ?? null,
-        readAll: () => [...stored.entries()],
-        write: (key, intent) => {
-          stored.set(key, intent);
-        },
-        remove: (key) => {
-          stored.delete(key);
-        },
-      },
       recover: vi.fn(),
       recordDiagnostic: (event) => diagnostics.push(event),
     });
@@ -669,7 +801,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       profileId: 'primary',
       groupId: 'codex-main',
     })).resolves.toEqual([]);
-    expect([...stored.values()]).toEqual([
+    expect(scheduler.readForSession('sess_1')).toEqual([
       expect.objectContaining({ status: 'waiting', serviceId: 'openai-codex' }),
     ]);
 
@@ -688,7 +820,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       profileId: 'primary',
       groupId: 'codex-main',
     })).resolves.toEqual([]);
-    expect([...stored.values()]).toEqual([
+    expect(scheduler.readForSession('sess_1')).toEqual([
       expect.objectContaining({ status: 'cancelled', serviceId: 'openai-codex' }),
     ]);
     expect(diagnostics).not.toEqual(expect.arrayContaining([
@@ -703,7 +835,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     // exhausted record (freeing the key to re-arm fresh) and publish a terminal
     // `recovered` resolution — the dead-letter row's closing counterpart.
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
-    const stored = new Map<string, unknown>();
     const diagnostics: unknown[] = [];
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
@@ -711,16 +842,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       maxBackoffMs: 1_000,
       jitterMs: () => 0,
       maxAttempts: 1,
-      store: {
-        read: (key) => stored.get(key) ?? null,
-        readAll: () => [...stored.entries()],
-        write: (key, intent) => {
-          stored.set(key, intent);
-        },
-        remove: (key) => {
-          stored.delete(key);
-        },
-      },
       recover: async () => {
         throw new Error('timeout of 5000ms exceeded');
       },
@@ -734,7 +855,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       error: new Error('timeout of 5000ms exceeded'),
     });
     await scheduler.wake({ sessionId: 'sess_1', reason: 'manual' });
-    expect([...stored.values()]).toEqual([
+    expect(scheduler.readForSession('sess_1')).toEqual([
       expect.objectContaining({ status: 'exhausted' }),
     ]);
 
@@ -749,7 +870,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     expect(cleared).toEqual([
       expect.objectContaining({ serviceId: 'openai-codex', status: 'exhausted' }),
     ]);
-    expect(stored.size).toBe(0);
+    expect(scheduler.readForSession('sess_1')).toEqual([]);
     expect(diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({
         event: 'runtime_auth_recovery_success',
@@ -769,14 +890,13 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       classification: usageLimitClassification(),
       error: new Error('timeout of 5000ms exceeded'),
     })).resolves.toMatchObject({ status: 'scheduled', retryable: true });
-    expect([...stored.values()]).toEqual([
+    expect(scheduler.readForSession('sess_1')).toEqual([
       expect.objectContaining({ status: 'waiting', attemptCount: 0 }),
     ]);
   });
 
   it('does not clear an exhausted dead-letter through non-recovered or terminal proof kinds', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
-    const stored = new Map<string, unknown>();
     const diagnostics: unknown[] = [];
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
@@ -784,16 +904,6 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       maxBackoffMs: 1_000,
       jitterMs: () => 0,
       maxAttempts: 1,
-      store: {
-        read: (key) => stored.get(key) ?? null,
-        readAll: () => [...stored.entries()],
-        write: (key, intent) => {
-          stored.set(key, intent);
-        },
-        remove: (key) => {
-          stored.delete(key);
-        },
-      },
       recover: async () => {
         throw new Error('timeout of 5000ms exceeded');
       },
@@ -807,7 +917,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       error: new Error('timeout of 5000ms exceeded'),
     });
     await scheduler.wake({ sessionId: 'sess_1', reason: 'manual' });
-    expect([...stored.values()]).toEqual([
+    expect(scheduler.readForSession('sess_1')).toEqual([
       expect.objectContaining({ status: 'exhausted' }),
     ]);
 
@@ -826,102 +936,9 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       profileId: 'primary',
       groupId: 'codex-main',
     })).resolves.toEqual([]);
-    expect([...stored.values()]).toEqual([
+    expect(scheduler.readForSession('sess_1')).toEqual([
       expect.objectContaining({ status: 'exhausted' }),
     ]);
-  });
-
-  it('prunes stale terminal durable intents when scheduling new runtime-auth recovery', async () => {
-    const { RuntimeAuthRecoveryScheduler } = await loadModule();
-    const nowMs = 8 * 24 * 60 * 60_000;
-    const oldKey = buildRuntimeAuthRecoveryKey({
-      sessionId: 'sess_old',
-      serviceId: 'openai-codex',
-      profileId: 'primary',
-      groupId: 'codex-main',
-    });
-    const freshKey = buildRuntimeAuthRecoveryKey({
-      sessionId: 'sess_fresh',
-      serviceId: 'openai-codex',
-      profileId: 'primary',
-      groupId: 'codex-main',
-    });
-    const stored = new Map<string, unknown>([
-      [oldKey, {
-        v: 1,
-        sessionId: 'sess_old',
-        serviceId: 'openai-codex',
-        profileId: 'primary',
-        groupId: 'codex-main',
-        status: 'cancelled',
-        armedAtMs: 1_000,
-        failurePhase: 'handler',
-        failureReason: 'handler_transient_failure',
-        classification: usageLimitClassification(),
-        switchesThisTurn: 0,
-        attemptCount: 1,
-        maxAttempts: 3,
-        nextRetryAtMs: null,
-        lastError: null,
-        lastErrorClassification: null,
-        terminalAtMs: 1_000,
-      }],
-      [freshKey, {
-        v: 1,
-        sessionId: 'sess_fresh',
-        serviceId: 'openai-codex',
-        profileId: 'primary',
-        groupId: 'codex-main',
-        status: 'exhausted',
-        armedAtMs: nowMs - 2_000,
-        failurePhase: 'handler',
-        failureReason: 'handler_transient_failure',
-        classification: usageLimitClassification(),
-        switchesThisTurn: 0,
-        attemptCount: 3,
-        maxAttempts: 3,
-        nextRetryAtMs: null,
-        lastError: 'max_attempts_exhausted',
-        lastErrorClassification: null,
-        terminalAtMs: nowMs - 1_000,
-      }],
-    ]);
-    const pruned: string[] = [];
-    const scheduler = new RuntimeAuthRecoveryScheduler({
-      nowMs: () => nowMs,
-      baseBackoffMs: 1_000,
-      maxBackoffMs: 10_000,
-      store: {
-        read: (key) => stored.get(key) ?? null,
-        readAll: () => [...stored.entries()],
-        write: (key, intent) => {
-          stored.set(key, intent);
-        },
-        prune: (predicate) => {
-          const removed: string[] = [];
-          for (const [sessionId, value] of stored.entries()) {
-            if (!predicate({ sessionId, value })) continue;
-            stored.delete(sessionId);
-            removed.push(sessionId);
-          }
-          pruned.push(...removed);
-          return removed;
-        },
-      },
-      recover: vi.fn(),
-    });
-
-    await scheduler.enqueueHandlerFailure({
-      sessionId: 'sess_new',
-      switchesThisTurn: 0,
-      classification: usageLimitClassification(),
-      error: new Error('timeout of 5000ms exceeded'),
-    });
-
-    expect(pruned).toEqual([oldKey]);
-    expect(stored.has(oldKey)).toBe(false);
-    expect(stored.has(freshKey)).toBe(true);
-    expect(scheduler.read('sess_new')).toMatchObject({ status: 'waiting' });
   });
 
   it('routes thrown generation apply failures through apply-failure retry classification', async () => {
@@ -962,6 +979,52 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       failureReason: 'post_switch_verification_failed',
       lastError: 'active_account_probe_missing_account_id',
       lastErrorClassification: expect.objectContaining({ kind: 'protocol_error', retryable: true }),
+    });
+  });
+
+  it('routes thrown missing resume-state apply failures through durable-continuity retry classification', async () => {
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    const scheduler = new RuntimeAuthRecoveryScheduler({
+      nowMs: () => 1_000,
+      baseBackoffMs: 1_000,
+      maxBackoffMs: 10_000,
+      recover: vi.fn(),
+    });
+    const error = new Error('connected_service_auth_generation_apply_failed:provider_session_state_unavailable_for_resume');
+    Object.assign(error, {
+      connectedServiceAuthGenerationApplyFailure: {
+        errorCode: 'provider_session_state_unavailable_for_resume',
+        diagnostics: {
+          failurePhase: 'continuity',
+          durableContinuity: {
+            trackedSession: null,
+            trackedSpawnOptions: null,
+            persistedSessionMetadata: null,
+            vendorResumeId: null,
+            candidatePersistedSessionFile: null,
+            materializationIdentity: null,
+          },
+        },
+      },
+    });
+
+    await expect(scheduler.enqueueHandlerFailure({
+      sessionId: 'sess_thrown_resume_gap',
+      switchesThisTurn: 1,
+      classification: usageLimitClassification(),
+      error,
+    })).resolves.toMatchObject({
+      status: 'scheduled',
+      retryable: true,
+      nextRetryAtMs: 2_000,
+    });
+
+    expect(scheduler.read('sess_thrown_resume_gap')).toMatchObject({
+      status: 'waiting',
+      failurePhase: 'apply',
+      failureReason: 'durable_continuity_reconstruction_retrying',
+      lastError: 'provider_session_state_unavailable_for_resume',
+      lastErrorClassification: expect.objectContaining({ kind: 'dependency_unavailable', retryable: true }),
     });
   });
 
@@ -1078,6 +1141,40 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       pendingTargetGeneration: null,
       nextRetryAtMs: 6_000,
     });
+  });
+
+  it('does not dead-letter repeated untargeted local completions while provider outcome proof is pending', async () => {
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    let nowMs = 1_000;
+    const scheduler = new RuntimeAuthRecoveryScheduler({
+      nowMs: () => nowMs,
+      baseBackoffMs: 100,
+      maxBackoffMs: 1_000,
+      jitterMs: () => 0,
+      maxAttempts: 2,
+      providerOutcomePendingWaitMs: 250,
+      recover: async () => ({ status: 'credential_refreshed', restartRequested: true }),
+    });
+
+    await scheduler.enqueueHandlerFailure({
+      sessionId: 'session-1',
+      switchesThisTurn: 1,
+      classification: usageLimitClassification(),
+      error: new Error('timeout of 5000ms exceeded'),
+    });
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await expect(scheduler.wake({ sessionId: 'session-1', reason: 'manual' }))
+        .resolves.toEqual({ status: 'waiting' });
+      const intent = scheduler.read('session-1');
+      expect(intent).toMatchObject({
+        status: 'resumed_awaiting_proof',
+        lastError: 'recovery_unproven_awaiting_provider_outcome',
+        attemptCount: 1,
+      });
+      expect(intent).not.toMatchObject({ status: 'exhausted' });
+      nowMs += 250;
+    }
   });
 
 	  it('keeps a bare ok:true switch recovery waiting (no provider-outcome proof)', async () => {
@@ -1672,21 +1769,22 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     expect(events).toContain('runtime_auth_recovery_dead_letter');
   });
 
-  it('does not consume another retry attempt when a stale-profile replay hits the same pending proof target', async () => {
+  it('keeps stale-profile proof waits pending until provider outcome proof arrives', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    const recover = vi.fn(async () => ({
+      status: 'switch_attempted',
+      result: {
+        status: 'observed_generation',
+        activeProfileId: 'backup',
+        generation: 2,
+      },
+    }));
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
       baseBackoffMs: 100,
       maxBackoffMs: 1_000,
       jitterMs: () => 0,
-      recover: async () => ({
-        status: 'switch_attempted',
-        result: {
-          status: 'observed_generation',
-          activeProfileId: 'backup',
-          generation: 2,
-        },
-      }),
+      recover,
     });
 
     await scheduler.enqueueHandlerFailure({
@@ -1714,9 +1812,9 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     await expect(scheduler.wake({ sessionId: 'session-1', reason: 'manual' }))
       .resolves.toEqual({ status: 'waiting' });
 
+    expect(recover).toHaveBeenCalledTimes(2);
     expect(scheduler.read('session-1')).toMatchObject({
       status: 'resumed_awaiting_proof',
-      attemptCount: 1,
       pendingTargetProfileId: 'backup',
       pendingTargetGeneration: 2,
     });
@@ -1778,26 +1876,75 @@ describe('RuntimeAuthRecoveryScheduler', () => {
     ]));
   });
 
-  it('does not consume retry attempts when stale-profile replays reproduce the same target profile across churned generations', async () => {
-    // Sibling sessions bump the shared group generation between replays (incident 2026-06-12,
-    // gen 81→87). The pending proof target is the PROFILE: a fresher generation for the same
-    // target profile is the same logical switch and must keep the attempt rollback (bounded by
-    // the coalesced replay budget), not burn the dead-letter attempt budget.
+  it('does not supersede an original-profile proof wait before provider outcome proof', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
-    let generation = 2;
+    const diagnostics: Array<{ event: string; reason?: string | null }> = [];
+    const recover = vi.fn(async () => ({
+      status: 'switch_attempted',
+      result: {
+        status: 'observed_generation',
+        activeProfileId: 'backup',
+        generation: 2,
+      },
+    }));
     const scheduler = new RuntimeAuthRecoveryScheduler({
       nowMs: () => 1_000,
       baseBackoffMs: 100,
       maxBackoffMs: 1_000,
       jitterMs: () => 0,
-      recover: async () => ({
-        status: 'switch_attempted',
-        result: {
-          status: 'observed_generation',
-          activeProfileId: 'backup',
-          generation: generation++,
-        },
-      }),
+      recover,
+      recordDiagnostic: (event) => {
+        diagnostics.push(event as { event: string; reason?: string | null });
+      },
+    });
+
+    await scheduler.enqueueHandlerFailure({
+      sessionId: 'session-1',
+      switchesThisTurn: 1,
+      classification: usageLimitClassification(),
+      error: new Error('timeout of 5000ms exceeded'),
+    });
+    await expect(scheduler.wake({ sessionId: 'session-1', reason: 'manual' }))
+      .resolves.toEqual({ status: 'waiting' });
+    expect(scheduler.read('session-1')).toMatchObject({
+      status: 'resumed_awaiting_proof',
+      classification: expect.objectContaining({ profileId: 'primary' }),
+      pendingTargetProfileId: 'backup',
+      pendingTargetGeneration: 2,
+    });
+
+    await expect(scheduler.wake({ sessionId: 'session-1', reason: 'manual' }))
+      .resolves.toEqual({ status: 'waiting' });
+
+    expect(recover).toHaveBeenCalledTimes(2);
+    expect(scheduler.read('session-1')).toMatchObject({
+      status: 'resumed_awaiting_proof',
+      pendingTargetProfileId: 'backup',
+    });
+    expect(diagnostics.map((event) => event.event)).not.toContain('runtime_auth_recovery_superseded');
+    expect(diagnostics.map((event) => event.event)).not.toContain('runtime_auth_recovery_dead_letter');
+  });
+
+  it('keeps stale-profile proof waits pending across churned group generations', async () => {
+    // Sibling sessions may bump the shared group generation between replays. A churned
+    // generation is still not provider-outcome proof, so the scheduler must keep owning the
+    // proof wait until explicit proof, terminal failure, or handler-reported supersession.
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    let generation = 2;
+    const recover = vi.fn(async () => ({
+      status: 'switch_attempted',
+      result: {
+        status: 'observed_generation',
+        activeProfileId: 'backup',
+        generation: generation++,
+      },
+    }));
+    const scheduler = new RuntimeAuthRecoveryScheduler({
+      nowMs: () => 1_000,
+      baseBackoffMs: 100,
+      maxBackoffMs: 1_000,
+      jitterMs: () => 0,
+      recover,
     });
 
     await scheduler.enqueueHandlerFailure({
@@ -1815,18 +1962,17 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       pendingTargetGeneration: 2,
     });
 
-    // Replay reproduces the same target PROFILE at a churned generation.
     await expect(scheduler.wake({ sessionId: 'session-1', reason: 'manual' }))
       .resolves.toEqual({ status: 'waiting' });
+    expect(recover).toHaveBeenCalledTimes(2);
     expect(scheduler.read('session-1')).toMatchObject({
       status: 'resumed_awaiting_proof',
-      attemptCount: 1,
       pendingTargetProfileId: 'backup',
       pendingTargetGeneration: 3,
     });
   });
 
-  it('bounds coalesced stale-profile replays instead of re-running the switch pipeline forever', async () => {
+  it('retains retry and dead-letter state for repeated stale-profile proof waits without provider proof', async () => {
     const { RuntimeAuthRecoveryScheduler } = await loadModule();
     const diagnostics: Array<{ event: string }> = [];
     let recoverRuns = 0;
@@ -1860,19 +2006,61 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       classification: usageLimitClassification(),
     });
 
-    // Every wake reproduces the SAME pending proof target without proof. Without a
-    // bound, the attempt rollback re-runs the full switch pipeline indefinitely.
+    // The first wake records the committed target. Later wakes for the original
+    // failing profile must not delete the durable intent merely because the
+    // pending target differs; the scheduler owns bounded retry/dead-letter state
+    // until provider outcome proof or terminal proof arrives.
     for (let i = 0; i < 20; i += 1) {
       nowMs += 10 * 60_000;
       await scheduler.wake({ sessionId: 'session-1', reason: 'manual' });
     }
 
-    // Coalesced budget (2) + the normal attempt budget (3) bound the replays.
-    expect(recoverRuns).toBeLessThanOrEqual(5);
+    expect(recoverRuns).toBeGreaterThan(1);
     expect(scheduler.read('session-1')).toMatchObject({
       status: 'exhausted',
+      pendingTargetProfileId: 'backup',
     });
     expect(diagnostics.map((event) => event.event)).toContain('runtime_auth_recovery_dead_letter');
+    expect(diagnostics.map((event) => event.event)).not.toContain('runtime_auth_recovery_superseded');
+  });
+
+  it('supersedes (never terminalizes) a wake whose recovery armed a same-session temporary retry (ported HF-5 / A1-MED-1)', async () => {
+    // A temporary_retry_armed/unavailable wake outcome means the SAME-SESSION backoff-resume path
+    // now owns the failure: the durable record must be removed and the key left re-armable —
+    // never settled terminal/cancelled by the unknown-status catch-all.
+    const { RuntimeAuthRecoveryScheduler } = await loadModule();
+    for (const temporaryRetryStatus of ['temporary_retry_armed', 'temporary_retry_unavailable'] as const) {
+      const diagnostics: Array<{ event: string }> = [];
+      const scheduler = new RuntimeAuthRecoveryScheduler({
+        nowMs: () => 1_000,
+        baseBackoffMs: 100,
+        maxBackoffMs: 1_000,
+        jitterMs: () => 0,
+        recover: async () => ({ status: temporaryRetryStatus }),
+        recordDiagnostic: (event) => {
+          diagnostics.push(event as { event: string });
+        },
+      });
+
+      await scheduler.beginClassifiedFailure({
+        sessionId: 'session-1',
+        switchesThisTurn: 0,
+        classification: usageLimitClassification(),
+      });
+      await expect(scheduler.wake({ sessionId: 'session-1', reason: 'manual' }))
+        .resolves.toEqual({ status: 'superseded' });
+
+      expect(scheduler.readForSession('session-1')).toEqual([]);
+      expect(diagnostics.map((event) => event.event)).not.toContain('runtime_auth_recovery_terminal');
+      expect(diagnostics.map((event) => event.event)).not.toContain('runtime_auth_recovery_dead_letter');
+
+      // The key re-arms immediately on a genuine future failure.
+      await expect(scheduler.beginClassifiedFailure({
+        sessionId: 'session-1',
+        switchesThisTurn: 0,
+        classification: usageLimitClassification(),
+      })).resolves.toMatchObject({ status: 'scheduled', retryable: true });
+    }
   });
 
   it('removes a superseded recovery intent and lets the same key re-arm on a genuine future failure', async () => {

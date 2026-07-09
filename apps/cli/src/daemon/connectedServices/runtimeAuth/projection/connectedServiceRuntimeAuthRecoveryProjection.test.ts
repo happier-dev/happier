@@ -5,7 +5,10 @@ import {
   buildRuntimeAuthRecoveryScheduledResult,
   normalizeConnectedServiceRuntimeAuthRecoveryProjection,
 } from './connectedServiceRuntimeAuthRecoveryProjection';
-import { projectConnectedServiceRuntimeAuthRecoveryReport } from './connectedServiceRuntimeAuthRecoverySessionEvent';
+import {
+  connectedServiceRuntimeAuthRecoveryCanOwnTurnFailure,
+  projectConnectedServiceRuntimeAuthRecoveryReport,
+} from './connectedServiceRuntimeAuthRecoverySessionEvent';
 import type { ConnectedServiceRuntimeFailureClassification } from '../types';
 
 const classification = {
@@ -20,6 +23,59 @@ const classification = {
 } satisfies ConnectedServiceRuntimeFailureClassification;
 
 describe('connected service runtime auth recovery projection', () => {
+  it('lets nonterminal retryable recovery own the turn failure surface', () => {
+    const scheduled = buildRuntimeAuthRecoveryScheduledResult({
+      classification,
+      recovery: {
+        status: 'scheduled',
+        retryable: true,
+        attemptCount: 1,
+        maxAttempts: 3,
+        nextRetryAtMs: 4567,
+      },
+    });
+    const projection = normalizeConnectedServiceRuntimeAuthRecoveryProjection({
+      report: { ok: true, result: scheduled },
+      statusNote: {
+        code: 'recovery_retry_scheduled',
+        message: 'retry scheduled',
+      },
+    });
+
+    expect(connectedServiceRuntimeAuthRecoveryCanOwnTurnFailure({
+      handled: true,
+      report: { ok: true, result: scheduled },
+      statusCode: 'recovery_retry_scheduled',
+      statusMessage: 'retry scheduled',
+      uxDiagnostic: scheduled.uxDiagnostic,
+      projection,
+    })).toBe(true);
+  });
+
+  it('does not let terminal recovery own the turn failure surface', () => {
+    expect(connectedServiceRuntimeAuthRecoveryCanOwnTurnFailure({
+      handled: true,
+      report: {
+        ok: true,
+        result: {
+          status: 'recovery_action_required',
+          action: {
+            kind: 'reconnect_profile',
+            profileId: 'primary',
+          },
+        },
+      },
+      statusCode: 'recovery_action_reconnect_profile',
+      statusMessage: 'profile needs reconnect',
+      projection: {
+        handled: true,
+        statusCode: 'recovery_action_reconnect_profile',
+        statusMessage: 'profile needs reconnect',
+        terminal: true,
+      },
+    })).toBe(false);
+  });
+
   it('builds a typed retry-scheduled transcript event with runtime-auth diagnostics', () => {
     const result = buildRuntimeAuthRecoveryScheduledResult({
       classification,
@@ -99,7 +155,7 @@ describe('connected service runtime auth recovery projection', () => {
     expect(projection.transcriptEvent).toBeUndefined();
   });
 
-  it('commits typed projection instead of emitting a generic message when diagnostics exist', () => {
+  it('keeps daemon-handled typed transcript events out of provider-side projection commits', () => {
     const scheduled = buildRuntimeAuthRecoveryScheduledResult({
       classification,
       recovery: {
@@ -119,11 +175,60 @@ describe('connected service runtime auth recovery projection', () => {
     });
     const commitTypedProjection = vi.fn();
     const sendGenericStatusMessage = vi.fn();
+    const addStatusMessage = vi.fn();
 
     const result = projectConnectedServiceRuntimeAuthRecoveryReport({
       report: {
         handled: true,
         report: { ok: true, result: scheduled },
+        statusCode: 'recovery_retry_scheduled',
+        statusMessage: 'retry scheduled',
+        uxDiagnostic: scheduled.uxDiagnostic,
+        projection,
+      },
+      addStatusMessage,
+      sendGenericStatusMessage,
+      commitTypedProjection,
+    });
+
+    expect(result.statusMessageAdded).toBe(true);
+    expect(result.typedProjectionCommitted).toBe(false);
+    expect(result.genericMessageEmitted).toBe(false);
+    expect(addStatusMessage).toHaveBeenCalledWith('retry scheduled');
+    expect(commitTypedProjection).not.toHaveBeenCalled();
+    expect(sendGenericStatusMessage).not.toHaveBeenCalled();
+  });
+
+  it('commits provider-side ux diagnostics when the daemon report has no transcript event', () => {
+    const scheduled = buildRuntimeAuthRecoveryScheduledResult({
+      classification,
+      recovery: {
+        status: 'scheduled',
+        retryable: true,
+        attemptCount: 1,
+        maxAttempts: 3,
+        nextRetryAtMs: 4567,
+      },
+    });
+    const resultWithoutTranscriptEvent = {
+      status: scheduled.status,
+      recovery: scheduled.recovery,
+      uxDiagnostic: scheduled.uxDiagnostic,
+    };
+    const projection = normalizeConnectedServiceRuntimeAuthRecoveryProjection({
+      report: { ok: true, result: resultWithoutTranscriptEvent },
+      statusNote: {
+        code: 'recovery_retry_scheduled',
+        message: 'retry scheduled',
+      },
+    });
+    const commitTypedProjection = vi.fn();
+    const sendGenericStatusMessage = vi.fn();
+
+    const result = projectConnectedServiceRuntimeAuthRecoveryReport({
+      report: {
+        handled: true,
+        report: { ok: true, result: resultWithoutTranscriptEvent },
         statusCode: 'recovery_retry_scheduled',
         statusMessage: 'retry scheduled',
         uxDiagnostic: scheduled.uxDiagnostic,

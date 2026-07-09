@@ -66,6 +66,17 @@ function readNullableTimestampMs(value: unknown): number | null {
   return Math.max(0, Math.trunc(value));
 }
 
+function readNullableNonNegativeInteger(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const numeric = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim().length > 0
+      ? Number(value)
+      : null;
+  if (numeric === null || !Number.isFinite(numeric) || numeric < 0) return null;
+  return Math.trunc(numeric);
+}
+
 function readKind(value: unknown): ConnectedServiceRuntimeAuthFailureKind | null {
   const parsed = ConnectedServiceRuntimeAuthFailureKindSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
@@ -113,6 +124,10 @@ function readRecoveryAction(
   return null;
 }
 
+function readConnectedServiceRecovery(value: unknown): ConnectedServiceRuntimeFailureClassification['connectedServiceRecovery'] | undefined {
+  return value === 'available' || value === 'unavailable' ? value : undefined;
+}
+
 export function sanitizeConnectedServiceRuntimeFailureClassification(
   value: unknown,
 ): ConnectedServiceRuntimeFailureClassification | null {
@@ -122,12 +137,24 @@ export function sanitizeConnectedServiceRuntimeFailureClassification(
   const source = readSource(value.source);
   if (!kind || !serviceId || !source) return null;
 
-  const limitCategory = readLimitCategory(value.limitCategory);
+  const rateLimits = isRecord(value.rateLimits) ? value.rateLimits : null;
+  const limitCategorySource = value.limitCategory === undefined ? rateLimits?.limitCategory : value.limitCategory;
+  const limitCategory = readLimitCategory(limitCategorySource);
   const retryAfterMs = readNullableTimestampMs(value.retryAfterMs);
-  const quotaScope = readQuotaScope(value.quotaScope);
-  const providerLimitId = readNullableSafeProviderString(value.providerLimitId);
-  const action = readSafeAction(value.action);
+  const quotaScopeSource = value.quotaScope === undefined ? rateLimits?.quotaScope : value.quotaScope;
+  const quotaScope = readQuotaScope(quotaScopeSource);
+  const providerLimitIdSource = value.providerLimitId === undefined ? rateLimits?.providerLimitId : value.providerLimitId;
+  const providerLimitId = readNullableSafeProviderString(providerLimitIdSource);
+  const sourceProviderAccountId = readNullableSafeProviderString(value.sourceProviderAccountId);
+  const sourceAccountLabel = sourceProviderAccountId
+    ? readNullableSafeProviderString(value.sourceAccountLabel)
+    : null;
+  const failingAccessTokenFingerprint = readNullableSafeProviderString(value.failingAccessTokenFingerprint);
+  const groupGeneration = readNullableNonNegativeInteger(value.groupGeneration);
+  const actionSource = value.action === undefined ? rateLimits?.action : value.action;
+  const action = readSafeAction(actionSource);
   const recoveryAction = readRecoveryAction(value.recoveryAction);
+  const connectedServiceRecovery = readConnectedServiceRecovery(value.connectedServiceRecovery);
 
   return {
     kind,
@@ -138,9 +165,14 @@ export function sanitizeConnectedServiceRuntimeFailureClassification(
     resetsAtMs: readNullableTimestampMs(value.resetsAtMs),
     ...(value.retryAfterMs === undefined ? {} : { retryAfterMs }),
     ...(quotaScope ? { quotaScope } : {}),
-    ...(value.providerLimitId === undefined ? {} : { providerLimitId }),
-    ...(value.action === undefined ? {} : { action }),
+    ...(providerLimitIdSource === undefined ? {} : { providerLimitId }),
+    ...(sourceProviderAccountId ? { sourceProviderAccountId } : {}),
+    ...(sourceProviderAccountId && value.sourceAccountLabel !== undefined ? { sourceAccountLabel } : {}),
+    ...(failingAccessTokenFingerprint ? { failingAccessTokenFingerprint } : {}),
+    ...(groupGeneration === null ? {} : { groupGeneration }),
+    ...(actionSource === undefined ? {} : { action }),
     planType: readNullableSafeProviderString(value.planType),
+    ...(connectedServiceRecovery ? { connectedServiceRecovery } : {}),
     rateLimits: null,
     source,
     ...(value.recoveryAction === undefined ? {} : { recoveryAction }),

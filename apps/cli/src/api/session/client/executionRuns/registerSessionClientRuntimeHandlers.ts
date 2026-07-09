@@ -5,13 +5,26 @@ import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudge
 import { readCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
-import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
+import { CATALOG_AGENT_IDS } from '@/agent/catalog/ids';
 
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
 import { createExecutionRunRpcApprovalDeps } from '@/rpc/handlers/executionRuns/createExecutionRunRpcApprovalDeps';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
+import type { BrowserContextRoutes } from '@/daemon/browser/context/routes';
+import type { BrowserAutomationRoutes } from '@/daemon/browser/automation/routes';
+import type { BrowserDiagnosticsActionRoutes } from '@/daemon/browser/diagnostics/actionRoutes';
+import type { BrowserRecordingRoutes } from '@/daemon/browser/recording/routes';
+import type {
+    BrowserRecordingComposerAttachInput,
+    BrowserRecordingComposerAttachResult,
+} from '@/daemon/browser/recording/attachToComposer';
+import type { LocalServicesRuntimeActionRoutes } from '@/daemon/local/services/actions/runtimeActionExecutor';
+import type { DaemonPeerMediationObservabilityRuntimeActionContext } from '@/daemon/peer/mediation/observability/runtimeActionExecutor';
+import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
+import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { commitSessionStoredMessage } from '@/session/transport/http/sessionsHttp';
 import { createServerBackedSessionTranscriptStore } from '@/api/session/createServerBackedSessionTranscriptStore';
 import {
@@ -23,23 +36,35 @@ import type { SessionTranscriptActionItem } from '@/api/session/sessionTranscrip
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { Metadata } from '@/api/types';
 import type { ACPMessageData, ACPProvider } from '../../sessionMessageTypes';
-import { deriveVoiceAgentTurnLocalId, readRuntimeDescriptorV1FromMetadata, readVoiceAgentTurnPayloadFromMeta } from '@happier-dev/protocol';
+import {
+    deriveVoiceAgentTurnLocalId,
+    readAcpConfiguredBackendV1FromMetadata,
+    readRuntimeDescriptorV1FromMetadata,
+    readVoiceAgentTurnPayloadFromMeta,
+} from '@happier-dev/protocol';
 import type { ExecutionRunPermissionRequestStoreProvider } from '@/agent/runtime/bridges/executionRun/executionRunPermissionResponseTarget';
 import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 
-export function resolveSessionClientParentProvider(metadata: unknown): CatalogAgentId {
+export function resolveSessionClientParentProvider(metadata: unknown): ACPProvider {
+    const configuredAcpBackendId = typeof readAcpConfiguredBackendV1FromMetadata(metadata)?.backendId === 'string'
+        ? String(readAcpConfiguredBackendV1FromMetadata(metadata)?.backendId).trim()
+        : '';
+    if (configuredAcpBackendId) {
+        return configuredAcpBackendId;
+    }
+
     const runtimeDescriptorProviderId = typeof readRuntimeDescriptorV1FromMetadata(metadata)?.providerId === 'string'
         ? String(readRuntimeDescriptorV1FromMetadata(metadata)?.providerId).trim()
         : '';
     if ((CATALOG_AGENT_IDS as readonly string[]).includes(runtimeDescriptorProviderId)) {
-        return runtimeDescriptorProviderId as CatalogAgentId;
+        return runtimeDescriptorProviderId;
     }
 
     const resolvedFlavor = typeof (metadata as { flavor?: unknown })?.flavor === 'string'
         ? String((metadata as { flavor?: string }).flavor).trim()
         : '';
     if ((CATALOG_AGENT_IDS as readonly string[]).includes(resolvedFlavor)) {
-        return resolvedFlavor as CatalogAgentId;
+        return resolvedFlavor;
     }
 
     throw new Error('Missing canonical session parent provider identity');
@@ -81,7 +106,7 @@ export function registerSessionClientRuntimeHandlers(
             text: string;
             localId?: string;
             meta?: Record<string, unknown>;
-        }>) => void;
+        }>) => Promise<void> | void;
         sendUserTextMessage: (text: string, opts?: { localId?: string; meta?: Record<string, unknown> }) => void;
         sendAgentMessage: (provider: ACPProvider, body: ACPMessageData, opts?: { localId?: string; meta?: Record<string, unknown> }) => void;
         sendUserTextMessageCommitted: (text: string, opts: { localId: string; meta?: Record<string, unknown> }) => Promise<void>;
@@ -91,13 +116,27 @@ export function registerSessionClientRuntimeHandlers(
             opts: { localId: string; meta?: Record<string, unknown> },
         ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
         sendAgentMessageCommitted: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown> }) => Promise<void>;
-        sendAgentMessageEphemeral: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> }) => void;
+        sendAgentMessageEphemeral: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; tick?: number }) => void;
+        sendAgentMessageEphemeralDelta?: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> }) => void;
+        getEphemeralStreamConnectionEpoch?: () => number;
         enqueueRegisteredSessionStateFieldMutation?: (mutation: RegisteredSessionStateFieldMutationV1) => void | Promise<void>;
         getTranscriptQueryContext: () => Readonly<{
             encryptionKey: Uint8Array;
             encryptionVariant: 'legacy' | 'dataKey';
         }>;
         getAgentStateRequestStore?: ExecutionRunPermissionRequestStoreProvider;
+        getBrowserDaemonControlRoutes?: (() => BrowserDaemonControlRoutes | null) | null;
+        getBrowserDaemonContextRoutes?: (() => BrowserContextRoutes | null) | null;
+        getBrowserDaemonAutomationRoutes?: (() => BrowserAutomationRoutes | null) | null;
+        getBrowserDiagnosticsActionRoutes?: (() => BrowserDiagnosticsActionRoutes | null) | null;
+        getBrowserRecordingRoutes?: (() => BrowserRecordingRoutes | null) | null;
+        attachBrowserRecordingToComposer?: (
+            input: BrowserRecordingComposerAttachInput,
+        ) => Promise<BrowserRecordingComposerAttachResult>;
+        getLocalServicesRuntimeActionRoutes?: (() => LocalServicesRuntimeActionRoutes | null) | null;
+        getSimulatorPreviewRoutes?: (() => SimulatorPreviewRoutes | null) | null;
+        getPeerMediationObservabilityRuntimeActionContext?: (() => DaemonPeerMediationObservabilityRuntimeActionContext | null) | null;
+        getServerFeaturesSnapshot?: (() => CliServerFeaturesSnapshot | undefined) | null;
         persistVoiceAgentRunMetadataFromPublicRun: (run: unknown, welcomedEpoch?: number) => void;
         socketEmitExecutionRunUpdated: (run: unknown) => void;
     }>,
@@ -190,10 +229,28 @@ export function registerSessionClientRuntimeHandlers(
         cwd: workingDirectory,
         serverUrl: configuration.serverUrl,
         parentProvider,
+        browserControl: params.getBrowserDaemonControlRoutes?.() ?? null,
+        browserContext: params.getBrowserDaemonContextRoutes?.() ?? null,
+        browserAutomation: params.getBrowserDaemonAutomationRoutes?.() ?? null,
+        browserDiagnostics: params.getBrowserDiagnosticsActionRoutes?.() ?? null,
+        browserRecording: params.getBrowserRecordingRoutes?.() ?? null,
+        attachBrowserRecordingToComposer: params.attachBrowserRecordingToComposer,
+        localServices: params.getLocalServicesRuntimeActionRoutes?.() ?? null,
+        simulatorPreview: params.getSimulatorPreviewRoutes?.() ?? null,
+        peerMediationObservability: params.getPeerMediationObservabilityRuntimeActionContext?.() ?? null,
+        // G9-E: forward the daemon-wide cached server-features accessor so the runtime-action front
+        // door's feature gate reads the live server bits cold instead of failing closed.
+        ...(params.getServerFeaturesSnapshot ? { getServerFeaturesSnapshot: params.getServerFeaturesSnapshot } : {}),
         sendAcp: (provider, body, opts) => params.sendAgentMessage(provider as ACPProvider, body as ACPMessageData, opts),
         streamedTranscriptSession: {
             sendAgentMessageEphemeral: (provider, body, opts) =>
                 params.sendAgentMessageEphemeral(provider as ACPProvider, body as ACPMessageData, opts),
+            sendAgentMessageEphemeralDelta:
+                typeof params.sendAgentMessageEphemeralDelta === 'function'
+                    ? (provider, body, opts) =>
+                        params.sendAgentMessageEphemeralDelta!(provider as ACPProvider, body as ACPMessageData, opts)
+                    : undefined,
+            getEphemeralStreamConnectionEpoch: params.getEphemeralStreamConnectionEpoch,
             enqueueAgentMessageCommitted:
                 typeof params.enqueueAgentMessageCommitted === 'function'
                     ? (provider, body, opts) =>

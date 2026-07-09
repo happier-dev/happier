@@ -1,16 +1,30 @@
 import { logger } from '@/ui/logger';
 import { buildDaemonInitialPromptLocalId } from '@/agent/runtime/daemonInitialPrompt';
+import { readSessionUserMessageDeliveryIntentMeta } from '@happier-dev/protocol';
 
 import type { AgentState, Metadata, Update, UserMessage } from '../../../types';
 import { handleSessionNewMessageUpdate } from '../../sessionNewMessageUpdate';
 import { handleSessionStateUpdate } from '../../sessionStateUpdateHandling';
-import type { KnownPendingQueueState } from '../../pendingQueueState';
+import type { KnownPendingQueueState, PendingQueueState } from '../../pendingQueueState';
 import { extractAssistantTextSnapshotFromSessionContent } from '../../turns/extractAssistantTextSnapshot';
 import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshot';
+import type { PendingMaterializationActiveTurnPolicy } from '../../pendingMaterializationActiveTurnPolicy';
+import { blocksPendingMaterializationDuringActiveTurn } from '../../pendingMaterializationActiveTurnPolicy';
+import {
+    isActiveLatestTurnStatus,
+    type LatestTurnStatusSnapshot,
+} from '../../sessionTurnStatusSnapshot';
+import type { PendingQueueRuntimeActivityProjection } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
+import type { SessionCatchUpAuthorization } from '../../sessionChangesSyncOnConnect';
 
 export type SessionClientUpdateRuntime = Readonly<{
-    handleUpdate: (data: Update, opts: { source: 'session-scoped' | 'user-scoped'; catchUpAfterSeq?: number; catchUpAfterSeqIsExplicit?: boolean }) => void;
-    observeCommittedAck: (params: { seq: number; localId?: string | null; markAsUserMessage?: boolean }) => void;
+    handleUpdate: (data: Update, opts: {
+        source: 'session-scoped' | 'user-scoped';
+        catchUpAfterSeq?: number;
+        catchUpAuthorization?: SessionCatchUpAuthorization;
+        pendingMaterializationActiveTurnPolicy?: PendingMaterializationActiveTurnPolicy;
+    }) => void;
+    observeCommittedAck: (params: { seq: number; localId?: string | null; markAsUserMessage?: boolean; refreshAgentQueueEchoSuppression?: boolean }) => void;
     getLastObservedMessageSeq: () => number;
     setLastObservedMessageSeq: (value: number) => void;
     getLastObservedUserMessageSeq: () => number;
@@ -35,6 +49,16 @@ function normalizeCatchUpAfterSeq(value: number | undefined): number | null {
         : null;
 }
 
+function normalizeDeliveredUserMessageSeq(value: unknown): number | null {
+    return Number.isSafeInteger(value) && (value as number) >= 0
+        ? value as number
+        : null;
+}
+
+function isExplicitCatchUpAuthorization(authorization: SessionCatchUpAuthorization | undefined): boolean {
+    return authorization === 'explicit_cursor';
+}
+
 export function createSessionClientUpdateRuntime(
     deps: Readonly<{
         sessionId: string;
@@ -49,20 +73,32 @@ export function createSessionClientUpdateRuntime(
         setAgentState: (agentState: AgentState | null) => void;
         getAgentStateVersion: () => number;
         setAgentStateVersion: (version: number) => void;
+        getLatestTurnStatus: () => LatestTurnStatusSnapshot | undefined;
+        getPendingQueueState?: () => PendingQueueState;
         applyPendingQueueState: (state: KnownPendingQueueState) => boolean;
+        onPendingChangedDrainTrigger?: (state: KnownPendingQueueState) => void;
         getPendingMessages: () => UserMessage[];
-        getPendingMessageCallback: () => ((message: UserMessage) => void) | null;
+        getPendingMessageCallback: () => ((message: UserMessage) => boolean | void) | null;
         getUserMessageCallbackAttachedAtMs: () => number | null;
         onConnectedServiceTurnLifecycleEvent?: (event: 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled') => void;
         emit: (event: string, payload?: unknown) => void;
         hasSelfEchoSuppressedLocalId: (localId: string) => boolean;
         hasAgentQueueEchoSuppressedLocalId: (localId: string) => boolean;
+        hasAgentQueueDeliveredLocalId: (localId: string) => boolean;
+        hasCanonicalPendingDeliveryLocalId: (localId: string) => boolean;
         markAgentQueueEchoSuppressedLocalId: (localId: string) => void;
+        markAgentQueueDeliveredLocalId: (localId: string) => void;
+        clearAgentQueueEchoSuppressedLocalId: (localId: string) => void;
+        clearAgentQueueDeliveredLocalId: (localId: string) => void;
         hasPendingQueueMaterializedLocalId: (localId: string) => boolean;
         deleteMaterializedLocalId: (localId: string) => void;
         initialLastObservedMessageSeq: number;
         observeCommittedUserMessageSeq?: (params: { localId: string | null | undefined; seq: number }) => void;
+        onUserMessageDeliveredToAgentQueue?: (seq: number) => void;
+        onUserMessageDeliveryProvenByLocalEcho?: (seq: number) => void;
+        getDeliveredUserMessageSeq?: () => number | null;
         turnAssistantTextSnapshotStore?: TurnAssistantTextSnapshotStore;
+        onRuntimeActivityProjectionFromServer?: (projection: PendingQueueRuntimeActivityProjection) => void;
     }>,
 ): SessionClientUpdateRuntime {
     const receivedMessageIds = new Set<string>();
@@ -100,7 +136,7 @@ export function createSessionClientUpdateRuntime(
                 }
                 if (
                     bodyRecord?.sid === deps.sessionId
-                    && (bodyRecord.t === 'new-message' || bodyRecord.t === 'message-updated')
+                    && bodyRecord.t === 'message-updated'
                     && messageRecord?.messageRole === 'user'
                     && typeof messageRecord.seq === 'number'
                     && Number.isFinite(messageRecord.seq)
@@ -121,22 +157,65 @@ export function createSessionClientUpdateRuntime(
                     lastObservedUserMessageSeq,
                     hasSelfEchoSuppressedLocalId: (localId) => deps.hasSelfEchoSuppressedLocalId(localId),
                     hasAgentQueueEchoSuppressedLocalId: (localId) => deps.hasAgentQueueEchoSuppressedLocalId(localId),
+                    hasAgentQueueDeliveredLocalId: (localId) => deps.hasAgentQueueDeliveredLocalId(localId),
                     markAgentQueueEchoSuppressedLocalId: (localId) => deps.markAgentQueueEchoSuppressedLocalId(localId),
+                    markAgentQueueDeliveredLocalId: (localId) => deps.markAgentQueueDeliveredLocalId(localId),
+                    clearAgentQueueEchoSuppressedLocalId: (localId) => deps.clearAgentQueueEchoSuppressedLocalId(localId),
+                    clearAgentQueueDeliveredLocalId: (localId) => deps.clearAgentQueueDeliveredLocalId(localId),
                     hasPendingQueueMaterializedLocalId: (localId) => deps.hasPendingQueueMaterializedLocalId(localId),
                     deleteMaterializedLocalId: (localId) => deps.deleteMaterializedLocalId(localId),
                     pendingMessageCallback: deps.getPendingMessageCallback(),
                     pendingMessages: deps.getPendingMessages(),
                     shouldDeliverUserMessageToAgentQueue: (message, update) => {
-                        if (!update?.id?.startsWith('catchup-')) return true;
+                        const isCatchUpUpdate = update?.id?.startsWith('catchup-') === true;
+                        const msgSeq = readMessageSeqFromUpdate(update);
+                        const deliveredWatermark = normalizeDeliveredUserMessageSeq(deps.getDeliveredUserMessageSeq?.());
+                        if (deliveredWatermark !== null && msgSeq !== null && msgSeq <= deliveredWatermark) {
+                            logger.debug('[DELIVERY-DECISION] user-message skipped below delivered watermark', {
+                                sessionId: deps.sessionId,
+                                updateId: update?.id,
+                                messageLocalId: typeof message.localId === 'string' ? message.localId : null,
+                                msgSeq,
+                                deliveredWatermark,
+                                catchUpAfterSeq: normalizeCatchUpAfterSeq(opts.catchUpAfterSeq),
+                                catchUpAuthorization: opts.catchUpAuthorization ?? null,
+                            });
+                            return false;
+                        }
+                        if (
+                            readSessionUserMessageDeliveryIntentMeta(message.meta) === 'explicit_pending'
+                            && !isExplicitCatchUpAuthorization(opts.catchUpAuthorization)
+                            && blocksPendingMaterializationDuringActiveTurn(opts.pendingMaterializationActiveTurnPolicy)
+                            && isActiveLatestTurnStatus(deps.getLatestTurnStatus())
+                        ) {
+                            logger.debug('[DELIVERY-DECISION] explicit-pending user-message held during active turn', {
+                                sessionId: deps.sessionId,
+                                updateId: update?.id,
+                                messageLocalId: typeof message.localId === 'string' ? message.localId : null,
+                                catchUpAfterSeq: normalizeCatchUpAfterSeq(opts.catchUpAfterSeq),
+                                catchUpAuthorization: opts.catchUpAuthorization ?? null,
+                            });
+                            return false;
+                        }
+                        if (!isCatchUpUpdate) return true;
                         const localId = typeof message.localId === 'string' ? message.localId.trim() : '';
+                        if (localId && deps.hasCanonicalPendingDeliveryLocalId(localId)) {
+                            logger.debug('[DELIVERY-DECISION] catch-up user-message suppressed (canonical pending delivery owns row)', {
+                                sessionId: deps.sessionId,
+                                updateId: update?.id,
+                                messageLocalId: localId,
+                                catchUpAfterSeq: normalizeCatchUpAfterSeq(opts.catchUpAfterSeq),
+                                catchUpAuthorization: opts.catchUpAuthorization ?? null,
+                            });
+                            return false;
+                        }
                         if (message.meta?.source === 'daemon-initial-prompt') {
                             const expectedLocalId = buildDaemonInitialPromptLocalId(deps.sessionId);
                             return Boolean(expectedLocalId && localId === expectedLocalId);
                         }
 
                         const catchUpAfterSeq = normalizeCatchUpAfterSeq(opts.catchUpAfterSeq);
-                        if (catchUpAfterSeq !== null && (opts.catchUpAfterSeqIsExplicit === true || catchUpAfterSeq > 0)) {
-                            const msgSeq = readMessageSeqFromUpdate(update);
+                        if (catchUpAfterSeq !== null && (isExplicitCatchUpAuthorization(opts.catchUpAuthorization) || catchUpAfterSeq > 0)) {
                             return msgSeq !== null && msgSeq > catchUpAfterSeq;
                         }
 
@@ -145,7 +224,7 @@ export function createSessionClientUpdateRuntime(
                             updateId: update?.id,
                             messageLocalId: localId || null,
                             catchUpAfterSeq,
-                            catchUpAfterSeqIsExplicit: opts.catchUpAfterSeqIsExplicit,
+                            catchUpAuthorization: opts.catchUpAuthorization ?? null,
                             callbackAttachedAtMs: deps.getUserMessageCallbackAttachedAtMs(),
                             messageCreatedAtMs: typeof (message as { createdAt?: unknown })?.createdAt === 'number'
                                 ? (message as { createdAt: number }).createdAt
@@ -153,8 +232,20 @@ export function createSessionClientUpdateRuntime(
                         });
                         return false;
                     },
+                    shouldResolveSkippedUserMessage: (_message, update) => {
+                        const msgSeq = readMessageSeqFromUpdate(update);
+                        const deliveredWatermark = normalizeDeliveredUserMessageSeq(deps.getDeliveredUserMessageSeq?.());
+                        return deliveredWatermark !== null && msgSeq !== null && msgSeq <= deliveredWatermark;
+                    },
+                    onUserMessageDeliveredToAgentQueue: (seq) => deps.onUserMessageDeliveredToAgentQueue?.(seq),
+                    // Conditional: an always-present wrapper would defeat the legacy fallback to
+                    // the queue-handoff hook inside handleSessionNewMessageUpdate.
+                    ...(deps.onUserMessageDeliveryProvenByLocalEcho
+                        ? { onUserMessageDeliveryProvenByLocalEcho: deps.onUserMessageDeliveryProvenByLocalEcho }
+                        : {}),
                     onConnectedServiceTurnLifecycleEvent: (event) => deps.onConnectedServiceTurnLifecycleEvent?.(event),
                     emit: (event, payload) => deps.emit(event, payload),
+                    observeCommittedUserMessageSeq: (params) => deps.observeCommittedUserMessageSeq?.(params),
                     debug: (message, payload) => logger.debug(message, payload),
                     debugLargeJson: (message, payload) => logger.debugLargeJson(message, payload),
                     observeMessage: (message, seq) => {
@@ -182,6 +273,7 @@ export function createSessionClientUpdateRuntime(
                 }
 
                 let shouldEmitMetadataUpdated = false;
+                let pendingChangedDrainTrigger: KnownPendingQueueState | null = null;
                 const stateUpdateResult = handleSessionStateUpdate({
                     update: data,
                     updateSource: opts.source,
@@ -197,6 +289,9 @@ export function createSessionClientUpdateRuntime(
                     onMetadataUpdated: () => {
                         shouldEmitMetadataUpdated = true;
                     },
+                    onPendingChangedDrainTrigger: (state) => {
+                        pendingChangedDrainTrigger = state;
+                    },
                     onWarning: (message) => logger.debug(message),
                 });
                 if (stateUpdateResult.handled) {
@@ -207,6 +302,16 @@ export function createSessionClientUpdateRuntime(
                     pendingWakeSeq = stateUpdateResult.pendingWakeSeq;
                     if (stateUpdateResult.pendingQueueState) {
                         shouldEmitMetadataUpdated = deps.applyPendingQueueState(stateUpdateResult.pendingQueueState) || shouldEmitMetadataUpdated;
+                    }
+                    if (pendingChangedDrainTrigger) {
+                        const canonicalPendingQueueState = deps.getPendingQueueState?.()
+                            ?? stateUpdateResult.pendingQueueState;
+                        if (canonicalPendingQueueState?.known) {
+                            deps.onPendingChangedDrainTrigger?.(canonicalPendingQueueState);
+                        }
+                    }
+                    if (stateUpdateResult.runtimeActivityProjection) {
+                        deps.onRuntimeActivityProjectionFromServer?.(stateUpdateResult.runtimeActivityProjection);
                     }
                     if (shouldEmitMetadataUpdated) {
                         deps.emit('metadata-updated');
@@ -223,6 +328,14 @@ export function createSessionClientUpdateRuntime(
         observeCommittedAck(params) {
             lastObservedMessageSeq = Math.max(lastObservedMessageSeq, params.seq);
             if (params.markAsUserMessage === true) {
+                if (
+                    params.refreshAgentQueueEchoSuppression === true
+                    && typeof params.localId === 'string'
+                    && params.localId.length > 0
+                ) {
+                    deps.markAgentQueueEchoSuppressedLocalId(params.localId);
+                    deps.onUserMessageDeliveredToAgentQueue?.(params.seq);
+                }
                 lastObservedUserMessageSeq = Math.max(lastObservedUserMessageSeq, params.seq);
                 deps.observeCommittedUserMessageSeq?.({
                     localId: params.localId,

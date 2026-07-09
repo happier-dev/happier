@@ -96,6 +96,7 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
         if (
             nextMetadata &&
             (
+                opts.currentMetadataVersion < 0 ||
                 nextMetadataVersion > opts.currentMetadataVersion ||
                 !isDeepStrictEqual(nextMetadata, opts.currentMetadata ?? null)
             )
@@ -123,6 +124,7 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
         if (
             nextAgentState !== undefined &&
             (
+                opts.currentAgentStateVersion < 0 ||
                 nextAgentStateVersion > opts.currentAgentStateVersion ||
                 !isDeepStrictEqual(nextAgentState, opts.currentAgentState ?? null)
             )

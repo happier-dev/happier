@@ -43,4 +43,30 @@ describe('runtimeAuthRecoveryKey', () => {
       profileId: null,
     });
   });
+
+  it('keeps group-backed keys distinct for different failing access-token fingerprints', () => {
+    const a = buildRuntimeAuthRecoveryKey({
+      sessionId: 'session-1',
+      serviceId: 'openai-codex',
+      groupId: 'codex-main',
+      profileId: 'member-a',
+      failingAccessTokenFingerprint: 'token-a',
+    });
+    const b = buildRuntimeAuthRecoveryKey({
+      sessionId: 'session-1',
+      serviceId: 'openai-codex',
+      groupId: 'codex-main',
+      profileId: 'member-b',
+      failingAccessTokenFingerprint: 'token-b',
+    });
+
+    expect(a).not.toBe(b);
+    expect(parseRuntimeAuthRecoveryKey(a)).toEqual({
+      sessionId: 'session-1',
+      serviceId: 'openai-codex',
+      groupId: 'codex-main',
+      profileId: null,
+      failingAccessTokenFingerprint: 'token-a',
+    });
+  });
 });

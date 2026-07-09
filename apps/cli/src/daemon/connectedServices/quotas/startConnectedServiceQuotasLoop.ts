@@ -1,5 +1,5 @@
 export type ConnectedServiceQuotasLoopHandle = Readonly<{
-  stop: () => void;
+  stop: () => Promise<void>;
   pause: () => void;
   resume: () => void;
 }>;
@@ -20,29 +20,36 @@ export function startConnectedServiceQuotasLoop(params: Readonly<{
     params.clearIntervalFn ?? ((handle) => clearInterval(handle as unknown as ReturnType<typeof setInterval>));
 
   let stopped = false;
-  let inFlight = false;
+  let inFlight: Promise<void> | null = null;
   let paused = false;
+  let stopPromise: Promise<void> | null = null;
   const intervalHandle = setIntervalImpl(() => {
     if (stopped || inFlight) return;
     if (paused) return;
-    inFlight = true;
-    void (async () => {
+    inFlight = (async () => {
       try {
         await params.coordinator.tickOnce();
       } catch (error) {
         params.onTickError(error);
       } finally {
-        inFlight = false;
+        inFlight = null;
       }
     })();
   }, tickMs);
   (intervalHandle as unknown as { unref?: () => void })?.unref?.();
 
   return {
-    stop: () => {
-      if (stopped) return;
+    stop: async () => {
+      if (stopPromise) {
+        await stopPromise;
+        return;
+      }
       stopped = true;
       clearIntervalImpl(intervalHandle);
+      stopPromise = (async () => {
+        await inFlight;
+      })();
+      await stopPromise;
     },
     pause: () => {
       paused = true;

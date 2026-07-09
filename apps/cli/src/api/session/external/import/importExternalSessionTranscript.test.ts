@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
@@ -30,6 +30,14 @@ vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
     }),
   }),
 }));
+
+vi.mock('sharp', () => ({
+  default: () => ({
+    metadata: async () => ({ width: 1, height: 1 }),
+  }),
+}));
+
+let importExternalSessionTranscriptModule: typeof import('./importExternalSessionTranscript');
 
 const pngBytes = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU6w9wAAAABJRU5ErkJggg==',
@@ -64,6 +72,10 @@ function directMediaItem(path: string): Record<string, unknown> {
 }
 
 describe('importExternalSessionTranscript', () => {
+  beforeAll(async () => {
+    importExternalSessionTranscriptModule = await import('./importExternalSessionTranscript');
+  }, 60_000);
+
   afterEach(() => {
     vi.clearAllMocks();
     resolveTranscriptMediaReadRootsMock.mockResolvedValue([]);
@@ -107,7 +119,7 @@ describe('importExternalSessionTranscript', () => {
         createdAt: 123,
       });
 
-      const { importExternalSessionTranscript } = await import('./importExternalSessionTranscript');
+      const { importExternalSessionTranscript } = importExternalSessionTranscriptModule;
       await expect(importExternalSessionTranscript({
         linked: createLinkedSession(workingDirectory),
         credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
@@ -169,7 +181,7 @@ describe('importExternalSessionTranscript', () => {
         createdAt: 124,
       });
 
-      const { importExternalSessionTranscript } = await import('./importExternalSessionTranscript');
+      const { importExternalSessionTranscript } = importExternalSessionTranscriptModule;
       await expect(importExternalSessionTranscript({
         linked: createLinkedSession(workingDirectory),
         credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
@@ -231,7 +243,7 @@ describe('importExternalSessionTranscript', () => {
         createdAt: 124,
       });
 
-      const { importExternalSessionTranscript } = await import('./importExternalSessionTranscript');
+      const { importExternalSessionTranscript } = importExternalSessionTranscriptModule;
       await expect(importExternalSessionTranscript({
         linked: createLinkedSession(workingDirectory),
         credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
@@ -301,7 +313,7 @@ describe('importExternalSessionTranscript', () => {
         createdAt: 125,
       });
 
-      const { importExternalSessionTranscript } = await import('./importExternalSessionTranscript');
+      const { importExternalSessionTranscript } = importExternalSessionTranscriptModule;
       await expect(importExternalSessionTranscript({
         linked: createLinkedSession(workingDirectory),
         credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
@@ -397,7 +409,7 @@ describe('importExternalSessionTranscript', () => {
         createdAt: 126,
       });
 
-      const { importExternalSessionTranscript } = await import('./importExternalSessionTranscript');
+      const { importExternalSessionTranscript } = importExternalSessionTranscriptModule;
       await expect(importExternalSessionTranscript({
         linked: createLinkedSession(workingDirectory),
         credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
@@ -532,7 +544,7 @@ describe('importExternalSessionTranscript', () => {
         createdAt: 127,
       });
 
-      const { importExternalSessionTranscript } = await import('./importExternalSessionTranscript');
+      const { importExternalSessionTranscript } = importExternalSessionTranscriptModule;
       await expect(importExternalSessionTranscript({
         linked: createLinkedSession(workingDirectory),
         credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
@@ -648,7 +660,7 @@ describe('importExternalSessionTranscript', () => {
         createdAt: 128,
       });
 
-      const { importExternalSessionTranscript } = await import('./importExternalSessionTranscript');
+      const { importExternalSessionTranscript } = importExternalSessionTranscriptModule;
       await expect(importExternalSessionTranscript({
         linked: createLinkedSession(workingDirectory),
         credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },

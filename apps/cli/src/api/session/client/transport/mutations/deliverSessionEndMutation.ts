@@ -1,8 +1,7 @@
 import axios from 'axios';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
-import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
-import { configuration } from '@/configuration';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import { SessionEndAckResponseSchema } from '@happier-dev/protocol/updates';
 
@@ -139,7 +138,7 @@ export async function deliverSessionEndMutation(params: Readonly<{
     mutation: SessionEndMutationV1;
 }>): Promise<boolean> {
     return await withSessionEndDeliverySlot(async () => {
-        const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+        const serverUrl = resolveServerHttpBaseUrl();
         try {
             const response = await axios.post(
                 `${serverUrl}/v1/sessions/${encodeURIComponent(params.mutation.sessionId)}/end`,

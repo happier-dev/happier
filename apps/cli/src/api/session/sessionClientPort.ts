@@ -2,33 +2,73 @@ import type { RpcHandlerManagerLike } from '@/api/rpc/types';
 import type { ACPMessageData, ACPProvider, SessionEventMessage } from './sessionMessageTypes';
 import type { AgentState, Metadata } from '../types';
 import type { ProviderTranscriptDispatchRequest } from './client/transcript/providerDispatch';
-import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
+import type {
+  SessionRuntimeActivitySourceClassV1,
+  SessionSystemRecord,
+  SessionSystemRecordNamespace,
+  SessionSystemRecordUpsertRequest,
+  SessionTurnMutationV1,
+} from '@happier-dev/protocol';
+import type {
+  SessionEncryptionContext,
+  SessionStoredContentEncryptionMode,
+} from '@/session/transport/encryption/sessionEncryptionContext';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import type { PendingQueueState } from './pendingQueueState';
 import type { RegisteredSessionStateFieldMutationV1 } from './client/transport/mutations/sessionClientDurableMutationTypes';
+import type {
+  PendingMaterializationActiveTurnPolicy,
+  ProviderAcceptancePendingMaterializationPolicy,
+} from './pendingMaterializationActiveTurnPolicy';
+import type {
+  PendingMaterializationDeliveryState,
+  PendingMaterializationDeliveryTiming,
+  PendingQueueDeliveryBlockedReason,
+} from './pendingQueueV2Transport';
 
 export type MaterializeNextPendingResult =
   | {
       type: 'materialized';
       localId: string;
-      seq: number;
+      seq: number | null;
       content: unknown;
       createdAt?: number;
       updatedAt?: number;
+      deliveryState?: PendingMaterializationDeliveryState;
     }
   | { type: 'no_pending' }
-  | { type: 'deferred'; reason: 'supervisor_offline' | 'supervisor_auth_failed' };
+  | { type: 'deferred'; reason: 'supervisor_offline' | 'supervisor_auth_failed' | 'runtime_activity_active' };
+
+export type ProviderUserMessageDeliveryAcceptance = Readonly<{
+  localIds?: readonly string[] | null;
+  userMessageSeq?: number | null;
+  userMessageSeqs?: readonly number[] | null;
+}>;
+
+export type UserMessageProviderAcceptanceQuery = Readonly<{
+  localIds?: readonly string[] | null;
+  userMessageSeq?: number | null;
+  userMessageSeqs?: readonly number[] | null;
+}>;
+
+export type LocallyConsumedUserMessageConfirmation = Readonly<{
+  localIds?: readonly string[] | null;
+  userMessageSeq?: number | null;
+  userMessageSeqs?: readonly number[] | null;
+}>;
+
+export type UserMessageLocalConsumptionQuery = Readonly<{
+  localIds?: readonly string[] | null;
+  userMessageSeq?: number | null;
+  userMessageSeqs?: readonly number[] | null;
+}>;
 
 export interface SessionClientPort {
   sessionId: string;
   rpcHandlerManager: RpcHandlerManagerLike;
 
   sendSessionEvent(event: SessionEventMessage, id?: string): void;
-  sendProviderMessage?(request: ProviderTranscriptDispatchRequest): void;
-  // Compat-only aliases for existing provider-owned callers. New callers should use sendProviderMessage().
-  sendClaudeSessionMessage(message: unknown, meta?: Record<string, unknown>): void;
-  // Compat-only alias for existing provider-owned callers. New callers should use sendProviderMessage().
-  sendCodexMessage?(body: unknown): void;
+  sendProviderMessage(request: ProviderTranscriptDispatchRequest): void;
   sendAgentMessage(provider: ACPProvider, body: ACPMessageData, opts?: { localId?: string; meta?: Record<string, unknown> }): void;
   enqueueAgentMessageCommitted?(
     provider: ACPProvider,
@@ -39,6 +79,21 @@ export interface SessionClientPort {
 
   updateMetadata(updater: (metadata: Metadata) => Metadata): void | Promise<void>;
   updateAgentState(updater: (state: AgentState) => AgentState): void | Promise<void>;
+  updateRuntimeActivityProjection?(projection: Readonly<{
+    runtimeActivityActiveCount: number;
+    runtimeActivityObservedAt: number | null;
+    runtimeActivityExpiresAt: number | null;
+    runtimeActivitySourceClass: SessionRuntimeActivitySourceClassV1 | null;
+  }>): Promise<void>;
+  upsertSessionSystemRecord?(request: SessionSystemRecordUpsertRequest): Promise<void>;
+  fetchSessionSystemRecord?(params: Readonly<{
+    namespace: SessionSystemRecordNamespace;
+    localId: string;
+  }>): Promise<SessionSystemRecord | null>;
+  getStoredContentEncryptionContext?(): Readonly<{
+    mode: SessionStoredContentEncryptionMode;
+    ctx?: SessionEncryptionContext;
+  }>;
   enqueueSessionTurnMutation?(mutation: SessionTurnMutationV1): void | Promise<void>;
   enqueueRegisteredSessionStateFieldMutation?(mutation: RegisteredSessionStateFieldMutationV1): void | Promise<void>;
   setSessionRuntimeControls?(controls: SessionRuntimeControls | null): void;
@@ -47,6 +102,27 @@ export interface SessionClientPort {
 
   getMetadataSnapshot(): Metadata | null;
   getCommittedUserMessageSeq?(localId: string): number | null;
+  hasCanonicalPendingDeliveryLocalId?(localId: string): boolean;
+  getDeliveredUserMessageSeq?(): number | null;
+  getProviderAcceptedUserMessageSeq?(): number | null;
+  hasUserMessageProviderAcceptance?(query: UserMessageProviderAcceptanceQuery): boolean;
+  hasUserMessageLocalConsumption?(query: UserMessageLocalConsumptionQuery): boolean;
+  /**
+   * HF-1 owed-delivery watermark, provider-acceptance shape: a runtime with an acceptance seam
+   * opts in (queue-handoff persist stops) and confirms accepted row seqs explicitly.
+   */
+  deferDeliveredUserMessageWatermarkToProviderAcceptance?(opts?: {
+    pendingMaterialization?: ProviderAcceptancePendingMaterializationPolicy;
+  }): void;
+  confirmUserMessageDeliveredToProvider?(acceptance: ProviderUserMessageDeliveryAcceptance): void;
+  confirmUserMessageLocallyConsumed?(confirmation: LocallyConsumedUserMessageConfirmation): void;
+  blockPendingMessageDelivery?(params: Readonly<{
+    localIds?: readonly string[] | null;
+    reason: PendingQueueDeliveryBlockedReason;
+  }>): Promise<boolean>;
+  retryPendingMessageDelivery?(params: Readonly<{
+    localId: string;
+  }>): Promise<boolean>;
   waitForCommittedUserMessageSeq?(
     localId: string,
     options?: Readonly<{ timeoutMs?: number; pollMs?: number }>,
@@ -54,9 +130,13 @@ export interface SessionClientPort {
   waitForMetadataUpdate(abortSignal?: AbortSignal): Promise<boolean>;
   materializeNextPendingMessageSafely?(opts?: {
     reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
+    activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
+    deliveryTiming?: PendingMaterializationDeliveryTiming;
   }): Promise<MaterializeNextPendingResult>;
   popPendingMessage(): Promise<boolean>;
-  shouldAttemptPendingMaterialization(): boolean;
+  shouldAttemptPendingMaterialization(opts?: {
+    activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
+  }): boolean;
   getPendingQueueState?(): PendingQueueState;
   reconcilePendingQueueState?(opts?: { force?: boolean }): Promise<boolean>;
 

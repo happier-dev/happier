@@ -67,7 +67,7 @@ function createRuntimeDescriptorMetadata(backendId: string) {
   });
 }
 
-describe('ApiSessionClient sendCodexMessage change_title', () => {
+describe('ApiSessionClient provider dispatch change_title', () => {
   it('does not update session metadata summary when Codex emits a change_title tool call (action handlers own metadata updates)', async () => {
     const emitted: Array<{ event: string; payload: any }> = [];
 

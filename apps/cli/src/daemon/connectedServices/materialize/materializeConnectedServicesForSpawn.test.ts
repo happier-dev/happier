@@ -61,8 +61,8 @@ describe('materializeConnectedServicesForSpawn', () => {
     expect(result!.env.CODEX_HOME).toBe(
       join(activeServerDir, 'daemon', 'connected-services', 'homes', 'openai-codex', 'work', 'codex', 'codex-home'),
     );
-    expect(typeof result!.cleanupOnFailure).toBe('function');
-    expect(typeof result!.cleanupOnExit).toBe('function');
+    expect(result!.cleanupOnFailure).toBeNull();
+    expect(result!.cleanupOnExit).toBeNull();
 
     const authPath = join(result!.env.CODEX_HOME, 'auth.json');
     const auth = JSON.parse(await readFile(authPath, 'utf8'));
@@ -87,8 +87,13 @@ describe('materializeConnectedServicesForSpawn', () => {
     await expect(readFile(join(result!.env.CODEX_HOME, 'AGENTS.md'), 'utf8')).resolves.toBe('# User Codex instructions\n');
     await expect(readFile(join(result!.env.CODEX_HOME, 'prompts', 'review.md'), 'utf8')).resolves.toBe('Review prompt\n');
     await expect(readFile(join(result!.env.CODEX_HOME, 'skills', 'reviewer', 'SKILL.md'), 'utf8')).resolves.toBe('# Reviewer\n');
+    // Auth secrets (accounts) are never shared, regardless of state-sharing mode.
     await expect(lstat(join(result!.env.CODEX_HOME, 'accounts'))).rejects.toThrow();
-    await expect(lstat(join(result!.env.CODEX_HOME, 'sessions'))).rejects.toThrow();
+    // Session state is shared by default now (no explicit account setting required),
+    // so the source rollout is reachable from the materialized Codex home.
+    await expect(
+      readFile(join(result!.env.CODEX_HOME, 'sessions', '2026', '05', '20', 'rollout-test.jsonl'), 'utf8'),
+    ).resolves.toBe('{}\n');
 
     result!.cleanupOnFailure?.();
     result!.cleanupOnExit?.();
@@ -477,7 +482,7 @@ describe('materializeConnectedServicesForSpawn', () => {
     });
 
     expect(result).not.toBeNull();
-    expect(result!.cleanupOnFailure).toEqual(expect.any(Function));
+    expect(result!.cleanupOnFailure).toBeNull();
     expect(result!.cleanupOnExit).toBeNull();
     expect(result!.env.HOME).toBeUndefined();
     expect(result!.env.USERPROFILE).toBeUndefined();
@@ -486,19 +491,16 @@ describe('materializeConnectedServicesForSpawn', () => {
     expect(result!.env.HAPPIER_OPENCODE_SERVER_STATE_PATH).toContain(join('opencode', 'managed-servers'));
 
     const auth = JSON.parse(result!.env.OPENCODE_AUTH_CONTENT ?? '{}');
-    expect(auth).toEqual({
-      openai: {
-        type: 'oauth',
-        refresh: 'refresh',
-        access: 'access',
-        expires: 123,
-        accountId: 'acct',
-      },
-      anthropic: {
-        type: 'api',
-        key: 'sk-ant-123',
-      },
-    });
+    // OpenCode Codex subscription auth is brokered: a stable, non-refreshable `type:'api'` marker is
+    // emitted (the broker plugin supplies the real fetch out-of-band). No OAuth refresh/access token is
+    // ever embedded in OPENCODE_AUTH_CONTENT (no-leak). The Anthropic Console key stays direct x-api-key.
+    expect(auth.openai.type).toBe('api');
+    expect(auth.openai.key).toMatch(/^happier-broker:openai:/);
+    expect(auth.openai.refresh).toBeUndefined();
+    expect(auth.openai.access).toBeUndefined();
+    expect(auth.anthropic).toEqual({ type: 'api', key: 'sk-ant-123' });
+    expect(result!.env.OPENCODE_AUTH_CONTENT).not.toContain('refresh');
+    expect(result!.env.OPENCODE_AUTH_CONTENT).not.toContain('access');
     expect(fetchMock).not.toHaveBeenCalled();
 
     result!.cleanupOnFailure?.();
@@ -622,7 +624,7 @@ describe('materializeConnectedServicesForSpawn', () => {
       recordsByServiceId: new Map([
         ['anthropic', claude],
       ]),
-    })).rejects.toThrow(/anthropic oauth/i);
+    })).rejects.toThrow(/anthropic auth requires token credentials/i);
   });
 
   it('materializes Pi auth.json with openai-codex oauth and Anthropic API key credentials', async () => {
@@ -664,7 +666,7 @@ describe('materializeConnectedServicesForSpawn', () => {
     });
 
     expect(result).not.toBeNull();
-    expect(result!.cleanupOnFailure).toEqual(expect.any(Function));
+    expect(result!.cleanupOnFailure).toBeNull();
     expect(result!.cleanupOnExit).toBeNull();
     expect(result!.env.PI_CODING_AGENT_DIR).toBe(
       join(activeServerDir, 'daemon', 'connected-services', 'homes', 'openai-codex', 'work', 'pi', 'pi-agent-dir'),
@@ -887,21 +889,16 @@ describe('materializeConnectedServicesForSpawn', () => {
     ]);
   });
 
-  it('materializes Gemini API key env vars from a gemini oauth credential', async () => {
+  it('materializes Gemini API key env vars from a gemini token credential', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-'));
     const gemini = buildConnectedServiceCredentialRecord({
       now: 10,
       serviceId: 'gemini',
       profileId: 'default',
-      kind: 'oauth',
-      expiresAt: 123,
-      oauth: {
-        accessToken: 'access',
-        refreshToken: 'refresh',
-        idToken: 'id',
-        scope: 'scope',
-        tokenType: 'Bearer',
+      kind: 'token',
+      token: {
+        token: 'gemini-api-key',
         providerAccountId: null,
         providerEmail: null,
       },
@@ -916,16 +913,17 @@ describe('materializeConnectedServicesForSpawn', () => {
     });
 
     expect(result).not.toBeNull();
-    expect(result!.cleanupOnFailure).toEqual(expect.any(Function));
+    expect(result!.cleanupOnFailure).toBeNull();
     expect(result!.cleanupOnExit).toBeNull();
-    expect(typeof result!.env.HOME).toBe('string');
-
-    const homeDir = result!.env.HOME!;
-    const credsPath = join(homeDir, '.gemini', 'oauth_creds.json');
-    const creds = JSON.parse(await readFile(credsPath, 'utf8'));
-    expect(creds.access_token).toBe('access');
-    expect(creds.refresh_token).toBe('refresh');
-    expect(creds.id_token).toBe('id');
+    expect(result!.env).toMatchObject({
+      HOME: join(activeServerDir, 'daemon', 'connected-services', 'homes', 'gemini', 'default', 'gemini', 'home'),
+      GEMINI_CLI_HOME: join(activeServerDir, 'daemon', 'connected-services', 'homes', 'gemini', 'default', 'gemini', 'home'),
+      GEMINI_FORCE_ENCRYPTED_FILE_STORAGE: 'false',
+      GOOGLE_APPLICATION_CREDENTIALS: '',
+      GEMINI_API_KEY: 'gemini-api-key',
+      GOOGLE_API_KEY: 'gemini-api-key',
+    });
+    await expect(readFile(join(result!.env.HOME!, '.gemini', 'oauth_creds.json'), 'utf8')).rejects.toThrow();
   });
 
   it('keeps Gemini materialization identity stable across first spawn and session re-entry', async () => {
@@ -935,14 +933,9 @@ describe('materializeConnectedServicesForSpawn', () => {
       now: 10,
       serviceId: 'gemini',
       profileId: 'default',
-      kind: 'oauth',
-      expiresAt: 123,
-      oauth: {
-        accessToken: 'access',
-        refreshToken: 'refresh',
-        idToken: 'id',
-        scope: 'scope',
-        tokenType: 'Bearer',
+      kind: 'token',
+      token: {
+        token: 'gemini-api-key',
         providerAccountId: null,
         providerEmail: null,
       },
@@ -969,6 +962,8 @@ describe('materializeConnectedServicesForSpawn', () => {
     expect(firstSpawn!.env.HOME).toBe(
       join(activeServerDir, 'daemon', 'connected-services', 'homes', 'gemini', 'default', 'gemini', 'home'),
     );
+    expect(firstSpawn!.env.GEMINI_API_KEY).toBe('gemini-api-key');
+    expect(reentry!.env.GEMINI_API_KEY).toBe('gemini-api-key');
   });
 
   it('materializes Gemini group selections into the stable group home', async () => {
@@ -978,18 +973,28 @@ describe('materializeConnectedServicesForSpawn', () => {
       now: 10,
       serviceId: 'gemini',
       profileId: 'backup',
-      kind: 'oauth',
-      expiresAt: 123,
-      oauth: {
-        accessToken: 'backup-access',
-        refreshToken: 'backup-refresh',
-        idToken: 'backup-id',
-        scope: 'scope',
-        tokenType: 'Bearer',
+      kind: 'token',
+      token: {
+        token: 'unused-api-key-when-vertex-metadata-is-present',
         providerAccountId: null,
         providerEmail: null,
       },
     });
+    if (gemini.kind !== 'token') {
+      throw new Error('Gemini Vertex fixture must be token-backed');
+    }
+    const vertexGemini = {
+      ...gemini,
+      token: {
+        ...gemini.token,
+        raw: {
+          vertexAi: {
+            project: 'vertex-project',
+            location: 'us-central1',
+          },
+        },
+      },
+    };
     const selection = {
       kind: 'group' as const,
       serviceId: 'gemini' as const,
@@ -997,7 +1002,7 @@ describe('materializeConnectedServicesForSpawn', () => {
       activeProfileId: 'backup',
       fallbackProfileId: 'fallback',
       generation: 7,
-      record: gemini,
+      record: vertexGemini,
       policy: { v: 1, strategy: 'priority' },
     };
 
@@ -1006,7 +1011,7 @@ describe('materializeConnectedServicesForSpawn', () => {
       materializationKey: 'spawn-1700000000000-random',
       activeServerDir,
       baseDir,
-      recordsByServiceId: new Map([['gemini', gemini]]),
+      recordsByServiceId: new Map([['gemini', vertexGemini]]),
       selectionsByServiceId: new Map([['gemini', selection]]),
     });
     const reentry = await materializeConnectedServicesForSpawn({
@@ -1014,7 +1019,7 @@ describe('materializeConnectedServicesForSpawn', () => {
       materializationKey: 'sess-gemini-connected',
       activeServerDir,
       baseDir,
-      recordsByServiceId: new Map([['gemini', gemini]]),
+      recordsByServiceId: new Map([['gemini', vertexGemini]]),
       selectionsByServiceId: new Map([['gemini', selection]]),
     });
 
@@ -1035,8 +1040,50 @@ describe('materializeConnectedServicesForSpawn', () => {
         policy: { v: 1, strategy: 'priority' },
       },
     ]);
-    const creds = JSON.parse(await readFile(join(firstSpawn!.env.HOME, '.gemini', 'oauth_creds.json'), 'utf8'));
-    expect(creds.access_token).toBe('backup-access');
+    expect(firstSpawn!.env).toMatchObject({
+      GOOGLE_GENAI_USE_VERTEXAI: '1',
+      GOOGLE_CLOUD_PROJECT: 'vertex-project',
+      GOOGLE_CLOUD_LOCATION: 'us-central1',
+    });
+    expect(firstSpawn!.env).not.toHaveProperty('GEMINI_API_KEY');
+    await expect(readFile(join(firstSpawn!.env.HOME, '.gemini', 'oauth_creds.json'), 'utf8')).rejects.toThrow();
+  });
+
+  it('blocks Gemini OAuth credential records during CLI materialization', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-'));
+    const gemini = buildConnectedServiceCredentialRecord({
+      now: 10,
+      serviceId: 'gemini',
+      profileId: 'default',
+      kind: 'oauth',
+      expiresAt: 123,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: 'id',
+        scope: 'scope',
+        tokenType: 'Bearer',
+        providerAccountId: null,
+        providerEmail: null,
+      },
+    });
+
+    await expect(materializeConnectedServicesForSpawn({
+      agentId: 'gemini',
+      materializationKey: 'session-4',
+      activeServerDir,
+      baseDir,
+      recordsByServiceId: new Map([['gemini', gemini]]),
+    })).rejects.toMatchObject({
+      code: 'connected_service_materialization_blocked',
+      diagnostics: expect.arrayContaining([
+        expect.objectContaining({
+          code: 'gemini_oauth_deferred_api_key_or_vertex_required',
+          severity: 'blocking',
+        }),
+      ]),
+    });
   });
 
   it('rejects Claude anthropic oauth credentials', async () => {

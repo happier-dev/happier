@@ -99,7 +99,7 @@ describe('createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator', () => {
             getConnectedServiceAuthGroup: vi.fn(async () => group('primary', 1)),
             updateConnectedServiceAuthGroupActiveProfile: vi.fn(async () => group('backup', 2)),
         };
-        const restartSession = vi.fn(async () => ({ ok: true as const }));
+        const restartSession = vi.fn(async () => ({ ok: true as const, mode: 'hot_apply' as const }));
 
         const coordinator = createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator({
             api,
@@ -155,7 +155,7 @@ describe('createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator', () => {
             getConnectedServiceAuthGroup: vi.fn(async () => group('primary', 1)),
             updateConnectedServiceAuthGroupActiveProfile: vi.fn(async () => group('backup', 2)),
         };
-        const restartSession = vi.fn(async () => ({ ok: true as const }));
+        const restartSession = vi.fn(async () => ({ ok: true as const, mode: 'hot_apply' as const }));
 
         const coordinator = createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator({
             api,

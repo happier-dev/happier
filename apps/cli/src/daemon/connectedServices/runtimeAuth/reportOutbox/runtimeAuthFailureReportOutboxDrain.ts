@@ -1,5 +1,6 @@
 import { notifyDaemonConnectedServiceRuntimeAuthFailure } from '@/daemon/controlClient';
 
+import { isRetryableConnectedServiceRuntimeAuthFailureReportDelivery } from '../resolveConnectedServiceRuntimeAuthFailureStatusMessage';
 import {
   drainRuntimeAuthFailureReportOutboxItems,
 } from './runtimeAuthFailureReportOutbox';
@@ -14,16 +15,6 @@ type RuntimeAuthFailureReportOutboxDaemonNotify = (body: Readonly<{
   resumePromptMode?: RuntimeAuthFailureReportOutboxItem['resumePromptMode'];
   classification: RuntimeAuthFailureReportOutboxItem['classification'];
 }>) => Promise<unknown>;
-
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isRetryableDaemonResponse(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  if (value.ok === false) return true;
-  return typeof value.error === 'string' && value.error.trim().length > 0;
-}
 
 export async function drainRuntimeAuthFailureReportOutboxToDaemon(input: Readonly<{
   outboxDir?: string;
@@ -41,7 +32,7 @@ export async function drainRuntimeAuthFailureReportOutboxToDaemon(input: Readonl
         ...(item.resumePromptMode ? { resumePromptMode: item.resumePromptMode } : {}),
         classification: item.classification,
       });
-      return isRetryableDaemonResponse(response)
+      return isRetryableConnectedServiceRuntimeAuthFailureReportDelivery(response)
         ? { status: 'retry' as const }
         : { status: 'delivered' as const };
     },

@@ -50,13 +50,13 @@ function buildMaterialSnapshot(snapshot: ProviderAccountUsageSnapshotV1): JsonVa
     recordKey: snapshot.recordKey,
     providerId: snapshot.providerId,
     accountSubject: snapshot.accountSubject,
-    aliases: snapshot.aliases,
     staleAfterMs: snapshot.staleAfterMs,
     source: snapshot.source,
     confidence: snapshot.confidence,
     state: snapshot.state,
     planLabel: snapshot.planLabel ?? null,
     accountLabel: snapshot.accountLabel ?? null,
+    recoveryCredits: snapshot.recoveryCredits ?? null,
     meters: snapshot.meters,
   });
 }

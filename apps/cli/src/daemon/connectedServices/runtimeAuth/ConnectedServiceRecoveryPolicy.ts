@@ -146,13 +146,14 @@ function isCredentialFailure(kind: ConnectedServiceRecoveryPolicyIssue['kind']):
 function isSwitchableGroupIssue(kind: ConnectedServiceRecoveryPolicyIssue['kind']): boolean {
   return kind === 'usage_limit'
     || kind === 'rate_limit'
-    || kind === 'auth_expired'
-    || kind === 'account_changed'
-    || kind === 'refresh_failed'
+    || kind === 'capacity'
     || kind === 'dependency_failure'
-    || kind === 'account_disabled'
     || kind === 'soft_limit'
     || kind === 'unknown';
+}
+
+function isAccountScopedCapacityIssue(issue: ConnectedServiceRecoveryPolicyIssue): boolean {
+  return issue.kind === 'capacity' && 'quotaScope' in issue && issue.quotaScope === 'account';
 }
 
 function hasProviderSharedStateRecoveryAction(issue: ConnectedServiceRecoveryPolicyIssue): boolean {
@@ -179,7 +180,7 @@ export function decideConnectedServiceRecovery(
   // Provider capacity ("Overloaded"/529) is server-side and account-independent: switching
   // accounts or restarting the session never helps. Retry the SAME session with backoff,
   // exactly like temporary throttles (incident 2026-06-12, lane TRANSIENT).
-  if (issue.kind === 'temporary_throttle' || issue.kind === 'capacity') {
+  if (issue.kind === 'temporary_throttle' || (issue.kind === 'capacity' && !isAccountScopedCapacityIssue(issue))) {
     return {
       action: 'temporary_retry',
       serviceId: issue.serviceId,
@@ -231,6 +232,16 @@ export function decideConnectedServiceRecovery(
     };
   }
 
+  if (issue.kind === 'account_changed') {
+    return {
+      action: 'profile_action_required',
+      serviceId: issue.serviceId,
+      profileId,
+      groupId,
+      reason: issue.kind,
+    };
+  }
+
   if (
     isCredentialFailure(issue.kind)
     && input.credentialRefresh?.status === 'refreshable'
@@ -253,18 +264,6 @@ export function decideConnectedServiceRecovery(
       || input.credentialHealth?.liveEvidence === 'auth_failed'
     )
   ) {
-    if (input.selection?.kind === 'group' && input.groupCandidate?.status === 'selected') {
-      return {
-        action: 'switch_account',
-        mode: input.groupCandidate.applyMode,
-        serviceId: input.selection.serviceId,
-        groupId: input.selection.groupId,
-        fromProfileId: input.selection.activeProfileId,
-        toProfileId: input.groupCandidate.profileId,
-        reason: issue.kind,
-        actor: input.actor,
-      };
-    }
     return {
       action: 'reconnect_required',
       serviceId: issue.serviceId,
@@ -301,7 +300,11 @@ export function decideConnectedServiceRecovery(
     };
   }
 
-  if (input.selection?.kind === 'group' && input.groupCandidate?.status === 'selected') {
+  if (
+    input.selection?.kind === 'group'
+    && input.groupCandidate?.status === 'selected'
+    && isSwitchableGroupIssue(issue.kind)
+  ) {
     return {
       action: 'switch_account',
       mode: input.groupCandidate.applyMode,

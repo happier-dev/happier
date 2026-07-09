@@ -5,6 +5,45 @@ import {
 } from './connectedServiceSchemas.js';
 import { requireConnectedAccountDescriptor, type ConnectedAccountDescriptor } from './connectedAccountDescriptors.js';
 
+export type ConnectedServiceOauthCredentialRawMetadata = Readonly<{
+  claudeAiOauth?: Readonly<{
+    subscriptionType?: string;
+    rateLimitTier?: string;
+  }>;
+  'claude.ai_oauth'?: Readonly<{
+    subscriptionType?: string;
+    rateLimitTier?: string;
+  }>;
+}>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function sanitizeOauthRawMetadata(
+  raw: ConnectedServiceOauthCredentialRawMetadata | null | undefined,
+): ConnectedServiceOauthCredentialRawMetadata | null {
+  const root = isRecord(raw) ? raw : {};
+  const claudeAiOauthRaw = isRecord(root.claudeAiOauth)
+    ? root.claudeAiOauth
+    : isRecord(root['claude.ai_oauth'])
+      ? root['claude.ai_oauth']
+      : {};
+  const subscriptionType = readString(claudeAiOauthRaw.subscriptionType);
+  const rateLimitTier = readString(claudeAiOauthRaw.rateLimitTier);
+  const claudeAiOauth = {
+    ...(subscriptionType ? { subscriptionType } : {}),
+    ...(rateLimitTier ? { rateLimitTier } : {}),
+  };
+  return Object.keys(claudeAiOauth).length > 0 ? { claudeAiOauth } : null;
+}
+
 export function buildConnectedServiceCredentialRecord(
   params:
     | Readonly<{
@@ -21,6 +60,7 @@ export function buildConnectedServiceCredentialRecord(
           tokenType: string | null;
           providerAccountId: string | null;
           providerEmail: string | null;
+          raw?: ConnectedServiceOauthCredentialRawMetadata | null;
         }>;
       }>
     | Readonly<{
@@ -57,7 +97,7 @@ export function buildConnectedServiceCredentialRecord(
             tokenType: params.oauth.tokenType,
             providerAccountId: params.oauth.providerAccountId,
             providerEmail: params.oauth.providerEmail,
-            raw: null,
+            raw: sanitizeOauthRawMetadata(params.oauth.raw),
           },
           token: null,
         }

@@ -19,7 +19,9 @@ import {
     ConnectedServiceBindingsV1Schema,
     ConnectedServiceCredentialHealthV1Schema,
     ConnectedServiceCredentialRecordV1Schema,
+    ConnectedServiceQuotaRecoveryCreditsV1Schema,
     ConnectedServiceQuotaSnapshotV1Schema,
+    ConnectedServiceUsageSourceV1Schema,
     SessionConnectedServiceAuthSwitchRpcParamsSchema,
     SealedConnectedServiceCredentialV1Schema,
 } from './connectedServiceSchemas.js';
@@ -131,6 +133,17 @@ describe('connectedServiceSchemas', () => {
         expect(health.reconnectRequired).toBe(true);
     });
 
+    it('classifies retryable credential health as usable but not reconnect-required', async () => {
+        const schemas = await import('./connectedServiceSchemas.js');
+
+        expect(schemas.isConnectedServiceCredentialHealthStatusUsable('connected')).toBe(true);
+        expect(schemas.isConnectedServiceCredentialHealthStatusUsable('refreshing')).toBe(true);
+        expect(schemas.isConnectedServiceCredentialHealthStatusUsable('refresh_failed_retryable')).toBe(true);
+        expect(schemas.isConnectedServiceCredentialHealthStatusUsable('needs_reauth')).toBe(false);
+        expect(schemas.isConnectedServiceCredentialHealthStatusReconnectRequired('needs_reauth')).toBe(true);
+        expect(schemas.isConnectedServiceCredentialHealthStatusReconnectRequired('refresh_failed_retryable')).toBe(false);
+    });
+
     it('rejects credential health provider error codes that are too large for persisted metadata', () => {
         expect(ConnectedServiceCredentialHealthV1Schema.safeParse({
             v: 1,
@@ -166,6 +179,99 @@ describe('connectedServiceSchemas', () => {
         });
         expect(parsed.meters).toHaveLength(1);
         expect(parsed.meters[0]?.meterId).toBe('requests');
+    });
+
+    it('requires explicit connected-service source context for provider-account quota projections', () => {
+        expect(ConnectedServiceUsageSourceV1Schema.parse({
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            bindingKind: 'profile',
+        })).toEqual({
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            bindingKind: 'profile',
+        });
+
+        expect(ConnectedServiceUsageSourceV1Schema.parse({
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            bindingKind: 'group_member',
+            groupId: 'team',
+            groupGeneration: 7,
+        })).toEqual({
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            bindingKind: 'group_member',
+            groupId: 'team',
+            groupGeneration: 7,
+        });
+
+        expect(ConnectedServiceUsageSourceV1Schema.safeParse({
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            bindingKind: 'group_member',
+        }).success).toBe(false);
+    });
+
+    it('accepts sanitized quota recovery credits on quota snapshots', () => {
+        const now = Date.now();
+        const parsed = ConnectedServiceQuotaSnapshotV1Schema.parse({
+            v: 1,
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            fetchedAt: now,
+            staleAfterMs: 300_000,
+            planLabel: 'pro',
+            accountLabel: 'user@example.com',
+            recoveryCredits: {
+                availableCount: 1,
+                credits: [{
+                    id: 'reset-credit-1',
+                    kind: 'usage_limit_reset',
+                    status: 'available',
+                    grantedAtMs: now - 1_000,
+                    expiresAtMs: now + 86_400_000,
+                    title: 'Codex rate limit reset',
+                    description: 'Reset your Codex rate limits.',
+                }],
+            },
+            meters: [{
+                meterId: 'weekly',
+                label: 'Weekly',
+                used: null,
+                limit: null,
+                unit: 'unknown',
+                utilizationPct: 82,
+                resetsAt: now + 60_000,
+                status: 'ok',
+                details: {},
+            }],
+        });
+
+        expect(parsed.recoveryCredits).toEqual({
+            availableCount: 1,
+            credits: [expect.objectContaining({
+                id: 'reset-credit-1',
+                kind: 'usage_limit_reset',
+                status: 'available',
+                expiresAtMs: now + 86_400_000,
+            })],
+        });
+        expect(ConnectedServiceQuotaRecoveryCreditsV1Schema.safeParse(parsed.recoveryCredits).success).toBe(true);
+    });
+
+    it('rejects provider-private recovery credit profile fields at the protocol boundary', () => {
+        const result = ConnectedServiceQuotaRecoveryCreditsV1Schema.safeParse({
+            availableCount: 1,
+            credits: [{
+                id: 'reset-credit-1',
+                kind: 'usage_limit_reset',
+                status: 'available',
+                profileImageUrl: 'https://example.com/avatar.png',
+            }],
+        });
+
+        expect(result.success).toBe(false);
     });
 
     it('parses additive quota meter source and remaining semantics', () => {
@@ -288,6 +394,62 @@ describe('connectedServiceSchemas', () => {
     expect(result.success).toBe(false);
   });
 
+  it('rejects quota evidence header values that can leak tokens', () => {
+    const result = ConnectedServiceQuotaSnapshotV1Schema.safeParse({
+      v: 1,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      fetchedAt: Date.now(),
+      staleAfterMs: 60_000,
+      planLabel: null,
+      accountLabel: null,
+      evidence: {
+        headers: {
+          'x-provider-debug': 'sk-abcdefghijklmnopqrstuvwxyz',
+        },
+      },
+      meters: [],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects quota evidence code text that can leak raw credential material', () => {
+    const result = ConnectedServiceQuotaSnapshotV1Schema.safeParse({
+      v: 1,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      fetchedAt: Date.now(),
+      staleAfterMs: 60_000,
+      planLabel: null,
+      accountLabel: null,
+      evidence: {
+        code: 'authorization: bearer sk-secret-token-value-1234567890',
+      },
+      meters: [],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects quota evidence message text that can leak raw credential material', () => {
+    const result = ConnectedServiceQuotaSnapshotV1Schema.safeParse({
+      v: 1,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      fetchedAt: Date.now(),
+      staleAfterMs: 60_000,
+      planLabel: null,
+      accountLabel: null,
+      evidence: {
+        message: 'provider failed with authorization: bearer sk-secret-token-value-1234567890',
+      },
+      meters: [],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it('rejects invalid profile ids', () => {
     const now = Date.now();
     expect(() => {
@@ -396,7 +558,7 @@ describe('connectedServiceSchemas', () => {
     it('parses default account group fallback policy', () => {
         expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1 })).toEqual({
             v: 1,
-            strategy: 'priority',
+            strategy: 'least_limited',
             autoSwitch: false,
             switchOn: {
                 usageLimit: true,
@@ -414,12 +576,41 @@ describe('connectedServiceSchemas', () => {
             preTurnProbeMode: 'when_stale',
             preTurnProbeOrder: 'current_first_then_candidates',
             recoveryMode: 'switch_or_wait',
-            recoveryPromptMode: 'standard',
             resumePromptMode: 'standard',
-            effectiveMeterStrategy: 'most_constrained',
-            memberRuntimeStatePersistence: 'server_state_json',
         });
         expect(ConnectedServiceAuthGroupPolicyV1Schema.safeParse({ v: 1, strategy: 'round_robin' }).success).toBe(false);
+        // Existing pools that persisted an explicit `priority` strategy must NOT be silently migrated.
+        expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1, strategy: 'priority' }).strategy).toBe('priority');
+    });
+
+    it('strips removed legacy no-op policy keys while rejecting genuine unknown keys', () => {
+        // Migration-safe: stored policy JSON that still carries the removed legacy keys parses
+        // (strips them) instead of failing strict validation and resetting the whole policy.
+        const migrated = ConnectedServiceAuthGroupPolicyV1Schema.parse({
+            v: 1,
+            strategy: 'manual',
+            softSwitchRemainingPercent: 42,
+            recoveryPromptMode: 'standard',
+            effectiveMeterStrategy: 'weekly',
+            memberRuntimeStatePersistence: 'server_state_json',
+        });
+        expect(migrated.strategy).toBe('manual');
+        expect(migrated.softSwitchRemainingPercent).toBe(42);
+        expect(migrated).not.toHaveProperty('recoveryPromptMode');
+        expect(migrated).not.toHaveProperty('effectiveMeterStrategy');
+        expect(migrated).not.toHaveProperty('memberRuntimeStatePersistence');
+        // Genuine typos are still rejected (strict is preserved for non-legacy unknown keys).
+        expect(ConnectedServiceAuthGroupPolicyV1Schema.safeParse({ v: 1, bogusKey: true }).success).toBe(false);
+        // The patch schema also tolerates the removed legacy keys from older clients.
+        const migratedPatch = ConnectedServiceAuthGroupPolicyPatchV1Schema.parse({
+            strategy: 'least_limited',
+            recoveryPromptMode: 'standard',
+            effectiveMeterStrategy: 'weekly',
+            memberRuntimeStatePersistence: 'server_state_json',
+        });
+        expect(migratedPatch.strategy).toBe('least_limited');
+        expect(migratedPatch).not.toHaveProperty('effectiveMeterStrategy');
+        expect(ConnectedServiceAuthGroupPolicyPatchV1Schema.safeParse({ bogusKey: true }).success).toBe(false);
     });
 
     it('parses disabled account group recovery resume prompts', () => {

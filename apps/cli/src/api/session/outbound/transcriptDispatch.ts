@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
-import { resolveBackendEngineAdapterResolution } from '@/agent/runtime/registry/engineRegistry';
+import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { writeSessionStateFieldWithMetadataPortBestEffort } from '@/agent/runtime/state/writeSessionStateFieldWithMetadataPort';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { logger } from '@/ui/logger';
@@ -20,7 +20,8 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Metadata } from '../../types';
-import { buildLegacyUsageReportFromUsageObservation, type UsageObservation } from '../../../usage/usageObservation';
+import type { UsageObservation } from '../../../usage/usageObservation';
+import { buildLegacyUsageReportFromUsageObservation } from '../../../usage/legacy/legacyUsageTransport';
 import { buildAcpAgentMessageEnvelope } from '../acpMessageEnvelope';
 import type {
   ACPMessageData,
@@ -51,6 +52,7 @@ export type TranscriptDispatchToolMaps = Readonly<{
   toolCallCanonicalNameByProviderAndId: Map<string, { rawToolName: string; canonicalToolName: string }>;
   permissionToolCallRawInputByProviderAndId: Map<string, unknown>;
   toolCallInputByProviderAndId: Map<string, unknown>;
+  maxToolCallCacheEntries?: number | undefined;
 }>;
 
 export type RuntimeOutboundTranscriptDispatchFacetResolution = Readonly<{
@@ -81,9 +83,7 @@ export async function resolveRuntimeOutboundTranscriptDispatchFacet(params: Read
   const backendId = readRuntimeOutboundTranscriptDispatchBackendId(params.metadata);
   if (!backendId) return null;
 
-  const resolution = await resolveBackendEngineAdapterResolution(backendId);
-  const facet = resolution?.engineAdapter.facets?.transcriptDispatch;
-  return facet ? { backendId, facet } : null;
+  return await getSessionHostBridge().resolveOutboundTranscriptDispatchFacet(backendId);
 }
 
 export function prepareAcpTranscriptDispatch(params: Readonly<{
@@ -103,6 +103,7 @@ export function prepareAcpTranscriptDispatch(params: Readonly<{
     toolCallCanonicalNameByProviderAndId: params.toolCallCanonicalNameByProviderAndId,
     permissionToolCallRawInputByProviderAndId: params.permissionToolCallRawInputByProviderAndId,
     toolCallInputByProviderAndId: params.toolCallInputByProviderAndId,
+    maxToolCallCacheEntries: params.maxToolCallCacheEntries,
   });
   const localId = typeof params.localId === 'string' && params.localId.length > 0 ? params.localId : randomUUID();
   const sidechainId = readSidechainId(normalizedBody.sidechainId);
@@ -120,10 +121,10 @@ export function prepareAcpTranscriptDispatch(params: Readonly<{
   };
 }
 
-export function commitRuntimeOutboundTranscriptDispatchPlan(
+export async function commitRuntimeOutboundTranscriptDispatchPlan(
   port: SessionClientTranscriptSendPort,
   plan: RuntimeOutboundTranscriptDispatchPlanV1,
-): void {
+): Promise<void> {
   for (const log of plan.outboundShapeLogs ?? []) {
     port.outboundShapeLogger.log(log.label, log.payload);
   }
@@ -135,7 +136,7 @@ export function commitRuntimeOutboundTranscriptDispatchPlan(
   }
 
   const payload = port.buildOutboundSessionMessagePayload(plan.content);
-  port.commitSessionMessageBestEffort({
+  await port.commitSessionMessageBestEffort({
     message: payload,
     localId: plan.localId,
     sidechainId: plan.sidechainId,

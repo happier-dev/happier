@@ -6,7 +6,10 @@ import {
 import { notifyDaemonConnectedServiceRuntimeAuthFailure } from '@/daemon/controlClient';
 import { logger as defaultLogger } from '@/ui/logger';
 
-import { resolveConnectedServiceRuntimeAuthFailureStatusMessage } from './resolveConnectedServiceRuntimeAuthFailureStatusMessage';
+import {
+  isRetryableConnectedServiceRuntimeAuthFailureReportDelivery,
+  resolveConnectedServiceRuntimeAuthFailureStatusMessage,
+} from './resolveConnectedServiceRuntimeAuthFailureStatusMessage';
 import {
   normalizeConnectedServiceRuntimeAuthRecoveryProjection,
   type ConnectedServiceRuntimeAuthRecoveryProjection,
@@ -16,6 +19,8 @@ import {
   removeRuntimeAuthFailureReportOutboxItem,
   resolveRuntimeAuthFailureReportOutboxKey,
 } from './reportOutbox/runtimeAuthFailureReportOutbox';
+import { scheduleRuntimeAuthFailureReportOutboxDrainToDaemon } from './reportOutbox/runtimeAuthFailureReportOutboxDrainScheduler';
+import { sanitizeConnectedServiceRuntimeFailureClassification } from './sanitizeConnectedServiceRuntimeFailureClassification';
 
 type RuntimeAuthFailureNotifyBody = Readonly<{
   sessionId: string;
@@ -36,6 +41,10 @@ type RuntimeAuthFailureNotify = (
 type RuntimeAuthFailureLogger = Readonly<{
   debug: (message: string, error?: unknown) => void;
 }>;
+
+type RuntimeAuthFailureReportOutboxDrainScheduler = (input: Readonly<{
+  outboxDir?: string;
+}>) => void;
 
 export type ConnectedServiceRuntimeAuthFailureDaemonReport = Readonly<{
   handled: boolean;
@@ -76,14 +85,6 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     : null;
 }
 
-function readRecoveryActionKind(value: unknown): string | null {
-  const action = readRecord(value);
-  const kind = action?.kind;
-  return kind === 'provider_state_sharing_required' || kind === 'quota_recovery_required'
-    ? kind
-    : null;
-}
-
 function readResumePromptMode(value: unknown): SessionUsageLimitRecoveryResumePromptModeV1 | null {
   const parsed = SessionUsageLimitRecoveryResumePromptModeV1Schema.safeParse(value);
   return parsed.success ? parsed.data : null;
@@ -99,7 +100,7 @@ function buildStableRuntimeAuthFailureReportDedupeKey(input: Readonly<{
   resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
   classification: unknown;
 }>): string | null {
-  const classification = readRecord(input.classification);
+  const classification = sanitizeConnectedServiceRuntimeFailureClassification(input.classification);
   if (!classification) return null;
   const resetsAtMsBucket = typeof classification.resetsAtMs === 'number' && Number.isFinite(classification.resetsAtMs)
     ? Math.floor(classification.resetsAtMs / 60_000)
@@ -113,7 +114,10 @@ function buildStableRuntimeAuthFailureReportDedupeKey(input: Readonly<{
     groupId: classification.groupId ?? null,
     limitCategory: classification.limitCategory ?? null,
     providerLimitId: classification.providerLimitId ?? null,
-    recoveryActionKind: readRecoveryActionKind(classification.recoveryAction),
+    sourceProviderAccountId: classification.sourceProviderAccountId ?? null,
+    failingAccessTokenFingerprint: classification.failingAccessTokenFingerprint ?? null,
+    groupGeneration: classification.groupGeneration ?? null,
+    recoveryActionKind: classification.recoveryAction?.kind ?? null,
     resumePromptMode: input.resumePromptMode ?? null,
     resetsAtMsBucket,
   });
@@ -127,14 +131,6 @@ function pruneStaleRuntimeAuthFailureReportDedupeEntries(nowMs: number): void {
   }
 }
 
-function isUnhandledLocalControlErrorReport(report: unknown): boolean {
-  const record = readRecord(report);
-  if (!record) return false;
-  if (record.ok === false || record.success === false) return true;
-  if (typeof record.error === 'string' && record.error.trim()) return true;
-  return typeof record.errorCode === 'string' && record.errorCode.trim().length > 0 && record.ok !== true;
-}
-
 export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Readonly<{
   sessionId: string;
   switchesThisTurn?: number;
@@ -144,26 +140,50 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
   logger?: RuntimeAuthFailureLogger;
   logPrefix?: string;
   reportOutboxDir?: string;
+  scheduleOutboxDrain?: RuntimeAuthFailureReportOutboxDrainScheduler;
   nowMs?: () => number;
 }>): Promise<ConnectedServiceRuntimeAuthFailureDaemonReport> {
   const notify = input.notify ?? notifyDaemonConnectedServiceRuntimeAuthFailure;
   const logger = input.logger ?? defaultLogger;
   const logPrefix = input.logPrefix ?? '[connected-services]';
+  const scheduleOutboxDrain = input.scheduleOutboxDrain ?? ((args: Readonly<{ outboxDir?: string }>) => {
+    scheduleRuntimeAuthFailureReportOutboxDrainToDaemon({
+      ...(args.outboxDir ? { outboxDir: args.outboxDir } : {}),
+      logger,
+      logPrefix,
+    });
+  });
   const resumePromptMode = readResumePromptMode(input.resumePromptMode);
+  const sanitizedClassification = sanitizeConnectedServiceRuntimeFailureClassification(input.classification);
+  if (!sanitizedClassification) {
+    logger.debug(`${logPrefix} Dropped connected-service runtime auth failure report with malformed classification`);
+    return {
+      handled: false,
+      report: null,
+      statusCode: null,
+      statusMessage: null,
+      ...(resumePromptMode ? { resumePromptMode } : {}),
+    };
+  }
   const reportBody: RuntimeAuthFailureNotifyBody = {
     sessionId: input.sessionId,
     switchesThisTurn: input.switchesThisTurn ?? 0,
     ...(resumePromptMode ? { resumePromptMode } : {}),
-    classification: input.classification,
+    classification: sanitizedClassification,
   };
 
   async function enqueueOutboxBestEffort(): Promise<void> {
     try {
-      await enqueueRuntimeAuthFailureReportOutboxItem({
+      const result = await enqueueRuntimeAuthFailureReportOutboxItem({
         ...(input.reportOutboxDir ? { outboxDir: input.reportOutboxDir } : {}),
         report: reportBody,
         ...(input.nowMs ? { nowMs: input.nowMs } : {}),
       });
+      if (result.status === 'enqueued' && result.enqueue === 'accepted') {
+        scheduleOutboxDrain({
+          ...(input.reportOutboxDir ? { outboxDir: input.reportOutboxDir } : {}),
+        });
+      }
     } catch (error) {
       logger.debug(`${logPrefix} Failed to enqueue connected-service runtime auth failure report outbox item (non-fatal)`, error);
     }
@@ -194,7 +214,7 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
       });
       if (projection.handled) {
         await removeOutboxBestEffort();
-      } else if (isUnhandledLocalControlErrorReport(report)) {
+      } else if (isRetryableConnectedServiceRuntimeAuthFailureReportDelivery(report)) {
         await enqueueOutboxBestEffort();
       }
       const reportRecord = readRecord(report);
@@ -228,7 +248,7 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
     sessionId: input.sessionId,
     switchesThisTurn: input.switchesThisTurn ?? 0,
     ...(resumePromptMode ? { resumePromptMode } : {}),
-    classification: input.classification,
+    classification: sanitizedClassification,
   });
   if (!dedupeKey) {
     return await performReport();

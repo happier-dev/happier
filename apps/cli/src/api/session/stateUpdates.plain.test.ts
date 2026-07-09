@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { updateSessionAgentStateWithAck, updateSessionMetadataWithAck } from './stateUpdates';
+import {
+  updateSessionAgentStateWithAck,
+  updateSessionMetadataWithAck,
+  updateSessionRuntimeActivityProjectionWithAck,
+} from './stateUpdates';
 import { logger } from '@/ui/logger';
 import type { Metadata } from '@/api/types';
 
@@ -22,6 +26,62 @@ function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('stateUpdates (plaintext sessions)', () => {
+  it('sends runtime activity through its public projection socket mutation only', async () => {
+    const emitWithAck = vi.fn(async (_event: string, payload: any) => ({
+      result: 'success',
+      didWrite: true,
+      runtimeActivityActiveCount: payload.runtimeActivityActiveCount,
+      runtimeActivityObservedAt: payload.runtimeActivityObservedAt,
+      runtimeActivityExpiresAt: payload.runtimeActivityExpiresAt,
+      runtimeActivitySourceClass: payload.runtimeActivitySourceClass,
+    }));
+
+    await updateSessionRuntimeActivityProjectionWithAck({
+      socket: { emitWithAck },
+      sessionId: 's1',
+      runtimeActivityActiveCount: 1,
+      runtimeActivityObservedAt: 1_000,
+      runtimeActivityExpiresAt: 2_000,
+      runtimeActivitySourceClass: 'provider_detached_task',
+    });
+
+    expect(emitWithAck).toHaveBeenCalledWith('update-runtime-activity', {
+      sid: 's1',
+      runtimeActivityActiveCount: 1,
+      runtimeActivityObservedAt: 1_000,
+      runtimeActivityExpiresAt: 2_000,
+      runtimeActivitySourceClass: 'provider_detached_task',
+    });
+    const [, payload] = emitWithAck.mock.calls[0]!;
+    expect(payload).not.toHaveProperty('thinking');
+    expect(payload).not.toHaveProperty('activeAt');
+    expect(payload).not.toHaveProperty('latestTurnStatus');
+    expect(payload).not.toHaveProperty('meaningfulActivityAt');
+    expect(payload).not.toHaveProperty('metadata');
+    expect(payload).not.toHaveProperty('agentState');
+  });
+
+  it('raises a typed retryable error when runtime activity projection writes fail', async () => {
+    const socket = {
+      emitWithAck: vi.fn(async () => ({
+        result: 'error',
+        error: 'internal',
+      })),
+    };
+
+    await expect(updateSessionRuntimeActivityProjectionWithAck({
+      socket,
+      sessionId: 's1',
+      runtimeActivityActiveCount: 1,
+      runtimeActivityObservedAt: 1_000,
+      runtimeActivityExpiresAt: 2_000,
+      runtimeActivitySourceClass: 'provider_detached_task',
+    })).rejects.toMatchObject({
+      code: 'runtime_activity_update_failed',
+      retryable: true,
+    });
+  });
+
   it('sends + applies plaintext metadata updates when session encryption mode is plain', async () => {
     const emitWithAck = vi.fn(async (_event: string, payload: any) => {
       expect(typeof payload.metadata).toBe('string');
@@ -117,6 +177,7 @@ describe('stateUpdates (plaintext sessions)', () => {
       expect(payload.activitySummaryV1).toEqual({
         pendingPermissionRequestCount: 1,
         pendingUserActionRequestCount: 1,
+        pendingRequestNewestCreatedAt: 2,
       });
       return {
         result: 'success',

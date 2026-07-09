@@ -4,9 +4,10 @@ import type {
   ConnectedServiceUxDiagnosticV1,
 } from '@happier-dev/protocol';
 
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { TrackedSession } from '@/daemon/types';
 import {
+  isExactAcceptedConnectedServiceAccountVerification,
   serializeAcceptedConnectedServiceAccountVerifications,
   toAcceptedConnectedServiceAccountVerification,
   type AcceptedConnectedServiceAccountVerification,
@@ -82,16 +83,30 @@ export async function runPostSwitchVerification<TFailure>(input: Readonly<{
   nextByServiceId: ReadonlyMap<ConnectedServiceId, PostSwitchVerificationEffectiveBinding>;
   serviceIds: ReadonlySet<ConnectedServiceId>;
   action: 'hot_applied' | 'restart_requested';
+  acceptedVerificationByServiceId?: AcceptedConnectedServiceAccountVerificationByServiceId;
   runtimeAuthSelectionsByServiceId?: RuntimeAuthSelectionsByServiceId;
   buildVerificationFailure(input: PostSwitchVerificationFailureInput): TFailure;
 }>): Promise<PostSwitchVerificationOutcome<TFailure>> {
+  const acceptedVerificationsByServiceId = new Map<ConnectedServiceId, AcceptedConnectedServiceAccountVerification>();
+  for (const serviceId of input.serviceIds) {
+    const accepted = input.acceptedVerificationByServiceId?.[serviceId];
+    if (isExactAcceptedConnectedServiceAccountVerification(accepted)) {
+      acceptedVerificationsByServiceId.set(serviceId, accepted);
+    }
+  }
   if (!input.verifyProviderAccountAdoption) {
     if (input.postSwitchVerificationMode?.kind === 'disabled_for_test_only') {
-      return { failure: null };
+      return {
+        failure: null,
+        ...spreadPostSwitchVerification({
+          verificationByServiceId: serializeAcceptedConnectedServiceAccountVerifications(acceptedVerificationsByServiceId),
+        }),
+      };
     }
     for (const serviceId of input.serviceIds) {
       const target = input.nextByServiceId.get(serviceId);
       if (!target || target.source !== 'connected') continue;
+      if (acceptedVerificationsByServiceId.has(serviceId)) continue;
       return {
         failure: input.buildVerificationFailure({
           serviceId,
@@ -103,14 +118,22 @@ export async function runPostSwitchVerification<TFailure>(input: Readonly<{
             reason: 'post_switch_verifier_missing',
           },
         }),
+        ...spreadPostSwitchVerification({
+          verificationByServiceId: serializeAcceptedConnectedServiceAccountVerifications(acceptedVerificationsByServiceId),
+        }),
       };
     }
-    return { failure: null };
+    return {
+      failure: null,
+      ...spreadPostSwitchVerification({
+        verificationByServiceId: serializeAcceptedConnectedServiceAccountVerifications(acceptedVerificationsByServiceId),
+      }),
+    };
   }
-  const acceptedVerificationsByServiceId = new Map<ConnectedServiceId, AcceptedConnectedServiceAccountVerification>();
   for (const serviceId of input.serviceIds) {
     const target = input.nextByServiceId.get(serviceId);
     if (!target || target.source !== 'connected') continue;
+    if (acceptedVerificationsByServiceId.has(serviceId)) continue;
     let verification: ConnectedServiceAccountTransitionVerificationResult;
     try {
       verification = await input.verifyProviderAccountAdoption({

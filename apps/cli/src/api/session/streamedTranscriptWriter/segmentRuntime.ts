@@ -12,6 +12,8 @@ export type StreamedTranscriptSegmentRuntime = {
   textVersion: number;
   didWriteDurable: boolean;
   didWriteLive: boolean;
+  appendOnlySinceLastDurableSnapshot: boolean;
+  appendOnlySinceLastLiveSnapshot: boolean;
   lastDurableText: string;
   lastCheckpointAtMs: number;
   lastCheckpointTextLen: number;
@@ -21,6 +23,12 @@ export type StreamedTranscriptSegmentRuntime = {
   lastLiveSnapshotAtMs: number;
   lastLiveSnapshotTextLen: number;
   lastLiveSnapshotText: string;
+  /** Per-segment live emission sequence (1-based once emitted; counts snapshots AND deltas). */
+  liveTick: number;
+  /** When the last full-snapshot live emission (checkpoint) happened. */
+  lastLiveCheckpointAtMs: number;
+  /** Connection epoch observed at the last live emission (null before the first emission). */
+  lastLiveEmitEpoch: number | null;
   durableCheckpointTimer: ReturnType<typeof setTimeout> | null;
   liveSnapshotTimer: ReturnType<typeof setTimeout> | null;
   isCommittingDurable: boolean;

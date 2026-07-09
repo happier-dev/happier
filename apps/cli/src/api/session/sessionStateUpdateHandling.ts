@@ -2,6 +2,7 @@ import { decodeBase64, decrypt } from '../encryption';
 import type { AgentState, Metadata, Update } from '../types';
 import { tryParseJsonObject } from '@/utils/tryParseJsonRecord';
 import { readKnownPendingQueueState, type KnownPendingQueueState } from './pendingQueueState';
+import type { PendingQueueRuntimeActivityProjection } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
 
 function tryDecodeSessionStateValue<T>(params: {
     rawValue: unknown;
@@ -30,6 +31,13 @@ function tryDecodeSessionStateValue<T>(params: {
     }
 }
 
+function hasRuntimeActivityProjectionFields(value: unknown): boolean {
+    if (!value || typeof value !== 'object') return false;
+    const record = value as Record<string, unknown>;
+    return 'runtimeActivityActiveCount' in record
+        || 'runtimeActivityExpiresAt' in record;
+}
+
 export function handleSessionStateUpdate(params: {
     update: Update;
     updateSource: 'session-scoped' | 'user-scoped';
@@ -43,6 +51,7 @@ export function handleSessionStateUpdate(params: {
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
     onMetadataUpdated: () => void;
+    onPendingChangedDrainTrigger?: (state: KnownPendingQueueState) => void;
     onWarning: (message: string) => void;
 }): {
     handled: boolean;
@@ -52,6 +61,7 @@ export function handleSessionStateUpdate(params: {
     agentStateVersion: number;
     pendingWakeSeq: number;
     pendingQueueState?: KnownPendingQueueState;
+    runtimeActivityProjection?: PendingQueueRuntimeActivityProjection;
 } {
     const body = params.update.body as any;
     if (body?.t === 'pending-changed') {
@@ -69,6 +79,9 @@ export function handleSessionStateUpdate(params: {
 
         params.onMetadataUpdated();
         const pendingQueueState = readKnownPendingQueueState(body);
+        if (pendingQueueState) {
+            params.onPendingChangedDrainTrigger?.(pendingQueueState);
+        }
         return {
             handled: true,
             metadata: params.metadata,
@@ -132,6 +145,16 @@ export function handleSessionStateUpdate(params: {
             agentState,
             agentStateVersion,
             pendingWakeSeq: params.pendingWakeSeq,
+            ...(hasRuntimeActivityProjectionFields(body)
+                ? {
+                    runtimeActivityProjection: {
+                        runtimeActivityActiveCount: body.runtimeActivityActiveCount,
+                        runtimeActivityObservedAt: body.runtimeActivityObservedAt,
+                        runtimeActivityExpiresAt: body.runtimeActivityExpiresAt,
+                        runtimeActivitySourceClass: body.runtimeActivitySourceClass,
+                    },
+                }
+                : {}),
         };
     }
 

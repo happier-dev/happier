@@ -42,6 +42,10 @@ export type ConnectedServiceRuntimeFailureClassification = Readonly<{
   retryAfterMs?: number | null;
   planType: string | null;
   providerLimitId?: string | null;
+  sourceProviderAccountId?: string | null;
+  sourceAccountLabel?: string | null;
+  failingAccessTokenFingerprint?: string | null;
+  groupGeneration?: number | null;
   quotaScope?: ConnectedServiceRuntimeQuotaScope;
   connectedServiceRecovery?: 'available' | 'unavailable';
   action?: Readonly<{ kind: 'open_url'; url: string }> | null;
@@ -73,11 +77,19 @@ export type ConnectedServiceAccountTransitionVerificationResult =
   | Readonly<{
       status: 'verified';
       providerAccountId?: string | null;
+      activeAccountId?: string | null;
+      sharedAuthSurfaceId?: string | null;
+      proofStrength?: 'exact' | 'weak' | 'diagnostic';
+      source?: string;
       reason?: string;
     }>
   | Readonly<{
       status: 'weakly_verified';
       providerAccountId?: string | null;
+      activeAccountId?: string | null;
+      sharedAuthSurfaceId?: string | null;
+      proofStrength?: 'exact' | 'weak' | 'diagnostic';
+      source?: string;
       reason: string;
     }>
   | Readonly<{

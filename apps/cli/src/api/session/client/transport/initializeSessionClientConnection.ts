@@ -1,6 +1,6 @@
 import { Socket } from 'socket.io-client';
 
-import { configuration } from '@/configuration';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import {
     createManagedConnectionSupervisor,
     DEFAULT_MANAGED_CONNECTION_POLICY,
@@ -16,10 +16,19 @@ import { logger } from '@/ui/logger';
 import { serializeAxiosErrorForLog } from '../../../client/serializeAxiosErrorForLog';
 import type { SessionSnapshotRefreshReason } from '../../sessionSnapshotRefreshReason';
 
+function normalizeMachineId(value: unknown): string | undefined {
+    if (typeof value !== 'string') {
+        return undefined;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export function initializeSessionClientConnection(
     params: Readonly<{
         token: string;
         sessionId: string;
+        localMachineId?: string | null;
         getMetadataSnapshot: () => unknown;
         setSessionSocket: (socket: Socket<ServerToClientEvents, ClientToServerEvents>) => void;
         rpcHandlerManager: {
@@ -37,6 +46,7 @@ export function initializeSessionClientConnection(
         syncSessionSnapshotFromServer: (opts: { reason: SessionSnapshotRefreshReason }) => Promise<void>;
         flushQueuedSessionMessagesOnReconnect: () => Promise<void>;
         flushDurableSessionMutationsOnReconnect: () => Promise<void>;
+        replayLatestSessionPresenceOnReconnect?: () => void;
         markConnected: () => 'connect' | 'reconnect';
     }>,
 ): Readonly<{
@@ -52,16 +62,15 @@ export function initializeSessionClientConnection(
         ...DEFAULT_MANAGED_CONNECTION_POLICY,
         createTransport: () => {
             const machineId = (() => {
+                const localMachineId = normalizeMachineId(params.localMachineId);
+                if (localMachineId) {
+                    return localMachineId;
+                }
                 const metadata = params.getMetadataSnapshot();
                 if (!(metadata && typeof metadata === 'object')) {
                     return undefined;
                 }
-                const rawMachineId = (metadata as { machineId?: unknown }).machineId;
-                if (typeof rawMachineId !== 'string') {
-                    return undefined;
-                }
-                const trimmedMachineId = rawMachineId.trim();
-                return trimmedMachineId.length > 0 ? trimmedMachineId : undefined;
+                return normalizeMachineId((metadata as { machineId?: unknown }).machineId);
             })();
             const { socket, transport } = createSessionSocketTransport({
                 token: params.token,
@@ -75,7 +84,7 @@ export function initializeSessionClientConnection(
         },
         classifyTransportErrorToProbeResult: params.classifyTransportErrorToProbeResult,
         probeReadiness: createLoopbackReadinessProbe({
-            serverUrl: configuration.apiServerUrl,
+            serverUrl: resolveServerHttpBaseUrl(),
             token: params.token,
         }),
         onStateChange: (state) => {
@@ -92,6 +101,7 @@ export function initializeSessionClientConnection(
             if (params.shouldKeepUserSocketConnected()) {
                 params.kickUserSocketConnect();
             }
+            params.replayLatestSessionPresenceOnReconnect?.();
             await params.syncChangesOnConnect({ reason: connectReason }).catch((error) => {
                 logger.debug('[API] Session changes sync on connect failed (non-fatal)', {
                     error: serializeAxiosErrorForLog(error),

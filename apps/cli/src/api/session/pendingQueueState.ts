@@ -1,6 +1,7 @@
 export type KnownPendingQueueState = Readonly<{
     known: true;
     pendingCount: number;
+    pendingBlockedCount: number;
     pendingVersion: number;
 }>;
 
@@ -13,27 +14,52 @@ function readNonNegativeInteger(value: unknown): number | null {
     return value;
 }
 
+function normalizeKnownPendingQueueState(state: KnownPendingQueueState): KnownPendingQueueState {
+    const pendingBlockedCount = readNonNegativeInteger((state as Readonly<{ pendingBlockedCount?: unknown }>).pendingBlockedCount) ?? 0;
+    return {
+        known: true,
+        pendingCount: state.pendingCount,
+        pendingBlockedCount: Math.min(pendingBlockedCount, state.pendingCount),
+        pendingVersion: state.pendingVersion,
+    };
+}
+
 export function readKnownPendingQueueState(value: unknown): KnownPendingQueueState | null {
     if (!value || typeof value !== 'object') return null;
     const record = value as Record<string, unknown>;
     const pendingCount = readNonNegativeInteger(record.pendingCount);
+    const pendingBlockedCount = Object.prototype.hasOwnProperty.call(record, 'pendingBlockedCount')
+        ? readNonNegativeInteger(record.pendingBlockedCount)
+        : 0;
     const pendingVersion = readNonNegativeInteger(record.pendingVersion);
-    if (pendingCount === null || pendingVersion === null) return null;
-    return { known: true, pendingCount, pendingVersion };
+    if (pendingCount === null || pendingBlockedCount === null || pendingVersion === null) return null;
+    return {
+        known: true,
+        pendingCount,
+        pendingBlockedCount: Math.min(pendingBlockedCount, pendingCount),
+        pendingVersion,
+    };
+}
+
+export function countMaterializablePendingRows(state: PendingQueueState): number {
+    if (!state.known) return 0;
+    return Math.max(0, state.pendingCount - normalizeKnownPendingQueueState(state).pendingBlockedCount);
 }
 
 export function applyKnownPendingQueueState(
     current: PendingQueueState,
     next: KnownPendingQueueState,
 ): { state: PendingQueueState; changed: boolean } {
-    if (current.known && next.pendingVersion < current.pendingVersion) {
+    const normalizedNext = normalizeKnownPendingQueueState(next);
+    if (current.known && normalizedNext.pendingVersion < current.pendingVersion) {
         return { state: current, changed: false };
     }
 
     const changed = !current.known
-        || current.pendingCount !== next.pendingCount
-        || current.pendingVersion !== next.pendingVersion;
-    return { state: next, changed };
+        || current.pendingCount !== normalizedNext.pendingCount
+        || normalizeKnownPendingQueueState(current).pendingBlockedCount !== normalizedNext.pendingBlockedCount
+        || current.pendingVersion !== normalizedNext.pendingVersion;
+    return { state: normalizedNext, changed };
 }
 
 export function derivePendingQueueStateAfterMaterializeResult(params: Readonly<{
@@ -53,13 +79,16 @@ export function derivePendingQueueStateAfterMaterializeResult(params: Readonly<{
         return applyKnownPendingQueueState(params.current, {
             known: true,
             pendingCount: 0,
+            pendingBlockedCount: 0,
             pendingVersion: params.current.pendingVersion,
         });
     }
 
+    const pendingCount = Math.max(0, params.current.pendingCount - 1);
     return applyKnownPendingQueueState(params.current, {
         known: true,
-        pendingCount: Math.max(0, params.current.pendingCount - 1),
+        pendingCount,
+        pendingBlockedCount: Math.min(params.current.pendingBlockedCount, pendingCount),
         pendingVersion: params.current.pendingVersion + 1,
     });
 }

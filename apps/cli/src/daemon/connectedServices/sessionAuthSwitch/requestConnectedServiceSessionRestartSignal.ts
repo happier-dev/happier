@@ -12,6 +12,10 @@ export type ConnectedServiceDaemonRestartDiagnosticStatus =
   | 'signal_failed'
   | 'skipped_stale_owner';
 
+export type ConnectedServiceSessionRestartSignalResult = Readonly<{
+  status: 'requested' | 'process_already_missing' | 'skipped_stale_owner';
+}>;
+
 export type ConnectedServiceDaemonRestartDiagnosticInput = Readonly<{
   trigger: ConnectedServiceDaemonRestartTrigger;
   sessionId?: string | null;
@@ -111,12 +115,13 @@ export async function requestConnectedServiceSessionRestartSignal(params: Readon
   pid: number;
   delayMs: number;
   preferProcessGroup?: boolean;
-  shouldSignal?: () => boolean;
+  shouldSignal?: () => boolean | Promise<boolean>;
   onSignalFailure: (error: unknown) => void;
+  onProcessAlreadyMissing?: () => void;
   restartDiagnostic?: ConnectedServiceDaemonRestartDiagnosticInput;
   recordRestartDiagnostic?: ConnectedServiceDaemonRestartDiagnosticRecorder;
   nowMs?: () => number;
-}>): Promise<void> {
+}>): Promise<ConnectedServiceSessionRestartSignalResult> {
   const nowMs = params.nowMs ?? Date.now;
   const processGroupPid = params.preferProcessGroup === true ? params.pid : null;
   const recordDiagnostic = (status: ConnectedServiceDaemonRestartDiagnosticStatus) => {
@@ -132,26 +137,28 @@ export async function requestConnectedServiceSessionRestartSignal(params: Readon
     });
   };
 
-  const signal = () => {
-    if (params.shouldSignal && !params.shouldSignal()) {
+  const signal = async (): Promise<ConnectedServiceSessionRestartSignalResult> => {
+    if (params.shouldSignal && !await params.shouldSignal()) {
       recordDiagnostic('skipped_stale_owner');
-      return;
+      return { status: 'skipped_stale_owner' };
     }
     recordDiagnostic('requested');
     try {
       if (params.preferProcessGroup === true) {
         try {
           process.kill(-params.pid, 'SIGTERM');
-          return;
+          return { status: 'requested' };
         } catch {
           // Fall back to the runner PID on platforms or spawn modes where process groups are unavailable.
         }
       }
       process.kill(params.pid, 'SIGTERM');
+      return { status: 'requested' };
     } catch (error) {
       if (isConnectedServiceRestartSignalStaleProcessError(error)) {
         recordDiagnostic('process_already_missing');
-        return;
+        params.onProcessAlreadyMissing?.();
+        return { status: 'process_already_missing' };
       }
       recordDiagnostic('signal_failed');
       params.onSignalFailure(error);
@@ -160,15 +167,13 @@ export async function requestConnectedServiceSessionRestartSignal(params: Readon
   };
 
   if (params.delayMs <= 0) {
-    signal();
-    return;
+    return await signal();
   }
 
-  await new Promise<void>((resolve, reject) => {
+  return await new Promise<ConnectedServiceSessionRestartSignalResult>((resolve, reject) => {
     const timer = setTimeout(() => {
       try {
-        signal();
-        resolve();
+        void signal().then(resolve, reject);
       } catch (error) {
         reject(error);
       }

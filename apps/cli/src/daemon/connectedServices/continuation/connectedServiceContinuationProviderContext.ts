@@ -1,15 +1,18 @@
-import { AGENT_IDS, type AgentId } from '@happier-dev/agents';
-import { ConnectedServiceBindingsV1Schema } from '@happier-dev/protocol';
-import { join } from 'node:path';
-
+import {
+  ConnectedServiceBindingsV1Schema,
+  isSessionContinuationRecoveryBlockingPendingDrain,
+} from '@happier-dev/protocol';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { TrackedSession } from '@/daemon/types';
 import { configuration } from '@/configuration';
-import { resolveDaemonCatalogAgentIdFromBackendTarget } from '@/daemon/backendTargetRouting';
+import { resolveTrackedSessionCatalogAgentId } from '@/daemon/sessions/resolveTrackedSessionCatalogAgentId';
 import {
   resolveTrackedConnectedServiceSwitchContinuityContext,
   resolveTrackedConnectedServiceVendorResumeId,
 } from '@/daemon/connectedServices/sessionAuthSwitch/resolveTrackedConnectedServiceSwitchContinuityContext';
+import { resolveConnectedServicesMaterializationBaseDir } from '@/daemon/connectedServices/materialize/resolveConnectedServicesMaterializationBaseDir';
 import { canResumeFromMaterializedState } from '@/daemon/connectedServices/stateSharing/canResumeFromMaterializedState';
+import { resolveTrackedConnectedServiceBindingsRaw } from '@/daemon/connectedServices/trackedSessionConnectedServiceBindings';
 
 type ContinuationContextTrackedSession = Pick<
   TrackedSession,
@@ -22,17 +25,10 @@ function normalizeOptionalString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function isAgentId(value: unknown): value is AgentId {
-  return typeof value === 'string' && (AGENT_IDS as readonly string[]).includes(value);
-}
-
 function resolveTrackedAgentId(
   tracked: Pick<ContinuationContextTrackedSession, 'happySessionMetadataFromLocalWebhook' | 'spawnOptions'>,
-): AgentId | null {
-  const agentId = resolveDaemonCatalogAgentIdFromBackendTarget(tracked.spawnOptions?.backendTarget);
-  if (agentId) return agentId;
-  const flavor = tracked.happySessionMetadataFromLocalWebhook?.flavor;
-  return isAgentId(flavor) ? flavor : null;
+): CatalogAgentId | null {
+  return resolveTrackedSessionCatalogAgentId(tracked);
 }
 
 function hasConnectedServiceBinding(rawBindings: unknown): boolean {
@@ -50,21 +46,25 @@ function readConnectedServiceBindingServiceId(rawBindings: unknown): string | nu
   return null;
 }
 
-function resolveTrackedConnectedServiceBindingsRaw(
-  tracked: Pick<ContinuationContextTrackedSession, 'happySessionMetadataFromLocalWebhook' | 'spawnOptions'>,
-): unknown {
-  return tracked.spawnOptions?.connectedServices ?? tracked.happySessionMetadataFromLocalWebhook?.connectedServices;
+function resolveContinuationConnectedServiceBindingsRaw(input: Readonly<{
+  tracked: Pick<ContinuationContextTrackedSession, 'happySessionMetadataFromLocalWebhook' | 'spawnOptions'>;
+  persistedSessionMetadata?: unknown;
+}>): unknown {
+  return resolveTrackedConnectedServiceBindingsRaw(input.tracked)
+    ?? (input.persistedSessionMetadata as { connectedServices?: unknown } | null)?.connectedServices;
 }
 
 async function hasExactReachableResumeContext(input: Readonly<{
   tracked: Pick<ContinuationContextTrackedSession, 'happySessionMetadataFromLocalWebhook' | 'spawnOptions' | 'vendorResumeId'>;
-  agentId: AgentId;
+  agentId: CatalogAgentId;
+  persistedSessionMetadata?: unknown;
 }>): Promise<boolean> {
   const tracked = input.tracked;
   const continuityContext = resolveTrackedConnectedServiceSwitchContinuityContext({
     agentId: input.agentId,
-    baseDir: join(configuration.happyHomeDir, 'daemon', 'connected-services', 'materialized'),
+    baseDir: resolveConnectedServicesMaterializationBaseDir(configuration.happyHomeDir),
     tracked,
+    persistedSessionMetadata: input.persistedSessionMetadata,
     vendorResumeId: resolveTrackedConnectedServiceVendorResumeId({
       agentId: input.agentId,
       tracked,
@@ -73,7 +73,10 @@ async function hasExactReachableResumeContext(input: Readonly<{
   if (!continuityContext.vendorResumeId) return false;
   if (!continuityContext.connectedServiceMaterializationIdentityV1) return false;
 
-  const serviceId = readConnectedServiceBindingServiceId(resolveTrackedConnectedServiceBindingsRaw(tracked));
+  const serviceId = readConnectedServiceBindingServiceId(resolveContinuationConnectedServiceBindingsRaw({
+    tracked,
+    persistedSessionMetadata: input.persistedSessionMetadata,
+  }));
   if (!serviceId) return false;
   if (!continuityContext.targetMaterializedEnv || !continuityContext.targetMaterializedRoot || !continuityContext.cwd) {
     return false;
@@ -96,8 +99,9 @@ async function hasExactReachableResumeContext(input: Readonly<{
 
 export async function resolveConnectedServiceContinuationProviderContextAvailability(input: Readonly<{
   tracked: Pick<ContinuationContextTrackedSession, 'happySessionMetadataFromLocalWebhook' | 'spawnOptions' | 'vendorResumeId'>;
+  persistedSessionMetadata?: unknown;
 }>): Promise<boolean> {
-  if (!hasConnectedServiceBinding(resolveTrackedConnectedServiceBindingsRaw(input.tracked))) return true;
+  if (!hasConnectedServiceBinding(resolveContinuationConnectedServiceBindingsRaw(input))) return true;
 
   const agentId = resolveTrackedAgentId(input.tracked);
   if (!agentId) return false;
@@ -105,11 +109,13 @@ export async function resolveConnectedServiceContinuationProviderContextAvailabi
   return await hasExactReachableResumeContext({
     tracked: input.tracked,
     agentId,
+    persistedSessionMetadata: input.persistedSessionMetadata,
   });
 }
 
 export async function replayPendingConnectedServiceContinuationsForTrackedSessions(input: Readonly<{
   trackedSessions: Iterable<ContinuationContextTrackedSession>;
+  resolvePersistedSessionMetadata?: (input: Readonly<{ sessionId: string }>) => Promise<unknown> | unknown;
   resolvePendingContinuation: (input: Readonly<{
     sessionId: string;
     exactProviderContextAvailable: boolean;
@@ -119,10 +125,16 @@ export async function replayPendingConnectedServiceContinuationsForTrackedSessio
   for (const tracked of input.trackedSessions) {
     const sessionId = normalizeOptionalString(tracked.happySessionId);
     if (!sessionId) continue;
+    const persistedSessionMetadata = await input.resolvePersistedSessionMetadata?.({ sessionId }) ?? null;
+    const replayMetadata = persistedSessionMetadata ?? tracked.happySessionMetadataFromLocalWebhook;
+    if (!isSessionContinuationRecoveryBlockingPendingDrain(replayMetadata)) continue;
     attemptedSessionIds.push(sessionId);
     await input.resolvePendingContinuation({
       sessionId,
-      exactProviderContextAvailable: await resolveConnectedServiceContinuationProviderContextAvailability({ tracked }),
+      exactProviderContextAvailable: await resolveConnectedServiceContinuationProviderContextAvailability({
+        tracked,
+        persistedSessionMetadata,
+      }),
     });
   }
   return { attemptedSessionIds };

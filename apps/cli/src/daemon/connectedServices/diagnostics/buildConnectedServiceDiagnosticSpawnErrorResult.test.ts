@@ -6,9 +6,11 @@ import {
 } from '@happier-dev/protocol';
 
 import {
+  buildConnectedServiceCredentialSpawnErrorResult,
   buildConnectedServiceCredentialRefreshSpawnErrorResult,
   buildConnectedServiceMaterializationSpawnErrorResult,
 } from './buildConnectedServiceDiagnosticSpawnErrorResult';
+import { ConnectedServiceCredentialResolutionError } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 
 describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
   it('preserves first-class Claude materialization diagnostic codes on spawn failure', () => {
@@ -135,6 +137,42 @@ describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
       diagnostics: {
         reason: 'profile_action_required',
         refreshStatus: 'needs_reauth',
+      },
+    });
+  });
+
+  it('maps missing connected-service credentials to the reconnect-required spawn diagnostic', () => {
+    const result = buildConnectedServiceCredentialSpawnErrorResult({
+      agentId: 'claude',
+      error: new ConnectedServiceCredentialResolutionError({
+        serviceId: 'claude-subscription',
+        profileId: 'batiplus',
+      }),
+    });
+
+    expect(result).not.toBeNull();
+    if (!result) {
+      throw new Error('expected missing-credential spawn diagnostic');
+    }
+    expect(result).toMatchObject({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: 'connected_service_credential_reconnect_required',
+    });
+    expect(isConnectedServiceUxDiagnosticSpawnErrorDetail(result.errorDetail)).toBe(true);
+    if (!isConnectedServiceUxDiagnosticSpawnErrorDetail(result.errorDetail)) {
+      throw new Error('expected connected-service diagnostic spawn detail');
+    }
+    expect(result.errorDetail.uxDiagnostic).toMatchObject({
+      code: 'connected_service_credential_reconnect_required',
+      failurePhase: 'materialization',
+      source: 'spawn_resume',
+      serviceId: 'claude-subscription',
+      profileId: 'batiplus',
+      retryable: false,
+      suggestedActions: ['reconnect_profile', 'open_connected_accounts'],
+      diagnostics: {
+        reason: 'missing_credential',
       },
     });
   });

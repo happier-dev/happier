@@ -2,29 +2,283 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   buildConnectedServiceCredentialRecord,
+  buildProviderAccountUsageRecordId,
   ConnectedServiceQuotaSnapshotV1Schema,
-  openAccountScopedBlobCiphertext,
+  openProviderAccountUsageSnapshotCiphertext,
+  projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
+  ProviderAccountUsageSnapshotV1Schema,
   sealAccountScopedBlobCiphertext,
 } from '@happier-dev/protocol';
-import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol';
+import type {
+  ConnectedServiceQuotaSnapshotV1,
+  ProviderAccountUsageRecordKeyV1,
+  ProviderAccountUsageSnapshotV1,
+} from '@happier-dev/protocol';
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { resolveConnectedServiceAccountMode } from '@/cloud/connectedServices/resolveConnectedServiceAccountMode';
 import { createDaemonServerWorkBudget, createDaemonServerWorkScheduler } from '@/daemon/serverWork';
 import type { Credentials } from '@/persistence';
+import { createProviderAccountUsageStore } from '../accountUsage/store';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServiceChildEnvironment';
 import { ConnectedServiceQuotasCoordinator } from './ConnectedServiceQuotasCoordinator';
-import type { ConnectedServiceQuotaFetcher } from './types';
+import { ConnectedServiceQuotaFetchError, type ConnectedServiceQuotaFetcher } from './types';
 
 type QuotaApi = ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]['api'];
-type RegisterArgs = Parameters<QuotaApi['registerConnectedServiceQuotaSnapshotSealed']>[0];
+type ProviderSealedRegisterArgs = Parameters<NonNullable<QuotaApi['registerProviderAccountUsageSnapshotSealed']>>[0];
+type ProviderPlainRegisterArgs = Parameters<NonNullable<QuotaApi['registerProviderAccountUsageSnapshotPlain']>>[0];
 type FetchArgs = Parameters<ConnectedServiceQuotaFetcher['loadQuota']>[0];
 type SealedCredentialResponse = NonNullable<Awaited<ReturnType<QuotaApi['getConnectedServiceCredentialSealed']>>>;
 type SealedQuotaSnapshotResponse = NonNullable<Awaited<ReturnType<QuotaApi['getConnectedServiceQuotaSnapshotSealed']>>>;
+type ConnectedServiceAuthGroupResponse = NonNullable<Awaited<ReturnType<NonNullable<QuotaApi['getConnectedServiceAuthGroup']>>>>;
+type SameAccountFanoutStrategy = 'provider_account_id' | 'shared_group_auth_surface' | 'none';
+type RuntimeIdentityFanoutCoordinator = ConnectedServiceQuotasCoordinator & Readonly<{
+  recordRuntimeAccountIdentityFromSnapshot(input: Readonly<{
+    sessionId: string;
+    serviceId: 'openai-codex' | 'claude-subscription';
+    groupId: string | null;
+    profileId: string;
+    providerAccountId: string;
+    accountLabel: string | null;
+    observedAtMs: number;
+    source: 'runtime_quota_snapshot' | 'active_account_verification' | 'runtime_auth_failure_report';
+    proofStrength: 'exact' | 'weak';
+    groupGeneration: number | null;
+  }>): unknown;
+  recordAccountExhaustionAndFanout(input: Readonly<{
+    sourceSessionId: string;
+    serviceId: 'openai-codex' | 'claude-subscription';
+    groupId: string;
+    exhaustedProfileId: string;
+    providerAccountId: string;
+    resetAtMs: number | null;
+    reason: 'usage_limit';
+  }>): Promise<Readonly<{
+    status: 'recorded';
+    fanoutCandidates: number;
+      fanoutRequests: number;
+    }>>;
+  recordRuntimeUsageLimitExhaustionAndFanout(input: Readonly<{
+    sourceSessionId: string;
+    serviceId: 'openai-codex' | 'claude-subscription';
+    groupId: string | null;
+    exhaustedProfileId: string | null;
+    sourceProviderAccountId?: string | null;
+    sourceAccountLabel?: string | null;
+    sourceGroupGeneration?: number | null;
+    resetAtMs: number | null;
+  }>): Promise<Readonly<{
+    status: 'recorded';
+    fanoutCandidates: number;
+    fanoutRequests: number;
+  }>>;
+}>;
+
+function buildQuotaSnapshotFixture(input: Readonly<{
+  serviceId: ConnectedServiceQuotaSnapshotV1['serviceId'];
+  profileId: string;
+  now: number;
+  remainingPct: number;
+  resetsAt?: number;
+}>): ConnectedServiceQuotaSnapshotV1 {
+  return {
+    v: 1,
+    serviceId: input.serviceId,
+    profileId: input.profileId,
+    fetchedAt: input.now,
+    staleAfterMs: 300_000,
+    planLabel: 'Pro',
+    accountLabel: `${input.profileId}@example.com`,
+    meters: [{
+      meterId: 'weekly',
+      label: 'Weekly',
+      used: null,
+      limit: null,
+      unit: 'unknown',
+      utilizationPct: Math.max(0, Math.min(100, 100 - input.remainingPct)),
+      remainingPct: input.remainingPct,
+      resetsAt: input.resetsAt ?? input.now + 600_000,
+      status: 'ok',
+      details: {},
+    }],
+  };
+}
+
+function createSoftSwitchEligibilityFixture(input: Readonly<{
+  serviceId: ConnectedServiceQuotaSnapshotV1['serviceId'];
+  now: number;
+  groupId?: string;
+  activeProfileId?: string;
+  memberProfileIds?: readonly string[];
+  targetProfileIds?: readonly string[];
+}>): Readonly<{
+  runtimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore;
+  accountUsageStore: ReturnType<typeof createProviderAccountUsageStore>;
+  getConnectedServiceAuthGroup: QuotaApi['getConnectedServiceAuthGroup'];
+}> {
+  const groupId = input.groupId ?? 'team';
+  const activeProfileId = input.activeProfileId ?? 'active';
+  const targetProfileIds = input.targetProfileIds ?? ['backup'];
+  const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+  const accountUsageStore = createProviderAccountUsageStore();
+  for (const profileId of targetProfileIds) {
+    const snapshot = buildQuotaSnapshotFixture({
+      serviceId: input.serviceId,
+      profileId,
+      now: input.now,
+      remainingPct: 90,
+    });
+    runtimeQuotaSnapshots.recordSnapshot({
+      serviceId: input.serviceId,
+      groupId,
+      profileId,
+      snapshot,
+    });
+    recordGroupMemberAccountUsageFixture(accountUsageStore, {
+      snapshot: buildConnectedGroupProviderAccountUsageSnapshot({
+        profileId,
+        groupGeneration: 1,
+        now: input.now,
+        remainingPct: 90,
+      }),
+      serviceId: input.serviceId,
+      groupId,
+      profileId,
+      groupGeneration: 1,
+    });
+  }
+  const profileIds = Array.from(new Set([activeProfileId, ...(input.memberProfileIds ?? []), ...targetProfileIds]));
+  return {
+    runtimeQuotaSnapshots,
+    accountUsageStore,
+    getConnectedServiceAuthGroup: vi.fn(async (): Promise<ConnectedServiceAuthGroupResponse> => ({
+      v: 1,
+      serviceId: input.serviceId,
+      groupId,
+      displayName: 'Team',
+      activeProfileId,
+      generation: 1,
+      policy: {
+        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+        autoSwitch: true,
+        strategy: 'least_limited',
+        cooldownMs: 500,
+        softSwitchRemainingPercent: 15,
+      },
+      state: { v: 1 },
+      members: profileIds.map((profileId, index) => ({
+        v: 1,
+        serviceId: input.serviceId,
+        groupId,
+        profileId,
+        priority: index,
+        enabled: true,
+        state: {},
+        createdAt: index + 1,
+        updatedAt: index + 1,
+      })),
+      createdAt: 1,
+      updatedAt: 2,
+    })),
+  };
+}
+
+function buildConnectedGroupProviderAccountUsageSnapshot(input: Readonly<{
+  profileId: string;
+  now: number;
+  remainingPct: number;
+  resetAtMs?: number | null;
+  groupGeneration?: number;
+}>): ProviderAccountUsageSnapshotV1 {
+  const recordKey: ProviderAccountUsageRecordKeyV1 = {
+    providerId: 'codex',
+    accountSubjectId: `acct_${input.profileId}`,
+    subjectKind: 'account',
+    quotaScope: 'account',
+  };
+  return {
+    v: 1,
+    recordId: buildProviderAccountUsageRecordId(recordKey),
+    recordKey,
+    providerId: recordKey.providerId,
+    accountSubject: {
+      kind: 'providerSubject',
+      id: recordKey.accountSubjectId,
+    },
+    observedAtMs: input.now,
+    fetchedAtMs: input.now,
+    staleAfterMs: 300_000,
+    source: 'runtimeSignal',
+    confidence: 'confirmed',
+    state: 'loaded_data',
+    planLabel: 'Pro',
+    accountLabel: `${input.profileId}@example.com`,
+    meters: [{
+      meterId: 'weekly',
+      label: 'Weekly',
+      used: null,
+      limit: null,
+      unit: 'unknown',
+      utilizationPct: 100 - input.remainingPct,
+      remainingPct: input.remainingPct,
+      resetsAt: input.resetAtMs ?? null,
+      status: 'ok',
+      details: { limitCategory: 'usage_limit' },
+    }],
+  };
+}
+
+function buildConnectedGroupProviderAccountUsageObservation(input: Readonly<{
+  profileId: string;
+  groupGeneration?: number;
+}>) {
+  return {
+    sources: [{
+      serviceId: 'openai-codex' as const,
+      profileId: input.profileId,
+      bindingKind: 'group_member' as const,
+      groupId: 'team',
+      ...(input.groupGeneration === undefined ? {} : { groupGeneration: input.groupGeneration }),
+    }],
+  };
+}
+
+function recordGroupMemberAccountUsageFixture(
+  store: ReturnType<typeof createProviderAccountUsageStore>,
+  input: Readonly<{
+    snapshot: ProviderAccountUsageSnapshotV1;
+    serviceId: ConnectedServiceQuotaSnapshotV1['serviceId'];
+    groupId: string;
+    profileId: string;
+    groupGeneration?: number;
+  }>,
+): void {
+  store.recordSnapshot(input.snapshot, {
+    sources: [{
+      serviceId: input.serviceId,
+      profileId: input.profileId,
+      bindingKind: 'group_member',
+      groupId: input.groupId,
+      ...(input.groupGeneration === undefined ? {} : { groupGeneration: input.groupGeneration }),
+    }],
+  });
+}
 
 describe('ConnectedServiceQuotasCoordinator', () => {
+  it('does not keep the obsolete account-usage-to-runtime-quota switch projection path active', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('./ConnectedServiceQuotasCoordinator.ts', import.meta.url)),
+      'utf8',
+    );
+
+    expect(source).not.toContain('buildSwitchRuntimeQuotaSnapshotsFromAccountUsage');
+  });
+
   function createJwtWithSub(sub: string, marker: string): string {
     const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
     const payload = Buffer.from(JSON.stringify({ sub, marker })).toString('base64url');
@@ -61,15 +315,19 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         providerEmail: 'user@example.com',
       },
     });
-
+    const softSwitchEligibility = createSoftSwitchEligibilityFixture({
+      serviceId: 'openai-codex',
+      now,
+    });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {}),
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async () => {}),
+      getConnectedServiceAuthGroup: softSwitchEligibility.getConnectedServiceAuthGroup,
     } as unknown as QuotaApi;
 
     const fetcher: ConnectedServiceQuotaFetcher = {
@@ -106,8 +364,243 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     expect((api as any).getAccountEncryptionMode).toHaveBeenCalled();
     expect((api as any).getConnectedServiceCredentialPlain).toHaveBeenCalledWith({ serviceId: 'openai-codex', profileId: 'work' });
-    expect((api as any).registerConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(1);
-    expect((api as any).registerConnectedServiceQuotaSnapshotSealed).toHaveBeenCalledTimes(0);
+    expect((api as any).registerProviderAccountUsageSnapshotPlain).toHaveBeenCalledWith(expect.objectContaining({
+      source: {
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        bindingKind: 'profile',
+      },
+      content: {
+        t: 'plain',
+        v: expect.objectContaining({
+          providerId: 'openai-codex',
+          planLabel: 'Pro',
+          accountLabel: 'user@example.com',
+        }),
+      },
+      metadata: expect.objectContaining({
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        status: 'ok',
+      }),
+    }));
+    expect((api as any).registerProviderAccountUsageSnapshotSealed).toHaveBeenCalledTimes(0);
+  });
+
+  it('consumes recovery credits through the quota fetcher and persists a refreshed plaintext snapshot', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+    const softSwitchEligibility = createSoftSwitchEligibilityFixture({
+      serviceId: 'openai-codex',
+      now,
+    });
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {}),
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async () => {}),
+      getConnectedServiceAuthGroup: softSwitchEligibility.getConnectedServiceAuthGroup,
+    } as unknown as QuotaApi;
+
+    const refreshedSnapshot: ConnectedServiceQuotaSnapshotV1 = {
+      v: 1,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      fetchedAt: now + 1,
+      staleAfterMs: 300_000,
+      planLabel: 'Pro',
+      accountLabel: 'user@example.com',
+      recoveryCredits: {
+        availableCount: 0,
+        credits: [],
+      },
+      meters: [],
+    };
+    const consumeRecoveryCredit = vi.fn(async () => {});
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      consumeRecoveryCredit,
+      loadQuota: vi.fn(async (): Promise<ConnectedServiceQuotaSnapshotV1 | null> => refreshedSnapshot),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+    });
+
+    const result = await coordinator.consumeRecoveryCreditForProfile({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      idempotencyKey: 'consume:work:credit-1',
+      providerCreditId: 'credit-1',
+    });
+    const replayed = await coordinator.consumeRecoveryCreditForProfile({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      idempotencyKey: 'consume:work:credit-1',
+      providerCreditId: 'credit-1',
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      receipt: {
+        idempotencyKey: 'consume:work:credit-1',
+        providerCreditId: 'credit-1',
+        status: 'consumed',
+      },
+      snapshot: refreshedSnapshot,
+    });
+    expect(replayed).toEqual(result);
+    expect(consumeRecoveryCredit).toHaveBeenCalledTimes(1);
+    expect(consumeRecoveryCredit).toHaveBeenCalledWith(expect.objectContaining({
+      record,
+      now,
+      idempotencyKey: 'consume:work:credit-1',
+      providerCreditId: 'credit-1',
+      signal: expect.any(AbortSignal),
+    }));
+    expect(fetcher.loadQuota).toHaveBeenCalledWith(expect.objectContaining({
+      record,
+      now,
+      signal: expect.any(AbortSignal),
+    }));
+    expect((api as any).registerProviderAccountUsageSnapshotPlain).toHaveBeenCalledWith(expect.objectContaining({
+      source: {
+        serviceId: 'openai-codex',
+        profileId: 'work',
+        bindingKind: 'profile',
+      },
+      content: {
+        t: 'plain',
+        v: expect.objectContaining({
+          providerId: 'openai-codex',
+          recoveryCredits: refreshedSnapshot.recoveryCredits,
+        }),
+      },
+      metadata: expect.objectContaining({
+        fetchedAt: refreshedSnapshot.fetchedAt,
+        staleAfterMs: refreshedSnapshot.staleAfterMs,
+        status: 'ok',
+      }),
+    }));
+  });
+
+  it('keeps the consume receipt idempotent when refresh persistence fails after the provider spend', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {
+        throw new Error('persist failed');
+      }),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async () => {}),
+    } as unknown as QuotaApi;
+
+    const refreshedSnapshot: ConnectedServiceQuotaSnapshotV1 = {
+      v: 1,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      fetchedAt: now + 1,
+      staleAfterMs: 300_000,
+      planLabel: 'Pro',
+      accountLabel: 'user@example.com',
+      recoveryCredits: {
+        availableCount: 0,
+        credits: [],
+      },
+      meters: [],
+    };
+    const consumeRecoveryCredit = vi.fn(async () => ({
+      idempotencyKey: 'consume:work:credit-1',
+      providerCreditId: 'credit-1',
+      status: 'consumed' as const,
+    }));
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      consumeRecoveryCredit,
+      loadQuota: vi.fn(async (): Promise<ConnectedServiceQuotaSnapshotV1 | null> => refreshedSnapshot),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+    });
+
+    const result = await coordinator.consumeRecoveryCreditForProfile({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      idempotencyKey: 'consume:work:credit-1',
+      providerCreditId: 'credit-1',
+    });
+    const replayed = await coordinator.consumeRecoveryCreditForProfile({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      idempotencyKey: 'consume:work:credit-1',
+      providerCreditId: 'credit-1',
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: 'connected_service_quota_recovery_credit_failed',
+      receipt: {
+        idempotencyKey: 'consume:work:credit-1',
+        providerCreditId: 'credit-1',
+        status: 'consumed',
+      },
+    });
+    expect(replayed).toEqual(result);
+    expect(consumeRecoveryCredit).toHaveBeenCalledTimes(1);
   });
 
   it('defers in-band durable persistence while account mode is unknown', async () => {
@@ -116,8 +609,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getAccountEncryptionMode: vi.fn(async () => 'unknown' as const),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
     } as unknown as QuotaApi;
 
     const coordinator = new ConnectedServiceQuotasCoordinator({
@@ -148,8 +639,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     expect(result).toEqual({ status: 'enqueued', enqueue: 'accepted' });
     await (coordinator as any).flushInBandQuotaPersistence(100);
-    expect((api as any).registerConnectedServiceQuotaSnapshotSealed).toHaveBeenCalledTimes(0);
-    expect((api as any).registerConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(0);
   });
 
   it('suppresses in-band quota snapshots whose embedded service id does not match the write key', async () => {
@@ -159,8 +648,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {}),
     } as unknown as QuotaApi;
 
     const coordinator = new ConnectedServiceQuotasCoordinator({
@@ -190,9 +678,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       },
     })).resolves.toEqual({ status: 'suppressed', reason: 'service_id_mismatch' });
     await coordinator.flushInBandQuotaPersistence(1_000);
-
-    expect((api as any).registerConnectedServiceQuotaSnapshotSealed).toHaveBeenCalledTimes(0);
-    expect((api as any).registerConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(0);
     expect(runtimeQuotaSnapshots.buildMemberStates({
       serviceId: 'openai-codex',
       groupId: 'group-1',
@@ -200,14 +685,13 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     }).size).toBe(0);
   });
 
-  it('does not persist unchanged in-band quota snapshots every five seconds by default', async () => {
+  it('suppresses unchanged in-band quota snapshots after the cadence window when the material is identical', async () => {
     let now = 1_000_000;
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {}),
     } as unknown as QuotaApi;
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api,
@@ -219,6 +703,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       now: () => now,
       randomBytes: (length: number) => randomBytes(length),
     });
+    const firstFetchedAt = now;
     const makeSnapshot = (fetchedAt: number): ConnectedServiceQuotaSnapshotV1 => ({
       v: 1,
       serviceId: 'openai-codex',
@@ -244,7 +729,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await expect(coordinator.recordInBandQuotaSnapshot({
       serviceId: 'openai-codex',
       profileId: 'work',
-      snapshot: makeSnapshot(now),
+      snapshot: makeSnapshot(firstFetchedAt),
     })).resolves.toEqual({ status: 'enqueued', enqueue: 'accepted' });
     await coordinator.flushInBandQuotaPersistence(1_000);
 
@@ -252,11 +737,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await expect(coordinator.recordInBandQuotaSnapshot({
       serviceId: 'openai-codex',
       profileId: 'work',
-      snapshot: makeSnapshot(now),
+      snapshot: makeSnapshot(firstFetchedAt),
     })).resolves.toEqual({ status: 'suppressed', reason: 'unchanged_fresh' });
     await coordinator.flushInBandQuotaPersistence(1_000);
 
-    expect((api as any).registerConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(1);
+    expect((api as any).registerProviderAccountUsageSnapshotPlain).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a server refresh marker material after a background read so the next in-band snapshot persists', async () => {
@@ -316,10 +801,9 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         },
       })),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {}),
     } as unknown as QuotaApi;
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
@@ -358,7 +842,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     })).resolves.toEqual({ status: 'enqueued', enqueue: 'accepted' });
     await coordinator.flushInBandQuotaPersistence(1_000);
 
-    expect((api as any).registerConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(2);
+    expect((api as any).registerProviderAccountUsageSnapshotPlain).toHaveBeenCalledTimes(2);
   });
 
   it('moves in-band quota persistence to the hydrated account scope after credentials gain a JWT', async () => {
@@ -371,10 +855,9 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
       getConnectedServiceCredentialPlain: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {}),
     } as unknown as QuotaApi;
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api,
@@ -422,7 +905,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     })).resolves.toEqual({ status: 'enqueued', enqueue: 'accepted' });
     await coordinator.flushInBandQuotaPersistence(1_000);
 
-    expect((api as any).registerConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(2);
+    expect((api as any).registerProviderAccountUsageSnapshotPlain).toHaveBeenCalledTimes(2);
   });
 
   it('does not pause same-fingerprint in-band persistence after account mode recovers', async () => {
@@ -437,10 +920,9 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       }),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
       getConnectedServiceCredentialPlain: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {}),
     } as unknown as QuotaApi;
 
     const coordinator = new ConnectedServiceQuotasCoordinator({
@@ -489,7 +971,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await vi.advanceTimersByTimeAsync(100);
     await recoveryFlush;
 
-    expect((api as any).registerConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(1);
+    expect((api as any).registerProviderAccountUsageSnapshotPlain).toHaveBeenCalledTimes(1);
   });
 
   it('refreshes account mode at in-band flush time before choosing quota storage mode', async () => {
@@ -500,8 +982,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         .mockResolvedValueOnce('e2ee' as const),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {}),
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async () => {}),
     } as unknown as QuotaApi;
 
     await expect(resolveConnectedServiceAccountMode(api)).resolves.toBe('plain');
@@ -535,8 +1017,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await (coordinator as any).flushInBandQuotaPersistence(100);
 
     expect((api as any).getAccountEncryptionMode).toHaveBeenCalledTimes(2);
-    expect((api as any).registerConnectedServiceQuotaSnapshotSealed).toHaveBeenCalledTimes(1);
-    expect((api as any).registerConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(0);
+    expect((api as any).registerProviderAccountUsageSnapshotSealed).toHaveBeenCalledTimes(1);
+    expect((api as any).registerProviderAccountUsageSnapshotPlain).toHaveBeenCalledTimes(0);
   });
 
   it('does not double-count server-work retries for failed in-band quota writes', async () => {
@@ -549,8 +1031,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {
         throw createHttpStatusError(503, 'server unavailable');
       }),
     } as unknown as QuotaApi;
@@ -597,8 +1078,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {}),
     } as unknown as QuotaApi;
 
     const coordinator = new ConnectedServiceQuotasCoordinator({
@@ -642,13 +1122,14 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       },
     });
 
-    expect((api as any).registerConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(0);
+    expect((api as any).registerProviderAccountUsageSnapshotPlain).toHaveBeenCalledTimes(0);
     await (coordinator as any).flushInBandQuotaPersistence(100);
-    expect((api as any).registerConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(1);
-    expect((api as any).registerConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledWith(expect.objectContaining({
-      content: expect.objectContaining({
-        v: expect.objectContaining({ fetchedAt: now + 1, planLabel: 'Pro' }),
-      }),
+    expect((api as any).registerProviderAccountUsageSnapshotPlain).toHaveBeenCalledTimes(1);
+    expect((api as any).registerProviderAccountUsageSnapshotPlain).toHaveBeenCalledWith(expect.objectContaining({
+      content: {
+        t: 'plain',
+        v: expect.objectContaining({ fetchedAtMs: now + 1, planLabel: 'Pro' }),
+      },
       metadata: expect.objectContaining({ materialFingerprint: expect.any(String) }),
     }));
   });
@@ -685,10 +1166,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       }),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
     } as unknown as QuotaApi;
 
     const fetcher: ConnectedServiceQuotaFetcher = {
@@ -729,11 +1208,9 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect((api as any).getConnectedServiceCredentialPlain).not.toHaveBeenCalled();
     expect((api as any).getConnectedServiceCredentialSealed).not.toHaveBeenCalled();
     expect(fetcher.loadQuota).not.toHaveBeenCalled();
-    expect((api as any).registerConnectedServiceQuotaSnapshotPlain).not.toHaveBeenCalled();
-    expect((api as any).registerConnectedServiceQuotaSnapshotSealed).toHaveBeenCalledTimes(0);
   });
 
-  it('routes polling quota snapshot writes through daemon server work', async () => {
+  it('routes polling quota snapshot writes through canonical account usage when available', async () => {
     const now = 1_000_000;
 
     const credentials: Credentials = {
@@ -760,11 +1237,13 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
     } as unknown as QuotaApi;
+    const accountUsageStore = createProviderAccountUsageStore();
+    const accountUsagePersistence = {
+      recordInBandSnapshot: vi.fn(async () => ({ status: 'enqueued' as const, enqueue: 'accepted' as const })),
+    };
     const serverWorkScheduler = {
       enqueue: vi.fn(async (request) => {
         await request.run(request.payload);
@@ -799,6 +1278,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       now: () => now,
       randomBytes: (length: number) => randomBytes(length),
       serverWorkScheduler,
+      accountUsageStore,
+      accountUsagePersistence,
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      accountUsagePersistence: typeof accountUsagePersistence;
     });
 
     coordinator.registerSpawnTarget({
@@ -811,17 +1294,113 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     await coordinator.tickOnce();
 
-    expect(serverWorkScheduler.enqueue).toHaveBeenCalledWith(expect.objectContaining({
-      purpose: 'connectedServiceQuotaPersistence',
-      kind: 'latestStateWrite',
-      key: expect.any(String),
-      payload: expect.objectContaining({
-        serviceId: 'openai-codex',
-        profileId: 'work',
-        materialFingerprint: expect.any(String),
+    expect(accountUsagePersistence.recordInBandSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerId: 'openai-codex',
+        planLabel: 'Pro',
       }),
-    }));
-    expect((api as any).registerConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(1);
+      {
+        sources: [
+          {
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            bindingKind: 'profile',
+          },
+        ],
+      },
+    );
+    expect(accountUsageStore.listSnapshots()).toHaveLength(1);
+    expect(serverWorkScheduler.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('records fetched quota snapshots under the credential provider account when the provider omits active account id', async () => {
+    const now = 1_000_000;
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'credential-provider-account',
+        providerEmail: 'user@example.com',
+      },
+    });
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const accountUsageStore = createProviderAccountUsageStore();
+    const accountUsagePersistence = {
+      recordInBandSnapshot: vi.fn(async () => ({ status: 'enqueued' as const, enqueue: 'accepted' as const })),
+    };
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: inputRecord.serviceId,
+        profileId: inputRecord.profileId,
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'user@example.com',
+        meters: [],
+      })),
+    };
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      accountUsageStore,
+      accountUsagePersistence,
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      accountUsagePersistence: typeof accountUsagePersistence;
+    });
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { 'openai-codex': { source: 'connected', profileId: 'work' } },
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(accountUsagePersistence.recordInBandSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerId: 'openai-codex',
+        accountSubject: { kind: 'providerSubject', id: 'credential-provider-account' },
+        recordKey: expect.objectContaining({
+          accountSubjectId: 'credential-provider-account',
+          subjectKind: 'account',
+        }),
+      }),
+      {
+        sources: [
+          {
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            bindingKind: 'profile',
+          },
+        ],
+      },
+    );
   });
 
   it('fetches and uploads sealed quota snapshots for active bindings', async () => {
@@ -866,7 +1445,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const api = {
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async (params: RegisterArgs) => {
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: ProviderSealedRegisterArgs) => {
         uploadedCiphertext = params.sealed.ciphertext;
         uploadedStatus = params.metadata?.status ?? null;
       }),
@@ -917,22 +1496,202 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await coordinator.tickOnce();
 
     expect(fetcher.loadQuota).toHaveBeenCalledTimes(1);
-    expect(api.registerConnectedServiceQuotaSnapshotSealed).toHaveBeenCalledTimes(1);
+    expect(api.registerProviderAccountUsageSnapshotSealed).toHaveBeenCalledTimes(1);
     expect(typeof uploadedCiphertext).toBe('string');
     expect(uploadedStatus).toBe('ok');
 
-    const opened = openAccountScopedBlobCiphertext({
-      kind: 'connected_service_quota_snapshot',
+    const opened = openProviderAccountUsageSnapshotCiphertext({
       material: { type: 'legacy', secret: credentials.encryption.secret },
       ciphertext: uploadedCiphertext ?? '',
     });
     expect(opened?.value).toBeTruthy();
-    const parsed = ConnectedServiceQuotaSnapshotV1Schema.safeParse(opened?.value);
+    const parsed = ProviderAccountUsageSnapshotV1Schema.safeParse(opened?.value);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
-      expect(parsed.data.serviceId).toBe('openai-codex');
-      expect(parsed.data.profileId).toBe('work');
+      expect(parsed.data.providerId).toBe('openai-codex');
+      expect(projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1({
+        snapshot: parsed.data,
+        source: {
+          serviceId: 'openai-codex',
+          profileId: 'work',
+          bindingKind: 'profile',
+        },
+      })).toEqual(expect.objectContaining({
+        serviceId: 'openai-codex',
+        profileId: 'work',
+      }));
     }
+  });
+
+  it('does not source-link provider-account usage when the fetched provider account differs from the credential profile', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct-connected-profile',
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    const sealedCredentialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const sealedCredential: SealedCredentialResponse = {
+      sealed: { format: 'account_scoped_v1', ciphertext: sealedCredentialCiphertext },
+      metadata: { kind: 'oauth' },
+    };
+    const uploads: ProviderSealedRegisterArgs[] = [];
+    const api = {
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: ProviderSealedRegisterArgs) => {
+        uploads.push(params);
+      }),
+    } satisfies QuotaApi;
+
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: inputRecord.serviceId,
+        profileId: inputRecord.profileId,
+        providerId: 'codex',
+        activeAccountId: 'acct-observed-provider',
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'other@example.com',
+        meters: [],
+      })),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+    });
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { 'openai-codex': { source: 'connected', profileId: 'work' } },
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(api.registerProviderAccountUsageSnapshotSealed).toHaveBeenCalledTimes(1);
+    const uploaded = uploads[0];
+    expect(uploaded).toBeDefined();
+    if (!uploaded) throw new Error('expected uploaded provider usage snapshot');
+    expect(uploaded.recordKey.accountSubjectId).toBe('acct-observed-provider');
+    expect(uploaded.source).toBeUndefined();
+  });
+
+  it('does not source-link provider-account usage without proven source provider identity', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: null,
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    const sealedCredentialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const sealedCredential: SealedCredentialResponse = {
+      sealed: { format: 'account_scoped_v1', ciphertext: sealedCredentialCiphertext },
+      metadata: { kind: 'oauth' },
+    };
+    const uploads: ProviderSealedRegisterArgs[] = [];
+    const api = {
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: ProviderSealedRegisterArgs) => {
+        uploads.push(params);
+      }),
+    } satisfies QuotaApi;
+
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: inputRecord.serviceId,
+        profileId: inputRecord.profileId,
+        providerId: 'codex',
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'user@example.com',
+        meters: [],
+      })),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+    });
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { 'openai-codex': { source: 'connected', profileId: 'work' } },
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(api.registerProviderAccountUsageSnapshotSealed).toHaveBeenCalledTimes(1);
+    const uploaded = uploads[0];
+    expect(uploaded).toBeDefined();
+    if (!uploaded) throw new Error('expected uploaded provider usage snapshot');
+    expect(uploaded.recordKey.subjectKind).toBe('unknown');
+    expect(uploaded.source).toBeUndefined();
   });
 
   it('uses resolved group active profiles from child selections when registering spawn targets', async () => {
@@ -975,7 +1734,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const api = {
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
     } satisfies QuotaApi;
 
     const fetcher: ConnectedServiceQuotaFetcher = {
@@ -1061,15 +1819,18 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         providerEmail: 'user@example.com',
       },
     });
+    const softSwitchEligibility = createSoftSwitchEligibilityFixture({
+      serviceId: 'openai-codex',
+      now,
+    });
 
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
+      getConnectedServiceAuthGroup: softSwitchEligibility.getConnectedServiceAuthGroup,
     } as unknown as QuotaApi;
 
     const fetcher: ConnectedServiceQuotaFetcher = {
@@ -1099,6 +1860,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       })),
     };
     const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2 }));
+    const diagnostics: unknown[] = [];
     const coordinatorParams = {
       api,
       credentials,
@@ -1106,8 +1868,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       now: () => now,
       randomBytes: (length: number) => randomBytes(length),
       discoveryEnabled: false,
+      runtimeQuotaSnapshots: softSwitchEligibility.runtimeQuotaSnapshots,
+      accountUsageStore: softSwitchEligibility.accountUsageStore,
       authGroupSwitchCoordinator: { switchBeforeTurn },
       groupSwitchCheckMinIntervalMs: 0,
+      recordDiagnostic: (event: unknown) => diagnostics.push(event),
     } satisfies ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
       authGroupSwitchCoordinator: { switchBeforeTurn: typeof switchBeforeTurn };
       groupSwitchCheckMinIntervalMs: number;
@@ -1150,6 +1915,1374 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       reason: 'soft_threshold',
       observedProfileId: 'active',
     });
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      event: 'quota_work_requested',
+      phase: 'soft_switch',
+      reason: 'soft_switch_requested',
+      sessionId: 'session-1',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      activeProfileId: 'active',
+      eligibilityStatus: 'eligible',
+      sourceProfileId: 'active',
+      sourceRemainingPercent: 5,
+      sourceThresholdPercent: 15,
+      selectedProfileId: 'backup',
+      selectedRemainingPercent: 90,
+      targetCount: 1,
+      allowedTargetCount: 1,
+    }));
+  });
+
+  it('uses canonical account usage instead of stale legacy runtime quota snapshots for proactive soft switching', async () => {
+    const now = 1_000_000;
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'active',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+    const softSwitchEligibility = createSoftSwitchEligibilityFixture({
+      serviceId: 'openai-codex',
+      now,
+    });
+    const accountUsageStore = createProviderAccountUsageStore();
+    accountUsageStore.recordSnapshot(
+      buildConnectedGroupProviderAccountUsageSnapshot({
+        profileId: 'active',
+        now,
+        remainingPct: 90,
+        groupGeneration: 1,
+      }),
+      buildConnectedGroupProviderAccountUsageObservation({ profileId: 'active', groupGeneration: 1 }),
+    );
+    accountUsageStore.recordSnapshot(
+      buildConnectedGroupProviderAccountUsageSnapshot({
+        profileId: 'backup',
+        now,
+        remainingPct: 5,
+        groupGeneration: 1,
+      }),
+      buildConnectedGroupProviderAccountUsageObservation({ profileId: 'backup', groupGeneration: 1 }),
+    );
+
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      getConnectedServiceAuthGroup: softSwitchEligibility.getConnectedServiceAuthGroup,
+    } as unknown as QuotaApi;
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: inputRecord.serviceId,
+        profileId: inputRecord.profileId,
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'active@example.com',
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: null,
+          limit: null,
+          unit: 'unknown',
+          utilizationPct: 95,
+          remainingPct: 5,
+          resetsAt: now + 60_000,
+          status: 'ok',
+          details: {},
+        }],
+      })),
+    };
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2 }));
+    const diagnostics: unknown[] = [];
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: false,
+      runtimeQuotaSnapshots: softSwitchEligibility.runtimeQuotaSnapshots,
+      accountUsageStore,
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      groupSwitchCheckMinIntervalMs: 0,
+      recordDiagnostic: (event: unknown) => diagnostics.push(event),
+    } satisfies ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      authGroupSwitchCoordinator: { switchBeforeTurn: typeof switchBeforeTurn };
+      groupSwitchCheckMinIntervalMs: number;
+    });
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      sessionId: 'session-1',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'group',
+            groupId: 'team',
+          },
+        },
+      },
+      connectedServiceSelectionsEnv: {
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+          kind: 'group',
+          serviceId: 'openai-codex',
+          groupId: 'team',
+          activeProfileId: 'active',
+          fallbackProfileId: 'backup',
+          generation: 1,
+        }]),
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(fetcher.loadQuota).toHaveBeenCalledTimes(1);
+    expect(switchBeforeTurn).not.toHaveBeenCalled();
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      event: 'quota_work_suppressed',
+      phase: 'soft_switch',
+      reason: 'soft_switch_no_meaningfully_better_target',
+    }));
+  });
+
+  it('does not fall back to runtime quota snapshots for same-account fanout eligibility when canonical account usage is cold', async () => {
+    const now = 1_000_000;
+    const softSwitchEligibility = createSoftSwitchEligibilityFixture({
+      serviceId: 'openai-codex',
+      now,
+    });
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api: {
+        getConnectedServiceAuthGroup: softSwitchEligibility.getConnectedServiceAuthGroup,
+      } as unknown as QuotaApi,
+      credentials: {
+        token: 'happy-token',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+      },
+      quotaFetchers: [],
+      runtimeQuotaSnapshots: softSwitchEligibility.runtimeQuotaSnapshots,
+      accountUsageStore: createProviderAccountUsageStore(),
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: false,
+    });
+    const resolveGroupSwitchTargetEligibility = (coordinator as unknown as {
+      resolveGroupSwitchTargetEligibility(input: Readonly<{
+        serviceId: 'openai-codex';
+        groupId: string;
+        purpose: 'same_account_fanout';
+      }>): Promise<Readonly<{ status: string; reason?: string }>>;
+    }).resolveGroupSwitchTargetEligibility.bind(coordinator);
+
+    await expect(resolveGroupSwitchTargetEligibility({
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      purpose: 'same_account_fanout',
+    })).resolves.toMatchObject({
+      status: 'unknown',
+      reason: 'source_account_usage_unavailable',
+    });
+  });
+
+  it('allows same-account fanout to choose a credential-valid fallback with unknown target quota when canonical source usage exists', async () => {
+    const now = 1_000_000;
+    const accountUsageStore = createProviderAccountUsageStore();
+    accountUsageStore.recordSnapshot(
+      buildConnectedGroupProviderAccountUsageSnapshot({
+        profileId: 'active',
+        now,
+        remainingPct: 0,
+        resetAtMs: now + 60_000,
+        groupGeneration: 1,
+      }),
+      buildConnectedGroupProviderAccountUsageObservation({ profileId: 'active', groupGeneration: 1 }),
+    );
+    const softSwitchEligibility = createSoftSwitchEligibilityFixture({
+      serviceId: 'openai-codex',
+      now,
+    });
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api: {
+        getConnectedServiceAuthGroup: softSwitchEligibility.getConnectedServiceAuthGroup,
+      } as unknown as QuotaApi,
+      credentials: {
+        token: 'happy-token',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+      },
+      quotaFetchers: [],
+      accountUsageStore,
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: false,
+    });
+    const resolveGroupSwitchTargetEligibility = (coordinator as unknown as {
+      resolveGroupSwitchTargetEligibility(input: Readonly<{
+        serviceId: 'openai-codex';
+        groupId: string;
+        purpose: 'same_account_fanout';
+      }>): Promise<Readonly<{ status: string; reason?: string; decisionTrace?: unknown }>>;
+    }).resolveGroupSwitchTargetEligibility.bind(coordinator);
+
+    await expect(resolveGroupSwitchTargetEligibility({
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      purpose: 'same_account_fanout',
+    })).resolves.toMatchObject({
+      status: 'eligible',
+      decisionTrace: {
+        candidates: expect.arrayContaining([
+          expect.objectContaining({
+            profileId: 'backup',
+            decision: 'selected',
+            quotaEvidence: { status: 'stale_or_missing' },
+          }),
+        ]),
+      },
+    });
+  });
+
+  it('does not use generationless account-usage group-member aliases as soft-switch target evidence', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const accountUsageStore = createProviderAccountUsageStore();
+    accountUsageStore.recordSnapshot(
+      buildConnectedGroupProviderAccountUsageSnapshot({
+        profileId: 'backup',
+        now,
+        remainingPct: 90,
+        resetAtMs: now + 600_000,
+      }),
+      buildConnectedGroupProviderAccountUsageObservation({ profileId: 'backup' }),
+    );
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'active',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct-active',
+        providerEmail: 'active@example.com',
+      },
+    });
+    const softSwitchEligibility = createSoftSwitchEligibilityFixture({
+      serviceId: 'openai-codex',
+      now,
+    });
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      getConnectedServiceAuthGroup: softSwitchEligibility.getConnectedServiceAuthGroup,
+    } as unknown as QuotaApi;
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: inputRecord.serviceId,
+        profileId: inputRecord.profileId,
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'active@example.com',
+        activeAccountId: 'acct-active',
+        confidence: 'exact',
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: null,
+          limit: null,
+          unit: 'unknown',
+          utilizationPct: 95,
+          remainingPct: 5,
+          resetsAt: now + 60_000,
+          status: 'ok',
+          details: {},
+        }],
+      })),
+    };
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2 }));
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: false,
+      accountUsageStore,
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      groupSwitchCheckMinIntervalMs: 0,
+    } satisfies ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      authGroupSwitchCoordinator: { switchBeforeTurn: typeof switchBeforeTurn };
+      groupSwitchCheckMinIntervalMs: number;
+    });
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      sessionId: 'session-1',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'group',
+            groupId: 'team',
+          },
+        },
+      },
+      connectedServiceSelectionsEnv: {
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+          kind: 'group',
+          serviceId: 'openai-codex',
+          groupId: 'team',
+          activeProfileId: 'active',
+          fallbackProfileId: 'backup',
+          generation: 1,
+        }]),
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(switchBeforeTurn).not.toHaveBeenCalled();
+  });
+
+  it('suppresses proactive soft-threshold switching when no different group member is eligible', async () => {
+    let now = 1_000_000;
+    const resetAtMs = now + 600_000;
+    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const accountUsageStore = createProviderAccountUsageStore();
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'active',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct-active',
+        providerEmail: 'active@example.com',
+      },
+    });
+    const memberStates = new Map<string, Record<string, unknown>>([
+      ['active', {
+        quotaExhaustedUntilMs: resetAtMs,
+        lastFailureKind: 'usage_limit',
+        lastObservedAtMs: now - 1_000,
+        providerResetsAtMs: resetAtMs,
+      }],
+      ['backup', {
+        quotaExhaustedUntilMs: resetAtMs,
+        lastFailureKind: 'usage_limit',
+        lastObservedAtMs: now - 1_000,
+        providerResetsAtMs: resetAtMs,
+      }],
+    ]);
+    recordGroupMemberAccountUsageFixture(accountUsageStore, {
+      snapshot: buildConnectedGroupProviderAccountUsageSnapshot({
+        profileId: 'backup',
+        now,
+        remainingPct: 0,
+        resetAtMs,
+        groupGeneration: 1,
+      }),
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'backup',
+      groupGeneration: 1,
+    });
+    const buildGroup = () => ({
+      v: 1,
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      displayName: 'Team',
+      activeProfileId: 'active',
+      generation: 1,
+      policy: {
+        v: 1,
+        autoSwitch: true,
+        strategy: 'priority',
+        cooldownMs: 500,
+      },
+      state: { v: 1 },
+      members: ['active', 'backup'].map((profileId, index) => ({
+        v: 1,
+        serviceId: 'openai-codex',
+        groupId: 'team',
+        profileId,
+        priority: index,
+        enabled: true,
+        state: memberStates.get(profileId) ?? {},
+        createdAt: index + 1,
+        updatedAt: index + 1,
+      })),
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      getConnectedServiceAuthGroup: vi.fn(async () => buildGroup()),
+    } as unknown as QuotaApi;
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: inputRecord.serviceId,
+        profileId: inputRecord.profileId,
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'active@example.com',
+        meters: [
+          {
+            meterId: 'weekly',
+            label: 'Weekly',
+            used: null,
+            limit: null,
+            unit: 'unknown',
+            utilizationPct: 95,
+            remainingPct: 5,
+            resetsAt: resetAtMs,
+            status: 'ok',
+            details: {},
+          },
+        ],
+      })),
+    };
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2 }));
+    const recordDiagnostic = vi.fn();
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: false,
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      groupSwitchCheckMinIntervalMs: 0,
+      accountUsageStore,
+      runtimeQuotaSnapshots,
+      recordDiagnostic,
+    });
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      sessionId: 'session-1',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'group',
+            groupId: 'team',
+          },
+        },
+      },
+      connectedServiceSelectionsEnv: {
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+          kind: 'group',
+          serviceId: 'openai-codex',
+          groupId: 'team',
+          activeProfileId: 'active',
+          fallbackProfileId: 'backup',
+          generation: 1,
+        }]),
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(switchBeforeTurn).not.toHaveBeenCalled();
+    expect(recordDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'quota_work_suppressed',
+      phase: 'soft_switch',
+      reason: 'group_exhausted_no_eligible_target',
+      retryAfterMs: resetAtMs - now,
+      decisionTrace: expect.objectContaining({
+        activeProfileId: 'active',
+        reason: 'no_eligible_members',
+        candidates: expect.arrayContaining([
+          expect.objectContaining({
+            profileId: 'active',
+            decision: 'excluded',
+            exclusionReason: 'current_active',
+          }),
+          expect.objectContaining({
+            profileId: 'backup',
+            decision: 'excluded',
+            exclusionReason: 'quota_exhausted',
+            retryAtMs: resetAtMs,
+          }),
+        ]),
+      }),
+    }));
+
+    now = resetAtMs - 1;
+    memberStates.set('backup', {});
+    await coordinator.tickOnce();
+    expect(switchBeforeTurn).not.toHaveBeenCalled();
+
+  });
+
+  it('suppresses proactive soft-threshold switching when the only different target is not meaningfully better', async () => {
+    let now = 1_000_000;
+    const resetAtMs = now + 600_000;
+    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const accountUsageStore = createProviderAccountUsageStore();
+    runtimeQuotaSnapshots.recordSnapshot({
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'backup',
+      snapshot: {
+        v: 1,
+        serviceId: 'openai-codex',
+        profileId: 'backup',
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'backup@example.com',
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: null,
+          limit: null,
+          unit: 'unknown',
+          utilizationPct: 90,
+          remainingPct: 10,
+          resetsAt: resetAtMs,
+          status: 'ok',
+          details: {},
+        }],
+      },
+    });
+    recordGroupMemberAccountUsageFixture(accountUsageStore, {
+      snapshot: buildConnectedGroupProviderAccountUsageSnapshot({
+        profileId: 'backup',
+        now,
+        remainingPct: 10,
+        resetAtMs,
+        groupGeneration: 1,
+      }),
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'backup',
+      groupGeneration: 1,
+    });
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'active',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct-active',
+        providerEmail: 'active@example.com',
+      },
+    });
+    const buildGroup = () => ({
+      v: 1,
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      displayName: 'Team',
+      activeProfileId: 'active',
+      generation: 1,
+      policy: {
+        v: 1,
+        autoSwitch: true,
+        strategy: 'priority',
+        cooldownMs: 500,
+        softSwitchRemainingPercent: 15,
+      },
+      state: { v: 1 },
+      members: ['active', 'backup'].map((profileId, index) => ({
+        v: 1,
+        serviceId: 'openai-codex',
+        groupId: 'team',
+        profileId,
+        priority: index,
+        enabled: true,
+        state: {},
+        createdAt: index + 1,
+        updatedAt: index + 1,
+      })),
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      getConnectedServiceAuthGroup: vi.fn(async () => buildGroup()),
+    } as unknown as QuotaApi;
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: inputRecord.serviceId,
+        profileId: inputRecord.profileId,
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'active@example.com',
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: null,
+          limit: null,
+          unit: 'unknown',
+          utilizationPct: 95,
+          remainingPct: 5,
+          resetsAt: resetAtMs,
+          status: 'ok',
+          details: {},
+        }],
+      })),
+    };
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2 }));
+    const recordDiagnostic = vi.fn();
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: false,
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      groupSwitchCheckMinIntervalMs: 0,
+      accountUsageStore,
+      runtimeQuotaSnapshots,
+      recordDiagnostic,
+    });
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      sessionId: 'session-1',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'group',
+            groupId: 'team',
+          },
+        },
+      },
+      connectedServiceSelectionsEnv: {
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+          kind: 'group',
+          serviceId: 'openai-codex',
+          groupId: 'team',
+          activeProfileId: 'active',
+          fallbackProfileId: 'backup',
+          generation: 1,
+        }]),
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(switchBeforeTurn).not.toHaveBeenCalled();
+    expect(recordDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'quota_work_suppressed',
+      phase: 'soft_switch',
+      reason: 'soft_switch_no_meaningfully_better_target',
+      retryAfterMs: resetAtMs - now,
+      decisionTrace: expect.objectContaining({
+        activeProfileId: 'active',
+        reason: 'selected',
+        candidates: expect.arrayContaining([
+          expect.objectContaining({
+            profileId: 'active',
+            decision: 'excluded',
+            exclusionReason: 'current_active',
+          }),
+          expect.objectContaining({
+            profileId: 'backup',
+            decision: 'selected',
+          }),
+        ]),
+      }),
+    }));
+
+    now = resetAtMs + 1;
+    runtimeQuotaSnapshots.recordSnapshot({
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'backup',
+      snapshot: {
+        v: 1,
+        serviceId: 'openai-codex',
+        profileId: 'backup',
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'backup@example.com',
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: null,
+          limit: null,
+          unit: 'unknown',
+          utilizationPct: 10,
+          remainingPct: 90,
+          resetsAt: now + 600_000,
+          status: 'ok',
+          details: {},
+        }],
+      },
+    });
+    recordGroupMemberAccountUsageFixture(accountUsageStore, {
+      snapshot: buildConnectedGroupProviderAccountUsageSnapshot({
+        profileId: 'backup',
+        now,
+        remainingPct: 90,
+        resetAtMs: now + 600_000,
+        groupGeneration: 1,
+      }),
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'backup',
+      groupGeneration: 1,
+    });
+    await coordinator.tickOnce();
+
+    expect(switchBeforeTurn).toHaveBeenCalledTimes(1);
+    expect(switchBeforeTurn).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      reason: 'soft_threshold',
+      observedProfileId: 'active',
+    });
+  });
+
+  it('suppresses proactive soft-threshold switching when the active profile remains above the threshold', async () => {
+    const now = 1_000_000;
+    const resetAtMs = now + 600_000;
+    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const accountUsageStore = createProviderAccountUsageStore();
+    runtimeQuotaSnapshots.recordSnapshot({
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'backup',
+      snapshot: {
+        v: 1,
+        serviceId: 'openai-codex',
+        profileId: 'backup',
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'backup@example.com',
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: null,
+          limit: null,
+          unit: 'unknown',
+          utilizationPct: 25,
+          remainingPct: 75,
+          resetsAt: resetAtMs,
+          status: 'ok',
+          details: {},
+        }],
+      },
+    });
+    recordGroupMemberAccountUsageFixture(accountUsageStore, {
+      snapshot: buildConnectedGroupProviderAccountUsageSnapshot({
+        profileId: 'backup',
+        now,
+        remainingPct: 75,
+        resetAtMs,
+        groupGeneration: 1,
+      }),
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'backup',
+      groupGeneration: 1,
+    });
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'active',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct-active',
+        providerEmail: 'active@example.com',
+      },
+    });
+    const buildGroup = () => ({
+      v: 1,
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      displayName: 'Team',
+      activeProfileId: 'active',
+      generation: 1,
+      policy: {
+        v: 1,
+        autoSwitch: true,
+        strategy: 'priority',
+        cooldownMs: 500,
+        softSwitchRemainingPercent: 15,
+      },
+      state: { v: 1 },
+      members: ['active', 'backup'].map((profileId, index) => ({
+        v: 1,
+        serviceId: 'openai-codex',
+        groupId: 'team',
+        profileId,
+        priority: index,
+        enabled: true,
+        state: {},
+        createdAt: index + 1,
+        updatedAt: index + 1,
+      })),
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      getConnectedServiceAuthGroup: vi.fn(async () => buildGroup()),
+    } as unknown as QuotaApi;
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: inputRecord.serviceId,
+        profileId: inputRecord.profileId,
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'active@example.com',
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: null,
+          limit: null,
+          unit: 'unknown',
+          utilizationPct: 48,
+          remainingPct: 52,
+          resetsAt: resetAtMs,
+          status: 'ok',
+          details: {},
+        }],
+      })),
+    };
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2 }));
+    const recordDiagnostic = vi.fn();
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: false,
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      groupSwitchCheckMinIntervalMs: 0,
+      accountUsageStore,
+      runtimeQuotaSnapshots,
+      recordDiagnostic,
+    });
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      sessionId: 'session-1',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'group',
+            groupId: 'team',
+          },
+        },
+      },
+      connectedServiceSelectionsEnv: {
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+          kind: 'group',
+          serviceId: 'openai-codex',
+          groupId: 'team',
+          activeProfileId: 'active',
+          fallbackProfileId: 'backup',
+          generation: 1,
+        }]),
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(switchBeforeTurn).not.toHaveBeenCalled();
+    expect(recordDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'quota_work_suppressed',
+      phase: 'soft_switch',
+      reason: 'soft_switch_no_meaningfully_better_target',
+    }));
+  });
+
+  it('suppresses proactive soft-threshold switching when stale active-profile state hides fresh healthy quota', async () => {
+    const now = 1_000_000;
+    const resetAtMs = now + 600_000;
+    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const accountUsageStore = createProviderAccountUsageStore();
+    runtimeQuotaSnapshots.recordSnapshot({
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'backup',
+      snapshot: {
+        v: 1,
+        serviceId: 'openai-codex',
+        profileId: 'backup',
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'backup@example.com',
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: null,
+          limit: null,
+          unit: 'unknown',
+          utilizationPct: 25,
+          remainingPct: 75,
+          resetsAt: resetAtMs,
+          status: 'ok',
+          details: {},
+        }],
+      },
+    });
+    recordGroupMemberAccountUsageFixture(accountUsageStore, {
+      snapshot: buildConnectedGroupProviderAccountUsageSnapshot({
+        profileId: 'backup',
+        now,
+        remainingPct: 75,
+        resetAtMs,
+        groupGeneration: 1,
+      }),
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'backup',
+      groupGeneration: 1,
+    });
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'active',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct-active',
+        providerEmail: 'active@example.com',
+      },
+    });
+    const buildGroup = () => ({
+      v: 1,
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      displayName: 'Team',
+      activeProfileId: 'active',
+      generation: 1,
+      policy: {
+        v: 1,
+        autoSwitch: true,
+        strategy: 'priority',
+        cooldownMs: 500,
+        softSwitchRemainingPercent: 15,
+      },
+      state: { v: 1 },
+      members: ['active', 'backup'].map((profileId, index) => ({
+        v: 1,
+        serviceId: 'openai-codex',
+        groupId: 'team',
+        profileId,
+        priority: index,
+        enabled: true,
+        state: profileId === 'active'
+          ? {
+              cooldownUntilMs: now + 30_000,
+              cooldownStartedAtMs: now - 1_000,
+            }
+          : {},
+        createdAt: index + 1,
+        updatedAt: index + 1,
+      })),
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      getConnectedServiceAuthGroup: vi.fn(async () => buildGroup()),
+    } as unknown as QuotaApi;
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: inputRecord.serviceId,
+        profileId: inputRecord.profileId,
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'active@example.com',
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: null,
+          limit: null,
+          unit: 'unknown',
+          utilizationPct: 48,
+          remainingPct: 52,
+          resetsAt: resetAtMs,
+          status: 'ok',
+          details: {},
+        }],
+      })),
+    };
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2 }));
+    const recordDiagnostic = vi.fn();
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: false,
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      groupSwitchCheckMinIntervalMs: 0,
+      accountUsageStore,
+      runtimeQuotaSnapshots,
+      recordDiagnostic,
+    });
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      sessionId: 'session-1',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'group',
+            groupId: 'team',
+          },
+        },
+      },
+      connectedServiceSelectionsEnv: {
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+          kind: 'group',
+          serviceId: 'openai-codex',
+          groupId: 'team',
+          activeProfileId: 'active',
+          fallbackProfileId: 'backup',
+          generation: 1,
+        }]),
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(switchBeforeTurn).not.toHaveBeenCalled();
+    expect(recordDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'quota_work_suppressed',
+      phase: 'soft_switch',
+      reason: 'soft_switch_no_meaningfully_better_target',
+    }));
+  });
+
+  it('suppresses proactive soft-threshold switching when target eligibility cannot be resolved', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'active',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct-active',
+        providerEmail: 'active@example.com',
+      },
+    });
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      getConnectedServiceAuthGroup: vi.fn(async () => {
+        throw new Error('timeout of 5000ms exceeded');
+      }),
+    } as unknown as QuotaApi;
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: inputRecord.serviceId,
+        profileId: inputRecord.profileId,
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'active@example.com',
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: null,
+          limit: null,
+          unit: 'unknown',
+          utilizationPct: 95,
+          remainingPct: 5,
+          resetsAt: null,
+          status: 'ok',
+          details: {},
+        }],
+      })),
+    };
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2 }));
+    const recordDiagnostic = vi.fn();
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: false,
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      groupSwitchCheckMinIntervalMs: 0,
+      runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+      recordDiagnostic,
+    });
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      sessionId: 'session-1',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'group',
+            groupId: 'team',
+          },
+        },
+      },
+      connectedServiceSelectionsEnv: {
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+          kind: 'group',
+          serviceId: 'openai-codex',
+          groupId: 'team',
+          activeProfileId: 'active',
+          fallbackProfileId: 'backup',
+          generation: 1,
+        }]),
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(api.getConnectedServiceAuthGroup).toHaveBeenCalledWith({
+      serviceId: 'openai-codex',
+      groupId: 'team',
+    });
+    expect(switchBeforeTurn).not.toHaveBeenCalled();
+    expect(recordDiagnostic).toHaveBeenCalledWith({
+      event: 'quota_work_suppressed',
+      phase: 'soft_switch',
+      reason: 'soft_switch_target_eligibility_unknown',
+    });
+  });
+
+  it('suppresses proactive soft-threshold switching when runtime quota evidence is unhydrated', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'active',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct-active',
+        providerEmail: 'active@example.com',
+      },
+    });
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: inputRecord.serviceId,
+        profileId: inputRecord.profileId,
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'active@example.com',
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: null,
+          limit: null,
+          unit: 'unknown',
+          utilizationPct: 95,
+          remainingPct: 5,
+          resetsAt: null,
+          status: 'ok',
+          details: {},
+        }],
+      })),
+    };
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2 }));
+    const recordDiagnostic = vi.fn();
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: false,
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      groupSwitchCheckMinIntervalMs: 0,
+      recordDiagnostic,
+    });
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      sessionId: 'session-1',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'group',
+            groupId: 'team',
+          },
+        },
+      },
+      connectedServiceSelectionsEnv: {
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+          kind: 'group',
+          serviceId: 'openai-codex',
+          groupId: 'team',
+          activeProfileId: 'active',
+          fallbackProfileId: 'backup',
+          generation: 1,
+        }]),
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(switchBeforeTurn).not.toHaveBeenCalled();
+    expect(recordDiagnostic).toHaveBeenCalledWith({
+      event: 'quota_work_suppressed',
+      phase: 'soft_switch',
+      reason: 'soft_switch_target_eligibility_unknown',
+    });
   });
 
   it('dedupes active-group soft switch cadence by group and active profile across sessions', async () => {
@@ -1174,14 +3307,17 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         providerEmail: 'user@example.com',
       },
     });
+    const softSwitchEligibility = createSoftSwitchEligibilityFixture({
+      serviceId: 'openai-codex',
+      now,
+    });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
+      getConnectedServiceAuthGroup: softSwitchEligibility.getConnectedServiceAuthGroup,
     } as unknown as QuotaApi;
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
@@ -1215,6 +3351,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       now: () => now,
       randomBytes: (length: number) => new Uint8Array(length),
       discoveryEnabled: false,
+      runtimeQuotaSnapshots: softSwitchEligibility.runtimeQuotaSnapshots,
+      accountUsageStore: softSwitchEligibility.accountUsageStore,
       authGroupSwitchCoordinator: { switchBeforeTurn },
       groupSwitchCheckMinIntervalMs: 60_000,
     });
@@ -1252,7 +3390,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(switchBeforeTurn).toHaveBeenCalledTimes(1);
   });
 
-  it('suppresses proactive soft-threshold switching while matching recovery is still pending', async () => {
+  it('uses the canonical reported session id while evaluating proactive soft-threshold guards', async () => {
     const now = 1_000_000;
     const credentials: Credentials = {
       token: 'happy-token',
@@ -1274,14 +3412,17 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         providerEmail: 'user@example.com',
       },
     });
+    const softSwitchEligibility = createSoftSwitchEligibilityFixture({
+      serviceId: 'openai-codex',
+      now,
+    });
     const api = {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
+      getConnectedServiceAuthGroup: softSwitchEligibility.getConnectedServiceAuthGroup,
     } as unknown as QuotaApi;
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
@@ -1319,6 +3460,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       now: () => now,
       randomBytes: (length: number) => new Uint8Array(length),
       discoveryEnabled: false,
+      runtimeQuotaSnapshots: softSwitchEligibility.runtimeQuotaSnapshots,
+      accountUsageStore: softSwitchEligibility.accountUsageStore,
       authGroupSwitchCoordinator: { switchBeforeTurn },
       groupSwitchCheckMinIntervalMs: 0,
       softSwitchRecoveryGuard,
@@ -1330,7 +3473,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     coordinator.registerSpawnTarget({
       pid: 123,
-      sessionId: 'session-1',
+      sessionId: 'spawn-request-session',
       connectedServicesBindingsRaw: {
         v: 1,
         bindingsByServiceId: {
@@ -1352,11 +3495,15 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         }]),
       },
     });
+    coordinator.updateSpawnTargetSessionId({
+      pid: 123,
+      sessionId: 'canonical-session-1',
+    });
 
     await coordinator.tickOnce();
 
     expect(softSwitchRecoveryGuard).toHaveBeenCalledWith({
-      sessionId: 'session-1',
+      sessionId: 'canonical-session-1',
       serviceId: 'openai-codex',
       groupId: 'team',
       activeProfileId: 'active',
@@ -1391,10 +3538,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
     } as unknown as QuotaApi;
     const fetcher: ConnectedServiceQuotaFetcher = {
       serviceId: 'openai-codex',
@@ -1475,7 +3620,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
   it('keeps active-group soft switching independent from quota persistence failures', async () => {
     const now = 1_000_000;
-    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const softSwitchEligibility = createSoftSwitchEligibilityFixture({
+      serviceId: 'openai-codex',
+      now,
+    });
+    const runtimeQuotaSnapshots = softSwitchEligibility.runtimeQuotaSnapshots;
 
     const credentials: Credentials = {
       token: 'happy-token',
@@ -1503,12 +3652,12 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async () => {
         throw new Error('server timeout');
       }),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
+      getConnectedServiceAuthGroup: softSwitchEligibility.getConnectedServiceAuthGroup,
     } as unknown as QuotaApi;
 
     const snapshot: ConnectedServiceQuotaSnapshotV1 = {
@@ -1547,6 +3696,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       randomBytes: (length: number) => randomBytes(length),
       discoveryEnabled: false,
       runtimeQuotaSnapshots,
+      accountUsageStore: softSwitchEligibility.accountUsageStore,
       authGroupSwitchCoordinator: { switchBeforeTurn },
       groupSwitchCheckMinIntervalMs: 0,
     });
@@ -1593,7 +3743,2355 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     });
   });
 
-  it('probes requested group member quota snapshots for auth-group candidate selection', async () => {
+  it('hot-applies only sibling sessions proven on the same live provider account after account exhaustion', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2, mode: 'hot_apply' as const }));
+    const readRuntimeAccountIdentityForFanout = vi.fn(async ({ sessionId }: { sessionId: string }) => {
+      if (sessionId === 'same-account') {
+        return {
+          status: 'exact' as const,
+          providerAccountId: 'acct-a',
+          accountLabel: null,
+          profileId: 'primary',
+          groupId: 'team',
+          groupGeneration: 4,
+          observedAtMs: now,
+          inProviderTurn: false,
+          safeToApply: true,
+        };
+      }
+      if (sessionId === 'different-account') {
+        return {
+          status: 'exact' as const,
+          providerAccountId: 'acct-b',
+          accountLabel: null,
+          profileId: 'primary',
+          groupId: 'team',
+          groupGeneration: 4,
+          observedAtMs: now,
+          inProviderTurn: false,
+          safeToApply: true,
+        };
+      }
+      return { status: 'inexact' as const, reason: 'runtime_identity_probe_inexact' };
+    });
+    const diagnostics: unknown[] = [];
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutMinIntervalMs: 0,
+      sameAccountFanoutStrategyResolver: async ({ agentId }: Readonly<{ agentId?: string | null }>): Promise<SameAccountFanoutStrategy> =>
+        agentId === 'codex' ? 'provider_account_id' : 'none',
+      readRuntimeAccountIdentityForFanout,
+      recordDiagnostic: (event) => diagnostics.push(event),
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutMinIntervalMs: number;
+      sameAccountFanoutStrategyResolver: (input: Readonly<{ agentId?: string | null }>) => Promise<SameAccountFanoutStrategy>;
+      readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
+    }) as RuntimeIdentityFanoutCoordinator;
+    const registerGroupSession = (sessionId: string, pid: number) => {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'codex',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'team',
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            activeProfileId: 'primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+    };
+    registerGroupSession('source', 101);
+    registerGroupSession('same-account', 102);
+    registerGroupSession('different-account', 103);
+    registerGroupSession('unknown-account', 104);
+
+    coordinator.recordRuntimeAccountIdentityFromSnapshot({
+      sessionId: 'source',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'primary',
+      providerAccountId: 'acct-a',
+      accountLabel: null,
+      observedAtMs: now,
+      source: 'runtime_quota_snapshot',
+      proofStrength: 'exact',
+      groupGeneration: 4,
+    });
+    coordinator.recordRuntimeAccountIdentityFromSnapshot({
+      sessionId: 'same-account',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'primary',
+      providerAccountId: 'acct-a',
+      accountLabel: null,
+      observedAtMs: now,
+      source: 'active_account_verification',
+      proofStrength: 'exact',
+      groupGeneration: 4,
+    });
+    coordinator.recordRuntimeAccountIdentityFromSnapshot({
+      sessionId: 'different-account',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'primary',
+      providerAccountId: 'acct-b',
+      accountLabel: null,
+      observedAtMs: now,
+      source: 'active_account_verification',
+      proofStrength: 'exact',
+      groupGeneration: 4,
+    });
+
+    await expect(coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      exhaustedProfileId: 'primary',
+      providerAccountId: 'acct-a',
+      resetAtMs: null,
+      reason: 'usage_limit',
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 1,
+      fanoutRequests: 1,
+    });
+
+    expect(switchBeforeTurn).toHaveBeenCalledTimes(1);
+    expect(switchBeforeTurn).toHaveBeenCalledWith({
+      sessionId: 'same-account',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      reason: 'same_provider_account_exhausted',
+      observedProfileId: 'primary',
+    });
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      event: 'quota_work_suppressed',
+      phase: 'same_account_fanout',
+      reason: 'runtime_identity_probe_account_mismatch',
+      sessionId: 'different-account',
+      expectedProviderAccountId: 'acct-a',
+      actualProviderAccountId: 'acct-b',
+      expectedProfileId: 'primary',
+      actualProfileId: 'primary',
+      expectedGroupId: 'team',
+      actualGroupId: 'team',
+      expectedGroupGeneration: 4,
+      actualGroupGeneration: 4,
+    }));
+    expect(readRuntimeAccountIdentityForFanout).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'same-account',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      expectedProfileId: 'primary',
+      expectedGroupGeneration: 4,
+      reason: 'same_provider_account_exhausted',
+    }));
+  });
+
+  it('fans out runtime usage-limit reports through the supplied exact source account after the source session has switched', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 5, mode: 'hot_apply' as const }));
+    const readRuntimeAccountIdentityForFanout = vi.fn(async ({ sessionId }: { sessionId: string }) => {
+      if (sessionId === 'same-account') {
+        return {
+          status: 'exact' as const,
+          providerAccountId: 'acct-source',
+          accountLabel: 'source@example.test',
+          profileId: 'primary',
+          groupId: 'team',
+          groupGeneration: 4,
+          observedAtMs: now,
+          inProviderTurn: false,
+          safeToApply: true,
+        };
+      }
+      return {
+        status: 'exact' as const,
+        providerAccountId: 'acct-other',
+        accountLabel: null,
+        profileId: 'primary',
+        groupId: 'team',
+        groupGeneration: 4,
+        observedAtMs: now,
+        inProviderTurn: false,
+        safeToApply: true,
+      };
+    });
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutMinIntervalMs: 0,
+      sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'provider_account_id',
+      readRuntimeAccountIdentityForFanout,
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutMinIntervalMs: number;
+      sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
+      readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
+    }) as RuntimeIdentityFanoutCoordinator;
+    const registerGroupSession = (sessionId: string, pid: number, activeProfileId: string) => {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'codex',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'team',
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            activeProfileId,
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+    };
+    registerGroupSession('source', 201, 'backup');
+    registerGroupSession('same-account', 202, 'primary');
+    registerGroupSession('different-account', 203, 'primary');
+
+    await expect(coordinator.recordRuntimeUsageLimitExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      exhaustedProfileId: 'primary',
+      sourceProviderAccountId: 'acct-source',
+      sourceAccountLabel: 'source@example.test',
+      resetAtMs: null,
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 1,
+      fanoutRequests: 1,
+    });
+
+    expect(switchBeforeTurn).toHaveBeenCalledTimes(1);
+    expect(switchBeforeTurn).toHaveBeenCalledWith({
+      sessionId: 'same-account',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      reason: 'same_provider_account_exhausted',
+      observedProfileId: 'primary',
+    });
+    expect(readRuntimeAccountIdentityForFanout).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'same-account',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      expectedProfileId: 'primary',
+      expectedGroupGeneration: 4,
+      reason: 'same_provider_account_exhausted',
+    }));
+  });
+
+  it('fans out from an exact indexed same-account identity when no live identity reader is available', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 5, mode: 'hot_apply' as const }));
+    const diagnostics: unknown[] = [];
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutMinIntervalMs: 0,
+      sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'provider_account_id',
+      readRuntimeAccountIdentityForFanout: null,
+      recordDiagnostic: (event) => diagnostics.push(event),
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutMinIntervalMs: number;
+      sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
+    }) as RuntimeIdentityFanoutCoordinator;
+    const registerGroupSession = (sessionId: string, pid: number) => {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'codex',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'team',
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            activeProfileId: 'primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+    };
+    registerGroupSession('source', 251);
+    registerGroupSession('same-account', 252);
+    registerGroupSession('different-account', 253);
+    coordinator.recordRuntimeAccountIdentityFromSnapshot({
+      sessionId: 'same-account',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'primary',
+      providerAccountId: 'acct-a',
+      accountLabel: null,
+      observedAtMs: now,
+      source: 'runtime_quota_snapshot',
+      proofStrength: 'exact',
+      groupGeneration: 4,
+    });
+    coordinator.recordRuntimeAccountIdentityFromSnapshot({
+      sessionId: 'different-account',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'primary',
+      providerAccountId: 'acct-b',
+      accountLabel: null,
+      observedAtMs: now,
+      source: 'runtime_quota_snapshot',
+      proofStrength: 'exact',
+      groupGeneration: 4,
+    });
+
+    await expect(coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      exhaustedProfileId: 'primary',
+      providerAccountId: 'acct-a',
+      resetAtMs: null,
+      reason: 'usage_limit',
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 1,
+      fanoutRequests: 1,
+    });
+
+    expect(switchBeforeTurn).toHaveBeenCalledTimes(1);
+    expect(switchBeforeTurn).toHaveBeenCalledWith({
+      sessionId: 'same-account',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      reason: 'same_provider_account_exhausted',
+      observedProfileId: 'primary',
+    });
+    expect(diagnostics).not.toContainEqual(expect.objectContaining({
+      reason: 'same_account_fanout_no_live_identity',
+    }));
+  });
+
+  it('does not fan out from a cached same-account identity without a fresh exact runtime proof', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 5, mode: 'hot_apply' as const }));
+    const readRuntimeAccountIdentityForFanout = vi.fn(async () => ({
+      status: 'inexact' as const,
+      reason: 'runtime_identity_probe_inexact',
+    }));
+    const diagnostics: unknown[] = [];
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutMinIntervalMs: 0,
+      sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'provider_account_id',
+      readRuntimeAccountIdentityForFanout,
+      recordDiagnostic: (event) => diagnostics.push(event),
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutMinIntervalMs: number;
+      sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
+      readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
+    }) as RuntimeIdentityFanoutCoordinator;
+
+    for (const [sessionId, pid] of [['source', 301], ['same-account', 302]] as const) {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'codex',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'team',
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            activeProfileId: 'primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+    }
+    coordinator.recordRuntimeAccountIdentityFromSnapshot({
+      sessionId: 'same-account',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'primary',
+      providerAccountId: 'acct-a',
+      accountLabel: null,
+      observedAtMs: now,
+      source: 'runtime_quota_snapshot',
+      proofStrength: 'exact',
+      groupGeneration: 4,
+    });
+
+    await expect(coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      exhaustedProfileId: 'primary',
+      providerAccountId: 'acct-a',
+      resetAtMs: null,
+      reason: 'usage_limit',
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 0,
+      fanoutRequests: 0,
+    });
+
+    expect(readRuntimeAccountIdentityForFanout).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'same-account',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      expectedProfileId: 'primary',
+      expectedGroupGeneration: 4,
+      reason: 'same_provider_account_exhausted',
+    }));
+    expect(switchBeforeTurn).not.toHaveBeenCalled();
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      reason: 'runtime_identity_probe_inexact',
+    }));
+  });
+
+  it('reconciles cold active same-group sibling identity before declaring no same-account fanout target', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 5, mode: 'hot_apply' as const }));
+    const readRuntimeAccountIdentityForFanout = vi.fn(async ({ sessionId }: { sessionId: string }) => {
+      if (sessionId === 'same-account-cold') {
+        return {
+          status: 'exact' as const,
+          providerAccountId: 'acct-a',
+          accountLabel: null,
+          profileId: 'primary',
+          groupId: 'team',
+          groupGeneration: 4,
+          observedAtMs: now,
+          inProviderTurn: false,
+          safeToApply: true,
+        };
+      }
+      if (sessionId === 'different-account-cold') {
+        return {
+          status: 'exact' as const,
+          providerAccountId: 'acct-b',
+          accountLabel: null,
+          profileId: 'primary',
+          groupId: 'team',
+          groupGeneration: 4,
+          observedAtMs: now,
+          inProviderTurn: false,
+          safeToApply: true,
+        };
+      }
+      return { status: 'inexact' as const, reason: 'runtime_identity_probe_inexact' };
+    });
+    const diagnostics: unknown[] = [];
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutMinIntervalMs: 0,
+      sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'provider_account_id',
+      readRuntimeAccountIdentityForFanout,
+      recordDiagnostic: (event) => diagnostics.push(event),
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutMinIntervalMs: number;
+      sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
+      readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
+    }) as RuntimeIdentityFanoutCoordinator;
+    const registerGroupSession = (sessionId: string, pid: number, groupId = 'team') => {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'codex',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId,
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId,
+            activeProfileId: 'primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+    };
+    registerGroupSession('source', 501);
+    registerGroupSession('same-account-cold', 502);
+    registerGroupSession('different-account-cold', 503);
+    registerGroupSession('same-account-other-group', 504, 'other-team');
+
+    await expect(coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      exhaustedProfileId: 'primary',
+      providerAccountId: 'acct-a',
+      resetAtMs: null,
+      reason: 'usage_limit',
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 1,
+      fanoutRequests: 1,
+    });
+
+    expect(readRuntimeAccountIdentityForFanout).toHaveBeenCalledTimes(2);
+    expect(readRuntimeAccountIdentityForFanout).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'same-account-cold',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      expectedProfileId: 'primary',
+      expectedGroupGeneration: 4,
+      reason: 'same_provider_account_exhausted',
+    }));
+    expect(readRuntimeAccountIdentityForFanout).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'different-account-cold',
+    }));
+    expect(switchBeforeTurn).toHaveBeenCalledTimes(1);
+    expect(switchBeforeTurn).toHaveBeenCalledWith({
+      sessionId: 'same-account-cold',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      reason: 'same_provider_account_exhausted',
+      observedProfileId: 'primary',
+    });
+    expect(diagnostics).not.toContainEqual(expect.objectContaining({
+      reason: 'same_account_fanout_no_matching_sessions',
+    }));
+  });
+
+  it('uses exact runtime account proof before rejecting stale expected profile and generation', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 9, mode: 'hot_apply' as const }));
+    const readRuntimeAccountIdentityForFanout = vi.fn(async () => ({
+      status: 'exact' as const,
+      providerAccountId: 'acct-a',
+      accountLabel: null,
+      profileId: 'runtime-primary',
+      groupId: 'team',
+      groupGeneration: 8,
+      observedAtMs: now,
+      inProviderTurn: false,
+      safeToApply: true,
+    }));
+    const diagnostics: unknown[] = [];
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutMinIntervalMs: 0,
+      sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'provider_account_id',
+      readRuntimeAccountIdentityForFanout,
+      recordDiagnostic: (event) => diagnostics.push(event),
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutMinIntervalMs: number;
+      sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
+      readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
+    }) as RuntimeIdentityFanoutCoordinator;
+
+    for (const [sessionId, pid] of [['source', 701], ['stale-sibling', 702]] as const) {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'codex',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'team',
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            activeProfileId: 'stale-primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+    }
+
+    await expect(coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      exhaustedProfileId: 'stale-primary',
+      providerAccountId: 'acct-a',
+      resetAtMs: null,
+      reason: 'usage_limit',
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 1,
+      fanoutRequests: 1,
+    });
+
+    expect(switchBeforeTurn).toHaveBeenCalledWith({
+      sessionId: 'stale-sibling',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      reason: 'same_provider_account_exhausted',
+      observedProfileId: 'runtime-primary',
+    });
+    expect(diagnostics).not.toContainEqual(expect.objectContaining({
+      reason: 'same_account_fanout_candidate_stale_generation',
+    }));
+    expect(diagnostics).not.toContainEqual(expect.objectContaining({
+      reason: 'same_account_fanout_no_matching_sessions',
+    }));
+  });
+
+  it('hot-applies a cold direct-live-capable sibling proven busy on the exhausted account', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 5, mode: 'hot_apply' as const }));
+    const runtimeAuthApplyCapabilityResolver = vi.fn(async () => ({
+      directLiveHotAuth: {
+        supportsInTurnApply: true,
+        requiresExactRuntimeIdentity: true,
+        refreshSelectionResync: 'required' as const,
+        authMode: {
+          kind: 'external_token_injection' as const,
+          surface: 'codex_chatgpt_auth_tokens',
+        },
+      },
+    }));
+    const readRuntimeAccountIdentityForFanout = vi.fn(async () => ({
+      status: 'exact' as const,
+      providerAccountId: 'acct-a',
+      accountLabel: null,
+      profileId: 'primary',
+      groupId: 'team',
+      groupGeneration: 4,
+      observedAtMs: now,
+      inProviderTurn: true,
+      safeToApply: false,
+    }));
+    const diagnostics: unknown[] = [];
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutMinIntervalMs: 0,
+      sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'provider_account_id',
+      readRuntimeAccountIdentityForFanout,
+      runtimeAuthApplyCapabilityResolver,
+      recordDiagnostic: (event) => diagnostics.push(event),
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutMinIntervalMs: number;
+      sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
+      readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
+      runtimeAuthApplyCapabilityResolver: typeof runtimeAuthApplyCapabilityResolver;
+    }) as RuntimeIdentityFanoutCoordinator;
+    for (const [sessionId, pid] of [['source', 601], ['busy-sibling', 602]] as const) {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'codex',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'team',
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            activeProfileId: 'primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+    }
+
+    await expect(coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      exhaustedProfileId: 'primary',
+      providerAccountId: 'acct-a',
+      resetAtMs: null,
+      reason: 'usage_limit',
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 1,
+      fanoutRequests: 1,
+    });
+
+    expect(switchBeforeTurn).toHaveBeenCalledWith({
+      sessionId: 'busy-sibling',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      reason: 'same_provider_account_exhausted',
+      observedProfileId: 'primary',
+    });
+    expect(diagnostics).not.toContainEqual(expect.objectContaining({
+      event: 'quota_work_deferred',
+      phase: 'same_account_fanout',
+      reason: 'same_account_fanout_candidate_deferred_until_turn_boundary',
+    }));
+    expect(diagnostics).not.toContainEqual(expect.objectContaining({
+      reason: 'same_provider_account_exhaustion_restart_required',
+    }));
+  });
+
+  it('defers busy fanout when provider capability is unsupported even if runtime reports legacy direct-live flags', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'deferred' as const, reason: 'defer_until_turn_boundary' }));
+    const runtimeAuthApplyCapabilityResolver = vi.fn(async () => ({ directLiveHotAuth: 'unsupported' as const }));
+    const readRuntimeAccountIdentityForFanout = vi.fn(async () => ({
+      status: 'exact' as const,
+      providerAccountId: 'acct-a',
+      accountLabel: null,
+      profileId: 'primary',
+      groupId: 'team',
+      groupGeneration: 4,
+      observedAtMs: now,
+      inProviderTurn: true,
+      safeToApply: false,
+      safeToDirectLiveApply: true,
+      requiresTurnBoundaryForApply: false,
+    }));
+    const diagnostics: unknown[] = [];
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutMinIntervalMs: 0,
+      sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'provider_account_id',
+      readRuntimeAccountIdentityForFanout,
+      runtimeAuthApplyCapabilityResolver,
+      recordDiagnostic: (event) => diagnostics.push(event),
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutMinIntervalMs: number;
+      sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
+      readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
+      runtimeAuthApplyCapabilityResolver: typeof runtimeAuthApplyCapabilityResolver;
+    }) as RuntimeIdentityFanoutCoordinator;
+    for (const [sessionId, pid] of [['source', 651], ['busy-sibling', 652]] as const) {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'unsupported-provider',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'team',
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            activeProfileId: 'primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+    }
+
+    await expect(coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      exhaustedProfileId: 'primary',
+      providerAccountId: 'acct-a',
+      resetAtMs: null,
+      reason: 'usage_limit',
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 1,
+      fanoutRequests: 1,
+    });
+
+    expect(runtimeAuthApplyCapabilityResolver).toHaveBeenCalledWith({
+      sessionId: 'busy-sibling',
+      agentId: 'unsupported-provider',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      reason: 'same_provider_account_exhausted',
+    });
+    expect(switchBeforeTurn).toHaveBeenCalledWith({
+      sessionId: 'busy-sibling',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      reason: 'same_provider_account_exhausted',
+      observedProfileId: 'primary',
+      deferUntilTurnBoundary: true,
+    });
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      event: 'quota_work_deferred',
+      phase: 'same_account_fanout',
+      reason: 'same_account_fanout_candidate_deferred_until_turn_boundary',
+    }));
+  });
+
+  it('requests deferred turn-boundary fanout when provider capability is unavailable while busy', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'deferred' as const, reason: 'defer_until_turn_boundary' }));
+    const readRuntimeAccountIdentityForFanout = vi.fn(async () => ({
+      status: 'exact' as const,
+      providerAccountId: 'acct-a',
+      accountLabel: null,
+      profileId: 'primary',
+      groupId: 'team',
+      groupGeneration: 4,
+      observedAtMs: now,
+      inProviderTurn: true,
+      safeToApply: false,
+    }));
+    const diagnostics: unknown[] = [];
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutMinIntervalMs: 0,
+      sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'provider_account_id',
+      readRuntimeAccountIdentityForFanout,
+      recordDiagnostic: (event) => diagnostics.push(event),
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutMinIntervalMs: number;
+      sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
+      readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
+    }) as RuntimeIdentityFanoutCoordinator;
+    for (const [sessionId, pid] of [['source', 701], ['busy-sibling', 702]] as const) {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'turn-boundary-agent',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'team',
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            activeProfileId: 'primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+    }
+
+    await expect(coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      exhaustedProfileId: 'primary',
+      providerAccountId: 'acct-a',
+      resetAtMs: null,
+      reason: 'usage_limit',
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 1,
+      fanoutRequests: 1,
+    });
+
+    expect(switchBeforeTurn).toHaveBeenCalledWith({
+      sessionId: 'busy-sibling',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      reason: 'same_provider_account_exhausted',
+      observedProfileId: 'primary',
+      deferUntilTurnBoundary: true,
+    });
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      event: 'quota_work_deferred',
+      phase: 'same_account_fanout',
+      reason: 'same_account_fanout_candidate_deferred_until_turn_boundary',
+    }));
+  });
+
+  it('defers busy fanout when runtime apply capability fields are absent', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'deferred' as const, reason: 'defer_until_turn_boundary' }));
+    const readRuntimeAccountIdentityForFanout = vi.fn(async () => ({
+      status: 'exact' as const,
+      strategy: 'provider_account_id' as const,
+      providerAccountId: 'acct-a',
+      accountLabel: null,
+      profileId: 'primary',
+      groupId: 'team',
+      groupGeneration: 4,
+      observedAtMs: now,
+      inProviderTurn: true,
+    }));
+    const diagnostics: unknown[] = [];
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutMinIntervalMs: 0,
+      sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'provider_account_id',
+      readRuntimeAccountIdentityForFanout,
+      recordDiagnostic: (event) => diagnostics.push(event),
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutMinIntervalMs: number;
+      sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
+      readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
+    }) as RuntimeIdentityFanoutCoordinator;
+    for (const [sessionId, pid] of [['source', 801], ['busy-sibling', 802]] as const) {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'turn-boundary-agent',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'team',
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            activeProfileId: 'primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+    }
+
+    await expect(coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      exhaustedProfileId: 'primary',
+      providerAccountId: 'acct-a',
+      resetAtMs: null,
+      reason: 'usage_limit',
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 1,
+      fanoutRequests: 1,
+    });
+
+    expect(switchBeforeTurn).toHaveBeenCalledWith({
+      sessionId: 'busy-sibling',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      reason: 'same_provider_account_exhausted',
+      observedProfileId: 'primary',
+      deferUntilTurnBoundary: true,
+    });
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      event: 'quota_work_deferred',
+      phase: 'same_account_fanout',
+      reason: 'same_account_fanout_candidate_deferred_until_turn_boundary',
+    }));
+  });
+
+  it('records group-exhausted diagnostics when fanout has no eligible target account', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({
+      status: 'no_eligible_member' as const,
+      generation: 5,
+      groupExhausted: true as const,
+      retryAtMs: now + 5_000,
+      excluded: [
+        { profileId: 'backup', reason: 'quota_exhausted', retryAtMs: now + 5_000 },
+      ],
+    }));
+    const readRuntimeAccountIdentityForFanout = vi.fn(async () => ({
+      status: 'exact' as const,
+      strategy: 'provider_account_id' as const,
+      providerAccountId: 'acct-a',
+      accountLabel: null,
+      profileId: 'primary',
+      groupId: 'team',
+      groupGeneration: 4,
+      observedAtMs: now,
+      inProviderTurn: false,
+    }));
+    const diagnostics: unknown[] = [];
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutMinIntervalMs: 0,
+      sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'provider_account_id',
+      readRuntimeAccountIdentityForFanout,
+      recordDiagnostic: (event) => diagnostics.push(event),
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutMinIntervalMs: number;
+      sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
+      readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
+    }) as RuntimeIdentityFanoutCoordinator;
+    for (const [sessionId, pid] of [['source', 851], ['idle-sibling', 852]] as const) {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'codex',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'team',
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            activeProfileId: 'primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+    }
+
+    await expect(coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      exhaustedProfileId: 'primary',
+      providerAccountId: 'acct-a',
+      resetAtMs: now + 5_000,
+      reason: 'usage_limit',
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 1,
+      fanoutRequests: 0,
+    });
+
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      event: 'quota_work_deferred',
+      phase: 'same_account_fanout',
+      reason: 'group_exhausted_no_eligible_target',
+      retryAfterMs: 5_000,
+    }));
+    expect(diagnostics).not.toContainEqual(expect.objectContaining({
+      reason: 'same_provider_account_exhaustion_restart_required',
+    }));
+  });
+
+  it('emits quota lifecycle transitions from canonical account-usage changes', async () => {
+    const now = Date.parse('2026-06-11T10:00:00.000Z');
+    const resetAtMs = now + 600_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const accountUsageStore = createProviderAccountUsageStore();
+    const primaryBlocked = buildConnectedGroupProviderAccountUsageSnapshot({
+      profileId: 'primary',
+      now,
+      remainingPct: 0,
+      resetAtMs,
+      groupGeneration: 4,
+    });
+    const backupBlocked = buildConnectedGroupProviderAccountUsageSnapshot({
+      profileId: 'backup',
+      now,
+      remainingPct: 0,
+      resetAtMs,
+      groupGeneration: 4,
+    });
+    accountUsageStore.recordSnapshot(
+      primaryBlocked,
+      buildConnectedGroupProviderAccountUsageObservation({ profileId: 'primary', groupGeneration: 4 }),
+    );
+    accountUsageStore.recordSnapshot(
+      backupBlocked,
+      buildConnectedGroupProviderAccountUsageObservation({ profileId: 'backup', groupGeneration: 4 }),
+    );
+
+    const api = {
+      getConnectedServiceAuthGroup: vi.fn(async (): Promise<ConnectedServiceAuthGroupResponse> => ({
+        v: 1,
+        serviceId: 'openai-codex',
+        groupId: 'team',
+        displayName: 'Team',
+        activeProfileId: 'primary',
+        generation: 4,
+        policy: {
+          ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+          autoSwitch: true,
+          strategy: 'priority',
+          cooldownMs: 500,
+        },
+        state: { v: 1 },
+        members: ['primary', 'backup'].map((profileId, index) => ({
+          v: 1,
+          serviceId: 'openai-codex',
+          groupId: 'team',
+          profileId,
+          priority: index,
+          enabled: true,
+          state: {},
+          createdAt: index + 1,
+          updatedAt: index + 1,
+        })),
+        createdAt: 1,
+        updatedAt: 2,
+      })),
+    } as unknown as QuotaApi;
+    const onQuotaLifecycleTransition = vi.fn(async () => {});
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: false,
+      accountUsageStore,
+      onQuotaLifecycleTransition,
+    } as unknown as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      accountUsageStore: typeof accountUsageStore;
+      onQuotaLifecycleTransition: typeof onQuotaLifecycleTransition;
+    });
+    coordinator.registerSpawnTarget({
+      pid: 321,
+      sessionId: 'session-quota-blocked',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': { source: 'connected', selection: 'group', groupId: 'team' },
+        },
+      },
+      connectedServiceSelectionsEnv: {
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+          kind: 'group',
+          serviceId: 'openai-codex',
+          groupId: 'team',
+          activeProfileId: 'primary',
+          fallbackProfileId: 'primary',
+          generation: 4,
+        }]),
+      },
+    });
+
+    await (coordinator as unknown as {
+      handleAccountUsageChanged(input: Readonly<{
+        sessionId: string;
+        serviceId: 'openai-codex';
+        profileId: string;
+        groupId: string;
+        groupGeneration: number;
+        recordId: string;
+        snapshot: ProviderAccountUsageSnapshotV1;
+      }>): Promise<void>;
+    }).handleAccountUsageChanged({
+      sessionId: 'session-quota-blocked',
+      serviceId: 'openai-codex',
+      profileId: 'primary',
+      groupId: 'team',
+      groupGeneration: 4,
+      recordId: primaryBlocked.recordId,
+      snapshot: primaryBlocked,
+    });
+
+    expect(onQuotaLifecycleTransition).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'blocked',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      sessionIds: ['session-quota-blocked'],
+      issueFingerprint: 'quota-blocked:openai-codex:team',
+      resetAtMs,
+    }));
+
+    accountUsageStore.recordSnapshot(
+      buildConnectedGroupProviderAccountUsageSnapshot({
+        profileId: 'backup',
+        now: now + 1_000,
+        remainingPct: 80,
+        groupGeneration: 4,
+      }),
+      buildConnectedGroupProviderAccountUsageObservation({ profileId: 'backup', groupGeneration: 4 }),
+    );
+    await (coordinator as unknown as {
+      handleAccountUsageChanged(input: Readonly<{
+        sessionId: string;
+        serviceId: 'openai-codex';
+        profileId: string;
+        groupId: string;
+        groupGeneration: number;
+        recordId: string;
+        snapshot: ProviderAccountUsageSnapshotV1;
+      }>): Promise<void>;
+    }).handleAccountUsageChanged({
+      sessionId: 'session-quota-blocked',
+      serviceId: 'openai-codex',
+      profileId: 'backup',
+      groupId: 'team',
+      groupGeneration: 4,
+      recordId: backupBlocked.recordId,
+      snapshot: accountUsageStore.resolveBySource({
+        serviceId: 'openai-codex',
+        profileId: 'backup',
+        bindingKind: 'group_member',
+        groupId: 'team',
+        groupGeneration: 4,
+      }) ?? backupBlocked,
+    });
+
+    expect(onQuotaLifecycleTransition).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'recovered',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      sessionIds: ['session-quota-blocked'],
+      issueFingerprint: 'quota-blocked:openai-codex:team',
+    }));
+  });
+
+  it('keeps quota probe lifecycle reconstruction passive; live account-usage changes emit rows', async () => {
+    const now = Date.parse('2026-06-11T10:00:00.000Z');
+    const resetAtMs = now + 600_000;
+    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const memberStates = new Map<string, Record<string, unknown>>([
+      ['primary', {
+        quotaExhaustedUntilMs: resetAtMs,
+        lastFailureKind: 'usage_limit',
+        lastObservedAtMs: now - 10_000,
+        providerResetsAtMs: resetAtMs,
+      }],
+      ['backup', {
+        quotaExhaustedUntilMs: resetAtMs,
+        lastFailureKind: 'usage_limit',
+        lastObservedAtMs: now - 10_000,
+        providerResetsAtMs: resetAtMs,
+      }],
+    ]);
+    const buildGroup = (): ConnectedServiceAuthGroupResponse => ({
+      v: 1,
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      displayName: 'Team',
+      activeProfileId: 'primary',
+      generation: 4,
+      policy: {
+        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+        autoSwitch: true,
+        strategy: 'least_limited',
+        cooldownMs: 500,
+      },
+      state: { v: 1 },
+      members: ['primary', 'backup'].map((profileId, index) => ({
+        v: 1,
+        serviceId: 'openai-codex',
+        groupId: 'team',
+        profileId,
+        priority: index,
+        enabled: true,
+        state: memberStates.get(profileId) ?? {},
+        createdAt: index + 1,
+        updatedAt: index + 1,
+      })),
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    const records = new Map(['primary', 'backup'].map((profileId) => [
+      profileId,
+      buildConnectedServiceCredentialRecord({
+        now,
+        serviceId: 'openai-codex',
+        profileId,
+        kind: 'oauth',
+        expiresAt: now + 60_000,
+        oauth: {
+          accessToken: `access-${profileId}`,
+          refreshToken: `refresh-${profileId}`,
+          idToken: null,
+          scope: null,
+          tokenType: null,
+          providerAccountId: `acct-${profileId}`,
+          providerEmail: `${profileId}@example.test`,
+        },
+      }),
+    ]));
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async ({ profileId }: { profileId: string }) => ({
+        content: { t: 'plain' as const, v: records.get(profileId) ?? null },
+      })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      getConnectedServiceAuthGroup: vi.fn(async () => buildGroup()),
+    } as unknown as QuotaApi;
+
+    const remainingByProfileId = new Map<string, number>([['primary', 0], ['backup', 0]]);
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => {
+        const remainingPct = remainingByProfileId.get(record.profileId) ?? 0;
+        return {
+          v: 1,
+          serviceId: 'openai-codex',
+          profileId: record.profileId,
+          fetchedAt: now,
+          staleAfterMs: 300_000,
+          planLabel: 'Pro',
+          accountLabel: null,
+          meters: [{
+            meterId: 'weekly',
+            label: 'Weekly',
+            used: null,
+            limit: null,
+            unit: 'unknown',
+            utilizationPct: 100 - remainingPct,
+            remainingPct,
+            resetsAt: resetAtMs,
+            status: 'ok',
+            details: {},
+          }],
+        };
+      }),
+    };
+
+    const onQuotaLifecycleTransition = vi.fn(async () => {});
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: false,
+      runtimeQuotaSnapshots,
+      onQuotaLifecycleTransition,
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      onQuotaLifecycleTransition: typeof onQuotaLifecycleTransition;
+    });
+    coordinator.registerSpawnTarget({
+      pid: 321,
+      sessionId: 'session-quota-blocked',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': { source: 'connected', selection: 'group', groupId: 'team' },
+        },
+      },
+      connectedServiceSelectionsEnv: {
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+          kind: 'group',
+          serviceId: 'openai-codex',
+          groupId: 'team',
+          activeProfileId: 'primary',
+          fallbackProfileId: 'primary',
+          generation: 4,
+        }]),
+      },
+    });
+
+    await coordinator.probeGroupQuotaSnapshots({
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileIds: ['primary'],
+    });
+    expect(onQuotaLifecycleTransition).not.toHaveBeenCalled();
+
+    await coordinator.probeGroupQuotaSnapshots({
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileIds: ['primary'],
+    });
+    expect(onQuotaLifecycleTransition).not.toHaveBeenCalled();
+
+    remainingByProfileId.set('backup', 80);
+    await coordinator.probeGroupQuotaSnapshots({
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileIds: ['backup'],
+    });
+    expect(onQuotaLifecycleTransition).not.toHaveBeenCalled();
+
+    await coordinator.probeGroupQuotaSnapshots({
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileIds: ['backup'],
+    });
+    expect(onQuotaLifecycleTransition).not.toHaveBeenCalled();
+  });
+
+  it('clears persisted member runtime blockers when a fresh group quota probe proves headroom', async () => {
+    const now = 1_000_000;
+    const resetAtMs = now + 600_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'primary',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access-primary',
+        refreshToken: 'refresh-primary',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct-primary',
+        providerEmail: 'primary@example.test',
+      },
+    });
+    const group = (): ConnectedServiceAuthGroupResponse => ({
+      v: 1,
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      displayName: 'Team',
+      activeProfileId: 'primary',
+      generation: 4,
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: true },
+      state: { v: 1 },
+      members: [{
+        v: 1,
+        serviceId: 'openai-codex',
+        groupId: 'team',
+        profileId: 'primary',
+        priority: 1,
+        enabled: true,
+        state: {
+          quotaExhaustedUntilMs: resetAtMs,
+          authInvalidUntilMs: resetAtMs,
+          credentialHealthStatus: 'needs_reauth',
+          lastFailureKind: 'auth_expired',
+          lastObservedAtMs: now - 10_000,
+          providerResetsAtMs: resetAtMs,
+        },
+        createdAt: 1,
+        updatedAt: 2,
+      }],
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    const updateConnectedServiceAuthGroupRuntimeState = vi.fn(async () => group());
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      getConnectedServiceAuthGroup: vi.fn(async () => group()),
+      updateConnectedServiceAuthGroupRuntimeState,
+    } as unknown as QuotaApi;
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: inputRecord.serviceId,
+        profileId: inputRecord.profileId,
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: 'primary@example.test',
+        meters: [{
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: null,
+          limit: null,
+          unit: 'unknown',
+          utilizationPct: 20,
+          remainingPct: 80,
+          resetsAt: null,
+          status: 'ok',
+          details: {},
+        }],
+      })),
+    };
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: false,
+      accountUsageStore: createProviderAccountUsageStore(),
+    });
+
+    await coordinator.probeGroupQuotaSnapshots({
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileIds: ['primary'],
+    });
+
+    expect(updateConnectedServiceAuthGroupRuntimeState).toHaveBeenCalledWith({
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      expectedGeneration: 4,
+      memberStates: [{
+        profileId: 'primary',
+        state: { providerResetsAtMs: resetAtMs },
+      }],
+    });
+  });
+
+  it('does not emit quota lifecycle transitions when every group member is auth-invalid', async () => {
+    const now = Date.parse('2026-06-11T10:00:00.000Z');
+    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const buildGroup = (): ConnectedServiceAuthGroupResponse => ({
+      v: 1,
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      displayName: 'Team',
+      activeProfileId: 'primary',
+      generation: 4,
+      policy: {
+        ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+        autoSwitch: true,
+        strategy: 'least_limited',
+      },
+      state: { v: 1 },
+      members: ['primary', 'backup'].map((profileId, index) => ({
+        v: 1,
+        serviceId: 'openai-codex',
+        groupId: 'team',
+        profileId,
+        priority: index,
+        enabled: true,
+        state: {
+          credentialHealthStatus: 'needs_reauth',
+          lastFailureKind: 'provider_auth_invalid',
+          lastObservedAtMs: now,
+        },
+        createdAt: index + 1,
+        updatedAt: index + 1,
+      })),
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    const records = new Map(['primary'].map((profileId) => [
+      profileId,
+      buildConnectedServiceCredentialRecord({
+        now,
+        serviceId: 'openai-codex',
+        profileId,
+        kind: 'oauth',
+        expiresAt: now + 60_000,
+        oauth: {
+          accessToken: `access-${profileId}`,
+          refreshToken: `refresh-${profileId}`,
+          idToken: null,
+          scope: null,
+          tokenType: null,
+          providerAccountId: `acct-${profileId}`,
+          providerEmail: `${profileId}@example.test`,
+        },
+      }),
+    ]));
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async ({ profileId }: { profileId: string }) => ({
+        content: { t: 'plain' as const, v: records.get(profileId) ?? null },
+      })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+      getConnectedServiceAuthGroup: vi.fn(async () => buildGroup()),
+    } as unknown as QuotaApi;
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: 'openai-codex',
+        profileId: record.profileId,
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: 'Pro',
+        accountLabel: null,
+        meters: [],
+      })),
+    };
+    const onQuotaLifecycleTransition = vi.fn(async () => {});
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      discoveryEnabled: false,
+      runtimeQuotaSnapshots,
+      onQuotaLifecycleTransition,
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      onQuotaLifecycleTransition: typeof onQuotaLifecycleTransition;
+    });
+    coordinator.registerSpawnTarget({
+      pid: 321,
+      sessionId: 'session-auth-invalid',
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': { source: 'connected', selection: 'group', groupId: 'team' },
+        },
+      },
+      connectedServiceSelectionsEnv: {
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+          kind: 'group',
+          serviceId: 'openai-codex',
+          groupId: 'team',
+          activeProfileId: 'primary',
+          fallbackProfileId: 'primary',
+          generation: 4,
+        }]),
+      },
+    });
+
+    await coordinator.probeGroupQuotaSnapshots({
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileIds: ['primary'],
+    });
+
+    expect(onQuotaLifecycleTransition).not.toHaveBeenCalled();
+  });
+
+  it('re-probes sibling runtime account identity before later fanout so stale proof is not reused', async () => {
+    let now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2, mode: 'hot_apply' as const }));
+    const readRuntimeAccountIdentityForFanout = vi.fn(async () => {
+      if (now === 1_000_000) {
+        return {
+          status: 'exact' as const,
+          providerAccountId: 'acct-a',
+          accountLabel: null,
+          profileId: 'primary',
+          groupId: 'team',
+          groupGeneration: 4,
+          observedAtMs: now,
+          inProviderTurn: false,
+          safeToApply: true,
+        };
+      }
+      return { status: 'inexact' as const, reason: 'runtime_identity_probe_inexact' };
+    });
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutMinIntervalMs: 0,
+      sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'provider_account_id',
+      readRuntimeAccountIdentityForFanout,
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutMinIntervalMs: number;
+      sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
+      readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
+    }) as RuntimeIdentityFanoutCoordinator;
+
+    for (const [sessionId, pid] of [['source', 201], ['same-account', 202]] as const) {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'codex',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'team',
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'team',
+            activeProfileId: 'primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+    }
+    coordinator.recordRuntimeAccountIdentityFromSnapshot({
+      sessionId: 'same-account',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      profileId: 'primary',
+      providerAccountId: 'acct-a',
+      accountLabel: null,
+      observedAtMs: now,
+      source: 'runtime_quota_snapshot',
+      proofStrength: 'exact',
+      groupGeneration: 4,
+    });
+
+    await expect(coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      exhaustedProfileId: 'primary',
+      providerAccountId: 'acct-a',
+      resetAtMs: null,
+      reason: 'usage_limit',
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 1,
+      fanoutRequests: 1,
+    });
+
+    now += 1_000;
+    await expect(coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'openai-codex',
+      groupId: 'team',
+      exhaustedProfileId: 'primary',
+      providerAccountId: 'acct-a',
+      resetAtMs: null,
+      reason: 'usage_limit',
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 0,
+      fanoutRequests: 0,
+    });
+    expect(switchBeforeTurn).toHaveBeenCalledTimes(1);
+    expect(readRuntimeAccountIdentityForFanout).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not coalesce same-account exhaustion fanout across independent groups', async () => {
+    let now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2, mode: 'hot_apply' as const }));
+    const readRuntimeAccountIdentityForFanout = vi.fn(async ({ groupId }: { groupId: string }) => ({
+      status: 'exact' as const,
+      providerAccountId: 'acct-a',
+      accountLabel: null,
+      profileId: 'primary',
+      groupId,
+      groupGeneration: 4,
+      observedAtMs: now,
+      inProviderTurn: false,
+      safeToApply: true,
+    }));
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutMinIntervalMs: 60_000,
+      sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'provider_account_id',
+      readRuntimeAccountIdentityForFanout,
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutMinIntervalMs: number;
+      sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
+      readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
+    }) as RuntimeIdentityFanoutCoordinator;
+    const registerGroupSession = (sessionId: string, pid: number, groupId: string) => {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'codex',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId,
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId,
+            activeProfileId: 'primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+    };
+    registerGroupSession('source-a', 301, 'team-a');
+    registerGroupSession('same-account-a', 302, 'team-a');
+    registerGroupSession('source-b', 303, 'team-b');
+    registerGroupSession('same-account-b', 304, 'team-b');
+    for (const [sessionId, groupId] of [
+      ['same-account-a', 'team-a'],
+      ['same-account-b', 'team-b'],
+    ] as const) {
+      coordinator.recordRuntimeAccountIdentityFromSnapshot({
+        sessionId,
+        serviceId: 'openai-codex',
+        groupId,
+        profileId: 'primary',
+        providerAccountId: 'acct-a',
+        accountLabel: null,
+        observedAtMs: now,
+        source: 'active_account_verification',
+        proofStrength: 'exact',
+        groupGeneration: 4,
+      });
+    }
+
+    await coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source-a',
+      serviceId: 'openai-codex',
+      groupId: 'team-a',
+      exhaustedProfileId: 'primary',
+      providerAccountId: 'acct-a',
+      resetAtMs: 1_200_000,
+      reason: 'usage_limit',
+    });
+    now += 10_000;
+    await coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source-b',
+      serviceId: 'openai-codex',
+      groupId: 'team-b',
+      exhaustedProfileId: 'primary',
+      providerAccountId: 'acct-a',
+      resetAtMs: 1_200_001,
+      reason: 'usage_limit',
+    });
+
+    expect(switchBeforeTurn).toHaveBeenCalledTimes(2);
+    expect(switchBeforeTurn).toHaveBeenNthCalledWith(1, {
+      sessionId: 'same-account-a',
+      serviceId: 'openai-codex',
+      groupId: 'team-a',
+      reason: 'same_provider_account_exhausted',
+      observedProfileId: 'primary',
+    });
+    expect(switchBeforeTurn).toHaveBeenNthCalledWith(2, {
+      sessionId: 'same-account-b',
+      serviceId: 'openai-codex',
+      groupId: 'team-b',
+      reason: 'same_provider_account_exhausted',
+      observedProfileId: 'primary',
+    });
+    expect(readRuntimeAccountIdentityForFanout).toHaveBeenCalledTimes(2);
+  });
+
+  it('fans out shared-auth-surface sessions without requiring provider account id', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2, mode: 'hot_apply' as const }));
+    const readRuntimeAccountIdentityForFanout = vi.fn(async () => ({
+      status: 'exact' as const,
+      strategy: 'shared_group_auth_surface' as const,
+      sharedAuthSurfaceId: 'team',
+      accountLabel: null,
+      profileId: 'primary',
+      groupId: 'team',
+      groupGeneration: 4,
+      observedAtMs: now,
+      inProviderTurn: false,
+      safeToApply: true,
+    }));
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'shared_group_auth_surface',
+      readRuntimeAccountIdentityForFanout,
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
+      readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
+    }) as RuntimeIdentityFanoutCoordinator;
+    for (const [sessionId, pid] of [['source', 301], ['same-account', 302]] as const) {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'claude',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'claude-subscription': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'team',
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'claude-subscription',
+            groupId: 'team',
+            activeProfileId: 'primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+      coordinator.recordRuntimeAccountIdentityFromSnapshot({
+        sessionId,
+        serviceId: 'claude-subscription',
+        groupId: 'team',
+        profileId: 'primary',
+        providerAccountId: 'acct-claude',
+        accountLabel: null,
+        observedAtMs: now,
+        source: 'runtime_quota_snapshot',
+        proofStrength: 'exact',
+        groupGeneration: 4,
+      });
+    }
+
+    await expect(coordinator.recordAccountExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'claude-subscription',
+      groupId: 'team',
+      exhaustedProfileId: 'primary',
+      providerAccountId: '',
+      resetAtMs: null,
+      reason: 'usage_limit',
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 1,
+      fanoutRequests: 1,
+    });
+    expect(readRuntimeAccountIdentityForFanout).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'same-account',
+      serviceId: 'claude-subscription',
+      groupId: 'team',
+      expectedProfileId: 'primary',
+      expectedGroupGeneration: 4,
+      reason: 'same_provider_account_exhausted',
+    }));
+    expect(switchBeforeTurn).toHaveBeenCalledWith({
+      sessionId: 'same-account',
+      serviceId: 'claude-subscription',
+      groupId: 'team',
+      reason: 'same_provider_account_exhausted',
+      observedProfileId: 'primary',
+    });
+  });
+
+  it('fans out runtime usage-limit reports for shared-auth-surface groups without source provider account ids', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const switchBeforeTurn = vi.fn(async () => ({ status: 'switched' as const, activeProfileId: 'backup', generation: 2, mode: 'hot_apply' as const }));
+    const readRuntimeAccountIdentityForFanout = vi.fn(async () => ({
+      status: 'exact' as const,
+      strategy: 'shared_group_auth_surface' as const,
+      sharedAuthSurfaceId: 'team',
+      accountLabel: null,
+      profileId: 'primary',
+      groupId: 'team',
+      groupGeneration: 4,
+      observedAtMs: now,
+      inProviderTurn: false,
+      safeToApply: true,
+    }));
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+      authGroupSwitchCoordinator: { switchBeforeTurn },
+      sameAccountFanoutMinIntervalMs: 0,
+      sameAccountFanoutStrategyResolver: async (): Promise<SameAccountFanoutStrategy> => 'shared_group_auth_surface',
+      readRuntimeAccountIdentityForFanout,
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      sameAccountFanoutMinIntervalMs: number;
+      sameAccountFanoutStrategyResolver: () => Promise<SameAccountFanoutStrategy>;
+      readRuntimeAccountIdentityForFanout: typeof readRuntimeAccountIdentityForFanout;
+    }) as RuntimeIdentityFanoutCoordinator;
+    for (const [sessionId, pid] of [['source', 401], ['same-account', 402]] as const) {
+      coordinator.registerSpawnTarget({
+        pid,
+        agentId: 'claude',
+        sessionId,
+        connectedServicesBindingsRaw: {
+          v: 1,
+          bindingsByServiceId: {
+            'claude-subscription': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'team',
+            },
+          },
+        },
+        connectedServiceSelectionsEnv: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'claude-subscription',
+            groupId: 'team',
+            activeProfileId: 'primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      } as Parameters<ConnectedServiceQuotasCoordinator['registerSpawnTarget']>[0] & { agentId: string });
+    }
+
+    await expect(coordinator.recordRuntimeUsageLimitExhaustionAndFanout({
+      sourceSessionId: 'source',
+      serviceId: 'claude-subscription',
+      groupId: 'team',
+      exhaustedProfileId: 'primary',
+      resetAtMs: null,
+    })).resolves.toEqual({
+      status: 'recorded',
+      fanoutCandidates: 1,
+      fanoutRequests: 1,
+    });
+    expect(switchBeforeTurn).toHaveBeenCalledWith({
+      sessionId: 'same-account',
+      serviceId: 'claude-subscription',
+      groupId: 'team',
+      reason: 'same_provider_account_exhausted',
+      observedProfileId: 'primary',
+    });
+  });
+
+  it('exposes fresh quota snapshots as central quota_probe_fresh proof without account-adoption proof', () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
+      getConnectedServiceCredentialPlain: vi.fn(async () => null),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    } as unknown as QuotaApi;
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+    });
+    const snapshot: ConnectedServiceQuotaSnapshotV1 = {
+      v: 1,
+      serviceId: 'openai-codex',
+      profileId: 'backup',
+      fetchedAt: now - 10_000,
+      staleAfterMs: 300_000,
+      planLabel: null,
+      accountLabel: null,
+      meters: [{
+        meterId: 'weekly',
+        label: 'Weekly',
+        used: 10,
+        limit: 100,
+        unit: 'requests',
+        utilizationPct: 10,
+        remainingPct: 90,
+        resetsAt: now + 300_000,
+        status: 'ok',
+        details: {},
+      }],
+    };
+    const materialFingerprint = coordinator.computeQuotaSnapshotMaterialFingerprint(snapshot);
+
+    expect(coordinator.resolveQuotaProbeFreshProof({
+      serviceId: 'openai-codex',
+      profileId: 'backup',
+      groupId: 'team',
+      expectedGroupGeneration: 8,
+      currentGroupGeneration: 8,
+      expectedMaterialFingerprint: materialFingerprint,
+      snapshotMaterialFingerprint: materialFingerprint,
+      snapshot,
+      maxAgeMs: 30_000,
+    })).toEqual({
+      status: 'proof',
+      proofKind: 'quota_probe_fresh',
+    });
+  });
+
+  it('routes probed group member quota snapshot writes through canonical account usage when available', async () => {
     const now = 1_000_000;
     const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
 
@@ -1623,10 +6121,35 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
+      getConnectedServiceAuthGroup: vi.fn(async (): Promise<ConnectedServiceAuthGroupResponse> => ({
+        v: 1,
+        serviceId: 'openai-codex',
+        groupId: 'team',
+        displayName: 'Team',
+        activeProfileId: 'primary',
+        generation: 4,
+        policy: {
+          ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
+          autoSwitch: true,
+          strategy: 'priority',
+        },
+        state: { v: 1 },
+        members: ['primary', 'backup'].map((profileId, index) => ({
+          v: 1,
+          serviceId: 'openai-codex',
+          groupId: 'team',
+          profileId,
+          priority: index,
+          enabled: true,
+          state: {},
+          createdAt: index + 1,
+          updatedAt: index + 1,
+        })),
+        createdAt: 1,
+        updatedAt: 2,
+      })),
     } as unknown as QuotaApi;
 
     const snapshot: ConnectedServiceQuotaSnapshotV1 = {
@@ -1656,6 +6179,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       serviceId: 'openai-codex',
       loadQuota: vi.fn(async (): Promise<ConnectedServiceQuotaSnapshotV1 | null> => snapshot),
     };
+    const accountUsageStore = createProviderAccountUsageStore();
+    const accountUsagePersistence = {
+      recordInBandSnapshot: vi.fn(async () => ({ status: 'enqueued' as const, enqueue: 'accepted' as const })),
+    };
 
     const coordinator = new ConnectedServiceQuotasCoordinator({
       api,
@@ -1664,7 +6191,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       now: () => now,
       randomBytes: (length: number) => randomBytes(length),
       runtimeQuotaSnapshots,
+      accountUsageStore,
+      accountUsagePersistence,
       discoveryEnabled: false,
+    } as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0] & {
+      accountUsagePersistence: typeof accountUsagePersistence;
     });
     const probeGroupQuotaSnapshots = (coordinator as unknown as {
       probeGroupQuotaSnapshots?: (input: Readonly<{
@@ -1688,10 +6219,42 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       groupId: 'team',
       profileId: 'backup',
     })).toStrictEqual(snapshot);
-    expect(api.registerConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(1);
+    expect(accountUsagePersistence.recordInBandSnapshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerId: 'openai-codex',
+        planLabel: 'Pro',
+      }),
+      {
+        sources: expect.arrayContaining([
+          {
+            serviceId: 'openai-codex',
+            profileId: 'backup',
+            bindingKind: 'profile',
+          },
+          {
+            serviceId: 'openai-codex',
+            profileId: 'backup',
+            bindingKind: 'group_member',
+            groupId: 'team',
+            groupGeneration: 4,
+          },
+        ]),
+      },
+    );
+    expect(accountUsageStore.resolveBySource({
+      serviceId: 'openai-codex',
+      profileId: 'backup',
+      bindingKind: 'group_member',
+      groupId: 'team',
+      groupGeneration: 4,
+    })).toEqual(expect.objectContaining({
+      providerId: 'openai-codex',
+      planLabel: 'Pro',
+    }));
+    expect(accountUsageStore.listSnapshots()).toHaveLength(1);
   });
 
-  it('hydrates requested group member quota snapshots from persisted storage', async () => {
+  it('does not hydrate persisted connected-service quota snapshots for requested group members', async () => {
     const now = 1_000_000;
     const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
 
@@ -1734,10 +6297,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         },
       })),
       getConnectedServiceCredentialPlain: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
     } as unknown as QuotaApi;
 
     const coordinator = new ConnectedServiceQuotasCoordinator({
@@ -1769,11 +6330,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       serviceId: 'openai-codex',
       groupId: 'team',
       profileId: 'backup',
-    })).toStrictEqual(snapshot);
-    expect(api.getConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledWith({
-      serviceId: 'openai-codex',
-      profileId: 'backup',
-    });
+    })).toBeNull();
+    expect(api.getConnectedServiceQuotaSnapshotPlain).not.toHaveBeenCalled();
   });
 
   it('derives a non-ok metadata status when all meters are unavailable', async () => {
@@ -1817,7 +6375,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const api = {
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async (params: RegisterArgs) => {
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: ProviderSealedRegisterArgs) => {
         uploadedStatus = params.metadata?.status ?? null;
       }),
     } satisfies QuotaApi;
@@ -1868,6 +6426,126 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(uploadedStatus).toBe('unavailable');
   });
 
+  it('does not overwrite useful stale quota when a refresh returns only quota_unknown placeholders', async () => {
+    const now = 1_000_000;
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+    const staleUsefulSnapshot: ConnectedServiceQuotaSnapshotV1 = {
+      v: 1,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      fetchedAt: now - 10 * 60_000,
+      staleAfterMs: 60_000,
+      planLabel: 'Pro',
+      accountLabel: 'user@example.com',
+      activeAccountId: 'acct-stale',
+      meters: [
+        {
+          meterId: 'weekly',
+          label: 'Weekly',
+          used: null,
+          limit: null,
+          unit: 'unknown',
+          utilizationPct: 64,
+          remainingPct: 36,
+          resetsAt: now + 60 * 60_000,
+          status: 'ok',
+          details: {},
+        },
+      ],
+    };
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct-fetched',
+        providerEmail: 'fresh@example.com',
+      },
+    });
+    const sealedCredentialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => ({
+        content: { t: 'plain' as const, v: staleUsefulSnapshot },
+        metadata: {
+          fetchedAt: staleUsefulSnapshot.fetchedAt,
+          staleAfterMs: staleUsefulSnapshot.staleAfterMs,
+          status: 'ok' as const,
+        },
+      })),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async (): Promise<SealedQuotaSnapshotResponse | null> => null),
+      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => ({
+        sealed: { format: 'account_scoped_v1', ciphertext: sealedCredentialCiphertext },
+        metadata: { kind: 'oauth' },
+      })),
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async (_params: ProviderPlainRegisterArgs) => {}),
+    } satisfies QuotaApi;
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async ({ record: inputRecord }: FetchArgs): Promise<ConnectedServiceQuotaSnapshotV1 | null> => ({
+        v: 1,
+        serviceId: inputRecord.serviceId,
+        profileId: inputRecord.profileId,
+        fetchedAt: now,
+        staleAfterMs: 300_000,
+        planLabel: null,
+        accountLabel: 'fresh@example.com',
+        activeAccountId: 'acct-fetched',
+        meters: [
+          {
+            meterId: 'weekly',
+            label: 'Weekly',
+            used: null,
+            limit: null,
+            unit: 'unknown',
+            utilizationPct: null,
+            resetsAt: null,
+            status: 'unavailable',
+            details: { code: 'quota_unknown' },
+          },
+        ],
+      })),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => randomBytes(length),
+    });
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { 'openai-codex': { source: 'connected', profileId: 'work' } },
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(fetcher.loadQuota).toHaveBeenCalledTimes(1);
+    expect(api.registerProviderAccountUsageSnapshotPlain).not.toHaveBeenCalled();
+  });
+
   it('supports profile ids that contain ":"', async () => {
     const now = 1_000_000;
 
@@ -1913,7 +6591,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         if (args.profileId !== 'work:us') return null;
         return sealedCredential;
       }),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
     } satisfies QuotaApi;
 
     const fetcher: ConnectedServiceQuotaFetcher = {
@@ -1992,7 +6669,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const api = {
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
     } satisfies QuotaApi;
 
     const fetcher: ConnectedServiceQuotaFetcher = {
@@ -2027,7 +6703,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await Promise.resolve();
 
     expect(settled).toBe(true);
-    expect(api.registerConnectedServiceQuotaSnapshotSealed).toHaveBeenCalledTimes(0);
     vi.useRealTimers();
   });
 
@@ -2068,14 +6743,14 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       metadata: { kind: 'oauth' },
     };
 
-	    let uploadedCiphertext: string | null = null;
-	    const api = {
-	      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
-	      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-	      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async (params: RegisterArgs) => {
-	        uploadedCiphertext = params.sealed.ciphertext;
-	      }),
-	    } satisfies QuotaApi;
+    let uploadedCiphertext: string | null = null;
+    const api = {
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: ProviderSealedRegisterArgs) => {
+        uploadedCiphertext = params.sealed.ciphertext;
+      }),
+    } satisfies QuotaApi;
 
 	    const fetcher: ConnectedServiceQuotaFetcher = {
 	      serviceId: 'openai-codex',
@@ -2109,11 +6784,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     await coordinator.tickOnce();
 
-    expect(api.registerConnectedServiceQuotaSnapshotSealed).toHaveBeenCalledTimes(1);
+    expect(api.registerProviderAccountUsageSnapshotSealed).toHaveBeenCalledTimes(1);
     expect(typeof uploadedCiphertext).toBe('string');
 
-    const opened = openAccountScopedBlobCiphertext({
-      kind: 'connected_service_quota_snapshot',
+    const opened = openProviderAccountUsageSnapshotCiphertext({
       material: { type: 'dataKey', machineKey },
       ciphertext: uploadedCiphertext ?? '',
     });
@@ -2162,7 +6836,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const api = {
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => existingSnapshot),
       getConnectedServiceCredentialSealed: vi.fn(async () => sealedCredential),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(),
     } satisfies QuotaApi;
 
     const fetcher: ConnectedServiceQuotaFetcher = { serviceId: 'openai-codex', loadQuota: vi.fn(async (_args: FetchArgs) => null) };
@@ -2228,7 +6901,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 	    const api = {
 	      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
 	      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-	      registerConnectedServiceQuotaSnapshotSealed: vi.fn(),
 	    } satisfies QuotaApi;
 
 	    const fetcher: ConnectedServiceQuotaFetcher = {
@@ -2280,7 +6952,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 	    const api = {
 	      getConnectedServiceQuotaSnapshotSealed: vi.fn(async (): Promise<SealedQuotaSnapshotResponse | null> => existingSnapshot),
 	      getConnectedServiceCredentialSealed: vi.fn(async () => null),
-	      registerConnectedServiceQuotaSnapshotSealed: vi.fn(),
 	    } satisfies QuotaApi;
 
 	    const fetcher: ConnectedServiceQuotaFetcher = { serviceId: 'openai-codex', loadQuota: vi.fn(async (_args: FetchArgs) => null) };
@@ -2303,7 +6974,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     await coordinator.tickOnce();
     expect(fetcher.loadQuota).not.toHaveBeenCalled();
-    expect(api.registerConnectedServiceQuotaSnapshotSealed).not.toHaveBeenCalled();
   });
 
   it('uses a shared lease so contending daemons do not duplicate stale quota fetches', async () => {
@@ -2372,12 +7042,20 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         },
       })),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async (params) => {
-        serverSnapshot = params.content.v;
+      registerProviderAccountUsageSnapshotPlain: vi.fn(async (params: ProviderPlainRegisterArgs) => {
+        const projected = projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1({
+          snapshot: params.content.v,
+          source: params.source ?? {
+            serviceId: 'openai-codex',
+            profileId: 'work',
+            bindingKind: 'profile',
+          },
+        });
+        if (!projected) throw new Error('Expected provider account usage source projection');
+        serverSnapshot = projected;
       }),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
       acquireConnectedServiceRefreshLease: vi.fn(async (params: Readonly<{ ownerId?: string; leaseMs: number }>) => {
         const ownerId = params.ownerId ?? 'legacy-owner';
         if (!leaseOwner || leaseOwner === ownerId) {
@@ -2457,7 +7135,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await tickB;
 
     expect(loadQuotaMock).toHaveBeenCalledTimes(1);
-    expect(apiWithLease.registerConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(1);
     expect(apiWithLease.getConnectedServiceQuotaSnapshotPlain).toHaveBeenCalledTimes(3);
     expect(sleepMs).toHaveBeenCalledWith(50);
   });
@@ -2490,10 +7167,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
       getConnectedServiceQuotaSnapshotPlain: vi.fn(async () => null),
       getConnectedServiceCredentialPlain: vi.fn(async () => ({ content: { t: 'plain' as const, v: record } })),
-      registerConnectedServiceQuotaSnapshotPlain: vi.fn(async () => {}),
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async () => null),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
       acquireConnectedServiceRefreshLease: vi.fn(async () => {
         throw new Error('lease service unavailable');
       }),
@@ -2586,7 +7261,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 	    const api = {
 	      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
 	      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-	      registerConnectedServiceQuotaSnapshotSealed: vi.fn(),
 	    } satisfies QuotaApi;
 
 	    const fetcher: ConnectedServiceQuotaFetcher = {
@@ -2613,7 +7287,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     });
 
     await expect(coordinator.tickOnce()).resolves.toBeUndefined();
-    expect(api.registerConnectedServiceQuotaSnapshotSealed).not.toHaveBeenCalled();
   });
 
   it('applies a failure backoff window per binding', async () => {
@@ -2656,7 +7329,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const api = {
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
     } satisfies QuotaApi;
     (api as unknown as { listConnectedServiceProfiles: unknown }).listConnectedServiceProfiles = vi.fn(async () => ({
       serviceId: 'openai-codex',
@@ -2698,6 +7370,680 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     now += 10_000;
     await coordinator.tickOnce();
     expect(fetcher.loadQuota).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses provider retry timing for quota fetch failure backoff when supplied', async () => {
+    let now = 1_000_000;
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    const sealedCredentialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const sealedCredential: SealedCredentialResponse = {
+      sealed: { format: 'account_scoped_v1', ciphertext: sealedCredentialCiphertext },
+      metadata: { kind: 'oauth' },
+    };
+
+    const api = {
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
+    } satisfies QuotaApi;
+
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'claude-subscription',
+      loadQuota: vi.fn(async () => {
+        const error = new Error('provider asked us to retry later') as Error & { retryAfterMs: number };
+        error.retryAfterMs = 90_000;
+        throw error;
+      }),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => new Uint8Array(length).fill(1),
+      failureBackoffMinMs: 10_000,
+      failureBackoffMaxMs: 60_000,
+      failureBackoffJitterPct: 0,
+      discoveryEnabled: false,
+    } as unknown as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]);
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { 'claude-subscription': { source: 'connected', profileId: 'work' } },
+      },
+    });
+
+    await coordinator.tickOnce();
+    await coordinator.tickOnce();
+    expect(fetcher.loadQuota).toHaveBeenCalledTimes(1);
+
+    now += 60_000;
+    await coordinator.tickOnce();
+    expect(fetcher.loadQuota).toHaveBeenCalledTimes(1);
+
+    now += 30_000;
+    await coordinator.tickOnce();
+    expect(fetcher.loadQuota).toHaveBeenCalledTimes(2);
+  });
+
+  it('marks unrecovered quota auth failures as reconnect-required credential health', async () => {
+    const now = 1_000_000;
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'claude-subscription',
+      profileId: 'legacy',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: 'user:inference user:profile',
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    const sealedCredentialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const sealedCredential: SealedCredentialResponse = {
+      sealed: { format: 'account_scoped_v1', ciphertext: sealedCredentialCiphertext },
+      metadata: { kind: 'oauth' },
+    };
+
+    const api = {
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
+      updateConnectedServiceCredentialHealth: vi.fn(async () => {}),
+    } satisfies QuotaApi;
+
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'claude-subscription',
+      loadQuota: vi.fn(async () => {
+        throw new ConnectedServiceQuotaFetchError(
+          'Claude subscription is missing Claude Code OAuth scope; reconnect Claude in Happier and retry.',
+          {
+            status: 403,
+            quotaFetchErrorCode: 'auth_failure',
+            providerCode: 'missing_claude_code_scope',
+          },
+        );
+      }),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => new Uint8Array(length).fill(1),
+      failureBackoffMinMs: 10_000,
+      failureBackoffMaxMs: 60_000,
+      failureBackoffJitterPct: 0,
+      discoveryEnabled: false,
+    } as unknown as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]);
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { 'claude-subscription': { source: 'connected', profileId: 'legacy' } },
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith({
+      serviceId: 'claude-subscription',
+      profileId: 'legacy',
+      health: {
+        v: 1,
+        status: 'needs_reauth',
+        reconnectRequired: true,
+        lastRefreshAttemptAt: now,
+        lastRefreshFailureAt: now,
+        lastRefreshFailureKind: 'provider_403',
+        providerHttpStatus: 403,
+        providerErrorCode: 'missing_claude_code_scope',
+      },
+    });
+  });
+
+  it('classifies a Claude-declared quota providerCode as reconnect-required (scoped via descriptor terminalAuthFailureProviderCodes)', async () => {
+    const now = 1_000_000;
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: 'user:inference user:profile',
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    const sealedCredentialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const sealedCredential: SealedCredentialResponse = {
+      sealed: { format: 'account_scoped_v1', ciphertext: sealedCredentialCiphertext },
+      metadata: { kind: 'oauth' },
+    };
+
+    const api = {
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
+      updateConnectedServiceCredentialHealth: vi.fn(async () => {}),
+    } satisfies QuotaApi;
+
+    // No HTTP status: classification here depends entirely on the providerCode being one of
+    // the codes the Claude quota descriptor declares via `terminalAuthFailureProviderCodes`.
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'claude-subscription',
+      terminalAuthFailureProviderCodes: [
+        'missing_claude_code_scope',
+        'claude_subscription_missing_claude_code_scope',
+      ],
+      loadQuota: vi.fn(async () => {
+        throw new ConnectedServiceQuotaFetchError(
+          'Claude subscription is missing Claude Code OAuth scope; reconnect Claude in Happier and retry.',
+          {
+            quotaFetchErrorCode: 'auth_failure',
+            providerCode: 'missing_claude_code_scope',
+          },
+        );
+      }),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => new Uint8Array(length).fill(1),
+      failureBackoffMinMs: 10_000,
+      failureBackoffMaxMs: 60_000,
+      failureBackoffJitterPct: 0,
+      discoveryEnabled: false,
+    } as unknown as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]);
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { 'claude-subscription': { source: 'connected', profileId: 'work' } },
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith({
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+      health: {
+        v: 1,
+        status: 'needs_reauth',
+        reconnectRequired: true,
+        lastRefreshAttemptAt: now,
+        lastRefreshFailureAt: now,
+        lastRefreshFailureKind: 'unknown',
+        providerErrorCode: 'missing_claude_code_scope',
+      },
+    });
+  });
+
+  it('does NOT treat the Claude-only providerCode as terminal for a different provider that never declared it (scoping proof)', async () => {
+    const now = 1_000_000;
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    const sealedCredentialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const sealedCredential: SealedCredentialResponse = {
+      sealed: { format: 'account_scoped_v1', ciphertext: sealedCredentialCiphertext },
+      metadata: { kind: 'oauth' },
+    };
+
+    const api = {
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
+      updateConnectedServiceCredentialHealth: vi.fn(async () => {}),
+    } satisfies QuotaApi;
+
+    // Same providerCode string as the Claude test above, but this fetcher never declares
+    // `terminalAuthFailureProviderCodes` — the coordinator must NOT globally union Claude's
+    // codes onto another provider's classification.
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'openai-codex',
+      loadQuota: vi.fn(async () => {
+        throw new ConnectedServiceQuotaFetchError(
+          'provider auth failed',
+          {
+            quotaFetchErrorCode: 'auth_failure',
+            providerCode: 'missing_claude_code_scope',
+          },
+        );
+      }),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => new Uint8Array(length).fill(1),
+      failureBackoffMinMs: 10_000,
+      failureBackoffMaxMs: 60_000,
+      failureBackoffJitterPct: 0,
+      discoveryEnabled: false,
+    } as unknown as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]);
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { 'openai-codex': { source: 'connected', profileId: 'work' } },
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith({
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      health: {
+        v: 1,
+        status: 'refresh_failed_retryable',
+        reconnectRequired: false,
+        lastRefreshAttemptAt: now,
+        lastRefreshFailureAt: now,
+        lastRefreshFailureKind: 'unknown',
+        providerErrorCode: 'missing_claude_code_scope',
+      },
+    });
+  });
+
+  it('classifies standard OAuth2 providerCodes (e.g. invalid_grant) as terminal for any provider, with no per-provider declaration required', async () => {
+    const now = 1_000_000;
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'gemini',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    const sealedCredentialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const sealedCredential: SealedCredentialResponse = {
+      sealed: { format: 'account_scoped_v1', ciphertext: sealedCredentialCiphertext },
+      metadata: { kind: 'oauth' },
+    };
+
+    const api = {
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
+      updateConnectedServiceCredentialHealth: vi.fn(async () => {}),
+    } satisfies QuotaApi;
+
+    // Gemini declares no `terminalAuthFailureProviderCodes` at all, yet the standard OAuth2
+    // code must still be terminal — it is centralized, not provider-declared.
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'gemini',
+      loadQuota: vi.fn(async () => {
+        throw new ConnectedServiceQuotaFetchError(
+          'provider auth failed',
+          {
+            quotaFetchErrorCode: 'auth_failure',
+            providerCode: 'invalid_grant',
+          },
+        );
+      }),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => new Uint8Array(length).fill(1),
+      failureBackoffMinMs: 10_000,
+      failureBackoffMaxMs: 60_000,
+      failureBackoffJitterPct: 0,
+      discoveryEnabled: false,
+    } as unknown as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]);
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { gemini: { source: 'connected', profileId: 'work' } },
+      },
+    });
+
+    await coordinator.tickOnce();
+
+    expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledWith({
+      serviceId: 'gemini',
+      profileId: 'work',
+      health: {
+        v: 1,
+        status: 'needs_reauth',
+        reconnectRequired: true,
+        lastRefreshAttemptAt: now,
+        lastRefreshFailureAt: now,
+        lastRefreshFailureKind: 'unknown',
+        providerErrorCode: 'invalid_grant',
+      },
+    });
+  });
+
+  it('keeps transient unrecovered quota 401 failures retryable before reconnect escalation', async () => {
+    let now = 1_000_000;
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: 'user:inference user:profile',
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    const sealedCredentialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const sealedCredential: SealedCredentialResponse = {
+      sealed: { format: 'account_scoped_v1', ciphertext: sealedCredentialCiphertext },
+      metadata: { kind: 'oauth' },
+    };
+
+    const api = {
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
+      updateConnectedServiceCredentialHealth: vi.fn(async () => {}),
+    } satisfies QuotaApi;
+
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'claude-subscription',
+      loadQuota: vi.fn(async () => {
+        throw new ConnectedServiceQuotaFetchError(
+          'provider auth failed',
+          {
+            status: 401,
+            quotaFetchErrorCode: 'auth_failure',
+          },
+        );
+      }),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => new Uint8Array(length).fill(1),
+      failureBackoffMinMs: 10_000,
+      failureBackoffMaxMs: 60_000,
+      failureBackoffJitterPct: 0,
+      discoveryEnabled: false,
+    } as unknown as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]);
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { 'claude-subscription': { source: 'connected', profileId: 'work' } },
+      },
+    });
+
+    await coordinator.tickOnce();
+    now += 10_000;
+    await coordinator.tickOnce();
+
+    expect(api.updateConnectedServiceCredentialHealth).toHaveBeenNthCalledWith(1, {
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+      health: {
+        v: 1,
+        status: 'refresh_failed_retryable',
+        reconnectRequired: false,
+        lastRefreshAttemptAt: 1_000_000,
+        lastRefreshFailureAt: 1_000_000,
+        lastRefreshFailureKind: 'provider_401',
+        providerHttpStatus: 401,
+      },
+    });
+    expect(api.updateConnectedServiceCredentialHealth).toHaveBeenNthCalledWith(2, {
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+      health: {
+        v: 1,
+        status: 'refresh_failed_retryable',
+        reconnectRequired: false,
+        lastRefreshAttemptAt: 1_010_000,
+        lastRefreshFailureAt: 1_010_000,
+        lastRefreshFailureKind: 'provider_401',
+        providerHttpStatus: 401,
+      },
+    });
+  });
+
+  it('escalates repeated unrecovered quota 401 failures after the quota backoff retry window', async () => {
+    let now = 1_000_000;
+
+    const credentials: Credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+    };
+    if (credentials.encryption.type !== 'legacy') throw new Error('fixture');
+
+    const record = buildConnectedServiceCredentialRecord({
+      now,
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: now + 60_000,
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: 'user:inference user:profile',
+        tokenType: null,
+        providerAccountId: 'acct',
+        providerEmail: 'user@example.com',
+      },
+    });
+
+    const sealedCredentialCiphertext = sealAccountScopedBlobCiphertext({
+      kind: 'connected_service_credential',
+      material: { type: 'legacy', secret: credentials.encryption.secret },
+      payload: record,
+      randomBytes: (length) => randomBytes(length),
+    });
+    const sealedCredential: SealedCredentialResponse = {
+      sealed: { format: 'account_scoped_v1', ciphertext: sealedCredentialCiphertext },
+      metadata: { kind: 'oauth' },
+    };
+
+    const api = {
+      getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
+      getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
+      updateConnectedServiceCredentialHealth: vi.fn(async () => {}),
+    } satisfies QuotaApi;
+
+    const fetcher: ConnectedServiceQuotaFetcher = {
+      serviceId: 'claude-subscription',
+      loadQuota: vi.fn(async () => {
+        throw new ConnectedServiceQuotaFetchError(
+          'provider auth failed',
+          {
+            status: 401,
+            quotaFetchErrorCode: 'auth_failure',
+          },
+        );
+      }),
+    };
+
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api,
+      credentials,
+      quotaFetchers: [fetcher],
+      now: () => now,
+      randomBytes: (length: number) => new Uint8Array(length).fill(1),
+      failureBackoffMinMs: 10_000,
+      failureBackoffMaxMs: 60_000,
+      failureBackoffJitterPct: 0,
+      discoveryEnabled: false,
+    } as unknown as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]);
+
+    coordinator.registerSpawnTarget({
+      pid: 123,
+      connectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: { 'claude-subscription': { source: 'connected', profileId: 'work' } },
+      },
+    });
+
+    for (const advanceMs of [0, 10_000, 20_000, 40_000, 60_000]) {
+      now += advanceMs;
+      await coordinator.tickOnce();
+    }
+
+    expect(api.updateConnectedServiceCredentialHealth).toHaveBeenCalledTimes(5);
+    expect(api.updateConnectedServiceCredentialHealth).toHaveBeenNthCalledWith(5, {
+      serviceId: 'claude-subscription',
+      profileId: 'work',
+      health: {
+        v: 1,
+        status: 'needs_reauth',
+        reconnectRequired: true,
+        lastRefreshAttemptAt: 1_130_000,
+        lastRefreshFailureAt: 1_130_000,
+        lastRefreshFailureKind: 'provider_401',
+        providerHttpStatus: 401,
+      },
+    });
   });
 
   it('applies failure backoff even when refreshRequestedAt remains newer than fetchedAt', async () => {
@@ -2744,7 +8090,6 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const api = {
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async (): Promise<SealedQuotaSnapshotResponse | null> => existingSnapshot),
       getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async () => {}),
     } satisfies QuotaApi;
 
     const fetcher: ConnectedServiceQuotaFetcher = {
@@ -2824,7 +8169,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const api = {
       getConnectedServiceQuotaSnapshotSealed: vi.fn(async () => null),
       getConnectedServiceCredentialSealed: vi.fn(async (): Promise<SealedCredentialResponse | null> => sealedCredential),
-      registerConnectedServiceQuotaSnapshotSealed: vi.fn(async (params: RegisterArgs) => {
+      registerProviderAccountUsageSnapshotSealed: vi.fn(async (params: ProviderSealedRegisterArgs) => {
         uploadedCiphertext = params.sealed.ciphertext;
       }),
     } satisfies QuotaApi;
@@ -2862,6 +8207,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
     expect((api as any).listConnectedServiceProfiles).toHaveBeenCalled();
     expect(fetcher.loadQuota).toHaveBeenCalledTimes(1);
+    expect(api.registerProviderAccountUsageSnapshotSealed).toHaveBeenCalledTimes(1);
     expect(typeof uploadedCiphertext).toBe('string');
   });
 });

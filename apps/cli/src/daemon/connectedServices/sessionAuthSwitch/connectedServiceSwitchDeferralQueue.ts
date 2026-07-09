@@ -243,6 +243,16 @@ export function createConnectedServiceSwitchDeferralQueue(
     const schedulePendingTimeout = (pending: PendingSwitch): void => {
         clearPendingTimer(pending);
         pending.timer = setTimeout(() => {
+            // The boundary never arrived in time. Force the turn to a closed boundary BEFORE running
+            // the forced switch so `isTurnInFlight` stops reporting it as live — otherwise the
+            // managed-server release guard would keep deferring this now-forced switch (which would
+            // leave the prior-fingerprint server pinned). The forced close is observable as
+            // turn_cancelled; the switch still emits its `aborted_after_timeout` completion event.
+            const state = turnStateBySessionId.get(pending.sessionId);
+            if (state?.inFlight === true) {
+                state.inFlight = false;
+                state.lastEvent = 'turn_cancelled';
+            }
             void executePendingSwitch(pending, 'aborted_after_timeout');
         }, timeoutMs);
     };

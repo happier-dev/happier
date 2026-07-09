@@ -1,6 +1,6 @@
-import type { CatalogAgentId } from '@/backends/types';
-import { verifyResumeReachabilityByAgent } from '@/backends/connectedServices/verifyResumeReachabilityByAgent';
-import type { VerifyResumeReachableResult } from '@/backends/connectedServices/verifyResumeReachableTypes';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
+import { verifyResumeReachabilityByAgent } from '@/daemon/connectedServices/verifyResumeReachabilityByAgent';
+import type { VerifyResumeReachableResult } from '@/daemon/connectedServices/verifyResumeReachableTypes';
 import { resolveConnectedServiceTargetMaterializedRoot } from './materialize/resolveConnectedServiceTargetMaterializedRoot';
 
 /**

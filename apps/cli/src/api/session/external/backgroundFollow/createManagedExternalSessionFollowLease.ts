@@ -95,6 +95,7 @@ export async function createManagedExternalSessionFollowLease(params: Readonly<{
                 type: 'direct-session-transcript-delta',
                 sessionId: params.sessionId,
                 items: Array.from(update.items),
+                fromCursor: update.fromCursor,
                 nextCursor: update.nextCursor,
                 truncated: update.truncated,
             })).catch(() => undefined);

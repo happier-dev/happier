@@ -1,4 +1,4 @@
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { TrackedSession } from '@/daemon/types';
 import type {
   ConnectedServiceDaemonRestartDiagnosticInput,
@@ -17,6 +17,7 @@ export function createConnectedServicesAuthUpdatedRestartHandler(params: Readonl
   restartRequestedPids: Set<number>;
   pidToTrackedSession: Map<number, TrackedSession>;
   restartAgentIds: ReadonlySet<CatalogAgentId>;
+  noRestartRequiredServiceIdsByAgentId?: ReadonlyMap<CatalogAgentId, ReadonlySet<string>>;
   requestRestartSignal?: (params: Readonly<{
     pid: number;
     delayMs: number;
@@ -46,6 +47,7 @@ export function createConnectedServicesAuthUpdatedRestartHandler(params: Readonl
     const trigger = event.trigger ?? 'refresh_triggered_restart';
     for (const target of event.affectedTargets) {
       if (!params.restartAgentIds.has(target.agentId)) continue;
+      if (params.noRestartRequiredServiceIdsByAgentId?.get(target.agentId)?.has(event.binding.serviceId)) continue;
       if (params.restartRequestedPids.has(target.pid)) continue;
 
       const tracked = params.pidToTrackedSession.get(target.pid);

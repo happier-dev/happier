@@ -5,11 +5,12 @@ import { randomUUID } from 'node:crypto';
 import type { ManagedConnectionTransport } from '@happier-dev/connection-supervisor';
 
 import { createAuthenticationHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
+import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { ClientToServerEvents, ServerToClientEvents } from '@/api/types';
 import { createSocketTransportAdapter } from '@/api/connection/createSocketTransportAdapter';
 import { configuration } from '@/configuration';
 import { getSocketIoProxyOptions } from '@/utils/proxy/socketIoProxy';
-import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
+import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
 
 const ACCESS_KEY_BINDING_CACHE_TTL_MS = 30_000;
 const MAX_ACCESS_KEY_BINDING_CACHE_ENTRIES = 2_048;
@@ -136,7 +137,9 @@ export function createSessionSocketTransport(params: Readonly<{
     socket: Socket<ServerToClientEvents, ClientToServerEvents>;
     transport: ManagedConnectionTransport;
 }> {
-    const serverUrl = resolveLoopbackHttpUrl(params.serverUrl ?? configuration.apiServerUrl).replace(/\/+$/, '');
+    const serverUrl = params.serverUrl
+        ? normalizeServerHttpBaseUrl(params.serverUrl)
+        : resolveServerHttpBaseUrl();
     const transports = params.transports ?? configuration.socketIoTransports;
     const env = params.env ?? process.env;
 
@@ -155,7 +158,9 @@ export function createSessionSocketTransport(params: Readonly<{
         ...getSocketIoProxyOptions({ targetUrl: serverUrl, env }),
     });
 
-    const socketTransport = createSocketTransportAdapter(socket);
+    const socketTransport = createSocketTransportAdapter(socket, {
+        connectTimeoutMs: resolveSessionControlSocketConnectTimeoutMs(),
+    });
     const transport: ManagedConnectionTransport = {
         ...socketTransport,
         async connect(): Promise<void> {

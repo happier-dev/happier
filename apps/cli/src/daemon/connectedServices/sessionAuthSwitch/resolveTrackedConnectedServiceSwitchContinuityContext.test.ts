@@ -8,6 +8,35 @@ import { HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY } from '../c
 import { resolveTrackedConnectedServiceSwitchContinuityContext } from './resolveTrackedConnectedServiceSwitchContinuityContext';
 
 describe('resolveTrackedConnectedServiceSwitchContinuityContext', () => {
+  it('threads the runtime-auth selection materialized target into the continuity context', () => {
+    expect(resolveTrackedConnectedServiceSwitchContinuityContext({
+      agentId: 'claude',
+      baseDir: '/tmp/happier-connected-services',
+      tracked: {
+        spawnOptions: {
+          directory: '/tmp/project',
+          environmentVariables: {
+            CLAUDE_CONFIG_DIR: '/tmp/happier-connected-services/old-home/claude',
+            [HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]: '/tmp/happier-connected-services/old-home/claude',
+            EXISTING: '1',
+          },
+        },
+      },
+      runtimeAuthSelection: {
+        targetMaterializedEnv: { CLAUDE_CONFIG_DIR: '/tmp/happier-connected-services/new-home/claude' },
+        targetMaterializedRoot: '/tmp/happier-connected-services/new-home/claude',
+      },
+    })).toMatchObject({
+      targetMaterializedRoot: '/tmp/happier-connected-services/new-home/claude',
+      targetMaterializedEnv: {
+        CLAUDE_CONFIG_DIR: '/tmp/happier-connected-services/new-home/claude',
+        EXISTING: '1',
+        [HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]: '/tmp/happier-connected-services/new-home/claude',
+      },
+      cwd: '/tmp/project',
+    });
+  });
+
   it('derives materialized root/env and persisted session-file candidate from tracked resume options', () => {
     const baseDir = '/tmp/happier-connected-services';
     const piSessionFile = join(

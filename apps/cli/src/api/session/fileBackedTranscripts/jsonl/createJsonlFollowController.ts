@@ -107,12 +107,27 @@ export function createJsonlFollowController(options: JsonlFollowControllerOption
     return {
         async attach(attachOptions) {
             if (disposed) return;
+            const previousKeepAlive = keepAlive;
+            let retained = false;
             if (attachOptions?.keepAlive === true) {
                 keepAlive = true;
             } else {
                 retainers += 1;
+                retained = true;
             }
-            await ensureStarted();
+            try {
+                await ensureStarted();
+            } catch (error) {
+                if (retained) {
+                    retainers = Math.max(0, retainers - 1);
+                } else {
+                    keepAlive = previousKeepAlive;
+                }
+                if (!shouldRun()) {
+                    await stop().catch(() => undefined);
+                }
+                throw error;
+            }
         },
         async detach(detachOptions) {
             if (detachOptions?.keepAlive === true) {

@@ -58,12 +58,14 @@ describe('requestConnectedServiceSessionRestartSignal', () => {
       throw error;
     });
     const onSignalFailure = vi.fn();
+    const onProcessAlreadyMissing = vi.fn();
     const records: unknown[] = [];
 
     await expect(requestConnectedServiceSessionRestartSignal({
       pid: 123,
       delayMs: 0,
       onSignalFailure,
+      onProcessAlreadyMissing,
       nowMs: () => 10_000,
       recordRestartDiagnostic: (record: unknown) => records.push(record),
       restartDiagnostic: {
@@ -76,10 +78,11 @@ describe('requestConnectedServiceSessionRestartSignal', () => {
         generation: 70,
         reason: 'usage_limit',
       },
-    })).resolves.toBeUndefined();
+    })).resolves.toEqual({ status: 'process_already_missing' });
 
     expect(kill).toHaveBeenCalledWith(123, 'SIGTERM');
     expect(onSignalFailure).not.toHaveBeenCalled();
+    expect(onProcessAlreadyMissing).toHaveBeenCalledOnce();
     expect(records).toEqual([
       expect.objectContaining({
         status: 'requested',
@@ -107,7 +110,7 @@ describe('requestConnectedServiceSessionRestartSignal', () => {
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     const records: unknown[] = [];
 
-    await requestConnectedServiceSessionRestartSignal({
+    await expect(requestConnectedServiceSessionRestartSignal({
       pid: 123,
       delayMs: 0,
       preferProcessGroup: true,
@@ -124,7 +127,7 @@ describe('requestConnectedServiceSessionRestartSignal', () => {
         generation: null,
         reason: 'manual',
       },
-    });
+    })).resolves.toEqual({ status: 'requested' });
 
     expect(kill).toHaveBeenCalledWith(-123, 'SIGTERM');
     expect(records).toEqual([{
@@ -191,12 +194,12 @@ describe('requestConnectedServiceSessionRestartSignal', () => {
   it('prefers the daemon-spawned process group when requested', async () => {
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
 
-    await requestConnectedServiceSessionRestartSignal({
+    await expect(requestConnectedServiceSessionRestartSignal({
       pid: 123,
       delayMs: 0,
       preferProcessGroup: true,
       onSignalFailure: () => {},
-    });
+    })).resolves.toEqual({ status: 'requested' });
 
     expect(kill).toHaveBeenCalledWith(-123, 'SIGTERM');
     expect(kill).not.toHaveBeenCalledWith(123, 'SIGTERM');
@@ -208,12 +211,12 @@ describe('requestConnectedServiceSessionRestartSignal', () => {
       return true;
     });
 
-    await requestConnectedServiceSessionRestartSignal({
+    await expect(requestConnectedServiceSessionRestartSignal({
       pid: 123,
       delayMs: 0,
       preferProcessGroup: true,
       onSignalFailure: () => {},
-    });
+    })).resolves.toEqual({ status: 'requested' });
 
     expect(kill).toHaveBeenNthCalledWith(1, -123, 'SIGTERM');
     expect(kill).toHaveBeenNthCalledWith(2, 123, 'SIGTERM');
@@ -232,7 +235,7 @@ describe('requestConnectedServiceSessionRestartSignal', () => {
     });
 
     await vi.advanceTimersByTimeAsync(50);
-    await promise;
+    await expect(promise).resolves.toEqual({ status: 'skipped_stale_owner' });
 
     expect(shouldSignal).toHaveBeenCalledOnce();
     expect(kill).not.toHaveBeenCalled();

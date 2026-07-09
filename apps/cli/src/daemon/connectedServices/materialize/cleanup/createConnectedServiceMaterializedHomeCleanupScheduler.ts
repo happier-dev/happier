@@ -5,7 +5,10 @@ import {
   readConnectedServiceMaterializationIdentityFromEnvironment,
   readConnectedServiceMaterializationIdentityFromSpawnOptions,
 } from '../../materialization/identity';
-import { ConnectedServiceMaterializedHomeCleanupScheduler } from './ConnectedServiceMaterializedHomeCleanupScheduler';
+import {
+  ConnectedServiceMaterializedHomeCleanupScheduler,
+  type ConnectedServiceRetainedMaterializationKeysResult,
+} from './ConnectedServiceMaterializedHomeCleanupScheduler';
 
 function readIdentityId(identity: ConnectedServiceMaterializationIdentityV1 | null): string | null {
   const id = typeof identity?.id === 'string' ? identity.id.trim() : '';
@@ -21,7 +24,7 @@ export function createConnectedServiceMaterializedHomeCleanupScheduler(params: R
   baseDir: string;
   pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
   nowMs?: () => number;
-  getRetainedMaterializationKeys?: () => Promise<Iterable<string>> | Iterable<string>;
+  getRetainedMaterializationKeys?: () => Promise<ConnectedServiceRetainedMaterializationKeysResult> | ConnectedServiceRetainedMaterializationKeysResult;
   orphanTtlMs?: number;
   attemptTtlMs?: number;
   maxCleanupRetries?: number;

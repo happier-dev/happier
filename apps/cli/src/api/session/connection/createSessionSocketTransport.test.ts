@@ -96,6 +96,61 @@ describe('createSessionSocketTransport', () => {
         expect(socket.connect).toHaveBeenCalledTimes(1);
     });
 
+    it('does not resolve connect until the session-scoped socket has actually connected', async () => {
+        const socket = createApiSessionSocketStub();
+        socket.connect.mockImplementation(() => socket);
+        bindApiSessionSocketMock(mockIo, socket);
+        vi.mocked(axios.get).mockReset();
+        vi.mocked(axios.post).mockReset();
+        vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { accessKey: { id: 'existing-key' } } } as never);
+
+        const { createSessionSocketTransport } = await import('./createSessionSocketTransport');
+        const { transport } = createSessionSocketTransport({
+            token: 'token-1',
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            serverUrl: 'http://127.0.0.1:4321',
+        });
+
+        let resolved = false;
+        const connectPromise = transport.connect().then(() => {
+            resolved = true;
+        });
+
+        await vi.waitFor(() => expect(socket.connect).toHaveBeenCalledTimes(1));
+        expect(resolved).toBe(false);
+
+        socket.connected = true;
+        socket.trigger('connect');
+        await connectPromise;
+
+        expect(resolved).toBe(true);
+    });
+
+    it('rejects connect when the session-scoped socket reports a connect error', async () => {
+        const socket = createApiSessionSocketStub();
+        socket.connect.mockImplementation(() => socket);
+        bindApiSessionSocketMock(mockIo, socket);
+        vi.mocked(axios.get).mockReset();
+        vi.mocked(axios.post).mockReset();
+        vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { accessKey: { id: 'existing-key' } } } as never);
+
+        const { createSessionSocketTransport } = await import('./createSessionSocketTransport');
+        const { transport } = createSessionSocketTransport({
+            token: 'token-1',
+            sessionId: 'session-1',
+            machineId: 'machine-1',
+            serverUrl: 'http://127.0.0.1:4321',
+        });
+
+        const connectPromise = transport.connect();
+        await vi.waitFor(() => expect(socket.connect).toHaveBeenCalledTimes(1));
+        const error = new Error('socket auth failed');
+        socket.trigger('connect_error', error);
+
+        await expect(connectPromise).rejects.toThrow('socket auth failed');
+    });
+
     it('preserves terminal auth failures from the access-key bootstrap request', async () => {
         const socket = createApiSessionSocketStub();
         bindApiSessionSocketMock(mockIo, socket);

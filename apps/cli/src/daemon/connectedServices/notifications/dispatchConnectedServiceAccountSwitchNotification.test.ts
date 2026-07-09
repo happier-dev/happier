@@ -105,4 +105,105 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
             { sound: 'happier_soft.wav', priority: 'high', androidSoundId: 'soft' },
         );
     });
+
+    it('dispatches the preventive copy for a preemptive soft-threshold switch', async () => {
+        const sendToAllDevicesAsync = vi.fn(async () => {});
+        const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+
+        await dispatchConnectedServiceAccountSwitchNotificationAsync({
+            settings: accountSettingsParse({}),
+            expoPushSender: { sendToAllDevicesAsync },
+            settingsSecretsReadKeys: [],
+            runtimeQuotaSnapshots,
+            listConnectedServiceProfiles: vi.fn(async () => ({
+                serviceId: 'openai-codex' as const,
+                profiles: [
+                    { profileId: 'primary', status: 'connected' as const, providerEmail: 'main@example.test' },
+                    { profileId: 'backup', status: 'connected' as const, providerEmail: 'backup@example.test' },
+                ],
+            })),
+            source: {
+                sessionId: 'session-soft',
+                sessionTitle: 'Refactor billing',
+                serviceId: 'openai-codex',
+                groupId: 'main',
+                fromProfileId: 'primary',
+                toProfileId: 'backup',
+                reason: 'soft_threshold',
+            },
+            nowMs: () => 2_000,
+            dedupeWindowMs: 0,
+        });
+
+        expect(sendToAllDevicesAsync).toHaveBeenCalledWith(
+            'Refactor billing',
+            expect.stringContaining('preventively'),
+            expect.objectContaining({ sessionId: 'session-soft' }),
+            expect.anything(),
+        );
+    });
+
+    it('suppresses external notifications for user-performed manual switches', async () => {
+        const sendToAllDevicesAsync = vi.fn(async () => {});
+        const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+
+        await dispatchConnectedServiceAccountSwitchNotificationAsync({
+            settings: accountSettingsParse({}),
+            expoPushSender: { sendToAllDevicesAsync },
+            settingsSecretsReadKeys: [],
+            runtimeQuotaSnapshots,
+            listConnectedServiceProfiles: vi.fn(async () => ({
+                serviceId: 'openai-codex' as const,
+                profiles: [
+                    { profileId: 'primary', status: 'connected' as const, providerEmail: 'main@example.test' },
+                    { profileId: 'backup', status: 'connected' as const, providerEmail: 'backup@example.test' },
+                ],
+            })),
+            source: {
+                sessionId: 'session-manual',
+                sessionTitle: 'Manual switch',
+                serviceId: 'openai-codex',
+                groupId: 'main',
+                fromProfileId: 'primary',
+                toProfileId: 'backup',
+                reason: 'manual',
+            },
+            nowMs: () => 2_000,
+            dedupeWindowMs: 0,
+        });
+
+        expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
+    });
+
+    it('suppresses external notifications for predictive fanout maintenance switches', async () => {
+        const sendToAllDevicesAsync = vi.fn(async () => {});
+        const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+
+        await dispatchConnectedServiceAccountSwitchNotificationAsync({
+            settings: accountSettingsParse({}),
+            expoPushSender: { sendToAllDevicesAsync },
+            settingsSecretsReadKeys: [],
+            runtimeQuotaSnapshots,
+            listConnectedServiceProfiles: vi.fn(async () => ({
+                serviceId: 'openai-codex' as const,
+                profiles: [
+                    { profileId: 'primary', status: 'connected' as const, providerEmail: 'main@example.test' },
+                    { profileId: 'backup', status: 'connected' as const, providerEmail: 'backup@example.test' },
+                ],
+            })),
+            source: {
+                sessionId: 'session-fanout',
+                sessionTitle: 'Implement auth fanout',
+                serviceId: 'openai-codex',
+                groupId: 'main',
+                fromProfileId: 'primary',
+                toProfileId: 'backup',
+                reason: 'same_provider_account_exhausted',
+            },
+            nowMs: () => 2_000,
+            dedupeWindowMs: 0,
+        });
+
+        expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
+    });
 });

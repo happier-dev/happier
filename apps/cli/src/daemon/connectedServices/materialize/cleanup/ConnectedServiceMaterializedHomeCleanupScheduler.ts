@@ -1,4 +1,4 @@
-import { lstat, readdir, realpath, rm, stat } from 'node:fs/promises';
+import { lstat, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isAbsolute, relative } from 'node:path';
 
@@ -23,9 +23,81 @@ export type ConnectedServiceMaterializedHomeCleanupResult = Readonly<{
 
 type RemovePath = typeof rm;
 
-async function readDirectoryEntries(path: string): Promise<ReadonlyArray<Readonly<{ name: string; path: string }>>> {
+type MaterializedHomeCleanupFileOperation =
+  | 'lstat'
+  | 'readFile'
+  | 'readdir'
+  | 'realpath'
+  | 'rm'
+  | 'stat'
+  | 'writeFile';
+
+const DEFAULT_FILE_OPERATION_TIMEOUT_MS = 5_000;
+
+export class ConnectedServiceMaterializedHomeCleanupFileOperationTimeoutError extends Error {
+  readonly code = 'ETIMEDOUT';
+
+  constructor(readonly operation: MaterializedHomeCleanupFileOperation, readonly path: string, readonly timeoutMs: number) {
+    super(`Materialized-home cleanup ${operation} timed out after ${timeoutMs}ms: ${path}`);
+    this.name = 'ConnectedServiceMaterializedHomeCleanupFileOperationTimeoutError';
+  }
+}
+
+export type ConnectedServiceRetainedMaterializationKeysResult =
+  | Iterable<string>
+  | Readonly<{ status: 'available'; keys: Iterable<string> }>
+  | Readonly<{ status: 'unavailable' }>;
+
+type RetainedSegmentsSnapshot = Readonly<{
+  retainedSegments: ReadonlySet<string>;
+  identityDeletionAuthority: 'confirmed' | 'unavailable';
+}>;
+
+function normalizeFileOperationTimeoutMs(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_FILE_OPERATION_TIMEOUT_MS;
+  if (!Number.isFinite(value)) return DEFAULT_FILE_OPERATION_TIMEOUT_MS;
+  return Math.max(1, Math.trunc(value));
+}
+
+async function runFileOperationWithTimeout<T>(input: Readonly<{
+  operation: MaterializedHomeCleanupFileOperation;
+  path: string;
+  timeoutMs: number;
+  run: () => Promise<T>;
+}>): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const operationPromise = input.run().then(
+    (value) => ({ status: 'completed' as const, value }),
+    (error) => ({ status: 'failed' as const, error }),
+  );
+  const timeoutPromise = new Promise<Readonly<{ status: 'timed_out' }>>((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      resolve({ status: 'timed_out' });
+    }, input.timeoutMs);
+    (timeoutHandle as unknown as { unref?: () => void })?.unref?.();
+  });
+
+  const result = await Promise.race([operationPromise, timeoutPromise]);
+  if (timeoutHandle) clearTimeout(timeoutHandle);
+  timeoutHandle = null;
+
+  if (result.status === 'completed') return result.value;
+  if (result.status === 'failed') throw result.error;
+  throw new ConnectedServiceMaterializedHomeCleanupFileOperationTimeoutError(
+    input.operation,
+    input.path,
+    input.timeoutMs,
+  );
+}
+
+async function readDirectoryEntries(path: string, timeoutMs: number): Promise<ReadonlyArray<Readonly<{ name: string; path: string }>>> {
   try {
-    const entries = await readdir(path, { withFileTypes: true });
+    const entries = await runFileOperationWithTimeout({
+      operation: 'readdir',
+      path,
+      timeoutMs,
+      run: async () => await readdir(path, { withFileTypes: true }),
+    });
     return entries
       .filter((entry) => entry.isDirectory())
       .map((entry) => ({ name: entry.name, path: join(path, entry.name) }));
@@ -35,13 +107,66 @@ async function readDirectoryEntries(path: string): Promise<ReadonlyArray<Readonl
   }
 }
 
-async function readDirectoryMtimeMs(path: string): Promise<number | null> {
+async function readDirectoryMtimeMs(path: string, timeoutMs: number): Promise<number | null> {
   try {
-    return (await stat(path)).mtimeMs;
+    return (await runFileOperationWithTimeout({
+      operation: 'stat',
+      path,
+      timeoutMs,
+      run: async () => await stat(path),
+    })).mtimeMs;
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
     throw error;
   }
+}
+
+function stripClaudeRefreshTokenFields(value: unknown): unknown | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const root = value as Record<string, unknown>;
+  const credential = root.claudeAiOauth;
+  if (!credential || typeof credential !== 'object' || Array.isArray(credential)) return null;
+  const credentialRecord = credential as Record<string, unknown>;
+  if (
+    !('refreshToken' in credentialRecord)
+    && !('refresh_token' in credentialRecord)
+    && !('RT' in credentialRecord)
+  ) {
+    return null;
+  }
+  const {
+    refreshToken: _refreshToken,
+    refresh_token: _refresh_token,
+    RT: _rt,
+    ...withoutRefreshTokens
+  } = credentialRecord;
+  return {
+    ...root,
+    claudeAiOauth: withoutRefreshTokens,
+  };
+}
+
+async function stripLegacyClaudeRefreshTokensFromMaterializedHome(credentialPath: string, timeoutMs: number): Promise<void> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await runFileOperationWithTimeout({
+      operation: 'readFile',
+      path: credentialPath,
+      timeoutMs,
+      run: async () => await readFile(credentialPath, 'utf8'),
+    })) as unknown;
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return;
+    return;
+  }
+  const stripped = stripClaudeRefreshTokenFields(parsed);
+  if (!stripped) return;
+  await runFileOperationWithTimeout({
+    operation: 'writeFile',
+    path: credentialPath,
+    timeoutMs,
+    run: async () => await writeFile(credentialPath, `${JSON.stringify(stripped)}\n`),
+  });
 }
 
 function normalizeMaterializationKeys(keys: Iterable<string>): Set<string> {
@@ -54,12 +179,23 @@ function normalizeMaterializationKeys(keys: Iterable<string>): Set<string> {
   return segments;
 }
 
+function normalizeRetainedMaterializationKeysResult(
+  result: ConnectedServiceRetainedMaterializationKeysResult,
+): Readonly<{ status: 'available'; keys: Iterable<string> } | { status: 'unavailable' }> {
+  if (typeof result === 'object' && result !== null && 'status' in result) {
+    if (result.status === 'unavailable') return { status: 'unavailable' };
+    return { status: 'available', keys: result.keys };
+  }
+  return { status: 'available', keys: result };
+}
+
 export class ConnectedServiceMaterializedHomeCleanupScheduler {
   readonly #baseDir: string;
   readonly #nowMs: () => number;
   readonly #orphanTtlMs: number;
   readonly #attemptTtlMs: number;
   readonly #maxCleanupRetries: number;
+  readonly #fileOperationTimeoutMs: number;
   readonly #removePath: RemovePath;
   readonly #failedAttemptsByPath = new Map<string, number>();
   readonly #abandonedPaths = new Set<string>();
@@ -68,10 +204,11 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     baseDir: string;
     nowMs: () => number;
     getLiveMaterializationKeys: () => Iterable<string>;
-    getRetainedMaterializationKeys?: () => Promise<Iterable<string>> | Iterable<string>;
+    getRetainedMaterializationKeys?: () => Promise<ConnectedServiceRetainedMaterializationKeysResult> | ConnectedServiceRetainedMaterializationKeysResult;
     orphanTtlMs?: number;
     attemptTtlMs?: number;
     maxCleanupRetries?: number;
+    fileOperationTimeoutMs?: number;
     removePath?: RemovePath;
   }>) {
     this.#baseDir = deps.baseDir;
@@ -79,38 +216,53 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     this.#orphanTtlMs = Math.max(0, Math.trunc(deps.orphanTtlMs ?? 24 * 60 * 60_000));
     this.#attemptTtlMs = Math.max(0, Math.trunc(deps.attemptTtlMs ?? 60 * 60_000));
     this.#maxCleanupRetries = Math.max(1, Math.trunc(deps.maxCleanupRetries ?? 3));
+    this.#fileOperationTimeoutMs = normalizeFileOperationTimeoutMs(deps.fileOperationTimeoutMs);
     this.#removePath = deps.removePath ?? rm;
   }
 
-  async #readRetainedSegments(): Promise<Set<string>> {
+  async #readRetainedSegments(): Promise<RetainedSegmentsSnapshot> {
     const liveSegments = normalizeMaterializationKeys(this.deps.getLiveMaterializationKeys());
-    const retainedKeys = await Promise.resolve(this.deps.getRetainedMaterializationKeys?.() ?? []);
+    const retainedResult = normalizeRetainedMaterializationKeysResult(
+      await Promise.resolve(this.deps.getRetainedMaterializationKeys?.() ?? []),
+    );
+    if (retainedResult.status === 'unavailable') {
+      return {
+        retainedSegments: liveSegments,
+        identityDeletionAuthority: 'unavailable',
+      };
+    }
+    const retainedKeys = retainedResult.keys;
     for (const segment of normalizeMaterializationKeys(retainedKeys)) {
       liveSegments.add(segment);
     }
-    return liveSegments;
+    return {
+      retainedSegments: liveSegments,
+      identityDeletionAuthority: 'confirmed',
+    };
   }
 
-  async #listCleanupTargets(retainedSegments: ReadonlySet<string>): Promise<ReadonlyArray<MaterializedHomeCleanupTarget>> {
+  async #listCleanupTargets(retainedSnapshot: RetainedSegmentsSnapshot): Promise<ReadonlyArray<MaterializedHomeCleanupTarget>> {
     const nowMs = this.#nowMs();
     const targets: MaterializedHomeCleanupTarget[] = [];
-    for (const entry of await readDirectoryEntries(this.#baseDir)) {
-      if (entry.name === '.attempts') continue;
-      if (retainedSegments.has(entry.name)) continue;
-      const mtimeMs = await readDirectoryMtimeMs(entry.path);
-      if (mtimeMs === null) continue;
-      if (nowMs - mtimeMs < this.#orphanTtlMs) continue;
-      targets.push({
-        targetKind: 'identity_root',
-        segment: entry.name,
-        path: entry.path,
-        mtimeMs,
-      });
+    if (retainedSnapshot.identityDeletionAuthority === 'confirmed') {
+      for (const entry of await readDirectoryEntries(this.#baseDir, this.#fileOperationTimeoutMs)) {
+        if (entry.name === '.attempts') continue;
+        if (retainedSnapshot.retainedSegments.has(entry.name)) continue;
+        const mtimeMs = await readDirectoryMtimeMs(entry.path, this.#fileOperationTimeoutMs);
+        if (mtimeMs === null) continue;
+        if (nowMs - mtimeMs < this.#orphanTtlMs) continue;
+        targets.push({
+          targetKind: 'identity_root',
+          segment: entry.name,
+          path: entry.path,
+          mtimeMs,
+        });
+      }
     }
 
     const attemptsRoot = join(this.#baseDir, '.attempts');
-    for (const entry of await readDirectoryEntries(attemptsRoot)) {
-      const mtimeMs = await readDirectoryMtimeMs(entry.path);
+    for (const entry of await readDirectoryEntries(attemptsRoot, this.#fileOperationTimeoutMs)) {
+      const mtimeMs = await readDirectoryMtimeMs(entry.path, this.#fileOperationTimeoutMs);
       if (mtimeMs === null) continue;
       if (nowMs - mtimeMs < this.#attemptTtlMs) continue;
       targets.push({
@@ -123,13 +275,37 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     return targets;
   }
 
+  async #stripLegacyClaudeRefreshTokens(retainedSnapshot: RetainedSegmentsSnapshot): Promise<void> {
+    await Promise.all(Array.from(retainedSnapshot.retainedSegments, async (segment) => {
+      await stripLegacyClaudeRefreshTokensFromMaterializedHome(
+        join(this.#baseDir, segment, 'claude', '.credentials.json'),
+        this.#fileOperationTimeoutMs,
+      );
+    }));
+  }
+
   async #isContainedDirectory(path: string): Promise<boolean> {
     try {
-      const targetStat = await lstat(path);
+      const targetStat = await runFileOperationWithTimeout({
+        operation: 'lstat',
+        path,
+        timeoutMs: this.#fileOperationTimeoutMs,
+        run: async () => await lstat(path),
+      });
       if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) return false;
       const [baseRealPath, targetRealPath] = await Promise.all([
-        realpath(this.#baseDir),
-        realpath(path),
+        runFileOperationWithTimeout({
+          operation: 'realpath',
+          path: this.#baseDir,
+          timeoutMs: this.#fileOperationTimeoutMs,
+          run: async () => await realpath(this.#baseDir),
+        }),
+        runFileOperationWithTimeout({
+          operation: 'realpath',
+          path,
+          timeoutMs: this.#fileOperationTimeoutMs,
+          run: async () => await realpath(path),
+        }),
       ]);
       const rel = relative(baseRealPath, targetRealPath);
       return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel);
@@ -141,7 +317,9 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
 
   async #isRetainedIdentityTarget(target: MaterializedHomeCleanupTarget): Promise<boolean> {
     if (target.targetKind !== 'identity_root') return false;
-    return (await this.#readRetainedSegments()).has(target.segment);
+    const retainedSnapshot = await this.#readRetainedSegments();
+    if (retainedSnapshot.identityDeletionAuthority !== 'confirmed') return true;
+    return retainedSnapshot.retainedSegments.has(target.segment);
   }
 
   async #removeTarget(target: MaterializedHomeCleanupTarget): Promise<ConnectedServiceMaterializedHomeCleanupResult> {
@@ -170,7 +348,12 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
       };
     }
     try {
-      await this.#removePath(target.path, { recursive: true, force: true });
+      await runFileOperationWithTimeout({
+        operation: 'rm',
+        path: target.path,
+        timeoutMs: this.#fileOperationTimeoutMs,
+        run: async () => await this.#removePath(target.path, { recursive: true, force: true }),
+      });
       this.#failedAttemptsByPath.delete(target.path);
       this.#abandonedPaths.delete(target.path);
       return {
@@ -189,9 +372,10 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
   }
 
   async reconcile(): Promise<ReadonlyArray<ConnectedServiceMaterializedHomeCleanupResult>> {
-    const retainedSegments = await this.#readRetainedSegments();
+    const retainedSnapshot = await this.#readRetainedSegments();
+    await this.#stripLegacyClaudeRefreshTokens(retainedSnapshot);
     const results: ConnectedServiceMaterializedHomeCleanupResult[] = [];
-    for (const target of await this.#listCleanupTargets(retainedSegments)) {
+    for (const target of await this.#listCleanupTargets(retainedSnapshot)) {
       results.push(await this.#removeTarget(target));
     }
     return results;

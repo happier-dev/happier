@@ -40,6 +40,7 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
     segment.lastCheckpointTextLen = commitTextLen;
     segment.lastCommittedTextVersion = commitVersion;
     segment.lastCommittedState = state;
+    segment.appendOnlySinceLastDurableSnapshot = true;
   };
 
   let committedSnapshotPromise: Promise<void>;

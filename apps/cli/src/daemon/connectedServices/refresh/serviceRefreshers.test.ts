@@ -39,6 +39,7 @@ describe('serviceRefreshers', () => {
       headers: expect.objectContaining({
         'Content-Type': 'application/x-www-form-urlencoded',
       }),
+      signal: expect.any(AbortSignal),
     }));
     expect(refreshed).toMatchObject({
       accessToken: 'new-access',
@@ -184,49 +185,18 @@ describe('serviceRefreshers', () => {
     })).rejects.toThrow(/access_token/i);
   });
 
-  it('refreshes Gemini tokens via refresh_token grant', async () => {
-    const previousClientSecret = process.env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_SECRET;
-    process.env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_SECRET = 'secret-123';
-
-    const fetchMock = vi.fn(async (_input: unknown, _init?: unknown) => ({
-      ok: true,
-      json: async () => ({
-        access_token: 'new-access',
-        refresh_token: 'new-refresh',
-        expires_in: 60,
-        scope: 'scope',
-        token_type: 'Bearer',
-      }),
-    }));
+  it('fails closed for Gemini OAuth refresh because Gemini is API-key/Vertex-only in this closure', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error('Gemini OAuth refresh must not call the network');
+    });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-    const now = 3000;
-    try {
-      const refreshed = await refreshConnectedAccountOauthTokens({
-        serviceId: 'gemini',
-        refreshToken: 'old-refresh',
-        now,
-      });
-
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-      const init: unknown = fetchMock.mock.calls[0]?.[1];
-      const body: unknown =
-        init && typeof init === 'object' && 'body' in init ? (init as { body?: unknown }).body : undefined;
-      const bodyText =
-        typeof body === 'string'
-          ? body
-          : body && typeof body === 'object' && 'toString' in body && typeof body.toString === 'function'
-            ? String(body.toString())
-            : '';
-      expect(bodyText).toContain('client_secret=secret-123');
-      expect(refreshed.accessToken).toBe('new-access');
-      expect(refreshed.refreshToken).toBe('new-refresh');
-      expect(refreshed.expiresAt).toBe(now + 60 * 1000);
-      expect(refreshed.scope).toBe('scope');
-      expect(refreshed.tokenType).toBe('Bearer');
-    } finally {
-      process.env.HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_SECRET = previousClientSecret;
-    }
+    await expect(refreshConnectedAccountOauthTokens({
+      serviceId: 'gemini',
+      refreshToken: 'old-refresh',
+      now: 3000,
+    })).rejects.toThrow(/does not support OAuth refresh/i);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('refreshes standard OAuth tokens from descriptor metadata by service id', async () => {
@@ -348,7 +318,7 @@ describe('serviceRefreshers', () => {
     });
   });
 
-  it('throws when Gemini refresh response is missing access_token', async () => {
+  it('does not parse Gemini OAuth refresh payloads because Gemini OAuth is not a supported descriptor mode', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -362,6 +332,7 @@ describe('serviceRefreshers', () => {
       serviceId: 'gemini',
       refreshToken: 'old-refresh',
       now: 3000,
-    })).rejects.toThrow(/access_token/i);
+    })).rejects.toThrow(/does not support OAuth refresh/i);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

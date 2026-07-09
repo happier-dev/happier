@@ -160,6 +160,34 @@ describe('connectedServiceSwitchDeferralQueue', () => {
         expect(runSwitch).toHaveBeenCalledTimes(1);
     });
 
+    it('force-closes the in-flight turn at a boundary when the timeout forces the switch', async () => {
+        const runSwitch = vi.fn(async () => {});
+        const queue = createConnectedServiceSwitchDeferralQueue({
+            timeoutMs: 60_000,
+            disableDeferral: false,
+        });
+
+        queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'prompt_or_steer' });
+        expect(queue.isTurnInFlight('sess_1')).toBe(true);
+        const pending = queue.requestSwitch({
+            sessionId: 'sess_1',
+            policy: 'defer_until_turn_boundary',
+            source: 'manual',
+            target: target(),
+            runSwitch,
+        });
+
+        vi.advanceTimersByTime(60_000);
+        await pending;
+
+        expect(runSwitch).toHaveBeenCalledTimes(1);
+        // After a forced (timeout) switch, the turn must no longer report in-flight, so the
+        // managed-server release guard does not defer the now-forced switch (which would otherwise
+        // leak the prior-fingerprint server). The forced boundary is observable as turn_cancelled.
+        expect(queue.isTurnInFlight('sess_1')).toBe(false);
+        expect(queue.getTurnLifecycleState('sess_1').lastEvent).toBe('turn_cancelled');
+    });
+
     it('bypasses deferral when HAPPIER_CONNECTED_SERVICES_DISABLE_TURN_DEFERRAL is enabled', async () => {
         const runSwitch = vi.fn(async () => {});
         const queue = createConnectedServiceSwitchDeferralQueue({

@@ -112,6 +112,143 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
       expect(notify).toHaveBeenCalledTimes(2);
     });
 
+    it('does not suppress usage-limit reports from different source provider accounts', async () => {
+      const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
+
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_dedupe_source_account',
+        switchesThisTurn: 0,
+        classification: {
+          ...limitClassification,
+          sourceProviderAccountId: 'acct-a',
+        },
+        notify,
+        nowMs: () => 1_000,
+      });
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_dedupe_source_account',
+        switchesThisTurn: 0,
+        classification: {
+          ...limitClassification,
+          sourceProviderAccountId: 'acct-b',
+        },
+        notify,
+        nowMs: () => 1_100,
+      });
+
+      expect(notify).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not suppress usage-limit reports from different failure-time group generations', async () => {
+      const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
+
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_dedupe_generation',
+        switchesThisTurn: 0,
+        classification: {
+          ...limitClassification,
+          sourceProviderAccountId: 'acct-a',
+          groupGeneration: 41,
+        },
+        notify,
+        nowMs: () => 1_000,
+      });
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_dedupe_generation',
+        switchesThisTurn: 0,
+        classification: {
+          ...limitClassification,
+          sourceProviderAccountId: 'acct-a',
+          groupGeneration: 42,
+        },
+        notify,
+        nowMs: () => 1_100,
+      });
+
+      expect(notify).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not suppress reports for different failing access token fingerprints', async () => {
+      const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
+
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_dedupe_failing_token_fingerprint',
+        switchesThisTurn: 0,
+        classification: {
+          ...limitClassification,
+          failingAccessTokenFingerprint: 'sha256:old-failed-token',
+        },
+        notify,
+        nowMs: () => 1_000,
+      });
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_dedupe_failing_token_fingerprint',
+        switchesThisTurn: 0,
+        classification: {
+          ...limitClassification,
+          failingAccessTokenFingerprint: 'sha256:new-failed-token',
+        },
+        notify,
+        nowMs: () => 1_100,
+      });
+
+      expect(notify).toHaveBeenCalledTimes(2);
+    });
+
+    it('suppresses repeated reports for the same failing access token fingerprint', async () => {
+      const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
+
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_dedupe_same_failing_token_fingerprint',
+        switchesThisTurn: 0,
+        classification: {
+          ...limitClassification,
+          failingAccessTokenFingerprint: 'sha256:failed-token',
+        },
+        notify,
+        nowMs: () => 1_000,
+      });
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_dedupe_same_failing_token_fingerprint',
+        switchesThisTurn: 0,
+        classification: {
+          ...limitClassification,
+          failingAccessTokenFingerprint: 'sha256:failed-token',
+        },
+        notify,
+        nowMs: () => 1_100,
+      });
+
+      expect(notify).toHaveBeenCalledTimes(1);
+    });
+
+    it('dedupes on sanitized provider identity instead of raw unsafe provider values', async () => {
+      const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
+
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_dedupe_sanitized',
+        switchesThisTurn: 0,
+        classification: {
+          ...limitClassification,
+          providerLimitId: 'Bearer raw-token-a',
+        },
+        notify,
+        nowMs: () => 1_000,
+      });
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_dedupe_sanitized',
+        switchesThisTurn: 0,
+        classification: {
+          ...limitClassification,
+          providerLimitId: 'Bearer raw-token-b',
+        },
+        notify,
+        nowMs: () => 1_100,
+      });
+
+      expect(notify).toHaveBeenCalledTimes(1);
+    });
+
     it('does not suppress reports with different stable recovery actions', async () => {
       const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
 
@@ -251,6 +388,79 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     expect(report.projection?.nextRetryAtMs).toBe(1234);
   });
 
+  it('sends a sanitized classification in the local daemon notification body', async () => {
+    const notify = vi.fn(async (_body: unknown, _options?: unknown) => ({
+      ok: true,
+      result: { status: 'recovery_retry_scheduled' },
+    }));
+
+    await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      sessionId: 'sess_sanitized_notify',
+      switchesThisTurn: 1,
+      classification: {
+        ...classification,
+        providerLimitId: 'Bearer raw-token',
+        planType: 'secret-enterprise-plan',
+        action: { kind: 'open_url', url: 'https://example.com/recover?api_key=secret' },
+        accessToken: 'secret-access-token',
+        rawProviderPayload: { body: 'raw-provider-body' },
+      },
+      notify,
+    });
+
+    const body = notify.mock.calls[0]?.[0];
+    expect(body).toMatchObject({
+      sessionId: 'sess_sanitized_notify',
+      switchesThisTurn: 1,
+      classification: {
+        ...classification,
+        providerLimitId: null,
+        planType: null,
+        action: null,
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain('raw-token');
+    expect(JSON.stringify(body)).not.toContain('secret-enterprise-plan');
+    expect(JSON.stringify(body)).not.toContain('api_key=secret');
+    expect(JSON.stringify(body)).not.toContain('secret-access-token');
+    expect(JSON.stringify(body)).not.toContain('raw-provider-body');
+  });
+
+  it('drops malformed classifications before local notification or outbox persistence', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-report-invalid-classification-');
+    try {
+      const notify = vi.fn(async () => ({
+        ok: true,
+        result: { status: 'recovery_retry_scheduled' },
+      }));
+
+      const report = await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_invalid_classification',
+        switchesThisTurn: 1,
+        classification: {
+          kind: 'usage_limit',
+          // Missing required serviceId/source means the sender cannot prove this body is safe.
+          accessToken: 'secret-access-token',
+          rawProviderPayload: { body: 'raw-provider-body' },
+        },
+        notify,
+        logger: { debug: vi.fn() },
+        reportOutboxDir: outboxDir,
+      });
+
+      expect(report).toEqual({
+        handled: false,
+        report: null,
+        statusCode: null,
+        statusMessage: null,
+      });
+      expect(notify).not.toHaveBeenCalled();
+      await expect(readRuntimeAuthFailureReportOutboxItems({ outboxDir })).resolves.toEqual([]);
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
+
   it('forwards an explicit custom resume prompt mode through the default daemon report body', async () => {
     const notify = vi.fn(async () => ({
       ok: true,
@@ -346,6 +556,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
   it('enqueues a sanitized outbox report when daemon notification fails', async () => {
     const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-helper-');
     try {
+      const scheduleOutboxDrain = vi.fn();
       await expect(reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_1',
         switchesThisTurn: 2,
@@ -360,6 +571,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         }),
         logger: { debug: vi.fn() },
         reportOutboxDir: outboxDir,
+        scheduleOutboxDrain,
         nowMs: () => 1_700_000_000_000,
       })).resolves.toMatchObject({
         handled: false,
@@ -380,6 +592,97 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
           rateLimits: null,
         },
       });
+      expect(scheduleOutboxDrain).toHaveBeenCalledOnce();
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
+
+  it('does not reschedule the outbox drain when the same retryable report only coalesces an existing item', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-coalesced-schedule-');
+    try {
+      const scheduleOutboxDrain = vi.fn();
+      const notify = vi.fn(async () => {
+        throw new Error('daemon unavailable');
+      });
+
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_schedule_coalesced',
+        switchesThisTurn: 2,
+        classification,
+        notify,
+        logger: { debug: vi.fn() },
+        reportOutboxDir: outboxDir,
+        scheduleOutboxDrain,
+        nowMs: () => 1_700_000_000_000,
+      });
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_schedule_coalesced',
+        switchesThisTurn: 2,
+        classification,
+        notify,
+        logger: { debug: vi.fn() },
+        reportOutboxDir: outboxDir,
+        scheduleOutboxDrain,
+        nowMs: () => 1_700_000_000_500,
+      });
+
+      expect(scheduleOutboxDrain).toHaveBeenCalledTimes(1);
+      const items = await readRuntimeAuthFailureReportOutboxItems({ outboxDir });
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({
+        attemptCount: 2,
+      });
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
+
+  it('enqueues a sanitized outbox report when daemon shutdown defers recovery intake', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-shutdown-deferral-');
+    try {
+      await expect(reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_shutdown_deferral',
+        switchesThisTurn: 1,
+        classification: {
+          ...classification,
+          providerLimitId: 'refresh-token-secret',
+          accessToken: 'secret-access-token',
+          rawProviderPayload: { body: 'raw-provider-body' },
+        },
+        notify: vi.fn(async () => ({
+          ok: true,
+          result: {
+            status: 'daemon_lifecycle_unavailable',
+            reason: 'recovery_deferred_shutdown',
+          },
+        })),
+        reportOutboxDir: outboxDir,
+        nowMs: () => 1_700_000_000_000,
+      })).resolves.toMatchObject({
+        handled: false,
+        report: {
+          ok: true,
+          result: {
+            status: 'daemon_lifecycle_unavailable',
+            reason: 'recovery_deferred_shutdown',
+          },
+        },
+      });
+
+      const items = await readRuntimeAuthFailureReportOutboxItems({ outboxDir });
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({
+        sessionId: 'sess_shutdown_deferral',
+        switchesThisTurn: 1,
+        classification: {
+          ...classification,
+          providerLimitId: null,
+        },
+      });
+      expect(JSON.stringify(items[0])).not.toContain('secret-access-token');
+      expect(JSON.stringify(items[0])).not.toContain('raw-provider-body');
+      expect(JSON.stringify(items[0])).not.toContain('refresh-token-secret');
     } finally {
       await removeTempDir(outboxDir);
     }

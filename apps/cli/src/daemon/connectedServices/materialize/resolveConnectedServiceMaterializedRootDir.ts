@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { normalizeMaterializationKeyForPath } from './normalizeMaterializationKeyForPath';
 
 /**

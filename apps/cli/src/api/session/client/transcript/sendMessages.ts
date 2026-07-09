@@ -51,6 +51,7 @@ type CommitSessionMessageParams = Readonly<{
     sessionEventType?: SessionEventType;
     logErrorMessage: string;
     markAsUserMessage?: boolean;
+    refreshAgentQueueEchoSuppression?: boolean;
 }>;
 
 export type SessionClientTranscriptSendPort = Readonly<{
@@ -58,7 +59,7 @@ export type SessionClientTranscriptSendPort = Readonly<{
     turnAssistantTextSnapshotStore?: TurnAssistantTextSnapshotStore;
     socket: {
         connected: boolean;
-        emit: (event: 'transcript-stream-segment', payload: unknown) => void;
+        emit: (event: 'transcript-stream-segment' | 'transcript-stream-segment-delta', payload: unknown) => void;
     };
     outboundShapeLogger: {
         log: (label: string, payload: unknown) => void;
@@ -67,12 +68,13 @@ export type SessionClientTranscriptSendPort = Readonly<{
     debugLargeJson: (message: string, data?: unknown) => void;
     getMetadataSnapshot: () => Metadata | null;
     buildOutboundSessionMessagePayload: (content: unknown) => PlainOrEncryptedPayload;
-    commitSessionMessageBestEffort: (params: CommitSessionMessageParams) => void;
+    commitSessionMessageBestEffort: (params: CommitSessionMessageParams) => Promise<void>;
     logSendWhileDisconnected: (context: string, details?: Record<string, unknown>) => void;
     markAgentQueueEchoSuppressedLocalId: (localId: string) => void;
     toolCallCanonicalNameByProviderAndId: Map<string, { rawToolName: string; canonicalToolName: string }>;
     permissionToolCallRawInputByProviderAndId: Map<string, unknown>;
     toolCallInputByProviderAndId: Map<string, unknown>;
+    maxToolCallCacheEntries?: number | undefined;
 }>;
 
 function observeAcpAssistantText(params: Readonly<{
@@ -110,6 +112,7 @@ export function sendAgentMessageViaPort(
         toolCallCanonicalNameByProviderAndId: port.toolCallCanonicalNameByProviderAndId,
         permissionToolCallRawInputByProviderAndId: port.permissionToolCallRawInputByProviderAndId,
         toolCallInputByProviderAndId: port.toolCallInputByProviderAndId,
+        maxToolCallCacheEntries: port.maxToolCallCacheEntries,
     });
 
     port.outboundShapeLogger.log(`acp:${provider}:${normalizedBody.type}`, normalizedBody);
@@ -142,7 +145,7 @@ export function sendAgentMessageViaPort(
 export function sendUserTextMessageViaPort(
     port: SessionClientTranscriptSendPort,
     text: string,
-    opts?: Readonly<{ localId?: string; meta?: Record<string, unknown> }>,
+    opts?: Readonly<{ localId?: string; meta?: Record<string, unknown>; refreshAgentQueueEchoSuppression?: boolean }>,
 ): void {
     const content = buildUserTextMessageContent(text, opts?.meta);
 
@@ -151,8 +154,7 @@ export function sendUserTextMessageViaPort(
     const localId = typeof opts?.localId === 'string' && opts.localId.length > 0 ? opts.localId : randomUUID();
     const meta = opts?.meta ?? null;
     const metaSource = typeof meta?.source === 'string' ? meta.source : null;
-    const metaSentFrom = typeof meta?.sentFrom === 'string' ? meta.sentFrom : null;
-    if (metaSource === 'cli' || metaSentFrom === 'cli') {
+    if (metaSource === 'cli') {
         port.markAgentQueueEchoSuppressedLocalId(localId);
     }
 
@@ -162,6 +164,7 @@ export function sendUserTextMessageViaPort(
         sidechainId: null,
         messageRole: 'user',
         markAsUserMessage: true,
+        refreshAgentQueueEchoSuppression: opts?.refreshAgentQueueEchoSuppression === true || metaSource === 'cli',
         logErrorMessage: '[SOCKET] Failed to commit user message (non-fatal)',
     });
 }
@@ -170,7 +173,7 @@ export function sendAgentMessageEphemeralViaPort(
     port: SessionClientTranscriptSendPort,
     provider: ACPProvider,
     body: ACPMessageData,
-    opts: Readonly<{ localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> }>,
+    opts: Readonly<{ localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; tick?: number }>,
 ): void {
     if (!port.socket.connected) {
         return;
@@ -184,6 +187,7 @@ export function sendAgentMessageEphemeralViaPort(
         toolCallCanonicalNameByProviderAndId: port.toolCallCanonicalNameByProviderAndId,
         permissionToolCallRawInputByProviderAndId: port.permissionToolCallRawInputByProviderAndId,
         toolCallInputByProviderAndId: port.toolCallInputByProviderAndId,
+        maxToolCallCacheEntries: port.maxToolCallCacheEntries,
     });
     const messageRole = resolveAcpSessionMessageRole(normalizedBody);
     const payload = port.buildOutboundSessionMessagePayload(content);
@@ -212,6 +216,9 @@ export function sendAgentMessageEphemeralViaPort(
                 localId,
                 ...(sidechainId ? { sidechainId } : {}),
                 messageRole,
+                ...(typeof opts.tick === 'number' && Number.isFinite(opts.tick) && opts.tick >= 0
+                    ? { tick: Math.trunc(opts.tick) }
+                    : {}),
                 content: payload,
                 createdAt,
                 updatedAt,
@@ -227,6 +234,67 @@ export function sendAgentMessageEphemeralViaPort(
         localId,
         source: 'ephemeral',
     });
+}
+
+/**
+ * Emit a live transcript delta tick: `body` carries ONLY the text appended since the previous
+ * live emission for this segment. Full-snapshot checkpoints still flow through
+ * `sendAgentMessageEphemeralViaPort`; receivers that cannot chain a delta drop it and resync on
+ * the next checkpoint. The delta content goes through the same envelope/encryption choke point as
+ * snapshots (`prepareAcpTranscriptDispatch` + `buildOutboundSessionMessagePayload`).
+ */
+export function sendAgentMessageEphemeralDeltaViaPort(
+    port: SessionClientTranscriptSendPort,
+    provider: ACPProvider,
+    body: ACPMessageData,
+    opts: Readonly<{ localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> }>,
+): void {
+    if (!port.socket.connected) {
+        return;
+    }
+
+    const { normalizedBody, content, localId, sidechainId } = prepareAcpTranscriptDispatch({
+        provider,
+        body,
+        meta: opts.meta,
+        localId: opts.localId,
+        toolCallCanonicalNameByProviderAndId: port.toolCallCanonicalNameByProviderAndId,
+        permissionToolCallRawInputByProviderAndId: port.permissionToolCallRawInputByProviderAndId,
+        toolCallInputByProviderAndId: port.toolCallInputByProviderAndId,
+        maxToolCallCacheEntries: port.maxToolCallCacheEntries,
+    });
+    const messageRole = resolveAcpSessionMessageRole(normalizedBody);
+    const payload = port.buildOutboundSessionMessagePayload(content);
+    const createdAt =
+        typeof opts.createdAt === 'number' && Number.isFinite(opts.createdAt)
+            ? Math.max(0, Math.trunc(opts.createdAt))
+            : Date.now();
+    const updatedAt =
+        typeof opts.updatedAt === 'number' && Number.isFinite(opts.updatedAt)
+            ? Math.max(createdAt, Math.trunc(opts.updatedAt))
+            : Date.now();
+
+    // Intentionally no observeAcpAssistantText here: delta bodies carry only appended chars, and
+    // the turn-assistant-text snapshot expects full text. Full-snapshot checkpoints (<= 1s apart)
+    // keep the turn snapshot fresh through sendAgentMessageEphemeralViaPort.
+
+    try {
+        port.socket.emit('transcript-stream-segment-delta', {
+            sid: port.sessionId,
+            message: {
+                localId,
+                ...(sidechainId ? { sidechainId } : {}),
+                messageRole,
+                tick: Math.max(1, Math.trunc(opts.tick)),
+                baseLength: Math.max(0, Math.trunc(opts.baseLength)),
+                content: payload,
+                createdAt,
+                updatedAt,
+            },
+        });
+    } catch {
+        // best effort
+    }
 }
 
 export function sendSessionEventViaPort(

@@ -6,8 +6,9 @@ import type { ConnectedServiceId } from '@happier-dev/protocol';
 import { readSafeOauthProviderErrorCode } from '@/cloud/safeOauthProviderError';
 import { mapConnectedAccountOauthPayload } from '@/daemon/connectedServices/descriptors/buildConnectedAccountCredentialRecord';
 import { resolveConnectedAccountOauthConfig } from '@/daemon/connectedServices/descriptors/connectedAccountOauthConfig';
-import { resolveGeminiOauthClientSecret } from '@/daemon/connectedServices/shared/oauthConfig';
-import { createGlobalConnectedServiceFetchRuntime } from '@/daemon/connectedServices/shared/runtimeFetch';
+import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
+
+const CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS = 15_000;
 
 export async function refreshConnectedAccountOauthTokens(params: Readonly<{
   serviceId: ConnectedServiceId;
@@ -26,15 +27,12 @@ export async function refreshConnectedAccountOauthTokens(params: Readonly<{
     serviceId: params.serviceId,
     env: process.env,
     resolveConfidentialClientValue: (resolverKey, envKey, env) => {
-      if (resolverKey === 'connectedServices.gemini.oauthConfidentialClient') {
-        return resolveGeminiOauthClientSecret(env as NodeJS.ProcessEnv);
-      }
       const raw = env[envKey];
       if (typeof raw === 'string' && raw.trim()) return raw.trim();
       throw new Error(`Unsupported connected-service confidential OAuth resolver: ${resolverKey}`);
     },
   });
-  const runtimeFetch = params.runtimeFetch ?? createGlobalConnectedServiceFetchRuntime();
+  const runtimeFetch = params.runtimeFetch ?? createGlobalFetchRuntime();
   const bodyFields: Record<string, string> = {
     grant_type: 'refresh_token',
     refresh_token: params.refreshToken,
@@ -50,12 +48,14 @@ export async function refreshConnectedAccountOauthTokens(params: Readonly<{
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(bodyFields),
+          signal: AbortSignal.timeout(CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS),
         }
       : {
           url: config.tokenUrl,
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams(bodyFields),
+          signal: AbortSignal.timeout(CONNECTED_SERVICE_OAUTH_REFRESH_TIMEOUT_MS),
         },
   );
   if (!response.ok) {

@@ -1,4 +1,5 @@
 import { normalizeToolCallV2, normalizeToolResultV2 } from '@/agent/tools/normalization';
+import { setBoundedMap } from '@/utils/collections/lru';
 
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import {
@@ -36,9 +37,23 @@ function ensureOpaqueAcpToolResultOutputEnvelope(output: unknown): unknown {
   return { output, _acp: {} };
 }
 
+function setToolCallCacheEntry<K, V>(params: Readonly<{
+  map: Map<K, V>;
+  key: K;
+  value: V;
+  maxEntries?: number;
+}>): void {
+  if (typeof params.maxEntries === 'number' && Number.isFinite(params.maxEntries)) {
+    setBoundedMap(params.map, params.key, params.value, params.maxEntries);
+    return;
+  }
+  params.map.set(params.key, params.value);
+}
+
 export function normalizeCodexSessionMessageBody(params: {
   body: any;
   toolCallCanonicalNameByProviderAndId: Map<string, { rawToolName: string; canonicalToolName: string }>;
+  maxToolCallCacheEntries?: number | undefined;
   debug: (message: string, data?: Record<string, unknown>) => void;
 }): any {
   const body = params.body;
@@ -54,9 +69,14 @@ export function normalizeCodexSessionMessageBody(params: {
       callId,
     });
     if (callId) {
-      params.toolCallCanonicalNameByProviderAndId.set(getToolCallNameKey('codex', callId), {
-        rawToolName,
-        canonicalToolName,
+      setToolCallCacheEntry({
+        map: params.toolCallCanonicalNameByProviderAndId,
+        key: getToolCallNameKey('codex', callId),
+        value: {
+          rawToolName,
+          canonicalToolName,
+        },
+        maxEntries: params.maxToolCallCacheEntries,
       });
     }
     return { ...body, name: canonicalToolName, input };
@@ -94,6 +114,7 @@ export function normalizeAcpSessionMessageBody(params: {
   toolCallCanonicalNameByProviderAndId: Map<string, { rawToolName: string; canonicalToolName: string }>;
   permissionToolCallRawInputByProviderAndId: Map<string, unknown>;
   toolCallInputByProviderAndId: Map<string, unknown>;
+  maxToolCallCacheEntries?: number | undefined;
 }): ACPMessageData {
   const { provider, body } = params;
 
@@ -118,12 +139,23 @@ export function normalizeAcpSessionMessageBody(params: {
       callId,
     });
     const inputWithOpaque = ensureOpaqueAcpToolCallInputEnvelope(input);
-    params.toolCallCanonicalNameByProviderAndId.set(getToolCallNameKey(provider, callId), {
-      rawToolName,
-      canonicalToolName,
+    const key = getToolCallNameKey(provider, callId);
+    setToolCallCacheEntry({
+      map: params.toolCallCanonicalNameByProviderAndId,
+      key,
+      value: {
+        rawToolName,
+        canonicalToolName,
+      },
+      maxEntries: params.maxToolCallCacheEntries,
     });
-    params.toolCallInputByProviderAndId.set(getToolCallNameKey(provider, callId), inputWithOpaque);
-    params.permissionToolCallRawInputByProviderAndId.delete(getToolCallNameKey(provider, callId));
+    setToolCallCacheEntry({
+      map: params.toolCallInputByProviderAndId,
+      key,
+      value: inputWithOpaque,
+      maxEntries: params.maxToolCallCacheEntries,
+    });
+    params.permissionToolCallRawInputByProviderAndId.delete(key);
     return { ...body, name: canonicalToolName, input: inputWithOpaque };
   }
 
@@ -132,10 +164,12 @@ export function normalizeAcpSessionMessageBody(params: {
     const nextOptions =
       rawInputHint != null ? backfillPermissionRequestOptionsInput(body.options, rawInputHint) : body.options;
     if (rawInputHint != null) {
-      params.permissionToolCallRawInputByProviderAndId.set(
-        getToolCallNameKey(provider, body.permissionId),
-        rawInputHint,
-      );
+      setToolCallCacheEntry({
+        map: params.permissionToolCallRawInputByProviderAndId,
+        key: getToolCallNameKey(provider, body.permissionId),
+        value: rawInputHint,
+        maxEntries: params.maxToolCallCacheEntries,
+      });
     }
     let { canonicalToolName } = normalizeToolCallV2({
       protocol: 'acp',

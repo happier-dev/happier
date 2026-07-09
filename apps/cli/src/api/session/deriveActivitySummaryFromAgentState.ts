@@ -1,31 +1,39 @@
+import {
+  isAgentStateRequestCoveredByCompletedRequests,
+  resolveAgentStateRequestCoverageOptions,
+} from '@happier-dev/agents';
 import type { AgentState } from '../types';
 import { resolveAgentRequestKind } from '@/agent/permissions/requestKind';
 
 type ActivitySummary = Readonly<{
   pendingPermissionRequestCount: number;
   pendingUserActionRequestCount: number;
+  pendingRequestNewestCreatedAt: number | null;
 }>;
 
-function getCompletedAt(value: unknown): number {
-  if (!value || typeof value !== 'object') return 0;
-  const completedAt = typeof (value as { completedAt?: unknown }).completedAt === 'number'
-    ? (value as { completedAt: number }).completedAt
-    : 0;
-  const createdAt = typeof (value as { createdAt?: unknown }).createdAt === 'number'
-    ? (value as { createdAt: number }).createdAt
-    : 0;
-  return Math.max(completedAt, createdAt);
-}
+const PENDING_REQUEST_COVERAGE_OPTIONS = resolveAgentStateRequestCoverageOptions({
+  kind: 'localPermissionBridge',
+});
 
 function isCoveredByCompletedRequest(
   completedRequests: NonNullable<AgentState['completedRequests']> | null | undefined,
   requestId: string,
-  createdAt: number,
+  request: unknown,
 ): boolean {
-  if (!completedRequests || typeof completedRequests !== 'object') return false;
-  const completed = completedRequests[requestId];
-  if (!completed) return false;
-  return createdAt <= getCompletedAt(completed);
+  return isAgentStateRequestCoveredByCompletedRequests({
+    requestId,
+    request,
+    completedRequests: completedRequests as Record<string, unknown> | null | undefined,
+    options: PENDING_REQUEST_COVERAGE_OPTIONS,
+  });
+}
+
+function readRequestCreatedAt(request: unknown): number | null {
+  if (!request || typeof request !== 'object') return null;
+  const createdAt = (request as { createdAt?: unknown }).createdAt;
+  return typeof createdAt === 'number' && Number.isFinite(createdAt)
+    ? Math.max(0, Math.floor(createdAt))
+    : null;
 }
 
 export function deriveActivitySummaryFromAgentState(agentState: AgentState | null | undefined): ActivitySummary {
@@ -35,18 +43,19 @@ export function deriveActivitySummaryFromAgentState(agentState: AgentState | nul
     return {
       pendingPermissionRequestCount: 0,
       pendingUserActionRequestCount: 0,
+      pendingRequestNewestCreatedAt: null,
     };
   }
 
   let pendingPermissionRequestCount = 0;
   let pendingUserActionRequestCount = 0;
+  let pendingRequestNewestCreatedAt: number | null = null;
 
   for (const [requestId, request] of Object.entries(requests)) {
     if (!request || typeof request !== 'object') continue;
     const toolName = typeof request.tool === 'string' ? request.tool : '';
     if (!toolName) continue;
-    const createdAt = typeof request.createdAt === 'number' ? request.createdAt : 0;
-    if (isCoveredByCompletedRequest(completedRequests, requestId, createdAt)) continue;
+    if (isCoveredByCompletedRequest(completedRequests, requestId, request)) continue;
 
     const kind = request.kind === 'user_action' || request.kind === 'permission'
       ? request.kind
@@ -57,10 +66,18 @@ export function deriveActivitySummaryFromAgentState(agentState: AgentState | nul
     } else {
       pendingPermissionRequestCount += 1;
     }
+    const createdAt = readRequestCreatedAt(request);
+    if (createdAt !== null) {
+      pendingRequestNewestCreatedAt =
+        pendingRequestNewestCreatedAt === null
+          ? createdAt
+          : Math.max(pendingRequestNewestCreatedAt, createdAt);
+    }
   }
 
   return {
     pendingPermissionRequestCount,
     pendingUserActionRequestCount,
+    pendingRequestNewestCreatedAt,
   };
 }

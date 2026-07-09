@@ -1,4 +1,5 @@
 import type { ConnectedServiceId, SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceRuntimeAuthApplyCapability } from '@/agent/catalog/types';
 
 import type { RuntimeAuthRecoveryIntent } from '../runtimeAuth/RuntimeAuthRecoveryScheduler';
 import { evaluatePredictiveSoftSwitchPolicy } from '../accountGroups/switching/predictiveSoftSwitchPolicy';
@@ -9,7 +10,7 @@ export type ConnectedServiceRecoverySoftSwitchGuardInput = Readonly<{
   groupId: string;
   activeProfileId: string;
   agentId?: string | null;
-  reason: 'soft_threshold' | 'usage_limit' | 'auth_expired';
+  reason: 'soft_threshold' | 'same_provider_account_exhausted' | 'usage_limit' | 'auth_expired';
 }>;
 
 export type ConnectedServiceRecoverySoftSwitchGuardResult =
@@ -28,6 +29,13 @@ type PredictiveSoftSwitchMode = 'supported' | 'unsupported';
 type ConnectedServiceRecoverySwitchTurnState = Readonly<{
   inFlight: boolean;
 }>;
+type RuntimeAuthApplyCapabilityResolver = (
+  input: ConnectedServiceRecoverySoftSwitchGuardInput,
+) => ConnectedServiceRuntimeAuthApplyCapability | Promise<ConnectedServiceRuntimeAuthApplyCapability>;
+
+const UNSUPPORTED_RUNTIME_AUTH_APPLY_CAPABILITY: ConnectedServiceRuntimeAuthApplyCapability = {
+  directLiveHotAuth: 'unsupported',
+};
 
 export const QUOTA_SOFT_SWITCH_SUPPRESSED_RECOVERY_PENDING_REASON =
   'quota_soft_switch_suppressed_recovery_pending';
@@ -87,15 +95,25 @@ export function createConnectedServiceRecoverySwitchGuard(deps: Readonly<{
   resolvePredictiveSoftSwitchMode?: (
     input: ConnectedServiceRecoverySoftSwitchGuardInput,
   ) => PredictiveSoftSwitchMode | Promise<PredictiveSoftSwitchMode>;
+  runtimeAuthApplyCapabilityResolver?: RuntimeAuthApplyCapabilityResolver | null;
 }>): (input: ConnectedServiceRecoverySoftSwitchGuardInput) => Promise<ConnectedServiceRecoverySoftSwitchGuardResult> {
   return async (input) => {
-    if (input.reason === 'soft_threshold') {
+    if (input.reason === 'soft_threshold' || input.reason === 'same_provider_account_exhausted') {
+      let runtimeAuthApply: ConnectedServiceRuntimeAuthApplyCapability | null = null;
+      if (deps.runtimeAuthApplyCapabilityResolver) {
+        try {
+          runtimeAuthApply = await deps.runtimeAuthApplyCapabilityResolver(input);
+        } catch {
+          runtimeAuthApply = UNSUPPORTED_RUNTIME_AUTH_APPLY_CAPABILITY;
+        }
+      }
       const predictiveDecision = evaluatePredictiveSoftSwitchPolicy({
         reason: input.reason,
         predictiveSoftSwitchMode: deps.resolvePredictiveSoftSwitchMode
           ? await deps.resolvePredictiveSoftSwitchMode(input)
           : 'supported',
         turnState: deps.readTurnState?.(input.sessionId) ?? null,
+        runtimeAuthApply,
       });
       if (predictiveDecision.status === 'suppress') {
         return predictiveDecision;

@@ -44,6 +44,7 @@ export async function dispatchProviderTranscriptMessage(
         body: request.body,
         meta: request.meta,
         metadata,
+        sessionId: opts.sessionId,
         now: () => Date.now(),
         randomId: () => randomUUID(),
         debug: port.debug,
@@ -58,6 +59,6 @@ export async function dispatchProviderTranscriptMessage(
     });
 
     recordRuntimeOutboundTranscriptToolTraceEvents(opts.sessionId, plan.toolTraceEvents);
-    commitRuntimeOutboundTranscriptDispatchPlan(port, plan);
+    await commitRuntimeOutboundTranscriptDispatchPlan(port, plan);
     applyRuntimeOutboundTranscriptPostSendEffects(opts.postSendReactionPort, plan.postSendEffects);
 }

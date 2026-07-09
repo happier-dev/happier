@@ -4,6 +4,7 @@ import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import type { AgentState, Metadata } from '../types';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '../encryption';
 import { deriveActivitySummaryFromAgentState } from './deriveActivitySummaryFromAgentState';
+import type { SessionRuntimeActivitySourceClassV1 } from '@happier-dev/protocol';
 
 type AckableSocket = {
     emitWithAck: (event: string, ...args: any[]) => Promise<any>;
@@ -214,6 +215,39 @@ export async function updateSessionAgentStateWithAck(opts: {
             `agent state update failed: ${describeAckFailure(answer)}`,
             'agent_state_update_failed',
             false,
+        );
+    });
+}
+
+export async function updateSessionRuntimeActivityProjectionWithAck(opts: {
+    socket: AckableSocket;
+    sessionId: string;
+    runtimeActivityActiveCount: number;
+    runtimeActivityObservedAt: number | null;
+    runtimeActivityExpiresAt: number | null;
+    runtimeActivitySourceClass: SessionRuntimeActivitySourceClassV1 | null;
+}): Promise<void> {
+    await backoff(async () => {
+        const answer = await emitSocketWithAck<any>({
+            socket: opts.socket,
+            event: 'update-runtime-activity',
+            payload: {
+                sid: opts.sessionId,
+                runtimeActivityActiveCount: opts.runtimeActivityActiveCount,
+                runtimeActivityObservedAt: opts.runtimeActivityObservedAt,
+                runtimeActivityExpiresAt: opts.runtimeActivityExpiresAt,
+                runtimeActivitySourceClass: opts.runtimeActivitySourceClass,
+            },
+        });
+
+        if (answer.result === 'success') {
+            return;
+        }
+
+        throw createSessionStateUpdateError(
+            `runtime activity update failed: ${describeAckFailure(answer)}`,
+            'runtime_activity_update_failed',
+            true,
         );
     });
 }

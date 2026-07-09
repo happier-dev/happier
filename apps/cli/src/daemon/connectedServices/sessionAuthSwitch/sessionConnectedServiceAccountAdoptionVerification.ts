@@ -1,7 +1,7 @@
 import type { ConnectedServiceBindingsV1, ConnectedServiceId } from '@happier-dev/protocol';
 
-import { getConnectedServiceRuntimeAuthAdapter } from '@/backends/catalog';
-import type { CatalogAgentId } from '@/backends/types';
+import { getConnectedServiceRuntimeAuthAdapter } from '@/daemon/connectedServices/catalogHooks';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { TrackedSession } from '@/daemon/types';
 import type {
   ConnectedServiceAccountTransitionVerificationResult,

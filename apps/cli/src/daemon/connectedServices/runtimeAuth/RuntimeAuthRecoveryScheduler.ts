@@ -11,7 +11,6 @@ import {
 import { buildConnectedServiceUxDiagnostic } from '../diagnostics/connectedServiceUxDiagnostics';
 import {
   DurableBackoffRecoveryScheduler,
-  type DurableBackoffRecoveryStore,
 } from '../recoveryScheduler/DurableBackoffRecoveryScheduler';
 import {
   isRecoveredProviderOutcomeProof,
@@ -40,6 +39,8 @@ import {
 
 type RuntimeAuthRecoveryStatus = 'waiting' | 'checking' | 'resumed_awaiting_proof' | 'cancelled' | 'exhausted';
 type RuntimeAuthRecoveryPhase = 'handler' | 'apply';
+
+const RUNTIME_AUTH_RECOVERY_UNPROVEN_PROVIDER_OUTCOME_ERROR = 'recovery_unproven_awaiting_provider_outcome';
 
 export type RuntimeAuthRecoveryIntent = Readonly<{
   v: 1;
@@ -129,7 +130,6 @@ export type RuntimeAuthRecoverySchedulerLike = Readonly<{
   }>): Promise<RuntimeAuthRecoveryScheduleResult>;
   read(sessionId: string): RuntimeAuthRecoveryIntent | null;
   readForSession(sessionId: string): ReadonlyArray<RuntimeAuthRecoveryIntent>;
-  hydrate(): ReadonlyArray<RuntimeAuthRecoveryIntent>;
   wake(input: Readonly<{ sessionId: string; reason: 'timer' | 'manual' }>): Promise<Readonly<{ status: string }>>;
   cancel(input: Readonly<{ sessionId: string }>): Promise<RuntimeAuthRecoveryIntent | null>;
   cancelByKey(input: RuntimeAuthRecoveryKeyParts): Promise<RuntimeAuthRecoveryIntent | null>;
@@ -471,6 +471,27 @@ function isTerminalRecoveryResult(result: unknown): boolean {
   return resolveTerminalRecoveryReason(result) !== null;
 }
 
+// HF-5 (A1-MED-1): a wake whose recovery armed the SAME-SESSION temporary backoff-resume path
+// (or reported it unavailable) hands ownership to that path. The durable record must be removed
+// with a SUPERSEDED outcome — never settled terminal by the unknown-status catch-all — so the
+// key re-arms fresh on a genuine future failure.
+function readTemporaryRetryWakeStatus(result: unknown): string | null {
+  const status = asRecord(result)?.status;
+  return status === 'temporary_retry_armed' || status === 'temporary_retry_unavailable'
+    ? status
+    : null;
+}
+
+function isUntargetedProviderOutcomeProofWaitRefresh(input: Readonly<{
+  intent: RuntimeAuthRecoveryIntent;
+  pendingTarget: RuntimeAuthPendingProofTarget | null;
+}>): boolean {
+  return input.intent.lastError === RUNTIME_AUTH_RECOVERY_UNPROVEN_PROVIDER_OUTCOME_ERROR
+    && input.pendingTarget === null
+    && input.intent.pendingTargetProfileId === null
+    && input.intent.pendingTargetGeneration === null;
+}
+
 function resolveTerminalRecoveryReason(result: unknown): string | null {
   const proof = resolveRuntimeAuthRecoveryProof(result);
   if (isTerminalProviderOutcomeProof(proof)) return proof;
@@ -568,9 +589,19 @@ function readVerificationReason(diagnostics: Record<string, unknown> | null): st
   return readString(asRecord(diagnostics?.verification)?.reason);
 }
 
+function isDurableContinuityReconstructionExhausted(diagnostics: Record<string, unknown> | null): boolean {
+  const durableContinuity = asRecord(diagnostics?.durableContinuity);
+  return diagnostics?.durableContinuityReconstructionExhausted === true
+    || diagnostics?.reconstructionExhausted === true
+    || durableContinuity?.status === 'exhausted'
+    || durableContinuity?.reconstructionExhausted === true;
+}
+
 function classifyApplyFailure(result: unknown): Readonly<{
   classification: DaemonServerWorkErrorClassification | null;
   lastError: string;
+  failureReason?: string;
+  terminalReason?: string | null;
 }> | null {
   const failure = readApplyFailureDiagnostics(result);
   if (!failure.errorCode) return null;
@@ -617,6 +648,31 @@ function classifyApplyFailure(result: unknown): Readonly<{
     };
   }
 
+  if (failure.errorCode === 'provider_session_state_unavailable_for_resume') {
+    const embeddedClassification = asRecord(failure.diagnostics?.errorClassification);
+    const classification = isServerWorkErrorClassification(embeddedClassification)
+      ? embeddedClassification
+      : ({ kind: 'dependency_unavailable', retryable: true } satisfies DaemonServerWorkErrorClassification);
+    if (
+      failure.diagnostics?.retryable === false
+      || classification.retryable === false
+      || isDurableContinuityReconstructionExhausted(failure.diagnostics)
+    ) {
+      return {
+        classification: classification.retryable
+          ? ({ kind: 'protocol_error', retryable: false } satisfies DaemonServerWorkErrorClassification)
+          : classification,
+        lastError: failure.errorCode,
+        terminalReason: 'provider_session_state_unavailable_after_reconstruction',
+      };
+    }
+    return {
+      classification,
+      lastError: failure.errorCode,
+      failureReason: 'durable_continuity_reconstruction_retrying',
+    };
+  }
+
   if (failure.errorCode !== 'hot_apply_failed') {
     return {
       classification: { kind: 'protocol_error', retryable: false } satisfies DaemonServerWorkErrorClassification,
@@ -650,6 +706,7 @@ function classifyThrownApplyFailure(error: unknown): Readonly<{
   classification: DaemonServerWorkErrorClassification | null;
   lastError: string;
   failureReason: string;
+  terminalReason?: string | null;
 }> | null {
   const failure = readConnectedServiceAuthGenerationApplyFailure(error);
   if (!failure) return null;
@@ -665,7 +722,8 @@ function classifyThrownApplyFailure(error: unknown): Readonly<{
   return {
     classification: classified?.classification ?? ({ kind: 'protocol_error', retryable: false } satisfies DaemonServerWorkErrorClassification),
     lastError: classified?.lastError ?? failure.errorCode,
-    failureReason: failure.errorCode,
+    failureReason: classified?.failureReason ?? failure.errorCode,
+    terminalReason: classified?.terminalReason ?? null,
   };
 }
 
@@ -814,7 +872,6 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
     providerOutcomePendingWaitMs?: number;
     maxDegradedAttempts?: number;
     degradedBackoffMs?: number;
-    store?: DurableBackoffRecoveryStore<RuntimeAuthRecoveryIntent>;
     recover: (input: Readonly<{
       sessionId: string;
       switchesThisTurn: number;
@@ -849,7 +906,6 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
       baseBackoffMs: this.#baseBackoffMs,
       maxBackoffMs,
       jitterMs: this.#jitterMs,
-      store: deps.store,
       normalizeIntent: normalizeRuntimeAuthRecoveryIntent,
       getStatus: (intent) => intent.status === 'resumed_awaiting_proof' ? 'waiting' : intent.status,
       getNextRetryAtMs: (intent) => intent.nextRetryAtMs,
@@ -906,6 +962,10 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
           if (supersededReason) {
             return { status: 'superseded' as const, reason: supersededReason };
           }
+          const temporaryRetryStatus = readTemporaryRetryWakeStatus(result);
+          if (temporaryRetryStatus) {
+            return { status: 'superseded' as const, reason: temporaryRetryStatus };
+          }
           const durableWait = resolveRuntimeAuthRecoveryDurableWait({
             result,
             intent,
@@ -937,14 +997,18 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
             // consume the normal attempt budget and the recovery settles terminal
             // instead of looping forever for an idle session.
             const coalescedReplayCount = intent.coalescedReplayCount ?? 0;
-            const rollbackAttempt = coalescedReplay && coalescedReplayCount < this.#maxCoalescedReplays;
+            const rollbackAttempt = isUntargetedProviderOutcomeProofWaitRefresh({
+              intent,
+              pendingTarget,
+            }) || (coalescedReplay && coalescedReplayCount < this.#maxCoalescedReplays);
             return {
               status: 'wait' as const,
-              lastError: 'recovery_unproven_awaiting_provider_outcome',
+              lastError: RUNTIME_AUTH_RECOVERY_UNPROVEN_PROVIDER_OUTCOME_ERROR,
               intent: {
                 ...intent,
                 status: 'resumed_awaiting_proof',
                 attemptCount: rollbackAttempt ? Math.max(0, intent.attemptCount - 1) : intent.attemptCount,
+                lastError: RUNTIME_AUTH_RECOVERY_UNPROVEN_PROVIDER_OUTCOME_ERROR,
                 ...(coalescedReplay ? { coalescedReplayCount: coalescedReplayCount + 1 } : {}),
                 pendingTargetProfileId: pendingTarget?.activeProfileId ?? intent.pendingTargetProfileId ?? null,
                 pendingTargetGeneration: pendingTarget?.generation ?? intent.pendingTargetGeneration ?? null,
@@ -982,7 +1046,16 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
           const applyFailure = classifyApplyFailure(result);
           if (applyFailure?.classification) {
             if (!applyFailure.classification.retryable) {
-              return { status: 'terminal' as const, lastError: applyFailure.lastError };
+              const terminalReason = applyFailure.terminalReason ?? applyFailure.lastError;
+              return {
+                status: 'terminal' as const,
+                lastError: terminalReason,
+                intent: {
+                  ...intent,
+                  lastError: applyFailure.lastError,
+                  terminalReason,
+                },
+              };
             }
             return {
               status: 'wait' as const,
@@ -1168,7 +1241,9 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
         failureReason: thrownApplyFailure.failureReason,
         lastError: thrownApplyFailure.lastError,
         errorClassification: thrownApplyFailure.classification,
-        terminalReason: thrownApplyFailure.classification?.retryable === true ? null : 'non_retryable_apply_failure',
+        terminalReason: thrownApplyFailure.classification?.retryable === true
+          ? null
+          : thrownApplyFailure.terminalReason ?? 'non_retryable_apply_failure',
       });
     }
     const errorClassification = classifyDaemonServerWorkError(input.error);
@@ -1197,10 +1272,14 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
       switchesThisTurn: input.switchesThisTurn,
       classification: input.classification,
       failurePhase: 'apply',
-      failureReason: readApplyFailureDiagnostics(input.result).errorCode ?? 'non_retryable_apply_failure',
+      failureReason: applyFailure?.failureReason
+        ?? readApplyFailureDiagnostics(input.result).errorCode
+        ?? 'non_retryable_apply_failure',
       lastError: applyFailure?.lastError ?? 'non_retryable_apply_failure',
       errorClassification: applyFailure?.classification ?? null,
-      terminalReason: applyFailure?.classification?.retryable === true ? null : 'non_retryable_apply_failure',
+      terminalReason: applyFailure?.classification?.retryable === true
+        ? null
+        : applyFailure?.terminalReason ?? 'non_retryable_apply_failure',
     });
   }
 
@@ -1214,6 +1293,7 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
       serviceId: intent.serviceId,
       profileId: intent.profileId,
       groupId: intent.groupId,
+      failingAccessTokenFingerprint: intent.classification.failingAccessTokenFingerprint ?? null,
     });
   }
 
@@ -1234,20 +1314,13 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
     }
     if (intents.length > 0) return intents;
 
-    for (const intent of this.#scheduler.hydrate()) {
-      this.#rememberIntent(intent);
-      if (intent.sessionId === sessionId) intents.push(intent);
-    }
-    if (intents.length > 0) return intents;
-
     const legacyIntent = this.#scheduler.read(sessionId);
     return legacyIntent ? [legacyIntent] : [];
   }
 
   /**
-   * Stop all armed recovery timers (daemon shutdown). The persisted intents stay `waiting` on disk
-   * so a healthy future daemon re-hydrates and re-drives them; this only prevents timers from firing
-   * switch/restart work into a tearing-down daemon.
+   * Stop all armed recovery timers during daemon shutdown. Runtime-auth recovery is process-local;
+   * dispose never fires recovery work during teardown.
    */
   dispose(): void {
     this.#scheduler.dispose();
@@ -1262,12 +1335,6 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
 
   readForSession(sessionId: string): ReadonlyArray<RuntimeAuthRecoveryIntent> {
     return this.#readForSession(sessionId);
-  }
-
-  hydrate(): ReadonlyArray<RuntimeAuthRecoveryIntent> {
-    const intents = this.#scheduler.hydrate();
-    for (const intent of intents) this.#rememberIntent(intent);
-    return intents;
   }
 
   async wake(input: Readonly<{ sessionId: string; reason: 'timer' | 'manual' }>): Promise<Readonly<{ status: string }>> {
@@ -1502,6 +1569,7 @@ export class RuntimeAuthRecoveryScheduler implements RuntimeAuthRecoverySchedule
       serviceId: classification.serviceId,
       profileId,
       groupId,
+      failingAccessTokenFingerprint: classification.failingAccessTokenFingerprint ?? null,
     });
     const supersededPendingProof = this.#readSupersededPendingProofIntents({
       sessionId: input.sessionId,

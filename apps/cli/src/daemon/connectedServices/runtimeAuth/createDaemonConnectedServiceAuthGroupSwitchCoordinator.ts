@@ -13,7 +13,13 @@ import {
     type ConnectedServiceAuthGroupGenerationApplyResult,
     type ConnectedServiceAuthGroupSwitchEvent,
 } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
-import { buildConnectedServiceAuthGroupSwitchState } from '../accountGroups/switching/buildConnectedServiceAuthGroupSwitchState';
+import {
+    buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState,
+} from '../accountGroups/switching/buildConnectedServiceAuthGroupSwitchState';
+import {
+    buildConnectedServiceAuthGroupSwitchStateFromAccountUsage,
+    type AccountUsageStoreForAuthGroupSwitchState,
+} from '../accountGroups/switching/buildConnectedServiceAuthGroupSwitchStateFromAccountUsage';
 
 type AuthGroupApi = Readonly<{
     getConnectedServiceAuthGroup(input: Readonly<{
@@ -25,6 +31,7 @@ type AuthGroupApi = Readonly<{
         groupId: string;
         activeProfileId: string;
         expectedGeneration?: number;
+        overrideRuntimeCooldown?: boolean;
     }>): Promise<ConnectedServiceAuthGroupV1>;
     updateConnectedServiceAuthGroupRuntimeState?(input: Readonly<{
         serviceId: ConnectedServiceId;
@@ -45,6 +52,15 @@ type AuthGroupApi = Readonly<{
 }>;
 
 type ConnectedServiceAccountSwitchMode = 'hot_apply' | 'restart_resume' | 'spawn_next_turn';
+
+type ConnectedServiceAuthGroupGenerationApplyInput = Readonly<{
+    sessionId?: string;
+    serviceId: ConnectedServiceId;
+    groupId: string;
+    activeProfileId: string | null;
+    generation: number;
+    reason?: string;
+}>;
 
 function mapAuthSwitchResultToMode(result: Readonly<Record<string, unknown>>): ConnectedServiceAccountSwitchMode {
     const mode = result.mode;
@@ -166,6 +182,16 @@ function resolveGroupQuotaProbeTimeoutMs(value: number | null | undefined): numb
     return normalized > 0 ? normalized : null;
 }
 
+function normalizeGroupLabel(value: string | null | undefined): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    return normalized.length > 0 ? normalized : null;
+}
+
+function authGroupLabelKey(input: Readonly<{ serviceId: string; groupId: string }>): string {
+    return `${input.serviceId}\0${input.groupId}`;
+}
+
 async function runQuotaSnapshotProbeWithTimeout(input: Readonly<{
     timeoutMs: number | null;
     probe: () => Promise<void>;
@@ -200,16 +226,15 @@ async function runQuotaSnapshotProbeWithTimeout(input: Readonly<{
 export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: Readonly<{
     api: AuthGroupApi;
     runtimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore;
+    accountUsageStore?: AccountUsageStoreForAuthGroupSwitchState | null;
     leases?: InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry;
     quotaFreshnessMs: number;
     nowMs: () => number;
     sleepMs?: (ms: number) => Promise<void>;
-    restartSession: (input: Readonly<{
-        serviceId: ConnectedServiceId;
-        groupId: string;
-        activeProfileId: string | null;
-        generation: number;
-    }>) => Promise<ConnectedServiceAuthGroupGenerationApplyResult>;
+    restartSession: (input: ConnectedServiceAuthGroupGenerationApplyInput) => Promise<ConnectedServiceAuthGroupGenerationApplyResult>;
+    preflightConnectedServiceAuthGeneration?: (
+        input: ConnectedServiceAuthGroupGenerationApplyInput,
+    ) => Promise<ConnectedServiceAuthGroupGenerationApplyResult>;
     hydratePersistedQuotaSnapshotsForGroup?: (input: Readonly<{
         serviceId: ConnectedServiceId;
         groupId: string;
@@ -224,6 +249,19 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
     quotaProbeTimeoutMs?: number | null;
     emitEvent?: (event: ConnectedServiceAuthGroupSwitchEvent) => void;
 }>): ConnectedServiceAuthGroupSwitchCoordinator {
+    const groupLabelByKey = new Map<string, string>();
+    const rememberGroupLabel = (group: ConnectedServiceAuthGroupV1) => {
+        groupLabelByKey.set(authGroupLabelKey(group), normalizeGroupLabel(group.displayName) ?? group.groupId);
+    };
+    const emitEvent = params.emitEvent
+        ? (event: ConnectedServiceAuthGroupSwitchEvent) => {
+            const groupLabel = groupLabelByKey.get(authGroupLabelKey(event))
+                ?? normalizeGroupLabel(event.groupLabel)
+                ?? event.groupId;
+            params.emitEvent?.({ ...event, groupLabel });
+        }
+        : undefined;
+
     return new ConnectedServiceAuthGroupSwitchCoordinator({
         leases: params.leases ?? new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
         nowMs: params.nowMs,
@@ -239,16 +277,13 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
                 sleepMs: params.sleepMs ?? defaultSwitchCoordinatorSleepMs,
             });
             if (!group) throw new Error(`Connected service auth group not found (${input.serviceId}/${input.groupId})`);
-            await params.hydratePersistedQuotaSnapshotsForGroup?.({
-                serviceId,
-                groupId: input.groupId,
-                profileIds: group.members.map((member) => member.profileId),
-            });
-            const state = buildConnectedServiceAuthGroupSwitchState({
-                group,
-                runtimeQuotaSnapshots: params.runtimeQuotaSnapshots,
-                nowMs: params.nowMs(),
-            });
+            rememberGroupLabel(group);
+            const state = params.accountUsageStore
+                ? buildConnectedServiceAuthGroupSwitchStateFromAccountUsage({
+                    group,
+                    accountUsageStore: params.accountUsageStore,
+                })?.state ?? buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState({ group })
+                : buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState({ group });
             if (typeof params.api.listConnectedServiceProfiles !== 'function') return state;
             const profiles = await params.api.listConnectedServiceProfiles({ serviceId }).catch(() => null);
             if (!profiles) return state;
@@ -271,19 +306,45 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
                 groupId: input.groupId,
                 activeProfileId: input.toProfileId,
                 expectedGeneration: input.expectedGeneration,
+                overrideRuntimeCooldown: true,
             });
-            return buildConnectedServiceAuthGroupSwitchState({
-                group,
-                runtimeQuotaSnapshots: params.runtimeQuotaSnapshots,
-                nowMs: params.nowMs(),
-            });
+            rememberGroupLabel(group);
+            return params.accountUsageStore
+                ? buildConnectedServiceAuthGroupSwitchStateFromAccountUsage({
+                    group,
+                    accountUsageStore: params.accountUsageStore,
+                })?.state ?? buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState({ group })
+                : buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState({ group });
         },
+        ...(params.preflightConnectedServiceAuthGeneration ? {
+            preflightApplyGeneration: async (input) => {
+                const serviceId = ConnectedServiceIdSchema.parse(input.serviceId);
+                const result = await params.preflightConnectedServiceAuthGeneration?.({
+                    ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+                    serviceId,
+                    groupId: input.groupId,
+                    activeProfileId: input.activeProfileId,
+                    generation: input.generation,
+                    ...(input.reason ? { reason: input.reason } : {}),
+                });
+                return result?.ok
+                    ? { ok: true, mode: mapAuthSwitchResultToMode(result) }
+                    : result ?? {
+                        ok: false,
+                        errorCode: 'generation_apply_not_confirmed',
+                        serviceId,
+                    };
+            },
+        } : {}),
         applyGeneration: async (input) => {
+            const serviceId = ConnectedServiceIdSchema.parse(input.serviceId);
             const result = await params.restartSession({
-                serviceId: input.serviceId as ConnectedServiceId,
+                ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+                serviceId,
                 groupId: input.groupId,
                 activeProfileId: input.activeProfileId,
                 generation: input.generation,
+                ...(input.reason ? { reason: input.reason } : {}),
             });
             return result.ok
                 ? { ok: true, mode: mapAuthSwitchResultToMode(result) }
@@ -335,6 +396,6 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
                 });
             },
         } : {}),
-        ...(params.emitEvent ? { emitEvent: params.emitEvent } : {}),
+        ...(emitEvent ? { emitEvent } : {}),
     });
 }

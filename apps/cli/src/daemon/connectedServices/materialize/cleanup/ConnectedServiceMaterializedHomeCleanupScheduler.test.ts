@@ -1,4 +1,4 @@
-import { mkdir, rm, stat, symlink, utimes } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -107,6 +107,53 @@ describe('ConnectedServiceMaterializedHomeCleanupScheduler', () => {
     }
   });
 
+  it('bounds hung path cleanup attempts and then stops retrying the root in the same daemon', async () => {
+    const root = await createTempDir('happier-materialized-home-cleanup-timeout-');
+    try {
+      const baseDir = join(root, 'materialized');
+      const orphanRoot = await createIdentityRoot(baseDir, 'hung-orphan', 'codex');
+      await touchOld(orphanRoot, 1_000);
+      const removePath = vi.fn(() => new Promise<never>(() => undefined));
+      const scheduler = new ConnectedServiceMaterializedHomeCleanupScheduler({
+        baseDir,
+        nowMs: () => 10_000,
+        orphanTtlMs: 1_000,
+        attemptTtlMs: 1_000,
+        maxCleanupRetries: 2,
+        fileOperationTimeoutMs: 25,
+        removePath,
+        getLiveMaterializationKeys: () => [],
+        getRetainedMaterializationKeys: async () => [],
+      });
+
+      await expect(scheduler.reconcile()).rejects.toMatchObject({
+        code: 'ETIMEDOUT',
+        operation: 'rm',
+        path: orphanRoot,
+      });
+
+      await expect(scheduler.reconcile()).rejects.toMatchObject({
+        code: 'ETIMEDOUT',
+        operation: 'rm',
+        path: orphanRoot,
+      });
+
+      await expect(scheduler.reconcile()).resolves.toEqual([
+        expect.objectContaining({
+          path: orphanRoot,
+          cleaned: false,
+          abandoned: true,
+          targetKind: 'identity_root',
+        }),
+      ]);
+
+      expect(removePath).toHaveBeenCalledTimes(2);
+      await expectExists(orphanRoot);
+    } finally {
+      await removeTempDir(root);
+    }
+  });
+
   it('rechecks retained identity roots immediately before deletion', async () => {
     const root = await createTempDir('happier-materialized-home-cleanup-race-');
     try {
@@ -141,6 +188,76 @@ describe('ConnectedServiceMaterializedHomeCleanupScheduler', () => {
       expect(retainedReads).toHaveBeenCalledTimes(2);
       expect(removePath).not.toHaveBeenCalled();
       await expectExists(retainedRoot);
+    } finally {
+      await removeTempDir(root);
+    }
+  });
+
+  it('skips identity-root deletion when retained-session scan is unavailable', async () => {
+    const root = await createTempDir('happier-materialized-home-cleanup-retained-unavailable-');
+    try {
+      const baseDir = join(root, 'materialized');
+      const orphanRoot = await createIdentityRoot(baseDir, 'possibly-resumable', 'codex');
+      const attemptsRoot = join(baseDir, '.attempts');
+      const staleAttempt = join(attemptsRoot, 'stale-attempt');
+      await mkdir(staleAttempt, { recursive: true });
+      await touchOld(orphanRoot, 1_000);
+      await touchOld(staleAttempt, 1_000);
+      const scheduler = new ConnectedServiceMaterializedHomeCleanupScheduler({
+        baseDir,
+        nowMs: () => 10_000,
+        orphanTtlMs: 1_000,
+        attemptTtlMs: 1_000,
+        getLiveMaterializationKeys: () => [],
+        getRetainedMaterializationKeys: async () => ({ status: 'unavailable' }),
+      });
+
+      await expect(scheduler.reconcile()).resolves.toEqual([
+        expect.objectContaining({ path: staleAttempt, cleaned: true, targetKind: 'attempt_root' }),
+      ]);
+      await expectExists(orphanRoot);
+      await expectMissing(staleAttempt);
+    } finally {
+      await removeTempDir(root);
+    }
+  });
+
+  it('strips legacy Claude refresh tokens from retained materialized homes', async () => {
+    const root = await createTempDir('happier-materialized-home-cleanup-refresh-token-strip-');
+    try {
+      const baseDir = join(root, 'materialized');
+      const materializationKey = 'live-claude-home';
+      const liveRoot = await createIdentityRoot(baseDir, materializationKey, 'claude');
+      const credentialPath = join(liveRoot, 'claude', '.credentials.json');
+      await writeFile(credentialPath, `${JSON.stringify({
+        claudeAiOauth: {
+          accessToken: 'access-placeholder',
+          refreshToken: 'camel-refresh',
+          refresh_token: 'snake-refresh',
+          RT: 'short-refresh',
+          expiresAt: 123,
+          scopes: ['user:inference'],
+        },
+      })}\n`);
+
+      const scheduler = new ConnectedServiceMaterializedHomeCleanupScheduler({
+        baseDir,
+        nowMs: () => 10_000,
+        orphanTtlMs: 1_000,
+        attemptTtlMs: 1_000,
+        getLiveMaterializationKeys: () => [materializationKey],
+        getRetainedMaterializationKeys: async () => [],
+      });
+
+      await expect(scheduler.reconcile()).resolves.toEqual([]);
+      const rewritten = JSON.parse(await readFile(credentialPath, 'utf8')) as Readonly<Record<string, unknown>>;
+      expect(rewritten).toEqual({
+        claudeAiOauth: {
+          accessToken: 'access-placeholder',
+          expiresAt: 123,
+          scopes: ['user:inference'],
+        },
+      });
     } finally {
       await removeTempDir(root);
     }

@@ -1,10 +1,10 @@
-import { readdir, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, readdir, rename, rm } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 
 import { AGENT_IDS } from '@happier-dev/agents';
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from '@happier-dev/protocol';
 
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { resolveConnectedServiceGroupHomeDir } from './resolveConnectedServiceHomeDir';
 
 type DeletedGroupCleanupTarget = Readonly<{
@@ -27,10 +27,21 @@ type GroupHomeTarget = Readonly<{
   agentId: CatalogAgentId;
 }>;
 
+export type ConnectedServiceGroupDeletionAuthority = Readonly<{
+  status: 'exists' | 'deleted' | 'unknown';
+}>;
+
 type GroupExists = (target: Readonly<{
   serviceId: ConnectedServiceId;
   groupId: string;
 }>) => Promise<boolean>;
+
+type ResolveGroupDeletionAuthority = (target: Readonly<{
+  serviceId: ConnectedServiceId;
+  groupId: string;
+}>) => Promise<ConnectedServiceGroupDeletionAuthority>;
+
+type RemoveGroupHomePath = (path: string, options: Readonly<{ recursive: true; force: true }>) => Promise<void>;
 
 function targetKey(input: Readonly<{
   serviceId: ConnectedServiceId;
@@ -56,10 +67,20 @@ function parseAgentId(value: string): CatalogAgentId | null {
   return (AGENT_IDS as ReadonlyArray<string>).includes(value) ? value as CatalogAgentId : null;
 }
 
+function authorityFromLegacyGroupExists(exists: boolean): ConnectedServiceGroupDeletionAuthority {
+  return exists ? { status: 'exists' } : { status: 'unknown' };
+}
+
+function hasNodeErrorCode(error: unknown, code: string): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error && error.code === code);
+}
+
 export class ConnectedServiceGroupHomeCleanupScheduler {
   private readonly pendingDeletedTargetsByKey = new Map<string, DeletedGroupCleanupTarget>();
   private readonly maxCleanupRetries: number;
-  private readonly removePath: typeof rm;
+  private readonly removePath: RemoveGroupHomePath;
+  private readonly renamePath: typeof rename;
+  private readonly nowMs: () => number;
 
   constructor(private readonly deps: Readonly<{
     activeServerDir: string;
@@ -69,11 +90,36 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
       agentId: CatalogAgentId;
     }>): boolean;
     groupExists?: GroupExists;
+    resolveGroupDeletionAuthority?: ResolveGroupDeletionAuthority;
     maxCleanupRetries?: number;
-    removePath?: typeof rm;
+    removePath?: RemoveGroupHomePath;
+    renamePath?: typeof rename;
+    nowMs?: () => number;
   }>) {
     this.maxCleanupRetries = deps.maxCleanupRetries ?? 3;
-    this.removePath = deps.removePath ?? rm;
+    this.renamePath = deps.renamePath ?? rename;
+    this.nowMs = deps.nowMs ?? (() => Date.now());
+    this.removePath = deps.removePath ?? (async (path) => {
+      await this.quarantineGroupHome(path);
+    });
+  }
+
+  private async quarantineGroupHome(path: string): Promise<void> {
+    const quarantineRoot = join(dirname(path), '.quarantine');
+    const entryBase = `${this.nowMs()}-${basename(path)}`;
+    await mkdir(quarantineRoot, { recursive: true });
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const quarantinePath = join(quarantineRoot, attempt === 0 ? entryBase : `${entryBase}-${attempt}`);
+      try {
+        await this.renamePath(path, quarantinePath);
+        return;
+      } catch (error) {
+        if (hasNodeErrorCode(error, 'ENOENT')) return;
+        if (hasNodeErrorCode(error, 'EEXIST') || hasNodeErrorCode(error, 'ENOTEMPTY')) continue;
+        throw error;
+      }
+    }
+    throw new Error(`Failed to allocate connected-service group-home quarantine path for ${path}`);
   }
 
   private async removeGroupHome(key: string, target: DeletedGroupCleanupTarget): Promise<void> {
@@ -131,12 +177,17 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
 
   async reconcileDeletedGroupHomes(input: Readonly<{
     groupExists?: GroupExists;
+    resolveGroupDeletionAuthority?: ResolveGroupDeletionAuthority;
   }>): Promise<ReadonlyArray<DeletedGroupCleanupResult>> {
+    const resolveGroupDeletionAuthority = input.resolveGroupDeletionAuthority ?? this.deps.resolveGroupDeletionAuthority;
     const groupExists = input.groupExists ?? this.deps.groupExists;
-    if (!groupExists) return [];
+    if (!resolveGroupDeletionAuthority && !groupExists) return [];
     const results: DeletedGroupCleanupResult[] = [];
     for (const target of await this.listExistingGroupHomeTargets()) {
-      if (await groupExists(target)) continue;
+      const authority = resolveGroupDeletionAuthority
+        ? await resolveGroupDeletionAuthority(target)
+        : authorityFromLegacyGroupExists(await groupExists!(target));
+      if (authority.status !== 'deleted') continue;
       results.push(await this.scheduleDeletedGroupCleanup(target));
     }
     return results;
@@ -150,9 +201,20 @@ export class ConnectedServiceGroupHomeCleanupScheduler {
         this.pendingDeletedTargetsByKey.delete(key);
         continue;
       }
-      if (this.deps.groupExists && await this.deps.groupExists(target)) {
-        this.pendingDeletedTargetsByKey.delete(key);
-        continue;
+      if (this.deps.resolveGroupDeletionAuthority) {
+        const authority = await this.deps.resolveGroupDeletionAuthority(target);
+        if (authority.status === 'exists') {
+          this.pendingDeletedTargetsByKey.delete(key);
+          continue;
+        }
+        if (authority.status === 'unknown') continue;
+      } else if (this.deps.groupExists) {
+        const authority = authorityFromLegacyGroupExists(await this.deps.groupExists(target));
+        if (authority.status === 'exists') {
+          this.pendingDeletedTargetsByKey.delete(key);
+          continue;
+        }
+        if (authority.status === 'unknown') continue;
       }
       await this.removeGroupHome(key, target);
       cleaned.push({ cleaned: true, path: target.path });

@@ -7,9 +7,12 @@ import type {
 import { readRecord, normalizeBoundedInt, type SessionTranscriptActionItem } from './sessionTranscriptActionInput';
 import { fetchEncryptedTranscriptMessagesPage, type RawTranscriptRow } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import {
+    createTranscriptHistoryNormalizationSequenceState,
     extractCompactRow,
     isMemoryArtifactDecryptedRow,
+    shouldSuppressTranscriptItemForEmptyCanonicalTurnDiff,
     tryResolveDecryptedTranscriptPayload,
+    type TranscriptHistoryNormalizationSequenceState,
 } from '@/session/services/transcript/transcriptHistoryRows';
 
 type ServerBackedSessionTranscriptStoreParams = Readonly<{
@@ -37,9 +40,13 @@ function rowToTranscriptItem(
     row: RawTranscriptRow,
     index: number,
     ctx: ServerBackedSessionTranscriptStoreParams['ctx'],
-): SessionTranscriptActionItem {
+    sequenceState: TranscriptHistoryNormalizationSequenceState,
+): SessionTranscriptActionItem | null {
     const seq = typeof row.seq === 'number' && Number.isFinite(row.seq) ? Math.floor(row.seq) : undefined;
     const decrypted = tryResolveDecryptedTranscriptPayload({ content: row.content, ctx });
+    if (decrypted && shouldSuppressTranscriptItemForEmptyCanonicalTurnDiff(decrypted, sequenceState)) {
+        return null;
+    }
     const compact = decrypted && !isMemoryArtifactDecryptedRow(decrypted)
         ? extractCompactRow({
             decrypted,
@@ -80,6 +87,14 @@ export function createServerBackedSessionTranscriptStore(
     params: ServerBackedSessionTranscriptStoreParams,
 ): FileBackedTranscriptSessionStore<SessionTranscriptActionItem> {
     let tailCursor: string | null = null;
+    const sequenceState = createTranscriptHistoryNormalizationSequenceState();
+
+    const rowsToTranscriptItems = (
+        rows: readonly RawTranscriptRow[],
+    ): SessionTranscriptActionItem[] => rows.flatMap((row, index) => {
+        const item = rowToTranscriptItem(row, index, params.ctx, sequenceState);
+        return item ? [item] : [];
+    });
 
     return {
         warm: async () => undefined,
@@ -97,7 +112,7 @@ export function createServerBackedSessionTranscriptStore(
             });
             tailCursor = typeof page.nextAfterSeq === 'number' ? String(page.nextAfterSeq) : tailCursor;
             const limited = limitItemsByEncodedBytes(
-                page.messages.map((row, index) => rowToTranscriptItem(row, index, params.ctx)),
+                rowsToTranscriptItems(page.messages),
                 maxBytes,
             );
             return {
@@ -134,7 +149,7 @@ export function createServerBackedSessionTranscriptStore(
             });
             tailCursor = typeof page.nextAfterSeq === 'number' ? String(page.nextAfterSeq) : tailCursor;
             const limited = limitItemsByEncodedBytes(
-                page.messages.map((row, index) => rowToTranscriptItem(row, index, params.ctx)),
+                rowsToTranscriptItems(page.messages),
                 maxBytes,
             );
             return {

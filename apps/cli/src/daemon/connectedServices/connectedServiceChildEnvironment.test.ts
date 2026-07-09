@@ -75,6 +75,7 @@ describe('connectedServiceChildEnvironment', () => {
       serviceId: 'openai-codex',
       profileId: 'bot',
       groupId: 'happier',
+      groupGeneration: 3,
     });
   });
 
@@ -102,6 +103,7 @@ describe('connectedServiceChildEnvironment', () => {
           serviceId: 'openai-codex',
           groupId: 'codex',
           profileId: 'backup',
+          groupGeneration: 7,
         },
       },
     });
@@ -112,6 +114,7 @@ describe('connectedServiceChildEnvironment', () => {
       serviceId: 'openai-codex',
       profileId: 'backup',
       groupId: 'codex',
+      groupGeneration: 7,
     });
   });
 

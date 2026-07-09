@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { ConnectedServiceStateSharingDescriptor } from '@/backends/types';
+import type { ConnectedServiceStateSharingDescriptor } from '@/agent/catalog/types';
 import { describe, expect, it } from 'vitest';
 
 import { applyConnectedServiceStateSharingDescriptor } from './applyConnectedServiceStateSharingDescriptor';

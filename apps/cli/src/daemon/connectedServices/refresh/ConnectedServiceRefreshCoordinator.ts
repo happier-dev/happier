@@ -12,22 +12,10 @@ import { randomBytes } from 'node:crypto';
 
 import type { ApiClient } from '@/api/api';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
-import {
-  type CodexChatGptAuthTokensRefreshResponse,
-  type CodexChatGptAuthTokensRefreshSelection,
-} from '@happier-dev/plugins-codex/agent/auth/services/openai/cloud/refreshBridge';
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { Credentials } from '@/persistence';
 import { logger } from '@/ui/logger';
 
-import {
-  HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
-  readConnectedServiceChildSelectionsFromEnv,
-} from '../connectedServiceChildEnvironment';
-import {
-  parseConnectedServiceBindingSelections,
-  type ConnectedServiceBindingSelection,
-} from '../parseConnectedServicesBindings';
 import { resolveConnectedServiceCredentials } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import {
   resolveConnectedServiceAccountMode,
@@ -37,12 +25,49 @@ import {
   ConnectedServiceMaterializationBlockedError,
   materializeConnectedServicesForSpawn,
 } from '../materialize/materializeConnectedServicesForSpawn';
+import { resolveConnectedServiceMaterializedRootDir } from '../materialize/resolveConnectedServiceMaterializedRootDir';
 import { refreshConnectedAccountOauthTokens } from './serviceRefreshers';
-import type { ConnectedServiceResolvedSelection } from '../materialization/materializer';
-import type { ConnectedServicesMaterializationDiagnostic } from '../materialization/materializer';
+import type { ConnectedServiceChildSelection } from '../connectedServiceChildEnvironment';
+import type {
+  ConnectedServiceMaterializationCredentialRefreshFailureCategory,
+  ConnectedServiceResolvedSelection,
+  ConnectedServicesMaterializationDiagnostic,
+} from '../materialization/materializer';
+import {
+  ConnectedServiceRuntimeRegistry,
+  type ConnectedServiceRuntimeRefreshTarget,
+  type ConnectedServiceRuntimeTarget,
+} from '../runtimeRegistry/registry';
+import {
+  getConnectedServiceMaterializedHomeFreshness,
+  resolveConnectedServiceMaterializedHomeRoot,
+} from '../catalogHooks';
 
 type BoundProfile = Readonly<{ serviceId: ConnectedServiceId; profileId: string }>;
-type ChildSelectionsByServiceId = NonNullable<ReturnType<typeof readConnectedServiceChildSelectionsFromEnv>>;
+type BrokerRefreshSelection<TServiceId extends ConnectedServiceId> = Readonly<
+  | { kind: 'profile'; serviceId: TServiceId; profileId: string }
+  | {
+      kind: 'group';
+      serviceId: TServiceId;
+      groupId: string;
+      activeProfileId: string;
+      fallbackProfileId: string;
+      generation: number;
+    }
+>;
+
+type CodexChatGptAuthTokensRefreshSelection = BrokerRefreshSelection<'openai-codex'>;
+type CodexChatGptAuthTokensRefreshResponse = Readonly<{
+  accessToken: string;
+  chatgptAccountId: string | null;
+  chatgptPlanType: string | null;
+}>;
+type ClaudeSubscriptionAuthTokensRefreshSelection = BrokerRefreshSelection<'claude-subscription'>;
+type ClaudeSubscriptionAuthTokensRefreshResponse = Readonly<{
+  accessToken: string;
+  anthropicAccountId: string | null;
+  expiresAt: number | null;
+}>;
 type ConnectedServiceCredentialSource = Readonly<{
   storageMode: 'plain' | 'sealed';
   record: ConnectedServiceCredentialRecordV1;
@@ -50,15 +75,7 @@ type ConnectedServiceCredentialSource = Readonly<{
 }>;
 
 export type ConnectedServiceRefreshFailureCategory =
-  | 'invalid_grant'
-  | 'invalid_client'
-  | 'provider_401'
-  | 'provider_403'
-  | 'network_error'
-  | 'malformed_response'
-  | 'missing_access_token'
-  | 'missing_refresh_token'
-  | 'unknown';
+  ConnectedServiceMaterializationCredentialRefreshFailureCategory;
 
 type ConnectedServiceCredentialRefreshReason =
   | 'scheduled'
@@ -104,14 +121,20 @@ export type ConnectedServiceCredentialHealthNotificationTarget = Readonly<{
   sessionId: string;
 }>;
 
-type SpawnTarget = Readonly<{
-  pid: number;
-  agentId: CatalogAgentId;
-  sessionId: string | null;
-  materializationKey: string;
-  bindings: ReadonlyArray<ConnectedServiceBindingSelection>;
-  childSelectionsByServiceId: ChildSelectionsByServiceId | null;
+type SpawnTarget = ConnectedServiceRuntimeRefreshTarget;
+
+type RematerializedTargetFailure = Readonly<{
+  target: SpawnTarget;
+  binding: BoundProfile;
+  diagnostic: ConnectedServicesMaterializationDiagnostic;
 }>;
+
+type RematerializedTargetsResult = Readonly<{
+  affectedTargets: ReadonlyArray<SpawnTarget>;
+  rematerializedTargets: ReadonlyArray<SpawnTarget>;
+  failedTargets: ReadonlyArray<RematerializedTargetFailure>;
+}>;
+type CanonicalGroupStateForRefresh = Readonly<{ activeProfileId: string | null; generation: number }>;
 
 function bindingKey(binding: BoundProfile): string {
   return `${binding.serviceId}/${binding.profileId}`;
@@ -220,11 +243,132 @@ function buildRefreshDiagnostic(params: Readonly<{
   };
 }
 
+function resolveRuntimeAuthRematerializationFailures(input: Readonly<{
+  result: RematerializedTargetsResult;
+  sessionId: string | null;
+}>): ReadonlyArray<RematerializedTargetFailure> {
+  if (input.sessionId) {
+    const sessionFailures = input.result.failedTargets.filter((failure) => failure.target.sessionId === input.sessionId);
+    if (sessionFailures.length > 0) return sessionFailures;
+    const sessionWasAffected = input.result.affectedTargets.some((target) => target.sessionId === input.sessionId);
+    return sessionWasAffected ? [] : input.result.failedTargets;
+  }
+  if (input.result.affectedTargets.length === 0) return [];
+  if (input.result.rematerializedTargets.length > 0) return [];
+  return input.result.failedTargets;
+}
+
+function wasRuntimeAuthSessionRematerialized(input: Readonly<{
+  result: RematerializedTargetsResult;
+  sessionId: string | null;
+}>): boolean {
+  if (!input.sessionId) return true;
+  return input.result.rematerializedTargets.some((target) => target.sessionId === input.sessionId);
+}
+
 function readRefreshFailureHttpStatus(message: string): number | null {
   const match = message.match(/,\s*(\d{3})\):/);
   if (!match) return null;
   const value = Number(match[1]);
   return Number.isInteger(value) ? value : null;
+}
+
+function providerHttpStatusForHealth(status: number | null | undefined): number | undefined {
+  if (typeof status !== 'number' || !Number.isInteger(status)) return undefined;
+  return status >= 100 && status <= 599 ? status : undefined;
+}
+
+function providerErrorCodeForHealth(code: string | null | undefined): string | undefined {
+  const trimmed = typeof code === 'string' ? code.trim() : '';
+  return trimmed.length > 0 ? trimmed.slice(0, 128) : undefined;
+}
+
+function readConnectedServiceRefreshFailureCategory(
+  value: unknown,
+): ConnectedServiceRefreshFailureCategory | null {
+  switch (value) {
+    case 'invalid_grant':
+    case 'invalid_client':
+    case 'provider_401':
+    case 'provider_403':
+    case 'network_error':
+    case 'malformed_response':
+    case 'missing_access_token':
+    case 'missing_refresh_token':
+    case 'unknown':
+      return value;
+    default:
+      return null;
+  }
+}
+
+export type ConnectedServiceMaterializationCredentialRefreshClassification = Readonly<{
+  category: ConnectedServiceRefreshFailureCategory;
+  providerStatus?: number;
+  providerErrorCode?: string;
+}>;
+
+export function classifyConnectedServiceMaterializationDiagnosticForCredentialRefresh(
+  diagnostic: ConnectedServicesMaterializationDiagnostic,
+): ConnectedServiceMaterializationCredentialRefreshClassification {
+  const refreshFailure = diagnostic.credentialRefreshFailure;
+  const category = readConnectedServiceRefreshFailureCategory(refreshFailure?.category) ?? 'unknown';
+  const providerStatus = providerHttpStatusForHealth(refreshFailure?.providerStatus);
+  const providerErrorCode = providerErrorCodeForHealth(refreshFailure?.providerErrorCode)
+    ?? providerErrorCodeForHealth(diagnostic.code);
+
+  return {
+    category,
+    ...(providerStatus !== undefined ? { providerStatus } : {}),
+    ...(providerErrorCode !== undefined ? { providerErrorCode } : {}),
+  };
+}
+
+/**
+ * Single canonical owner for materialization-failure credential-health writes. Classifies the
+ * diagnostic via the shared taxonomy and only latches `needs_reauth` for genuinely auth/permission
+ * failure categories; every other blocking reason keeps its true category as a non-latching
+ * `refresh_failed_retryable` status. Reused by the coordinator's rematerialize path AND the spawn
+ * preflight path (`resolveConnectedServiceAuthForSpawn`) so no caller can fabricate an auth latch.
+ */
+export async function persistConnectedServiceCredentialHealthForMaterializationFailure(input: Readonly<{
+  api: ApiClient;
+  binding: BoundProfile;
+  diagnostic: ConnectedServicesMaterializationDiagnostic;
+  now: number;
+}>): Promise<void> {
+  const updateHealth = input.api.updateConnectedServiceCredentialHealth;
+  if (typeof updateHealth !== 'function') return;
+
+  const classification = classifyConnectedServiceMaterializationDiagnosticForCredentialRefresh(input.diagnostic);
+  const health = {
+    v: 1,
+    status: isReauthRequiredFailure(classification.category) ? 'needs_reauth' : 'refresh_failed_retryable',
+    reconnectRequired: isReauthRequiredFailure(classification.category),
+    lastRefreshAttemptAt: input.now,
+    lastRefreshFailureAt: input.now,
+    lastRefreshFailureKind: classification.category,
+    ...(providerHttpStatusForHealth(classification.providerStatus) !== undefined
+      ? { providerHttpStatus: providerHttpStatusForHealth(classification.providerStatus) }
+      : {}),
+    ...(classification.providerErrorCode ? { providerErrorCode: classification.providerErrorCode } : {}),
+  } satisfies ConnectedServiceCredentialHealthV1;
+
+  try {
+    await updateHealth.call(input.api, {
+      serviceId: input.binding.serviceId,
+      profileId: input.binding.profileId,
+      health,
+    });
+  } catch (error) {
+    logger.warn('[DAEMON RUN] Failed to update connected-service credential health after materialization failure', {
+      serviceId: input.binding.serviceId,
+      profileId: input.binding.profileId,
+      materializationCode: input.diagnostic.code,
+      reason: input.diagnostic.reason ?? null,
+      error: serializeAxiosErrorForLog(error),
+    });
+  }
 }
 
 function classifyRefreshFailure(error: unknown): Readonly<{
@@ -330,8 +474,21 @@ async function persistUpdatedCredential(params: Readonly<{
 }
 
 export class ConnectedServiceRefreshCoordinator {
-  private readonly targetsByPid = new Map<number, SpawnTarget>();
+  private readonly runtimeRegistry: ConnectedServiceRuntimeRegistry;
   private readonly inFlightRefreshes = new Map<string, Promise<ConnectedServiceCredentialRefreshResult>>();
+  private readonly inFlightRefreshRematerializations = new Map<string, Promise<RematerializedTargetsResult>>();
+  private readonly inFlightRefreshAuthUpdatedNotifications = new Map<string, Promise<void>>();
+  // RR-1: rotate+distribute is ONE transaction on the single 'refreshed' completion path. This guard
+  // stops a distribution-triggered nested refresh from recursing back into another distribution.
+  private readonly distributingRefreshedBindings = new Set<string>();
+  // The rematerialization result produced by the by-construction distribution of the LAST 'refreshed'
+  // completion for a binding. Runtime-auth reads it to derive per-session materialization outcomes
+  // WITHOUT a second rematerialize/notify (preserving single-materialize under concurrent callers).
+  private readonly lastRefreshedDistributionByKey = new Map<string, RematerializedTargetsResult>();
+  private readonly canonicalGroupStateCache = new Map<string, Readonly<{
+    atMs: number;
+    group: CanonicalGroupStateForRefresh | null;
+  }>>();
 
   constructor(private readonly params: Readonly<{
     api: ApiClient;
@@ -345,6 +502,7 @@ export class ConnectedServiceRefreshCoordinator {
     now: () => number;
     accountSettingsProvider?: () => AccountSettings | Readonly<Record<string, unknown>> | null | undefined;
     processEnv?: NodeJS.ProcessEnv;
+    runtimeRegistry?: ConnectedServiceRuntimeRegistry;
     onAuthUpdated?: (event: Readonly<{
       binding: BoundProfile;
       affectedTargets: ReadonlyArray<SpawnTarget>;
@@ -355,7 +513,9 @@ export class ConnectedServiceRefreshCoordinator {
       healthStatus: ConnectedServiceCredentialHealthNotificationStatus;
       affectedTargets: ReadonlyArray<ConnectedServiceCredentialHealthNotificationTarget>;
     }>) => void | Promise<void>;
-  }>) {}
+  }>) {
+    this.runtimeRegistry = params.runtimeRegistry ?? new ConnectedServiceRuntimeRegistry();
+  }
 
   registerSpawnTarget(params: Readonly<{
     pid: number;
@@ -363,38 +523,66 @@ export class ConnectedServiceRefreshCoordinator {
     sessionId?: string | null;
     materializationKey: string;
     connectedServicesBindingsRaw: unknown;
+    connectedServiceSelectionsEnv?: Pick<NodeJS.ProcessEnv, string> | null;
     connectedServiceSelectionsEnvRaw?: string;
   }>): void {
-    const bindings = parseConnectedServiceBindingSelections(params.connectedServicesBindingsRaw);
-    if (bindings.length === 0) return;
-    this.targetsByPid.set(params.pid, {
+    this.runtimeRegistry.registerTarget({
       pid: params.pid,
       agentId: params.agentId,
       sessionId: typeof params.sessionId === 'string' && params.sessionId.trim().length > 0
         ? params.sessionId.trim()
         : null,
       materializationKey: params.materializationKey,
-      bindings,
-      childSelectionsByServiceId: typeof params.connectedServiceSelectionsEnvRaw === 'string'
-        ? readConnectedServiceChildSelectionsFromEnv({
-          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: params.connectedServiceSelectionsEnvRaw,
-        })
-        : null,
+      connectedServicesBindingsRaw: params.connectedServicesBindingsRaw,
+      ...(params.connectedServiceSelectionsEnv
+        ? { connectedServiceSelectionsEnv: params.connectedServiceSelectionsEnv }
+        : {}),
+      connectedServiceSelectionsEnvRaw: params.connectedServiceSelectionsEnvRaw,
     });
   }
 
   unregisterPid(pid: number): void {
-    this.targetsByPid.delete(pid);
+    this.runtimeRegistry.unregisterPid(pid);
+  }
+
+  /**
+   * R3-6: resolve a LIVE runtime target (session or execution run) by its baked broker
+   * selection-identity string, for broker bridge authorization (broker callers present a
+   * synthetic sessionId that can never match a tracked session).
+   */
+  getRuntimeTargetByBrokerSelectionIdentity(identity: string): ConnectedServiceRuntimeTarget | null {
+    return this.runtimeRegistry.getByBrokerSelectionIdentity(identity);
+  }
+
+  // Execution-run targets share their runner's pid with the session target, so they live in the
+  // registry's run keyspace (keyed by runKey) instead of the pid map. Refresh distribution and
+  // canonical group-home ownership cover them via the shared listRefreshTargets() view.
+  registerExecutionRunTarget(params: Readonly<{
+    runKey: string;
+    runnerPid: number;
+    agentId: CatalogAgentId;
+    materializationKey: string;
+    connectedServicesBindingsRaw: unknown;
+    connectedServiceSelectionsEnv?: Pick<NodeJS.ProcessEnv, string> | null;
+  }>): void {
+    this.runtimeRegistry.registerRunTarget({
+      runKey: params.runKey,
+      pid: params.runnerPid,
+      agentId: params.agentId,
+      materializationKey: params.materializationKey,
+      connectedServicesBindingsRaw: params.connectedServicesBindingsRaw,
+      ...(params.connectedServiceSelectionsEnv
+        ? { connectedServiceSelectionsEnv: params.connectedServiceSelectionsEnv }
+        : {}),
+    });
+  }
+
+  unregisterExecutionRunTarget(runKey: string): void {
+    this.runtimeRegistry.unregisterRunKey(runKey);
   }
 
   transferPid(fromPid: number, toPid: number): void {
-    const target = this.targetsByPid.get(fromPid);
-    if (!target) return;
-    this.targetsByPid.delete(fromPid);
-    this.targetsByPid.set(toPid, {
-      ...target,
-      pid: toPid,
-    });
+    this.runtimeRegistry.transferPid(fromPid, toPid);
   }
 
   async tickOnce(): Promise<void> {
@@ -402,7 +590,7 @@ export class ConnectedServiceRefreshCoordinator {
     const unique = new Map<string, BoundProfile>();
     const errors: unknown[] = [];
 
-    for (const target of this.targetsByPid.values()) {
+    for (const target of this.runtimeRegistry.listRefreshTargets()) {
       for (const binding of this.resolveBoundProfiles(target)) {
         unique.set(bindingKey(binding), binding);
       }
@@ -425,12 +613,19 @@ export class ConnectedServiceRefreshCoordinator {
     serviceId: ConnectedServiceId;
     profileId: string;
   }>): Promise<ConnectedServiceCredentialRefreshResult> {
+    const binding = { serviceId: input.serviceId, profileId: input.profileId };
     const result = await this.refreshOauthBinding(
-      { serviceId: input.serviceId, profileId: input.profileId },
+      binding,
       this.params.now(),
       { reason: 'spawn_preflight' },
     );
     await this.notifyCredentialHealthForRefreshResult(result);
+    if (result.status === 'not_needed') {
+      const rematerialization = await this.maybeRematerializeStaleMaterializedHomesForFreshStoreBinding(binding);
+      if (rematerialization && rematerialization.rematerializedTargets.length > 0) {
+        await this.notifyAuthUpdatedForRefreshedBinding(binding, rematerialization.rematerializedTargets);
+      }
+    }
     return result;
   }
 
@@ -450,48 +645,188 @@ export class ConnectedServiceRefreshCoordinator {
   async refreshConnectedServiceCredentialForRuntimeAuthFailure(input: Readonly<{
     serviceId: ConnectedServiceId;
     profileId: string;
+    sessionId?: string | null;
   }>): Promise<ConnectedServiceCredentialRefreshResult> {
+    const binding = { serviceId: input.serviceId, profileId: input.profileId };
     const result = await this.refreshOauthBinding(
-      { serviceId: input.serviceId, profileId: input.profileId },
+      binding,
       this.params.now(),
       { force: true, reason: 'runtime_auth_failure' },
     );
     await this.notifyCredentialHealthForRefreshResult(result);
+    if (result.status !== 'refreshed') return result;
+
+    // RR-1: the 'refreshed' completion path already rematerialized + notified every registered target
+    // by construction. Consume that result to derive this session's outcome instead of running (and
+    // notifying) a second distribution — preserving single-materialize under concurrent callers.
+    const rematerialization = this.lastRefreshedDistributionByKey.get(bindingKey(binding))
+      ?? await this.rematerializeTargetsForBindingAfterRefresh(binding);
+    const targetFailures = resolveRuntimeAuthRematerializationFailures({
+      result: rematerialization,
+      sessionId: input.sessionId ?? null,
+    });
+    if (targetFailures.length > 0) {
+      return this.buildMaterializationFailureRefreshResult({
+        sourceResult: result,
+        failure: targetFailures[0]!,
+      });
+    }
+
+    if (!wasRuntimeAuthSessionRematerialized({ result: rematerialization, sessionId: input.sessionId ?? null })) {
+      return await this.finalizeRefreshResult(binding, this.buildMissingRuntimeAuthTargetRefreshResult({
+        binding,
+        sourceResult: result,
+      }));
+    }
+
     return result;
   }
 
   async refreshOpenAiCodexChatGptTokensForBridge(input: Readonly<{
     selection: CodexChatGptAuthTokensRefreshSelection;
     chatgptPlanType: string | null;
+    forceRefresh?: boolean;
   }>): Promise<CodexChatGptAuthTokensRefreshResponse> {
     const profileId = input.selection.kind === 'profile'
       ? input.selection.profileId
       : input.selection.activeProfileId;
+    const binding: BoundProfile = { serviceId: 'openai-codex', profileId };
+
+    // F6 conditional refresh: when not forced, return the CURRENT access token if it is OAuth and not
+    // within the refresh window of expiry — NO provider call, NO lease, NO rotation. The single-use
+    // OAuth refresh token is rotated only near-expiry or when the broker forces it (its 401 retry).
+    if (input.forceRefresh !== true) {
+      const current = await this.readValidOauthAccessTokenForBridge(binding);
+      if (current) {
+        return {
+          accessToken: current.accessToken,
+          chatgptAccountId: current.providerAccountId,
+          chatgptPlanType: input.chatgptPlanType,
+        };
+      }
+    }
+
     const result = await this.refreshOauthBinding(
-      { serviceId: 'openai-codex', profileId },
+      binding,
       this.params.now(),
       { force: true, reason: 'provider_auth_bridge' },
     );
     if (result.status !== 'refreshed' || result.credential?.kind !== 'oauth') {
       throw new Error('connected_service_chatgpt_refresh_unavailable');
     }
-
-    const affectedTargets = await this.rematerializeTargetsForBinding({
-      serviceId: 'openai-codex',
-      profileId,
-    });
-    if (affectedTargets.length > 0) {
-      await this.params.onAuthUpdated?.({
-        binding: { serviceId: 'openai-codex', profileId },
-        affectedTargets,
-        trigger: 'refresh_triggered_restart',
-      });
-    }
+    // Distribution happens BY CONSTRUCTION on the 'refreshed' completion path (RR-1).
 
     return {
       accessToken: result.credential.oauth.accessToken,
       chatgptAccountId: result.credential.oauth.providerAccountId,
       chatgptPlanType: input.chatgptPlanType,
+    };
+  }
+
+  async refreshClaudeSubscriptionTokensForBridge(input: Readonly<{
+    selection: ClaudeSubscriptionAuthTokensRefreshSelection;
+    forceRefresh?: boolean;
+    shouldAdoptCurrentAccessToken?: (accessToken: string) => boolean;
+  }>): Promise<ClaudeSubscriptionAuthTokensRefreshResponse> {
+    const profileId = input.selection.kind === 'group'
+      ? input.selection.activeProfileId
+      : input.selection.profileId;
+    const binding: BoundProfile = { serviceId: 'claude-subscription', profileId };
+
+    // Read the current credential to branch on kind. Setup-tokens (kind:'token') are non-rotating and
+    // returned as-is; OAuth (kind:'oauth') is refreshed through the canonical single-flight refresher so
+    // the daemon stays the sole refresher and the rotated refresh token is persisted ONLY in the store.
+    const records = await resolveConnectedServiceCredentials({
+      credentials: this.params.credentials,
+      api: this.params.api,
+      bindings: [binding],
+    });
+    const current = records.get('claude-subscription');
+    if (!current) {
+      throw new Error('connected_service_claude_subscription_refresh_unavailable');
+    }
+
+    if (current.kind === 'token') {
+      return {
+        accessToken: current.token.token,
+        anthropicAccountId: current.token.providerAccountId,
+        expiresAt: null,
+      };
+    }
+
+    // F6 conditional refresh: when not forced, return the CURRENT OAuth access token if it is not within
+    // the refresh window of expiry — NO provider call, NO lease, NO rotation. The single-use refresh
+    // token is rotated only near-expiry or when the broker forces it (its 401 retry).
+    if (input.forceRefresh !== true && this.isOauthRecordStillValidForBridge(current)) {
+      return {
+        accessToken: current.oauth.accessToken,
+        anthropicAccountId: current.oauth.providerAccountId,
+        expiresAt: current.expiresAt ?? null,
+      };
+    }
+
+    if (
+      input.forceRefresh === true
+      && input.shouldAdoptCurrentAccessToken
+      && this.isOauthRecordStillValidForBridge(current)
+    ) {
+      if (input.shouldAdoptCurrentAccessToken(current.oauth.accessToken)) {
+        return {
+          accessToken: current.oauth.accessToken,
+          anthropicAccountId: current.oauth.providerAccountId,
+          expiresAt: current.expiresAt ?? null,
+        };
+      }
+    }
+
+    const result = await this.refreshOauthBinding(
+      binding,
+      this.params.now(),
+      { force: true, reason: 'provider_auth_bridge' },
+    );
+    if (result.status !== 'refreshed' || result.credential?.kind !== 'oauth') {
+      throw new Error('connected_service_claude_subscription_refresh_unavailable');
+    }
+    // Distribution happens BY CONSTRUCTION on the 'refreshed' completion path (RR-1).
+
+    return {
+      accessToken: result.credential.oauth.accessToken,
+      anthropicAccountId: result.credential.oauth.providerAccountId,
+      expiresAt: result.credential.expiresAt ?? null,
+    };
+  }
+
+  /**
+   * F6 helper: true when an OAuth credential's access token is still valid for the bridge (a finite
+   * expiry strictly outside the refresh window). Mirrors the `force:false` not-needed gate in
+   * `refreshOauthBindingUnserialized`. A null/non-finite expiry is treated as NOT safely reusable (the
+   * caller falls through to a refresh) so an unknown-expiry token is never served stale.
+   */
+  private isOauthRecordStillValidForBridge(record: ConnectedServiceCredentialRecordV1): boolean {
+    if (record.kind !== 'oauth') return false;
+    const expiresAt = record.expiresAt;
+    if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt)) return false;
+    return expiresAt - this.params.now() > this.params.refreshWindowMs;
+  }
+
+  /**
+   * F6 helper for the Codex bridge: read the current credential via the canonical refresh reader (no
+   * parallel read path) and return its access token + account id IFF it is OAuth and still valid. Null
+   * otherwise (the caller then runs a forced refresh).
+   */
+  private async readValidOauthAccessTokenForBridge(
+    binding: BoundProfile,
+  ): Promise<Readonly<{ accessToken: string; providerAccountId: string | null }> | null> {
+    const source = await readCredentialForRefresh({
+      api: this.params.api,
+      credentials: this.params.credentials,
+      binding,
+    });
+    if (!source || source.record.kind !== 'oauth') return null;
+    if (!this.isOauthRecordStillValidForBridge(source.record)) return null;
+    return {
+      accessToken: source.record.oauth.accessToken,
+      providerAccountId: source.record.oauth.providerAccountId,
     };
   }
 
@@ -501,15 +836,71 @@ export class ConnectedServiceRefreshCoordinator {
       await this.notifyCredentialHealthForRefreshResult(result);
       throw new Error(`Connected services refresh failed (${binding.serviceId}/${binding.profileId}): ${result.diagnostic.category ?? 'unknown'}`);
     }
-    if (result.status !== 'refreshed') return;
+    if (result.status !== 'refreshed') {
+      if (result.status !== 'not_needed') return;
+      const rematerialization = await this.maybeRematerializeStaleMaterializedHomesForFreshStoreBinding(binding);
+      if (!rematerialization || rematerialization.rematerializedTargets.length === 0) return;
+      await this.notifyAuthUpdatedForRefreshedBinding(binding, rematerialization.rematerializedTargets);
+      return;
+    }
+    // A 'refreshed' result already rematerialized + notified BY CONSTRUCTION on the completion path (RR-1).
+  }
 
-    const affectedTargets = await this.rematerializeTargetsForBinding(binding);
-    if (affectedTargets.length === 0) return;
-    await this.params.onAuthUpdated?.({
-      binding,
-      affectedTargets,
-      trigger: 'refresh_triggered_restart',
-    });
+  private async maybeRematerializeStaleMaterializedHomesForFreshStoreBinding(
+    binding: BoundProfile,
+  ): Promise<RematerializedTargetsResult | null> {
+    const affected = this.runtimeRegistry.listRefreshTargets().filter((target) =>
+      this.resolveBoundProfiles(target).some((candidate) =>
+        candidate.serviceId === binding.serviceId && candidate.profileId === binding.profileId,
+      ),
+    );
+    for (const rawTarget of affected) {
+      const target = await this.canonicalizeTargetSelectionsForRefresh(rawTarget);
+      if (!target) continue;
+      const targetBinding = this.resolveBoundProfiles(target).find((candidate) =>
+        candidate.serviceId === binding.serviceId,
+      ) ?? binding;
+      const source = await readCredentialForRefresh({
+        api: this.params.api,
+        credentials: this.params.credentials,
+        binding: targetBinding,
+      });
+      if (!source || source.record.kind !== 'oauth') continue;
+      if (!this.isOauthRecordStillValidForBridge(source.record)) continue;
+      const freshness = await getConnectedServiceMaterializedHomeFreshness(target.agentId);
+      if (!freshness) continue;
+      const fallbackMaterializedRootDir = resolveConnectedServiceMaterializedRootDir({
+        baseDir: this.params.baseDir,
+        agentId: target.agentId,
+        materializationKey: target.materializationKey,
+      });
+      const materializedRootDir = this.resolveMaterializedHomeRootForTarget({
+        target,
+        binding: targetBinding,
+      }) ?? fallbackMaterializedRootDir;
+      let stale = false;
+      try {
+        stale = await freshness.isMaterializedHomeStale({
+          serviceId: targetBinding.serviceId,
+          materializedRootDir,
+          record: source.record,
+          now: this.params.now(),
+          refreshWindowMs: this.params.refreshWindowMs,
+        });
+      } catch (error) {
+        logger.debug('[ConnectedServiceRefreshCoordinator] materialized home freshness check failed; rematerializing target', {
+          serviceId: binding.serviceId,
+          profileId: binding.profileId,
+          agentId: target.agentId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        stale = true;
+      }
+      if (stale) {
+        return await this.rematerializeTargetsForBindingAfterRefresh(binding);
+      }
+    }
+    return null;
   }
 
   private async refreshOauthBinding(
@@ -543,6 +934,7 @@ export class ConnectedServiceRefreshCoordinator {
         await previous.catch(() => undefined);
       }
       return await this.finalizeRefreshResult(
+        binding,
         await this.refreshOauthBindingUnserialized(binding, now, options),
       );
     })();
@@ -774,10 +1166,39 @@ export class ConnectedServiceRefreshCoordinator {
   }
 
   private async finalizeRefreshResult(
+    binding: BoundProfile,
     result: ConnectedServiceCredentialRefreshResult,
   ): Promise<ConnectedServiceCredentialRefreshResult> {
     await this.persistCredentialHealthForRefreshResult(result);
+    if (result.status === 'refreshed') {
+      // RR-1: rotate+distribute is ONE transaction BY CONSTRUCTION. Every rotation funnels through
+      // this single completion path (the OAuth refresh leaf calls it exactly once), so no entry point
+      // — scheduled, bridge, runtime-auth, quota probe, or spawn preflight — can mint a fresh token
+      // and leave a materialized target (group siblings included) holding the superseded one.
+      const distributionKey = bindingKey(binding);
+      if (!this.distributingRefreshedBindings.has(distributionKey)) {
+        this.distributingRefreshedBindings.add(distributionKey);
+        try {
+          this.lastRefreshedDistributionByKey.set(distributionKey, await this.distributeRefreshedBinding(binding));
+        } finally {
+          this.distributingRefreshedBindings.delete(distributionKey);
+        }
+      }
+    }
     return result;
+  }
+
+  /**
+   * Rematerialize every registered target for a freshly rotated binding and notify the runtime so the
+   * affected sessions adopt the new token. Both the rematerialize and the auth-updated notify are
+   * per-binding single-flighted, so concurrent completion callers coalesce onto one distribution.
+   */
+  private async distributeRefreshedBinding(binding: BoundProfile): Promise<RematerializedTargetsResult> {
+    const rematerialization = await this.rematerializeTargetsForBindingAfterRefresh(binding);
+    if (rematerialization.rematerializedTargets.length > 0) {
+      await this.notifyAuthUpdatedForRefreshedBinding(binding, rematerialization.rematerializedTargets);
+    }
+    return rematerialization;
   }
 
   private buildFailureCredentialHealth(
@@ -840,14 +1261,70 @@ export class ConnectedServiceRefreshCoordinator {
     }
   }
 
-  private async rematerializeTargetsForBinding(binding: BoundProfile): Promise<ReadonlyArray<SpawnTarget>> {
-    const affected = Array.from(this.targetsByPid.values()).filter((target) =>
+  private async rematerializeTargetsForBindingAfterRefresh(binding: BoundProfile): Promise<RematerializedTargetsResult> {
+    const key = bindingKey(binding);
+    const existing = this.inFlightRefreshRematerializations.get(key);
+    if (existing) return await existing;
+
+    const promise = this.rematerializeTargetsForBindingDetailed(binding);
+    this.inFlightRefreshRematerializations.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      if (this.inFlightRefreshRematerializations.get(key) === promise) {
+        this.inFlightRefreshRematerializations.delete(key);
+      }
+    }
+  }
+
+  private async notifyAuthUpdatedForRefreshedBinding(
+    binding: BoundProfile,
+    affectedTargets: ReadonlyArray<SpawnTarget>,
+  ): Promise<void> {
+    if (affectedTargets.length === 0) return;
+    const key = bindingKey(binding);
+    const existing = this.inFlightRefreshAuthUpdatedNotifications.get(key);
+    if (existing) {
+      await existing;
+      return;
+    }
+
+    const promise = Promise.resolve(this.params.onAuthUpdated?.({
+      binding,
+      affectedTargets,
+      trigger: 'refresh_triggered_restart',
+    }));
+    this.inFlightRefreshAuthUpdatedNotifications.set(key, promise);
+    try {
+      await promise;
+    } finally {
+      queueMicrotask(() => {
+        if (this.inFlightRefreshAuthUpdatedNotifications.get(key) === promise) {
+          this.inFlightRefreshAuthUpdatedNotifications.delete(key);
+        }
+      });
+    }
+  }
+
+  private async rematerializeTargetsForBindingDetailed(binding: BoundProfile): Promise<RematerializedTargetsResult> {
+    const affected = this.runtimeRegistry.listRefreshTargets().filter((target) =>
       this.resolveBoundProfiles(target).some((candidate) =>
         candidate.serviceId === binding.serviceId && candidate.profileId === binding.profileId,
       ),
     );
     const rematerialized: SpawnTarget[] = [];
-    for (const target of affected) {
+    const failed: RematerializedTargetFailure[] = [];
+    for (const rawTarget of affected) {
+      const target = await this.canonicalizeTargetSelectionsForRefresh(rawTarget);
+      if (!target) {
+        logger.warn('[DAEMON RUN] Skipping connected-service rematerialization; canonical group state unavailable', {
+          serviceId: binding.serviceId,
+          profileId: binding.profileId,
+          agentId: rawTarget.agentId,
+          pid: rawTarget.pid,
+        });
+        continue;
+      }
       const records = await resolveConnectedServiceCredentials({
         credentials: this.params.credentials,
         api: this.params.api,
@@ -874,6 +1351,11 @@ export class ConnectedServiceRefreshCoordinator {
           ?? this.resolveBoundProfiles(target).find((candidate) => candidate.serviceId === binding.serviceId)
           ?? binding;
         await this.persistCredentialHealthForMaterializationFailure(targetBinding, primaryDiagnostic);
+        failed.push({
+          target,
+          binding: targetBinding,
+          diagnostic: primaryDiagnostic,
+        });
         logger.warn('[DAEMON RUN] Connected-service rematerialization blocked; skipping auth-update restart', {
           serviceId: targetBinding.serviceId,
           profileId: targetBinding.profileId,
@@ -885,48 +1367,65 @@ export class ConnectedServiceRefreshCoordinator {
       }
       rematerialized.push(target);
     }
-    return rematerialized;
+    return {
+      affectedTargets: affected,
+      rematerializedTargets: rematerialized,
+      failedTargets: failed,
+    };
   }
 
   private async persistCredentialHealthForMaterializationFailure(
     binding: BoundProfile,
     diagnostic: ConnectedServicesMaterializationDiagnostic,
   ): Promise<void> {
-    const updateHealth = this.params.api.updateConnectedServiceCredentialHealth;
-    if (typeof updateHealth !== 'function') return;
+    await persistConnectedServiceCredentialHealthForMaterializationFailure({
+      api: this.params.api,
+      binding,
+      diagnostic,
+      now: this.params.now(),
+    });
+  }
 
-    const now = this.params.now();
-    const providerErrorCode = typeof diagnostic.code === 'string'
-      && diagnostic.code.trim().length > 0
-      && diagnostic.code.trim().length <= 128
-      ? diagnostic.code.trim()
-      : undefined;
-    const health = {
-      v: 1,
-      status: 'needs_reauth',
-      reconnectRequired: true,
-      lastRefreshAttemptAt: now,
-      lastRefreshFailureAt: now,
-      lastRefreshFailureKind: 'provider_403',
-      providerHttpStatus: 403,
-      ...(providerErrorCode ? { providerErrorCode } : {}),
-    } satisfies ConnectedServiceCredentialHealthV1;
+  private buildMaterializationFailureRefreshResult(input: Readonly<{
+    sourceResult: ConnectedServiceCredentialRefreshResult;
+    failure: RematerializedTargetFailure;
+  }>): ConnectedServiceCredentialRefreshResult {
+    const classification = classifyConnectedServiceMaterializationDiagnosticForCredentialRefresh(input.failure.diagnostic);
+    return {
+      status: 'refresh_failed',
+      credential: input.sourceResult.credential,
+      diagnostic: buildRefreshDiagnostic({
+        binding: input.failure.binding,
+        reason: 'runtime_auth_failure',
+        status: 'refresh_failed',
+        category: classification.category,
+        providerStatus: classification.providerStatus,
+        providerErrorCode: classification.providerErrorCode ?? 'materialization_failed',
+        expiresAt: input.sourceResult.diagnostic.expiresAt ?? input.sourceResult.credential?.expiresAt ?? null,
+        now: this.params.now(),
+        refreshWindowMs: this.params.refreshWindowMs,
+      }),
+    };
+  }
 
-    try {
-      await updateHealth.call(this.params.api, {
-        serviceId: binding.serviceId,
-        profileId: binding.profileId,
-        health,
-      });
-    } catch (error) {
-      logger.warn('[DAEMON RUN] Failed to update connected-service credential health after materialization failure', {
-        serviceId: binding.serviceId,
-        profileId: binding.profileId,
-        materializationCode: diagnostic.code,
-        reason: diagnostic.reason ?? null,
-        error: serializeAxiosErrorForLog(error),
-      });
-    }
+  private buildMissingRuntimeAuthTargetRefreshResult(input: Readonly<{
+    binding: BoundProfile;
+    sourceResult: ConnectedServiceCredentialRefreshResult;
+  }>): ConnectedServiceCredentialRefreshResult {
+    return {
+      status: 'refresh_failed',
+      credential: input.sourceResult.credential,
+      diagnostic: buildRefreshDiagnostic({
+        binding: input.binding,
+        reason: 'runtime_auth_failure',
+        status: 'refresh_failed',
+        category: 'unknown',
+        providerErrorCode: 'runtime_auth_target_not_registered',
+        expiresAt: input.sourceResult.diagnostic.expiresAt ?? input.sourceResult.credential?.expiresAt ?? null,
+        now: this.params.now(),
+        refreshWindowMs: this.params.refreshWindowMs,
+      }),
+    };
   }
 
   private async notifyCredentialHealthForRefreshResult(
@@ -984,7 +1483,7 @@ export class ConnectedServiceRefreshCoordinator {
   private resolveNotificationTargetsForBinding(
     binding: BoundProfile,
   ): ReadonlyArray<ConnectedServiceCredentialHealthNotificationTarget> {
-    return Array.from(this.targetsByPid.values())
+    return this.runtimeRegistry.listRefreshTargets()
       .filter((target) => this.resolveBoundProfiles(target).some((candidate) =>
         candidate.serviceId === binding.serviceId && candidate.profileId === binding.profileId,
       ))
@@ -995,23 +1494,110 @@ export class ConnectedServiceRefreshCoordinator {
       }));
   }
 
-  private resolveBoundProfiles(target: SpawnTarget): ReadonlyArray<BoundProfile> {
-    return target.bindings.flatMap((binding) => {
-      if (binding.kind === 'profile') {
-        return [{ serviceId: binding.serviceId, profileId: binding.profileId }];
-      }
-      const selection = target.childSelectionsByServiceId?.get(binding.serviceId);
-      if (selection?.kind === 'group' && selection.groupId === binding.groupId) {
-        return [{ serviceId: binding.serviceId, profileId: selection.activeProfileId }];
-      }
-      return binding.fallbackProfileId
-        ? [{ serviceId: binding.serviceId, profileId: binding.fallbackProfileId }]
-        : [];
+  private resolveMaterializedHomeRootForTarget(input: Readonly<{
+    target: SpawnTarget;
+    binding: BoundProfile;
+  }>): string | null {
+    return resolveConnectedServiceMaterializedHomeRoot(input.target.agentId, {
+      activeServerDir: this.params.activeServerDir,
+      serviceId: input.binding.serviceId,
+      profileId: input.binding.profileId,
+      selection: input.target.childSelectionsByServiceId?.get(input.binding.serviceId) ?? null,
     });
   }
 
+  private async resolveCanonicalGroupStateForRefresh(
+    input: Readonly<{ serviceId: ConnectedServiceId; groupId: string }>,
+    now: number,
+  ): Promise<CanonicalGroupStateForRefresh | null> {
+    const key = `${input.serviceId}::${input.groupId}`;
+    const cached = this.canonicalGroupStateCache.get(key);
+    if (cached && now - cached.atMs < 15_000) return cached.group;
+
+    let group: CanonicalGroupStateForRefresh | null = null;
+    const reader = this.params.api.getConnectedServiceAuthGroup;
+    if (typeof reader === 'function') {
+      try {
+        const value = await reader.call(this.params.api, {
+          serviceId: input.serviceId,
+          groupId: input.groupId,
+        });
+        group = value
+          ? {
+              activeProfileId: typeof value.activeProfileId === 'string' && value.activeProfileId.trim().length > 0
+                ? value.activeProfileId
+                : null,
+              generation: typeof value.generation === 'number' && Number.isFinite(value.generation)
+                ? Math.trunc(value.generation)
+                : 0,
+            }
+          : null;
+      } catch {
+        group = null;
+      }
+    }
+    this.canonicalGroupStateCache.set(key, { atMs: now, group });
+    return group;
+  }
+
+  private async canonicalizeTargetSelectionsForRefresh(
+    target: SpawnTarget,
+  ): Promise<SpawnTarget | null> {
+    if (!target.childSelectionsByServiceId || target.childSelectionsByServiceId.size === 0) {
+      return target;
+    }
+
+    let changed = false;
+    let nextBindings = target.bindings;
+    const nextSelections = new Map<ConnectedServiceId, ConnectedServiceChildSelection>();
+    for (const [serviceId, selection] of target.childSelectionsByServiceId.entries()) {
+      if (selection.kind !== 'group') {
+        nextSelections.set(serviceId, selection);
+        continue;
+      }
+      const canonical = await this.resolveCanonicalGroupStateForRefresh(
+        { serviceId, groupId: selection.groupId },
+        this.params.now(),
+      );
+      if (!canonical?.activeProfileId) return null;
+      const canonicalActiveProfileId = canonical.activeProfileId;
+
+      const nextSelection: ConnectedServiceChildSelection =
+        canonicalActiveProfileId === selection.activeProfileId && canonical.generation === selection.generation
+          ? selection
+          : {
+              ...selection,
+              activeProfileId: canonicalActiveProfileId,
+              generation: canonical.generation,
+            };
+      nextSelections.set(serviceId, nextSelection);
+
+      const rewrittenBindings = nextBindings.map((candidate) =>
+        candidate.serviceId === serviceId && candidate.profileId !== canonicalActiveProfileId
+          ? { ...candidate, profileId: canonicalActiveProfileId }
+          : candidate,
+      );
+      if (rewrittenBindings.some((candidate, index) => candidate !== nextBindings[index])) {
+        nextBindings = rewrittenBindings;
+        changed = true;
+      }
+      if (nextSelection !== selection) changed = true;
+    }
+
+    if (!changed) return target;
+    return {
+      ...target,
+      bindings: nextBindings,
+      childSelectionsByServiceId: nextSelections,
+    };
+  }
+
+  private resolveBoundProfiles(target: SpawnTarget): ReadonlyArray<BoundProfile> {
+    return target.bindings;
+  }
+
   private buildResolvedSelectionsByServiceId(
-    childSelectionsByServiceId: ChildSelectionsByServiceId,
+    childSelectionsByServiceId: NonNullable<SpawnTarget['childSelectionsByServiceId']>,
     recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>,
   ): ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection> {
     const selectionsByServiceId = new Map<ConnectedServiceId, ConnectedServiceResolvedSelection>();

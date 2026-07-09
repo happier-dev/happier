@@ -18,6 +18,8 @@ describe('createConnectedServiceQuotaPersistenceScheduler', () => {
     run: (key: string, payload: TestPayload) => Promise<void>;
     maxKeys?: number;
     maxConsecutiveFailures?: number;
+    shouldRetry?: (error: unknown) => boolean;
+    shouldPauseAfterFailure?: (error: unknown) => boolean;
   }>) {
     return createConnectedServiceQuotaPersistenceScheduler<string, TestPayload>({
       run: input.run,
@@ -34,7 +36,8 @@ describe('createConnectedServiceQuotaPersistenceScheduler', () => {
         jitterRatio: 0,
         now: input.now,
       }),
-      shouldRetry: () => true,
+      shouldRetry: input.shouldRetry ?? (() => true),
+      shouldPauseAfterFailure: input.shouldPauseAfterFailure,
     });
   }
 
@@ -101,6 +104,64 @@ describe('createConnectedServiceQuotaPersistenceScheduler', () => {
 
     expect(flushed).toBe(true);
     expect(attempts).toEqual(['initial', 'initial', 'initial', 'initial', 'initial', 'latest-same-material']);
+  });
+
+  it('suppresses same-fingerprint work after a non-retryable failure', async () => {
+    vi.useFakeTimers();
+    let nowMs = 0;
+    const attempts: string[] = [];
+    const scheduler = createScheduler({
+      now: () => nowMs,
+      shouldRetry: () => false,
+      run: async (_key, payload) => {
+        attempts.push(payload.value);
+        throw new Error('non-retryable');
+      },
+    });
+
+    expect(scheduler.enqueue('profile', { materialFingerprint: 'fp-old', value: 'first' }).type).toBe('accepted');
+    await vi.runAllTimersAsync();
+    expect(attempts).toEqual(['first']);
+
+    expect(scheduler.enqueue('profile', { materialFingerprint: 'fp-old', value: 'same-material' })).toEqual({
+      type: 'suppressed',
+      reason: 'paused_after_nonretryable_failure',
+    });
+    await scheduler.flushAll(25);
+    await vi.advanceTimersByTimeAsync(25);
+    expect(attempts).toEqual(['first']);
+
+    expect(scheduler.enqueue('profile', { materialFingerprint: 'fp-new', value: 'changed-material' }).type).toBe('accepted');
+    await vi.runAllTimersAsync();
+    expect(attempts).toEqual(['first', 'changed-material']);
+  });
+
+  it('does not pause same-fingerprint work when a non-retryable failure is explicitly non-pausing', async () => {
+    vi.useFakeTimers();
+    let nowMs = 0;
+    let shouldFail = true;
+    const attempts: string[] = [];
+    const nonPausingError = new Error('mode unavailable');
+    const scheduler = createScheduler({
+      now: () => nowMs,
+      shouldRetry: (error) => error !== nonPausingError,
+      shouldPauseAfterFailure: (error) => error !== nonPausingError,
+      maxConsecutiveFailures: 1,
+      run: async (_key, payload) => {
+        attempts.push(payload.value);
+        if (shouldFail) throw nonPausingError;
+      },
+    });
+
+    expect(scheduler.enqueue('profile', { materialFingerprint: 'fp', value: 'initial' }).type).toBe('accepted');
+    await vi.runAllTimersAsync();
+    expect(attempts).toEqual(['initial']);
+
+    shouldFail = false;
+    expect(scheduler.enqueue('profile', { materialFingerprint: 'fp', value: 'same-material' }).type).toBe('accepted');
+    await vi.runAllTimersAsync();
+
+    expect(attempts).toEqual(['initial', 'same-material']);
   });
 
   it('bounds paused same-fingerprint payload retention by maxKeys', async () => {

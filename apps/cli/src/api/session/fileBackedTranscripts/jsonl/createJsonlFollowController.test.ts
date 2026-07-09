@@ -210,6 +210,40 @@ describe('createJsonlFollowController', () => {
         }
     });
 
+    it('rolls back a failed attach so a later successful attach can stop on detach', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'jsonl-controller-attach-rollback-'));
+        const filePath = join(root, 'session.jsonl');
+        await writeFile(filePath, '{"first":1}\n');
+        let failStart = true;
+        const metrics: string[] = [];
+        const controller = createJsonlFollowController({
+            filePath,
+            onLine: () => {},
+            watchFile: () => {
+                if (failStart) {
+                    throw new Error('watcher unavailable');
+                }
+                return () => {};
+            },
+            metrics: {
+                onEvent: (event) => metrics.push(event.type),
+            },
+        });
+
+        try {
+            await expect(controller.attach()).rejects.toThrow(/watcher unavailable/);
+            failStart = false;
+            await controller.attach();
+            await controller.detach();
+
+            expect(metrics.filter((type) => type === 'controller_started')).toHaveLength(1);
+            expect(metrics).toContain('controller_stopped');
+        } finally {
+            await controller.dispose().catch(() => {});
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('waits for startup drain when attach is called concurrently', async () => {
         const root = await mkdtemp(join(tmpdir(), 'jsonl-controller-concurrent-startup-'));
         const filePath = join(root, 'session.jsonl');

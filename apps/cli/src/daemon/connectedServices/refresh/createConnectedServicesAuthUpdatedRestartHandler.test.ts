@@ -129,6 +129,33 @@ describe('createConnectedServicesAuthUpdatedRestartHandler', () => {
     expect(kill).toHaveBeenCalledTimes(0);
   });
 
+  it('does not restart a no-restart service for a daemon target without runtime callback capability', async () => {
+    const restartRequestedPids = new Set<number>();
+    const requestRestartSignal = vi.fn(async () => ({ signaled: true }));
+    const pidToTrackedSession = new Map<number, TrackedSession>([
+      [1, createTrackedSession({ pid: 1, sessionId: 's1', kill: vi.fn() })],
+    ]);
+
+    const handler = createConnectedServicesAuthUpdatedRestartHandler({
+      restartRequestedPids,
+      pidToTrackedSession,
+      restartAgentIds: new Set(['claude']),
+      noRestartRequiredServiceIdsByAgentId: new Map([
+        ['claude', new Set(['claude-subscription'])],
+      ]),
+      requestRestartSignal,
+      restartSignalDelayMs: 250,
+    });
+
+    await handler({
+      binding: { serviceId: 'claude-subscription', profileId: 'work' },
+      affectedTargets: [{ pid: 1, agentId: 'claude' }],
+    });
+
+    expect(requestRestartSignal).not.toHaveBeenCalled();
+    expect(restartRequestedPids.size).toBe(0);
+  });
+
   it('does not mark the pid for restart when SIGTERM throws', () => {
     const restartRequestedPids = new Set<number>();
     const kill = vi.fn(() => {

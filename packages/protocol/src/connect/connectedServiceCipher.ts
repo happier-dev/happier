@@ -29,19 +29,6 @@ export function openConnectedServiceCredentialCiphertext(params: Readonly<{
   });
 }
 
-export function sealConnectedServiceQuotaSnapshotCiphertext(params: Readonly<{
-  material: AccountScopedCryptoMaterial;
-  payload: unknown;
-  randomBytes: (length: number) => Uint8Array;
-}>): string {
-  return sealAccountScopedBlobCiphertext({
-    kind: 'connected_service_quota_snapshot',
-    material: params.material,
-    payload: params.payload,
-    randomBytes: params.randomBytes,
-  });
-}
-
 export function openConnectedServiceQuotaSnapshotCiphertext(params: Readonly<{
   material: AccountScopedCryptoMaterial;
   ciphertext: string;
@@ -52,4 +39,3 @@ export function openConnectedServiceQuotaSnapshotCiphertext(params: Readonly<{
     ciphertext: params.ciphertext,
   });
 }
-

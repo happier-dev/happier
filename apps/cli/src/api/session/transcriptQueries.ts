@@ -2,9 +2,8 @@ import axios from 'axios';
 
 import { resolveLatestPermissionIntent } from '@happier-dev/agents';
 
-import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
-import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
+import { resolveServerHttpBaseUrl } from '../client/serverHttpBaseUrl';
 import { isAuthenticationError } from '../client/httpStatusError';
 import { serializeAxiosErrorForLog } from '../client/serializeAxiosErrorForLog';
 
@@ -86,7 +85,7 @@ async function fetchTranscriptMessagesForContinuation(
   logMessage: string,
 ): Promise<ReadonlyArray<unknown> | null> {
   const take = normalizeTake(params.take, 100);
-  const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+  const serverUrl = resolveServerHttpBaseUrl();
 
   try {
     const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
@@ -150,7 +149,7 @@ export async function fetchRecentTranscriptTextItemsForAcpImportFromServer(
   params: SessionTranscriptQueryParams & { take?: number },
 ): Promise<Array<{ role: 'user' | 'agent'; text: string }>> {
   const take = normalizeTake(params.take, 150);
-  const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+  const serverUrl = resolveServerHttpBaseUrl();
 
   try {
     const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
@@ -205,7 +204,7 @@ export async function fetchLatestUserPermissionIntentFromEncryptedTranscript(
   params: SessionTranscriptQueryParams & { take?: number },
 ): Promise<{ intent: PermissionMode; updatedAt: number } | null> {
   const take = normalizeTake(params.take, 200);
-  const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+  const serverUrl = resolveServerHttpBaseUrl();
 
   try {
     const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
@@ -274,7 +273,7 @@ export async function hasCommittedUserMessageAfterMs(params: Readonly<{
   const failureAtMs = Number.isFinite(params.failureAtMs)
     ? Math.max(0, Math.trunc(params.failureAtMs))
     : 0;
-  const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+  const serverUrl = resolveServerHttpBaseUrl();
 
   try {
     const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {

@@ -304,6 +304,176 @@ describe('switchSessionConnectedServiceAuth', () => {
     }));
   });
 
+  it('emits the resolved auth-group label on canonical account switch events', async () => {
+    const tracked = trackedSession();
+    const emitSessionEvent = vi.fn();
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic',
+          profiles: [{ profileId: 'group-active', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => group({ displayName: 'Work Pool' }),
+      },
+      resolveContinuity: async () => ({ mode: 'restart_rematerialize' }),
+      restartSession: vi.fn(async () => {}),
+      persistSessionBindings: vi.fn(async () => {}),
+      hotApply: async () => ({ ok: true }),
+      registerHotApplyTargets: () => {},
+      emitSessionEvent,
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        bindings: {
+          v: 1,
+          bindingsByServiceId: {
+            anthropic: {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'work',
+              profileId: 'old-profile',
+            },
+          },
+        },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      action: 'restart_requested',
+    });
+
+    expect(emitSessionEvent).toHaveBeenCalledWith('sess_1', expect.objectContaining({
+      type: 'connected_service_account_switch',
+      serviceId: 'anthropic',
+      groupId: 'work',
+      groupLabel: 'Work Pool',
+      fromProfileId: 'old-profile',
+      toProfileId: 'group-active',
+      reason: 'manual',
+    }));
+  });
+
+  it('does not emit account switch events when the binding changes but the effective profile stays the same', async () => {
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        connectedServices: bindings('old-profile'),
+      },
+    });
+    const emitSessionEvent = vi.fn();
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic',
+          profiles: [{ profileId: 'old-profile', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => group({
+          activeProfileId: 'old-profile',
+          generation: 9,
+          members: [
+            {
+              v: 1,
+              serviceId: 'anthropic',
+              groupId: 'work',
+              profileId: 'old-profile',
+              priority: 100,
+              enabled: true,
+              state: {},
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          ],
+        }),
+      },
+      resolveContinuity: async () => ({ mode: 'restart_rematerialize' }),
+      restartSession: vi.fn(async () => {}),
+      persistSessionBindings: vi.fn(async () => {}),
+      hotApply: async () => ({ ok: true }),
+      registerHotApplyTargets: () => {},
+      emitSessionEvent,
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        bindings: {
+          v: 1,
+          bindingsByServiceId: {
+            anthropic: {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'work',
+              profileId: 'old-profile',
+            },
+          },
+        },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      action: 'restart_requested',
+    });
+
+    expect(emitSessionEvent).not.toHaveBeenCalledWith('sess_1', expect.objectContaining({
+      type: 'connected_service_account_switch',
+      serviceId: 'anthropic',
+    }));
+  });
+
+  it('suppresses duplicate final account switch events for coordinator-owned automatic group applies', async () => {
+    const tracked = trackedSession();
+    const emitSessionEvent = vi.fn();
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      reason: 'pre_turn_group_policy',
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic',
+          profiles: [{ profileId: 'group-active', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => group({ displayName: 'Work Pool' }),
+      },
+      resolveContinuity: async () => ({ mode: 'restart_rematerialize' }),
+      restartSession: vi.fn(async () => {}),
+      persistSessionBindings: vi.fn(async () => {}),
+      hotApply: async () => ({ ok: true }),
+      registerHotApplyTargets: () => {},
+      emitSessionEvent,
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        bindings: {
+          v: 1,
+          bindingsByServiceId: {
+            anthropic: {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'work',
+              profileId: 'old-profile',
+            },
+          },
+        },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      action: 'restart_requested',
+    });
+
+    expect(emitSessionEvent).not.toHaveBeenCalledWith('sess_1', expect.objectContaining({
+      type: 'connected_service_account_switch',
+      serviceId: 'anthropic',
+      reason: 'pre_turn_group_policy',
+    }));
+  });
+
   it('forwards the inactive session cwd and persisted session-file hint to the continuity check (F2)', async () => {
     // For an INACTIVE switch the daemon adapter cannot read cwd/target-root from a tracked session.
     // The switch must forward the inactive session's working directory and persisted session-file hint
@@ -407,6 +577,201 @@ describe('switchSessionConnectedServiceAuth', () => {
       toProfileId: 'new-profile',
       reason: 'manual',
     }));
+  });
+
+  it('allows retryable-refresh profiles during manual auth switch validation', async () => {
+    const tracked = trackedSession();
+    const restartSession = vi.fn(async () => {});
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic',
+          profiles: [{ profileId: 'new-profile', status: 'refresh_failed_retryable' as const }],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity: async () => ({ mode: 'restart_rematerialize' }),
+      restartSession,
+      persistSessionBindings: vi.fn(),
+      hotApply: async () => ({ ok: true }),
+      registerHotApplyTargets: () => {},
+      emitSessionEvent: vi.fn(),
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        bindings: bindings('new-profile'),
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      action: 'restart_requested',
+      normalizedBindings: bindings('new-profile'),
+    });
+
+    expect(restartSession).toHaveBeenCalledWith(tracked);
+    expect(tracked.spawnOptions?.connectedServices).toEqual(bindings('new-profile'));
+  });
+
+  it('uses webhook metadata bindings as the previous binding when tracked spawn options no longer carry them', async () => {
+    const previousBindings = bindings('old-profile');
+    const nextBindings = bindings('new-profile');
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+      },
+      happySessionMetadataFromLocalWebhook: {
+        path: '/tmp/project',
+        host: 'test-host',
+        homeDir: '/tmp/home',
+        happyHomeDir: '/tmp/home/.happier',
+        happyLibDir: '/tmp/home/.happier/lib',
+        happyToolsDir: '/tmp/home/.happier/tools',
+        flavor: 'claude',
+        connectedServices: previousBindings,
+      },
+    });
+    const resolveContinuity = vi.fn(async ({ previous, next, previousBindings: resolvedPreviousBindings }) => {
+      expect(previous).toEqual(expect.objectContaining({
+        serviceId: 'anthropic',
+        profileId: 'old-profile',
+      }));
+      expect(next).toEqual(expect.objectContaining({
+        serviceId: 'anthropic',
+        profileId: 'new-profile',
+      }));
+      expect(resolvedPreviousBindings).toEqual(previousBindings);
+      return { mode: 'restart_rematerialize' as const };
+    });
+    const restartSession = vi.fn(async () => {});
+    const emitSessionEvent = vi.fn();
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic',
+          profiles: [{ profileId: 'new-profile', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity,
+      restartSession,
+      hotApply: async () => ({ ok: true }),
+      registerHotApplyTargets: vi.fn(),
+      emitSessionEvent,
+      persistSessionBindings: vi.fn(),
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        bindings: nextBindings,
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      action: 'restart_requested',
+      normalizedBindings: nextBindings,
+    });
+
+    expect(resolveContinuity).toHaveBeenCalledOnce();
+    expect(restartSession).toHaveBeenCalledWith(tracked);
+    expect(emitSessionEvent).toHaveBeenCalledWith('sess_1', expect.objectContaining({
+      type: 'connected_service_account_switch',
+      serviceId: 'anthropic',
+      fromProfileId: 'old-profile',
+      toProfileId: 'new-profile',
+      reason: 'manual',
+    }));
+  });
+
+  it('passes webhook metadata bindings into unchanged rematerialization when spawn options no longer carry them', async () => {
+    const previousBindings = bindings('old-profile');
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+      },
+      happySessionMetadataFromLocalWebhook: {
+        path: '/tmp/project',
+        host: 'test-host',
+        homeDir: '/tmp/home',
+        happyHomeDir: '/tmp/home/.happier',
+        happyLibDir: '/tmp/home/.happier/lib',
+        happyToolsDir: '/tmp/home/.happier/tools',
+        flavor: 'claude',
+        connectedServices: previousBindings,
+      },
+    });
+    const materializeRuntimeAuthSelection = vi.fn(async ({ previous, next, previousBindings: resolvedPreviousBindings }) => {
+      expect(previous).toEqual(expect.objectContaining({
+        serviceId: 'anthropic',
+        profileId: 'old-profile',
+      }));
+      expect(next).toEqual(expect.objectContaining({
+        serviceId: 'anthropic',
+        profileId: 'old-profile',
+      }));
+      expect(resolvedPreviousBindings).toEqual(previousBindings);
+      return { kind: 'materialized' };
+    });
+    const resolveContinuity = vi.fn(async ({ previous, next, previousBindings: resolvedPreviousBindings }) => {
+      expect(previous).toEqual(expect.objectContaining({
+        serviceId: 'anthropic',
+        profileId: 'old-profile',
+      }));
+      expect(next).toEqual(expect.objectContaining({
+        serviceId: 'anthropic',
+        profileId: 'old-profile',
+      }));
+      expect(resolvedPreviousBindings).toEqual(previousBindings);
+      return { mode: 'hot_apply' as const };
+    });
+    const hotApply = vi.fn(async () => ({ ok: true as const }));
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic',
+          profiles: [{ profileId: 'old-profile', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      materializeRuntimeAuthSelection,
+      resolveContinuity,
+      restartSession: vi.fn(),
+      hotApply,
+      recoverAfterRuntimeAuthSwitch: vi.fn(async () => ({ ok: true })),
+      continueAfterRuntimeAuthSwitch: vi.fn(async () => {}),
+      verifyProviderAccountAdoption: vi.fn(async () => ({
+        status: 'verified' as const,
+        reason: 'test_verified',
+      })),
+      persistSessionBindings: vi.fn(),
+      registerHotApplyTargets: vi.fn(),
+      emitSessionEvent: vi.fn(),
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        bindings: previousBindings,
+        rematerializeServiceId: 'anthropic',
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      action: 'hot_applied',
+      normalizedBindings: previousBindings,
+      continuityByServiceId: { anthropic: 'hot_apply' },
+    });
+
+    expect(materializeRuntimeAuthSelection).toHaveBeenCalledOnce();
+    expect(resolveContinuity).toHaveBeenCalledOnce();
+    expect(hotApply).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -1610,6 +1975,77 @@ describe('switchSessionConnectedServiceAuth', () => {
     }));
   });
 
+  it('falls back to restart when hot-apply verification cannot read the active provider account id', async () => {
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        connectedServices: codexBindings('team'),
+      },
+    });
+    const emitSessionEvent = vi.fn();
+    const restartSession = vi.fn(async () => {});
+    const recoverAfterRuntimeAuthSwitch = vi.fn<RecoverAfterRuntimeAuthSwitch>(async () => ({ ok: true }));
+    const continueAfterRuntimeAuthSwitch = vi.fn(async () => {});
+    const verifyProviderAccountAdoption = vi.fn<VerifyProviderAccountAdoption>(async () => ({
+      status: 'unavailable',
+      retryable: true,
+      reason: 'active_account_probe_missing_account_id',
+    }));
+
+    const result = await switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'openai-codex',
+          profiles: [{ profileId: 'bot', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity: async () => ({ mode: 'hot_apply' }),
+      restartSession,
+      hotApply: async () => ({ ok: true }),
+      recoverAfterRuntimeAuthSwitch,
+      continueAfterRuntimeAuthSwitch,
+      verifyProviderAccountAdoption,
+      persistSessionBindings: vi.fn(),
+      registerHotApplyTargets: vi.fn(),
+      emitSessionEvent,
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'codex',
+        bindings: codexBindings('bot'),
+      },
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      action: 'restart_requested',
+      continuityByServiceId: { 'openai-codex': 'restart_rematerialize' },
+    });
+    expect(restartSession).toHaveBeenCalledWith(tracked);
+    expect(recoverAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
+    expect(verifyProviderAccountAdoption).toHaveBeenCalledOnce();
+    expect(verifyProviderAccountAdoption).toHaveBeenCalledWith(expect.objectContaining({
+      serviceId: 'openai-codex',
+      target: expect.objectContaining({ profileId: 'bot' }),
+      action: 'hot_applied',
+    }));
+    expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledOnce();
+    expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'restart_requested',
+      serviceIds: new Set(['openai-codex']),
+    }));
+    expect(emitSessionEvent).toHaveBeenCalledWith('sess_1', expect.objectContaining({
+      type: 'connected_service_account_switch',
+      serviceId: 'openai-codex',
+      toProfileId: 'bot',
+      mode: 'restart_resume',
+    }));
+  });
+
   it('escalates a retryable hot-apply adoption mismatch through restart rematerialization before continuing', async () => {
     const tracked = trackedSession({
       spawnOptions: {
@@ -2046,6 +2482,7 @@ describe('switchSessionConnectedServiceAuth', () => {
 
   it('preserves automatic runtime failure as the application actor and reason', async () => {
     const tracked = trackedSession();
+    const emitSessionEvent = vi.fn();
 
     await expect(switchSessionConnectedServiceAuth({
       core: createCore(),
@@ -2065,8 +2502,9 @@ describe('switchSessionConnectedServiceAuth', () => {
       persistSessionBindings: async () => {},
       hotApply: async () => ({ ok: false }),
       registerHotApplyTargets: () => {},
-      emitSessionEvent: () => {},
+      emitSessionEvent,
       reason: 'automatic_runtime_failure',
+      runtimeAuthApplyReason: 'usage_limit',
       request: {
         sessionId: 'sess_1',
         agentId: 'claude',
@@ -2085,6 +2523,12 @@ describe('switchSessionConnectedServiceAuth', () => {
         },
       },
     });
+    expect(emitSessionEvent).toHaveBeenCalledWith('sess_1', expect.objectContaining({
+      type: 'connected_service_account_switch_attempt',
+      ok: false,
+      action: 'hot_applied',
+      reason: 'usage_limit',
+    }));
   });
 
   it('preserves automatic runtime failure as the emitted switch reason', async () => {
@@ -2290,7 +2734,7 @@ describe('switchSessionConnectedServiceAuth', () => {
         agentId: 'claude',
         expectedGroupGenerationByServiceId: { anthropic: 67 },
         bindings: {
-          v: 1,
+          v: 1 as const,
           bindingsByServiceId: {
             anthropic: {
               source: 'connected',
@@ -2299,7 +2743,7 @@ describe('switchSessionConnectedServiceAuth', () => {
               profileId: 'group-active',
             },
           },
-        },
+        } satisfies ConnectedServiceBindingsV1,
       },
     })).resolves.toMatchObject({
       ok: true,
@@ -2395,7 +2839,7 @@ describe('switchSessionConnectedServiceAuth', () => {
         agentId: 'claude',
         expectedGroupGenerationByServiceId: { anthropic: 67 },
         bindings: {
-          v: 1,
+          v: 1 as const,
           bindingsByServiceId: {
             anthropic: {
               source: 'connected',
@@ -2428,6 +2872,115 @@ describe('switchSessionConnectedServiceAuth', () => {
     expect(verifyProviderAccountAdoption).not.toHaveBeenCalled();
     expect(continueAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
     expect(emitSessionEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not treat tracked env adoption as runtime proof for direct-live-required same-account fanout', async () => {
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'work',
+              profileId: 'backup',
+            },
+          },
+        },
+        environmentVariables: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'work',
+            activeProfileId: 'backup',
+            fallbackProfileId: 'backup',
+            generation: 5,
+          }]),
+        },
+      },
+    });
+    const runtimeAuthSelection = { kind: 'runtime-auth-selection', requireDirectLiveHotApply: true };
+    const materializeRuntimeAuthSelection = vi.fn(async () => runtimeAuthSelection);
+    const resolveContinuity = vi.fn(async ({ runtimeAuthSelection: receivedSelection }) => {
+      expect(receivedSelection).toBe(runtimeAuthSelection);
+      return { mode: 'hot_apply' as const };
+    });
+    const hotApply = vi.fn(async () => ({ ok: true as const }));
+    const verifyProviderAccountAdoption = vi.fn(async () => ({
+      status: 'verified' as const,
+      reason: 'test_verified',
+    }));
+    const continueAfterRuntimeAuthSwitch = vi.fn(async () => {});
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      reason: 'automatic_runtime_failure',
+      runtimeAuthApplyReason: 'same_provider_account_exhausted',
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'openai-codex',
+          profiles: [{ profileId: 'backup', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => group({
+          serviceId: 'openai-codex',
+          groupId: 'work',
+          activeProfileId: 'backup',
+          generation: 5,
+          members: [{
+            v: 1,
+            serviceId: 'openai-codex',
+            groupId: 'work',
+            profileId: 'backup',
+            priority: 100,
+            enabled: true,
+            state: {},
+            createdAt: 1,
+            updatedAt: 1,
+          }],
+        }),
+      },
+      resolveContinuity,
+      materializeRuntimeAuthSelection,
+      restartSession: vi.fn(),
+      hotApply,
+      recoverAfterRuntimeAuthSwitch: async () => ({ ok: true }),
+      continueAfterRuntimeAuthSwitch,
+      verifyProviderAccountAdoption,
+      persistSessionBindings: vi.fn(),
+      registerHotApplyTargets: vi.fn(),
+      emitSessionEvent: vi.fn(),
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'codex',
+        expectedGroupGenerationByServiceId: { 'openai-codex': 5 },
+        bindings: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'work',
+              profileId: 'backup',
+            },
+          },
+        },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      action: 'hot_applied',
+      continuityByServiceId: { 'openai-codex': 'hot_apply' },
+    });
+
+    expect(materializeRuntimeAuthSelection).toHaveBeenCalledOnce();
+    expect(resolveContinuity).toHaveBeenCalledOnce();
+    expect(hotApply).toHaveBeenCalledOnce();
+    expect(verifyProviderAccountAdoption).toHaveBeenCalledOnce();
+    expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledOnce();
   });
 
   it('escalates unchanged group hot-apply adoption mismatch through restart rematerialization', async () => {
@@ -2501,7 +3054,7 @@ describe('switchSessionConnectedServiceAuth', () => {
         agentId: 'claude',
         expectedGroupGenerationByServiceId: { anthropic: 68 },
         bindings: {
-          v: 1,
+          v: 1 as const,
           bindingsByServiceId: {
             anthropic: {
               source: 'connected',
@@ -2681,6 +3234,232 @@ describe('switchSessionConnectedServiceAuth', () => {
         generation: 7,
       },
     ]));
+  });
+
+  it('dry-runs runtime-auth generation apply without mutating session state or emitting events', async () => {
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            anthropic: {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'work',
+              profileId: 'primary',
+            },
+          },
+        },
+      },
+    });
+    const originalSpawnOptions = tracked.spawnOptions;
+    const runtimeAuthSelection = { kind: 'materialized-selection' };
+    const materializeRuntimeAuthSelection = vi.fn(async () => runtimeAuthSelection);
+    const resolveContinuity = vi.fn(async () => ({ mode: 'hot_apply' as const }));
+    const persistSessionBindings = vi.fn(async () => undefined);
+    const hotApply = vi.fn(async () => ({ ok: true as const }));
+    const restartSession = vi.fn(async () => undefined);
+    const verifyProviderAccountAdoption = vi.fn(async () => ({
+      status: 'verified' as const,
+      reason: 'test_verified',
+    }));
+    const continueAfterRuntimeAuthSwitch = vi.fn(async () => undefined);
+    const registerHotApplyTargets = vi.fn();
+    const emitSessionEvent = vi.fn();
+    const input = {
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic' as const,
+          profiles: [
+            { profileId: 'primary', status: 'connected' as const },
+            { profileId: 'group-active', status: 'connected' as const },
+          ],
+        }),
+        getConnectedServiceAuthGroup: async () => group({
+          activeProfileId: 'group-active',
+          generation: 67,
+        }),
+      },
+      resolveContinuity,
+      materializeRuntimeAuthSelection,
+      restartSession,
+      hotApply,
+      recoverAfterRuntimeAuthSwitch: async () => ({ ok: true as const }),
+      continueAfterRuntimeAuthSwitch,
+      verifyProviderAccountAdoption,
+      persistSessionBindings,
+      registerHotApplyTargets,
+      emitSessionEvent,
+      dryRun: true,
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        expectedGroupGenerationByServiceId: { anthropic: 67 },
+        bindings: {
+          v: 1 as const,
+          bindingsByServiceId: {
+            anthropic: {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'work',
+              profileId: 'group-active',
+            },
+          },
+        } satisfies ConnectedServiceBindingsV1,
+      },
+    };
+
+    await expect(switchSessionConnectedServiceAuth(input)).resolves.toMatchObject({
+      ok: true,
+      action: 'hot_applied',
+      continuityByServiceId: { anthropic: 'hot_apply' },
+    });
+    expect(materializeRuntimeAuthSelection).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'preflight',
+    }));
+    expect(resolveContinuity).toHaveBeenCalledWith(expect.objectContaining({
+      runtimeAuthSelection,
+    }));
+    expect(tracked.spawnOptions).toBe(originalSpawnOptions);
+    expect(persistSessionBindings).not.toHaveBeenCalled();
+    expect(hotApply).not.toHaveBeenCalled();
+    expect(restartSession).not.toHaveBeenCalled();
+    expect(verifyProviderAccountAdoption).not.toHaveBeenCalled();
+    expect(continueAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
+    expect(registerHotApplyTargets).not.toHaveBeenCalled();
+    expect(emitSessionEvent).not.toHaveBeenCalled();
+  });
+
+  it('preflights a prospective group generation before the group active profile is committed', async () => {
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            anthropic: {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'work',
+              profileId: 'primary',
+            },
+          },
+        },
+        environmentVariables: {
+          [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([{
+            kind: 'group',
+            serviceId: 'anthropic',
+            groupId: 'work',
+            activeProfileId: 'primary',
+            fallbackProfileId: 'backup',
+            generation: 4,
+          }]),
+        },
+      },
+    });
+    const originalSpawnOptions = tracked.spawnOptions;
+    const runtimeAuthSelection = { kind: 'materialized-selection', profileId: 'backup', generation: 5 };
+    const materializeRuntimeAuthSelection = vi.fn(async ({ groupMetadata }) => {
+      expect(groupMetadata).toMatchObject({
+        groupId: 'work',
+        activeProfileId: 'backup',
+        generation: 5,
+      });
+      return runtimeAuthSelection;
+    });
+    const resolveContinuity = vi.fn(async ({ runtimeAuthSelection: receivedSelection }) => {
+      expect(receivedSelection).toBe(runtimeAuthSelection);
+      return { mode: 'hot_apply' as const };
+    });
+    const persistSessionBindings = vi.fn(async () => undefined);
+    const hotApply = vi.fn(async () => ({ ok: true as const }));
+    const restartSession = vi.fn(async () => undefined);
+    const registerHotApplyTargets = vi.fn();
+    const emitSessionEvent = vi.fn();
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic' as const,
+          profiles: [
+            { profileId: 'primary', status: 'connected' as const },
+            { profileId: 'backup', status: 'connected' as const },
+          ],
+        }),
+        getConnectedServiceAuthGroup: async () => group({
+          activeProfileId: 'primary',
+          generation: 4,
+          members: [
+            {
+              v: 1,
+              serviceId: 'anthropic',
+              groupId: 'work',
+              profileId: 'primary',
+              priority: 100,
+              enabled: true,
+              state: {},
+              createdAt: 1,
+              updatedAt: 1,
+            },
+            {
+              v: 1,
+              serviceId: 'anthropic',
+              groupId: 'work',
+              profileId: 'backup',
+              priority: 90,
+              enabled: true,
+              state: {},
+              createdAt: 2,
+              updatedAt: 2,
+            },
+          ],
+        }),
+      },
+      resolveContinuity,
+      materializeRuntimeAuthSelection,
+      restartSession,
+      hotApply,
+      persistSessionBindings,
+      registerHotApplyTargets,
+      emitSessionEvent,
+      dryRun: true,
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        expectedGroupGenerationByServiceId: { anthropic: 5 },
+        bindings: {
+          v: 1,
+          bindingsByServiceId: {
+            anthropic: {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'work',
+              profileId: 'backup',
+            },
+          },
+        },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      action: 'hot_applied',
+      continuityByServiceId: { anthropic: 'hot_apply' },
+    });
+
+    expect(tracked.spawnOptions).toBe(originalSpawnOptions);
+    expect(hotApply).not.toHaveBeenCalled();
+    expect(restartSession).not.toHaveBeenCalled();
+    expect(persistSessionBindings).not.toHaveBeenCalled();
+    expect(registerHotApplyTargets).not.toHaveBeenCalled();
+    expect(emitSessionEvent).not.toHaveBeenCalled();
   });
 
   it('ignores implicit native defaults for unrelated Codex services when computing changed bindings', async () => {
@@ -2975,6 +3754,70 @@ describe('switchSessionConnectedServiceAuth', () => {
         claudeSubscriptionProfileId: 'old-claude-subscription',
       }),
     }));
+  });
+
+  it('trusts exact direct-live hot-apply proof instead of re-probing account adoption', async () => {
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        connectedServices: codexBindings('old-codex'),
+      },
+    });
+    const verifyProviderAccountAdoption = vi.fn(async () => ({
+      status: 'unavailable' as const,
+      retryable: false,
+      reason: 'active_account_probe_missing_account_id',
+    }));
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'openai-codex',
+          profiles: [{ profileId: 'new-codex', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity: async () => ({ mode: 'hot_apply' }),
+      restartSession: async () => {
+        throw new Error('restart should not run');
+      },
+      hotApply: async () => ({
+        ok: true as const,
+        verificationByServiceId: {
+          'openai-codex': {
+            status: 'verified' as const,
+            activeAccountId: 'acct_new',
+            proofStrength: 'exact' as const,
+            source: 'applied_credential',
+          },
+        },
+      }),
+      persistSessionBindings: vi.fn(),
+      registerHotApplyTargets: vi.fn(),
+      verifyProviderAccountAdoption,
+      emitSessionEvent: vi.fn(),
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'codex',
+        bindings: codexBindings('new-codex'),
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      action: 'hot_applied',
+      verificationByServiceId: {
+        'openai-codex': {
+          status: 'verified',
+          activeAccountId: 'acct_new',
+          proofStrength: 'exact',
+          source: 'applied_credential',
+        },
+      },
+    });
+
+    expect(verifyProviderAccountAdoption).not.toHaveBeenCalled();
   });
 
   it('restarts instead of hot applying when any changed service requires restart continuity', async () => {

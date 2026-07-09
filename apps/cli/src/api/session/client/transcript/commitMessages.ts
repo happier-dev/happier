@@ -31,6 +31,7 @@ export function prepareCommittedAgentMessageViaPort(
     toolCallCanonicalNameByProviderAndId: port.toolCallCanonicalNameByProviderAndId,
     permissionToolCallRawInputByProviderAndId: port.permissionToolCallRawInputByProviderAndId,
     toolCallInputByProviderAndId: port.toolCallInputByProviderAndId,
+    maxToolCallCacheEntries: port.maxToolCallCacheEntries,
   });
 
   return {

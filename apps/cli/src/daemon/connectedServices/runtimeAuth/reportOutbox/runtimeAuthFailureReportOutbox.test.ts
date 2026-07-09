@@ -22,6 +22,9 @@ const classifiedFailure = {
   retryAfterMs: 60_000,
   quotaScope: 'account',
   providerLimitId: 'codex-daily-limit',
+  sourceProviderAccountId: 'acct_source',
+  sourceAccountLabel: 'source@example.test',
+  groupGeneration: 42,
   action: { kind: 'open_url', url: 'https://provider.example/reconnect' },
   planType: 'team',
   rateLimits: {
@@ -67,6 +70,9 @@ describe('runtimeAuthFailureReportOutbox', () => {
           retryAfterMs: 60_000,
           quotaScope: 'account',
           providerLimitId: 'codex-daily-limit',
+          sourceProviderAccountId: 'acct_source',
+          sourceAccountLabel: 'source@example.test',
+          groupGeneration: 42,
           action: { kind: 'open_url', url: 'https://provider.example/reconnect' },
           planType: 'team',
           rateLimits: null,
@@ -90,10 +96,72 @@ describe('runtimeAuthFailureReportOutbox', () => {
     }
   });
 
+  it('normalizes deferred reports with the shared runtime-auth classification sanitizer', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-shared-sanitizer-');
+    try {
+      const result = await enqueueRuntimeAuthFailureReportOutboxItem({
+        outboxDir,
+        report: {
+          sessionId: 'sess_shared_sanitizer',
+          classification: {
+            kind: 'usage_limit',
+            serviceId: 'openai-codex',
+            profileId: 'primary',
+            groupId: 'codex-group',
+            resetsAtMs: 1_700_000_100_000,
+            retryAfterMs: 60_000,
+            planType: 'team',
+            connectedServiceRecovery: 'available',
+            sourceProviderAccountId: 'acct_source',
+            sourceAccountLabel: 'source@example.test',
+            groupGeneration: 42,
+            rateLimits: {
+              limitCategory: 'usage_limit',
+              quotaScope: 'workspace',
+              providerLimitId: 'codex-daily-limit',
+              action: { kind: 'open_url', url: 'https://provider.example/reconnect' },
+              accessToken: 'secret-rate-limit-token',
+            },
+            source: 'structured_provider_error',
+          },
+        },
+        nowMs: () => 1_700_000_000_000,
+      });
+
+      expect(result).toMatchObject({ status: 'enqueued' });
+      const items = await readRuntimeAuthFailureReportOutboxItems({ outboxDir });
+      expect(items).toHaveLength(1);
+      expect(items[0].classification).toEqual(expect.objectContaining({
+        kind: 'usage_limit',
+        limitCategory: 'usage_limit',
+        serviceId: 'openai-codex',
+        profileId: 'primary',
+        groupId: 'codex-group',
+        resetsAtMs: 1_700_000_100_000,
+        retryAfterMs: 60_000,
+        quotaScope: 'workspace',
+        providerLimitId: 'codex-daily-limit',
+        action: { kind: 'open_url', url: 'https://provider.example/reconnect' },
+        planType: 'team',
+        connectedServiceRecovery: 'available',
+        rateLimits: null,
+        source: 'structured_provider_error',
+        sourceProviderAccountId: 'acct_source',
+        sourceAccountLabel: 'source@example.test',
+        groupGeneration: 42,
+      }));
+
+      const raw = await readFile(join(outboxDir, `${items[0].fileId}.json`), 'utf8');
+      expect(raw).not.toContain('secret-rate-limit-token');
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
+
   it('coalesces duplicate report keys by updating attempt metadata', async () => {
     const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-coalesce-');
     try {
-      await enqueueRuntimeAuthFailureReportOutboxItem({
+      const first = await enqueueRuntimeAuthFailureReportOutboxItem({
         outboxDir,
         report: {
           sessionId: 'sess_1',
@@ -103,7 +171,7 @@ describe('runtimeAuthFailureReportOutbox', () => {
         },
         nowMs: () => 1_700_000_000_000,
       });
-      await enqueueRuntimeAuthFailureReportOutboxItem({
+      const second = await enqueueRuntimeAuthFailureReportOutboxItem({
         outboxDir,
         report: {
           sessionId: 'sess_1',
@@ -113,6 +181,9 @@ describe('runtimeAuthFailureReportOutbox', () => {
         },
         nowMs: () => 1_700_000_000_500,
       });
+
+      expect(first).toMatchObject({ status: 'enqueued', enqueue: 'accepted' });
+      expect(second).toMatchObject({ status: 'enqueued', enqueue: 'coalesced' });
 
       const canonicalFiles = (await readdir(outboxDir)).filter((entry) => entry.endsWith('.json'));
       expect(canonicalFiles).toHaveLength(1);

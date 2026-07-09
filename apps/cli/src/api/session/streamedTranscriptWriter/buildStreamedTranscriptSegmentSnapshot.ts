@@ -15,6 +15,27 @@ export function buildStreamedTranscriptSegmentSnapshotBody(segment: StreamedTran
       };
 }
 
+/**
+ * Same ACP body shape as the full snapshot, but carrying ONLY the appended delta text. Receivers
+ * reconstruct the accumulated text from per-segment assembly state.
+ */
+export function buildStreamedTranscriptSegmentDeltaBody(
+  segment: StreamedTranscriptSegmentRuntime,
+  deltaText: string,
+): ACPMessageData {
+  return segment.kind === 'assistant'
+    ? {
+        type: 'message',
+        message: deltaText,
+        ...(segment.sidechainId ? { sidechainId: segment.sidechainId } : {}),
+      }
+    : {
+        type: 'thinking',
+        text: deltaText,
+        ...(segment.sidechainId ? { sidechainId: segment.sidechainId } : {}),
+      };
+}
+
 export function buildStreamedTranscriptSegmentSnapshotMeta(params: {
   segment: StreamedTranscriptSegmentRuntime;
   state: StreamedTranscriptSegmentState;

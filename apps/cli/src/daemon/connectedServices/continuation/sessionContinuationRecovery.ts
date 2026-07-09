@@ -12,7 +12,7 @@ import {
 
 import { buildContinuationResumePrompt } from './continuationResumePrompt';
 
-type ContinuationStore = Readonly<{
+export type ContinuationStore = Readonly<{
   read: (sessionId: string) => Promise<unknown | null> | unknown | null;
   write: (sessionId: string, state: unknown) => Promise<void> | void;
 }>;
@@ -84,16 +84,87 @@ function createEmptyRecovery(): SessionContinuationRecoveryV1 {
   };
 }
 
-async function readRecovery(store: ContinuationStore, sessionId: string): Promise<SessionContinuationRecoveryV1> {
-  const stored = await store.read(sessionId);
-  const direct = SessionContinuationRecoveryV1Schema.safeParse(stored);
+function cloneAttempt(attempt: SessionContinuationRecoveryAttemptV1): SessionContinuationRecoveryAttemptV1 {
+  return {
+    ...attempt,
+    ...(attempt.recoveryIdentity ? { recoveryIdentity: { ...attempt.recoveryIdentity } } : {}),
+  };
+}
+
+function cloneRecovery(recovery: SessionContinuationRecoveryV1): SessionContinuationRecoveryV1 {
+  return {
+    v: 1,
+    attemptsById: Object.fromEntries(
+      Object.entries(recovery.attemptsById).map(([attemptId, attempt]) => [
+        attemptId,
+        cloneAttempt(attempt),
+      ]),
+    ),
+  };
+}
+
+function parseRecovery(value: unknown): SessionContinuationRecoveryV1 | null {
+  const direct = SessionContinuationRecoveryV1Schema.safeParse(value);
   if (direct.success) return direct.data;
-  if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
-    const nested = (stored as Record<string, unknown>)[SESSION_CONTINUATION_RECOVERY_METADATA_KEY];
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const nested = (value as Record<string, unknown>)[SESSION_CONTINUATION_RECOVERY_METADATA_KEY];
     const parsedNested = SessionContinuationRecoveryV1Schema.safeParse(nested);
     if (parsedNested.success) return parsedNested.data;
   }
-  return createEmptyRecovery();
+  return null;
+}
+
+function selectNewestAttempt(
+  left: SessionContinuationRecoveryAttemptV1 | undefined,
+  right: SessionContinuationRecoveryAttemptV1 | undefined,
+): SessionContinuationRecoveryAttemptV1 | undefined {
+  if (!left) return right;
+  if (!right) return left;
+  return right.updatedAtMs > left.updatedAtMs ? right : left;
+}
+
+function mergeRecoveryStates(
+  left: SessionContinuationRecoveryV1 | null,
+  right: SessionContinuationRecoveryV1 | null,
+): SessionContinuationRecoveryV1 | null {
+  if (!left) return right ? cloneRecovery(right) : null;
+  if (!right) return cloneRecovery(left);
+  const attemptsById: SessionContinuationRecoveryV1['attemptsById'] = {};
+  const attemptIds = new Set([
+    ...Object.keys(left.attemptsById),
+    ...Object.keys(right.attemptsById),
+  ]);
+  for (const attemptId of attemptIds) {
+    const selected = selectNewestAttempt(left.attemptsById[attemptId], right.attemptsById[attemptId]);
+    if (selected) attemptsById[attemptId] = cloneAttempt(selected);
+  }
+  return { v: 1, attemptsById };
+}
+
+export function createSessionContinuationRecoveryOverlayStore(params: Readonly<{
+  durableStore: ContinuationStore;
+}>): ContinuationStore {
+  const cache = new Map<string, SessionContinuationRecoveryV1>();
+  return {
+    async read(sessionId) {
+      const durable = parseRecovery(await params.durableStore.read(sessionId));
+      const cached = cache.get(sessionId) ?? null;
+      return mergeRecoveryStates(durable, cached) ?? null;
+    },
+    async write(sessionId, state) {
+      await params.durableStore.write(sessionId, state);
+      const parsed = parseRecovery(state);
+      if (parsed) {
+        cache.set(sessionId, cloneRecovery(parsed));
+      } else {
+        cache.delete(sessionId);
+      }
+    },
+  };
+}
+
+async function readRecovery(store: ContinuationStore, sessionId: string): Promise<SessionContinuationRecoveryV1> {
+  return parseRecovery(await store.read(sessionId)) ?? createEmptyRecovery();
 }
 
 async function writeRecovery(

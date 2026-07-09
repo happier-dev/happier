@@ -12,6 +12,10 @@ import {
     ConnectedServiceLimitCategoryV1Schema,
     type ConnectedServiceLimitCategoryV1,
 } from './connectedServiceLimitCategory.js';
+import {
+    containsUnsafeDiagnosticText,
+    isUnsafeDiagnosticHeaderName,
+} from './diagnosticPrivacy.js';
 
 export {
     ConnectedServiceLimitCategoryV1Schema,
@@ -54,6 +58,29 @@ export const ConnectedServiceCredentialHealthStatusV1Schema = z.enum([
     'refresh_failed_retryable',
 ]);
 export type ConnectedServiceCredentialHealthStatusV1 = z.infer<typeof ConnectedServiceCredentialHealthStatusV1Schema>;
+
+export function normalizeConnectedServiceCredentialHealthStatus(
+    raw: unknown,
+): ConnectedServiceCredentialHealthStatusV1 {
+    if (raw === 'connected') return 'connected';
+    if (raw === 'refreshing') return 'refreshing';
+    if (raw === 'refresh_failed_retryable') return 'refresh_failed_retryable';
+    return 'needs_reauth';
+}
+
+export function isConnectedServiceCredentialHealthStatusReconnectRequired(
+    status: ConnectedServiceCredentialHealthStatusV1 | null | undefined,
+): boolean {
+    return status === 'needs_reauth';
+}
+
+export function isConnectedServiceCredentialHealthStatusUsable(
+    status: ConnectedServiceCredentialHealthStatusV1 | null | undefined,
+): boolean {
+    return status === 'connected'
+        || status === 'refreshing'
+        || status === 'refresh_failed_retryable';
+}
 
 export const ConnectedServiceCredentialRefreshFailureKindV1Schema = z.enum([
     'invalid_grant',
@@ -204,25 +231,30 @@ const ConnectedServiceQuotaEvidenceV1Schema = z
     })
     .strict()
     .superRefine((evidence, ctx) => {
-        if (!evidence.headers) return;
-        for (const headerName of Object.keys(evidence.headers)) {
-            const normalized = headerName.trim().toLowerCase();
-            if (
-                normalized === 'authorization'
-                || normalized === 'proxy-authorization'
-                || normalized === 'cookie'
-                || normalized === 'set-cookie'
-                || normalized.includes('authorization')
-                || normalized.includes('token')
-                || normalized.includes('secret')
-                || normalized.includes('api-key')
-            ) {
-                ctx.addIssue({
-                    code: z.ZodIssueCode.custom,
-                    message: 'Unsafe quota evidence header',
-                    path: ['headers', headerName],
-                });
+        if (evidence.headers) {
+            for (const [headerName, headerValue] of Object.entries(evidence.headers)) {
+                if (isUnsafeDiagnosticHeaderName(headerName) || containsUnsafeDiagnosticText(headerValue)) {
+                    ctx.addIssue({
+                        code: z.ZodIssueCode.custom,
+                        message: 'Unsafe quota evidence header',
+                        path: ['headers', headerName],
+                    });
+                }
             }
+        }
+        if (containsUnsafeDiagnosticText(evidence.code)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'Unsafe quota evidence code',
+                path: ['code'],
+            });
+        }
+        if (containsUnsafeDiagnosticText(evidence.message)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'Unsafe quota evidence message',
+                path: ['message'],
+            });
         }
     });
 
@@ -240,6 +272,44 @@ export const ConnectedServiceQuotaResetSourceV1Schema = z.enum([
 ]);
 
 export type ConnectedServiceQuotaResetSourceV1 = z.infer<typeof ConnectedServiceQuotaResetSourceV1Schema>;
+
+export const ConnectedServiceQuotaRecoveryCreditKindV1Schema = z.enum([
+    'usage_limit_reset',
+]);
+export type ConnectedServiceQuotaRecoveryCreditKindV1 = z.infer<typeof ConnectedServiceQuotaRecoveryCreditKindV1Schema>;
+
+export const ConnectedServiceQuotaRecoveryCreditStatusV1Schema = z.enum([
+    'available',
+    'redeeming',
+    'redeemed',
+    'expired',
+    'unavailable',
+    'unknown',
+]);
+export type ConnectedServiceQuotaRecoveryCreditStatusV1 = z.infer<typeof ConnectedServiceQuotaRecoveryCreditStatusV1Schema>;
+
+export const ConnectedServiceQuotaRecoveryCreditV1Schema = z
+    .object({
+        id: z.string().trim().min(1).max(256),
+        kind: ConnectedServiceQuotaRecoveryCreditKindV1Schema,
+        status: ConnectedServiceQuotaRecoveryCreditStatusV1Schema,
+        grantedAtMs: z.number().int().nonnegative().optional(),
+        expiresAtMs: z.number().int().nonnegative().optional(),
+        redeemStartedAtMs: z.number().int().nonnegative().nullable().optional(),
+        redeemedAtMs: z.number().int().nonnegative().nullable().optional(),
+        title: z.string().trim().min(1).max(256).optional(),
+        description: z.string().trim().min(1).max(1024).optional(),
+    })
+    .strict();
+export type ConnectedServiceQuotaRecoveryCreditV1 = z.infer<typeof ConnectedServiceQuotaRecoveryCreditV1Schema>;
+
+export const ConnectedServiceQuotaRecoveryCreditsV1Schema = z
+    .object({
+        availableCount: z.number().int().nonnegative(),
+        credits: z.array(ConnectedServiceQuotaRecoveryCreditV1Schema).default([]),
+    })
+    .strict();
+export type ConnectedServiceQuotaRecoveryCreditsV1 = z.infer<typeof ConnectedServiceQuotaRecoveryCreditsV1Schema>;
 
 export const ConnectedServiceQuotaMeterV1Schema = z.object({
     meterId: z.string().min(1),
@@ -280,6 +350,30 @@ export const ConnectedServiceQuotaMeterV1Schema = z.object({
 
 export type ConnectedServiceQuotaMeterV1 = z.infer<typeof ConnectedServiceQuotaMeterV1Schema>;
 
+export const ConnectedServiceUsageSourceBindingKindV1Schema = z.enum(['profile', 'group_member']);
+export type ConnectedServiceUsageSourceBindingKindV1 = z.infer<typeof ConnectedServiceUsageSourceBindingKindV1Schema>;
+
+export const ConnectedServiceUsageSourceV1Schema = z
+    .object({
+        serviceId: ConnectedServiceIdSchema,
+        profileId: ConnectedServiceProfileIdSchema,
+        bindingKind: ConnectedServiceUsageSourceBindingKindV1Schema,
+        groupId: z.string().trim().min(1).optional(),
+        groupGeneration: z.number().int().nonnegative().optional(),
+    })
+    .strict()
+    .superRefine((source, ctx) => {
+        if (source.bindingKind === 'group_member' && !source.groupId) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'Group-member connected-service usage sources require groupId',
+                path: ['groupId'],
+            });
+        }
+    });
+
+export type ConnectedServiceUsageSourceV1 = z.infer<typeof ConnectedServiceUsageSourceV1Schema>;
+
 export const ConnectedServiceQuotaSnapshotV1Schema = z.object({
     v: z.literal(1),
     serviceId: ConnectedServiceIdSchema,
@@ -295,6 +389,7 @@ export const ConnectedServiceQuotaSnapshotV1Schema = z.object({
     source: ConnectedServiceQuotaSourceV1Schema.optional(),
     confidence: ConnectedServiceQuotaConfidenceV1Schema.optional(),
     evidence: ConnectedServiceQuotaEvidenceV1Schema.optional(),
+    recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1Schema.optional(),
     meters: z.array(ConnectedServiceQuotaMeterV1Schema),
 });
 
@@ -307,10 +402,24 @@ export const SealedConnectedServiceQuotaSnapshotV1Schema = z.object({
 
 export type SealedConnectedServiceQuotaSnapshotV1 = z.infer<typeof SealedConnectedServiceQuotaSnapshotV1Schema>;
 
-export const ConnectedServiceAuthGroupPolicyV1Schema = z
+// Fields that were previously frozen single-value no-op knobs (no behavioral reader). They are
+// removed from the policy, but stored blobs and older clients may still carry them; strip them at
+// the parse boundary so removal is migration-safe (strict validation still rejects other unknowns).
+const REMOVED_AUTH_GROUP_POLICY_LEGACY_KEYS = ['recoveryPromptMode', 'effectiveMeterStrategy', 'memberRuntimeStatePersistence'] as const;
+
+function stripRemovedAuthGroupPolicyLegacyKeys(value: unknown): unknown {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const record = value as Record<string, unknown>;
+    if (!REMOVED_AUTH_GROUP_POLICY_LEGACY_KEYS.some((key) => key in record)) return value;
+    const next = { ...record };
+    for (const key of REMOVED_AUTH_GROUP_POLICY_LEGACY_KEYS) delete next[key];
+    return next;
+}
+
+export const ConnectedServiceAuthGroupPolicyV1Schema = z.preprocess(stripRemovedAuthGroupPolicyLegacyKeys, z
     .object({
         v: z.literal(1).default(1),
-        strategy: z.enum(['priority', 'least_limited', 'manual']).default('priority'),
+        strategy: z.enum(['priority', 'least_limited', 'manual']).default('least_limited'),
         autoSwitch: z.boolean().default(false),
         switchOn: z
             .object({
@@ -340,18 +449,13 @@ export const ConnectedServiceAuthGroupPolicyV1Schema = z
         recoveryMode: z
             .enum(['off', 'wait_until_reset', 'switch_then_resume', 'switch_or_wait'])
             .default('switch_or_wait'),
-        recoveryPromptMode: z.literal('standard').default('standard'),
         resumePromptMode: z.enum(['standard', 'off', 'custom']).default('standard'),
-        effectiveMeterStrategy: z
-            .enum(['most_constrained', 'primary', 'secondary', 'daily', 'weekly', 'session'])
-            .default('most_constrained'),
-        memberRuntimeStatePersistence: z.literal('server_state_json').default('server_state_json'),
     })
-    .strict();
+    .strict());
 
 export type ConnectedServiceAuthGroupPolicyV1 = z.infer<typeof ConnectedServiceAuthGroupPolicyV1Schema>;
 
-export const ConnectedServiceAuthGroupPolicyPatchV1Schema = z
+export const ConnectedServiceAuthGroupPolicyPatchV1Schema = z.preprocess(stripRemovedAuthGroupPolicyLegacyKeys, z
     .object({
         v: z.literal(1).optional(),
         strategy: z.enum(['priority', 'least_limited', 'manual']).optional(),
@@ -375,14 +479,9 @@ export const ConnectedServiceAuthGroupPolicyPatchV1Schema = z
         preTurnProbeMode: z.enum(['never', 'when_stale', 'always_for_group']).optional(),
         preTurnProbeOrder: z.enum(['current_first_then_candidates', 'candidates_first_then_current']).optional(),
         recoveryMode: z.enum(['off', 'wait_until_reset', 'switch_then_resume', 'switch_or_wait']).optional(),
-        recoveryPromptMode: z.literal('standard').optional(),
         resumePromptMode: z.enum(['standard', 'off', 'custom']).optional(),
-        effectiveMeterStrategy: z
-            .enum(['most_constrained', 'primary', 'secondary', 'daily', 'weekly', 'session'])
-            .optional(),
-        memberRuntimeStatePersistence: z.literal('server_state_json').optional(),
     })
-    .strict();
+    .strict());
 
 export type ConnectedServiceAuthGroupPolicyPatchV1 = z.infer<typeof ConnectedServiceAuthGroupPolicyPatchV1Schema>;
 

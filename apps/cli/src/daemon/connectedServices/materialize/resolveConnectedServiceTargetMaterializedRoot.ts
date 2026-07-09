@@ -1,6 +1,6 @@
 import { dirname, isAbsolute } from 'node:path';
 
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY } from '../connectedServiceChildEnvironment';
 
 function normalizeOptionalString(value: unknown): string | null {

@@ -14,6 +14,8 @@ let userSocketStub: ApiSessionSocketStub | null = null;
 const createdClients: Array<{ close: () => Promise<void> }> = [];
 const sessionTransportParamsHistory: Array<Record<string, unknown>> = [];
 let supervisorOnConnected: (() => Promise<void> | void) | null = null;
+let supervisorOnDisconnected: ((params: { event: { reason?: string } }) => Promise<void> | void) | null = null;
+let supervisorReportProbeResult: ReturnType<typeof vi.fn> | null = null;
 
 async function getCurrentConnectionState() {
   const mod = await import('@/api/offline/serverConnectionErrors');
@@ -48,13 +50,19 @@ vi.mock('./connection/createSessionSocketTransport', () => ({
 
 vi.mock('@happier-dev/connection-supervisor', () => ({
   DEFAULT_MANAGED_CONNECTION_POLICY: {},
-  createManagedConnectionSupervisor: (params: { createTransport: () => unknown; onConnected?: () => Promise<void> | void }) => ({
+  createManagedConnectionSupervisor: (params: {
+    createTransport: () => unknown;
+    onConnected?: () => Promise<void> | void;
+    onDisconnected?: (params: { event: { reason?: string } }) => Promise<void> | void;
+  }) => ({
     start: async () => {
       supervisorOnConnected = params.onConnected ?? null;
+      supervisorOnDisconnected = params.onDisconnected ?? null;
       params.createTransport();
       await params.onConnected?.();
     },
     stop: async () => {},
+    reportProbeResult: (...args: unknown[]) => supervisorReportProbeResult?.(...args),
   }),
 }));
 
@@ -63,6 +71,8 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
     vi.useFakeTimers();
     sessionTransportParamsHistory.length = 0;
     supervisorOnConnected = null;
+    supervisorOnDisconnected = null;
+    supervisorReportProbeResult = vi.fn();
   });
 
   afterEach(async () => {
@@ -133,6 +143,29 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
     expect((client as any).pendingMaterializedLocalIds.has('direct-retry-1')).toBe(true);
     expect((client as any).committedLocalIdsAwaitingEcho.has('direct-retry-1')).toBe(false);
     expect((client as any).queuedDisconnectedSessionMessages.has('direct-retry-1')).toBe(true);
+  });
+
+  it('reports planned server restart socket events to the session connection supervisor', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+
+    vi.stubEnv('HAPPIER_TRANSCRIPT_STORAGE', 'direct');
+
+    const { ApiSessionClient } = await import('./sessionClient');
+
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    createdClients.push(client);
+    await Promise.resolve();
+
+    sessionSocketStub.trigger('server:restarting', { retryAfterMs: 7_000 });
+
+    expect(supervisorReportProbeResult).toHaveBeenCalledWith({
+      status: 'retry_later',
+      retryAfterMs: 7_000,
+      reason: 'server_restarting',
+      errorMessage: 'Server restart in progress',
+    });
   });
 
   it('does not reject the reconnect hook when queued replay fails', async () => {
@@ -323,6 +356,30 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
     });
   });
 
+  it('uses the local runtime machineId for session socket bootstrap when metadata has not caught up', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+
+    vi.stubEnv('HAPPIER_TRANSCRIPT_STORAGE', 'direct');
+
+    const { ApiSessionClient } = await import('./sessionClient');
+
+    const client = new ApiSessionClient(
+      'tok',
+      createPlainSessionFixture({ id: 's1' }),
+      { localMachineId: ' machine-local ' },
+    );
+    createdClients.push(client);
+
+    expect(sessionTransportParamsHistory).toHaveLength(1);
+    expect(sessionTransportParamsHistory[0]).toMatchObject({
+      token: 'tok',
+      sessionId: 's1',
+      machineId: 'machine-local',
+    });
+  });
+
   it('recovers shared offline UX state when the supervised session transport reconnects', async () => {
     vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({ connected: true });
@@ -342,5 +399,67 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
     expect(supervisorOnConnected).not.toBeNull();
     await expect(supervisorOnConnected?.()).resolves.toBeUndefined();
     expect(currentConnectionState.isOffline()).toBe(false);
+  });
+
+  it('replays the latest session presence after the supervised session transport reconnects', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+
+    vi.stubEnv('HAPPIER_TRANSCRIPT_STORAGE', 'direct');
+
+    const { ApiSessionClient } = await import('./sessionClient');
+
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    createdClients.push(client);
+
+    client.keepAlive(true, 'local');
+    expect(sessionSocketStub.emit).toHaveBeenCalledWith('session-alive', expect.objectContaining({
+      sid: 's1',
+      thinking: true,
+      mode: 'local',
+    }));
+
+    sessionSocketStub.emit.mockClear();
+    await expect(supervisorOnConnected?.()).resolves.toBeUndefined();
+
+    expect(sessionSocketStub.emit).toHaveBeenCalledWith('session-alive', expect.objectContaining({
+      sid: 's1',
+      thinking: true,
+      mode: 'local',
+    }));
+  });
+
+  it('replays presence updated while the supervised session transport is reconnecting after a proxy disconnect', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+
+    vi.stubEnv('HAPPIER_TRANSCRIPT_STORAGE', 'direct');
+
+    const { ApiSessionClient } = await import('./sessionClient');
+
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    createdClients.push(client);
+
+    expect(supervisorOnDisconnected).not.toBeNull();
+    sessionSocketStub.connected = false;
+    await expect(supervisorOnDisconnected?.({ event: { reason: 'transport close' } })).resolves.toBeUndefined();
+
+    sessionSocketStub.emit.mockClear();
+    sessionSocketStub.volatile.emit.mockClear();
+    client.keepAlive(true, 'local');
+
+    expect(sessionSocketStub.emit).not.toHaveBeenCalledWith('session-alive', expect.anything());
+    expect(sessionSocketStub.volatile.emit).not.toHaveBeenCalledWith('session-alive', expect.anything());
+
+    sessionSocketStub.connected = true;
+    await expect(supervisorOnConnected?.()).resolves.toBeUndefined();
+
+    expect(sessionSocketStub.emit).toHaveBeenCalledWith('session-alive', expect.objectContaining({
+      sid: 's1',
+      thinking: true,
+      mode: 'local',
+    }));
   });
 });

@@ -7,6 +7,7 @@ import { ConnectedServiceIdSchema } from '@happier-dev/protocol';
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
 import type { ExpoPushActivityNotificationSender } from '@/notifications/activity/sendExpoPushActivityNotification';
 import type { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
+import { isBackgroundConnectedServiceSwitchReason } from '../connectedServiceSwitchEventVisibility';
 import {
   loadConnectedServiceNotificationProfilesById,
   resolveConnectedServiceNotificationProfileLabel,
@@ -73,6 +74,11 @@ export async function dispatchConnectedServiceAccountSwitchNotificationAsync(par
   nowMs?: () => number;
   dedupeWindowMs?: number;
 }>): Promise<void> {
+  if (isBackgroundConnectedServiceSwitchReason(params.source.reason)) return;
+  // Manual switches were performed by the user — a push about their own action is noise.
+  // The transcript event still commits (the visibility policy above owns full silence).
+  if (params.source.reason === 'manual') return;
+
   const profilesById = await loadConnectedServiceNotificationProfilesById({
     serviceId: params.source.serviceId,
     listConnectedServiceProfiles: params.listConnectedServiceProfiles,

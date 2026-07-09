@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
+import * as accountUsageModule from './accountUsage.js';
 import * as protocol from '../index.js';
 
 type ProviderAccountUsageRecordKeyV1 = Readonly<{
@@ -18,13 +19,16 @@ type ProviderAccountUsageSnapshotV1 = Readonly<{
     recordKey: ProviderAccountUsageRecordKeyV1;
     providerId: string;
     accountSubject: Readonly<{ kind: string; id: string; mergeKey?: string }>;
-    aliases: readonly Readonly<{ kind: string; providerId: string; serviceId?: string; profileId?: string; accountSubjectId: string }>[];
     observedAtMs: number;
     fetchedAtMs: number;
     staleAfterMs: number;
     source: string;
     confidence: string;
+    state?: string;
+    planLabel?: string | null;
+    accountLabel?: string | null;
     meters: readonly unknown[];
+    recoveryCredits?: unknown;
 }>;
 
 type Parser<T> = Readonly<{
@@ -43,7 +47,7 @@ function isFunction(value: unknown): value is (...args: readonly unknown[]) => u
 }
 
 function isParser<T>(value: unknown): value is Parser<T> {
-    return !!value
+    return Boolean(value)
         && typeof value === 'object'
         && typeof (value as { parse?: unknown }).parse === 'function'
         && typeof (value as { safeParse?: unknown }).safeParse === 'function';
@@ -79,39 +83,35 @@ function createSnapshot(overrides: Partial<ProviderAccountUsageSnapshotV1> = {})
             kind: 'providerSubject',
             id: recordKey.accountSubjectId,
         },
-        aliases: overrides.aliases ?? [
-            {
-                kind: 'connectedServiceProfile',
-                providerId: 'codex',
-                serviceId: 'openai-codex',
-                profileId: 'work',
-                accountSubjectId: recordKey.accountSubjectId,
-            },
-        ],
-        observedAtMs: overrides.observedAtMs ?? 1700000000000,
-        fetchedAtMs: overrides.fetchedAtMs ?? 1700000000000,
+        observedAtMs: overrides.observedAtMs ?? 1_700_000_000_000,
+        fetchedAtMs: overrides.fetchedAtMs ?? 1_700_000_000_000,
         staleAfterMs: overrides.staleAfterMs ?? 60_000,
         source: overrides.source ?? 'runtimeSignal',
         confidence: overrides.confidence ?? 'confirmed',
-        meters: overrides.meters ?? [
-            {
-                meterId: 'weekly',
-                label: 'Weekly',
-                used: 82,
-                limit: 100,
-                remaining: 18,
-                remainingPct: 18,
-                usedPct: 82,
-                resetAtMs: 1700003600000,
-                unit: 'credits',
-                utilizationPct: 82,
-                resetsAt: 1700003600000,
-                status: 'ok',
-                limitScope: 'account',
-                confidence: 'exact',
-                details: { limitCategory: 'quota' },
-            },
-        ],
+        state: overrides.state ?? 'loaded_data',
+        planLabel: overrides.planLabel ?? 'Pro',
+        accountLabel: overrides.accountLabel ?? 'work@example.com',
+        ...(overrides.recoveryCredits ? { recoveryCredits: overrides.recoveryCredits } : {}),
+        meters: overrides.meters ?? [{
+            meterId: 'weekly',
+            label: 'Weekly',
+            used: 82,
+            limit: 100,
+            remaining: 18,
+            remainingPct: 18,
+            usedPct: 82,
+            resetAtMs: 1_700_003_600_000,
+            resetSource: 'provider',
+            unit: 'credits',
+            utilizationPct: 82,
+            resetsAt: 1_700_003_600_000,
+            status: 'ok',
+            source: 'in_band_provider_snapshot',
+            scope: 'weekly',
+            limitScope: 'account',
+            confidence: 'exact',
+            details: { limitCategory: 'usage_limit' },
+        }],
     };
 }
 
@@ -135,95 +135,66 @@ describe('provider account usage protocol', () => {
         expect(String(recordId)).not.toContain('acct_secret_provider_subject');
     });
 
-    it('normalizes usage aliases deterministically', () => {
-        const normalizeAliases = requireExport<(...args: readonly unknown[]) => unknown>(
-            'normalizeProviderAccountUsageAliases',
-            isFunction,
-        );
-
-        const normalized = normalizeAliases([
-            {
-                kind: 'nativeCli',
-                providerId: 'codex',
-                localCredentialRef: 'codex-home-main',
-                accountSubjectId: 'acct_1',
-            },
-            {
-                kind: 'connectedServiceProfile',
-                providerId: 'codex',
-                serviceId: 'openai-codex',
-                profileId: 'work',
-                accountSubjectId: 'acct_1',
-            },
-            {
-                kind: 'connectedServiceProfile',
-                providerId: 'codex',
-                serviceId: 'openai-codex',
-                profileId: 'work',
-                accountSubjectId: 'acct_1',
-            },
-        ]);
-
-        expect(normalized).toEqual([
-            {
-                kind: 'connectedServiceProfile',
-                providerId: 'codex',
-                serviceId: 'openai-codex',
-                profileId: 'work',
-                accountSubjectId: 'acct_1',
-            },
-            {
-                kind: 'nativeCli',
-                providerId: 'codex',
-                localCredentialRef: 'codex-home-main',
-                accountSubjectId: 'acct_1',
-            },
-        ]);
-    });
-
-    it('builds opaque local credential refs without embedding local paths', () => {
-        const buildLocalCredentialRef = requireExport<(...args: readonly unknown[]) => unknown>(
-            'buildProviderAccountUsageOpaqueLocalCredentialRef',
-            isFunction,
-        );
-
-        const ref = buildLocalCredentialRef({
-            providerId: 'codex',
-            kind: 'appServerNative',
-            value: '/Users/alice/.codex',
-        });
-
-        expect(ref).toMatch(/^opaque:codex:appServerNative:[A-Za-z0-9_-]+$/);
-        expect(String(ref)).not.toContain('/Users/alice');
-        expect(String(ref)).not.toContain('.codex');
-    });
-
-    it('rejects path-like local credential aliases at the protocol boundary', () => {
-        const schema = requireExport<Parser<ProviderAccountUsageSnapshotV1>>(
+    it('parses alias-free snapshots and keeps legacy alias helpers out of the public contract', () => {
+        const snapshotSchema = requireExport<Parser<ProviderAccountUsageSnapshotV1>>(
             'ProviderAccountUsageSnapshotV1Schema',
             isParser,
         );
 
-        const result = schema.safeParse({
+        expect((protocol as Record<string, unknown>).normalizeProviderAccountUsageAliases).toBeUndefined();
+        expect((protocol as Record<string, unknown>).ProviderAccountUsageAliasV1Schema).toBeUndefined();
+
+        const result = snapshotSchema.safeParse({
             ...createSnapshot(),
             aliases: [{
-                kind: 'nativeCli',
+                kind: 'connectedServiceProfile',
                 providerId: 'codex',
-                localCredentialRef: '/Users/alice/.codex',
+                serviceId: 'openai-codex',
+                profileId: 'work',
                 accountSubjectId: 'acct_secret_provider_subject',
             }],
         });
 
+        expect(snapshotSchema.safeParse(createSnapshot()).success).toBe(true);
         expect(result.success).toBe(false);
     });
 
-    it('parses canonical snapshots with shared meter semantics', () => {
-        const schema = requireExport<Parser<ProviderAccountUsageSnapshotV1>>(
+    it('builds opaque local credential refs without leaking raw path material', () => {
+        const buildLocalCredentialRef = requireExport<(...args: readonly unknown[]) => unknown>(
+            'buildProviderAccountUsageOpaqueLocalCredentialRef',
+            isFunction,
+        );
+        const maxSchemaCompatibleProviderId = 'p'.repeat(102);
+        const maxSchemaCompatibleKind = 'k'.repeat(102);
+
+        const ref = buildLocalCredentialRef({
+            providerId: maxSchemaCompatibleProviderId,
+            kind: maxSchemaCompatibleKind,
+            value: '/Users/alice/.codex/auth.json',
+        });
+
+        expect(String(ref)).toHaveLength(256);
+        expect(String(ref)).toMatch(/^opaque:/);
+        expect(String(ref)).not.toContain('/Users/alice/.codex/auth.json');
+        expect(() => buildLocalCredentialRef({
+            providerId: 'p'.repeat(103),
+            kind: maxSchemaCompatibleKind,
+            value: 'credential',
+        })).toThrow();
+        expect(() => buildLocalCredentialRef({
+            providerId: maxSchemaCompatibleProviderId,
+            kind: 'k'.repeat(103),
+            value: 'credential',
+        })).toThrow();
+    });
+
+    it('parses canonical snapshots with shared meter semantics and rejects mismatched ids', () => {
+        const snapshotSchema = requireExport<Parser<ProviderAccountUsageSnapshotV1>>(
             'ProviderAccountUsageSnapshotV1Schema',
             isParser,
         );
 
-        const snapshot = schema.parse(createSnapshot());
+        const snapshot = snapshotSchema.parse(createSnapshot());
 
         expect(snapshot.recordId).toBe(expectedRecordId(snapshot.recordKey));
         expect(snapshot.meters[0]).toEqual(expect.objectContaining({
@@ -232,107 +203,63 @@ describe('provider account usage protocol', () => {
             limitScope: 'account',
             confidence: 'exact',
         }));
+        expect(snapshotSchema.safeParse({
+            ...createSnapshot(),
+            recordId: expectedRecordId({
+                providerId: 'codex',
+                accountSubjectId: 'acct_other',
+                subjectKind: 'account',
+                quotaScope: 'account',
+            }),
+        }).success).toBe(false);
     });
 
-    it('rejects diagnostic headers that can leak tokens', () => {
-        const schema = requireExport<Parser<ProviderAccountUsageSnapshotV1>>(
+    it('rejects diagnostics that can leak raw credential material', () => {
+        const snapshotSchema = requireExport<Parser<ProviderAccountUsageSnapshotV1>>(
             'ProviderAccountUsageSnapshotV1Schema',
             isParser,
         );
 
-        const result = schema.safeParse({
+        expect(snapshotSchema.safeParse({
             ...createSnapshot(),
-            diagnostics: [
-                {
-                    kind: 'provider_http',
-                    headers: {
-                        authorization: 'Bearer secret',
-                    },
+            diagnostics: [{
+                kind: 'provider_http',
+                headers: {
+                    authorization: 'Bearer secret',
                 },
-            ],
-        });
-
-        expect(result.success).toBe(false);
-    });
-
-    it('rejects diagnostic text that can leak raw credential material', () => {
-        const schema = requireExport<Parser<ProviderAccountUsageSnapshotV1>>(
-            'ProviderAccountUsageSnapshotV1Schema',
-            isParser,
-        );
-
-        const result = schema.safeParse({
-            ...createSnapshot(),
-            diagnostics: [
-                {
-                    kind: 'provider_http',
-                    message: 'provider failed with authorization: bearer sk-secret-token-value-1234567890',
-                },
-            ],
-        });
-
-        expect(result.success).toBe(false);
-    });
-
-    it('rejects adoption records whose target id or aliases do not match the stable record key', () => {
-        const schema = requireExport<Parser<unknown>>(
-            'ProviderAccountUsageAdoptionV1Schema',
-            isParser,
-        );
-        const stableRecordKey = {
-            providerId: 'codex',
-            accountSubjectId: 'acct_stable',
-            subjectKind: 'account',
-            quotaScope: 'account',
-        };
-        const mismatchedRecordKey = {
-            providerId: 'codex',
-            accountSubjectId: 'acct_other',
-            subjectKind: 'account',
-            quotaScope: 'account',
-        };
-
-        expect(schema.safeParse({
-            providerId: 'codex',
-            fromRecordId: expectedRecordId({
-                providerId: 'codex',
-                accountSubjectId: 'provisional:codex',
-                subjectKind: 'unknown',
-                quotaScope: 'account',
-            }),
-            toRecordId: expectedRecordId(mismatchedRecordKey),
-            stableRecordKey,
-            proof: { kind: 'provider_account_id_match' },
-            observedAtMs: 1700000000000,
-            aliases: [{
-                kind: 'nativeCli',
-                providerId: 'codex',
-                accountSubjectId: stableRecordKey.accountSubjectId,
             }],
         }).success).toBe(false);
 
-        expect(schema.safeParse({
-            providerId: 'codex',
-            fromRecordId: expectedRecordId({
-                providerId: 'codex',
-                accountSubjectId: 'provisional:codex',
-                subjectKind: 'unknown',
-                quotaScope: 'account',
-            }),
-            toRecordId: expectedRecordId(stableRecordKey),
-            stableRecordKey,
-            proof: { kind: 'provider_account_id_match' },
-            observedAtMs: 1700000000000,
-            aliases: [{
-                kind: 'nativeCli',
-                providerId: 'codex',
-                accountSubjectId: 'provisional:codex',
+        expect(snapshotSchema.safeParse({
+            ...createSnapshot(),
+            diagnostics: [{
+                kind: 'provider_http',
+                message: 'provider failed with authorization: bearer sk-secret-token-value-1234567890',
+            }],
+        }).success).toBe(false);
+
+        expect(snapshotSchema.safeParse({
+            ...createSnapshot(),
+            diagnostics: [{
+                kind: 'provider_http',
+                headers: {
+                    'x-provider-debug': 'sk-abcdefghijklmnopqrstuvwxyz',
+                },
             }],
         }).success).toBe(false);
     });
 
-    it('projects connected-service aliases to compatibility quota snapshots', () => {
-        const schema = requireExport<Parser<ProviderAccountUsageSnapshotV1>>(
+    it('keeps alias and adoption compatibility helpers off the public module surfaces', () => {
+        expect((protocol as Record<string, unknown>).ProviderAccountUsageAdoptionV1Schema).toBeUndefined();
+        expect((protocol as Record<string, unknown>).normalizeProviderAccountUsageAliases).toBeUndefined();
+
+        expect((accountUsageModule as Record<string, unknown>).ProviderAccountUsageAliasV1Schema).toBeUndefined();
+        expect((accountUsageModule as Record<string, unknown>).ProviderAccountUsageAdoptionV1Schema).toBeUndefined();
+        expect((accountUsageModule as Record<string, unknown>).normalizeProviderAccountUsageAliases).toBeUndefined();
+    });
+
+    it('projects provider account usage snapshots to connected-service quota compatibility snapshots', () => {
+        const snapshotSchema = requireExport<Parser<ProviderAccountUsageSnapshotV1>>(
             'ProviderAccountUsageSnapshotV1Schema',
             isParser,
         );
@@ -340,12 +267,24 @@ describe('provider account usage protocol', () => {
             'projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1',
             isFunction,
         );
-        const snapshot = schema.parse(createSnapshot());
+        const snapshot = snapshotSchema.parse(createSnapshot({
+            recoveryCredits: {
+                availableCount: 1,
+                credits: [{
+                    id: 'reset-credit-1',
+                    kind: 'usage_limit_reset',
+                    status: 'available',
+                }],
+            },
+        }));
 
         const projected = projectSnapshot({
             snapshot,
-            serviceId: 'openai-codex',
-            profileId: 'work',
+            source: {
+                serviceId: 'openai-codex',
+                profileId: 'work',
+                bindingKind: 'profile',
+            },
         });
 
         expect(projected).toEqual(expect.objectContaining({
@@ -358,7 +297,20 @@ describe('provider account usage protocol', () => {
             activeAccountId: snapshot.accountSubject.id,
             source: 'in_band_provider_snapshot',
             confidence: 'exact',
+            recoveryCredits: expect.objectContaining({
+                availableCount: 1,
+            }),
             meters: snapshot.meters,
         }));
+    });
+
+    it('does not export the connected-service quota back-projection helper', () => {
+        expect((protocol as Record<string, unknown>).projectConnectedServiceQuotaSnapshotToProviderAccountUsageSnapshotV1)
+            .toBeUndefined();
+    });
+
+    it('does not export a connected-service quota sealing helper for durable persistence', () => {
+        expect((protocol as Record<string, unknown>).sealConnectedServiceQuotaSnapshotCiphertext).toBeUndefined();
+        expect(typeof (protocol as Record<string, unknown>).openConnectedServiceQuotaSnapshotCiphertext).toBe('function');
     });
 });

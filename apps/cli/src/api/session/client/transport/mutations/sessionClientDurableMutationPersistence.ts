@@ -4,16 +4,26 @@ import { dirname, join } from 'node:path';
 
 import { configuration } from '@/configuration';
 import { getSessionStateFieldDescriptor } from '@happier-dev/agents';
+import { hasSessionStateFieldMetadataBinding } from '@happier-dev/agents/session/state/metadataWriters';
 import {
     SessionMessageRoleSchema,
+    SessionRunnerRuntimeStateV1Schema,
+    SessionStateAcpConfigOptionValueSchema,
+    SessionStateAcpSessionModeValueSchema,
     SessionStateFieldDeliveryClassSchema,
     SessionStateFieldIdSchema,
+    SessionStateModelValueSchema,
+    SessionStatePermissionModeValueSchema,
+    SessionStateProviderSessionIdValueSchema,
+    SessionStateRuntimeDescriptorValueSchema,
+    SessionStateTitleValueSchema,
     SessionStateUsageLimitRecoveryValueSchema,
     SessionStateWorkStateValueSchema,
     SessionStoredMessageContentSchema,
     SessionTurnMutationV1Schema,
     type SessionTurnMutationV1,
 } from '@happier-dev/protocol';
+import { SessionRuntimeActivityProjectionV1Schema } from '@happier-dev/protocol/sessions';
 
 import type {
     QueuedSessionClientDurableMutation,
@@ -24,6 +34,10 @@ import type {
     TranscriptMessageAppendMutationV1,
 } from './sessionClientDurableMutationTypes';
 import { resolveTranscriptMessageAppendMutationId } from './sessionClientDurableMutationTypes';
+import {
+    isAuthoritativeSessionClientDurableMutation,
+    isAuthoritativeSessionClientDurableMutationKind,
+} from './sessionClientDurableMutationDurabilityPolicy';
 
 type SessionClientDurableMutationOutboxFileV1 = Readonly<{
     v: 1;
@@ -41,12 +55,19 @@ export type SessionClientDurableMutationDeadLetterEntry = Readonly<{
     deadLetteredAt: number;
     diagnostic?: Record<string, unknown>;
     payloadSummary?: Record<string, unknown>;
+    queuedMutation?: QueuedSessionClientDurableMutation;
+    recoveryAttemptedAt?: number;
 }>;
 
 type SessionClientDurableMutationDeadLetterFileV1 = Readonly<{
     v: 1;
     entries: readonly SessionClientDurableMutationDeadLetterEntry[];
 }>;
+
+const DEFAULT_DEAD_LETTER_MAX_ENTRIES = 1_000;
+const MAX_DEAD_LETTER_MAX_ENTRIES = 10_000;
+const DEFAULT_REFERENCED_PREREQUISITE_MAX_ENTRIES = 10_000;
+const MAX_REFERENCED_PREREQUISITE_MAX_ENTRIES = 50_000;
 
 function sanitizeSessionIdForFileName(sessionId: string): string {
     const sanitized = String(sessionId).replace(/[^a-zA-Z0-9_.-]/g, '_');
@@ -73,6 +94,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function readBoundedIntEnv(name: string, fallback: number): number {
+    const parsed = Number.parseInt(String(process.env[name] ?? '').trim(), 10);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? Math.trunc(parsed) : fallback;
+}
+
+function resolveDeadLetterMaxEntries(): number {
+    return Math.min(
+        MAX_DEAD_LETTER_MAX_ENTRIES,
+        Math.max(
+            1,
+            readBoundedIntEnv(
+                'HAPPIER_SESSION_MUTATION_OUTBOX_DEAD_LETTER_MAX_ENTRIES',
+                DEFAULT_DEAD_LETTER_MAX_ENTRIES,
+            ),
+        ),
+    );
+}
+
+export function resolveSessionClientDurableMutationReferencedPrerequisiteMaxEntries(): number {
+    return Math.min(
+        MAX_REFERENCED_PREREQUISITE_MAX_ENTRIES,
+        Math.max(
+            1,
+            readBoundedIntEnv(
+                'HAPPIER_SESSION_MUTATION_OUTBOX_REFERENCED_PREREQUISITE_MAX_ENTRIES',
+                DEFAULT_REFERENCED_PREREQUISITE_MAX_ENTRIES,
+            ),
+        ),
+    );
+}
+
 function summarizePayload(value: unknown): Record<string, unknown> | undefined {
     if (!isRecord(value)) return undefined;
     const summary: Record<string, unknown> = {
@@ -84,6 +136,80 @@ function summarizePayload(value: unknown): Record<string, unknown> | undefined {
     return summary;
 }
 
+function addDependencyMutationIds(
+    value: unknown,
+    add: (mutationId: string) => void,
+): void {
+    if (!Array.isArray(value)) return;
+    for (const item of value) {
+        if (!isRecord(item) || typeof item.mutationId !== 'string' || item.mutationId.trim().length === 0) continue;
+        add(item.mutationId);
+    }
+}
+
+async function loadReferencedPrerequisiteMutationIds(
+    sessionId: string,
+): Promise<Readonly<{ mutationIds: ReadonlySet<string>; overflowCount: number }>> {
+    const maxEntries = resolveSessionClientDurableMutationReferencedPrerequisiteMaxEntries();
+    const mutationIds = new Set<string>();
+    let overflowCount = 0;
+    const add = (mutationId: string): void => {
+        if (mutationIds.has(mutationId)) return;
+        if (mutationIds.size >= maxEntries) {
+            overflowCount += 1;
+            return;
+        }
+        mutationIds.add(mutationId);
+    };
+    try {
+        const parsed = JSON.parse(await readFile(resolveSessionClientDurableMutationOutboxPath(sessionId), 'utf8')) as unknown;
+        if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.mutations)) {
+            return { mutationIds, overflowCount };
+        }
+        for (const rawMutation of parsed.mutations) {
+            if (!isRecord(rawMutation)) continue;
+            addDependencyMutationIds(rawMutation.dependsOn, add);
+            if (isRecord(rawMutation.payload)) {
+                addDependencyMutationIds(rawMutation.payload.dependsOn, add);
+            }
+        }
+    } catch {
+        return { mutationIds, overflowCount };
+    }
+    return { mutationIds, overflowCount };
+}
+
+function retainDeadLettersForQueuedPrerequisites(params: Readonly<{
+    entries: readonly SessionClientDurableMutationDeadLetterEntry[];
+    referencedPrerequisiteMutationIds: ReadonlySet<string>;
+    ordinaryCap: number;
+    referencedOverflowCount: number;
+}>): Readonly<{
+    entries: readonly SessionClientDurableMutationDeadLetterEntry[];
+    cappedDeadLetterCount: number;
+    referencedRetainedEntryCount: number;
+    prunedEntryCount: number;
+    referencedPrerequisiteOverflowCount: number;
+}> {
+    const isReferenced = (entry: SessionClientDurableMutationDeadLetterEntry): boolean => (
+        typeof entry.mutationId === 'string'
+        && params.referencedPrerequisiteMutationIds.has(entry.mutationId)
+    );
+    const unreferencedEntries = params.entries.filter((entry) => !isReferenced(entry));
+    const retainedUnreferencedEntries = new Set(unreferencedEntries.slice(-params.ordinaryCap));
+    const retainedEntries = params.entries.filter((entry) => (
+        isReferenced(entry) || retainedUnreferencedEntries.has(entry)
+    ));
+    const referencedRetainedEntryCount = retainedEntries.filter(isReferenced).length;
+    return {
+        entries: retainedEntries,
+        cappedDeadLetterCount: Math.max(0, unreferencedEntries.length - retainedUnreferencedEntries.size),
+        referencedRetainedEntryCount,
+        prunedEntryCount: Math.max(0, params.entries.length - retainedEntries.length),
+        referencedPrerequisiteOverflowCount: params.referencedOverflowCount,
+    };
+}
+
 function createDeadLetterEntry(params: Readonly<{
     sessionId: string;
     kind: SessionClientDurableMutationDeadLetterEntry['kind'];
@@ -93,6 +219,8 @@ function createDeadLetterEntry(params: Readonly<{
     createdAt?: number;
     diagnostic?: Record<string, unknown>;
     payload?: unknown;
+    queuedMutation?: QueuedSessionClientDurableMutation;
+    recoveryAttemptedAt?: number;
 }>): SessionClientDurableMutationDeadLetterEntry {
     return {
         v: 1,
@@ -105,6 +233,10 @@ function createDeadLetterEntry(params: Readonly<{
         deadLetteredAt: Date.now(),
         ...(params.diagnostic ? { diagnostic: params.diagnostic } : {}),
         ...(params.payload !== undefined ? { payloadSummary: summarizePayload(params.payload) } : {}),
+        ...(params.queuedMutation ? { queuedMutation: params.queuedMutation } : {}),
+        ...(typeof params.recoveryAttemptedAt === 'number'
+            ? { recoveryAttemptedAt: params.recoveryAttemptedAt }
+            : {}),
     };
 }
 
@@ -305,15 +437,108 @@ function parseRegisteredSessionStateFieldValue(
     fieldId: RegisteredSessionStateFieldMutationV1['fieldId'],
     value: unknown,
 ): Readonly<{ ok: true; value: unknown }> | Readonly<{ ok: false }> {
+    if (fieldId === 'identity.runtimeDescriptor') {
+        const parsed = SessionStateRuntimeDescriptorValueSchema.safeParse(value);
+        return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+    }
+    if (fieldId === 'identity.providerSessionId') {
+        return parseProviderSessionIdWriteValue(value);
+    }
+    if (fieldId === 'intent.model') {
+        const parsed = SessionStateModelValueSchema.safeParse(value);
+        return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+    }
+    if (fieldId === 'intent.permissionMode') {
+        const parsed = SessionStatePermissionModeValueSchema.safeParse(value);
+        return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+    }
+    if (fieldId === 'intent.acpSessionMode') {
+        const parsed = SessionStateAcpSessionModeValueSchema.safeParse(value);
+        return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+    }
+    if (fieldId === 'intent.acpConfigOption') {
+        const parsed = SessionStateAcpConfigOptionValueSchema.safeParse(value);
+        return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+    }
+    if (fieldId === 'display.title') {
+        return parseDisplayTitleWriteValue(value);
+    }
     if (fieldId === 'runtime.workState') {
         const parsed = SessionStateWorkStateValueSchema.safeParse(value);
+        return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+    }
+    if (fieldId === 'runtime.activity') {
+        const parsed = SessionRuntimeActivityProjectionV1Schema.safeParse(value);
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
     }
     if (fieldId === 'runtime.usageLimitRecovery') {
         const parsed = SessionStateUsageLimitRecoveryValueSchema.safeParse(value);
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
     }
+    if (fieldId === 'runtime.sessionRunner') {
+        const parsed = SessionRunnerRuntimeStateV1Schema.safeParse(value);
+        return parsed.success ? { ok: true, value: parsed.data } : { ok: false };
+    }
+    if (hasSessionStateFieldMetadataBinding(fieldId)) {
+        return { ok: true, value };
+    }
     return { ok: false };
+}
+
+function parseProviderSessionIdWriteValue(
+    value: unknown,
+): Readonly<{ ok: true; value: unknown }> | Readonly<{ ok: false }> {
+    const parsedValue = SessionStateProviderSessionIdValueSchema.safeParse(value);
+    if (parsedValue.success) return { ok: true, value: parsedValue.data };
+    if (!isRecord(value)) return { ok: false };
+
+    const metadataKey = typeof value.metadataKey === 'string' && value.metadataKey.trim().length > 0
+        ? value.metadataKey.trim()
+        : null;
+    if (!metadataKey) return { ok: false };
+    if (value.value !== null && !SessionStateProviderSessionIdValueSchema.safeParse(value.value).success) {
+        return { ok: false };
+    }
+    return {
+        ok: true,
+        value: {
+            metadataKey,
+            value: value.value,
+        },
+    };
+}
+
+function parseDisplayTitleWriteValue(
+    value: unknown,
+): Readonly<{ ok: true; value: unknown }> | Readonly<{ ok: false }> {
+    const parsedTitle = SessionStateTitleValueSchema.safeParse(value);
+    if (parsedTitle.success) return { ok: true, value: parsedTitle.data };
+    if (!isRecord(value)) return { ok: false };
+
+    const title = SessionStateTitleValueSchema.safeParse(value.title);
+    if (!title.success) return { ok: false };
+
+    const parsed: {
+        title: string;
+        updatedAt?: number;
+        staleBehavior?: 'drop' | 'bump-if-value-changed';
+        preserveExistingValue?: boolean;
+    } = {
+        title: title.data,
+    };
+    if (value.updatedAt !== undefined) {
+        if (typeof value.updatedAt !== 'number' || !Number.isFinite(value.updatedAt)) return { ok: false };
+        parsed.updatedAt = value.updatedAt;
+    }
+    if (value.staleBehavior !== undefined) {
+        if (value.staleBehavior !== 'drop' && value.staleBehavior !== 'bump-if-value-changed') return { ok: false };
+        parsed.staleBehavior = value.staleBehavior;
+    }
+    if (value.preserveExistingValue !== undefined) {
+        if (typeof value.preserveExistingValue !== 'boolean') return { ok: false };
+        parsed.preserveExistingValue = value.preserveExistingValue;
+    }
+    return { ok: true, value: parsed };
 }
 
 type ParseQueuedResult = Readonly<{
@@ -498,15 +723,14 @@ export async function loadSessionClientDurableMutationOutbox(sessionId: string):
     try {
         const parsed = JSON.parse(await readFile(resolveSessionClientDurableMutationOutboxPath(sessionId), 'utf8')) as unknown;
         if (!isRecord(parsed) || parsed.v !== 1 || !Array.isArray(parsed.mutations)) {
-            await appendSessionClientDurableMutationDeadLetters(sessionId, [
-                createDeadLetterEntry({
-                    sessionId,
-                    kind: 'outbox_file',
-                    reason: 'invalid_outbox_file',
-                    payload: parsed,
-                }),
-            ]);
+            const deadLetters = [createDeadLetterEntry({
+                sessionId,
+                kind: 'outbox_file',
+                reason: 'invalid_outbox_file',
+                payload: parsed,
+            })];
             await saveSessionClientDurableMutationOutbox(sessionId, []);
+            await appendSessionClientDurableMutationDeadLetters(sessionId, deadLetters);
             return [];
         }
         const mutations: QueuedSessionClientDurableMutation[] = [];
@@ -517,8 +741,8 @@ export async function loadSessionClientDurableMutationOutbox(sessionId: string):
             deadLetters.push(...parsedMutation.deadLetters);
         }
         if (deadLetters.length > 0) {
-            await appendSessionClientDurableMutationDeadLetters(sessionId, deadLetters);
             await saveSessionClientDurableMutationOutbox(sessionId, mutations);
+            await appendSessionClientDurableMutationDeadLetters(sessionId, deadLetters);
         }
         return mutations;
     } catch {
@@ -557,16 +781,20 @@ async function writeJsonAtomic(
     }
 }
 
+async function unlinkIfExists(filePath: string): Promise<void> {
+    await unlink(filePath).catch((error) => {
+        const err = error as NodeJS.ErrnoException;
+        if (err?.code !== 'ENOENT') throw error;
+    });
+}
+
 export async function saveSessionClientDurableMutationOutbox(
     sessionId: string,
     mutations: readonly QueuedSessionClientDurableMutation[],
 ): Promise<void> {
     const filePath = resolveSessionClientDurableMutationOutboxPath(sessionId);
     if (mutations.length === 0) {
-        await unlink(filePath).catch((error) => {
-            const err = error as NodeJS.ErrnoException;
-            if (err?.code !== 'ENOENT') throw error;
-        });
+        await unlinkIfExists(filePath);
         return;
     }
     await writeJsonAtomic(filePath, { v: 1, mutations });
@@ -584,17 +812,170 @@ async function loadDeadLetterFile(filePath: string): Promise<SessionClientDurabl
     }
 }
 
+function readLegacyAuthoritativeDeadLetterMutation(
+    entry: SessionClientDurableMutationDeadLetterEntry,
+    sessionId: string,
+): QueuedSessionClientDurableMutation | null {
+    const summary = entry.payloadSummary;
+    if (!summary) return null;
+    const recoveredSessionId = typeof summary.sessionId === 'string' && summary.sessionId.trim().length > 0
+        ? summary.sessionId
+        : sessionId;
+    const mutationId = typeof entry.mutationId === 'string' && entry.mutationId.trim().length > 0
+        ? entry.mutationId
+        : typeof summary.mutationId === 'string' && summary.mutationId.trim().length > 0
+            ? summary.mutationId
+            : null;
+    if (!mutationId) return null;
+    const createdAt = typeof entry.createdAt === 'number' && Number.isFinite(entry.createdAt)
+        ? entry.createdAt
+        : entry.deadLetteredAt;
+    const attempts = typeof entry.attempts === 'number' && Number.isFinite(entry.attempts)
+        ? Math.max(0, Math.trunc(entry.attempts))
+        : 0;
+
+    if (entry.kind === 'session_end') {
+        return {
+            kind: 'session_end',
+            mutationId,
+            payload: {
+                v: 1,
+                sessionId: recoveredSessionId,
+                mutationId,
+                source: 'session_end',
+                observedAt: createdAt,
+            },
+            createdAt,
+            attempts,
+            nextAttemptAt: 0,
+        };
+    }
+    if (
+        entry.kind !== 'session_turn_mutation'
+        || !['complete', 'fail', 'cancel', 'end_session'].includes(String(summary.action ?? ''))
+    ) {
+        return null;
+    }
+    return {
+        kind: 'session_turn_mutation',
+        mutationId,
+        payload: {
+            v: 1,
+            sessionId: recoveredSessionId,
+            mutationId,
+            action: 'end_session',
+            observedAt: createdAt,
+        },
+        createdAt,
+        attempts,
+        nextAttemptAt: 0,
+    };
+}
+
+function readRecoverableAuthoritativeDeadLetterMutation(
+    entry: SessionClientDurableMutationDeadLetterEntry,
+    sessionId: string,
+): QueuedSessionClientDurableMutation | null {
+    if (!isAuthoritativeSessionClientDurableMutationKind(entry.kind)) return null;
+    if (typeof entry.recoveryAttemptedAt === 'number') return null;
+    const record = entry as unknown as Record<string, unknown>;
+    const rawMutation = record.queuedMutation ?? record.mutation ?? (
+        record.payload
+            ? {
+                kind: entry.kind,
+                mutationId: entry.mutationId,
+                payload: record.payload,
+                createdAt: entry.createdAt,
+                attempts: entry.attempts,
+                nextAttemptAt: 0,
+            }
+            : null
+    );
+    if (rawMutation) {
+        const parsed = parseQueuedSessionClientDurableMutation(rawMutation, sessionId);
+        const mutation = parsed.mutations[0];
+        if (mutation && isAuthoritativeSessionClientDurableMutation(mutation)) {
+            return { ...mutation, nextAttemptAt: 0 } as QueuedSessionClientDurableMutation;
+        }
+    }
+    return readLegacyAuthoritativeDeadLetterMutation(entry, sessionId);
+}
+
+export async function recoverAuthoritativeSessionClientDurableMutationDeadLetters(
+    sessionId: string,
+    limit = 100,
+): Promise<QueuedSessionClientDurableMutation[]> {
+    const filePath = resolveSessionClientDurableMutationDeadLetterPath(sessionId);
+    const existing = await loadDeadLetterFile(filePath);
+    if (existing.length === 0) return [];
+    const recovered: QueuedSessionClientDurableMutation[] = [];
+    const recoveryAttemptedAt = Date.now();
+    let changed = false;
+    const updated = existing.map((entry) => {
+        if (recovered.length >= limit) return entry;
+        const mutation = readRecoverableAuthoritativeDeadLetterMutation(entry, sessionId);
+        if (!mutation) return entry;
+        recovered.push(mutation);
+        changed = true;
+        return { ...entry, recoveryAttemptedAt };
+    });
+    if (changed) {
+        await writeJsonAtomic(filePath, { v: 1, entries: updated });
+    }
+    return recovered;
+}
+
+export async function loadSessionClientDurableMutationDeadLetters(
+    sessionId: string,
+): Promise<SessionClientDurableMutationDeadLetterEntry[]> {
+    const entries = await loadDeadLetterFile(resolveSessionClientDurableMutationDeadLetterPath(sessionId));
+    const referencedPrerequisites = await loadReferencedPrerequisiteMutationIds(sessionId);
+    const retained = retainDeadLettersForQueuedPrerequisites({
+        entries,
+        referencedPrerequisiteMutationIds: referencedPrerequisites.mutationIds,
+        ordinaryCap: resolveDeadLetterMaxEntries(),
+        referencedOverflowCount: referencedPrerequisites.overflowCount,
+    });
+    return [...retained.entries];
+}
+
 export async function appendSessionClientDurableMutationDeadLetters(
     sessionId: string,
     entries: readonly SessionClientDurableMutationDeadLetterEntry[],
-): Promise<void> {
-    if (entries.length === 0) return;
+): Promise<Readonly<{
+    cappedDeadLetterCount: number;
+    referencedRetainedEntryCount: number;
+    prunedEntryCount: number;
+    referencedPrerequisiteOverflowCount: number;
+}>> {
+    if (entries.length === 0) {
+        return {
+            cappedDeadLetterCount: 0,
+            referencedRetainedEntryCount: 0,
+            prunedEntryCount: 0,
+            referencedPrerequisiteOverflowCount: 0,
+        };
+    }
     const filePath = resolveSessionClientDurableMutationDeadLetterPath(sessionId);
     const existing = await loadDeadLetterFile(filePath);
+    const maxEntries = resolveDeadLetterMaxEntries();
+    const referencedPrerequisites = await loadReferencedPrerequisiteMutationIds(sessionId);
+    const retained = retainDeadLettersForQueuedPrerequisites({
+        entries: [...existing, ...entries],
+        referencedPrerequisiteMutationIds: referencedPrerequisites.mutationIds,
+        ordinaryCap: maxEntries,
+        referencedOverflowCount: referencedPrerequisites.overflowCount,
+    });
     await writeJsonAtomic(filePath, {
         v: 1,
-        entries: [...existing, ...entries],
+        entries: retained.entries,
     } satisfies SessionClientDurableMutationDeadLetterFileV1);
+    return {
+        cappedDeadLetterCount: retained.cappedDeadLetterCount,
+        referencedRetainedEntryCount: retained.referencedRetainedEntryCount,
+        prunedEntryCount: retained.prunedEntryCount,
+        referencedPrerequisiteOverflowCount: retained.referencedPrerequisiteOverflowCount,
+    };
 }
 
 export function createSessionClientDurableMutationDeadLetterEntry(params: Readonly<{
@@ -612,5 +993,8 @@ export function createSessionClientDurableMutationDeadLetterEntry(params: Readon
         createdAt: params.mutation.createdAt,
         diagnostic: params.diagnostic,
         payload: params.mutation.payload,
+        ...(isAuthoritativeSessionClientDurableMutation(params.mutation)
+            ? { queuedMutation: params.mutation }
+            : {}),
     });
 }

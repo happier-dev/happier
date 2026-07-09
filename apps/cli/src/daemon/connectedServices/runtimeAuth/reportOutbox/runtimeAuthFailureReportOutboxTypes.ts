@@ -1,37 +1,8 @@
 import type { SessionUsageLimitRecoveryResumePromptModeV1 } from '@happier-dev/protocol';
 
-import type {
-  ConnectedServiceRuntimeFailureClassification,
-  ConnectedServiceRuntimeAuthFailureKind,
-  ConnectedServiceRuntimeLimitCategory,
-  ConnectedServiceRuntimeQuotaScope,
-} from '../types';
+import type { ConnectedServiceRuntimeFailureClassification } from '../types';
 
-export type RuntimeAuthFailureReportOutboxAction = Readonly<{
-  kind: 'open_url';
-  url: string;
-}>;
-
-export type RuntimeAuthFailureReportOutboxRecoveryAction =
-  | Readonly<{ kind: 'provider_state_sharing_required' }>
-  | Readonly<{ kind: 'quota_recovery_required' }>;
-
-export type RuntimeAuthFailureReportOutboxClassification = Readonly<{
-  kind: ConnectedServiceRuntimeAuthFailureKind;
-  limitCategory?: ConnectedServiceRuntimeLimitCategory;
-  serviceId: string;
-  profileId: string | null;
-  groupId: string | null;
-  resetsAtMs: number | null;
-  retryAfterMs?: number | null;
-  quotaScope?: ConnectedServiceRuntimeQuotaScope;
-  providerLimitId?: string | null;
-  action?: RuntimeAuthFailureReportOutboxAction | null;
-  planType: string | null;
-  rateLimits: null;
-  source: ConnectedServiceRuntimeFailureClassification['source'];
-  recoveryAction?: RuntimeAuthFailureReportOutboxRecoveryAction | null;
-}>;
+export type RuntimeAuthFailureReportOutboxClassification = ConnectedServiceRuntimeFailureClassification;
 
 export type RuntimeAuthFailureReportOutboxReport = Readonly<{
   sessionId: string;
@@ -54,7 +25,11 @@ export type RuntimeAuthFailureReportOutboxItem = Readonly<{
 }>;
 
 export type EnqueueRuntimeAuthFailureReportOutboxItemResult =
-  | Readonly<{ status: 'enqueued'; item: RuntimeAuthFailureReportOutboxItem }>
+  | Readonly<{
+    status: 'enqueued';
+    enqueue: 'accepted' | 'coalesced';
+    item: RuntimeAuthFailureReportOutboxItem;
+  }>
   | Readonly<{ status: 'rejected'; reason: 'unclassified_report' }>;
 
 export type DrainRuntimeAuthFailureReportOutboxItemResult =

@@ -1,4 +1,4 @@
-import type { ConnectedServiceRecoveryCapabilities } from '@/backends/types';
+import type { ConnectedServiceRecoveryCapabilities } from '@/agent/catalog/types';
 
 type PredictiveSoftSwitchCapability = 'supported' | 'unsupported';
 

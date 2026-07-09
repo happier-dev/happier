@@ -15,6 +15,7 @@ type ExternalSessionPollingFollowLeaseParams<TItem> = Readonly<{
 
 type ExternalSessionTranscriptUpdate<TItem> = Readonly<{
   items: TItem[];
+  fromCursor: string | null;
   nextCursor: string | null;
   truncated: boolean;
 }>;
@@ -80,30 +81,39 @@ export async function createPollingExternalSessionFollowLease<TItem>(
     pollTimer = null;
   };
 
-  const schedulePoll = (): void => {
+  const schedulePoll = (delayMs = pollIntervalMs): void => {
     if (released || listeners.size === 0 || pollTimer) return;
     pollTimer = setTimeout(() => {
       pollTimer = null;
       void pollOnce();
-    }, pollIntervalMs);
+    }, delayMs);
   };
 
   const pollOnce = async (): Promise<void> => {
     if (released || polling || listeners.size === 0) return;
     polling = true;
+    let shouldDrainTruncatedPage = false;
     try {
+      const fromCursor = tailCursor ?? 'tail';
       const result = await params.readAfterTranscript({
-        cursor: tailCursor ?? 'tail',
+        cursor: fromCursor,
         maxBytes,
         maxItems,
       });
       const items = Array.from(result.items) as TItem[];
-      if (typeof result.nextCursor === 'string' || result.nextCursor === null) {
-        tailCursor = result.nextCursor ?? tailCursor;
+      const nextCursor = typeof result.nextCursor === 'string' || result.nextCursor === null
+        ? result.nextCursor
+        : undefined;
+      if (nextCursor !== undefined) {
+        tailCursor = nextCursor ?? tailCursor;
       }
+      shouldDrainTruncatedPage = result.truncated === true
+        && typeof nextCursor === 'string'
+        && nextCursor !== fromCursor;
       if (items.length > 0 || result.truncated === true) {
         await notifyTranscriptListeners(listeners, {
           items,
+          fromCursor,
           nextCursor: result.nextCursor ?? null,
           truncated: result.truncated === true,
         });
@@ -112,7 +122,7 @@ export async function createPollingExternalSessionFollowLease<TItem>(
       // Follow leases are best-effort; the next poll can recover from transient read failures.
     } finally {
       polling = false;
-      schedulePoll();
+      schedulePoll(shouldDrainTruncatedPage ? 0 : pollIntervalMs);
     }
   };
 

@@ -1,7 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { STANDARD_CONTINUATION_RESUME_PROMPT } from './continuationResumePrompt';
+
 type ContinuationModule = Readonly<{
   isContinuationRecoveryAwaitingProviderActivityStatus: (status: string) => boolean;
+  createSessionContinuationRecoveryOverlayStore: (params: {
+    durableStore: {
+      read: (sessionId: string) => Promise<unknown | null> | unknown | null;
+      write: (sessionId: string, state: unknown) => Promise<void> | void;
+    };
+  }) => {
+    read: (sessionId: string) => Promise<unknown | null> | unknown | null;
+    write: (sessionId: string, state: unknown) => Promise<void> | void;
+  };
   createSessionContinuationRecoveryController: (deps: {
     nowMs: () => number;
     providerActivityTimeoutMs?: number;
@@ -77,6 +88,7 @@ async function loadContinuationModule(): Promise<ContinuationModule> {
   const mod = await import(modulePath).catch(() => null);
   expect(mod).not.toBeNull();
   expect(typeof (mod as Partial<ContinuationModule> | null)?.createSessionContinuationRecoveryController).toBe('function');
+  expect(typeof (mod as Partial<ContinuationModule> | null)?.createSessionContinuationRecoveryOverlayStore).toBe('function');
   expect(typeof (mod as Partial<ContinuationModule> | null)?.isContinuationRecoveryAwaitingProviderActivityStatus).toBe('function');
   return mod as ContinuationModule;
 }
@@ -93,6 +105,10 @@ function createStore() {
 }
 
 describe('session continuation recovery', () => {
+  it('uses the canonical standard continuation resume prompt', () => {
+    expect(STANDARD_CONTINUATION_RESUME_PROMPT).toBe('Continue where you left off');
+  });
+
   it('identifies statuses that need provider-activity timeout scheduling', async () => {
     const { isContinuationRecoveryAwaitingProviderActivityStatus } = await loadContinuationModule();
 
@@ -100,6 +116,51 @@ describe('session continuation recovery', () => {
     expect(isContinuationRecoveryAwaitingProviderActivityStatus('already_awaiting_provider_activity')).toBe(true);
     expect(isContinuationRecoveryAwaitingProviderActivityStatus('provider_activity_timeout')).toBe(false);
     expect(isContinuationRecoveryAwaitingProviderActivityStatus('provider_activity_observed')).toBe(false);
+  });
+
+  it('keeps the newest continuation recovery attempt when durable state lags the overlay cache', async () => {
+    const { createSessionContinuationRecoveryOverlayStore } = await loadContinuationModule();
+    const durable = createStore();
+    const overlay = createSessionContinuationRecoveryOverlayStore({ durableStore: durable });
+    const newest = {
+      v: 1,
+      attemptsById: {
+        restart: {
+          v: 1,
+          attemptId: 'restart',
+          status: 'awaiting_provider_activity',
+          failureAtMs: 1_000,
+          updatedAtMs: 3_000,
+          sentAtMs: 2_500,
+          resumePromptMode: 'standard',
+        },
+      },
+    };
+    const staleDurable = {
+      v: 1,
+      attemptsById: {
+        restart: {
+          v: 1,
+          attemptId: 'restart',
+          status: 'pending_provider_context',
+          failureAtMs: 1_000,
+          updatedAtMs: 2_000,
+          resumePromptMode: 'standard',
+        },
+      },
+    };
+
+    await overlay.write('session-1', newest);
+    durable.write('session-1', staleDurable);
+
+    await expect(overlay.read('session-1')).resolves.toMatchObject({
+      attemptsById: {
+        restart: {
+          status: 'awaiting_provider_activity',
+          updatedAtMs: 3_000,
+        },
+      },
+    });
   });
 
   it('sends one continuation per persisted session attempt across controller instances', async () => {
@@ -140,7 +201,7 @@ describe('session continuation recovery', () => {
     })).resolves.toEqual({ status: 'already_awaiting_provider_activity' });
 
     expect(sentPrompts).toHaveLength(1);
-    expect(sentPrompts[0]).toBe('The interrupted turn was recovered. Continue from where you left off.');
+    expect(sentPrompts[0]).toBe(STANDARD_CONTINUATION_RESUME_PROMPT);
   });
 
   it('sends the account-level custom resume prompt when the effective mode is custom', async () => {
@@ -188,7 +249,7 @@ describe('session continuation recovery', () => {
       },
     })).resolves.toEqual({ status: 'awaiting_provider_activity' });
 
-    expect(sentPrompts).toEqual(['The interrupted turn was recovered. Continue from where you left off.']);
+    expect(sentPrompts).toEqual([STANDARD_CONTINUATION_RESUME_PROMPT]);
   });
 
   it('falls back to the standard resume prompt when custom mode has no custom text source', async () => {
@@ -211,7 +272,7 @@ describe('session continuation recovery', () => {
       },
     })).resolves.toEqual({ status: 'awaiting_provider_activity' });
 
-    expect(sentPrompts).toEqual(['The interrupted turn was recovered. Continue from where you left off.']);
+    expect(sentPrompts).toEqual([STANDARD_CONTINUATION_RESUME_PROMPT]);
   });
 
   it('preserves idempotency through async metadata stores', async () => {

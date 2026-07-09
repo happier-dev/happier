@@ -77,12 +77,13 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
                 credential: null,
                 diagnostic: refreshDiagnostic,
             },
-            restartRequested: true,
+            restartRequested: false,
         });
 
         expect(refreshConnectedServiceCredentialForRuntimeAuthFailure).toHaveBeenCalledWith({
             serviceId: 'claude-subscription',
             profileId: 'primary',
+            sessionId: 'sess_claude_group',
         });
         expect(switchAfterClassifiedFailure).not.toHaveBeenCalled();
         expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledWith(expect.objectContaining({
@@ -219,6 +220,76 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         expect(switchAfterClassifiedFailure).not.toHaveBeenCalled();
     });
 
+    it('routes account-changed group failures to profile reconnect without refreshing or switching the pool', async () => {
+        const switchAfterClassifiedFailure = vi.fn(async () => ({
+            status: 'switched' as const,
+            activeProfileId: 'backup',
+            generation: 2,
+            mode: 'hot_apply' as const,
+        }));
+        const refreshConnectedServiceCredentialForRuntimeAuthFailure = vi.fn(async () => ({
+            status: 'refreshed' as const,
+            credential: null,
+            diagnostic: {
+                serviceId: 'claude-subscription' as const,
+                profileId: 'primary',
+                reason: 'runtime_auth_failure' as const,
+                status: 'refreshed' as const,
+                expiresAt: null,
+                expiryAgeMs: null,
+                refreshWindowMs: 0,
+            },
+        }));
+
+        await expect(handleConnectedServiceRuntimeAuthFailureForSession({
+            getChildren: () => [{
+                startedBy: 'daemon',
+                pid: 111,
+                happySessionId: 'sess_changed_account',
+                spawnOptions: {
+                    directory: '/tmp/project',
+                    connectedServices: {
+                        v: 1,
+                        bindingsByServiceId: {
+                            'claude-subscription': {
+                                source: 'connected',
+                                selection: 'group',
+                                groupId: 'claude',
+                                profileId: 'primary',
+                            },
+                        },
+                    },
+                },
+            }],
+            switchCoordinator: { switchAfterClassifiedFailure },
+            refreshConnectedServiceCredentialForRuntimeAuthFailure,
+            sessionId: 'sess_changed_account',
+            switchesThisTurn: 0,
+            classification: {
+                kind: 'account_changed',
+                serviceId: 'claude-subscription',
+                profileId: 'primary',
+                groupId: 'claude',
+                resetsAtMs: null,
+                planType: null,
+                rateLimits: null,
+                source: 'structured_provider_error',
+            },
+        })).resolves.toEqual({
+            status: 'recovery_action_required',
+            action: {
+                kind: 'reconnect_profile',
+                serviceId: 'claude-subscription',
+                profileId: 'primary',
+                groupId: 'claude',
+                reason: 'account_changed',
+            },
+        });
+
+        expect(refreshConnectedServiceCredentialForRuntimeAuthFailure).not.toHaveBeenCalled();
+        expect(switchAfterClassifiedFailure).not.toHaveBeenCalled();
+    });
+
     it('routes tracked group session failures into the switch coordinator with structured recovery context', async () => {
         const switchAfterClassifiedFailure = vi.fn(async () => ({
             status: 'switched' as const,
@@ -287,18 +358,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
             planType: null,
             switchesThisTurn: 0,
         }));
-        expect(emitSessionEvent).toHaveBeenCalledWith('sess_1', expect.objectContaining({
-            type: 'connected_service_auth_group_switch',
-            serviceId: 'openai-codex',
-            groupId: 'group-1',
-            fromProfileId: 'primary',
-            toProfileId: 'backup',
-            reason: 'usage_limit',
-            mode: 'hot_apply',
-            toGeneration: 2,
-            resultStatus: 'switched',
-            success: true,
-        }));
+        expect(emitSessionEvent).not.toHaveBeenCalled();
     });
 
     it('resolves canonical group context without replacing the provider-reported failed profile', async () => {
@@ -367,10 +427,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         expect(switchAfterClassifiedFailure).toHaveBeenCalledWith(expect.objectContaining({
             observedProfileId: 'primary',
         }));
-        expect(emitSessionEvent).toHaveBeenCalledWith('sess_1', expect.objectContaining({
-            fromProfileId: 'primary',
-            toProfileId: 'backup-2',
-        }));
+        expect(emitSessionEvent).not.toHaveBeenCalled();
     });
 
     it('uses the tracked auth group to rotate after a provider-state-sharing usage-limit hint', async () => {
@@ -876,17 +933,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
             groupId: 'group-1',
             observedProfileId: 'backup',
         }));
-        expect(emitSessionEvent).toHaveBeenCalledWith('sess_1', expect.objectContaining({
-            type: 'connected_service_auth_group_switch',
-            serviceId: 'gemini',
-            groupId: 'group-1',
-            fromProfileId: 'backup',
-            toProfileId: 'secondary',
-            reason: 'usage_limit',
-            toGeneration: 3,
-            resultStatus: 'switched',
-            success: true,
-        }));
+        expect(emitSessionEvent).not.toHaveBeenCalled();
     });
 
     it('uses inactive session bindings when the tracked child has already exited', async () => {
@@ -1156,17 +1203,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
             attemptId: 'connected-service-auth-switch|hot_applied|openai-codex:group:group-1:backup:2',
             action: 'hot_applied',
         }));
-        expect(emitSessionEvent).toHaveBeenCalledWith('sess_1', expect.objectContaining({
-            type: 'connected_service_auth_group_switch',
-            serviceId: 'openai-codex',
-            groupId: 'group-1',
-            fromProfileId: 'primary',
-            toProfileId: 'backup',
-            reason: 'usage_limit',
-            resultStatus: 'observed_generation',
-            success: true,
-            toGeneration: 2,
-        }));
+        expect(emitSessionEvent).not.toHaveBeenCalled();
     });
 
     it('keeps the provider-reported failed profile when the tracked group selection already advanced', async () => {
@@ -1245,13 +1282,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
             attemptId: 'connected-service-auth-switch|hot_applied|openai-codex:group:group-1:backup:2',
             action: 'hot_applied',
         }));
-        expect(emitSessionEvent).toHaveBeenCalledWith('sess_1', expect.objectContaining({
-            type: 'connected_service_auth_group_switch',
-            fromProfileId: 'primary',
-            toProfileId: 'backup',
-            resultStatus: 'observed_generation',
-            success: true,
-        }));
+        expect(emitSessionEvent).not.toHaveBeenCalled();
     });
 
     it('does not re-continue a stale-profile replay when the pending proof target re-appears at a churned generation', async () => {

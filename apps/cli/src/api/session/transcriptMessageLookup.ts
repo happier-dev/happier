@@ -5,7 +5,7 @@ import { Agent as HttpsAgent } from 'node:https';
 
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
 import { configuration } from '@/configuration';
-import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
+import { resolveServerHttpBaseUrl } from '../client/serverHttpBaseUrl';
 import { SessionMessageContentSchema, type SessionMessageContent } from '../types';
 import { readAuthenticationStatus, readHttpStatus } from '@/api/client/httpStatusError';
 import { TranscriptRecoveryCoordinator, type TranscriptRecoveryResult } from './recovery/TranscriptRecoveryCoordinator';
@@ -187,7 +187,7 @@ export async function findTranscriptEncryptedMessageByLocalId(params: {
     onError?: (error: unknown) => void;
     timeoutMs?: number;
 }): Promise<TranscriptMessageLookupResult | null> {
-    const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+    const serverUrl = resolveServerHttpBaseUrl();
     const outcome = await findTranscriptEncryptedMessageByLocalIdV2({
         token: params.token,
         serverUrl,
@@ -227,7 +227,7 @@ export async function waitForTranscriptEncryptedMessageByLocalId(params: {
     const errorBackoffBaseMs = params.errorBackoffBaseMs ?? configuration.transcriptLookupErrorBackoffBaseMs;
     const errorBackoffMaxMs = params.errorBackoffMaxMs ?? configuration.transcriptLookupErrorBackoffMaxMs;
     const requestTimeoutMs = params.requestTimeoutMs ?? configuration.transcriptLookupRequestTimeoutMs;
-    const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+    const serverUrl = resolveServerHttpBaseUrl();
     if (params.supervisor) {
         return await waitForTranscriptEncryptedMessageByLocalIdWithSupervisor({
             ...params,
