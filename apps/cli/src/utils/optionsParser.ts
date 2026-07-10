@@ -68,3 +68,20 @@ export function formatOptionsXml(options: string[]): string {
   return '\n<options>\n' + options.map(opt => `    <option>${opt}</option>`).join('\n') + '\n</options>';
 }
 
+/**
+ * Format assistant text for terminal display
+ * Replaces an <options>...</options> XML block with a readable numbered list
+ * so terminal surfaces (which have no tappable option buttons) do not show raw XML.
+ *
+ * @param text - The assistant text potentially containing an options XML block
+ * @returns The text with the options block rendered as a numbered list
+ */
+export function formatTextWithOptionsForTerminal(text: string): string {
+  const { text: textWithoutOptions, options } = parseOptionsFromText(text);
+  if (options.length === 0) {
+    return text;
+  }
+  const numberedList = options.map((option, index) => `  ${index + 1}. ${option}`).join('\n');
+  const optionsBlock = `Options:\n${numberedList}`;
+  return textWithoutOptions.length > 0 ? `${textWithoutOptions}\n\n${optionsBlock}` : optionsBlock;
+}

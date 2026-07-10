@@ -1,4 +1,5 @@
 import type { SDKMessage, SDKAssistantMessage, SDKResultMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk'
+import { formatTextWithOptionsForTerminal } from '@/utils/optionsParser'
 import type { MessageBuffer } from './ink/messageBuffer'
 import { logger } from './logger'
 
@@ -72,7 +73,7 @@ export function formatClaudeMessageForInk(
                 
                 for (const block of assistantMsg.message.content) {
                     if (block.type === 'text') {
-                        messageBuffer.addMessage(block.text || '', 'assistant')
+                        messageBuffer.addMessage(formatTextWithOptionsForTerminal(block.text || ''), 'assistant')
                     } else if (block.type === 'tool_use') {
                         messageBuffer.addMessage(`🔧 Tool: ${block.name}`, 'tool')
                         if (block.input) {
@@ -95,7 +96,7 @@ export function formatClaudeMessageForInk(
             if (resultMsg.subtype === 'success') {
                 if ('result' in resultMsg && resultMsg.result) {
                     messageBuffer.addMessage('✨ Summary:', 'result')
-                    messageBuffer.addMessage(resultMsg.result || '', 'result')
+                    messageBuffer.addMessage(formatTextWithOptionsForTerminal(resultMsg.result || ''), 'result')
                 }
                 
                 if (resultMsg.usage) {

@@ -77,7 +77,7 @@ import {
   parseOptionsFromText,
   hasIncompleteOptions,
   formatOptionsXml,
-} from '@/backends/gemini/utils/optionsParser';
+} from '@/utils/optionsParser';
 import { ConversationHistory } from '@/backends/gemini/utils/conversationHistory';
 import { createGeminiBackendMessageHandler } from '@/backends/gemini/runtime/createGeminiBackendMessageHandler';
 import { reportGeminiConnectedServiceRuntimeAuthFailureBestEffort } from '@/backends/gemini/connectedServices/surfaceGeminiConnectedServiceRuntimeAuthFailure';

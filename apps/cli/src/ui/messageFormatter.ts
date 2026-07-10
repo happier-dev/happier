@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import type { SDKMessage, SDKAssistantMessage, SDKResultMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk';
+import { formatTextWithOptionsForTerminal } from '@/utils/optionsParser';
 import { logger } from './logger';
 
 export type OnAssistantResultCallback = (result: SDKResultMessage) => void | Promise<void>;
@@ -76,7 +77,7 @@ export function formatClaudeMessage(
                 // Handle content array (can contain text blocks and tool use blocks)
                 for (const block of assistantMsg.message.content) {
                     if (block.type === 'text') {
-                        console.log(block.text);
+                        console.log(formatTextWithOptionsForTerminal(block.text ?? ''));
                     } else if (block.type === 'tool_use') {
                         console.log(chalk.yellow.bold(`\n🔧 Tool: ${block.name}`));
                         if (block.input) {
@@ -99,7 +100,7 @@ export function formatClaudeMessage(
             if (resultMsg.subtype === 'success') {
                 if ('result' in resultMsg && resultMsg.result) {
                     console.log(chalk.green.bold('\n✨ Summary:'));
-                    console.log(resultMsg.result);
+                    console.log(formatTextWithOptionsForTerminal(resultMsg.result));
                 }
                 
                 // Show usage stats
