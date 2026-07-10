@@ -8,7 +8,7 @@ const { resolveSessionControlsProbeVariantMock } = vi.hoisted(() => ({
   resolveSessionControlsProbeVariantMock: vi.fn(() => 'provider:variant'),
 }));
 
-vi.mock('@/backends/catalog', () => ({
+vi.mock('@/agent/catalog/registry', () => ({
   AGENTS: {
     codex: {
       resolveSessionControlsProbeVariant: resolveSessionControlsProbeVariantMock,

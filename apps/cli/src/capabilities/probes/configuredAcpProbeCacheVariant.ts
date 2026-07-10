@@ -1,13 +1,9 @@
 import { createHash } from 'node:crypto';
-import { resolve } from 'node:path';
 
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
-import { resolveConfiguredAcpBackendFromPluginBackendDefinition } from '@/agent/acp/catalog/configured/resolveBackend';
 import { resolveConfiguredAcpBackendFromAccountSettingsOrPlugins } from '@/agent/acp/catalog/configured/resolveBackend';
-import type { CatalogAgentLookupId } from '@/backends/types';
-import { resolveLocalPathPluginSource } from '@/plugins/discovery/sources/localPath';
-import { createPluginStateStore } from '@/plugins/store/state';
+import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import { isConfiguredAcpProbeTarget } from './isConfiguredAcpProbeTarget';
 
 function sortJsonValue(value: unknown): unknown {
@@ -22,43 +18,6 @@ function sortJsonValue(value: unknown): unknown {
     return Object.fromEntries(entries);
   }
   return value;
-}
-
-async function resolveConfiguredAcpBackendFromPluginState(params: Readonly<{
-  backendId: string;
-  happyHomeDir?: string;
-}>): Promise<ReturnType<typeof resolveConfiguredAcpBackendFromPluginBackendDefinition> | null> {
-  const store = createPluginStateStore({ happyHomeDir: params.happyHomeDir });
-  const state = await store.read();
-
-  for (const record of Object.values(state.plugins)) {
-    if (!record.state.enabled) {
-      continue;
-    }
-
-    const defaultManifestPath = resolve(record.source.locator, '.happier-plugin/plugin.json');
-    const resolvedLocator = record.install.mode === 'managed_install'
-      ? record.install.installedPath
-      : record.source.manifestPath && record.source.manifestPath !== defaultManifestPath
-        ? record.source.manifestPath
-        : record.source.locator;
-    if (typeof resolvedLocator !== 'string' || resolvedLocator.trim().length === 0) {
-      continue;
-    }
-
-    const resolvedSource = await resolveLocalPathPluginSource({ locator: resolvedLocator });
-    if (!resolvedSource.ok) {
-      continue;
-    }
-
-    const rawBackend = resolvedSource.manifest.contributes.backends.find((entry) => entry.id === params.backendId) ?? null;
-    const backend = resolveConfiguredAcpBackendFromPluginBackendDefinition(rawBackend, params.backendId);
-    if (backend) {
-      return backend;
-    }
-  }
-
-  return null;
 }
 
 export async function resolveConfiguredAcpProbeCacheVariant(params: Readonly<{
@@ -80,11 +39,7 @@ export async function resolveConfiguredAcpProbeCacheVariant(params: Readonly<{
     backendId,
     happyHomeDir: params.happyHomeDir,
   });
-  const pluginBackend = backend ?? await resolveConfiguredAcpBackendFromPluginState({
-    backendId,
-    happyHomeDir: params.happyHomeDir,
-  });
-  if (!pluginBackend) {
+  if (!backend) {
     if (!params.accountSettings) {
       return `configuredAcp:${backendId}:missing-account-settings`;
     }
@@ -92,18 +47,18 @@ export async function resolveConfiguredAcpProbeCacheVariant(params: Readonly<{
   }
 
   const materialProbeSettings = sortJsonValue({
-    command: pluginBackend.command,
-    args: pluginBackend.args,
-    env: pluginBackend.env,
-    auth: pluginBackend.auth,
-    transportProfile: pluginBackend.transportProfile,
-    capabilities: pluginBackend.capabilities,
-    defaultMode: pluginBackend.defaultMode,
-    defaultModel: pluginBackend.defaultModel,
+    command: backend.command,
+    args: backend.args,
+    env: backend.env,
+    auth: backend.auth,
+    transportProfile: backend.transportProfile,
+    capabilities: backend.capabilities,
+    defaultMode: backend.defaultMode,
+    defaultModel: backend.defaultModel,
   });
 
   // Cache variants must not leak raw env/auth material (may contain secrets). Use a stable digest so
   // the key stays bounded and safe to log/debug.
   const digest = createHash('sha256').update(JSON.stringify(materialProbeSettings)).digest('base64url');
-  return `configuredAcp:${pluginBackend.backendId}:${digest}`;
+  return `configuredAcp:${backend.backendId}:${digest}`;
 }

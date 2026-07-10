@@ -39,7 +39,7 @@ describe('probeAgentModesBestEffort (codex app-server)', () => {
     });
 
     expect(result).toEqual({
-      provider: 'codex',
+      agentId: 'codex',
       availableModes: [
         { id: 'default', name: 'Default' },
         { id: 'plan', name: 'Plan', description: 'Reasoning effort: medium' },
@@ -55,6 +55,25 @@ describe('probeAgentModesBestEffort (codex app-server)', () => {
     }));
   });
 
+  it('surfaces repeated Codex app-server preflight failures as unavailable instead of static fallback modes', async () => {
+    probeModesRawMock
+      .mockRejectedValueOnce(new Error('codex app-server unavailable'))
+      .mockRejectedValueOnce(new Error('codex app-server still unavailable'));
+
+    const result = await probeAgentModesBestEffort({
+      agentId: 'codex',
+      cwd: '/repo-retryable-failure',
+      accountSettings: { codexBackendMode: 'appServer' },
+    });
+
+    expect(result).toEqual({
+      agentId: 'codex',
+      availableModes: [],
+      source: 'unavailable',
+    });
+    expect(probeModesRawMock).toHaveBeenCalledTimes(2);
+  });
+
   it('uses Codex app-server collaboration modes when account settings select appServer', async () => {
     probeModesRawMock.mockResolvedValueOnce([
       { id: 'default', name: 'Default' },
@@ -68,7 +87,7 @@ describe('probeAgentModesBestEffort (codex app-server)', () => {
     });
 
     expect(result).toEqual({
-      provider: 'codex',
+      agentId: 'codex',
       availableModes: [
         { id: 'default', name: 'Default' },
         { id: 'plan', name: 'Plan', description: 'Reasoning effort: medium' },
@@ -95,7 +114,7 @@ describe('probeAgentModesBestEffort (codex app-server)', () => {
     });
 
     expect(result).toEqual({
-      provider: 'codex',
+      agentId: 'codex',
       availableModes: [
         { id: 'default', name: 'Default' },
         { id: 'plan', name: 'Plan' },
@@ -108,5 +127,25 @@ describe('probeAgentModesBestEffort (codex app-server)', () => {
       probeKind: 'modes',
       accountSettings: null,
     }));
+  });
+
+  it('surfaces provider-owned mode probe unavailability instead of a static fallback', async () => {
+    resolvePreflightSessionControlsProbeAdapterMock.mockResolvedValueOnce({
+      failureCacheStrategy: 'cooldown',
+      probeModesRaw: probeModesRawMock,
+    });
+    probeModesRawMock.mockResolvedValueOnce(null);
+
+    const result = await probeAgentModesBestEffort({
+      agentId: 'codex',
+      cwd: '/repo-unavailable',
+      accountSettings: { codexBackendMode: 'appServer' },
+    });
+
+    expect(result).toEqual({
+      agentId: 'codex',
+      availableModes: [],
+      source: 'unavailable',
+    });
   });
 });

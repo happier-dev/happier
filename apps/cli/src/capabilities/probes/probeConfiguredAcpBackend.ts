@@ -1,7 +1,7 @@
-import type { AgentBackend } from '@/agent/core';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
-import type { CatalogAgentLookupId } from '@/backends/types';
+import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
+import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import type { Credentials } from '@/persistence';
 
 import { createConfiguredAcpProbeBackend } from './configuredAcpProbeBackend';
@@ -17,7 +17,7 @@ export async function probeConfiguredAcpBackend<T>(params: Readonly<{
   cwd: string;
   accountSettings?: Readonly<Record<string, unknown>> | null;
   credentials?: Credentials | null;
-  onBackend: (backend: AgentBackend) => Promise<T>;
+  onBackend: (backend: AcpProbeBackend) => Promise<T>;
 }>): Promise<ConfiguredAcpProbeBackendResult<T>> {
   const backend = await createConfiguredAcpProbeBackend({
     agentId: params.agentId,

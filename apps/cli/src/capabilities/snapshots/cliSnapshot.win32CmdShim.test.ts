@@ -19,7 +19,7 @@ describe('detectCliSnapshotOnDaemonPath (Windows cmd shim)', () => {
     }
     restoreEnvValues(envBaseline);
     vi.doUnmock('child_process');
-    vi.doUnmock('@/backends/catalog');
+    vi.doUnmock('@/agent/catalog/registry');
     vi.resetModules();
     vi.restoreAllMocks();
     if (workDir) removeTempDirSync(workDir);
@@ -34,7 +34,7 @@ describe('detectCliSnapshotOnDaemonPath (Windows cmd shim)', () => {
 
     vi.resetModules();
 
-    vi.doMock('@/backends/catalog', () => ({
+    vi.doMock('@/agent/catalog/registry', () => ({
       AGENTS: {
         codex: { id: 'codex' },
       },

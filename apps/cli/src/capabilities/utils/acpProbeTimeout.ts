@@ -1,4 +1,4 @@
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 
 const DEFAULT_ACP_PROBE_TIMEOUT_MS = 8_000;
 const MAX_TRANSPORT_DERIVED_ACP_PROBE_TIMEOUT_MS = 30_000;

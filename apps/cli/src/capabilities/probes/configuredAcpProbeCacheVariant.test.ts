@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createPluginStateStore } from '@/plugins/store/state';
 
 import { resolveConfiguredAcpProbeCacheVariant } from './configuredAcpProbeCacheVariant';
@@ -39,73 +40,46 @@ async function writePluginFixture(rootDir: string): Promise<void> {
   await writeFile(
     join(manifestDir, 'plugin.json'),
     JSON.stringify(
-      {
-        schemaVersion: 2,
+      createPluginManifestV2Fixture({
         id: 'acme.probe.variant.plugin',
-        version: '1.0.0',
         displayName: 'Probe Variant Plugin',
         description: 'Contributes an ACP backend used for probe cache variants',
-        engines: {
-          happier: '^0.2.0',
-        },
-        runtime: {
-          apiVersion: 1,
-          capabilities: ['providers', 'backends'],
-        },
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
-          },
-        },
-        permissions: [],
-        contributions: [
+        uses: ['agents'],
+        contributes: {
+          agents: [
           {
-            kind: 'provider',
-            kindVersion: 1,
-            id: 'acme.probe.variant.provider',
-            providerAgentId: 'customAcp',
-            display: {
-              name: 'Probe Variant Provider',
-              tags: ['plugin'],
-            },
-            ownedBackendIds: ['acme.probe.variant.backend'],
-          },
-          {
-            kind: 'backend',
-            kindVersion: 1,
             id: 'acme.probe.variant.backend',
-            providerId: 'acme.probe.variant.provider',
-            runtimeKind: 'acp',
-            capabilities: {
-              supportsModels: true,
-              supportsModes: true,
-              supportsConfigOptions: true,
-            },
-            surfaceHandlers: [],
-            launch: {
-              command: 'plugin-variant-launch',
-              args: ['--ignored'],
-              env: {},
-            },
-            acp: {
-              title: 'Plugin Variant Backend',
-              command: 'plugin-variant-cli',
-              args: ['acp'],
-              env: {
-                REGION: { t: 'literal', v: 'eu' },
+            runtime: {
+              kind: 'acp',
+              transport: {
+                kind: 'stdio',
+                launch: {
+                  kind: 'executable',
+                  command: 'plugin-variant-cli',
+                  args: ['acp'],
+                  env: {
+                    REGION: 'eu',
+                  },
+                },
               },
-              transportProfile: 'generic',
+              ux: {
+                title: 'Plugin Variant Backend',
+              },
               capabilities: {
-                supportsLoadSession: false,
-                supportsModes: 'yes',
-                supportsModels: 'yes',
+                supportsResume: false,
+                supportsModes: true,
+                supportsModels: true,
                 supportsConfigOptions: 'unknown',
-                promptImageSupport: 'unknown',
+                supportsPromptImages: false,
               },
+            },
+            capabilities: {
+              externalSessions: true,
             },
           },
-        ],
-      },
+          ],
+        },
+      }),
       null,
       2,
     ),

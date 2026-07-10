@@ -5,9 +5,9 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import {
-  providerCliPathRequiresJavaScriptRuntime,
-  resolveProviderCliJavaScriptRuntimeCommand,
-} from '@happier-dev/cli-common/providers';
+  agentCliPathRequiresJavaScriptRuntime,
+  resolveAgentCliJavaScriptRuntimeCommand,
+} from '@happier-dev/cli-common/agents';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
 const execFileAsync = promisify(execFile);
@@ -30,8 +30,8 @@ export async function runCliCommandBestEffort(params: Readonly<{
   const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : 1_000;
   const isWindows = process.platform === 'win32';
   const isCmdScript = isWindows && /\.(cmd|bat)$/i.test(params.resolvedPath);
-  const needsJavaScriptRuntime = providerCliPathRequiresJavaScriptRuntime(params.resolvedPath);
-  const runtimeExecutable = resolveProviderCliJavaScriptRuntimeCommand(params.resolvedPath, process.env, {
+  const needsJavaScriptRuntime = agentCliPathRequiresJavaScriptRuntime(params.resolvedPath);
+  const runtimeExecutable = resolveAgentCliJavaScriptRuntimeCommand(params.resolvedPath, process.env, {
     isBunRuntime: typeof process.versions.bun === 'string',
     currentExecPath: process.execPath,
   });

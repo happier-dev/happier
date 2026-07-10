@@ -3,7 +3,7 @@ import {
   isAgentId,
   legacyCustomAcpCompat,
 } from '@happier-dev/agents';
-import type { CatalogAgentLookupId } from '@/backends/types';
+import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 
 import type { CliAuthSpec } from './types';
 

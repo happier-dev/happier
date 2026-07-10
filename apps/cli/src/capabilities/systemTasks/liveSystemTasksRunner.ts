@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 
-import { SystemTaskSpecSchema } from '@happier-dev/protocol';
+import {
+  SSH_TUNNEL_SYSTEM_TASK_KINDS,
+  SystemTaskSpecSchema,
+} from '@happier-dev/protocol';
 import {
   createDaemonServiceRestartTaskKind,
   createDaemonServiceStartTaskKind,
@@ -267,10 +270,10 @@ export function getLiveSystemTasksRunnerAdapter(): SystemTasksRunnerAdapter {
         stopService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'stop'),
         restartService: async (params) => await runLiveDaemonServiceLifecycleAction(params, 'restart'),
       }),
-      'daemon.sshTunnel.ensure.v1': createDaemonSshTunnelEnsureTaskKind(),
-      'daemon.sshTunnel.list.v1': createDaemonSshTunnelListTaskKind(),
-      'daemon.sshTunnel.release.v1': createDaemonSshTunnelReleaseTaskKind(),
-      'daemon.sshTunnel.stop.v1': createDaemonSshTunnelStopTaskKind(),
+      [SSH_TUNNEL_SYSTEM_TASK_KINDS.ensure]: createDaemonSshTunnelEnsureTaskKind(),
+      [SSH_TUNNEL_SYSTEM_TASK_KINDS.list]: createDaemonSshTunnelListTaskKind(),
+      [SSH_TUNNEL_SYSTEM_TASK_KINDS.release]: createDaemonSshTunnelReleaseTaskKind(),
+      [SSH_TUNNEL_SYSTEM_TASK_KINDS.stop]: createDaemonSshTunnelStopTaskKind(),
       'relay.runtime.installOrUpdate.v1': createRelayRuntimeInstallOrUpdateTaskKind({
         installOrUpdate: async (params) => {
           const localParams = requireLocalRelayRuntimeParams(params);

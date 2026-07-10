@@ -80,7 +80,7 @@ describe('probeAgentModelsBestEffort (configured ACP backend)', () => {
     });
 
     expect(result.source).toBe('dynamic');
-    expect(result.provider).toBe('customAcp');
+    expect(result.agentId).toBe('customAcp');
     expect(result.availableModels).toEqual([
       { id: 'default', name: 'Default' },
       { id: 'model-a', name: 'Model A' },

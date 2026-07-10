@@ -1,7 +1,6 @@
-import type { AgentCatalogEntry } from '@/backends/catalog';
-import { AGENTS } from '@/backends/catalog';
-import { CATALOG_AGENT_IDS } from '@/backends/types';
-import type { CatalogAgentId } from '@/backends/types';
+import { AGENTS } from '@/agent/catalog/registry';
+import type { AgentCatalogEntry } from '@/agent/catalog/types';
+import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/agent/catalog/ids';
 
 import { CHECKLIST_IDS, resumeChecklistId, type ChecklistId } from './checklistIds';
 import type { CapabilityDetectRequest } from './types';

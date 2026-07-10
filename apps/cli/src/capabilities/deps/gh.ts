@@ -10,7 +10,7 @@ import {
   GH_GITHUB_REPO,
   INSTALLABLE_KEYS,
 } from '@happier-dev/protocol/installables';
-import { downloadGitHubReleaseAsset } from '@happier-dev/cli-common/providers';
+import { downloadGitHubReleaseAsset } from '@happier-dev/cli-common/agents';
 import { extractReleasePayloadRootFromArchive } from '@happier-dev/cli-common/firstPartyRuntime';
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';

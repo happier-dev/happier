@@ -24,21 +24,29 @@ vi.mock('./configuredAcpProbeBackend', () => ({
   createConfiguredAcpProbeBackend: createConfiguredAcpProbeBackendMock,
 }));
 
-vi.mock('@/backends/catalog', () => ({
-  AGENTS: {
-    claude: {},
-    opencode: {
-      getAcpRuntimeDefinitionBridge: async () => null,
+vi.mock('@/agent/catalog/registry', async () => {
+  const { normalizeKimiAcpPythonSelector } = await import('@happier-dev/plugins-kimi/agent/acp/pythonSelectorEnv');
+  const readKimiSelector = (accountSettings?: Record<string, unknown> | null) =>
+    normalizeKimiAcpPythonSelector(accountSettings?.kimiAcpPythonSelector) ?? 'auto';
+
+  return {
+    AGENTS: {
+      claude: {},
+      opencode: {
+        getAcpRuntimeDefinitionBridge: async () => null,
+      },
+      kimi: {
+        getAcpBackendFactory: () => ({}),
+        resolveModelsProbeVariant: ({ accountSettings }: { accountSettings?: Record<string, unknown> | null }) =>
+          `kimi:${readKimiSelector(accountSettings)}`,
+        resolveModelsProbeBackendOptions: ({ accountSettings }: { accountSettings?: Record<string, unknown> | null }) => {
+          const selector = readKimiSelector(accountSettings);
+          return selector === 'poll' ? { kimiAcpPythonSelector: selector } : {};
+        },
+      },
     },
-    kimi: {
-      getAcpBackendFactory: () => ({}),
-      resolveModelsProbeVariant: ({ accountSettings }: { accountSettings?: Record<string, unknown> | null }) =>
-        `kimi:${typeof accountSettings?.kimiAcpPythonSelector === 'string' ? accountSettings.kimiAcpPythonSelector : 'auto'}`,
-      resolveModelsProbeBackendOptions: ({ accountSettings }: { accountSettings?: Record<string, unknown> | null }) =>
-        accountSettings?.kimiAcpPythonSelector === 'poll' ? { kimiAcpPythonSelector: 'poll' } : {},
-    },
-  },
-}));
+  };
+});
 
 import { probeAgentModelsBestEffort, resetAgentModelsProbeCacheForTests } from './agentModelsProbe';
 
@@ -50,7 +58,7 @@ describe('probeAgentModelsBestEffort (static-only providers)', () => {
     createConfiguredAcpProbeBackendMock.mockClear();
   });
 
-  it('does not start ACP backend for qwen model probing', async () => {
+  it('does not start ACP backend for unavailable qwen model probing', async () => {
     createCatalogAcpBackendMock.mockRejectedValue(new Error('unexpected acp backend creation'));
     const res = await probeAgentModelsBestEffort({
       agentId: 'qwen',
@@ -58,8 +66,9 @@ describe('probeAgentModelsBestEffort (static-only providers)', () => {
       timeoutMs: 100,
     });
 
-    expect(res.provider).toBe('qwen');
-    expect(res.source).toBe('static');
+    expect(res.agentId).toBe('qwen');
+    expect(res.source).toBe('unavailable');
+    expect(res.availableModels).toEqual([]);
     expect(createCatalogAcpBackendMock).not.toHaveBeenCalled();
   });
 
@@ -82,7 +91,7 @@ describe('probeAgentModelsBestEffort (static-only providers)', () => {
       timeoutMs: 100,
     });
 
-    expect(res.provider).toBe('kimi');
+    expect(res.agentId).toBe('kimi');
     expect(res.source).toBe('dynamic');
     expect(res.availableModels).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'kimi-code/kimi-for-coding', name: 'Kimi for Coding' }),
@@ -109,7 +118,7 @@ describe('probeAgentModelsBestEffort (static-only providers)', () => {
       timeoutMs: 100,
     });
 
-    expect(res.provider).toBe('opencode');
+    expect(res.agentId).toBe('opencode');
     expect(res.source).toBe('dynamic');
     expect(res.availableModels).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'anthropic/claude-sonnet-4.5', name: 'Claude Sonnet 4.5' }),
@@ -164,6 +173,51 @@ describe('probeAgentModelsBestEffort (static-only providers)', () => {
     expect(createCatalogAcpBackendMock).toHaveBeenCalledTimes(2);
   });
 
+  it('normalizes mixed-case Kimi poll selector settings before probing and cache partitioning', async () => {
+    validateCatalogAcpProbeSpawnMock.mockResolvedValue({ ok: true });
+    createCatalogAcpBackendMock.mockImplementation(async (_agentId: string, opts: Record<string, unknown>) => ({
+      backend: {
+        startSession: async () => ({ sessionId: 'session-kimi' }),
+        getSessionModelState: () => ({
+          availableModels: [
+            opts.kimiAcpPythonSelector === 'poll'
+              ? { id: 'poll-model', name: 'Poll model' }
+              : { id: 'auto-model', name: 'Auto model' },
+          ],
+        }),
+        getSessionConfigOptionsState: () => null,
+        dispose: vi.fn(async () => {}),
+      },
+    }));
+
+    const poll = await probeAgentModelsBestEffort({
+      agentId: 'kimi',
+      cwd: process.cwd(),
+      timeoutMs: 100,
+      accountSettings: { kimiAcpPythonSelector: ' POLL ' },
+    });
+    expect(poll.availableModels).toEqual([
+      { id: 'default', name: 'Default' },
+      { id: 'poll-model', name: 'Poll model' },
+    ]);
+
+    const auto = await probeAgentModelsBestEffort({
+      agentId: 'kimi',
+      cwd: process.cwd(),
+      timeoutMs: 100,
+      accountSettings: { kimiAcpPythonSelector: 'auto' },
+    });
+    expect(auto.availableModels).toEqual([
+      { id: 'default', name: 'Default' },
+      { id: 'auto-model', name: 'Auto model' },
+    ]);
+
+    expect(createCatalogAcpBackendMock).toHaveBeenNthCalledWith(1, 'kimi', expect.objectContaining({
+      kimiAcpPythonSelector: 'poll',
+    }));
+    expect(createCatalogAcpBackendMock).toHaveBeenCalledTimes(2);
+  });
+
   it('falls back to curated static Claude model labels when dynamic probing is unavailable', async () => {
     const res = await probeAgentModelsBestEffort({
       agentId: 'claude',
@@ -171,7 +225,7 @@ describe('probeAgentModelsBestEffort (static-only providers)', () => {
       timeoutMs: 100,
     });
 
-    expect(res.provider).toBe('claude');
+    expect(res.agentId).toBe('claude');
     expect(res.source).toBe('static');
     expect(createConfiguredAcpProbeBackendMock).not.toHaveBeenCalled();
 

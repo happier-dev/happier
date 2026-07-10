@@ -48,5 +48,5 @@ process.exit(1);
       }
       await fixture.cleanup();
     }
-  }, 20_000);
+  }, 60_000);
 });

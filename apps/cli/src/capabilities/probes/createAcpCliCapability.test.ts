@@ -17,21 +17,21 @@ type ProbeAcpAgentCapabilities = (params: {
   timeoutMs?: number;
 }) => Promise<AcpProbeResult>;
 
-const { probeAcpAgentCapabilities, requireProviderCliLaunchSpec } = vi.hoisted(() => ({
+const { probeAcpAgentCapabilities, requireAgentCliLaunchSpec } = vi.hoisted(() => ({
   probeAcpAgentCapabilities: vi.fn<ProbeAcpAgentCapabilities>(async () => ({
     ok: false as const,
     checkedAt: 1,
     error: { message: 'probe disabled in unit test' },
   })),
-  requireProviderCliLaunchSpec: vi.fn(),
+  requireAgentCliLaunchSpec: vi.fn(),
 }));
 
 vi.mock('@/capabilities/probes/acpProbe', () => ({
   probeAcpAgentCapabilities,
 }));
 
-vi.mock('@/packagedRuntime/managedTools/requireProviderCliLaunchSpec', () => ({
-  requireProviderCliLaunchSpec,
+vi.mock('@/packagedRuntime/managedTools/requireAgentCliLaunchSpec', () => ({
+  requireAgentCliLaunchSpec,
 }));
 
 function buildCliSnapshot(resolvedPath: string): DetectCliSnapshot {
@@ -39,6 +39,7 @@ function buildCliSnapshot(resolvedPath: string): DetectCliSnapshot {
     path: process.env.PATH ?? null,
     clis: {
       claude: { available: false },
+      antigravity: { available: false },
       codex: { available: false },
       opencode: { available: false },
       gemini: { available: true, resolvedPath },
@@ -52,6 +53,8 @@ function buildCliSnapshot(resolvedPath: string): DetectCliSnapshot {
       pi: { available: false },
       cursor: { available: false },
       copilot: { available: false },
+      coderabbit: { available: false },
+      deepsec: { available: false },
     },
     tmux: { available: false },
     windowsTerminal: { available: false },
@@ -79,11 +82,11 @@ function createKimiPluginCliCapability() {
 describe('createAcpCliCapability', () => {
   beforeEach(() => {
     probeAcpAgentCapabilities.mockClear();
-    requireProviderCliLaunchSpec.mockReset();
+    requireAgentCliLaunchSpec.mockReset();
   });
 
   it('probes ACP capabilities through the canonical provider launch path when the CLI uses a JS runtime wrapper', async () => {
-    requireProviderCliLaunchSpec.mockReturnValue({
+    requireAgentCliLaunchSpec.mockReturnValue({
       source: 'managed',
       resolvedPath: '/managed/gemini/index.mjs',
       command: '/managed/node',
@@ -188,7 +191,7 @@ describe('createAcpCliCapability', () => {
   });
 
   it('allows provider-owned ACP probes to augment the child environment', async () => {
-    requireProviderCliLaunchSpec.mockReturnValue({
+    requireAgentCliLaunchSpec.mockReturnValue({
       source: 'managed',
       resolvedPath: '/managed/kimi/index.mjs',
       command: '/managed/node',
@@ -236,7 +239,7 @@ describe('createAcpCliCapability', () => {
     const originalPythonPath = process.env.PYTHONPATH;
     const originalSecret = process.env.HAPPIER_TEST_SECRET;
     expect(originalPlatformDescriptor).toBeDefined();
-    requireProviderCliLaunchSpec.mockReturnValue({
+    requireAgentCliLaunchSpec.mockReturnValue({
       source: 'managed',
       resolvedPath: '/managed/kimi/index.mjs',
       command: '/managed/node',

@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { detectCliSnapshotOnDaemonPath } from './cliSnapshot';
-import { resolveProviderCliManagedCommandPath } from '@/packagedRuntime/managedTools/providerCliResolution';
+import { resolveAgentCliManagedCommandPath } from '@/packagedRuntime/managedTools/agentCliResolution';
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
 import { resolveSystemJavaScriptRuntimeBinary, writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
@@ -23,6 +23,7 @@ const SCOPED_ENV_KEYS = [
   'HAPPIER_JS_RUNTIME_PATH',
   'HAPPIER_MANAGED_NODE_BIN',
   'HAPPIER_NODE_PATH',
+  'HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS',
   'ANTHROPIC_API_KEY',
   'OPENAI_API_KEY',
 ] as const;
@@ -72,6 +73,7 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     setEnv('HAPPIER_CODEX_PATH', undefined);
     setEnv('HAPPIER_OHMYPI_PATH', undefined);
     setEnv('HAPPIER_OPENCODE_PATH', undefined);
+    setEnv('HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS', undefined);
   });
 
   afterEach(() => {
@@ -94,6 +96,33 @@ describe('detectCliSnapshotOnDaemonPath', () => {
       expect(snapshot.clis.claude.available).toBe(true);
       expect(snapshot.clis.claude.resolvedPath).toBe(claudePath);
       expect(snapshot.clis.claude.version).toBe('2.0.69');
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'prefers Claude native install discovery over PATH wrappers',
+    async () => {
+      const wrapperBin = join(workDir, 'wrapper-bin');
+      mkdirSync(wrapperBin, { recursive: true });
+      makeExecutableShim({
+        dir: wrapperBin,
+        name: 'claude',
+        stdout: 'echo "9.9.9 (Wrapper)"',
+      });
+      setEnv('PATH', wrapperBin);
+
+      const localBin = join(homeDir, '.local', 'bin');
+      mkdirSync(localBin, { recursive: true });
+      const claudePath = makeExecutableShim({
+        dir: localBin,
+        name: 'claude',
+        stdout: 'echo "2.0.72 (Claude Code)"',
+      });
+
+      const snapshot = await detectCliSnapshotOnDaemonPath({});
+      expect(snapshot.clis.claude.available).toBe(true);
+      expect(snapshot.clis.claude.resolvedPath).toBe(claudePath);
+      expect(snapshot.clis.claude.version).toBe('2.0.72');
     },
   );
 
@@ -157,6 +186,37 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     expect(snapshot.clis.claude.available).toBe(true);
     expect(snapshot.clis.claude.resolvedPath).toBe(claudePath);
     expect(snapshot.clis.claude.version).toBe('2.0.71');
+  });
+
+  it('uses the configured snapshot budget when probing JavaScript entrypoint versions', async () => {
+    const entryDir = join(workDir, 'claude-js-slow');
+    mkdirSync(entryDir, { recursive: true });
+    const claudePath = join(entryDir, 'claude.js');
+    writeFileSync(
+      claudePath,
+      [
+        '#!/usr/bin/env node',
+        'if (process.argv.includes("--version")) {',
+        '  setTimeout(() => console.log("2.0.73 (Claude Code)"), 1300);',
+        '} else {',
+        '  console.log("ok");',
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    if (process.platform !== 'win32') {
+      chmodSync(claudePath, 0o644);
+    }
+
+    setEnv('HAPPIER_CLAUDE_PATH', claudePath);
+    setEnv('HAPPIER_JS_RUNTIME_PATH', resolveSystemJavaScriptRuntimeBinary(envBaseline.PATH));
+    setEnv('HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS', '3000');
+
+    const snapshot = await detectCliSnapshotOnDaemonPath({});
+    expect(snapshot.clis.claude.available).toBe(true);
+    expect(snapshot.clis.claude.resolvedPath).toBe(claudePath);
+    expect(snapshot.clis.claude.version).toBe('2.0.73');
   });
 
   it.skipIf(process.platform === 'win32')(
@@ -252,7 +312,7 @@ describe('detectCliSnapshotOnDaemonPath', () => {
   );
 
   it('detects managed Codex installs when the system CLI is unavailable', async () => {
-    const managedPath = resolveProviderCliManagedCommandPath('codex', { happyHomeDir: homeDir });
+    const managedPath = resolveAgentCliManagedCommandPath('codex', { happyHomeDir: homeDir });
     mkdirSync(join(managedPath, '..'), { recursive: true });
     writeFileSync(
       managedPath,
@@ -277,7 +337,7 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     });
     setEnv('PATH', systemBin);
 
-    const managedPath = resolveProviderCliManagedCommandPath('codex', { happyHomeDir: homeDir });
+    const managedPath = resolveAgentCliManagedCommandPath('codex', { happyHomeDir: homeDir });
     mkdirSync(join(managedPath, '..'), { recursive: true });
     writeFileSync(
       managedPath,
@@ -303,7 +363,7 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     });
     setEnv('HAPPIER_CODEX_PATH', overrideCodexPath);
 
-    const managedPath = resolveProviderCliManagedCommandPath('codex', { happyHomeDir: homeDir });
+    const managedPath = resolveAgentCliManagedCommandPath('codex', { happyHomeDir: homeDir });
     mkdirSync(join(managedPath, '..'), { recursive: true });
     writeFileSync(
       managedPath,
@@ -576,7 +636,7 @@ describe('detectCliSnapshotOnDaemonPath', () => {
   );
 
   it.skipIf(process.platform === 'win32')(
-    'reports Gemini as logged in when ~/.gemini/oauth_creds.json exists',
+    'does not treat Gemini native OAuth files as Happier-managed login status',
     async () => {
       const binDir = join(workDir, 'bin');
       mkdirSync(binDir, { recursive: true });
@@ -612,7 +672,11 @@ describe('detectCliSnapshotOnDaemonPath', () => {
 
       const snapshot = await detectCliSnapshotOnDaemonPath({ includeLoginStatus: true });
       expect(snapshot.clis.gemini.available).toBe(true);
-      expect(snapshot.clis.gemini.isLoggedIn).toBe(true);
+      expect(snapshot.clis.gemini.isLoggedIn).toBe(false);
+      expect(snapshot.clis.gemini.authStatus).toMatchObject({
+        state: 'logged_out',
+        reason: 'missing_credentials',
+      });
 
       const invocations = readFileSync(invocationsPath, 'utf8');
       expect(invocations).not.toContain('auth status');
@@ -660,9 +724,15 @@ describe('detectCliSnapshotOnDaemonPath', () => {
       writeFileSync(
         join(credentialsDir, '.credentials.json'),
         JSON.stringify({
-          accessToken: 'claude-access-token',
-          expiresAt: '2099-01-01T00:00:00.000Z',
-          email: 'tester@example.com',
+          claudeAiOauth: {
+            accessToken: 'claude-access-token',
+            refreshToken: 'claude-refresh-token',
+            expiresAt: Date.parse('2099-01-01T00:00:00.000Z'),
+            scopes: ['user:inference', 'user:profile', 'user:sessions:claude_code'],
+          },
+          oauthAccount: {
+            emailAddress: 'tester@example.com',
+          },
         }),
         'utf8',
       );

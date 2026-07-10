@@ -1,12 +1,10 @@
 import type { Capability, CapabilitiesDetectContext } from '../service';
 import { resolveCliFeatureDecision } from '../../features/featureDecisionService';
 import {
-  AGENT_PROVIDER_IDS,
+  AGENT_IDS,
   hasBuiltInAcpConfig,
   isAgentId,
-  resolveAgentRuntimeControlSurface,
-  resolveDefaultAgentRuntimeKind,
-  resolveCodexSpawnExtrasForRuntime,
+  resolveAgentRuntimeControlSurfaceForSession,
 } from '@happier-dev/agents';
 import {
   ExecutionRunIntentSchema,
@@ -19,7 +17,8 @@ import {
 } from '../../agent/executionRuns/profiles/intentRegistry';
 import { hasCatalogAcpBackendOwner } from '../../agent/acp/catalog/owner';
 import { resolveCliEngineRegistry } from '../../agent/runtime/registry/engineRegistry';
-import type { ResolvedBackendContribution } from '../../plugins/projection/registry/types';
+import type { ResolvedAgentRuntimeContribution } from '../../plugins/projection/registry/types';
+import { resolveProviderSessionRuntimePreferences } from '../../session/runtime/catalogHooks';
 
 function isCliAvailable(context: CapabilitiesDetectContext, agentId: string): boolean {
   const clis = context?.cliSnapshot?.clis;
@@ -44,7 +43,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function resolveBackendExecutionRunIntents(params: Readonly<{
-  backendContribution?: ResolvedBackendContribution;
+  backendContribution?: ResolvedAgentRuntimeContribution;
   defaultIntents: readonly ExecutionRunIntent[];
 }>): readonly ExecutionRunIntent[] {
   const executionRun = params.backendContribution?.capabilities?.executionRun;
@@ -78,7 +77,7 @@ function resolveExecutionRunBackendAvailability(params: Readonly<{
     getAcpRuntimeDefinitionBridge?: unknown;
     getRuntimeCore?: unknown;
   }> | null | undefined;
-  backendContribution?: ResolvedBackendContribution;
+  backendContribution?: ResolvedAgentRuntimeContribution;
 }>): boolean {
   if (params.backendContribution?.capabilities?.executionRun?.supported === false) {
     return false;
@@ -115,19 +114,20 @@ export const executionRunsCapability: Capability = {
         disabledReason: gate.blockerCode,
       };
     }
-    const voiceEnabled = resolveCliFeatureDecision({ featureId: 'voice', env: process.env }).state === 'enabled';
+    const voiceAgentDecision = resolveCliFeatureDecision({ featureId: 'voice.agent', env: process.env });
+    const voiceAgentEnabled = voiceAgentDecision.state === 'enabled';
 
     const cliEngineRegistry = await resolveCliEngineRegistry();
     const executionRunProfileCatalog = buildExecutionRunProfileCatalog(
       (cliEngineRegistry.contributions.executionRunProfiles ?? []).map((profile) => profile.definition),
     );
     const executionRunProfiles = listExecutionRunProfileContributionDescriptors(executionRunProfileCatalog);
-    const intents = voiceEnabled
+    const intents = voiceAgentEnabled
       ? listExecutionRunSupportedIntents()
       : listExecutionRunSupportedIntents().filter((intent) => intent !== 'voice_agent');
-    const contributedBackendIds = Array.from(cliEngineRegistry.contributions.backendDefinitionsById.keys());
+    const contributedBackendIds = Array.from(cliEngineRegistry.contributions.agentRuntimeDefinitionsById.keys());
     const catalogBackendIds = Object.keys(cliEngineRegistry.contributions.catalogEntriesById);
-    const knownBuiltInAgentIds = AGENT_PROVIDER_IDS;
+    const knownBuiltInAgentIds = AGENT_IDS;
     const backendIds = Array.from(new Set([
       ...knownBuiltInAgentIds,
       'customAcp',
@@ -136,25 +136,28 @@ export const executionRunsCapability: Capability = {
     ]));
 
     const supportsVendorResumeByBackend = Object.fromEntries(
-      backendIds.map((backendId) => {
+      await Promise.all(backendIds.map(async (backendId) => {
         const isKnownBuiltInAgentId = isAgentId(backendId);
         if (isKnownBuiltInAgentId) {
-          const surface = backendId === 'codex'
-            ? (() => {
-              const codexExtras = resolveCodexSpawnExtrasForRuntime({ settings: {}, processEnv: process.env });
-              const runtimeKind = (codexExtras.codexBackendMode ?? resolveDefaultAgentRuntimeKind('codex')) ?? null;
-              return resolveAgentRuntimeControlSurface('codex', runtimeKind);
-            })()
-            : resolveAgentRuntimeControlSurface(backendId, null);
-          return [backendId, surface.resume.vendorResume !== 'unsupported'] as const;
+          const runtimePreferences = await resolveProviderSessionRuntimePreferences(backendId, {
+            settings: {},
+            processEnv: process.env,
+            startedBy: 'daemon',
+          });
+          const surface = resolveAgentRuntimeControlSurfaceForSession({
+            agentId: backendId,
+            metadata: {},
+            accountSettings: runtimePreferences,
+          });
+          return [backendId, surface?.resume.vendorResume !== 'unsupported'] as const;
         }
         return [backendId, false] as const;
-      }),
+      })),
     ) as Record<string, boolean>;
 
     const backends = Object.fromEntries(
       backendIds.map((backendId) => {
-        const backendContribution = cliEngineRegistry.contributions.backendDefinitionsById.get(backendId);
+        const backendContribution = cliEngineRegistry.contributions.agentRuntimeDefinitionsById.get(backendId);
         const entry = cliEngineRegistry.contributions.catalogEntriesById[backendId];
         const isKnownBuiltInAgentId = isAgentId(backendId);
         const available = resolveExecutionRunBackendAvailability({
@@ -178,6 +181,16 @@ export const executionRunsCapability: Capability = {
     return {
       available: true,
       intents,
+      ...(voiceAgentEnabled
+        ? {}
+        : {
+            disabledIntents: {
+              voice_agent: {
+                disabledBy: voiceAgentDecision.blockedBy ?? 'local_policy',
+                disabledReason: voiceAgentDecision.blockerCode,
+              },
+            },
+          }),
       executionRunProfiles,
       // Backend catalog is best-effort and intended for UI affordances (pickers, warnings).
       // Runtime enforcement still happens at execution-run start/send time.

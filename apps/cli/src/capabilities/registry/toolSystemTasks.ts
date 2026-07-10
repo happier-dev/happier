@@ -1,5 +1,8 @@
 import {
+  SSH_TUNNEL_SYSTEM_TASK_KIND_IDS,
+  SSH_TUNNEL_SYSTEM_TASK_KINDS,
   SystemTaskSpecSchema,
+  type SystemTaskJsonValue,
 } from '@happier-dev/protocol';
 
 import { type Capability } from '../service';
@@ -8,10 +11,7 @@ import { getLiveSystemTasksRunnerAdapter } from '../systemTasks/liveSystemTasksR
 
 export const SYSTEM_TASK_KIND_IDS = [
   DISCOVER_CONFIGURED_SSH_HOSTS_SYSTEM_TASK_KIND,
-  'daemon.sshTunnel.ensure.v1',
-  'daemon.sshTunnel.list.v1',
-  'daemon.sshTunnel.release.v1',
-  'daemon.sshTunnel.stop.v1',
+  ...SSH_TUNNEL_SYSTEM_TASK_KIND_IDS,
   'remote.ssh.bootstrapMachine.v1',
   'relay.runtime.installOrUpdate.v1',
   'relay.runtime.start.v1',
@@ -41,7 +41,7 @@ function createUnsupportedRunner(): SystemTasksRunnerAdapter {
 
 export function createProtocolSystemTasksRunnerAdapter(
   runner: Readonly<{
-    start: (params: Readonly<{ taskId: string; kind: string; params: unknown }>) => Promise<unknown>;
+    start: (params: Readonly<{ taskId: string; kind: string; params: SystemTaskJsonValue }>) => Promise<unknown>;
     poll: (params: Readonly<{ taskId: string; cursor: number }>) => Promise<unknown>;
     respond: (params: Readonly<{ taskId: string; answer: unknown }>) => Promise<void>;
   }>,
@@ -92,6 +92,20 @@ export function createSystemTasksCapability(runner: SystemTasksRunnerAdapter = c
       available: true,
       kinds: [...SYSTEM_TASK_KIND_IDS],
       methods: ['start', 'poll', 'respond'],
+      taskGroups: [
+        {
+          id: 'ssh-tunnel-supervisor',
+          title: 'SSH tunnel supervisor',
+          owner: 'local-daemon',
+          surface: 'host-internal-system-task',
+          kinds: [
+            SSH_TUNNEL_SYSTEM_TASK_KINDS.ensure,
+            SSH_TUNNEL_SYSTEM_TASK_KINDS.list,
+            SSH_TUNNEL_SYSTEM_TASK_KINDS.release,
+            SSH_TUNNEL_SYSTEM_TASK_KINDS.stop,
+          ],
+        },
+      ],
     }),
     invoke: async ({ method, params }) => {
       if (method === 'start') {

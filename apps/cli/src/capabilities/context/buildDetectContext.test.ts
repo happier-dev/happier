@@ -11,6 +11,7 @@ function makeDetectCliSnapshot(): DetectCliSnapshot {
     path: '/usr/bin',
     clis: {
       claude: makeUnavailableCliEntry(),
+      antigravity: makeUnavailableCliEntry(),
       codex: makeUnavailableCliEntry(),
       opencode: makeUnavailableCliEntry(),
       gemini: makeUnavailableCliEntry(),
@@ -24,6 +25,8 @@ function makeDetectCliSnapshot(): DetectCliSnapshot {
       pi: makeUnavailableCliEntry(),
       cursor: makeUnavailableCliEntry(),
       copilot: makeUnavailableCliEntry(),
+      coderabbit: makeUnavailableCliEntry(),
+      deepsec: makeUnavailableCliEntry(),
     },
     tmux: { available: false },
     windowsTerminal: { available: false },

@@ -1,20 +1,20 @@
 import type { TransportHandler } from '@/agent/transport';
 import type { AcpRuntimeDefinitionBridgeV1 } from '@/agent/acp/runtime/definition';
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { resolveAcpProbeTimeoutMs } from '@/capabilities/utils/acpProbeTimeout';
 import { buildAcpCapabilitySnapshot } from '@/capabilities/probes/acpCapabilitySnapshot';
 import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
 import { probeAcpAgentCapabilities } from '@/capabilities/probes/acpProbe';
 import { probeAcpRuntimeDefinitionBridgeCapabilities } from '@/capabilities/probes/acpBackend';
 import type { Capability } from '@/capabilities/service';
-import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
+import { requireAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 
 function resolveAcpProbeLaunch(agentId: CatalogAgentId, resolvedPath: string): Readonly<{
   command: string;
   args: readonly string[];
 }> {
   try {
-    const launch = requireProviderCliLaunchSpec(agentId, { processEnv: process.env });
+    const launch = requireAgentCliLaunchSpec(agentId, { processEnv: process.env });
     if (launch.resolvedPath === resolvedPath) {
       return {
         command: launch.command,

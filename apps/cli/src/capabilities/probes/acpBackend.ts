@@ -1,6 +1,6 @@
 import type { AcpRuntimeDefinitionBridgeV1 } from '@/agent/acp/runtime/definition';
 import { resolveAcpRuntimeDefinitionProbeLaunch } from '@/agent/acp/runtime/definition';
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { resolveAcpProbeTimeoutMs } from '@/capabilities/utils/acpProbeTimeout';
 
 import { probeAcpAgentCapabilities } from './acpProbe';

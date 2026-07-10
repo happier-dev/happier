@@ -9,6 +9,7 @@ export type PreflightSessionControlsProbeParams = Readonly<{
   cwd: string;
   timeoutMs: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
+  env?: NodeJS.ProcessEnv;
 }>;
 
 /**

@@ -1,5 +1,5 @@
-import { AGENTS } from '@/backends/catalog';
-import type { CatalogAgentLookupId } from '@/backends/types';
+import { AGENTS } from '@/agent/catalog/registry';
+import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 
 import type { PreflightSessionControlsProbeAdapter } from './preflightSessionControlsProbeAdapterTypes';
 

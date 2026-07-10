@@ -4,7 +4,7 @@ const { getPreflightSessionControlsProbeAdapterMock } = vi.hoisted(() => ({
   getPreflightSessionControlsProbeAdapterMock: vi.fn(),
 }));
 
-vi.mock('@/backends/catalog', () => ({
+vi.mock('@/agent/catalog/registry', () => ({
   AGENTS: {
     claude: {
       getPreflightSessionControlsProbeAdapter: getPreflightSessionControlsProbeAdapterMock,

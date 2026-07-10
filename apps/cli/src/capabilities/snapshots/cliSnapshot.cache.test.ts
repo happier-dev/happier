@@ -27,7 +27,7 @@ describe('detectCliSnapshotOnDaemonPath (cache)', () => {
   it('returns a timed-out auth status instead of hanging when a CLI auth probe never settles', async () => {
     vi.resetModules();
 
-    vi.doMock('@/backends/catalog', () => ({
+    vi.doMock('@/agent/catalog/registry', () => ({
       AGENTS: {
         codex: {
           id: 'codex',
@@ -91,7 +91,7 @@ describe('detectCliSnapshotOnDaemonPath (cache)', () => {
       source: 'command' as const,
     }));
 
-    vi.doMock('@/backends/catalog', () => ({
+    vi.doMock('@/agent/catalog/registry', () => ({
       AGENTS: {
         codex: {
           id: 'codex',
@@ -151,7 +151,7 @@ describe('detectCliSnapshotOnDaemonPath (cache)', () => {
   it('allows slower successful auth probes to complete before the snapshot timeout', async () => {
     vi.resetModules();
 
-    vi.doMock('@/backends/catalog', () => ({
+    vi.doMock('@/agent/catalog/registry', () => ({
       AGENTS: {
         codex: {
           id: 'codex',
@@ -210,7 +210,7 @@ describe('detectCliSnapshotOnDaemonPath (cache)', () => {
   it('caches snapshots and avoids re-probing CLI versions within TTL', async () => {
     vi.resetModules();
 
-    vi.doMock('@/backends/catalog', () => ({
+    vi.doMock('@/agent/catalog/registry', () => ({
       AGENTS: {
         opencode: { id: 'opencode' },
       },
@@ -269,7 +269,7 @@ process.exit(0);
   it('invalidates cache when HAPPIER_*_PATH override changes', async () => {
     vi.resetModules();
 
-    vi.doMock('@/backends/catalog', () => ({
+    vi.doMock('@/agent/catalog/registry', () => ({
       AGENTS: {
         opencode: { id: 'opencode' },
       },
@@ -342,7 +342,7 @@ process.exit(0);
   it('invalidates cache when HAPPIER_HOME_DIR changes', async () => {
     vi.resetModules();
 
-    vi.doMock('@/backends/catalog', () => ({
+    vi.doMock('@/agent/catalog/registry', () => ({
       AGENTS: {
         opencode: { id: 'opencode' },
       },
@@ -407,7 +407,7 @@ process.exit(0);
   it('invalidates cache when HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON changes', async () => {
     vi.resetModules();
 
-    vi.doMock('@/backends/catalog', () => ({
+    vi.doMock('@/agent/catalog/registry', () => ({
       AGENTS: {
         opencode: { id: 'opencode' },
       },
@@ -471,7 +471,7 @@ process.exit(0);
   it('invalidates cache when auth environment changes login status', async () => {
     vi.resetModules();
 
-    vi.doMock('@/backends/catalog', () => ({
+    vi.doMock('@/agent/catalog/registry', () => ({
       AGENTS: {
         claude: {
           id: 'claude',
@@ -542,7 +542,7 @@ process.exit(0);
   it('invalidates cache when HOME changes auth-file lookup', async () => {
     vi.resetModules();
 
-    vi.doMock('@/backends/catalog', () => ({
+    vi.doMock('@/agent/catalog/registry', () => ({
       AGENTS: {
         claude: {
           id: 'claude',

@@ -1,12 +1,12 @@
 import type { BackendTargetRefV1, McpValueRefV1 } from '@happier-dev/protocol';
 
-import type { AgentBackend } from '@/agent/core';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
+import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 import { createConfiguredAcpBackend } from '@/agent/acp/catalog/configured/createConfiguredAcpBackend';
 import { materializeConfiguredAcpEnvironment } from '@/agent/acp/catalog/configured/materializeEnvironment';
 import { resolveConfiguredAcpBackendFromAccountSettingsOrPlugins } from '@/agent/acp/catalog/configured/resolveBackend';
 import { configuration } from '@/configuration';
-import type { CatalogAgentLookupId } from '@/backends/types';
+import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import type { Credentials } from '@/persistence';
 
 import { isConfiguredAcpProbeTarget } from './isConfiguredAcpProbeTarget';
@@ -34,7 +34,7 @@ export async function createConfiguredAcpProbeBackend(params: Readonly<{
   cwd: string;
   accountSettings?: Readonly<Record<string, unknown>> | null;
   credentials?: Credentials | null;
-}>): Promise<AgentBackend | null> {
+}>): Promise<AcpProbeBackend | null> {
   if (!isConfiguredAcpProbeTarget(params)) return null;
 
   const backend = await resolveConfiguredAcpBackendFromAccountSettingsOrPlugins({

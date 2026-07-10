@@ -3,8 +3,8 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/pr
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-vi.mock('@happier-dev/cli-common/providers', async () => {
-  const actual = await vi.importActual<typeof import('@happier-dev/cli-common/providers')>('@happier-dev/cli-common/providers');
+vi.mock('@happier-dev/cli-common/agents', async () => {
+  const actual = await vi.importActual<typeof import('@happier-dev/cli-common/agents')>('@happier-dev/cli-common/agents');
   return {
     ...actual,
     downloadGitHubReleaseAsset: async ({ destinationPath }: { destinationPath: string }) => {

@@ -3,10 +3,10 @@ import { hasCatalogAcpBackendOwner } from '@/agent/acp/catalog/owner';
 import { resolveCliPathOverride } from '@/agent/runtime/cli/resolveCliPathOverride';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
-import { AGENTS } from '@/backends/catalog';
-import type { CatalogAgentLookupId } from '@/backends/types';
+import { AGENTS } from '@/agent/catalog/registry';
+import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
-import { resolveProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
+import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import {
   getAgentModelConfig,
@@ -20,8 +20,10 @@ import { validateCatalogAcpProbeSpawn } from './validateCatalogAcpProbeSpawn';
 import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
 import { resolveAgentProbeVariant } from './resolveAgentProbeVariant';
 import { probeConfiguredAcpBackend } from './probeConfiguredAcpBackend';
+import { resolveProviderOwnedPreflightControlsProbeDecision } from './providerOwnedPreflightControlsProbePolicy';
 import { resolvePreflightSessionControlsProbeAdapter } from './resolvePreflightSessionControlsProbeAdapter';
 import { runPreflightSessionControlsProbe } from './runPreflightSessionControlsProbe';
+import { withPreflightSessionControlsProbeEnvironment } from './preflightSessionControlsProbeEnvironment';
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
 
@@ -49,10 +51,10 @@ export type ProbedAgentModel = Readonly<{
 }>;
 
 export type ProbedAgentModelsResult = Readonly<{
-  provider: CatalogAgentLookupId;
+  agentId: CatalogAgentLookupId;
   availableModels: ReadonlyArray<ProbedAgentModel>;
   supportsFreeform: boolean;
-  source: 'dynamic' | 'static';
+  source: 'dynamic' | 'static' | 'unavailable';
 }>;
 
 const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 15_000;
@@ -142,11 +144,28 @@ function buildStatic(agentId: CatalogAgentLookupId): ProbedAgentModelsResult {
       return true;
     });
   return {
-    provider: agentId,
+    agentId,
     availableModels,
     supportsFreeform,
     source: 'static',
   };
+}
+
+function buildUnavailable(agentId: CatalogAgentLookupId): ProbedAgentModelsResult {
+  return {
+    agentId,
+    availableModels: [],
+    supportsFreeform: false,
+    source: 'unavailable',
+  };
+}
+
+function shouldFailClosedForMissingCli(params: {
+  agentId: CatalogAgentLookupId;
+  backendTarget?: BackendTargetRefV1;
+}): boolean {
+  if (params.backendTarget?.kind === 'configuredAcpBackend') return false;
+  return resolveAgentCliLaunchSpec(params.agentId) === null;
 }
 
 function normalizeProbeOptionValue(value: unknown): ProbedAgentModelOptionValue {
@@ -222,6 +241,12 @@ function normalizeDynamicModels(modelsRaw: unknown): ProbedAgentModel[] | null {
     seen.add(m.id);
     return true;
   });
+}
+
+function normalizePreflightDynamicModels(modelsRaw: unknown): ProbedAgentModel[] | null {
+  const models = normalizeDynamicModels(modelsRaw);
+  if (models) return models;
+  return Array.isArray(modelsRaw) && modelsRaw.length === 0 ? [] : null;
 }
 
 function isSimpleCliModelIdLine(line: string): boolean {
@@ -364,6 +389,7 @@ async function probeModelsFromCliModelsCommand(params: {
   args: ReadonlyArray<string>;
   cwd: string;
   timeoutMs: number;
+  env?: NodeJS.ProcessEnv;
 }): Promise<ReadonlyArray<ProbedAgentModel> | null> {
   const timeoutMs = Math.max(250, params.timeoutMs);
   const stdoutMaxBytes = 256 * 1024;
@@ -387,7 +413,7 @@ async function probeModelsFromCliModelsCommand(params: {
 
     const child = spawn(invocation.command, invocation.args, {
       cwd: params.cwd,
-      env: { ...process.env, CI: '1' },
+      env: { ...(params.env ?? process.env), CI: '1' },
       stdio: ['ignore', 'pipe', 'ignore'],
       windowsHide: true,
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,
@@ -535,6 +561,8 @@ export async function probeAgentModelsBestEffort(params: {
   timeoutMs?: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
   credentials?: Credentials | null;
+  connectedServices?: unknown;
+  env?: NodeJS.ProcessEnv;
 }): Promise<ProbedAgentModelsResult> {
   const nowMs = Date.now();
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
@@ -549,6 +577,7 @@ export async function probeAgentModelsBestEffort(params: {
     cwd,
     backendTarget: params.backendTarget,
     variant: probeVariant,
+    connectedServices: params.connectedServices,
   });
 
   const cached = agentModelsProbeCache.get(cacheKey);
@@ -560,6 +589,11 @@ export async function probeAgentModelsBestEffort(params: {
     if (cached2?.kind === 'success' && agentModelsProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
 
     const fallback = buildStatic(params.agentId);
+    if (shouldFailClosedForMissingCli(params)) {
+      const unavailable = buildUnavailable(params.agentId);
+      agentModelsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+      return unavailable;
+    }
     const modelConfig = resolveAgentModelConfigForLookupId(params.agentId);
     if (modelConfig.dynamicProbe === 'static-only') {
       agentModelsProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
@@ -592,45 +626,64 @@ export async function probeAgentModelsBestEffort(params: {
       const probeModelsRaw = preflightModelsAdapter?.probeModelsRaw;
       if (probeModelsRaw) {
         const probePreflightModelsOnce = async (): Promise<ProbedAgentModel[] | null> => {
-          const modelsRaw = await probeModelsRaw({
+          const modelsRaw = await withPreflightSessionControlsProbeEnvironment({
+            agentId: params.agentId,
+            probeKind: 'models',
+            cwd,
+            connectedServices: params.connectedServices,
+            credentials: params.credentials ?? null,
+            accountSettings: params.accountSettings ?? null,
+            processEnv: params.env ?? process.env,
+          }, async ({ env }) => await probeModelsRaw({
             backendTarget: params.backendTarget,
             probeKind: 'models',
             cwd,
             timeoutMs,
             accountSettings: params.accountSettings ?? null,
-          }).catch(() => null);
-          return normalizeDynamicModels(modelsRaw);
+            env,
+          })).catch(() => null);
+          return normalizePreflightDynamicModels(modelsRaw);
         };
 
         const probeResult = await runPreflightSessionControlsProbe({
           adapter: preflightModelsAdapter,
           probeOnce: probePreflightModelsOnce,
         });
-        if (probeResult.kind === 'success') {
-          const res: ProbedAgentModelsResult = { ...fallback, availableModels: probeResult.value, source: 'dynamic' };
+        const decision = resolveProviderOwnedPreflightControlsProbeDecision({
+          probeResult,
+          emptySuccess: 'unavailable',
+        });
+        if (decision.kind === 'success') {
+          const res: ProbedAgentModelsResult = { ...fallback, availableModels: decision.value, source: 'dynamic' };
           agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODELS_SUCCESS_TTL_MS });
           return res;
         }
-        if (probeResult.kind === 'retryable_failure') {
-          // For providers where this probe is the primary/authoritative source (e.g. Codex app-server),
-          // cache an error so subsequent calls retry instead of freezing the static fallback.
-          agentModelsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
-          return fallback;
-        }
+        const res = buildUnavailable(params.agentId);
+        agentModelsProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODELS_FAILURE_TTL_MS });
+        return res;
       }
 
       // Prefer lightweight CLI preflight probes when the provider offers a `models` command.
       // This avoids needing to start a full ACP session just to populate a menu.
       const cliProbeArgs = preflightModelsAdapter?.cliModelsCommandArgs;
       if (Array.isArray(cliProbeArgs) && cliProbeArgs.length > 0) {
-        const launch = resolveProviderCliLaunchSpec(params.agentId);
+        const launch = resolveAgentCliLaunchSpec(params.agentId);
         const models = launch
-          ? await probeModelsFromCliModelsCommand({
+          ? await withPreflightSessionControlsProbeEnvironment({
+            agentId: params.agentId,
+            probeKind: 'models',
+            cwd,
+            connectedServices: params.connectedServices,
+            credentials: params.credentials ?? null,
+            accountSettings: params.accountSettings ?? null,
+            processEnv: params.env ?? process.env,
+          }, async ({ env }) => await probeModelsFromCliModelsCommand({
             command: launch.command,
             args: [...launch.args, ...cliProbeArgs],
             cwd,
             timeoutMs,
-          }).catch(() => null)
+            env,
+          })).catch(() => null)
           : null;
         if (models) {
           const res: ProbedAgentModelsResult = { ...fallback, availableModels: models, source: 'dynamic' };

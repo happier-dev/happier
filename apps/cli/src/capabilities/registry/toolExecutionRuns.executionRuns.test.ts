@@ -25,8 +25,8 @@ function makeCliEngineRegistryMock(
 ): Awaited<ReturnType<typeof engineRegistry.resolveCliEngineRegistry>> {
   return {
     contributions: {
-      providers: Object.freeze([]),
-      backends: Object.freeze([]),
+      agents: Object.freeze([]),
+      agentRuntimes: Object.freeze([]),
       actions: Object.freeze([]),
       resources: Object.freeze([]),
       uiDescriptors: Object.freeze([]),
@@ -35,8 +35,8 @@ function makeCliEngineRegistryMock(
       hookRegistrations: Object.freeze([]),
       surfaceHandlersByBackendId: new Map(),
       catalogEntriesById: {},
-      providerDefinitionsById: new Map(),
-      backendDefinitionsById: new Map(),
+      agentDefinitionsById: new Map(),
+      agentRuntimeDefinitionsById: new Map(),
       executionRunProfilesById: new Map(),
       pluginDiagnosticsByPluginId: {},
       ...contributions,
@@ -54,7 +54,13 @@ function makeCliEngineRegistryMock(
 }
 
 describe('executionRunsCapability', () => {
-  const envScope = createEnvKeyScope(['PATH', 'HAPPIER_CODERABBIT_REVIEW_CMD', 'HAPPIER_CODEX_BACKEND_MODE']);
+  const envScope = createEnvKeyScope([
+    'PATH',
+    'HAPPIER_CODERABBIT_REVIEW_CMD',
+    'HAPPIER_CODEX_BACKEND_MODE',
+    'HAPPIER_FEATURE_VOICE__ENABLED',
+    'HAPPIER_FEATURE_VOICE_AGENT__ENABLED',
+  ]);
 
   beforeEach(() => {
     envScope.restore();
@@ -110,7 +116,6 @@ describe('executionRunsCapability', () => {
 
     expect(res.available).toBe(true);
     expect(res.backends.customAcp).toMatchObject({ available: true });
-    expect(res.backends.kiro).toMatchObject({ available: true });
     expect(res.backends.ohMyPi).toMatchObject({ available: true });
   });
 
@@ -150,7 +155,7 @@ describe('executionRunsCapability', () => {
     });
   });
 
-  it('reports Codex resume support from the effective runtime mode (HAPPIER_CODEX_BACKEND_MODE)', async () => {
+  it('reports Codex resume support after normalizing legacy mcp env mode to appServer', async () => {
     process.env.HAPPIER_CODEX_BACKEND_MODE = 'mcp';
 
     const res = await executionRunsCapability.detect({
@@ -166,7 +171,7 @@ describe('executionRunsCapability', () => {
     expect(res?.available).toBe(true);
     expect(res.backends.codex).toMatchObject({
       available: true,
-      supportsVendorResume: false,
+      supportsVendorResume: true,
     });
   });
 
@@ -192,6 +197,35 @@ describe('executionRunsCapability', () => {
     for (const backendId of ['claude', 'codex', 'customAcp', 'ohMyPi']) {
       expect(res.backends[backendId]?.intents).toBe(res.intents);
     }
+  });
+
+  it('omits voice_agent and projects its canonical blocker when voice.agent is disabled', async () => {
+    envScope.patch({
+      HAPPIER_FEATURE_VOICE__ENABLED: '1',
+      HAPPIER_FEATURE_VOICE_AGENT__ENABLED: '0',
+    });
+
+    const res = await executionRunsCapability.detect({
+      context: {
+        cliSnapshot: makeCliSnapshot({ claude: { available: true } }),
+      },
+      request: { id: 'tool.executionRuns' },
+    }) as {
+      available: boolean;
+      intents: readonly string[];
+      backends: Record<string, { intents: readonly string[] }>;
+      disabledIntents?: Record<string, { disabledBy: string; disabledReason: string }>;
+    };
+
+    expect(res.available).toBe(true);
+    expect(res.intents).not.toContain('voice_agent');
+    for (const backend of Object.values(res.backends)) {
+      expect(backend.intents).not.toContain('voice_agent');
+    }
+    expect(res.disabledIntents?.voice_agent).toEqual({
+      disabledBy: 'local_policy',
+      disabledReason: 'flag_disabled',
+    });
   });
 
   it('returns only protocol-defined execution-run intents', async () => {
@@ -279,15 +313,15 @@ describe('executionRunsCapability', () => {
 
   it('marks plugin backends with backend-owned runtimeCore available', async () => {
     vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
-      backendDefinitionsById: new Map([
+      agentRuntimeDefinitionsById: new Map([
         [
           'plugin.review',
           {
             id: 'plugin.review',
-            providerId: 'plugin.provider',
+            agentId: 'plugin.provider',
             provenance: 'external',
             source: { kind: 'path' },
-            definition: { kindVersion: 1, id: 'plugin.review', providerId: 'plugin.provider' },
+            definition: { kindVersion: 1, id: 'plugin.review', agentId: 'plugin.provider' },
             getRuntimeCore: async () => async () => ({
               runtimeCore: {
                 createSessionRuntime: async () => {
@@ -301,7 +335,7 @@ describe('executionRunsCapability', () => {
           },
         ],
       ]),
-      providerDefinitionsById: new Map([
+      agentDefinitionsById: new Map([
         [
           'plugin.provider',
           {
@@ -374,15 +408,15 @@ describe('executionRunsCapability', () => {
 
   it('narrows plugin backend intents to backend-declared execution-run review intents', async () => {
     vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
-      backendDefinitionsById: new Map([
+      agentRuntimeDefinitionsById: new Map([
         [
           'plugin.review',
           {
             id: 'plugin.review',
-            providerId: 'plugin.provider',
+            agentId: 'plugin.provider',
             provenance: 'external',
             source: { kind: 'path' },
-            definition: { kindVersion: 1, id: 'plugin.review', providerId: 'plugin.provider' },
+            definition: { kindVersion: 1, id: 'plugin.review', agentId: 'plugin.provider' },
             capabilities: normalizePluginBackendCapabilitiesV1({
               executionRun: {
                 supported: true,
@@ -404,7 +438,7 @@ describe('executionRunsCapability', () => {
           },
         ],
       ]),
-      providerDefinitionsById: new Map([
+      agentDefinitionsById: new Map([
         [
           'plugin.provider',
           {
@@ -440,19 +474,19 @@ describe('executionRunsCapability', () => {
 
   it('marks plugin-contributed backends unavailable when runtimeCore proof is missing', async () => {
     vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
-      backendDefinitionsById: new Map([
+      agentRuntimeDefinitionsById: new Map([
         [
           'plugin.review',
           {
             id: 'plugin.review',
-            providerId: 'plugin.provider',
+            agentId: 'plugin.provider',
             provenance: 'external',
             source: { kind: 'path' },
-            definition: { kindVersion: 1, id: 'plugin.review', providerId: 'plugin.provider' },
+            definition: { kindVersion: 1, id: 'plugin.review', agentId: 'plugin.provider' },
           },
         ],
       ]),
-      providerDefinitionsById: new Map([
+      agentDefinitionsById: new Map([
         [
           'plugin.provider',
           {
@@ -485,15 +519,15 @@ describe('executionRunsCapability', () => {
 
   it('marks plugin-contributed backends unavailable when execution-run support is explicitly disabled', async () => {
     vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
-      backendDefinitionsById: new Map([
+      agentRuntimeDefinitionsById: new Map([
         [
           'plugin.review',
           {
             id: 'plugin.review',
-            providerId: 'plugin.provider',
+            agentId: 'plugin.provider',
             provenance: 'external',
             source: { kind: 'path' },
-            definition: { kindVersion: 1, id: 'plugin.review', providerId: 'plugin.provider' },
+            definition: { kindVersion: 1, id: 'plugin.review', agentId: 'plugin.provider' },
             capabilities: normalizePluginBackendCapabilitiesV1({
               executionRun: { supported: false },
             }),
@@ -510,7 +544,7 @@ describe('executionRunsCapability', () => {
           },
         ],
       ]),
-      providerDefinitionsById: new Map([
+      agentDefinitionsById: new Map([
         [
           'plugin.provider',
           {

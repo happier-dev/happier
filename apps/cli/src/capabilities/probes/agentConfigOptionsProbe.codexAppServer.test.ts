@@ -47,7 +47,7 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
     });
 
     expect(result).toEqual({
-      provider: 'codex',
+      agentId: 'codex',
       configOptions: [
         {
           id: 'speed',
@@ -71,6 +71,25 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
     }));
   });
 
+  it('surfaces repeated Codex app-server preflight failures as unavailable instead of static fallback config options', async () => {
+    probeConfigOptionsRawMock
+      .mockRejectedValueOnce(new Error('codex app-server unavailable'))
+      .mockRejectedValueOnce(new Error('codex app-server still unavailable'));
+
+    const result = await probeAgentConfigOptionsBestEffort({
+      agentId: 'codex',
+      cwd: '/repo-retryable-failure',
+      accountSettings: { codexBackendMode: 'appServer' },
+    });
+
+    expect(result).toEqual({
+      agentId: 'codex',
+      configOptions: [],
+      source: 'unavailable',
+    });
+    expect(probeConfigOptionsRawMock).toHaveBeenCalledTimes(2);
+  });
+
   it('returns only session-level config options when model-scoped controls are present', async () => {
     probeConfigOptionsRawMock.mockResolvedValueOnce([]);
 
@@ -81,7 +100,7 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
     });
 
     expect(result).toEqual({
-      provider: 'codex',
+      agentId: 'codex',
       configOptions: [],
       source: 'dynamic',
     });
@@ -108,7 +127,7 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
     });
 
     expect(result).toEqual({
-      provider: 'codex',
+      agentId: 'codex',
       configOptions: [
         {
           id: 'speed',
@@ -130,7 +149,27 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
     }));
   });
 
-  it('does not cache invalid dynamic config-options results as a 24h success fallback', async () => {
+  it('surfaces provider-owned config-option probe unavailability instead of a static fallback', async () => {
+    resolvePreflightSessionControlsProbeAdapterMock.mockResolvedValueOnce({
+      failureCacheStrategy: 'cooldown',
+      probeConfigOptionsRaw: probeConfigOptionsRawMock,
+    });
+    probeConfigOptionsRawMock.mockResolvedValueOnce(null);
+
+    const result = await probeAgentConfigOptionsBestEffort({
+      agentId: 'codex',
+      cwd: '/repo-unavailable',
+      accountSettings: { codexBackendMode: 'appServer' },
+    });
+
+    expect(result).toEqual({
+      agentId: 'codex',
+      configOptions: [],
+      source: 'unavailable',
+    });
+  });
+
+  it('surfaces invalid dynamic config-options results as unavailable without caching a 24h success fallback', async () => {
     probeConfigOptionsRawMock
       .mockResolvedValueOnce([{}])
       .mockResolvedValueOnce([{}]);
@@ -141,9 +180,9 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
       accountSettings: { codexBackendMode: 'appServer' },
     });
     expect(first).toEqual({
-      provider: 'codex',
+      agentId: 'codex',
       configOptions: [],
-      source: 'static',
+      source: 'unavailable',
     });
 
     probeConfigOptionsRawMock.mockResolvedValueOnce([
@@ -166,7 +205,7 @@ describe('probeAgentConfigOptionsBestEffort (codex app-server)', () => {
     });
 
     expect(second).toEqual({
-      provider: 'codex',
+      agentId: 'codex',
       configOptions: [
         {
           id: 'speed',

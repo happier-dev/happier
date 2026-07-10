@@ -5,18 +5,18 @@ import { access } from 'fs/promises';
 import { join, delimiter as PATH_DELIMITER } from 'path';
 import { promisify } from 'util';
 
-import { AGENTS, type CatalogAgentLookupId, type CliDetectSpec } from '@/backends/catalog';
-import { resolveCliAuthHomeDir } from '@/capabilities/cliAuth/shared';
-import type { CliAuthSpec, CliAuthStatus } from '@/backends/types';
-import { resolveProviderCliCommandForRuntime } from '@/packagedRuntime/managedTools/providerCliResolution';
+import { AGENTS } from '@/agent/catalog/registry';
+import type { CatalogAgentLookupId, CliDetectSpec } from '@/agent/catalog/types';
+import type { CliAuthSpec, CliAuthStatus } from '@/capabilities/cliAuth/types';
+import { resolveAgentCliCommandForRuntime } from '@/packagedRuntime/managedTools/agentCliResolution';
 import { AsyncTtlCache } from '@happier-dev/protocol';
 import { getAgentCliRuntimeSpec, isAgentId, legacyCustomAcpCompat } from '@happier-dev/agents';
 import {
-    isProviderCliPathRunnable,
-    providerCliPathRequiresJavaScriptRuntime,
-    resolveProviderCliJavaScriptRuntimeCommand,
-    resolveProviderCliJavaScriptRuntimeKind,
-} from '@happier-dev/cli-common/providers';
+    isAgentCliPathRunnable,
+    agentCliPathRequiresJavaScriptRuntime,
+    resolveAgentCliJavaScriptRuntimeCommand,
+    resolveAgentCliJavaScriptRuntimeKind,
+} from '@happier-dev/cli-common/agents';
 import { resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
 const execFileAsync = promisify(execFile);
@@ -99,7 +99,7 @@ const cliSnapshotCache = new AsyncTtlCache<DetectCliSnapshot>({
     errorTtlMs: 2_000,
 });
 
-const DEFAULT_CLI_SNAPSHOT_PROBE_TIMEOUT_MS = process.env.CI ? 3_000 : 1_500;
+const DEFAULT_CLI_SNAPSHOT_PROBE_TIMEOUT_MS = 3_000;
 const DEFAULT_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS = process.env.CI ? 7_000 : 6_500;
 const CLI_SNAPSHOT_PROBE_TIMEOUT = Symbol('CLI_SNAPSHOT_PROBE_TIMEOUT');
 
@@ -204,46 +204,6 @@ async function resolveCommandOnPath(command: string, pathEnv: string | null): Pr
     return null;
 }
 
-async function resolveClaudeOutsidePath(): Promise<string | null> {
-    const isWindows = process.platform === 'win32';
-    const accessMode = isWindows ? fsConstants.F_OK : fsConstants.X_OK;
-
-    const override = typeof process.env.HAPPIER_CLAUDE_PATH === 'string' ? process.env.HAPPIER_CLAUDE_PATH.trim() : '';
-    if (override) {
-        const resolvedOverride = await resolveCliOverridePath('claude');
-        if (resolvedOverride) return resolvedOverride;
-    }
-
-    const homeDir = resolveCliAuthHomeDir();
-    const candidates: string[] = [];
-
-    if (isWindows) {
-        const localAppData = process.env.LOCALAPPDATA || join(homeDir, 'AppData', 'Local');
-        candidates.push(join(localAppData, 'Claude', 'claude.exe'));
-        candidates.push(join(homeDir, '.claude', 'claude.exe'));
-    } else {
-        // Native installer default location (may not be on PATH for daemons/non-login shells)
-        candidates.push(join(homeDir, '.local', 'bin', 'claude'));
-
-        // Common Homebrew locations (in case the daemon PATH is minimal)
-        candidates.push('/opt/homebrew/bin/claude');
-        candidates.push('/usr/local/bin/claude');
-        candidates.push('/home/linuxbrew/.linuxbrew/bin/claude');
-        candidates.push(join(homeDir, '.linuxbrew', 'bin', 'claude'));
-    }
-
-    for (const candidate of candidates) {
-        try {
-            await access(candidate, accessMode);
-            return candidate;
-        } catch {
-            // continue
-        }
-    }
-
-    return null;
-}
-
 async function resolveCliOverridePath(name: DetectCliName): Promise<string | null> {
     const isWindows = process.platform === 'win32';
     const accessMode = isWindows ? fsConstants.F_OK : fsConstants.X_OK;
@@ -302,13 +262,13 @@ function quoteShellArgument(value: string): string {
 
 async function isCliPathRunnable(resolvedPath: string): Promise<boolean> {
     const isBunRuntime = typeof process.versions.bun === 'string';
-    const runnable = isProviderCliPathRunnable(resolvedPath, process.env, {
+    const runnable = isAgentCliPathRunnable(resolvedPath, process.env, {
         isBunRuntime,
         currentExecPath: process.execPath,
     });
     if (runnable) return true;
 
-    if (resolveProviderCliJavaScriptRuntimeKind(resolvedPath) !== 'node') {
+    if (resolveAgentCliJavaScriptRuntimeKind(resolvedPath) !== 'node') {
         return false;
     }
 
@@ -317,13 +277,13 @@ async function isCliPathRunnable(resolvedPath: string): Promise<boolean> {
 }
 
 async function resolveJavaScriptRuntimeExecutableForCliSnapshot(resolvedPath: string): Promise<string | null> {
-    const resolved = resolveProviderCliJavaScriptRuntimeCommand(resolvedPath, process.env, {
+    const resolved = resolveAgentCliJavaScriptRuntimeCommand(resolvedPath, process.env, {
         isBunRuntime: typeof process.versions.bun === 'string',
         currentExecPath: process.execPath,
     });
     if (resolved) return resolved;
 
-    if (resolveProviderCliJavaScriptRuntimeKind(resolvedPath) !== 'node') {
+    if (resolveAgentCliJavaScriptRuntimeKind(resolvedPath) !== 'node') {
         return null;
     }
 
@@ -332,7 +292,7 @@ async function resolveJavaScriptRuntimeExecutableForCliSnapshot(resolvedPath: st
 }
 
 async function resolveCliLaunchCommand(params: { resolvedPath: string }): Promise<string> {
-    if (!providerCliPathRequiresJavaScriptRuntime(params.resolvedPath)) {
+    if (!agentCliPathRequiresJavaScriptRuntime(params.resolvedPath)) {
         return quoteShellArgument(params.resolvedPath);
     }
 
@@ -392,14 +352,20 @@ async function resolveCliBinaryNames(name: DetectCliName): Promise<readonly stri
     return [name];
 }
 
-async function detectCliVersion(params: { name: DetectCliName; resolvedPath: string }): Promise<string | null> {
+function resolveCliVersionExecTimeoutMs(snapshotProbeTimeoutMs: number): number {
+    return Math.max(500, snapshotProbeTimeoutMs - 100);
+}
+
+async function detectCliVersion(params: { name: DetectCliName; resolvedPath: string; timeoutMs: number }): Promise<string | null> {
     // Best-effort, must never throw.
     try {
-        // Keep this short (runs in parallel for multiple CLIs), but give enough headroom for slower systems.
-        const timeoutMs = process.env.CI ? 2500 : 1200;
+        // Keep this within the outer snapshot probe budget. JS-backed CLIs can take
+        // noticeably longer to start under load, so this must not use a smaller
+        // hidden timeout than the configured snapshot budget.
+        const timeoutMs = resolveCliVersionExecTimeoutMs(params.timeoutMs);
         const isWindows = process.platform === 'win32';
         const isCmdScript = isWindows && /\.(cmd|bat)$/i.test(params.resolvedPath);
-        const needsJavaScriptRuntime = providerCliPathRequiresJavaScriptRuntime(params.resolvedPath);
+        const needsJavaScriptRuntime = agentCliPathRequiresJavaScriptRuntime(params.resolvedPath);
 
         const asString = (value: unknown): string => {
             if (typeof value === 'string') return value;
@@ -593,7 +559,7 @@ async function resolveCliPathForName(
         return { resolvedPath: override, resolutionSource: 'override' };
     }
 
-    const managedResolution = resolveProviderCliCommandForRuntime(resolveAgentCliRuntimeSpecForLookupId(name));
+    const managedResolution = resolveAgentCliCommandForRuntime(resolveAgentCliRuntimeSpecForLookupId(name));
     if (managedResolution) {
         if (!await isCliPathRunnable(managedResolution.command)) return null;
         return {
@@ -611,11 +577,7 @@ async function resolveCliPathForName(
         }
     }
 
-    if (name !== 'claude') return null;
-    const resolvedPath = await resolveClaudeOutsidePath();
-    if (!resolvedPath) return null;
-    if (!await isCliPathRunnable(resolvedPath)) return null;
-    return { resolvedPath, resolutionSource: 'system' };
+    return null;
 }
 
 /**
@@ -655,7 +617,7 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
 
             const [versionResult, authStatusResult, resolvedCommandResult] = await Promise.all([
                 withCliSnapshotProbeTimeout(
-                    detectCliVersion({ name, resolvedPath }),
+                    detectCliVersion({ name, resolvedPath, timeoutMs: probeTimeoutMs }),
                     probeTimeoutMs,
                 ),
                 includeLoginStatus

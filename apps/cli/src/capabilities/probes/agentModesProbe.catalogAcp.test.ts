@@ -28,7 +28,7 @@ vi.mock('./resolvePreflightSessionControlsProbeAdapter', () => ({
   resolvePreflightSessionControlsProbeAdapter: vi.fn(async () => null),
 }));
 
-vi.mock('@/backends/catalog', () => ({
+vi.mock('@/agent/catalog/registry', () => ({
   AGENTS: {
     opencode: {
       getAcpRuntimeDefinitionBridge: async () => null,
@@ -65,7 +65,7 @@ describe('probeAgentModesBestEffort (catalog ACP bridge)', () => {
     });
 
     expect(result).toEqual({
-      provider: 'opencode',
+      agentId: 'opencode',
       availableModes: [{ id: 'plan', name: 'Plan' }],
       source: 'dynamic',
     });

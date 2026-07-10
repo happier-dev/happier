@@ -6,10 +6,10 @@ import { tmpdir } from 'node:os';
 import { configuration } from '../../configuration';
 import { resolveExistingManagedJavaScriptRuntimeCommand } from '@/packagedRuntime/js/managedJavaScriptRuntime';
 import { readRuntimeInstallableLastCheckAtMs } from '@/packagedRuntime/installables/updateState';
-import { downloadGitHubReleaseAsset, extractGitHubReleaseAsset } from '@happier-dev/cli-common/providers';
+import { downloadGitHubReleaseAsset, extractGitHubReleaseAsset } from '@happier-dev/cli-common/agents';
 import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime/github';
 
-import { resolveCodexAcpReleaseAsset, CODEX_ACP_GITHUB_REPO } from '@/packagedRuntime/managedTools/providers/codexAcpRelease';
+import { resolveCodexAcpReleaseAsset, CODEX_ACP_GITHUB_REPO } from '@/packagedRuntime/managedTools/agents/codexAcpRelease';
 
 type CodexAcpState = Readonly<{
   installedVersion: string | null;

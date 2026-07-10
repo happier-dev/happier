@@ -1,4 +1,7 @@
-import { SYSTEM_TASK_PROTOCOL_VERSION } from '@happier-dev/protocol';
+import {
+  SSH_TUNNEL_SYSTEM_TASK_KINDS,
+  SYSTEM_TASK_PROTOCOL_VERSION,
+} from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createSystemTasksRunner } from '../systemTasksRunner';
@@ -61,16 +64,16 @@ describe('daemon SSH tunnel system tasks', () => {
 
     const runner = createSystemTasksRunner({
       kinds: {
-        'daemon.sshTunnel.ensure.v1': loaded!.createDaemonSshTunnelEnsureTaskKind({ ensureDaemonSshTunnel }),
-        'daemon.sshTunnel.list.v1': loaded!.createDaemonSshTunnelListTaskKind({ listDaemonSshTunnels }),
-        'daemon.sshTunnel.release.v1': loaded!.createDaemonSshTunnelReleaseTaskKind({ releaseDaemonSshTunnel }),
-        'daemon.sshTunnel.stop.v1': loaded!.createDaemonSshTunnelStopTaskKind({ stopDaemonSshTunnel }),
+        [SSH_TUNNEL_SYSTEM_TASK_KINDS.ensure]: loaded!.createDaemonSshTunnelEnsureTaskKind({ ensureDaemonSshTunnel }),
+        [SSH_TUNNEL_SYSTEM_TASK_KINDS.list]: loaded!.createDaemonSshTunnelListTaskKind({ listDaemonSshTunnels }),
+        [SSH_TUNNEL_SYSTEM_TASK_KINDS.release]: loaded!.createDaemonSshTunnelReleaseTaskKind({ releaseDaemonSshTunnel }),
+        [SSH_TUNNEL_SYSTEM_TASK_KINDS.stop]: loaded!.createDaemonSshTunnelStopTaskKind({ stopDaemonSshTunnel }),
       },
     });
 
     await runner.start({
       taskId: 'ensure',
-      kind: 'daemon.sshTunnel.ensure.v1',
+      kind: SSH_TUNNEL_SYSTEM_TASK_KINDS.ensure,
       params: {
         remoteHostId: 'host-a',
         serverId: 'server-1',
@@ -82,17 +85,17 @@ describe('daemon SSH tunnel system tasks', () => {
     });
     await runner.start({
       taskId: 'list',
-      kind: 'daemon.sshTunnel.list.v1',
+      kind: SSH_TUNNEL_SYSTEM_TASK_KINDS.list,
       params: { protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION },
     });
     await runner.start({
       taskId: 'release',
-      kind: 'daemon.sshTunnel.release.v1',
+      kind: SSH_TUNNEL_SYSTEM_TASK_KINDS.release,
       params: { leaseId: 'lease-1' },
     });
     await runner.start({
       taskId: 'stop',
-      kind: 'daemon.sshTunnel.stop.v1',
+      kind: SSH_TUNNEL_SYSTEM_TASK_KINDS.stop,
       params: { tunnelKey: 'ssh-tunnel:host-a' },
     });
 

@@ -21,8 +21,8 @@ const { downloadGitHubReleaseAssetMock, extractReleasePayloadRootFromArchiveMock
   }),
 }));
 
-vi.mock('@happier-dev/cli-common/providers', async () => {
-  const actual = await vi.importActual<typeof import('@happier-dev/cli-common/providers')>('@happier-dev/cli-common/providers');
+vi.mock('@happier-dev/cli-common/agents', async () => {
+  const actual = await vi.importActual<typeof import('@happier-dev/cli-common/agents')>('@happier-dev/cli-common/agents');
   return {
     ...actual,
     downloadGitHubReleaseAsset: downloadGitHubReleaseAssetMock,

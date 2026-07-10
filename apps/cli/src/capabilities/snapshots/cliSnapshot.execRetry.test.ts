@@ -8,7 +8,7 @@ describe('detectCliSnapshotOnDaemonPath (version retry)', () => {
   it('retries version probing when execFile hits transient spawn errors', async () => {
     vi.resetModules();
 
-    vi.doMock('@/backends/catalog', () => ({
+    vi.doMock('@/agent/catalog/registry', () => ({
       AGENTS: {
         codex: { id: 'codex' },
       },

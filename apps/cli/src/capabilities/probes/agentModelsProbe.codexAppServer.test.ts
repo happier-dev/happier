@@ -40,7 +40,7 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
     });
 
     expect(first).toEqual({
-      provider: 'codex',
+      agentId: 'codex',
       availableModels: [
         { id: 'default', name: 'Default' },
         { id: 'gpt-5.4', name: 'GPT-5.4' },
@@ -88,7 +88,7 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
     });
 
     expect(result).toEqual({
-      provider: 'codex',
+      agentId: 'codex',
       availableModels: [
         { id: 'default', name: 'Default' },
         {
@@ -133,7 +133,7 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
     });
 
     expect(result).toEqual({
-      provider: 'codex',
+      agentId: 'codex',
       availableModels: [
         { id: 'default', name: 'Default' },
         { id: 'gpt-5.4', name: 'GPT-5.4' },
@@ -146,6 +146,44 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
       probeKind: 'models',
       accountSettings: null,
     }));
+  });
+
+  it('surfaces an empty Codex app-server model list as unavailable instead of static fallback models', async () => {
+    probeModelsRawMock.mockResolvedValueOnce([]);
+
+    const result = await probeAgentModelsBestEffort({
+      agentId: 'codex',
+      cwd: '/repo-empty',
+      accountSettings: { codexBackendMode: 'appServer' },
+    });
+
+    expect(result).toEqual({
+      agentId: 'codex',
+      availableModels: [],
+      supportsFreeform: false,
+      source: 'unavailable',
+    });
+    expect(probeModelsRawMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces repeated Codex app-server preflight failures as unavailable instead of static fallback models', async () => {
+    probeModelsRawMock
+      .mockRejectedValueOnce(new Error('codex app-server unavailable'))
+      .mockRejectedValueOnce(new Error('codex app-server still unavailable'));
+
+    const result = await probeAgentModelsBestEffort({
+      agentId: 'codex',
+      cwd: '/repo-retryable-failure',
+      accountSettings: { codexBackendMode: 'appServer' },
+    });
+
+    expect(result).toEqual({
+      agentId: 'codex',
+      availableModels: [],
+      supportsFreeform: false,
+      source: 'unavailable',
+    });
+    expect(probeModelsRawMock).toHaveBeenCalledTimes(2);
   });
 
   it('filters malformed dynamic model payload entries and normalizes invalid option values to null', async () => {
@@ -185,7 +223,7 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
     });
 
     expect(result).toEqual({
-      provider: 'codex',
+      agentId: 'codex',
       availableModels: [
         { id: 'default', name: 'Default' },
         {

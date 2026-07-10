@@ -7,7 +7,7 @@ import { checklists } from './checklists';
 
 describe('capabilities checklists', () => {
   afterEach(() => {
-    vi.doUnmock('@/backends/catalog');
+    vi.doUnmock('@/agent/catalog/registry');
     vi.resetModules();
   });
 
@@ -36,7 +36,7 @@ describe('capabilities checklists', () => {
   it('does not read AGENTS during module initialization', async () => {
     let initialized = false;
 
-    vi.doMock('@/backends/catalog', () => ({
+    vi.doMock('@/agent/catalog/registry', () => ({
       get AGENTS() {
         if (!initialized) {
           throw new ReferenceError("Cannot access 'AGENTS' before initialization");

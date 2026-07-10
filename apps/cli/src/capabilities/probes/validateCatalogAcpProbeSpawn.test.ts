@@ -4,7 +4,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 const requireCatalogEntryMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/backends/catalog', () => ({
+vi.mock('@/agent/catalog/registry', () => ({
   requireCatalogEntry: requireCatalogEntryMock,
 }));
 

@@ -1,6 +1,8 @@
 import {
-  CODEX_ACP_INSTALLABLE_DESCRIPTOR,
+  CODEX_ACP_DEP_ID,
   GH_INSTALLABLE_DESCRIPTOR,
+  INSTALLABLE_KEYS,
+  InstallableDependencyDescriptorSchema,
   resolveInstallablesRegistry,
   type InstallableDependencyDescriptor,
 } from '@happier-dev/protocol/installables';
@@ -20,6 +22,40 @@ import {
   createInstallableCapabilityRequests,
   type RuntimeInstallableAdapterResolver,
 } from './installables';
+
+const codexAcpInstallableDescriptor = InstallableDependencyDescriptorSchema.parse({
+  id: INSTALLABLE_KEYS.CODEX_ACP,
+  key: INSTALLABLE_KEYS.CODEX_ACP,
+  kind: 'dep',
+  version: '1',
+  capabilityId: CODEX_ACP_DEP_ID,
+  display: {
+    name: 'Codex ACP',
+  },
+  description: 'Codex ACP dependency test fixture',
+  source: {
+    kind: 'github_release_binary',
+    repo: 'zed-industries/codex-acp',
+    distTag: 'latest',
+  },
+  binary: {
+    commands: ['codex-acp'],
+    systemFirst: true,
+    managedFallback: true,
+  },
+  defaultPolicy: {
+    autoInstallWhenNeeded: true,
+    autoUpdateMode: 'auto',
+  },
+  consent: {
+    install: 'not_required',
+    update: 'not_required',
+  },
+  stability: {
+    experimental: true,
+    supported: true,
+  },
+});
 
 function createRegistry(descriptors: readonly InstallableDependencyDescriptor[]) {
   return resolveInstallablesRegistry({
@@ -44,7 +80,7 @@ function createAdapter(params: Readonly<{
   detectCapabilityStatus?: RuntimeInstallableAdapter['detectCapabilityStatus'];
   installOrUpgrade?: RuntimeInstallableAdapter['installOrUpgrade'];
 }> = {}): RuntimeInstallableAdapter {
-  const descriptor = params.descriptor ?? CODEX_ACP_INSTALLABLE_DESCRIPTOR;
+  const descriptor = params.descriptor ?? codexAcpInstallableDescriptor;
   return {
     key: descriptor.key,
     capabilityId: descriptor.capabilityId,
@@ -57,7 +93,7 @@ function createAdapter(params: Readonly<{
 
 describe('installable capability projection', () => {
   it('projects descriptor metadata and routes detect/install/upgrade through the runtime adapter', async () => {
-    const registry = createRegistry([CODEX_ACP_INSTALLABLE_DESCRIPTOR]);
+    const registry = createRegistry([codexAcpInstallableDescriptor]);
     const detectedStatus = Object.freeze({ installed: true, sourceKind: 'github_release_binary' });
     const detectCapabilityStatus = vi.fn(
       async (_params?: RuntimeInstallableCapabilityStatusParams) => detectedStatus,
@@ -66,7 +102,7 @@ describe('installable capability projection', () => {
       async () => ({ ok: true, logPath: '/tmp/codex-acp.log' }),
     );
     const resolveAdapter: RuntimeInstallableAdapterResolver = async (key, opts) => {
-      expect(key).toBe(CODEX_ACP_INSTALLABLE_DESCRIPTOR.key);
+      expect(key).toBe(codexAcpInstallableDescriptor.key);
       expect(opts?.installablesRegistry).toBe(registry);
       return createAdapter({
         detectCapabilityStatus,
@@ -118,7 +154,7 @@ describe('installable capability projection', () => {
   });
 
   it('returns the existing unsupported-method public error shape for unknown installable methods', async () => {
-    const registry = createRegistry([CODEX_ACP_INSTALLABLE_DESCRIPTOR]);
+    const registry = createRegistry([codexAcpInstallableDescriptor]);
     const capabilities = await createInstallableCapabilities({
       installablesRegistry: registry,
       getRuntimeInstallableAdapter: async () => createAdapter(),
@@ -158,7 +194,7 @@ describe('installable capability projection', () => {
   });
 
   it('fails closed when the runtime adapter does not match the descriptor capability id', async () => {
-    const registry = createRegistry([CODEX_ACP_INSTALLABLE_DESCRIPTOR]);
+    const registry = createRegistry([codexAcpInstallableDescriptor]);
     const mismatchedAdapter: RuntimeInstallableAdapter = {
       ...createAdapter(),
       capabilityId: 'dep.other-tool',
@@ -171,7 +207,7 @@ describe('installable capability projection', () => {
   });
 
   it('builds detect requests from installable descriptors', () => {
-    const registry = createRegistry([CODEX_ACP_INSTALLABLE_DESCRIPTOR, GH_INSTALLABLE_DESCRIPTOR]);
+    const registry = createRegistry([codexAcpInstallableDescriptor, GH_INSTALLABLE_DESCRIPTOR]);
 
     expect(createInstallableCapabilityRequests(registry)).toEqual([
       { id: 'dep.codex-acp' },

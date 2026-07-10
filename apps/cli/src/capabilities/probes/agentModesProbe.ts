@@ -2,8 +2,8 @@ import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
 import { hasCatalogAcpBackendOwner } from '@/agent/acp/catalog/owner';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
-import { AGENTS } from '@/backends/catalog';
-import type { CatalogAgentLookupId } from '@/backends/types';
+import { AGENTS } from '@/agent/catalog/registry';
+import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import { getAgentSessionModesKind, isAgentId, legacyCustomAcpCompat } from '@happier-dev/agents';
 import { AsyncTtlCache, type BackendTargetRefV1 } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
@@ -11,16 +11,19 @@ import { validateCatalogAcpProbeSpawn } from './validateCatalogAcpProbeSpawn';
 import { buildAgentProbeCacheKey } from './buildAgentProbeCacheKey';
 import { resolveAgentProbeVariant } from './resolveAgentProbeVariant';
 import { probeConfiguredAcpBackend } from './probeConfiguredAcpBackend';
+import { resolveProviderOwnedPreflightControlsProbeDecision } from './providerOwnedPreflightControlsProbePolicy';
 import { resolvePreflightSessionControlsProbeAdapter } from './resolvePreflightSessionControlsProbeAdapter';
 import { runPreflightSessionControlsProbe } from './runPreflightSessionControlsProbe';
+import { withPreflightSessionControlsProbeEnvironment } from './preflightSessionControlsProbeEnvironment';
+import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import { z } from 'zod';
 
 export type ProbedAgentMode = Readonly<{ id: string; name: string; description?: string }>;
 
 export type ProbedAgentModesResult = Readonly<{
-  provider: CatalogAgentLookupId;
+  agentId: CatalogAgentLookupId;
   availableModes: ReadonlyArray<ProbedAgentMode>;
-  source: 'dynamic' | 'static';
+  source: 'dynamic' | 'static' | 'unavailable';
 }>;
 
 const DEFAULT_PROBE_MODES_TIMEOUT_MS = 15_000;
@@ -50,7 +53,19 @@ const ProbeModeChoiceInputSchema = z.object({
 });
 
 function buildStatic(agentId: CatalogAgentLookupId): ProbedAgentModesResult {
-  return { provider: agentId, availableModes: [], source: 'static' };
+  return { agentId, availableModes: [], source: 'static' };
+}
+
+function buildUnavailable(agentId: CatalogAgentLookupId): ProbedAgentModesResult {
+  return { agentId, availableModes: [], source: 'unavailable' };
+}
+
+function shouldFailClosedForMissingCli(params: {
+  agentId: CatalogAgentLookupId;
+  backendTarget?: BackendTargetRefV1;
+}): boolean {
+  if (params.backendTarget?.kind === 'configuredAcpBackend') return false;
+  return resolveAgentCliLaunchSpec(params.agentId) === null;
 }
 
 function resolveAgentSessionModesKindForLookupId(agentId: CatalogAgentLookupId) {
@@ -167,6 +182,8 @@ export async function probeAgentModesBestEffort(params: {
   timeoutMs?: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
   credentials?: Credentials | null;
+  connectedServices?: unknown;
+  env?: NodeJS.ProcessEnv;
 }): Promise<ProbedAgentModesResult> {
   const nowMs = Date.now();
   const cwd = typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : process.cwd();
@@ -181,6 +198,7 @@ export async function probeAgentModesBestEffort(params: {
     cwd,
     backendTarget: params.backendTarget,
     variant: probeVariant,
+    connectedServices: params.connectedServices,
   });
 
   const cached = agentModesProbeCache.get(cacheKey);
@@ -192,19 +210,33 @@ export async function probeAgentModesBestEffort(params: {
     if (cached2?.kind === 'success' && agentModesProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
 
     const fallback = buildStatic(params.agentId);
+    if (shouldFailClosedForMissingCli(params)) {
+      const unavailable = buildUnavailable(params.agentId);
+      agentModesProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
+      return unavailable;
+    }
 
     const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : DEFAULT_PROBE_MODES_TIMEOUT_MS;
 
     const preflightAdapter = await resolvePreflightSessionControlsProbeAdapter(params.agentId);
     if (preflightAdapter?.probeModesRaw) {
       const probePreflightModesOnce = async (): Promise<ProbedAgentMode[] | null> => {
-        const modesRaw = await preflightAdapter.probeModesRaw!({
+        const modesRaw = await withPreflightSessionControlsProbeEnvironment({
+          agentId: params.agentId,
+          probeKind: 'modes',
+          cwd,
+          connectedServices: params.connectedServices,
+          credentials: params.credentials ?? null,
+          accountSettings: params.accountSettings ?? null,
+          processEnv: params.env ?? process.env,
+        }, async ({ env }) => await preflightAdapter.probeModesRaw!({
           backendTarget: params.backendTarget,
           probeKind: 'modes',
           cwd,
           timeoutMs,
           accountSettings: params.accountSettings ?? null,
-        }).catch(() => null);
+          env,
+        })).catch(() => null);
         return normalizeDynamicModes(modesRaw);
       };
 
@@ -212,15 +244,18 @@ export async function probeAgentModesBestEffort(params: {
         adapter: preflightAdapter,
         probeOnce: probePreflightModesOnce,
       });
-      if (probeResult.kind === 'success') {
-        const res: ProbedAgentModesResult = { ...fallback, availableModes: probeResult.value, source: 'dynamic' };
+      const decision = resolveProviderOwnedPreflightControlsProbeDecision({
+        probeResult,
+        emptySuccess: 'unavailable',
+      });
+      if (decision.kind === 'success') {
+        const res: ProbedAgentModesResult = { ...fallback, availableModes: decision.value, source: 'dynamic' };
         agentModesProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: PROBE_MODES_SUCCESS_TTL_MS });
         return res;
       }
-      if (probeResult.kind === 'retryable_failure') {
-        agentModesProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
-        return fallback;
-      }
+      const res = buildUnavailable(params.agentId);
+      agentModesProbeCache.setError(cacheKey, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
+      return res;
     }
 
     try {

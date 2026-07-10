@@ -1,6 +1,6 @@
 import type { CliAuthSpec } from './types';
 import { createCatalogCliAuthSpec } from './createCatalogCliAuthSpec';
-import type { CatalogAgentLookupId } from '@/backends/types';
+import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 
 export function createUnknownCliAuthSpec(agentId: CatalogAgentLookupId): CliAuthSpec {
   return createCatalogCliAuthSpec(agentId, {

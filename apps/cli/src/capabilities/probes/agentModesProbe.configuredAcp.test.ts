@@ -73,7 +73,7 @@ describe('probeAgentModesBestEffort (configured ACP backend)', () => {
     });
 
     expect(result.source).toBe('dynamic');
-    expect(result.provider).toBe('customAcp');
+    expect(result.agentId).toBe('customAcp');
     expect(result.availableModes).toEqual([{ id: 'plan', name: 'Plan' }]);
     expect(resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock).toHaveBeenCalledWith({
       settings: { acpCatalogSettingsV1: { v: 2, backends: [] } },

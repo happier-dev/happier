@@ -1,4 +1,5 @@
-import { requireCatalogEntry, type CatalogAgentLookupId } from '@/backends/catalog';
+import { requireCatalogEntry } from '@/agent/catalog/registry';
+import type { CatalogAgentLookupId } from '@/agent/catalog/types';
 import type { DaemonSpawnValidationResult } from '@/daemon/spawnHooks';
 import { hasCatalogAcpBackendOwner } from '@/agent/acp/catalog/owner';
 

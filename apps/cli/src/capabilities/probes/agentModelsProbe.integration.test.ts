@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import { delimiter, dirname, join, resolve } from 'node:path';
 
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import type { AgentBackend } from '@/agent/core';
+import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 import { probeAgentModelsBestEffort, probeModelsFromAcpBackend } from './agentModelsProbe';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import {
@@ -42,8 +42,8 @@ function createProbeBackendOptions(params: {
   };
 }
 
-type ProbeBackendLike = Pick<AgentBackend, 'startSession'> & {
-  getSessionModelState: () => unknown;
+type ProbeBackendLike = Pick<AcpProbeBackend, 'dispose' | 'startSession'> & {
+  getSessionModelState: () => { availableModels?: unknown } | null;
   getSessionConfigOptionsState: () => unknown;
 };
 
@@ -167,13 +167,14 @@ describe('probeModelsFromAcpBackend', () => {
 
   it('does not leak unhandled rejections when startSession times out first', async () => {
     let rejectStartSession!: (reason?: unknown) => void;
-    const startSessionPromise = new Promise<Awaited<ReturnType<AgentBackend['startSession']>>>((_resolve, reject) => {
+    const startSessionPromise = new Promise<Awaited<ReturnType<AcpProbeBackend['startSession']>>>((_resolve, reject) => {
       rejectStartSession = reject;
     });
     const backend: ProbeBackendLike = {
       startSession: () => startSessionPromise,
       getSessionModelState: () => null,
       getSessionConfigOptionsState: () => null,
+      dispose: async () => undefined,
     };
 
     const unhandled: unknown[] = [];
@@ -182,7 +183,7 @@ describe('probeModelsFromAcpBackend', () => {
     };
     process.on('unhandledRejection', onUnhandledRejection);
     try {
-      await expect(probeModelsFromAcpBackend({ backend: backend as unknown as AgentBackend, timeoutMs: 1 })).rejects.toThrow(/ACP startSession timeout/i);
+      await expect(probeModelsFromAcpBackend({ backend, timeoutMs: 1 })).rejects.toThrow(/ACP startSession timeout/i);
       rejectStartSession(new Error('late startSession rejection'));
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(unhandled).toEqual([]);
@@ -194,11 +195,12 @@ describe('probeModelsFromAcpBackend', () => {
   it('does not leak unhandled rejections when startSession resolves before timeout', async () => {
     const backend: ProbeBackendLike = {
       startSession: async () =>
-        ({ sessionId: 'session-ok' }) as Awaited<ReturnType<AgentBackend['startSession']>>,
+        ({ sessionId: 'session-ok' }) as Awaited<ReturnType<AcpProbeBackend['startSession']>>,
       getSessionModelState: () => ({
         availableModels: [{ id: 'model-a', name: 'Model A' }],
       }),
       getSessionConfigOptionsState: () => null,
+      dispose: async () => undefined,
     };
 
     const unhandled: unknown[] = [];
@@ -208,7 +210,7 @@ describe('probeModelsFromAcpBackend', () => {
     process.on('unhandledRejection', onUnhandledRejection);
     try {
       const models = await probeModelsFromAcpBackend({
-        backend: backend as unknown as AgentBackend,
+        backend,
         timeoutMs: 250,
       });
       expect(models).toEqual([
@@ -226,16 +228,17 @@ describe('probeModelsFromAcpBackend', () => {
     const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
     const backend: ProbeBackendLike = {
       startSession: async () =>
-        ({ sessionId: 'session-ok' }) as Awaited<ReturnType<AgentBackend['startSession']>>,
+        ({ sessionId: 'session-ok' }) as Awaited<ReturnType<AcpProbeBackend['startSession']>>,
       getSessionModelState: () => ({
         availableModels: [{ id: 'model-a', name: 'Model A' }],
       }),
       getSessionConfigOptionsState: () => null,
+      dispose: async () => undefined,
     };
 
     try {
       const models = await probeModelsFromAcpBackend({
-        backend: backend as unknown as AgentBackend,
+        backend,
         timeoutMs: 250,
       });
       expect(models).toEqual([
@@ -552,7 +555,52 @@ process.exit(1);
     }
   }, 20_000);
 
-  it('falls back to static codex models when codex ACP spawn is unavailable', async () => {
+  it('returns dynamic model list from the Antigravity plugin preflight contribution', async () => {
+    const fixture = await createProbeTempDir('happier-cli-model-probe-antigravity');
+    const binDir = resolve(join(fixture.dir, 'bin'));
+    await mkdir(binDir, { recursive: true });
+
+    const agyPath = resolve(join(binDir, 'agy'));
+    await writeExecutableScript(
+      agyPath,
+      `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "models") {
+  process.stdout.write("Gemini 3.5 Flash (Medium)\\nClaude Sonnet 4.6 (Thinking)\\n");
+  process.exit(0);
+}
+process.exit(1);
+`,
+    );
+
+    const prevPath = process.env.PATH;
+    const prevOverride = process.env.HAPPIER_ANTIGRAVITY_PATH;
+    process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
+    delete process.env.HAPPIER_ANTIGRAVITY_PATH;
+    try {
+      const res = await probeAgentModelsBestEffort({
+        agentId: 'antigravity',
+        cwd: fixture.dir,
+        timeoutMs: CLI_MODELS_PROBE_TEST_TIMEOUT_MS,
+      });
+      expect(res.source).toBe('dynamic');
+      expect(res.availableModels).toEqual([
+        { id: 'default', name: 'Default' },
+        { id: 'Gemini 3.5 Flash (Medium)', name: 'Gemini 3.5 Flash (Medium)' },
+        { id: 'Claude Sonnet 4.6 (Thinking)', name: 'Claude Sonnet 4.6 (Thinking)' },
+      ]);
+    } finally {
+      process.env.PATH = prevPath;
+      if (typeof prevOverride === 'string') {
+        process.env.HAPPIER_ANTIGRAVITY_PATH = prevOverride;
+      } else {
+        delete process.env.HAPPIER_ANTIGRAVITY_PATH;
+      }
+      await fixture.cleanup();
+    }
+  }, 20_000);
+
+  it('falls back only to the default Codex model when Codex dynamic probing is unavailable', async () => {
     const prevPath = process.env.PATH;
     const prevOverride = process.env.HAPPIER_CODEX_ACP_BIN;
     process.env.PATH = '';
@@ -564,7 +612,7 @@ process.exit(1);
         timeoutMs: 500,
       });
       expect(res.source).toBe('static');
-      expect(res.availableModels[0]).toEqual({ id: 'default', name: 'Default' });
+      expect(res.availableModels).toEqual([{ id: 'default', name: 'Default' }]);
     } finally {
       process.env.PATH = prevPath;
       if (typeof prevOverride === 'string') {
