@@ -1,6 +1,6 @@
-export const AUGGIE_PROVIDER_SETTINGS_PLUGIN = {
+export const AUGGIE_AGENT_SETTINGS_PLUGIN = {
   providerId: 'auggie',
-  title: { key: 'settingsProviders.plugins.auggie.title' },
+  title: { key: 'settingsAgents.plugins.auggie.title' },
   icon: { ionName: 'sparkles-outline', color: { kind: 'theme', token: 'green' } },
   settings: {},
   uiSections: [],

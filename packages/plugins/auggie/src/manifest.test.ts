@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 function requireAuggieBackend() {
-  const backend = PLUGIN_MANIFEST.contributes?.backends?.find((entry) => entry.id === 'auggie');
+  const backend = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'auggie');
   if (!backend) {
     throw new Error('Expected Auggie plugin manifest to declare auggie backend contribution');
   }
@@ -11,16 +11,27 @@ function requireAuggieBackend() {
 }
 
 describe('Auggie plugin manifest', () => {
+  it('declares agent settings as plugin-authored contribution data', () => {
+    const contribution = PLUGIN_MANIFEST.contributes.agentSettings?.find((entry) => entry.agentId === 'auggie');
+
+    expect(contribution).toEqual(expect.objectContaining({
+      id: 'auggie.agentSettings.v1',
+      kind: 'agentSettings.v1',
+      storageScope: 'agentAccount',
+    }));
+    expect(contribution?.fields).toEqual([]);
+    expect(contribution?.ui.sections).toEqual([]);
+  });
+
   it('declares a plugin-owned ACP backend contribution', () => {
     const backend = requireAuggieBackend();
 
     expect(PLUGIN_MANIFEST.id).toBe('happier.agent.auggie');
-    expect(PLUGIN_MANIFEST.runtime.capabilities).toContain('backends');
+    expect(PLUGIN_MANIFEST.uses).toContain('agents');
     expect(backend).toMatchObject({
       kindVersion: 1,
       id: 'auggie',
-      agentId: 'auggie',
-      engine: {
+      runtime: {
         kind: 'acp',
         transport: {
           kind: 'stdio',
@@ -51,6 +62,6 @@ describe('Auggie plugin manifest', () => {
         },
       },
     });
-    expect(backend.engine).not.toHaveProperty('providerCliRuntime');
+    expect(backend.runtime).not.toHaveProperty('providerCliRuntime');
   });
 });

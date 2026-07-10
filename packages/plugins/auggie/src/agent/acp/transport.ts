@@ -1,4 +1,4 @@
-import type { AcpStderrRulesV1, AcpToolNameInferenceV1 } from '@happier-dev/plugin-sdk/acp';
+import type { AcpStderrRulesV1, AcpToolNameInferenceV1 } from '@happier-dev/plugin-sdk/experimental/acp';
 
 export const AUGGIE_ACP_TIMEOUTS = Object.freeze({
   initMs: 60_000,

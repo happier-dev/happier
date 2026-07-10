@@ -1,3 +1,5 @@
+import { normalizeAcpPermissionIntent } from '@happier-dev/plugin-sdk/experimental/acp';
+
 export type AuggiePermissionMode = string | null | undefined;
 
 type AuggieToolPolicy = 'allow' | 'deny' | 'ask-user';
@@ -27,21 +29,14 @@ export const AUGGIE_TOOL_NAMES = Object.freeze([
   'add_tasks',
 ] as const);
 
-function normalizePermissionMode(mode: AuggiePermissionMode): string {
-  const normalized = String(mode ?? 'default').trim();
-  if (!normalized) return 'default';
-  if (normalized === 'read_only') return 'read-only';
-  return normalized;
-}
-
 function permissionArgsForRules(rules: ReadonlyArray<readonly [string, AuggieToolPolicy]>): string[] {
   return rules.flatMap(([tool, policy]) => ['--permission', `${tool}:${policy}`]);
 }
 
 export function buildAuggiePermissionArgs(permissionMode: AuggiePermissionMode): string[] {
-  const intent = normalizePermissionMode(permissionMode);
+  const intent = normalizeAcpPermissionIntent(permissionMode);
 
-  if (intent === 'yolo' || intent === 'bypassPermissions') {
+  if (intent === 'yolo') {
     return permissionArgsForRules(AUGGIE_TOOL_NAMES.map((tool) => [tool, 'allow'] as const));
   }
 

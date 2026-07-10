@@ -1,4 +1,4 @@
-import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/acp';
+import type { AcpBackendSpecV1 } from '@happier-dev/plugin-sdk/experimental/acp';
 
 import { buildAuggieAcpArgv } from './callbacks.js';
 import { AUGGIE_ACP_TIMEOUTS, AUGGIE_STDERR_RULES, AUGGIE_TOOL_NAME_INFERENCE } from './transport.js';

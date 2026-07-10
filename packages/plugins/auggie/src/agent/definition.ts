@@ -62,5 +62,11 @@ export const AGENT_DEFINITION = Object.freeze({
     acceptsJavaScriptFileOverride: false,
     docsUrl: 'https://augmentcode.com',
   },
-  providerSettings: null,
+  agentSettings: null,
+  runtimeContributions: {
+    agentCatalogEntry: {
+      importName: 'AUGGIE_AGENT_RUNTIME_CONTRIBUTION',
+      source: './agent/contributions/runtime',
+    },
+  },
 });

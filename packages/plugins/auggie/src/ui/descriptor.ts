@@ -35,15 +35,25 @@ export const AUGGIE_UI_DESCRIPTOR = Object.freeze({
     icon: { assetId: 'auggie' },
   },
   settings: {
-    descriptorId: 'auggie.providerSettings.v1',
+    descriptorId: 'auggie.agentSettings.v1',
   },
   behavior: {
     descriptorId: 'auggie.uiBehavior.v1',
-    newSessionOptions: [{ id: 'auggie.allowIndexing', stateKey: 'allowIndexing' }],
   },
   session: {},
   message: {},
-  components: { slots: [] },
+  components: {
+    slots: [
+      {
+        id: 'auggie.allowIndexingChip',
+        slot: 'newSession.agentInputExtraActionChips',
+        componentId: 'firstParty.auggie.allowIndexingChip',
+        props: {
+          optionStateKey: 'allowIndexing',
+        },
+      },
+    ],
+  },
   assets: {
     svgIcon: { assetId: 'auggie' },
   },

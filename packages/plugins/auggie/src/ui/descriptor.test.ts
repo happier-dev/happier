@@ -10,7 +10,7 @@ const FORBIDDEN_NO_EXECUTE_KEYS = new Set([
   'uiBehaviorOverride',
   'sessionProviderBehavior',
   'messageMetaOverride',
-  'providerSettings',
+  'agentSettings',
   'visibleMessageResolver',
   'svgIconXml',
 ]);
@@ -44,7 +44,7 @@ describe('AUGGIE_UI_DESCRIPTOR', () => {
         connectedService: { serviceId: null, labelKey: 'agentInput.agent.auggie', connectRoute: null },
         icon: { assetId: 'auggie' },
       },
-      settings: { descriptorId: 'auggie.providerSettings.v1' },
+      settings: { descriptorId: 'auggie.agentSettings.v1' },
       behavior: { descriptorId: 'auggie.uiBehavior.v1' },
     });
   });

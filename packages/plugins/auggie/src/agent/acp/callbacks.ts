@@ -1,4 +1,4 @@
-import type { AcpTier2ArgvBuilderV1 } from '@happier-dev/plugin-sdk/acp';
+import type { AcpTier2ArgvBuilderV1 } from '@happier-dev/plugin-sdk/experimental/acp';
 
 import { readAuggieAllowIndexingFromEnv } from '../options/allowIndexing.js';
 import { buildAuggiePermissionArgs } from '../permissions/permissionArgs.js';
