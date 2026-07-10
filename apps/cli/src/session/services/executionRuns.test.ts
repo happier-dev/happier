@@ -19,7 +19,14 @@ vi.mock('./getSessionHistory', () => ({
     readRawSessionHistoryRows,
 }));
 
-import { getExecutionRun, listExecutionRuns, normalizeExecutionRunRpcPayload, waitForExecutionRun } from './executionRuns';
+import {
+    getExecutionRun,
+    listExecutionRuns,
+    normalizeExecutionRunRpcPayload,
+    sendExecutionRunMessage,
+    stopExecutionRun,
+    waitForExecutionRun,
+} from './executionRuns';
 
 function createRun(params: Readonly<{
     runId: string;
@@ -86,7 +93,7 @@ function createTranscriptRows(params: Readonly<{
                 role: 'agent',
                 content: {
                     type: 'acp',
-                    provider: 'claude',
+                    agentId: 'claude',
                     data: {
                         type: 'tool-call',
                         callId,
@@ -118,7 +125,7 @@ function createTranscriptRows(params: Readonly<{
                 role: 'agent',
                 content: {
                     type: 'acp',
-                    provider: 'claude',
+                    agentId: 'claude',
                     data: {
                         type: 'tool-result',
                         callId,
@@ -324,6 +331,37 @@ describe('listExecutionRuns', () => {
         });
     });
 
+    it('keeps legacy marker-backed built-in agent targets for deployed marker compatibility', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
+        listExecutionRunMarkers.mockResolvedValueOnce([
+            createMarker({
+                runId: 'run-marker-legacy-built-in-agent',
+                status: 'running',
+                startedAtMs: 20,
+                backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+            }),
+        ]);
+        readRawSessionHistoryRows.mockResolvedValueOnce([]);
+
+        const result = await getExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: { runId: 'run-marker-legacy-built-in-agent' },
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            data: {
+                run: expect.objectContaining({
+                    runId: 'run-marker-legacy-built-in-agent',
+                    backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+                    status: 'running',
+                }),
+            },
+        });
+    });
+
     it('matches canonical V2 configured ACP marker-backed runs when filtering by the concrete configured backend id', async () => {
         callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
         listExecutionRunMarkers.mockResolvedValueOnce([
@@ -476,6 +514,47 @@ describe('listExecutionRuns', () => {
         });
     });
 
+    it('uses durable fallback directly when live session rpc is skipped for inactive sessions', async () => {
+        listExecutionRunMarkers.mockResolvedValueOnce([]);
+        readRawSessionHistoryRows.mockResolvedValueOnce(createTranscriptRows({
+            runId: 'run_inactive_hist',
+            callId: 'call_inactive_hist',
+            status: 'succeeded',
+            startedAtMs: 10,
+        }));
+
+        const result = await listExecutionRuns({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: {},
+            skipLiveRpc: true,
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            data: {
+                runs: [
+                    {
+                        runId: 'run_inactive_hist',
+                        callId: 'call_inactive_hist',
+                        sidechainId: 'call_inactive_hist',
+                        intent: 'plan',
+                        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                        permissionMode: 'workspace_write',
+                        retentionPolicy: 'ephemeral',
+                        runClass: 'bounded',
+                        ioMode: 'request_response',
+                        status: 'succeeded',
+                        startedAtMs: 10,
+                        finishedAtMs: 20,
+                    },
+                ],
+            },
+        });
+        expect(callSessionRpc).not.toHaveBeenCalled();
+    });
+
     it('merges marker-backed and transcript-backed runs during app-level fallback instead of hiding transcript history', async () => {
         callSessionRpc.mockResolvedValueOnce({
             ok: false,
@@ -578,7 +657,7 @@ describe('listExecutionRuns', () => {
                     role: 'agent',
                     content: {
                         type: 'acp',
-                        provider: 'claude',
+                        agentId: 'claude',
                         data: {
                             type: 'tool-result',
                             callId: 'call_hist_2',
@@ -615,7 +694,7 @@ describe('listExecutionRuns', () => {
                     role: 'agent',
                     content: {
                         type: 'acp',
-                        provider: 'claude',
+                        agentId: 'claude',
                         data: {
                             type: 'tool-call',
                             callId: 'call_hist_2',
@@ -811,7 +890,7 @@ describe('getExecutionRun', () => {
                     role: 'agent',
                     content: {
                         type: 'acp',
-                        provider: 'claude',
+                        agentId: 'claude',
                         data: {
                             type: 'tool-call',
                             callId: 'call_hist_1',
@@ -843,7 +922,7 @@ describe('getExecutionRun', () => {
                     role: 'agent',
                     content: {
                         type: 'acp',
-                        provider: 'claude',
+                        agentId: 'claude',
                         data: {
                             type: 'tool-result',
                             callId: 'call_hist_1',
@@ -946,6 +1025,32 @@ describe('getExecutionRun', () => {
         });
     });
 
+    it('falls back to marker-backed execution run state when transcript get fallback fails', async () => {
+        callSessionRpc.mockResolvedValueOnce({
+            ok: false,
+            errorCode: 'execution_run_not_found',
+            error: 'Not found',
+        });
+        listExecutionRunMarkers.mockResolvedValueOnce([
+            createMarker({ runId: 'run-marker-only', status: 'running', startedAtMs: 20 }),
+        ]);
+        readRawSessionHistoryRows.mockRejectedValueOnce(new Error('transcript fetch failed'));
+
+        const result = await getExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: { runId: 'run-marker-only' },
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            data: {
+                run: createRun({ runId: 'run-marker-only', status: 'running', startedAtMs: 20 }),
+            },
+        });
+    });
+
     it('preserves the original rpc transport error when transcript get fallback lookup fails', async () => {
         callSessionRpc.mockRejectedValueOnce(new Error('Socket connect timeout'));
         listExecutionRunMarkers.mockResolvedValueOnce([]);
@@ -962,6 +1067,73 @@ describe('getExecutionRun', () => {
             ok: false,
             code: 'unknown_error',
             message: 'Socket connect timeout',
+        });
+    });
+
+    it('returns not found when rpc is unavailable and no fallback run exists', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
+        listExecutionRunMarkers.mockResolvedValueOnce([]);
+        readRawSessionHistoryRows.mockResolvedValueOnce([]);
+
+        const result = await getExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: { runId: 'run-missing' },
+        });
+
+        expect(result).toEqual({
+            ok: false,
+            code: 'execution_run_not_found',
+            message: 'Execution run not found',
+        });
+    });
+});
+
+describe('execution run control fallback', () => {
+    beforeEach(() => {
+        callSessionRpc.mockReset();
+        listExecutionRunMarkers.mockReset();
+        readRawSessionHistoryRows.mockReset();
+    });
+
+    it('returns not found when stop rpc is unavailable and no fallback run exists', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
+        listExecutionRunMarkers.mockResolvedValueOnce([]);
+        readRawSessionHistoryRows.mockResolvedValueOnce([]);
+
+        const result = await stopExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: { runId: 'run-missing' },
+        });
+
+        expect(result).toEqual({
+            ok: false,
+            code: 'execution_run_not_found',
+            message: 'Execution run not found',
+        });
+    });
+
+    it('fails closed when send rpc is unavailable but the run only exists in fallback history', async () => {
+        callSessionRpc.mockRejectedValueOnce(new Error('RPC method not available'));
+        listExecutionRunMarkers.mockResolvedValueOnce([
+            createMarker({ runId: 'run-marker-running', status: 'running', startedAtMs: 20 }),
+        ]);
+        readRawSessionHistoryRows.mockResolvedValueOnce([]);
+
+        const result = await sendExecutionRunMessage({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: { runId: 'run-marker-running', message: 'continue' },
+        });
+
+        expect(result).toEqual({
+            ok: false,
+            code: 'execution_run_not_allowed',
+            message: 'Execution run control unavailable',
         });
     });
 });

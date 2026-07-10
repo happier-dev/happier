@@ -32,6 +32,11 @@ export type ListSessionsResult = Readonly<{
   hasNext: boolean;
 }>;
 
+function normalizeResultLimit(limit: number | undefined): number | null {
+  if (typeof limit !== 'number' || !Number.isFinite(limit) || limit <= 0) return null;
+  return Math.floor(limit);
+}
+
 function toLastMessagePreview(message: SemanticTranscriptItem | undefined): ListSessionsLastMessagePreview | undefined {
   if (!message || !message.text) return undefined;
   const text = message.text.slice(0, LIST_SESSION_PREVIEW_TEXT_LIMIT);
@@ -98,13 +103,15 @@ export async function listSessions(params: Readonly<{
   const filteredRows = params.resumableOnly
     ? rowModels.filter((row) => row.vendorResume.eligible === true && row.archivedAt === null && row.active !== true)
     : rowModels;
+  const resultLimit = normalizeResultLimit(params.limit);
+  const limitedRows = resultLimit === null ? filteredRows : filteredRows.slice(0, resultLimit);
 
-  const allowedSessionIds = params.resumableOnly ? new Set(filteredRows.map((row) => row.id)) : null;
-  const rowById = new Map(filteredRows.map((row) => [row.id, row] as const));
+  const allowedSessionIds = new Set(limitedRows.map((row) => row.id));
+  const rowById = new Map(limitedRows.map((row) => [row.id, row] as const));
   let sessions = page.sessions
     .map((row) => summarizeSessionRow({ credentials: params.credentials, row }))
     .filter((session) => params.includeSystem || session.isSystem !== true)
-    .filter((session) => !allowedSessionIds || allowedSessionIds.has(session.id))
+    .filter((session) => allowedSessionIds.has(session.id))
     .map((session) => {
       const row = rowById.get(session.id);
       if (!row) {
@@ -134,6 +141,6 @@ export async function listSessions(params: Readonly<{
     sessions,
     nextCursor: page.nextCursor,
     hasNext: page.hasNext,
-    ...(params.includeRows === true ? { rows: filteredRows } : {}),
+    ...(params.includeRows === true ? { rows: limitedRows } : {}),
   };
 }

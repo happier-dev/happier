@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   attemptProviderNativeFork: vi.fn(),
   attemptAcpLatestFork: vi.fn(),
   createReplayForkSession: vi.fn(),
-  isAcpForkEligibleForProvider: vi.fn(),
+  isAcpForkEligibleForAgent: vi.fn(),
 }));
 
 vi.mock('@/persistence', () => ({
@@ -26,7 +26,7 @@ vi.mock('@/session/transport/encryption/sessionEncryptionContext', () => ({
 }));
 
 vi.mock('@/agent/acp/acpForkEligibility', () => ({
-  isAcpForkEligibleForProvider: (...args: unknown[]) => mocks.isAcpForkEligibleForProvider(...args),
+  isAcpForkEligibleForAgent: (...args: unknown[]) => mocks.isAcpForkEligibleForAgent(...args),
 }));
 
 vi.mock('./fork/attemptProviderNativeFork', () => ({
@@ -49,8 +49,8 @@ function createBridge(params: Readonly<{
   return {
     resolveSessionForkBackendTarget: vi.fn(async () => ({
       ok: true,
-      providerAgentId: 'codex',
-      providerHintProviderId: 'codex',
+      catalogAgentId: 'codex',
+      agentHintAgentId: 'codex',
       backendTargetV2: {
         kind: 'backend',
         backendId: 'codex',
@@ -90,7 +90,7 @@ describe('createForkSessionLifecycleActionHandler', () => {
     mocks.attemptProviderNativeFork.mockResolvedValue(null);
     mocks.attemptAcpLatestFork.mockResolvedValue(null);
     mocks.createReplayForkSession.mockResolvedValue({ ok: true, childSessionId: 'child-replay' });
-    mocks.isAcpForkEligibleForProvider.mockReturnValue(false);
+    mocks.isAcpForkEligibleForAgent.mockReturnValue(false);
   });
 
   it('passes the bridge-resolved fork surface into provider-native fork attempts', async () => {
@@ -151,6 +151,72 @@ describe('createForkSessionLifecycleActionHandler', () => {
 
     expect(results).toEqual([
       { ok: true, childSessionId: 'child-replay' },
+      { ok: true, childSessionId: 'child-replay' },
+    ]);
+    expect(mocks.createReplayForkSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the same fork spawn nonce for repeated equivalent fork requests after single-flight clears', async () => {
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createBridge({ forkSurface: null }),
+      handlers: {
+        spawnSession: vi.fn(),
+        stopSession: vi.fn(),
+      },
+    });
+    const request = {
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'replay',
+    } as const;
+
+    await handler(request);
+    await handler(request);
+
+    const firstSpawnNonce = mocks.createReplayForkSession.mock.calls[0]?.[0]?.spawnNonce;
+    const secondSpawnNonce = mocks.createReplayForkSession.mock.calls[1]?.[0]?.spawnNonce;
+    expect(firstSpawnNonce).toEqual(expect.any(String));
+    expect(firstSpawnNonce).toBe(secondSpawnNonce);
+  });
+
+  it('does not coalesce concurrent forks that request different strategies', async () => {
+    let releaseNativeFork!: () => void;
+    const nativeForkPromise = new Promise<{ ok: true; childSessionId: string }>((resolve) => {
+      releaseNativeFork = () => resolve({ ok: true, childSessionId: 'child-native' });
+    });
+    mocks.attemptProviderNativeFork.mockImplementation(async (params: { requestedStrategy: string }) => {
+      if (params.requestedStrategy === 'auto') {
+        return nativeForkPromise;
+      }
+      return null;
+    });
+    mocks.createReplayForkSession.mockResolvedValue({ ok: true, childSessionId: 'child-replay' });
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: createBridge({ forkSurface: null }),
+      handlers: {
+        spawnSession: vi.fn(),
+        stopSession: vi.fn(),
+      },
+    });
+
+    const autoFork = handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'auto',
+    });
+    const replayFork = handler({
+      v: 1,
+      parentSessionId: 'parent-session',
+      forkPoint: { type: 'latest' },
+      strategy: 'replay',
+    });
+    releaseNativeFork();
+    const results = await Promise.all([autoFork, replayFork]);
+
+    expect(results).toEqual([
+      { ok: true, childSessionId: 'child-native' },
       { ok: true, childSessionId: 'child-replay' },
     ]);
     expect(mocks.createReplayForkSession).toHaveBeenCalledTimes(1);

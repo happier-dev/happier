@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -64,6 +64,10 @@ const { bootstrapAccountSettingsContext } = vi.hoisted(() => ({
   bootstrapAccountSettingsContext: vi.fn(),
 }));
 
+const { validateStoredAuthTokenAgainstActiveServer } = vi.hoisted(() => ({
+  validateStoredAuthTokenAgainstActiveServer: vi.fn(),
+}));
+
 vi.mock('@/daemon/controlClient', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/daemon/controlClient')>();
   return {
@@ -111,6 +115,10 @@ vi.mock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => ({
   bootstrapAccountSettingsContext,
 }));
 
+vi.mock('@/auth/validateStoredAuthTokenAgainstActiveServer', () => ({
+  validateStoredAuthTokenAgainstActiveServer,
+}));
+
 const { callSessionRpc } = vi.hoisted(() => ({
   callSessionRpc: vi.fn(),
 }));
@@ -129,6 +137,7 @@ import {
   type ActionId,
 } from '@happier-dev/protocol';
 import { createPluginStateStore } from '@/plugins/store/state';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { configuration } from '@/configuration';
 
 const env = process.env;
@@ -139,8 +148,7 @@ async function writePluginBackendFixture(rootDir: string): Promise<void> {
   await writeFile(
     join(manifestDir, 'plugin.json'),
     JSON.stringify(
-      {
-        schemaVersion: 2,
+      createPluginManifestV2Fixture({
         id: 'acme.cli-action.plugin',
         version: '1.0.0',
         displayName: 'CLI Action Plugin',
@@ -148,60 +156,49 @@ async function writePluginBackendFixture(rootDir: string): Promise<void> {
         engines: {
           happier: `^${configuration.currentCliVersion}`,
         },
-        runtime: {
-          apiVersion: 1,
-          capabilities: ['providers', 'backends'],
+        uses: ['agents'],
+        entrypoints: {
+          main: './daemon.mjs',
         },
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
-          },
+        permissions: {
+          required: [],
+          optional: [],
         },
-        permissions: [],
-        contributions: [
-          {
-            kind: 'provider',
-            kindVersion: 1,
-            id: 'acme.cli-action.provider',
-            display: {
-              name: 'CLI Action Provider',
-            },
-            ownedBackendIds: ['acme.cli-action.backend'],
-          },
-          {
-            kind: 'backend',
-            kindVersion: 1,
-            id: 'acme.cli-action.backend',
-            providerId: 'acme.cli-action.provider',
-            runtimeKind: 'acp',
-            launch: {
-              command: 'ignored-launch-command',
-              args: ['--ignored'],
-              env: {},
-            },
-            acp: {
-              title: 'Plugin Review Bot',
-              description: 'Plugin-sourced ACP backend',
-              command: 'plugin-review-bot',
-              args: ['acp'],
-              env: {},
-              transportProfile: 'generic',
-              capabilities: {
-                supportsLoadSession: false,
-                supportsModes: 'unknown',
-                supportsModels: 'unknown',
-                supportsConfigOptions: 'unknown',
-                promptImageSupport: 'unknown',
+        contributes: {
+          agents: [
+            {
+              kindVersion: 1,
+              id: 'acme.cli-action.backend',
+              display: {
+                name: 'Plugin Review Bot',
+              },
+              runtime: {
+                kind: 'acp',
+                transport: {
+                  kind: 'stdio',
+                  launch: {
+                    kind: 'executable',
+                    command: 'plugin-review-bot',
+                    args: ['acp'],
+                    env: {},
+                  },
+                },
+                ux: {
+                  title: 'Plugin Review Bot',
+                  description: 'Plugin-sourced ACP backend',
+                },
+                capabilities: {
+                  supportsLoadSession: false,
+                  supportsModes: 'unknown',
+                  supportsModels: 'unknown',
+                  supportsConfigOptions: 'unknown',
+                  promptImageSupport: 'unknown',
+                },
               },
             },
-            capabilities: {
-              supportsModels: true,
-              supportsModes: true,
-              supportsConfigOptions: true,
-            },
-          },
-        ],
-      },
+          ],
+        },
+      }),
       null,
       2,
     ),
@@ -219,8 +216,7 @@ async function writePluginActionFixture(rootDir: string): Promise<void> {
   await writeFile(
     join(manifestDir, 'plugin.json'),
     JSON.stringify(
-      {
-        schemaVersion: 2,
+      createPluginManifestV2Fixture({
         id: 'acme.cli-action-exec.plugin',
         version: '1.0.0',
         displayName: 'CLI Action Execution Plugin',
@@ -228,33 +224,32 @@ async function writePluginActionFixture(rootDir: string): Promise<void> {
         engines: {
           happier: `^${configuration.currentCliVersion}`,
         },
-        runtime: {
-          apiVersion: 1,
-          capabilities: ['actions'],
+        uses: ['actions'],
+        entrypoints: {
+          main: './daemon.mjs',
         },
-        permissions: [],
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
-          },
+        permissions: {
+          required: [],
+          optional: [],
         },
-        contributions: [
-          {
-            kind: 'action',
-            id: 'acme.review.start',
-            title: 'Start Acme Review',
-            description: 'Starts an Acme review workflow',
-            scopes: ['global'],
-            surfaces: ['cli'],
-            placement: 'commandPalette',
-            dangerLevel: 'safe',
-            handler: {
-              target: 'daemon',
-              exportName: 'startReview',
+        contributes: {
+          actions: [
+            {
+              id: 'acme.review.start',
+              title: 'Start Acme Review',
+              description: 'Starts an Acme review workflow',
+              scopes: ['global'],
+              surfaces: ['cli'],
+              placement: 'commandPalette',
+              dangerLevel: 'safe',
+              handler: {
+                target: 'daemon',
+                exportName: 'startReview',
+              },
             },
-          },
-        ],
-      },
+          ],
+        },
+      }),
       null,
       2,
     ),
@@ -264,11 +259,12 @@ async function writePluginActionFixture(rootDir: string): Promise<void> {
     join(rootDir, 'daemon.mjs'),
     [
       'export async function startReview(request) {',
-      '  return {',
+      '  return { ok: true, data: {',
       '    pluginHandled: true,',
       '    actionId: request.actionId,',
       '    input: request.input,',
       '    surface: request.context.surface,',
+      '  }',
       '  };',
       '}',
       '',
@@ -283,8 +279,7 @@ async function writeActivatedPluginActionFixture(rootDir: string): Promise<void>
   await writeFile(
     join(manifestDir, 'plugin.json'),
     JSON.stringify(
-      {
-        schemaVersion: 2,
+      createPluginManifestV2Fixture({
         id: 'acme.cli-activated-action.plugin',
         version: '1.0.0',
         displayName: 'CLI Activated Action Plugin',
@@ -292,23 +287,32 @@ async function writeActivatedPluginActionFixture(rootDir: string): Promise<void>
         engines: {
           happier: `^${configuration.currentCliVersion}`,
         },
-        runtime: {
-          apiVersion: 1,
-          capabilities: ['actions'],
+        uses: ['actions'],
+        entrypoints: {
+          main: './daemon.mjs',
         },
-        permissions: [
-          {
-            capability: 'actions.register',
-            reason: 'Registers activation-time actions for CLI execution tests',
-          },
-        ],
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
-          },
+        permissions: {
+          required: [],
+          optional: [],
         },
-        contributions: [],
-      },
+        contributes: {
+          actions: [
+            {
+              id: 'acme.activated.review.start',
+              title: 'Activated Review Start',
+              description: 'Starts an activated review workflow',
+              scopes: ['global'],
+              surfaces: ['cli'],
+              placement: 'commandPalette',
+              dangerLevel: 'safe',
+              handler: {
+                target: 'daemon',
+                registrationId: 'acme.activated.review.start',
+              },
+            },
+          ],
+        },
+      }),
       null,
       2,
     ),
@@ -320,14 +324,14 @@ async function writeActivatedPluginActionFixture(rootDir: string): Promise<void>
       'export async function activate(api) {',
       '  api.registerAction({',
       '    id: "acme.activated.review.start",',
-      '    title: "Activated Review Start",',
-      '    description: "Starts an activated review workflow",',
-      '    surface: "cli",',
       '    handler: async (request) => ({',
-      '      pluginHandled: true,',
-      '      actionId: request.actionId,',
-      '      input: request.input,',
-      '      surface: request.context.surface,',
+      '      ok: true,',
+      '      data: {',
+      '        pluginHandled: true,',
+      '        actionId: request.actionId,',
+      '        input: request.input,',
+      '        surface: request.context.surface,',
+      '      },',
       '    }),',
       '  });',
       '}',
@@ -398,6 +402,8 @@ describe('createCliActionExecutor', () => {
     stopExecutionRun.mockReset();
     executeExecutionRunAction.mockReset();
     bootstrapAccountSettingsContext.mockReset();
+    validateStoredAuthTokenAgainstActiveServer.mockReset();
+    validateStoredAuthTokenAgainstActiveServer.mockResolvedValue({ state: 'valid', httpStatus: 200 });
     callSessionRpc.mockReset();
     mockAxiosGet.mockReset();
     mockAxiosPost.mockReset();
@@ -1015,7 +1021,131 @@ describe('createCliActionExecutor', () => {
       ok: false,
       errorCode: 'action_disabled',
       error: 'action_disabled',
+      details: expect.objectContaining({
+        actionId: 'review.start',
+        surface: 'cli',
+        reason: 'disabled_by_settings',
+        settingsState: 'disabled',
+      }),
     });
+  });
+
+  it('activates review-provider plugins before dispatching review.start', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-review-provider-lazy-home-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-cli-review-provider-lazy-root-'));
+    const markerPath = join(pluginRoot, 'activation.log');
+    const sessionId = 'sess-1-aaaaaaaaaaaa';
+    const manifestDir = join(pluginRoot, '.happier-plugin');
+    await mkdir(manifestDir, { recursive: true });
+    await writeFile(
+      join(manifestDir, 'plugin.json'),
+      JSON.stringify(
+        {
+          schemaVersion: 2,
+          id: 'acme.lazy.review-provider',
+          version: '1.0.0',
+          displayName: 'Lazy Review Provider',
+          description: 'Activates only when a review provider is requested',
+          engines: {
+            happier: `^${configuration.currentCliVersion}`,
+          },
+          activationEvents: ['onReviewProvider:coderabbit'],
+          uses: [],
+          entrypoints: {
+            main: './daemon.mjs',
+          },
+          permissions: {
+            required: [],
+            optional: [],
+          },
+          contributes: {},
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    await writeFile(
+      join(pluginRoot, 'daemon.mjs'),
+      [
+        'import { appendFile } from "node:fs/promises";',
+        '',
+        'export async function activate() {',
+        `  await appendFile(${JSON.stringify(markerPath)}, "activated\\n", "utf8");`,
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const store = createPluginStateStore({ happyHomeDir });
+    await store.write({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: {
+        'acme.lazy.review-provider': {
+          source: {
+            kind: 'path',
+            locator: pluginRoot,
+            trustPolicy: 'local_trusted',
+            installPolicy: 'link',
+            resolvedPath: pluginRoot,
+            manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+          },
+          compatibility: {
+            status: 'unknown',
+            diagnostics: [],
+          },
+          install: {
+            mode: 'link',
+            manifestVersion: '1.0.0',
+            manifestDigest: null,
+            installedPath: null,
+          },
+          state: {
+            enabled: true,
+          },
+        },
+      },
+    });
+    fetchSessionById.mockResolvedValue({
+      id: sessionId,
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+      activeAt: 2,
+      pendingCount: 0,
+      metadataVersion: 1,
+      metadata: {},
+    });
+    callSessionRpc.mockImplementationOnce(async () => {
+      await expect(readFile(markerPath, 'utf8')).resolves.toBe('activated\n');
+      return { ok: true, reviewTurnId: 'turn-review-native' };
+    });
+    const executor = createPlainExecutor({ happyHomeDir, sessionId });
+
+    const result = await executor.execute(
+      'review.start',
+      {
+        sessionId,
+        engineIds: ['coderabbit'],
+        instructions: 'Review this change.',
+        runLocation: 'current_session',
+        permissionMode: 'read_only',
+        changeType: 'uncommitted',
+        base: { kind: 'none' },
+      },
+      { surface: 'cli', defaultSessionId: sessionId },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      result: { ok: true, reviewTurnId: 'turn-review-native' },
+    });
+    expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId,
+      method: `${sessionId}:session.review.startInline`,
+    }));
+    await expect(readFile(markerPath, 'utf8')).resolves.toBe('activated\n');
   });
 
   it('responds to permission requests via session RPC', async () => {
@@ -1047,7 +1177,7 @@ describe('createCliActionExecutor', () => {
     expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
       token: 'token',
       sessionId: 'sess-1',
-      method: 'sess-1:permission',
+      method: 'sess-1:session.permission.respond',
       request: { id: 'perm-1', approved: true },
     }));
   });
@@ -1086,7 +1216,7 @@ describe('createCliActionExecutor', () => {
 
     expect(result).toEqual({ ok: true, result: { ok: true } });
     expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
-      method: 'sess-1:permission',
+      method: 'sess-1:session.permission.respond',
       request: {
         id: 'perm-1',
         approved: false,
@@ -1133,7 +1263,7 @@ describe('createCliActionExecutor', () => {
     expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
       token: 'token',
       sessionId: 'sess-1',
-      method: 'sess-1:permission',
+      method: 'sess-1:session.user_action.answer',
       request: expect.objectContaining({
         id: 'ua-1',
         approved: true,
@@ -1185,7 +1315,7 @@ describe('createCliActionExecutor', () => {
     );
 
     expect(callSessionRpc).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      method: 'sess-1:permission',
+      method: 'sess-1:session.user_action.answer',
       request: expect.objectContaining({
         id: 'ua-reject',
         approved: false,
@@ -1195,7 +1325,7 @@ describe('createCliActionExecutor', () => {
       }),
     }));
     expect(callSessionRpc).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      method: 'sess-1:permission',
+      method: 'sess-1:session.user_action.answer',
       request: expect.objectContaining({
         id: 'ua-request-changes',
         approved: false,
@@ -1323,8 +1453,11 @@ describe('createCliActionExecutor', () => {
       directory: '/repo/current',
       machineId: 'machine-1',
       backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'claude' },
-      modelId: 'gpt-5',
-      modelUpdatedAt: expect.any(Number),
+      modelSelection: {
+        v: 1,
+        updatedAt: expect.any(Number),
+        ref: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'gpt-5' },
+      },
       initialPrompt: 'Hello from CLI action',
     }));
     expect(updateSessionMetadataWithRetry).toHaveBeenCalledWith(expect.objectContaining({
@@ -1343,6 +1476,275 @@ describe('createCliActionExecutor', () => {
         },
       },
     });
+  });
+
+  it('spawns a new session for an explicit canonical opencode backend target key', async () => {
+    const executor = createPlainExecutor({
+      rawSession: {
+        metadata: {
+          machineId: 'machine-1',
+          path: '/repo/current',
+          host: 'leeroy-mbp',
+        },
+      },
+    });
+    spawnDaemonSession.mockResolvedValue({ success: true, sessionId: 'sess-opencode' });
+    fetchSessionById.mockResolvedValue({
+      id: 'sess-opencode',
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+      activeAt: 2,
+      pendingCount: 0,
+      metadataVersion: 1,
+      metadata: {
+        path: '/repo/current',
+        host: 'leeroy-mbp',
+        summary: { text: 'Spawned OpenCode session' },
+      },
+    });
+    updateSessionMetadataWithRetry.mockResolvedValue({
+      version: 2,
+      metadata: {
+        machineId: 'machine-1',
+        path: '/repo/current',
+        host: 'leeroy-mbp',
+      },
+    });
+
+    const result = await executor.execute(
+      'session.spawn_new',
+      {
+        backendTargetKey: 'backend:opencode',
+        initialMessage: 'Hello from CLI action',
+      },
+      { surface: 'cli', defaultSessionId: 'sess-1' },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        type: 'success',
+        sessionId: 'sess-opencode',
+        created: true,
+      },
+    });
+    expect(spawnDaemonSession).toHaveBeenCalledWith(expect.objectContaining({
+      directory: '/repo/current',
+      machineId: 'machine-1',
+      backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'opencode' },
+      initialPrompt: 'Hello from CLI action',
+    }));
+  });
+
+  it('forwards rich dev spawn fields from session.spawn_new to daemon spawn', async () => {
+    const executor = createPlainExecutor({
+      rawSession: {
+        metadata: {
+          machineId: 'machine-1',
+          path: '/repo/current',
+          host: 'leeroy-mbp',
+        },
+      },
+    });
+    const runtimeDescriptorV1 = {
+      v: 1,
+      agentId: 'codex',
+      agent: {
+        agentExtra: {
+          owner: 'happier',
+          schemaId: 'codex-runtime',
+          v: 1,
+        },
+        backendMode: 'appServer',
+      },
+    } as const;
+    const mcpSelection = {
+      forceIncludeServerIds: ['server-a'],
+      forceExcludeServerIds: ['server-b'],
+    } as const;
+    const connectedServices = {
+      v: 1,
+      bindingsByServiceId: {
+        'openai-codex': {
+          source: 'connected',
+          selection: 'profile',
+          profileId: 'codex-profile',
+        },
+      },
+    } as const;
+    const sessionConfigOptionOverrides = {
+      v: 1,
+      updatedAt: 1710000000000,
+      overrides: {
+        reasoning_effort: { updatedAt: 1710000000000, value: 'xhigh' },
+      },
+    } as const;
+    const configOptions = { ultracode: true } as const;
+    spawnDaemonSession.mockResolvedValue({ success: true, sessionId: 'sess-rich' });
+    fetchSessionById.mockResolvedValue({
+      id: 'sess-rich',
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+      activeAt: 2,
+      pendingCount: 0,
+      metadataVersion: 1,
+      metadata: {
+        path: '/repo/rich',
+        host: 'leeroy-mbp',
+        summary: { text: 'Spawned rich session' },
+      },
+    });
+
+    const result = await executor.execute(
+      'session.spawn_new',
+      {
+        directory: '/repo/rich',
+        backendTargetKey: 'backend:codex',
+        initialPrompt: 'Hello rich session',
+        permissionMode: 'safe-yolo',
+        permissionModeUpdatedAt: 1710000000001,
+        agentModeId: 'plan',
+        agentModeUpdatedAt: 1710000000002,
+        modelId: 'gpt-5',
+        modelUpdatedAt: 1710000000003,
+        sessionConfigOptionOverrides,
+        configOptions,
+        profileId: 'codex-profile',
+        environmentVariables: { FEATURE_FLAG: 'enabled' },
+        connectedServices,
+        connectedServicesUpdatedAt: 1710000000004,
+        mcpSelection,
+        transcriptStorage: 'persisted',
+        runtimeDescriptorV1,
+        terminal: { mode: 'tmux' },
+        windowsTerminalWindowName: 'Happier Test',
+      },
+      { surface: 'cli', defaultSessionId: 'sess-1' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(spawnDaemonSession).toHaveBeenCalledWith(expect.objectContaining({
+      directory: '/repo/rich',
+      spawnNonce: expect.any(String),
+      initialPrompt: 'Hello rich session',
+      backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'codex' },
+      permissionMode: 'safe-yolo',
+      permissionModeUpdatedAt: 1710000000001,
+      agentModeId: 'plan',
+      agentModeUpdatedAt: 1710000000002,
+      modelSelection: {
+        v: 1,
+        updatedAt: 1710000000003,
+        ref: { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'gpt-5' },
+      },
+      sessionConfigOptionOverrides: {
+        v: 1,
+        updatedAt: expect.any(Number),
+        overrides: {
+          reasoning_effort: { updatedAt: 1710000000000, value: 'xhigh' },
+          ultracode: { updatedAt: expect.any(Number), value: true },
+        },
+      },
+      profileId: 'codex-profile',
+      environmentVariables: { FEATURE_FLAG: 'enabled' },
+      connectedServices,
+      connectedServicesUpdatedAt: 1710000000004,
+      mcpSelection: {
+        v: 1,
+        managedServersEnabled: true,
+        ...mcpSelection,
+      },
+      transcriptStorage: 'persisted',
+      runtimeDescriptorV1,
+      terminal: { mode: 'tmux' },
+      windowsTerminalWindowName: 'Happier Test',
+    }));
+  });
+
+  it('rejects session-agent session.permission_mode.set escalation before transport dispatch', async () => {
+    callSessionRpc.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-1',
+      permissionMode: 'workspace_write',
+    });
+    const executor = createPlainExecutor({
+      rawSession: {
+        metadata: {
+          machineId: 'machine-1',
+          path: '/repo/current',
+          host: 'leeroy-mbp',
+          permissionMode: 'default',
+          permissionModeUpdatedAt: 100,
+        },
+      },
+    });
+
+    const result = await executor.execute(
+      'session.permission_mode.set',
+      {
+        sessionId: 'sess-1',
+        permissionMode: 'workspace_write',
+      },
+      { surface: 'agent', defaultSessionId: 'sess-1' },
+    );
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      errorCode: 'permission_escalation_denied',
+      error: 'permission_escalation_denied',
+    }));
+    expect(callSessionRpc).not.toHaveBeenCalled();
+  });
+
+  it('blocks session.spawn_new before daemon spawn when the active server rejects stored auth', async () => {
+    const executor = createPlainExecutor({
+      rawSession: {
+        metadata: {
+          machineId: 'machine-1',
+          path: '/repo/current',
+          host: 'leeroy-mbp',
+        },
+      },
+    });
+    validateStoredAuthTokenAgainstActiveServer.mockResolvedValueOnce({
+      state: 'invalid',
+      httpStatus: 401,
+      reasonCode: 'not_authenticated',
+    });
+    spawnDaemonSession.mockResolvedValue({ success: true, sessionId: 'sess-new' });
+    fetchSessionById.mockResolvedValue({
+      id: 'sess-new',
+      createdAt: 1,
+      updatedAt: 2,
+      active: true,
+      activeAt: 2,
+      pendingCount: 0,
+      metadataVersion: 1,
+      metadata: {
+        path: '/repo/current',
+        host: 'leeroy-mbp',
+        summary: { text: 'Spawned session' },
+      },
+    });
+
+    const result = await executor.execute(
+      'session.spawn_new',
+      {
+        agentId: 'opencode',
+        initialMessage: 'Hello from CLI action',
+      },
+      { surface: 'cli', defaultSessionId: 'sess-1' },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: 'not_authenticated',
+    });
+    expect(validateStoredAuthTokenAgainstActiveServer).toHaveBeenCalledWith('token');
+    expect(spawnDaemonSession).not.toHaveBeenCalled();
+    expect(fetchSessionById).not.toHaveBeenCalled();
   });
 
   it('spawns a new session from the current session context with account connected-service defaults', async () => {
@@ -1427,8 +1829,11 @@ describe('createCliActionExecutor', () => {
       directory: '/repo/current',
       machineId: 'machine-1',
       backendTarget: { kind: 'backend', sourceKind: 'built_in', backendId: 'claude' },
-      modelId: 'gpt-5',
-      modelUpdatedAt: expect.any(Number),
+      modelSelection: {
+        v: 1,
+        updatedAt: expect.any(Number),
+        ref: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'gpt-5' },
+      },
       initialPrompt: 'Hello from CLI action',
       connectedServices: {
         v: 1,
@@ -1614,7 +2019,7 @@ describe('createCliActionExecutor', () => {
     expect(fetchSessionsPage).not.toHaveBeenCalled();
   });
 
-  it('recovers session.spawn_new when daemon reports child exited before webhook', async () => {
+  it('preserves session.spawn_new child-exit failures instead of masking them with nonce recovery', async () => {
     const executor = createPlainExecutor({
       rawSession: {
         metadata: {
@@ -1626,7 +2031,7 @@ describe('createCliActionExecutor', () => {
     });
     spawnDaemonSession.mockResolvedValue({
       error: 'Failed to spawn session: Child process exited before session webhook (pid=1234, code=null, signal=SIGKILL)',
-      errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK',
+      errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
     });
     resolveDaemonSpawnSessionByNonce.mockResolvedValue({
       status: 'success',
@@ -1664,14 +2069,47 @@ describe('createCliActionExecutor', () => {
     );
 
     expect(result).toMatchObject({
-      ok: true,
-      result: {
-        type: 'success',
-        sessionId: 'sess-recovered-webhook-exit',
-        created: true,
+      ok: false,
+      error: expect.stringContaining('Child process exited before session webhook'),
+    });
+    expect(JSON.stringify(result)).not.toContain('spawn_recovery_not_found');
+    expect(JSON.stringify(result)).not.toContain('Deterministic spawn recovery');
+    expect(resolveDaemonSpawnSessionByNonce).not.toHaveBeenCalled();
+    expect(fetchSessionsPage).not.toHaveBeenCalled();
+  });
+
+  it('preserves session.spawn_new spawn validation failures instead of masking them as daemon unavailable', async () => {
+    const executor = createPlainExecutor({
+      rawSession: {
+        metadata: {
+          machineId: 'machine-1',
+          path: '/repo/current',
+          host: 'leeroy-mbp',
+        },
       },
     });
-    expect(resolveDaemonSpawnSessionByNonce).toHaveBeenCalledTimes(1);
+    spawnDaemonSession.mockResolvedValue({
+      error: 'OhMyPi has no available models. Set provider API keys before starting a session.',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+    });
+
+    const result = await executor.execute(
+      'session.spawn_new',
+      {
+        path: '/repo/current',
+        backendTargetKey: 'agent:ohMyPi',
+      },
+      { surface: 'cli', defaultSessionId: 'sess-1' },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      error: expect.stringContaining('OhMyPi has no available models'),
+    });
+    expect(JSON.stringify(result)).not.toContain(SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE);
+    expect(JSON.stringify(result)).not.toContain('spawn_recovery_');
+    expect(resolveDaemonSpawnSessionByNonce).not.toHaveBeenCalled();
     expect(fetchSessionsPage).not.toHaveBeenCalled();
   });
 
@@ -1730,13 +2168,9 @@ describe('createCliActionExecutor', () => {
     );
 
     expect(result).toEqual({
-      ok: true,
-      result: {
-        type: 'error',
-        errorCode: 'host_not_found',
-        errorMessage: 'host_not_found',
-        host: 'other-host',
-      },
+      ok: false,
+      errorCode: 'host_not_found',
+      error: 'host_not_found',
     });
     expect(spawnDaemonSession).not.toHaveBeenCalled();
   });
@@ -1747,7 +2181,14 @@ describe('createCliActionExecutor', () => {
 
     const result = await executor.execute(
       'session.message.send',
-      { sessionId: 'sess-1', message: 'Hello', wait: false, timeoutSeconds: 10 },
+      {
+        sessionId: 'sess-1',
+        message: 'Hello',
+        modelOverride: 'default',
+        providerConnectionId: 'pc_work',
+        wait: false,
+        timeoutSeconds: 10,
+      },
       { surface: 'cli', defaultSessionId: 'sess-1' },
     );
 
@@ -1759,6 +2200,10 @@ describe('createCliActionExecutor', () => {
       credentials: expect.objectContaining({ token: 'token' }),
       idOrPrefix: 'sess-1',
       message: 'Hello',
+      modelSelectionInput: {
+        providerConnectionId: 'pc_work',
+        modelId: 'default',
+      },
       wait: false,
       timeoutMs: 10_000,
     }));

@@ -1,12 +1,11 @@
-import { randomUUID } from 'node:crypto';
-
 import type { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
-import { isAcpForkEligibleForProvider } from '@/agent/acp/acpForkEligibility';
+import { isAcpForkEligibleForAgent } from '@/agent/acp/acpForkEligibility';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { readCredentials } from '@/persistence';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import { resolveForkCutoffSeqInclusive } from '@/session/fork/resolveForkCutoffSeqInclusive';
 import { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
+import { createStableSpawnNonce } from '@/session/shared/spawnNonce';
 import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { SessionForkRpcParamsSchema } from '@happier-dev/protocol';
@@ -24,6 +23,7 @@ import type {
 
 export function createForkSessionLifecycleActionHandler(params: Readonly<{
     sessionHostBridge: ReturnType<typeof getSessionHostBridge>;
+    resolveExecutionSurfaces?: NonNullable<SessionLifecycleMachineDeps['resolveExecutionSurfaces']>;
     handlers: SessionLifecycleMachineHandlers;
     deps?: SessionLifecycleMachineDeps;
 }>): SessionLifecycleActionHandler {
@@ -119,8 +119,11 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
         }
 
         const forkIsConfiguredAcp = forkBackendResolution.configuredAcp !== null;
-        const forkProviderAgentId = forkBackendResolution.providerAgentId;
-        const inheritedForkOverrides = resolveForkInheritedOverridesFromMetadata(parentMetadata, forkProviderAgentId);
+        const forkAgentId = forkBackendResolution.catalogAgentId;
+        const inheritedForkOverrides = resolveForkInheritedOverridesFromMetadata(
+            parentMetadata,
+            forkBackendResolution.backendTargetV2,
+        );
 
         const targetSeqInclusive = forkPoint.type === 'seq'
             ? forkPoint.upToSeqInclusive
@@ -149,48 +152,69 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                 ? resolvedCutoff.cutoffSeqInclusive
                 : cutoffSeqInclusive;
 
-        const forkSingleFlightKey = `${parentSessionId}:${forkPoint.type}:${effectiveCutoffSeqInclusive}`;
+        const forkSingleFlightKey = JSON.stringify({
+            parentSessionId,
+            forkPointType: forkPoint.type,
+            effectiveCutoffSeqInclusive,
+            requestedStrategy,
+            replayMaxSeedChars: parsed.data.replayMaxSeedChars ?? null,
+            replaySummaryRunner: parsed.data.replaySummaryRunner ?? null,
+        });
         const existingFork = inFlightForks.get(forkSingleFlightKey);
         if (existingFork) {
             return await existingFork;
         }
 
         const forkPromise = (async (): Promise<ForkLifecycleResult> => {
-            const spawnNonce = `fork:${parentSessionId}:${effectiveCutoffSeqInclusive}:${randomUUID()}`;
+            const spawnNonce = createStableSpawnNonce('session.fork', {
+                parentSessionId,
+                forkPointType: forkPoint.type,
+                effectiveCutoffSeqInclusive,
+                requestedStrategy,
+                replayMaxSeedChars: parsed.data.replayMaxSeedChars ?? null,
+                replaySummaryRunner: parsed.data.replaySummaryRunner ?? null,
+            });
             const maxTextChars = readReplayTextLimitFromEnv();
-            const forkSurface = (await params.sessionHostBridge.resolveExecutionSurfaces(
+            const resolveExecutionSurfaces = params.resolveExecutionSurfaces
+                ?? params.sessionHostBridge.resolveExecutionSurfaces.bind(params.sessionHostBridge);
+            const forkSurface = (await resolveExecutionSurfaces(
                 forkBackendResolution.backendTargetV2.backendId,
             )).fork;
-
-            const providerNativeFork = await attemptProviderNativeFork({
-                requestedStrategy,
-                credentials,
-                parentSessionId,
-                parentSession,
-                parentMetadata,
-                directory,
-                forkPoint,
-                targetSeqInclusive,
-                effectiveCutoffSeqInclusive,
-                spawnNonce,
-                forkBackendResolution,
-                inheritedForkOverrides,
-                forkSurface,
-                spawnSession: params.handlers.spawnSession,
-                stopSession: params.handlers.stopSession,
-            });
-            if (providerNativeFork) return providerNativeFork;
 
             const shouldAttemptAcpForkLatest =
                 (requestedStrategy === 'auto' || requestedStrategy === 'acp_fork_latest') &&
                 forkPoint.type === 'latest' &&
                 (
                     forkIsConfiguredAcp ||
-                    (forkProviderAgentId !== null && isAcpForkEligibleForProvider({
-                        providerId: forkProviderAgentId,
+                    (forkAgentId !== null && isAcpForkEligibleForAgent({
+                        agentId: forkAgentId,
                         metadata: parentMetadata,
                     }))
                 );
+
+            // An agent-owned fork surface can implement both native and ACP
+            // modes. Route ACP-backed sessions directly to the ACP lifecycle so
+            // one surface invocation has one authoritative persisted strategy.
+            if (!(requestedStrategy === 'auto' && shouldAttemptAcpForkLatest)) {
+                const providerNativeFork = await attemptProviderNativeFork({
+                    requestedStrategy,
+                    credentials,
+                    parentSessionId,
+                    parentSession,
+                    parentMetadata,
+                    directory,
+                    forkPoint,
+                    targetSeqInclusive,
+                    effectiveCutoffSeqInclusive,
+                    spawnNonce,
+                    forkBackendResolution,
+                    inheritedForkOverrides,
+                    forkSurface,
+                    spawnSession: params.handlers.spawnSession,
+                    stopSession: params.handlers.stopSession,
+                });
+                if (providerNativeFork) return providerNativeFork;
+            }
 
             if (shouldAttemptAcpForkLatest) {
                 const acpLatestFork = await attemptAcpLatestFork({
@@ -201,7 +225,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                     directory,
                     effectiveCutoffSeqInclusive,
                     forkIsConfiguredAcp,
-                    forkProviderAgentId,
+                    spawnNonce,
                     forkBackendResolution,
                     inheritedForkOverrides,
                     forkSurface,

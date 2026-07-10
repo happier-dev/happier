@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { configuration } from '@/configuration';
 import {
     SPAWN_SESSION_ERROR_CODES,
@@ -8,6 +6,7 @@ import {
 import { createReplaySeededSession } from '@/session/replay/createReplaySeededSession';
 import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
 import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
+import { isAmbiguousSpawnSessionFailure } from '@/session/shared/spawnNonce';
 import { logger } from '@/ui/logger';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
@@ -107,7 +106,7 @@ export async function createReplayForkSession(params: Readonly<{
                 credentials: params.credentials,
                 directory: replayChildDirectory,
                 flavor: params.forkBackendResolution.replayFlavor,
-                tag: `fork:${params.parentSessionId}:${params.effectiveCutoffSeqInclusive}:${randomUUID()}`,
+                tag: params.spawnNonce,
                 metadata: {
                     ...inheritedForkOverrides.metadata,
                     ...params.forkBackendResolution.metadataOverlay,
@@ -118,7 +117,7 @@ export async function createReplayForkSession(params: Readonly<{
                         parentCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
                         createdAtMs: nowMs,
                         strategy: 'replay',
-                        providerHint: { providerId: params.forkBackendResolution.providerHintProviderId },
+                        agentHint: { agentId: params.forkBackendResolution.agentHintAgentId },
                     },
                     replaySeedV1: {
                         v: 1,
@@ -170,7 +169,9 @@ export async function createReplayForkSession(params: Readonly<{
     } satisfies SpawnSessionOptions);
 
     if (spawnResult.type !== 'success') {
-        await archiveSessionBestEffort(params.credentials.token, created.sessionId);
+        if (!isAmbiguousSpawnSessionFailure(spawnResult)) {
+            await archiveSessionBestEffort(params.credentials.token, created.sessionId);
+        }
         return {
             ok: false,
             errorCode: (spawnResult as { errorCode?: string })?.errorCode ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,

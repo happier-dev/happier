@@ -143,4 +143,40 @@ describe('getSessionTranscript', () => {
       roles: expect.anything(),
     }));
   });
+
+  it('keeps raw transcript page batches large enough for small semantic history requests', async () => {
+    const { getSessionTranscript } = await import('./getSessionTranscript');
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-1',
+      rawSession: { id: 'sess-1' },
+      mode: 'plain',
+      ctx: { encryptionKey: new Uint8Array([1]), encryptionVariant: 'legacy' },
+    });
+    fetchEncryptedTranscriptMessagesPage.mockResolvedValueOnce({
+      messages: [
+        {
+          seq: 1,
+          createdAt: 10,
+          messageRole: 'user',
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
+        },
+      ],
+      hasMore: false,
+      nextBeforeSeq: null,
+      nextAfterSeq: null,
+    });
+
+    await getSessionTranscript({
+      credentials,
+      idOrPrefix: 'sess-1',
+      limit: 5,
+      includeRaw: true,
+      includeTools: true,
+    });
+
+    expect(fetchEncryptedTranscriptMessagesPage).toHaveBeenCalledWith(expect.objectContaining({
+      limit: 20,
+    }));
+  });
 });

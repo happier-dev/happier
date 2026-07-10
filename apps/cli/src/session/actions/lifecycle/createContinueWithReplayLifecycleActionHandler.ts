@@ -2,8 +2,9 @@ import type { getSessionHostBridge } from '@/agent/runtime/bridges/session/Sessi
 import {
     SPAWN_SESSION_ERROR_CODES,
 } from '@/rpc/handlers/registerSessionHandlers';
-import { parseSessionContinueWithReplayRpcParamsCompatIngress } from '@happier-dev/protocol';
 import { continueSessionWithReplay } from '@/session/replay/continueWithReplay';
+import { parseSessionContinueWithReplayRpcParamsCompatIngress } from '@/session/replay/continueWithReplayCompatIngress';
+import { normalizeSpawnNonce } from '@/session/shared/spawnNonce';
 
 import type {
     SessionLifecycleActionHandler,
@@ -26,8 +27,9 @@ export function createContinueWithReplayLifecycleActionHandler(params: Readonly<
             };
         }
 
+        const parsedData = parsed.data as typeof parsed.data & { spawnNonce?: unknown };
         const resolvedBackend = params.sessionHostBridge.resolveContinueWithReplayBackendTarget({
-            backendTarget: parsed.data.backendTarget,
+            backendTarget: parsedData.backendTarget,
         });
         if (!resolvedBackend.ok) {
             return {
@@ -44,8 +46,8 @@ export function createContinueWithReplayLifecycleActionHandler(params: Readonly<
                 approvedNewDirectoryCreation: parsed.data.approvedNewDirectoryCreation,
                 permissionMode: parsed.data.permissionMode,
                 permissionModeUpdatedAt: parsed.data.permissionModeUpdatedAt,
-                modelId: parsed.data.modelId,
-                modelUpdatedAt: parsed.data.modelUpdatedAt,
+                modelSelection: parsed.data.modelSelection,
+                spawnNonce: normalizeSpawnNonce(parsedData.spawnNonce),
                 replay: parsed.data.replay,
             },
             {

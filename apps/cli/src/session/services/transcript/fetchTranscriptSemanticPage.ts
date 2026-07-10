@@ -1,6 +1,7 @@
 import { logger } from '@/ui/logger';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 
+import { createTranscriptHistoryNormalizationSequenceState } from './transcriptHistoryRows';
 import { extractSemanticTranscriptItem } from './extractSemanticTranscriptItem';
 import type {
   SemanticTranscriptDiagnostics,
@@ -162,6 +163,7 @@ export async function fetchTranscriptSemanticPage(params: Readonly<{
   let totalPayloadBytes = 0;
   const maxTotalPayloadBytes = Math.max(0, Math.floor(params.maxTotalPayloadBytes ?? 256 * 1024));
   const eventKinds = params.eventKinds?.filter((kind) => kind.trim().length > 0);
+  const sequenceState = createTranscriptHistoryNormalizationSequenceState();
 
   while (items.length < limit && rawRowsScanned < maxRawRowsToScan) {
     const page = await fetchPage({
@@ -190,6 +192,7 @@ export async function fetchTranscriptSemanticPage(params: Readonly<{
         row,
         index,
         ctx: params.ctx,
+        sequenceState,
         options: {
           mode: params.mode,
           ...(params.transcriptRoles ? { transcriptRoles: params.transcriptRoles } : {}),

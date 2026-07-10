@@ -1,5 +1,6 @@
 import {
   createActionExecutor,
+  createUnavailableRuntimeActionExecutor,
   type ActionExecutorDeps,
   type ApprovalRequestV1,
 } from '@happier-dev/protocol';
@@ -68,6 +69,7 @@ export function createCliActionExecutorHarness(
       }),
     isActionEnabled: envIsActionEnabled,
     isActionApprovalRequired: envIsActionApprovalRequired,
+    runtimeActionExecute: createUnavailableRuntimeActionExecutor(),
     ...(overrides ?? {}),
   };
   const originalApprovalsUpdate = rawDeps.approvalsUpdate;

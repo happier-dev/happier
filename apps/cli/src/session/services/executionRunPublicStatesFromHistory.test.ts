@@ -13,7 +13,7 @@ describe('listExecutionRunPublicStatesFromHistoryRows', () => {
                     role: 'agent',
                     content: {
                         type: 'acp',
-                        provider: 'claude',
+                        agentId: 'claude',
                         data: {
                             type: 'tool-result',
                             callId: 'call_hist_1',
@@ -46,7 +46,7 @@ describe('listExecutionRunPublicStatesFromHistoryRows', () => {
                     role: 'agent',
                     content: {
                         type: 'acp',
-                        provider: 'claude',
+                        agentId: 'claude',
                         data: {
                             type: 'tool-call',
                             callId: 'call_hist_1',
@@ -96,7 +96,7 @@ describe('listExecutionRunPublicStatesFromHistoryRows', () => {
                     role: 'agent',
                     content: {
                         type: 'acp',
-                        provider: 'claude',
+                        agentId: 'claude',
                         data: {
                             type: 'tool-result',
                             callId: 'call_hist_legacy_builtin',
@@ -151,7 +151,7 @@ describe('listExecutionRunPublicStatesFromHistoryRows', () => {
                     role: 'agent',
                     content: {
                         type: 'acp',
-                        provider: 'claude',
+                        agentId: 'claude',
                         data: {
                             type: 'tool-result',
                             callId: 'call_hist_legacy_configured_hint',
@@ -208,7 +208,7 @@ describe('listExecutionRunPublicStatesFromHistoryRows', () => {
                     role: 'agent',
                     content: {
                         type: 'acp',
-                        provider: 'claude',
+                        agentId: 'claude',
                         data: {
                             type: 'tool-result',
                             callId: 'call_hist_legacy_acp',
@@ -263,7 +263,7 @@ describe('listExecutionRunPublicStatesFromHistoryRows', () => {
                     role: 'agent',
                     content: {
                         type: 'acp',
-                        provider: 'claude',
+                        agentId: 'claude',
                         data: {
                             type: 'tool-result',
                             callId: 'call_hist_v2_acp',
@@ -323,7 +323,7 @@ describe('listExecutionRunPublicStatesFromHistoryRows', () => {
                     role: 'agent',
                     content: {
                         type: 'acp',
-                        provider: 'claude',
+                        agentId: 'claude',
                         data: {
                             type: 'tool-result',
                             callId: 'call_hist_legacy_custom_acp',
@@ -363,7 +363,7 @@ describe('listExecutionRunPublicStatesFromHistoryRows', () => {
                     role: 'agent',
                     content: {
                         type: 'acp',
-                        provider: 'claude',
+                        agentId: 'claude',
                         data: {
                             type: 'tool-result',
                             callId: 'call_hist_explicit_custom_acp',

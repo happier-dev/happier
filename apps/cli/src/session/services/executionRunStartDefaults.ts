@@ -14,3 +14,8 @@ export function defaultIoModeForExecutionRunIntent(intent: ExecutionRunIntent): 
   if (intent === 'voice_agent') return 'streaming';
   return 'request_response';
 }
+
+export function defaultRetentionPolicyForExecutionRunIntent(intent: ExecutionRunIntent): 'ephemeral' | 'resumable' {
+  if (intent === 'voice_agent') return 'resumable';
+  return 'ephemeral';
+}

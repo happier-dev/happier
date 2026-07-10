@@ -19,7 +19,7 @@ import { isPidAlive } from './processLiveness';
 import { logExternalSessionsInternalError } from './responseErrors';
 
 function mapLinkedExternalSessionErrorToExternalTakeoverError(
-    errorCode: 'invalid_request' | 'provider_unavailable',
+    errorCode: 'invalid_request' | 'agent_unavailable',
     error: string,
 ): ExternalSessionTakeoverResultV1 {
     const externalErrorCode: ExternalSessionTakeoverErrorCodeV1 =
@@ -68,7 +68,7 @@ export async function executeExternalSessionTakeoverAction(
     let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
     try {
         validatedSource = await validateDirectMachineSource({
-            providerId: linked.session.providerId,
+            agentId: linked.session.agentId,
             source: linked.session.source,
             env: process.env,
         });
@@ -87,7 +87,7 @@ export async function executeExternalSessionTakeoverAction(
     const markers = await listSessionMarkers().catch(() => []);
     const trustedOwner = findTrustedExternalSessionOwner({
         markers,
-        providerId: validatedLinkedSession.providerId,
+        agentId: validatedLinkedSession.agentId,
         remoteSessionId: validatedLinkedSession.remoteSessionId,
         isPidAlive,
     });
@@ -165,7 +165,7 @@ export async function executeExternalSessionTakeoverAction(
                     }
                     next.externalHistoryImportV1 = {
                         v: 1,
-                        providerId: validatedLinkedSession.providerId,
+                        agentId: validatedLinkedSession.agentId,
                         remoteSessionId: validatedLinkedSession.remoteSessionId,
                         importedAtMs: Date.now(),
                         source: validatedLinkedSession.source,

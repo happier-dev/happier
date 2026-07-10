@@ -13,7 +13,11 @@ import { logger } from '@/utils/logger';
 
 import { resolveDefaultCandidatesLimit } from './actionConfiguration';
 import { resolveExternalSessionSurfaceOps } from './providerOpsResolution';
-import { externalSessionsError, internalErrorResponse } from './responseErrors';
+import {
+    externalSessionsError,
+    internalErrorResponse,
+    mapExternalSessionProviderFailureToExternalSessionsError,
+} from './responseErrors';
 
 export async function executeExternalSessionCandidatesListAction(
     raw: unknown,
@@ -22,25 +26,25 @@ export async function executeExternalSessionCandidatesListAction(
     if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionsCandidatesListResponse;
     try {
         const validatedSource = await validateDirectMachineSource({
-            providerId: parsed.data.providerId,
+            agentId: parsed.data.agentId,
             source: parsed.data.source,
             env: process.env,
         });
         if (!validatedSource.ok) {
             return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionsCandidatesListResponse;
         }
-        const { providerId, cursor, searchTerm, searchMode } = parsed.data;
+        const { agentId, cursor, searchTerm, searchMode } = parsed.data;
         const source = validatedSource.source;
         const limit = parsed.data.limit ?? resolveDefaultCandidatesLimit();
         const startedAtMs = Date.now();
         const startMemory = process.memoryUsage();
-        const providerOps = await resolveExternalSessionSurfaceOps(providerId);
+        const providerOps = await resolveExternalSessionSurfaceOps(agentId);
         if (!providerOps.listCandidates) {
-            return externalSessionsError('provider_unavailable', 'candidates_list_not_supported') satisfies ExternalSessionsCandidatesListResponse;
+            return externalSessionsError('agent_unavailable', 'candidates_list_not_supported') satisfies ExternalSessionsCandidatesListResponse;
         }
         const res = await providerOps.listCandidates({ source, cursor, limit, searchTerm, searchMode });
         logger.debug('[externalSessions.actions.candidates] list finished', {
-            providerId,
+            agentId,
             elapsedMs: Date.now() - startedAtMs,
             searchTermLength: typeof searchTerm === 'string' ? searchTerm.trim().length : 0,
             searchMode: searchMode ?? 'default',
@@ -59,6 +63,8 @@ export async function executeExternalSessionCandidatesListAction(
             ...(res.searchIncomplete ? { searchIncomplete: true } : {}),
         } satisfies ExternalSessionsCandidatesListResponse;
     } catch (error) {
+        const providerFailure = mapExternalSessionProviderFailureToExternalSessionsError(error);
+        if (providerFailure) return providerFailure satisfies ExternalSessionsCandidatesListResponse;
         return internalErrorResponse(
             'external_sessions_candidates_list',
             error,
@@ -75,7 +81,7 @@ export async function executeExternalSessionLinkEnsureAction(
     let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
     try {
         validatedSource = await validateDirectMachineSource({
-            providerId: parsed.data.providerId,
+            agentId: parsed.data.agentId,
             source: parsed.data.source,
             env: process.env,
         });
@@ -92,7 +98,7 @@ export async function executeExternalSessionLinkEnsureAction(
 
     const credentials = await readCredentials().catch(() => null);
     if (!credentials) {
-        return externalSessionsError('provider_unavailable', 'not_authenticated') satisfies ExternalSessionLinkEnsureResponse;
+        return externalSessionsError('agent_unavailable', 'not_authenticated') satisfies ExternalSessionLinkEnsureResponse;
     }
 
     try {
@@ -100,7 +106,7 @@ export async function executeExternalSessionLinkEnsureAction(
         const res = await ensureExternalSessionLink({
             credentials,
             machineId: parsed.data.machineId,
-            providerId: parsed.data.providerId,
+            agentId: parsed.data.agentId,
             remoteSessionId: parsed.data.remoteSessionId,
             codexBackendMode,
             runtimeDescriptor: parsed.data.runtimeDescriptorV1,

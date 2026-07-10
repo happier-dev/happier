@@ -1,4 +1,4 @@
-import { AGENTS_CORE, type AgentId } from '@happier-dev/agents';
+import { AGENTS_CORE, AGENT_IDS, type AgentId } from '@happier-dev/agents';
 import {
   ConnectedServicesDefaultAuthByAgentIdV1Schema,
   ConnectedServiceBindingsV1Schema,
@@ -6,8 +6,53 @@ import {
   type ConnectedServiceBindingsV1,
 } from '@happier-dev/protocol';
 
+import type { Credentials } from '@/persistence';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+
 export function agentSupportsSpawnConnectedServicesDefaults(agentId: AgentId): boolean {
   return (AGENTS_CORE[agentId].connectedServices?.supportedServiceIds.length ?? 0) > 0;
+}
+
+/**
+ * THE session spawn-defaulting owner (one defaulting owner, one settings path — QA2-F02).
+ *
+ * Resolves the account-default connected-services selection for a built-in agent from a FRESH,
+ * bounded blocking account-settings bootstrap (`bootstrapAccountSettingsContext` mode 'blocking';
+ * its network reads carry internal 15s timeouts, so the wait is bounded). Callers must NEVER
+ * substitute an in-process settings snapshot for this resolution: a second settings surface is
+ * exactly the stale-snapshot split-brain that silently killed run defaulting live (QA2-F02).
+ * Consumed by session spawn (createCliActionDeps) AND execution-run start (connectedServicesEnv).
+ * Fails to null (no defaults) on any bootstrap/validation failure.
+ */
+export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params: Readonly<{
+  agentId: string;
+  credentials: Credentials;
+}>): Promise<Readonly<{
+  connectedServices: ConnectedServiceBindingsV1;
+  connectedServicesUpdatedAt: number;
+}> | null> {
+  const agentId = params.agentId.trim();
+  if (!AGENT_IDS.includes(agentId as AgentId)) return null;
+  if (!agentSupportsSpawnConnectedServicesDefaults(agentId as AgentId)) return null;
+
+  try {
+    const accountSettingsContext = await bootstrapAccountSettingsContext({
+      credentials: params.credentials,
+      mode: 'blocking',
+      deps: { applySideEffects: () => undefined },
+    });
+    const connectedServices = resolveSpawnConnectedServicesDefaults({
+      accountSettings: accountSettingsContext.settings,
+      agentId: agentId as AgentId,
+    });
+    if (!connectedServices) return null;
+    return {
+      connectedServices,
+      connectedServicesUpdatedAt: Date.now(),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function normalizeBindingForSpawn(

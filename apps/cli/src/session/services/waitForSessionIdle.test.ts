@@ -6,7 +6,7 @@ describe('waitForSessionIdle', () => {
         vi.clearAllMocks();
     });
 
-    it('seeds socket idle wait from projection without transcript scan', async () => {
+    it('seeds socket idle wait from a busy projection without transcript scan', async () => {
         const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
         const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
         const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 123 }));
@@ -28,6 +28,88 @@ describe('waitForSessionIdle', () => {
                     id: 'sess-1',
                     active: true,
                     agentState: '{"requests":{"stale":{"createdAt":1}}}',
+                    latestTurnStatus: 'in_progress',
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                },
+            })),
+        }));
+
+        const { waitForSessionIdle } = await import('./waitForSessionIdle');
+        const machineKey = new Uint8Array(32).fill(1);
+
+        await expect(waitForSessionIdle({
+            credentials: { token: 'token', encryption: { type: 'dataKey', publicKey: machineKey, machineKey } },
+            idOrPrefix: 'sess-1',
+            timeoutMs: 1_000,
+        })).resolves.toEqual({
+            ok: true,
+            sessionId: 'sess-1',
+            idle: true,
+            observedAt: 123,
+        });
+
+        expect(waitForIdleViaSocket).toHaveBeenCalledWith(expect.objectContaining({
+            initialTurnActivity: {
+                pendingUserTurns: 0,
+                activeTaskInFlight: true,
+                turnInFlight: true,
+            },
+            initialAgentStateSummary: { pendingRequestsCount: 0 },
+            preferProjectionUpdates: true,
+        }));
+        expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
+        expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
+    });
+
+    it('trusts a complete idle projection over transcript task lifecycle rows', async () => {
+        const fetchEncryptedTranscriptPageLatest = vi.fn(async (_params: { timeoutMs?: number }) => [
+            {
+                id: 'msg-background-task',
+                localId: 'local-background-task',
+                seq: 4,
+                createdAt: 4,
+                updatedAt: 4,
+                content: {
+                    t: 'plain',
+                    v: {
+                        role: 'agent',
+                        content: {
+                            type: 'acp',
+                            agentId: 'claude',
+                            data: { type: 'task_started', id: 'background-task-1' },
+                        },
+                    },
+                },
+            },
+        ]);
+        const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
+        const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 123 }));
+
+        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
+            fetchEncryptedTranscriptPageLatest,
+            fetchEncryptedTranscriptPageAfterSeq,
+        }));
+        vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
+            waitForIdleViaSocket,
+        }));
+        vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+            fetchSessionById: vi.fn(async () => ({
+                latestTurnStatus: 'completed',
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+            })),
+        }));
+        vi.doMock('./resolveSessionTransportContext', () => ({
+            resolveSessionTransportContext: vi.fn(async () => ({
+                ok: true,
+                sessionId: 'sess-1',
+                mode: 'plain',
+                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                rawSession: {
+                    id: 'sess-1',
+                    active: true,
+                    agentState: null,
                     latestTurnStatus: 'completed',
                     pendingPermissionRequestCount: 0,
                     pendingUserActionRequestCount: 0,
@@ -55,10 +137,127 @@ describe('waitForSessionIdle', () => {
                 activeTaskInFlight: false,
                 turnInFlight: false,
             },
-            initialAgentStateSummary: { pendingRequestsCount: 0 },
+            initialTurnActivityRequiresTranscriptIdleEvidence: false,
             preferProjectionUpdates: true,
         }));
         expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
         expect(fetchEncryptedTranscriptPageAfterSeq).not.toHaveBeenCalled();
+    });
+
+    it('falls back to socket confirmation when transcript evidence is unavailable for an incomplete projection', async () => {
+        const fetchEncryptedTranscriptPageLatest = vi.fn(async () => {
+            throw new Error('transcript decrypt unavailable');
+        });
+        const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
+        const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 123 }));
+
+        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
+            fetchEncryptedTranscriptPageLatest,
+            fetchEncryptedTranscriptPageAfterSeq,
+        }));
+        vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
+            waitForIdleViaSocket,
+        }));
+        vi.doMock('./resolveSessionTransportContext', () => ({
+            resolveSessionTransportContext: vi.fn(async () => ({
+                ok: true,
+                sessionId: 'sess-1',
+                mode: 'plain',
+                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                rawSession: {
+                    id: 'sess-1',
+                    active: true,
+                    agentState: null,
+                    latestTurnStatus: null,
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                },
+            })),
+        }));
+
+        const { waitForSessionIdle } = await import('./waitForSessionIdle');
+        const machineKey = new Uint8Array(32).fill(1);
+
+        await expect(waitForSessionIdle({
+            credentials: { token: 'token', encryption: { type: 'dataKey', publicKey: machineKey, machineKey } },
+            idOrPrefix: 'sess-1',
+            timeoutMs: 1_000,
+        })).resolves.toEqual({
+            ok: true,
+            sessionId: 'sess-1',
+            idle: true,
+            observedAt: 123,
+        });
+
+        expect(waitForIdleViaSocket).toHaveBeenCalledWith(expect.objectContaining({
+            initialTurnActivity: {
+                pendingUserTurns: 1,
+                activeTaskInFlight: false,
+                turnInFlight: true,
+            },
+            initialTurnActivityRequiresTranscriptIdleEvidence: true,
+            preferProjectionUpdates: false,
+        }));
+        expect(fetchEncryptedTranscriptPageLatest).toHaveBeenCalledOnce();
+    });
+
+    it('keeps wait-idle scoped to foreground turn activity when runtime activity is active', async () => {
+        const fetchEncryptedTranscriptPageLatest = vi.fn(async () => []);
+        const fetchEncryptedTranscriptPageAfterSeq = vi.fn(async () => []);
+        const waitForIdleViaSocket = vi.fn(async () => ({ idle: true as const, observedAt: 123 }));
+
+        vi.doMock('@/api/session/fetchEncryptedTranscriptWindow', () => ({
+            fetchEncryptedTranscriptPageLatest,
+            fetchEncryptedTranscriptPageAfterSeq,
+        }));
+        vi.doMock('@/session/transport/socket/sessionSocketAgentState', () => ({
+            waitForIdleViaSocket,
+        }));
+        vi.doMock('./resolveSessionTransportContext', () => ({
+            resolveSessionTransportContext: vi.fn(async () => ({
+                ok: true,
+                sessionId: 'sess-1',
+                mode: 'plain',
+                ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+                rawSession: {
+                    id: 'sess-1',
+                    active: true,
+                    agentState: null,
+                    latestTurnStatus: 'completed',
+                    pendingPermissionRequestCount: 0,
+                    pendingUserActionRequestCount: 0,
+                    runtimeActivityActiveCount: 1,
+                    runtimeActivityObservedAt: 1_000,
+                    runtimeActivityExpiresAt: Date.now() + 60_000,
+                    runtimeActivitySourceClass: 'provider_detached_task',
+                },
+            })),
+        }));
+
+        const { waitForSessionIdle } = await import('./waitForSessionIdle');
+        const machineKey = new Uint8Array(32).fill(1);
+
+        await expect(waitForSessionIdle({
+            credentials: { token: 'token', encryption: { type: 'dataKey', publicKey: machineKey, machineKey } },
+            idOrPrefix: 'sess-1',
+            timeoutMs: 1_000,
+        })).resolves.toEqual({
+            ok: true,
+            sessionId: 'sess-1',
+            idle: true,
+            observedAt: 123,
+        });
+
+        expect(fetchEncryptedTranscriptPageLatest).not.toHaveBeenCalled();
+        expect(waitForIdleViaSocket).toHaveBeenCalledWith(expect.objectContaining({
+            initialTurnActivity: {
+                pendingUserTurns: 0,
+                activeTaskInFlight: false,
+                turnInFlight: false,
+            },
+            initialTurnActivityRequiresTranscriptIdleEvidence: false,
+            initialAgentStateSummary: { pendingRequestsCount: 0 },
+            preferProjectionUpdates: true,
+        }));
     });
 });

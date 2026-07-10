@@ -128,10 +128,15 @@ export async function resolveSessionTransportContext(params: Readonly<{
         };
     }
 
-    const rawSession = await fetchSessionTransportRecord({
+    const rawSession = resolved.rawSession && !shouldRetryForPublishedSessionDataEncryptionKey({
         credentials: params.credentials,
-        sessionId: resolved.sessionId,
-    });
+        rawSession: resolved.rawSession,
+    })
+        ? resolved.rawSession
+        : await fetchSessionTransportRecord({
+            credentials: params.credentials,
+            sessionId: resolved.sessionId,
+        });
     if (!rawSession) {
         return {
             ok: false,

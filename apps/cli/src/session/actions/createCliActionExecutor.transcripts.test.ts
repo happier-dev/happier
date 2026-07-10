@@ -183,6 +183,44 @@ describe('createCliActionExecutor transcript actions', () => {
     ]);
   });
 
+  it('namespaces generated transcript import ids per import operation', async () => {
+    const plainContent = { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'imported row' } } };
+    const writeTranscriptItems = vi.fn(async (
+      _sessionId: string,
+      _items: readonly TranscriptItem[],
+    ) => ({ imported: 1, cursor: 'tail-import' }));
+    const executor = createCliActionExecutor({
+      token: 'token-1',
+      sessionId: 'session-1',
+      ctx: { encryptionKey: new Uint8Array(32).fill(3), encryptionVariant: 'dataKey' },
+      transcriptStore: createTranscriptStore({}),
+      writeTranscriptItems,
+    } as TranscriptExecutorTestParams);
+
+    await expect(executor.execute('transcript.import', {
+      items: [{ content: plainContent }],
+    }, { surface: 'rpc', defaultSessionId: 'session-1' })).resolves.toMatchObject({
+      ok: true,
+    });
+    await expect(executor.execute('transcript.import', {
+      items: [{ content: plainContent }],
+    }, { surface: 'rpc', defaultSessionId: 'session-1' })).resolves.toMatchObject({
+      ok: true,
+    });
+    await expect(executor.execute('transcript.import', {
+      items: [{ id: 'explicit-row', content: plainContent }],
+    }, { surface: 'rpc', defaultSessionId: 'session-1' })).resolves.toMatchObject({
+      ok: true,
+    });
+
+    const firstGeneratedId = writeTranscriptItems.mock.calls[0]?.[1][0]?.id;
+    const secondGeneratedId = writeTranscriptItems.mock.calls[1]?.[1][0]?.id;
+    expect(firstGeneratedId).toMatch(/^import:[0-9a-f-]{36}:0$/u);
+    expect(secondGeneratedId).toMatch(/^import:[0-9a-f-]{36}:0$/u);
+    expect(secondGeneratedId).not.toBe(firstGeneratedId);
+    expect(writeTranscriptItems.mock.calls[2]?.[1][0]?.id).toBe('explicit-row');
+  });
+
   it('tails session logs with offset and maxBytes bounds', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-session-log-tail-'));
     const logPath = join(dir, 'session.log');

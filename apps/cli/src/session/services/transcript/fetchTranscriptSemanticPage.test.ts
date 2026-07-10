@@ -230,4 +230,210 @@ describe('fetchTranscriptSemanticPage', () => {
       }),
     ]);
   });
+
+  it('suppresses empty canonical turn diff tool-call/result pairs', async () => {
+    const turnDiffInput = {
+      files: [],
+      _happier: {
+        sessionChangeScope: 'turn',
+        turnId: 'turn-1',
+        sessionId: 'session-1',
+        provider: 'codex',
+        source: 'scm_checkpoint',
+        confidence: 'exact',
+        turnStatus: 'completed',
+        seqRange: {
+          startSeqInclusive: 10,
+          endSeqInclusive: 11,
+        },
+      },
+    };
+    const fetchPage = vi.fn<FetchTranscriptRawPage>().mockResolvedValueOnce({
+      messages: [
+        {
+          seq: 10,
+          createdAt: 100,
+          messageRole: 'agent',
+          content: {
+            t: 'plain',
+            v: {
+              role: 'agent',
+              content: {
+                type: 'acp',
+                agentId: 'codex',
+                data: {
+                  type: 'tool-call',
+                  callId: 'diff-empty-1',
+                  name: 'Diff',
+                  input: JSON.stringify(turnDiffInput),
+                },
+              },
+            },
+          },
+        },
+        {
+          seq: 11,
+          createdAt: 101,
+          messageRole: 'agent',
+          content: {
+            t: 'plain',
+            v: {
+              role: 'agent',
+              content: {
+                type: 'acp',
+                agentId: 'codex',
+                data: {
+                  type: 'tool-result',
+                  callId: 'diff-empty-1',
+                  output: JSON.stringify({ status: 'completed', files: [] }),
+                },
+              },
+            },
+          },
+        },
+      ],
+      hasMore: false,
+      nextBeforeSeq: null,
+      nextAfterSeq: null,
+    });
+
+    const page = await fetchTranscriptSemanticPage({
+      token: 'token',
+      sessionId: 'session-1',
+      ctx,
+      limit: 10,
+      rawPageLimit: 10,
+      maxRawRowsToScan: 10,
+      direction: 'before',
+      scope: 'all',
+      mode: 'transcript',
+      includeTools: true,
+      includeRaw: true,
+      fetchPage,
+    });
+
+    expect(page.items).toEqual([]);
+  });
+
+  it('suppresses standalone empty canonical turn diff results when result metadata is present', async () => {
+    const turnDiffResult = {
+      status: 'completed',
+      files: [],
+      _happier: {
+        sessionChangeScope: 'turn',
+        turnId: 'turn-1',
+        sessionId: 'session-1',
+        provider: 'codex',
+        source: 'scm_checkpoint',
+        confidence: 'exact',
+        turnStatus: 'completed',
+        seqRange: {
+          startSeqInclusive: 10,
+          endSeqInclusive: 11,
+        },
+      },
+    };
+    const fetchPage = vi.fn<FetchTranscriptRawPage>().mockResolvedValueOnce({
+      messages: [
+        {
+          seq: 11,
+          createdAt: 101,
+          messageRole: 'agent',
+          content: {
+            t: 'plain',
+            v: {
+              role: 'agent',
+              content: {
+                type: 'acp',
+                agentId: 'codex',
+                data: {
+                  type: 'tool-result',
+                  callId: 'diff-empty-1',
+                  output: turnDiffResult,
+                },
+              },
+            },
+          },
+        },
+      ],
+      hasMore: false,
+      nextBeforeSeq: null,
+      nextAfterSeq: null,
+    });
+
+    const page = await fetchTranscriptSemanticPage({
+      token: 'token',
+      sessionId: 'session-1',
+      ctx,
+      limit: 10,
+      rawPageLimit: 10,
+      maxRawRowsToScan: 10,
+      direction: 'before',
+      scope: 'all',
+      mode: 'transcript',
+      includeTools: true,
+      includeRaw: true,
+      fetchPage,
+    });
+
+    expect(page.items).toEqual([]);
+  });
+
+  it('suppresses standalone empty v2 canonical Diff results without evidence', async () => {
+    const fetchPage = vi.fn<FetchTranscriptRawPage>().mockResolvedValueOnce({
+      messages: [
+        {
+          seq: 11,
+          createdAt: 101,
+          messageRole: 'agent',
+          content: {
+            t: 'plain',
+            v: {
+              role: 'agent',
+              content: {
+                type: 'acp',
+                agentId: 'codex',
+                data: {
+                  type: 'tool-result',
+                  callId: 'diff-empty-1',
+                  output: {
+                    status: 'completed',
+                    _happier: {
+                      v: 2,
+                      protocol: 'acp',
+                      provider: 'codex',
+                      rawToolName: 'Diff',
+                      canonicalToolName: 'Diff',
+                    },
+                    _raw: { status: 'completed' },
+                    _acp: {},
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
+      hasMore: false,
+      nextBeforeSeq: null,
+      nextAfterSeq: null,
+    });
+
+    const page = await fetchTranscriptSemanticPage({
+      token: 'token',
+      sessionId: 'session-1',
+      ctx,
+      limit: 10,
+      rawPageLimit: 10,
+      maxRawRowsToScan: 10,
+      direction: 'before',
+      scope: 'all',
+      mode: 'transcript',
+      includeTools: true,
+      includeRaw: true,
+      fetchPage,
+    });
+
+    expect(page.items).toEqual([]);
+  });
 });

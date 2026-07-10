@@ -103,7 +103,7 @@ export async function getSessionTranscript(params: Readonly<{
       sessionId: sessionTarget.sessionId,
       ctx: sessionTarget.ctx,
       limit,
-      rawPageLimit: includeRaw ? Math.min(50, limit) : Math.min(100, Math.max(limit, 20)),
+      rawPageLimit: includeRaw ? Math.min(50, Math.max(limit, 20)) : Math.min(100, Math.max(limit, 20)),
       maxRawRowsToScan: Math.max(40, limit * 20),
       direction: normalizeDirection(params.direction),
       cursor: params.cursor ?? null,

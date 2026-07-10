@@ -10,8 +10,9 @@ import {
 } from '@happier-dev/protocol/sessions';
 
 import { logger } from '@/ui/logger';
+import { isExternalSessionProviderFailureError } from '@/session/external/providerOps';
 
-export type ExternalSessionsErrorCode = 'invalid_request' | 'machine_offline' | 'provider_unavailable' | 'internal_error';
+export type ExternalSessionsErrorCode = 'invalid_request' | 'machine_offline' | 'agent_unavailable' | 'internal_error';
 
 export function externalSessionsError(
     errorCode: ExternalSessionsErrorCode,
@@ -25,12 +26,40 @@ export function mapActionFailureToExternalSessionsError(
 ): { ok: false; errorCode: ExternalSessionsErrorCode; error: string } {
     const errorCode = result.errorCode === 'machine_offline'
         ? 'machine_offline'
-        : result.errorCode === 'provider_unavailable'
-            ? 'provider_unavailable'
+        : result.errorCode === 'agent_unavailable'
+            ? 'agent_unavailable'
             : result.errorCode === 'invalid_request' || result.errorCode === 'invalid_parameters'
                 ? 'invalid_request'
                 : 'internal_error';
     return externalSessionsError(errorCode, result.error);
+}
+
+function mapProviderFailureCodeToExternalSessionsErrorCode(code: string): ExternalSessionsErrorCode {
+    if (code === 'invalid_request' || code === 'source_invalid' || code === 'candidate_not_found') {
+        return 'invalid_request';
+    }
+    if (
+        code === 'agent_unavailable'
+        || code === 'unavailable'
+        || code === 'not_authorized'
+        || code === 'provider_error'
+        || code === 'timeout'
+        || code === 'source_unreachable'
+        || code === 'unsupported'
+        || code === 'follow_not_supported'
+        || code === 'takeover_not_available'
+        || code === 'cancelled'
+    ) {
+        return 'agent_unavailable';
+    }
+    return 'agent_unavailable';
+}
+
+export function mapExternalSessionProviderFailureToExternalSessionsError(
+    error: unknown,
+): { ok: false; errorCode: ExternalSessionsErrorCode; error: string } | null {
+    if (!isExternalSessionProviderFailureError(error)) return null;
+    return externalSessionsError(mapProviderFailureCodeToExternalSessionsErrorCode(error.code), error.message);
 }
 
 function mapExternalTakeoverErrorCodeToExternalSessionsErrorCode(
@@ -40,16 +69,16 @@ function mapExternalTakeoverErrorCodeToExternalSessionsErrorCode(
     if (errorCode === 'machine_offline') return 'machine_offline';
     if (errorCode === 'transcript_import_failed' || errorCode === 'spawn_failed') return 'internal_error';
     if (errorCode === 'capability_unsupported') {
-        return 'provider_unavailable';
+        return 'agent_unavailable';
     }
     if (
         errorCode === 'takeover_not_available'
         && (error === 'takeover_not_supported' || error === 'not_authenticated')
     ) {
-        return 'provider_unavailable';
+        return 'agent_unavailable';
     }
     if (errorCode === 'invalid_external_source' && error === 'session_metadata_unavailable') {
-        return 'provider_unavailable';
+        return 'agent_unavailable';
     }
     return 'invalid_request';
 }

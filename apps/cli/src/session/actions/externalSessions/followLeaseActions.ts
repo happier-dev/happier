@@ -27,7 +27,7 @@ export async function executeExternalSessionAttachAction(
     let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
     try {
         validatedSource = await validateDirectMachineSource({
-            providerId: parsed.data.providerId,
+            agentId: parsed.data.agentId,
             source: parsed.data.source,
             env: process.env,
         });
@@ -38,7 +38,7 @@ export async function executeExternalSessionAttachAction(
         return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionAttachResponse;
     }
     try {
-        const providerOps = await resolveExternalSessionSurfaceOps(parsed.data.providerId);
+        const providerOps = await resolveExternalSessionSurfaceOps(parsed.data.agentId);
         const attached = await context.followLeaseManager.attach({
             sessionId: parsed.data.sessionId,
             leaseId: parsed.data.leaseId,
@@ -96,7 +96,7 @@ export async function executeExternalSessionFollowPolicySetAction(
     let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
     try {
         validatedSource = await validateDirectMachineSource({
-            providerId: parsed.data.providerId,
+            agentId: parsed.data.agentId,
             source: parsed.data.source,
             env: process.env,
         });
@@ -113,7 +113,7 @@ export async function executeExternalSessionFollowPolicySetAction(
 
     let providerOps: Awaited<ReturnType<typeof resolveExternalSessionSurfaceOps>>;
     try {
-        providerOps = await resolveExternalSessionSurfaceOps(parsed.data.providerId);
+        providerOps = await resolveExternalSessionSurfaceOps(parsed.data.agentId);
     } catch (error) {
         return internalErrorResponse(
             'external_session_follow_policy_set.provider_ops',
@@ -123,12 +123,12 @@ export async function executeExternalSessionFollowPolicySetAction(
     }
 
     if (parsed.data.enabled && !providerOps.acquireFollowLease) {
-        return externalSessionsError('provider_unavailable', 'background_follow_not_supported') satisfies ExternalSessionFollowPolicySetResponse;
+        return externalSessionsError('agent_unavailable', 'background_follow_not_supported') satisfies ExternalSessionFollowPolicySetResponse;
     }
 
     const credentials = await readCredentials().catch(() => null);
     if (!credentials) {
-        return externalSessionsError('provider_unavailable', 'not_authenticated') satisfies ExternalSessionFollowPolicySetResponse;
+        return externalSessionsError('agent_unavailable', 'not_authenticated') satisfies ExternalSessionFollowPolicySetResponse;
     }
 
     try {

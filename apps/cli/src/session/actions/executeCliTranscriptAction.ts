@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol';
 import { SessionMessageContentSchema } from '@/api/types';
 import {
@@ -65,6 +67,12 @@ function stringifyTranscriptItem(item: SessionTranscriptActionItem): string {
     return JSON.stringify(item.raw ?? item.content ?? item);
 }
 
+function readImportOperationId(input: Record<string, unknown>): string {
+    return readOptionalString(input, 'importId')
+        ?? readOptionalString(input, 'operationId')
+        ?? randomUUID();
+}
+
 async function resolveStore(
     params: Readonly<{
         options: CliTranscriptActionExecutorOptions;
@@ -86,13 +94,16 @@ async function resolveStore(
 
 function coerceImportItems(input: Record<string, unknown>): readonly SessionTranscriptActionItem[] {
     const rawItems = Array.isArray(input.items) ? input.items : [];
+    const fallbackNamespace = readImportOperationId(input);
     return rawItems
         .map((item, index): SessionTranscriptActionItem | null => {
             const record = readRecord(item);
             const content = record.content;
             const parsedContent = SessionMessageContentSchema.safeParse(content);
             return {
-                id: readOptionalString(record, 'id') ?? readOptionalString(record, 'localId') ?? `import-${index}`,
+                id: readOptionalString(record, 'id')
+                    ?? readOptionalString(record, 'localId')
+                    ?? `import:${fallbackNamespace}:${index}`,
                 ...(typeof record.seq === 'number' ? { seq: record.seq } : {}),
                 ...(typeof record.createdAt === 'number' ? { createdAt: record.createdAt } : {}),
                 ...(typeof record.text === 'string' ? { text: record.text } : {}),

@@ -3,6 +3,7 @@ import { stopDaemonSession } from '@/daemon/controlClient';
 import { listSessionMarkers, removeSessionMarker } from '@/daemon/sessionRegistry';
 import { createStopSession } from '@/daemon/sessions/stopSession';
 import type { TrackedSession } from '@/daemon/types';
+import { logger } from '@/ui/logger';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import {
@@ -55,7 +56,10 @@ async function stopSessionViaMarkersBestEffort(sessionId: string): Promise<boole
     ]),
   );
 
-  return await createStopSession({ pidToTrackedSession })(sessionId);
+  return await createStopSession({
+    pidToTrackedSession,
+    logPidReuseRefusal: (message) => logger.debug(message),
+  })(sessionId);
 }
 
 async function cleanupStoppedSessionMarkersBestEffort(sessionId: string): Promise<void> {

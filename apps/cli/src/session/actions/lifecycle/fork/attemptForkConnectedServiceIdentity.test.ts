@@ -7,10 +7,10 @@ import type {
   ForkSpawnSession,
 } from './forkLifecycleTypes';
 import type { ForkSurfaceV1 } from '@happier-dev/agents';
+import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 
 const mocks = vi.hoisted(() => ({
   dispatchProviderNativeFork: vi.fn(),
-  getForkSurface: vi.fn(),
   updateSessionMetadataWithRetry: vi.fn(),
   fetchForkChildSessionOrThrow: vi.fn(),
   cleanupForkChildBestEffort: vi.fn(),
@@ -21,10 +21,6 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/session/fork/providerNativeForkDispatch', () => ({
   dispatchProviderNativeFork: (...args: unknown[]) => mocks.dispatchProviderNativeFork(...args),
-}));
-
-vi.mock('@/backends/catalog', () => ({
-  getForkSurface: (...args: unknown[]) => mocks.getForkSurface(...args),
 }));
 
 vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
@@ -69,8 +65,8 @@ const PARENT_MATERIALIZATION_IDENTITY = {
 function createBuiltInForkResolution(): ForkBackendResolution {
   return {
     ok: true,
-    providerAgentId: 'codex',
-    providerHintProviderId: 'codex',
+    catalogAgentId: 'codex',
+    agentHintAgentId: 'codex',
     backendTargetV2: {
       kind: 'backend',
       backendId: 'codex',
@@ -83,11 +79,28 @@ function createBuiltInForkResolution(): ForkBackendResolution {
   };
 }
 
+function createOpenCodeForkResolution(): ForkBackendResolution {
+  return {
+    ok: true,
+    catalogAgentId: 'opencode',
+    agentHintAgentId: 'opencode',
+    backendTargetV2: {
+      kind: 'backend',
+      backendId: 'opencode',
+      sourceKind: 'built_in',
+    },
+    backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+    replayFlavor: 'opencode',
+    metadataOverlay: {},
+    configuredAcp: null,
+  } as unknown as ForkBackendResolution;
+}
+
 function createConfiguredAcpForkResolution(): ForkBackendResolution {
   return {
     ok: true,
-    providerAgentId: null,
-    providerHintProviderId: 'acp:review-bot',
+    catalogAgentId: null,
+    agentHintAgentId: 'acp:review-bot',
     backendTargetV2: {
       kind: 'backend',
       backendId: 'review-bot',
@@ -250,6 +263,105 @@ describe('fork connected-service child materialization identity', () => {
     expect(spawnSession).not.toHaveBeenCalled();
   });
 
+  it('does not fall back after provider-native auto fork times out waiting for webhook', async () => {
+    const fork = vi.fn().mockResolvedValue({
+      providerSessionId: 'codex-child-thread',
+      launch: {},
+    });
+    const spawnSession = vi.fn<ForkSpawnSession>()
+      .mockResolvedValue({
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+        errorMessage: 'Timed out waiting for session webhook',
+      });
+
+    const result = await attemptProviderNativeFork({
+      requestedStrategy: 'auto',
+      credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentSession: createParentRawSessionFixture(),
+      parentMetadata: {},
+      directory: '/tmp/project',
+      forkPoint: { type: 'latest' as const },
+      targetSeqInclusive: 10,
+      effectiveCutoffSeqInclusive: 10,
+      spawnNonce: 'native-timeout-nonce',
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: {
+        metadata: {},
+        spawn: {},
+      },
+      forkSurface: { fork } satisfies ForkSurfaceV1,
+      spawnSession,
+      stopSession: vi.fn(),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+    });
+    expect(mocks.archiveSessionBestEffort).not.toHaveBeenCalled();
+    expect(mocks.cleanupForkChildBestEffort).not.toHaveBeenCalled();
+  });
+
+  it('preserves non-Codex runtime backend mode in provider-native fork spawn and metadata', async () => {
+    const runtimeDescriptorV1 = {
+      v: 1,
+      agentId: 'opencode',
+      provider: {
+        backendMode: 'server',
+        providerSessionId: 'opencode-child-thread',
+      },
+    } as const;
+    const fork = vi.fn().mockResolvedValue({
+      providerSessionId: 'opencode-child-thread',
+      launch: {
+        sessionStateUpdates: [
+          {
+            fieldId: 'identity.runtimeDescriptor',
+            value: runtimeDescriptorV1,
+          },
+        ],
+      },
+    });
+    const spawnSession = vi.fn<ForkSpawnSession>()
+      .mockResolvedValue({ type: 'success', sessionId: 'child-opencode' });
+
+    const result = await attemptProviderNativeFork({
+      requestedStrategy: 'provider_native',
+      credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentSession: createParentRawSessionFixture(),
+      parentMetadata: {},
+      directory: '/tmp/project',
+      forkPoint: { type: 'latest' as const },
+      targetSeqInclusive: 10,
+      effectiveCutoffSeqInclusive: 10,
+      spawnNonce: 'native-nonce',
+      forkBackendResolution: createOpenCodeForkResolution(),
+      inheritedForkOverrides: {
+        metadata: {},
+        spawn: {},
+      },
+      forkSurface: { fork } satisfies ForkSurfaceV1,
+      spawnSession,
+      stopSession: vi.fn(),
+    });
+
+    const updatedMetadata = readUpdatedMetadata();
+    expect(result).toEqual({ ok: true, childSessionId: 'child-opencode' });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      runtimeDescriptorV1,
+    }));
+    expect(updatedMetadata.forkV1).toMatchObject({
+      agentHint: {
+        agentId: 'opencode',
+        backendMode: 'server',
+        providerSessionId: 'opencode-child-thread',
+      },
+    });
+  });
+
   it('adds a fresh child identity when configured ACP latest fork uses the bridge surface', async () => {
     const fork = vi.fn().mockResolvedValue({
       providerSessionId: 'vendor-child-acp',
@@ -267,8 +379,8 @@ describe('fork connected-service child materialization identity', () => {
       },
       directory: '/tmp/project',
       effectiveCutoffSeqInclusive: 10,
+      spawnNonce: 'acp-nonce',
       forkIsConfiguredAcp: true,
-      forkProviderAgentId: null,
       forkBackendResolution: createConfiguredAcpForkResolution(),
       inheritedForkOverrides: createConnectedServiceInheritedOverrides(),
       forkSurface: { fork } satisfies ForkSurfaceV1,
@@ -305,7 +417,6 @@ describe('fork connected-service child materialization identity', () => {
         environmentVariables: { SURFACE_FORK: '1' },
       },
     });
-    mocks.getForkSurface.mockResolvedValue(null);
     mocks.createConfiguredAcpBackend.mockReturnValue(null);
     const spawnSession = vi.fn<ForkSpawnSession>()
       .mockResolvedValue({ type: 'success', sessionId: 'child-acp-surface' });
@@ -317,14 +428,14 @@ describe('fork connected-service child materialization identity', () => {
       parentMetadata: {
         agentRuntimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: { providerSessionId: 'vendor-parent' },
         },
       },
       directory: '/tmp/project',
       effectiveCutoffSeqInclusive: 10,
+      spawnNonce: 'built-in-acp-nonce',
       forkIsConfiguredAcp: false,
-      forkProviderAgentId: 'codex' as const,
       forkBackendResolution: createBuiltInForkResolution(),
       inheritedForkOverrides: {
         metadata: {},
@@ -338,7 +449,6 @@ describe('fork connected-service child materialization identity', () => {
     const result = await attemptAcpLatestFork(input);
 
     expect(result).toEqual({ ok: true, childSessionId: 'child-acp-surface' });
-    expect(mocks.getForkSurface).not.toHaveBeenCalled();
     expect(fork).toHaveBeenCalledWith({
       parentSessionId: 'parent-session',
       parentMetadata: input.parentMetadata,
@@ -367,8 +477,8 @@ describe('fork connected-service child materialization identity', () => {
       parentMetadata: {},
       directory: '/tmp/project',
       effectiveCutoffSeqInclusive: 10,
+      spawnNonce: 'empty-acp-nonce',
       forkIsConfiguredAcp: true,
-      forkProviderAgentId: null,
       forkBackendResolution: createConfiguredAcpForkResolution(),
       inheritedForkOverrides: {
         metadata: {},
@@ -387,5 +497,44 @@ describe('fork connected-service child materialization identity', () => {
     expect(fork).toHaveBeenCalled();
     expect(mocks.createConfiguredAcpBackend).not.toHaveBeenCalled();
     expect(spawnSession).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back after ACP latest auto fork times out waiting for webhook', async () => {
+    const fork = vi.fn().mockResolvedValue({
+      providerSessionId: 'vendor-child-surface',
+      launch: {},
+    });
+    const spawnSession = vi.fn<ForkSpawnSession>()
+      .mockResolvedValue({
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+        errorMessage: 'Timed out waiting for session webhook',
+      });
+
+    const result = await attemptAcpLatestFork({
+      requestedStrategy: 'auto',
+      credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentMetadata: {},
+      directory: '/tmp/project',
+      effectiveCutoffSeqInclusive: 10,
+      forkIsConfiguredAcp: false,
+      spawnNonce: 'acp-timeout-nonce',
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: {
+        metadata: {},
+        spawn: {},
+      },
+      forkSurface: { fork } satisfies ForkSurfaceV1,
+      spawnSession,
+      stopSession: vi.fn(),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+    });
+    expect(mocks.archiveSessionBestEffort).not.toHaveBeenCalled();
+    expect(mocks.cleanupForkChildBestEffort).not.toHaveBeenCalled();
   });
 });

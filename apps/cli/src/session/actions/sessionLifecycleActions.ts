@@ -18,6 +18,8 @@ export function createMachineSessionLifecycleActionExecutor(params: Readonly<{
     deps?: SessionLifecycleMachineDeps;
 }>): RpcActionExecutor {
     const sessionHostBridge = getSessionHostBridge();
+    const resolveExecutionSurfaces = params.deps?.resolveExecutionSurfaces
+        ?? sessionHostBridge.resolveExecutionSurfaces.bind(sessionHostBridge);
 
     return createSessionLifecycleRpcActionExecutor({
         'session.spawn_new': createSpawnNewSessionLifecycleActionHandler({
@@ -30,6 +32,7 @@ export function createMachineSessionLifecycleActionExecutor(params: Readonly<{
         }),
         'session.fork': createForkSessionLifecycleActionHandler({
             sessionHostBridge,
+            resolveExecutionSurfaces,
             handlers: params.handlers,
             deps: params.deps,
         }),

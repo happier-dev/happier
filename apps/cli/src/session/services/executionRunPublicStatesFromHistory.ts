@@ -1,4 +1,4 @@
-import { getBackendDefinition, isAgentId } from '@happier-dev/agents';
+import { getBackendCatalogDefinition, isAgentId } from '@happier-dev/agents';
 import {
     ExecutionRunPublicStateSchema,
     type ExecutionRunPublicState,
@@ -104,7 +104,7 @@ function readBackendTarget(input: Record<string, unknown> | null, output: Record
         if (isLegacyConfiguredBackendSentinelId(legacyBackendId)) {
             return null;
         }
-        const legacyTarget = isAgentId(legacyBackendId) && getBackendDefinition(legacyBackendId)
+        const legacyTarget = isAgentId(legacyBackendId) && getBackendCatalogDefinition(legacyBackendId)
             ? {
                 kind: 'builtInAgent',
                 agentId: legacyBackendId,

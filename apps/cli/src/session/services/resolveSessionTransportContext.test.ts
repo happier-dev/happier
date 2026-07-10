@@ -41,6 +41,44 @@ describe('resolveSessionTransportContext', () => {
         }
     });
 
+    it('reuses an exact full-id session row returned by id resolution instead of fetching it again', async () => {
+        resolveSessionIdOrPrefix.mockResolvedValue({
+            ok: true,
+            sessionId: 'sess-full-id',
+            rawSession: {
+                id: 'sess-full-id',
+                active: false,
+                activeAt: 1,
+                encryptionMode: 'plain',
+                metadata: {},
+            },
+        });
+
+        const { resolveSessionTransportContext } = await import('./resolveSessionTransportContext');
+
+        const result = await resolveSessionTransportContext({
+            credentials: {
+                token: 'token',
+                encryption: {
+                    type: 'legacy',
+                    secret: new Uint8Array([1, 2, 3, 4]),
+                },
+            },
+            idOrPrefix: 'sess-full-id',
+        });
+
+        expect(fetchSessionById).not.toHaveBeenCalled();
+        expect(result).toMatchObject({
+            ok: true,
+            sessionId: 'sess-full-id',
+            rawSession: {
+                id: 'sess-full-id',
+                active: false,
+            },
+            mode: 'plain',
+        });
+    });
+
     it('refetches active e2ee sessions when the published dataEncryptionKey is briefly missing', async () => {
         const machineKey = new Uint8Array(32).fill(7);
         const publicKey = deriveBoxPublicKeyFromSeed(machineKey);

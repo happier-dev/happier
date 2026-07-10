@@ -1,20 +1,45 @@
 import { homedir } from 'node:os';
 
 import {
+  AcpConfigOptionOverridesV1Schema,
+  BackendTargetRefV2Schema,
+  DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+  buildBackendTargetKeyV2,
   getActionSpec,
+  RuntimeDescriptorV1Schema,
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
+  SessionAgentSpawnPolicyV1Schema,
+  SessionMcpSelectionV1Schema,
+  SessionModelSelectionV1Schema,
+  SessionModelSelectionResolutionError,
+  ProviderConnectionIdSchema,
+  resolveSessionModelSelectionInputRefV1,
   SessionUsageLimitRecoveryV1Schema,
+  mergeSpawnConfigOptionAliases,
   readBackendTargetRefV2,
+  readRuntimeDescriptorV1FromMetadata,
   type ConnectedServiceBindingsV1,
+  type SessionAgentSpawnPolicyV1,
+  type SpawnConfigOptionValue,
   type SessionBridgeLifecycleHookEventIdV1,
+  type SessionModelSelectionV1,
   type SessionUsageLimitRecoveryResumePromptModeV1,
   type SessionUsageLimitRecoveryV1,
   type ActionExecutorDeps,
+  type ActionSurfaces,
+  type BackendTargetRefV2,
 } from '@happier-dev/protocol';
+import {
+  assertNonEscalatingPermissionMode,
+  resolveNearestPermissionModeAtOrBelow,
+  resolvePermissionPrivilegeOrdinal,
+} from '@happier-dev/protocol/actions/permissionPrivilege';
+import { SpawnSessionTerminalSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 import {
   AGENT_IDS,
   DEFAULT_AGENT_ID,
   parsePermissionIntentAlias,
+  resolvePermissionIntentFromSessionMetadata,
   resolveCanonicalAgentIdFromFlavor,
   type AgentId,
   type PermissionIntent,
@@ -22,11 +47,9 @@ import {
 import { getPreferredHostName } from '@/daemon/machine/metadata';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { readSettings, type Credentials } from '@/persistence';
-import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 import {
-  agentSupportsSpawnConnectedServicesDefaults,
-  resolveSpawnConnectedServicesDefaults,
+  resolveSessionSpawnConnectedServicesDefaultsPayload,
 } from '@/session/services/spawnConnectedServicesDefaults';
 import { getSessionEvents } from '@/session/services/getSessionEvents';
 import { getSessionTranscript } from '@/session/services/getSessionTranscript';
@@ -58,6 +81,7 @@ import {
   stopExecutionRun,
   waitForExecutionRun,
 } from '@/session/services/executionRuns';
+import { buildPluginInstallApprovalPreview } from '@/plugins/devLoop/installApprovalPreview';
 import {
   normalizeExecutionRunWaitPollIntervalMs,
   normalizeExecutionRunWaitTimeoutMs,
@@ -78,11 +102,17 @@ import {
   normalizeUsageLimitRecoveryOperationResult,
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
 import { routeSessionUsageLimitRecoverySwitchAccountNow } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoverySwitchAccountNow';
+import { executePluginDevLoopAction } from '@/plugins/devLoop/actions';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import {
   isConcreteBackendTargetCompatId,
   isLegacyCustomAcpSessionAgentId,
 } from '@/session/backendTargets/compat/customAcp';
+import {
+  resolveBackendTargetFromSessionMetadata,
+  resolveExplicitBackendTargetFromSessionMetadata,
+} from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
+import { resolveSessionAgentSpawnInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
 import { createCliActionInventoryDeps } from './cliActionDeps/createCliActionInventoryDeps';
 import {
   readSessionAgentState,
@@ -126,11 +156,15 @@ export type ScheduleInactiveSessionUsageLimitRecoveryCheck = (input: Readonly<{
   sessionId: string;
   recovery: SessionUsageLimitRecoveryV1;
   runCheckNow: () => Promise<unknown>;
-}>) => void;
+}>) => Promise<void> | void;
 
 export type CancelInactiveSessionUsageLimitRecoveryCheck = (input: Readonly<{
   sessionId: string;
 }>) => void;
+
+export type CancelConnectedServiceRuntimeAuthRecovery = (input: Readonly<{
+  sessionId: string;
+}>) => Promise<unknown> | unknown;
 
 export type RetryTemporaryThrottleNow = (input: Readonly<{
   sessionId: string;
@@ -142,6 +176,153 @@ type CurrentMachineControlIdentity = Readonly<{
   homeDir: string | null;
 }>;
 
+function readStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (!entries.every(([, entryValue]) => typeof entryValue === 'string')) return undefined;
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function readConfigOptionsRecord(value: unknown): Record<string, SpawnConfigOptionValue> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (!entries.every(([, entryValue]) => (
+    typeof entryValue === 'string'
+    || typeof entryValue === 'number' && Number.isFinite(entryValue)
+    || typeof entryValue === 'boolean'
+    || entryValue === null
+  ))) {
+    return undefined;
+  }
+  return Object.fromEntries(entries) as Record<string, SpawnConfigOptionValue>;
+}
+
+function hasExplicitString(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function hasExplicitValue(value: unknown): boolean {
+  return value !== undefined;
+}
+
+function isSessionAgentSurface(surface: unknown): surface is 'agent' {
+  return surface === 'agent';
+}
+
+function normalizeSessionAgentSpawnPolicy(raw: unknown): SessionAgentSpawnPolicyV1 {
+  const parsed = SessionAgentSpawnPolicyV1Schema.safeParse(raw);
+  return parsed.success ? parsed.data : DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1;
+}
+
+function resolveSpawnPolicyDeniedField(params: Readonly<{
+  policy: SessionAgentSpawnPolicyV1;
+  input: Readonly<{
+    path?: unknown;
+    directory?: unknown;
+    host?: unknown;
+    machineId?: unknown;
+    serverId?: unknown;
+    agentId?: unknown;
+    backendTargetKey?: unknown;
+    backendTarget?: unknown;
+    modelId?: unknown;
+    providerConnectionId?: unknown;
+    permissionMode?: unknown;
+    agentModeId?: unknown;
+    sessionConfigOptionOverrides?: unknown;
+    configOptions?: unknown;
+    profileId?: unknown;
+    environmentVariables?: unknown;
+    connectedServices?: unknown;
+    mcpSelection?: unknown;
+    transcriptStorage?: unknown;
+    runtimeDescriptorV1?: unknown;
+  }>;
+}>): string | null {
+  const { policy, input } = params;
+  if (!policy.allowCustomDirectory && hasExplicitString(input.path)) return 'path';
+  if (!policy.allowCustomDirectory && hasExplicitString(input.directory)) return 'directory';
+  if (!policy.allowCrossMachine && hasExplicitString(input.host)) return 'host';
+  if (!policy.allowCrossMachine && hasExplicitString(input.machineId)) return 'machineId';
+  if (!policy.allowCrossMachine && hasExplicitString(input.serverId)) return 'serverId';
+  if (!policy.allowBackendTargetOverride && hasExplicitString(input.agentId)) return 'agentId';
+  if (!policy.allowBackendTargetOverride && hasExplicitString(input.backendTargetKey)) return 'backendTargetKey';
+  if (!policy.allowBackendTargetOverride && hasExplicitValue(input.backendTarget)) return 'backendTarget';
+  if (!policy.allowBackendTargetOverride && hasExplicitValue(input.runtimeDescriptorV1)) return 'runtimeDescriptorV1';
+  if (!policy.allowModelOverride && hasExplicitString(input.modelId)) return 'modelId';
+  if (!policy.allowModelOverride && input.providerConnectionId !== undefined) return 'providerConnectionId';
+  if (!policy.allowPermissionModeOverride && hasExplicitString(input.permissionMode)) return 'permissionMode';
+  if (!policy.allowAgentModeOverride && hasExplicitString(input.agentModeId)) return 'agentModeId';
+  if (!policy.allowConfigOptionOverrides && hasExplicitValue(input.sessionConfigOptionOverrides)) return 'sessionConfigOptionOverrides';
+  if (!policy.allowConfigOptionOverrides && hasExplicitValue(input.configOptions)) return 'configOptions';
+  if (!policy.allowProfileOverride && hasExplicitString(input.profileId)) return 'profileId';
+  if (!policy.allowEnvironmentVariables && hasExplicitValue(input.environmentVariables)) return 'environmentVariables';
+  if (!policy.allowConnectedServicesOverride && hasExplicitValue(input.connectedServices)) return 'connectedServices';
+  if (!policy.allowMcpSelectionOverride && hasExplicitValue(input.mcpSelection)) return 'mcpSelection';
+  if (!policy.allowTranscriptStorageOverride && hasExplicitValue(input.transcriptStorage)) return 'transcriptStorage';
+  return null;
+}
+
+function permissionEscalationDetails(params: Readonly<{
+  callerSurface: keyof ActionSurfaces | null | undefined;
+  decision: Readonly<{
+    reason: string;
+    requestedMode: string;
+    requestedOrdinal: number | null;
+    callerMode: string;
+    callerOrdinal: number;
+  }>;
+}>): Record<string, unknown> {
+  return {
+    surface: params.callerSurface ?? null,
+    reason: params.decision.reason,
+    requestedMode: params.decision.requestedMode,
+    requestedOrdinal: params.decision.requestedOrdinal,
+    callerMode: params.decision.callerMode,
+    callerOrdinal: params.decision.callerOrdinal,
+  };
+}
+
+function permissionEscalationActionResult(params: Readonly<{
+  callerSurface: keyof ActionSurfaces | null | undefined;
+  decision: Exclude<ReturnType<typeof assertNonEscalatingPermissionMode>, { ok: true }>;
+}>): Readonly<{ ok: false; errorCode: string; error: string; details: Record<string, unknown> }> {
+  return {
+    ok: false,
+    errorCode: params.decision.reason,
+    error: params.decision.reason,
+    details: permissionEscalationDetails(params),
+  };
+}
+
+function permissionEscalationSpawnResult(params: Readonly<{
+  callerSurface: keyof ActionSurfaces | null | undefined;
+  decision: Exclude<ReturnType<typeof assertNonEscalatingPermissionMode>, { ok: true }>;
+}>): Readonly<{
+  type: 'error';
+  errorCode: string;
+  errorMessage: string;
+  details: Record<string, unknown>;
+}> {
+  return {
+    type: 'error',
+    errorCode: params.decision.reason,
+    errorMessage: params.decision.reason,
+    details: permissionEscalationDetails(params),
+  };
+}
+
+function applyPermissionCeiling(params: Readonly<{
+  callerMode: string;
+  permissionCeiling: SessionAgentSpawnPolicyV1['permissionCeiling'];
+}>): string {
+  if (!params.permissionCeiling) return params.callerMode;
+  const callerOrdinal = resolvePermissionPrivilegeOrdinal(params.callerMode) ?? 1;
+  const ceilingOrdinal = resolvePermissionPrivilegeOrdinal(params.permissionCeiling);
+  if (ceilingOrdinal === null || ceilingOrdinal >= callerOrdinal) return params.callerMode;
+  return params.permissionCeiling;
+}
+
 async function resolveSpawnConnectedServicesDefaultPayload(params: Readonly<{
   backendTarget: NonNullable<ReturnType<typeof readBackendTargetRefV2>>;
   credentials: Credentials;
@@ -150,28 +331,12 @@ async function resolveSpawnConnectedServicesDefaultPayload(params: Readonly<{
   connectedServicesUpdatedAt: number;
 }> | null> {
   if (params.backendTarget.sourceKind !== 'built_in') return null;
-  const agentId = params.backendTarget.backendId;
-  if (!AGENT_IDS.includes(agentId as AgentId)) return null;
-  if (!agentSupportsSpawnConnectedServicesDefaults(agentId as AgentId)) return null;
-
-  try {
-    const accountSettingsContext = await bootstrapAccountSettingsContext({
-      credentials: params.credentials,
-      mode: 'blocking',
-      deps: { applySideEffects: () => undefined },
-    });
-    const connectedServices = resolveSpawnConnectedServicesDefaults({
-      accountSettings: accountSettingsContext.settings,
-      agentId: agentId as AgentId,
-    });
-    if (!connectedServices) return null;
-    return {
-      connectedServices,
-      connectedServicesUpdatedAt: Date.now(),
-    };
-  } catch {
-    return null;
-  }
+  // ONE defaulting owner (QA2-F02): session spawn and execution-run start resolve defaults
+  // through the same fresh-bootstrap owner; no local settings-snapshot path.
+  return await resolveSessionSpawnConnectedServicesDefaultsPayload({
+    agentId: params.backendTarget.backendId,
+    credentials: params.credentials,
+  });
 }
 
 function readUsageLimitRecoveryFromControlResult(result: unknown): SessionUsageLimitRecoveryV1 | null {
@@ -230,11 +395,14 @@ export function createCliActionDeps(params: Readonly<{
     host?: unknown;
     machineId?: unknown;
   }> | null;
+  getCallerPermissionMode?: (() => string | null | undefined) | null;
+  getCurrentSessionBackendTarget?: (() => BackendTargetRefV2 | null | undefined) | null;
   happyHomeDir?: string;
   isUsageLimitRecoveryEnabled?: (() => Promise<boolean> | boolean) | null;
   resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
   scheduleInactiveSessionUsageLimitRecoveryCheck?: ScheduleInactiveSessionUsageLimitRecoveryCheck;
   cancelInactiveSessionUsageLimitRecoveryCheck?: CancelInactiveSessionUsageLimitRecoveryCheck;
+  cancelConnectedServiceRuntimeAuthRecovery?: CancelConnectedServiceRuntimeAuthRecovery;
   retryTemporaryThrottleNow?: RetryTemporaryThrottleNow;
 }>): ActionExecutorDeps {
   const inventoryDeps = createCliActionInventoryDeps(params);
@@ -268,6 +436,20 @@ export function createCliActionDeps(params: Readonly<{
       currentSessionMetadata = null;
       return null;
     }
+  };
+
+  const readValidPermissionMode = (value: unknown): string | null => {
+    const normalized = typeof value === 'string' ? value.trim() : '';
+    return normalized && parsePermissionIntentAlias(normalized) ? normalized : null;
+  };
+
+  const resolveCallerPermissionMode = async (explicit: unknown): Promise<string> => {
+    const explicitMode = readValidPermissionMode(explicit);
+    if (explicitMode) return explicitMode;
+    const liveMode = readValidPermissionMode(params.getCallerPermissionMode?.());
+    if (liveMode) return liveMode;
+    const metadata = await readCurrentSessionMetadata();
+    return resolvePermissionIntentFromSessionMetadata(metadata)?.intent ?? 'default';
   };
 
   const resolveCurrentSessionValue = async (key: 'path' | 'host' | 'machineId'): Promise<string | null> => {
@@ -542,13 +724,13 @@ export function createCliActionDeps(params: Readonly<{
     });
   };
 
-  const scheduleUsageLimitRecoveryCheckFromResult = (
+  const scheduleUsageLimitRecoveryCheckFromResult = async (
     sessionId: string,
     result: unknown,
-  ): void => {
+  ): Promise<void> => {
     const recovery = readUsageLimitRecoveryFromControlResult(result);
     if (!recovery || recovery.status !== 'waiting') return;
-    params.scheduleInactiveSessionUsageLimitRecoveryCheck?.({
+    await params.scheduleInactiveSessionUsageLimitRecoveryCheck?.({
       sessionId,
       recovery,
       runCheckNow: async () => await callRoutedUsageLimitRecoveryControl(
@@ -566,7 +748,7 @@ export function createCliActionDeps(params: Readonly<{
 
   const callRoutedUsageLimitRecoveryControl = async (
     sessionId: string,
-    operation: 'enable' | 'cancel' | 'checkNow' | 'switchAccountNow',
+    operation: 'enable' | 'cancel' | 'checkNow' | 'switchAccountNow' | 'consumeResetCredit',
     request: Record<string, unknown>,
   ): Promise<unknown> => {
     if (!params.credentials) {
@@ -614,7 +796,9 @@ export function createCliActionDeps(params: Readonly<{
           ? SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE
           : operation === 'cancel'
             ? SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL
-            : SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW,
+            : operation === 'consumeResetCredit'
+              ? SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT
+              : SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW,
         request,
       ),
     } as const;
@@ -630,7 +814,7 @@ export function createCliActionDeps(params: Readonly<{
           resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
         },
       });
-      scheduleUsageLimitRecoveryCheckFromResult(transport.sessionId, result);
+      await scheduleUsageLimitRecoveryCheckFromResult(transport.sessionId, result);
       return normalizeUsageLimitRecoveryOperationResult(result, { sessionId: transport.sessionId });
     }
     if (operation === 'cancel') {
@@ -638,8 +822,16 @@ export function createCliActionDeps(params: Readonly<{
         ...routeParams,
         request: request as { sessionId: string; issueFingerprint?: string | null },
       });
-      params.cancelInactiveSessionUsageLimitRecoveryCheck?.({ sessionId: transport.sessionId });
-      return normalizeUsageLimitRecoveryOperationResult(result, { sessionId: transport.sessionId });
+      const normalized = normalizeUsageLimitRecoveryOperationResult(result, { sessionId: transport.sessionId });
+      if (normalized.ok === true) {
+        params.cancelInactiveSessionUsageLimitRecoveryCheck?.({ sessionId: transport.sessionId });
+        try {
+          await params.cancelConnectedServiceRuntimeAuthRecovery?.({ sessionId: transport.sessionId });
+        } catch {
+          // The routed cancel already cleared user-visible wait metadata; scheduler cleanup is best-effort.
+        }
+      }
+      return normalized;
     }
     if (operation === 'switchAccountNow') {
       return normalizeUsageLimitRecoveryOperationResult(await routeSessionUsageLimitRecoverySwitchAccountNow({
@@ -656,13 +848,15 @@ export function createCliActionDeps(params: Readonly<{
       request: request as {
         sessionId: string;
         provider?: string;
+        issueFingerprint?: string;
+        operation?: 'check_now' | 'switch_account_now' | 'consume_reset_credit';
         resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
       },
       ...(params.resumeInactiveSessionWhenUsageLimitReady
         ? { resumeInactiveSessionWhenReady: params.resumeInactiveSessionWhenUsageLimitReady }
         : {}),
     });
-    scheduleUsageLimitRecoveryCheckFromResult(transport.sessionId, result);
+    await scheduleUsageLimitRecoveryCheckFromResult(transport.sessionId, result);
     return normalizeUsageLimitRecoveryOperationResult(result, { sessionId: transport.sessionId });
   };
 
@@ -691,6 +885,7 @@ export function createCliActionDeps(params: Readonly<{
         mode: transport.mode,
         ctx: transport.ctx,
         request,
+        skipLiveRpc: transport.rawSession.active === false,
       });
     },
     executionRunGet: async (sessionId, request) => {
@@ -777,9 +972,86 @@ export function createCliActionDeps(params: Readonly<{
     sessionOpen: async () => notSupported(),
     sessionFork: async () => notSupported(),
     sessionRollback: async () => notSupported(),
-    sessionSpawnNew: async ({ tag, agentId, modelId, backendTargetKey, title, path, host, initialMessage }) => {
+    sessionSpawnNew: async ({
+      tag,
+      agentId,
+      modelId,
+      providerConnectionId,
+      modelUpdatedAt,
+      backendTargetKey,
+      backendTarget: requestedBackendTarget,
+      title,
+      path,
+      directory: directoryAlias,
+      host,
+      machineId,
+      serverId,
+      initialMessage,
+      initialPrompt,
+      permissionMode,
+      permissionModeUpdatedAt,
+      agentModeId,
+      agentModeUpdatedAt,
+      sessionConfigOptionOverrides,
+      configOptions,
+      profileId,
+      environmentVariables,
+      connectedServices,
+      connectedServicesUpdatedAt,
+      mcpSelection,
+      transcriptStorage,
+      terminal,
+      windowsRemoteSessionLaunchMode,
+      windowsRemoteSessionConsole,
+      windowsTerminalWindowName,
+      runtimeDescriptorV1,
+      callerSurface,
+      callerPermissionMode,
+      sessionAgentSpawnPolicyV1,
+    }) => {
       if (!params.credentials) {
         notSupported();
+      }
+
+      const sessionAgentCaller = isSessionAgentSurface(callerSurface);
+      const spawnPolicy = sessionAgentCaller
+        ? normalizeSessionAgentSpawnPolicy(sessionAgentSpawnPolicyV1)
+        : null;
+      if (spawnPolicy) {
+        const deniedField = resolveSpawnPolicyDeniedField({
+          policy: spawnPolicy,
+          input: {
+            path,
+            directory: directoryAlias,
+            host,
+            machineId,
+            serverId,
+            agentId,
+            backendTargetKey,
+            backendTarget: requestedBackendTarget,
+            modelId,
+            providerConnectionId,
+            permissionMode,
+            agentModeId,
+            sessionConfigOptionOverrides,
+            configOptions,
+            profileId,
+            environmentVariables,
+            connectedServices,
+            mcpSelection,
+            transcriptStorage,
+            runtimeDescriptorV1,
+          },
+        });
+        if (deniedField) {
+          return {
+            type: 'error',
+            errorCode: 'spawn_policy_denied',
+            errorMessage: 'spawn_policy_denied',
+            field: deniedField,
+            surface: 'agent',
+          };
+        }
       }
 
       const requestedHost = typeof host === 'string' ? host.trim() : '';
@@ -792,8 +1064,13 @@ export function createCliActionDeps(params: Readonly<{
         }
       }
 
-      const directory = typeof path === 'string' && path.trim().length > 0
+      const explicitDirectory = typeof path === 'string' && path.trim().length > 0
         ? path.trim()
+        : typeof directoryAlias === 'string' && directoryAlias.trim().length > 0
+          ? directoryAlias.trim()
+          : '';
+      const directory = explicitDirectory
+        ? explicitDirectory
         : await resolveCurrentSessionValue('path');
       if (!directory) {
         return { type: 'error', errorCode: 'spawn_target_missing', errorMessage: 'spawn_target_missing' };
@@ -802,13 +1079,35 @@ export function createCliActionDeps(params: Readonly<{
       const rawBackendTargetKey = typeof backendTargetKey === 'string' ? backendTargetKey.trim() : '';
       const normalizedAgentId = typeof agentId === 'string' ? agentId.trim() : '';
       const canonicalAgentId = normalizedAgentId ? resolveCanonicalAgentIdFromFlavor(normalizedAgentId) : null;
-      const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
       const normalizedTag = typeof tag === 'string' ? tag.trim() : '';
       const normalizedTitle = typeof title === 'string' ? title.trim() : '';
-      const normalizedInitialMessage = typeof initialMessage === 'string' ? initialMessage.trim() : '';
-      const hookBackendTarget = rawBackendTargetKey || (normalizedAgentId ? `agent:${normalizedAgentId}` : `agent:${DEFAULT_AGENT_ID}`);
+      const normalizedInitialMessage = typeof initialMessage === 'string' && initialMessage.trim().length > 0
+        ? initialMessage.trim()
+        : typeof initialPrompt === 'string' && initialPrompt.trim().length > 0
+          ? initialPrompt.trim()
+          : '';
+      const currentMetadata = await readCurrentSessionMetadata();
+      const explicitRuntimeDescriptorV1 = (() => {
+        if (runtimeDescriptorV1 === undefined) return undefined;
+        const parsed = RuntimeDescriptorV1Schema.safeParse(runtimeDescriptorV1);
+        return parsed.success ? parsed.data : undefined;
+      })();
+      const inheritedRuntimeDescriptorV1 = runtimeDescriptorV1 === undefined
+        ? readRuntimeDescriptorV1FromMetadata(currentMetadata) ?? undefined
+        : undefined;
+      const normalizedRuntimeDescriptorV1 = explicitRuntimeDescriptorV1 ?? inheritedRuntimeDescriptorV1;
+      const requestedHookBackendTarget = rawBackendTargetKey || (normalizedAgentId ? `agent:${normalizedAgentId}` : '');
+      const explicitBackendTarget = (() => {
+        if (requestedBackendTarget == null) return { ok: true as const, value: null };
+        const parsed = BackendTargetRefV2Schema.safeParse(requestedBackendTarget);
+        return parsed.success ? { ok: true as const, value: parsed.data } : { ok: false as const };
+      })();
+      if (!explicitBackendTarget.ok) {
+        return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+      }
 
       const backendTarget = (() => {
+        if (explicitBackendTarget.value) return explicitBackendTarget.value;
         if (rawBackendTargetKey) {
           try {
             const parsed = readBackendTargetRefV2(rawBackendTargetKey);
@@ -841,6 +1140,26 @@ export function createCliActionDeps(params: Readonly<{
             sourceKind: 'built_in',
           });
         }
+        const explicitRuntimeDescriptorProviderId = explicitRuntimeDescriptorV1?.agentId;
+        if (explicitRuntimeDescriptorProviderId && isConcreteBackendTargetCompatId(explicitRuntimeDescriptorProviderId)) {
+          try {
+            return readBackendTargetRefV2({
+              kind: 'backend',
+              backendId: explicitRuntimeDescriptorProviderId,
+              sourceKind: 'built_in',
+            });
+          } catch {
+            return null;
+          }
+        }
+        const currentSessionBackendTarget = params.getCurrentSessionBackendTarget?.() ?? null;
+        if (currentSessionBackendTarget) {
+          return currentSessionBackendTarget;
+        }
+        const metadataBackendTarget = resolveBackendTargetFromSessionMetadata(currentMetadata);
+        if (metadataBackendTarget) {
+          return metadataBackendTarget;
+        }
         return readBackendTargetRefV2({
           kind: 'backend',
           backendId: DEFAULT_AGENT_ID,
@@ -853,28 +1172,180 @@ export function createCliActionDeps(params: Readonly<{
       if (backendTarget.sourceKind === 'built_in' && normalizedAgentId && !AGENT_IDS.includes(normalizedAgentId as AgentId)) {
         return { type: 'error', errorCode: 'agent_not_found', errorMessage: 'agent_not_found' };
       }
-      const connectedServicesDefaults = await resolveSpawnConnectedServicesDefaultPayload({
-        credentials: params.credentials,
-        backendTarget,
-      });
+      const hookBackendTarget = requestedHookBackendTarget || buildBackendTargetKeyV2(backendTarget);
+      const inheritedMetadataBackendTarget = params.getCurrentSessionBackendTarget?.()
+        ?? resolveExplicitBackendTargetFromSessionMetadata(currentMetadata);
+      let inheritedSpawn: ReturnType<typeof resolveSessionAgentSpawnInheritedOverridesFromMetadata>['spawn'];
+      try {
+        inheritedSpawn = resolveSessionAgentSpawnInheritedOverridesFromMetadata(
+          currentMetadata,
+          inheritedMetadataBackendTarget,
+        ).spawn;
+      } catch (error) {
+        if (error instanceof SessionModelSelectionResolutionError) {
+          return { type: 'error', errorCode: 'invalid_parameters', errorMessage: error.code };
+        }
+        throw error;
+      }
+
+      const resolvedConnectedServices = connectedServices !== undefined
+        ? connectedServices
+        : inheritedSpawn.connectedServices;
+      const connectedServicesDefaults = resolvedConnectedServices === undefined
+        ? await resolveSpawnConnectedServicesDefaultPayload({
+            credentials: params.credentials,
+            backendTarget,
+          })
+        : null;
+      const resolvedMachineId = typeof machineId === 'string' && machineId.trim().length > 0
+        ? machineId.trim()
+        : currentMachineId;
+      const resolvedCallerPermissionMode = sessionAgentCaller
+        ? applyPermissionCeiling({
+            callerMode: await resolveCallerPermissionMode(callerPermissionMode),
+            permissionCeiling: spawnPolicy?.permissionCeiling ?? null,
+          })
+        : 'yolo';
+      const permissionDecision = sessionAgentCaller
+        ? (typeof permissionMode === 'string' && permissionMode.trim().length > 0
+            ? assertNonEscalatingPermissionMode({
+                requestedMode: permissionMode,
+                callerMode: resolvedCallerPermissionMode,
+              })
+            : resolveNearestPermissionModeAtOrBelow({
+                requestedMode: undefined,
+                callerMode: resolvedCallerPermissionMode,
+                supportedModes: ['plan', 'read-only', 'default', 'safe-yolo', 'yolo'],
+              }))
+        : (typeof permissionMode === 'string' && permissionMode.trim().length > 0
+            ? assertNonEscalatingPermissionMode({
+                requestedMode: permissionMode,
+                callerMode: 'yolo',
+              })
+            : inheritedSpawn.permissionMode
+              ? assertNonEscalatingPermissionMode({
+                  requestedMode: inheritedSpawn.permissionMode,
+                  callerMode: 'yolo',
+                })
+              : null);
+      if (permissionDecision?.ok === false) {
+        return permissionEscalationSpawnResult({
+          callerSurface,
+          decision: permissionDecision,
+        });
+      }
+      const normalizedPermissionMode = permissionDecision?.ok === true
+        ? permissionDecision.normalizedMode
+        : undefined;
+      const normalizedPermissionModeUpdatedAt = typeof permissionModeUpdatedAt === 'number'
+        ? permissionModeUpdatedAt
+        : permissionMode === undefined && inheritedSpawn.permissionMode === normalizedPermissionMode
+          ? inheritedSpawn.permissionModeUpdatedAt
+          : undefined;
+      const resolvedAgentTargetKey = buildBackendTargetKeyV2(backendTarget);
+      const parsedProviderConnectionId = providerConnectionId === undefined || providerConnectionId === null
+        ? { success: true as const, data: null }
+        : ProviderConnectionIdSchema.safeParse(providerConnectionId);
+      if (!parsedProviderConnectionId.success) {
+        return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+      }
+      const explicitModelId = typeof modelId === 'string' ? modelId.trim() : '';
+      if (providerConnectionId !== undefined && !explicitModelId) {
+        return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+      }
+      const resolvedModelSelection: SessionModelSelectionV1 | undefined = (() => {
+        if (modelId === undefined) {
+          const inherited = inheritedSpawn.modelSelection;
+          return inherited?.ref.agentTargetKey === resolvedAgentTargetKey ? inherited : undefined;
+        }
+        const ref = resolveSessionModelSelectionInputRefV1({
+          agentTargetKey: resolvedAgentTargetKey,
+          providerConnectionId: parsedProviderConnectionId.data,
+          modelId: explicitModelId,
+        });
+        if (ref === null) return undefined;
+        return SessionModelSelectionV1Schema.parse({
+          v: 1,
+          updatedAt: typeof modelUpdatedAt === 'number' && Number.isFinite(modelUpdatedAt)
+            ? modelUpdatedAt
+            : Date.now(),
+          ref,
+        });
+      })();
+      const resolvedAgentModeId = typeof agentModeId === 'string'
+        ? agentModeId
+        : agentModeId === undefined
+          ? inheritedSpawn.agentModeId
+          : undefined;
+      const resolvedAgentModeUpdatedAt = typeof agentModeUpdatedAt === 'number'
+        ? agentModeUpdatedAt
+        : agentModeId === undefined
+          ? inheritedSpawn.agentModeUpdatedAt
+          : undefined;
+      const resolvedProfileId = typeof profileId === 'string'
+        ? profileId
+        : profileId === undefined
+          ? inheritedSpawn.profileId
+          : undefined;
+      const normalizedEnvironmentVariables = readStringRecord(environmentVariables);
+      const normalizedSessionConfigOptionOverrides = (() => {
+        const value = sessionConfigOptionOverrides === undefined
+          ? inheritedSpawn.sessionConfigOptionOverrides
+          : sessionConfigOptionOverrides;
+        const parsed = value === undefined ? null : AcpConfigOptionOverridesV1Schema.safeParse(value);
+        const parsedConfigOptions = readConfigOptionsRecord(configOptions);
+        return mergeSpawnConfigOptionAliases({
+          sessionConfigOptionOverrides: parsed?.success ? parsed.data : undefined,
+          configOptions: parsedConfigOptions,
+        });
+      })();
+      const normalizedMcpSelection = (() => {
+        const value = mcpSelection === undefined ? inheritedSpawn.mcpSelection : mcpSelection;
+        if (value === undefined) return undefined;
+        const parsed = SessionMcpSelectionV1Schema.safeParse(value);
+        return parsed.success ? parsed.data : undefined;
+      })();
+      const normalizedTerminal = (() => {
+        if (terminal === undefined) return undefined;
+        const parsed = SpawnSessionTerminalSchema.safeParse(terminal);
+        return parsed.success ? parsed.data : undefined;
+      })();
 
       const created = await createSpawnedSession({
         credentials: params.credentials,
         directory,
-        ...(currentMachineId ? { machineId: currentMachineId } : {}),
+        ...(resolvedMachineId ? { machineId: resolvedMachineId } : {}),
         backendTarget,
         ...(connectedServicesDefaults ?? {}),
+        ...(resolvedConnectedServices !== undefined ? { connectedServices: resolvedConnectedServices } : {}),
+        ...(typeof connectedServicesUpdatedAt === 'number'
+          ? { connectedServicesUpdatedAt }
+          : connectedServices === undefined && typeof inheritedSpawn.connectedServicesUpdatedAt === 'number'
+            ? { connectedServicesUpdatedAt: inheritedSpawn.connectedServicesUpdatedAt }
+            : {}),
         ...(normalizedTag ? { tag: normalizedTag } : {}),
         ...(normalizedTitle ? { title: normalizedTitle } : {}),
         ...(normalizedInitialMessage ? { initialMessage: normalizedInitialMessage } : {}),
-        ...(normalizedModelId.length > 0 && normalizedModelId !== 'default'
-          ? { modelId: normalizedModelId }
-          : {}),
+        ...(resolvedModelSelection ? { modelSelection: resolvedModelSelection } : {}),
+        ...(normalizedPermissionMode ? { permissionMode: normalizedPermissionMode } : {}),
+        ...(typeof normalizedPermissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt } : {}),
+        ...(typeof resolvedAgentModeId === 'string' ? { agentModeId: resolvedAgentModeId } : {}),
+        ...(typeof resolvedAgentModeUpdatedAt === 'number' ? { agentModeUpdatedAt: resolvedAgentModeUpdatedAt } : {}),
+        ...(normalizedSessionConfigOptionOverrides ? { sessionConfigOptionOverrides: normalizedSessionConfigOptionOverrides } : {}),
+        ...(typeof resolvedProfileId === 'string' ? { profileId: resolvedProfileId } : {}),
+        ...(normalizedEnvironmentVariables ? { environmentVariables: normalizedEnvironmentVariables } : {}),
+        ...(normalizedMcpSelection ? { mcpSelection: normalizedMcpSelection } : {}),
+        ...(transcriptStorage === 'persisted' || transcriptStorage === 'direct' ? { transcriptStorage } : {}),
+        ...(normalizedTerminal ? { terminal: normalizedTerminal } : {}),
+        ...(windowsRemoteSessionLaunchMode !== undefined ? { windowsRemoteSessionLaunchMode } : {}),
+        ...(windowsRemoteSessionConsole !== undefined ? { windowsRemoteSessionConsole } : {}),
+        ...(typeof windowsTerminalWindowName === 'string' ? { windowsTerminalWindowName } : {}),
+        ...(normalizedRuntimeDescriptorV1 ? { runtimeDescriptorV1: normalizedRuntimeDescriptorV1 } : {}),
       });
 
       try {
         await dispatchSessionLifecycleHookEvent({
-          eventId: 'session.spawn_new',
+          eventId: 'session.spawned',
           happySessionId: created.sessionId,
           backendTarget: hookBackendTarget,
           payload: {
@@ -885,7 +1356,7 @@ export function createCliActionDeps(params: Readonly<{
             ...(normalizedTitle ? { title: normalizedTitle } : {}),
             ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}),
             ...(rawBackendTargetKey ? { backendTargetKey: rawBackendTargetKey } : {}),
-            ...(normalizedModelId.length > 0 ? { modelId: normalizedModelId } : {}),
+            ...(resolvedModelSelection ? { modelId: resolvedModelSelection.ref.modelId } : {}),
             ...(normalizedInitialMessage ? { initialMessageLength: normalizedInitialMessage.length } : {}),
           },
         });
@@ -901,12 +1372,19 @@ export function createCliActionDeps(params: Readonly<{
       };
     },
     sessionSpawnPicker: async () => notSupported(),
-    pathsListRecent: async () => notSupported(),
-    machinesList: async () => notSupported(),
-    serversList: async () => notSupported(),
     ...(approvalsStore ?? {}),
     ...inventoryDeps,
-    sessionSendMessage: async ({ sessionId, message, wait, timeoutSeconds, permissionModeOverride, modelOverride }) => {
+    sessionSendMessage: async ({
+      sessionId,
+      message,
+      wait,
+      timeoutSeconds,
+      permissionModeOverride,
+      modelOverride,
+      providerConnectionId,
+      callerSurface,
+      callerPermissionMode,
+    }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
@@ -916,6 +1394,46 @@ export function createCliActionDeps(params: Readonly<{
         typeof timeoutSeconds === 'number' && Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
           ? Math.min(3600, timeoutSeconds)
           : 300;
+      const permissionOverrideDecision = isSessionAgentSurface(callerSurface) && typeof permissionModeOverride === 'string' && permissionModeOverride.trim().length > 0
+        ? assertNonEscalatingPermissionMode({
+            requestedMode: permissionModeOverride,
+            callerMode: await resolveCallerPermissionMode(callerPermissionMode),
+          })
+        : null;
+      if (permissionOverrideDecision?.ok === false) {
+        return permissionEscalationActionResult({
+          callerSurface,
+          decision: permissionOverrideDecision,
+        });
+      }
+      const normalizedPermissionModeOverride = permissionOverrideDecision?.ok === true
+        ? permissionOverrideDecision.normalizedMode
+        : typeof permissionModeOverride === 'string' && permissionModeOverride.trim().length > 0
+          ? permissionModeOverride.trim()
+          : undefined;
+      const normalizedProviderConnectionId = providerConnectionId === null
+        ? null
+        : providerConnectionId === undefined
+          ? undefined
+          : ProviderConnectionIdSchema.parse(providerConnectionId);
+      const normalizedModelOverride = modelOverride === null
+        ? null
+        : typeof modelOverride === 'string' && modelOverride.trim().length > 0
+          ? modelOverride.trim()
+          : undefined;
+      if (normalizedProviderConnectionId !== undefined
+        && normalizedProviderConnectionId !== null
+        && (normalizedModelOverride === undefined || normalizedModelOverride === null)) {
+        return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      }
+      const modelSelectionInput = normalizedModelOverride === undefined
+        ? undefined
+        : {
+            ...(normalizedProviderConnectionId !== undefined
+              ? { providerConnectionId: normalizedProviderConnectionId }
+              : {}),
+            modelId: normalizedModelOverride,
+          };
 
       const res = await sendSessionMessage({
         credentials: params.credentials,
@@ -923,14 +1441,8 @@ export function createCliActionDeps(params: Readonly<{
         message: String(message ?? ''),
         wait: normalizedWait,
         timeoutMs: normalizedTimeoutSeconds * 1000,
-        ...(typeof permissionModeOverride === 'string' && permissionModeOverride.trim().length > 0
-          ? { permissionModeOverride: permissionModeOverride.trim() }
-          : {}),
-        ...(modelOverride === null
-          ? { modelOverride: null }
-          : typeof modelOverride === 'string' && modelOverride.trim().length > 0
-            ? { modelOverride: modelOverride.trim() }
-            : {}),
+        ...(normalizedPermissionModeOverride ? { permissionModeOverride: normalizedPermissionModeOverride } : {}),
+        ...(modelSelectionInput ? { modelSelectionInput } : {}),
       });
       if (!res.ok) {
         return {
@@ -939,6 +1451,7 @@ export function createCliActionDeps(params: Readonly<{
           error: res.code,
           ...(res.candidates ? { candidates: res.candidates } : {}),
           ...(res.message ? { message: res.message } : {}),
+          ...(res.providerError ? { details: res.providerError } : {}),
         };
       }
       const canonicalSessionId = typeof res.sessionId === 'string' && res.sessionId.trim().length > 0
@@ -953,14 +1466,15 @@ export function createCliActionDeps(params: Readonly<{
             messageLength: String(message ?? '').length,
             wait: normalizedWait,
             timeoutSeconds: normalizedTimeoutSeconds,
-            ...(typeof permissionModeOverride === 'string' && permissionModeOverride.trim().length > 0
-              ? { permissionModeOverride: permissionModeOverride.trim() }
+            ...(normalizedPermissionModeOverride
+              ? { permissionModeOverride: normalizedPermissionModeOverride }
               : {}),
-            ...(modelOverride === null
-              ? { modelOverride: null }
-              : typeof modelOverride === 'string' && modelOverride.trim().length > 0
-                ? { modelOverride: modelOverride.trim() }
-                : {}),
+            ...(normalizedProviderConnectionId !== undefined && normalizedModelOverride !== undefined
+              ? {
+                  modelOverride: normalizedModelOverride,
+                  providerConnectionId: normalizedProviderConnectionId,
+                }
+              : {}),
           },
         });
       } catch {
@@ -991,11 +1505,27 @@ export function createCliActionDeps(params: Readonly<{
       return { ok: true, sessionId: res.sessionId, title: normalizedTitle };
     },
 
-    sessionPermissionModeSet: async ({ sessionId, permissionMode }) => {
+    sessionPermissionModeSet: async ({ sessionId, permissionMode, callerSurface, callerPermissionMode }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
-      const parsed = parsePermissionIntentAlias(String(permissionMode ?? '').trim());
+      const permissionDecision = isSessionAgentSurface(callerSurface)
+        ? assertNonEscalatingPermissionMode({
+            requestedMode: permissionMode,
+            callerMode: await resolveCallerPermissionMode(callerPermissionMode),
+          })
+        : null;
+      if (permissionDecision?.ok === false) {
+        return permissionEscalationActionResult({
+          callerSurface,
+          decision: permissionDecision,
+        });
+      }
+      const parsed = parsePermissionIntentAlias(
+        permissionDecision?.ok === true
+          ? permissionDecision.normalizedMode
+          : String(permissionMode ?? '').trim(),
+      );
       if (!parsed) {
         return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       }
@@ -1012,7 +1542,7 @@ export function createCliActionDeps(params: Readonly<{
       return { ok: true, sessionId: res.sessionId, permissionMode: parsed, updatedAt };
     },
 
-    sessionModelSet: async ({ sessionId, modelId }) => {
+    sessionModelSet: async ({ sessionId, modelId, providerConnectionId }) => {
       if (!params.credentials) {
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
@@ -1025,10 +1555,17 @@ export function createCliActionDeps(params: Readonly<{
         credentials: params.credentials,
         idOrPrefix: sessionId,
         modelId: normalizedModelId,
+        ...(providerConnectionId !== undefined ? { providerConnectionId } : {}),
         updatedAt,
       });
       if (!res.ok) {
-        return { ok: false, errorCode: res.code, error: res.code, ...(res.candidates ? { candidates: res.candidates } : {}) };
+        return {
+          ok: false,
+          errorCode: res.code,
+          error: res.code,
+          ...('candidates' in res && res.candidates ? { candidates: res.candidates } : {}),
+          ...('providerError' in res ? { details: res.providerError } : {}),
+        };
       }
       return { ok: true, sessionId: res.sessionId, modelId: normalizedModelId, updatedAt };
     },
@@ -1049,6 +1586,13 @@ export function createCliActionDeps(params: Readonly<{
 
     sessionWorkStateGet: async ({ sessionId }) => {
       return await callResolvedSessionRpc(sessionId, SESSION_RPC_METHODS.SESSION_WORK_STATE_GET, {});
+    },
+
+    sessionTerminalComposerClear: async ({ sessionId, expectedStateAtMs }) => {
+      return await callResolvedSessionRpc(sessionId, SESSION_RPC_METHODS.SESSION_TERMINAL_COMPOSER_CLEAR, {
+        sessionId,
+        ...(typeof expectedStateAtMs === 'number' ? { expectedStateAtMs } : {}),
+      });
     },
 
     sessionGoalGet: async ({ sessionId }) => {
@@ -1092,28 +1636,44 @@ export function createCliActionDeps(params: Readonly<{
       return await callRoutedUsageLimitRecoveryControl(sessionId, 'cancel', request);
     },
 
-    sessionUsageLimitCheckNow: async ({ sessionId, provider, resumePromptMode }) => {
+    sessionUsageLimitCheckNow: async ({ sessionId, agentId, resumePromptMode }) => {
       if (!await isUsageLimitRecoveryEnabled()) {
         return normalizeUsageLimitRecoveryOperationResult(usageLimitRecoveryDisabledResult(), { sessionId });
       }
-      const normalizedProvider = typeof provider === 'string' ? provider.trim() : '';
+      const normalizedAgentId = typeof agentId === 'string' ? agentId.trim() : '';
       const normalizedResumePromptMode = readResumePromptMode(resumePromptMode);
       return await callRoutedUsageLimitRecoveryControl(sessionId, 'checkNow', {
         sessionId,
-        ...(normalizedProvider.length > 0 ? { provider: normalizedProvider } : {}),
+        ...(normalizedAgentId.length > 0 ? { agentId: normalizedAgentId } : {}),
         ...(normalizedResumePromptMode ? { resumePromptMode: normalizedResumePromptMode } : {}),
       });
     },
 
-    sessionUsageLimitSwitchAccountNow: async ({ sessionId, provider, resumePromptMode }) => {
+    sessionUsageLimitSwitchAccountNow: async ({ sessionId, agentId, resumePromptMode }) => {
       if (!await isUsageLimitRecoveryEnabled()) {
         return normalizeUsageLimitRecoveryOperationResult(usageLimitRecoveryDisabledResult(), { sessionId });
       }
-      const normalizedProvider = typeof provider === 'string' ? provider.trim() : '';
+      const normalizedAgentId = typeof agentId === 'string' ? agentId.trim() : '';
       const normalizedResumePromptMode = readResumePromptMode(resumePromptMode);
       return await callRoutedUsageLimitRecoveryControl(sessionId, 'switchAccountNow', {
         sessionId,
-        ...(normalizedProvider.length > 0 ? { provider: normalizedProvider } : {}),
+        ...(normalizedAgentId.length > 0 ? { agentId: normalizedAgentId } : {}),
+        ...(normalizedResumePromptMode ? { resumePromptMode: normalizedResumePromptMode } : {}),
+      });
+    },
+
+    sessionUsageLimitConsumeResetCredit: async ({ sessionId, agentId, issueFingerprint, resumePromptMode }) => {
+      if (!await isUsageLimitRecoveryEnabled()) {
+        return normalizeUsageLimitRecoveryOperationResult(usageLimitRecoveryDisabledResult(), { sessionId });
+      }
+      const normalizedAgentId = typeof agentId === 'string' ? agentId.trim() : '';
+      const normalizedIssueFingerprint = typeof issueFingerprint === 'string' ? issueFingerprint.trim() : '';
+      const normalizedResumePromptMode = readResumePromptMode(resumePromptMode);
+      return await callRoutedUsageLimitRecoveryControl(sessionId, 'consumeResetCredit', {
+        sessionId,
+        operation: 'consume_reset_credit',
+        ...(normalizedAgentId.length > 0 ? { agentId: normalizedAgentId } : {}),
+        ...(normalizedIssueFingerprint.length > 0 ? { issueFingerprint: normalizedIssueFingerprint } : {}),
         ...(normalizedResumePromptMode ? { resumePromptMode: normalizedResumePromptMode } : {}),
       });
     },
@@ -1553,6 +2113,24 @@ export function createCliActionDeps(params: Readonly<{
       } catch (error) {
         return serializeHostSubagentStoreError(error);
       }
+    },
+
+    pluginsDevLoopAction: async ({ actionId, input }) => await executePluginDevLoopAction({
+      actionId,
+      input,
+      happyHomeDir: params.happyHomeDir,
+      workspaceRoot: await resolveCurrentSessionValue('path') ?? undefined,
+    }),
+
+    buildApprovalPreview: async ({ actionId, input, defaultPreview }) => {
+      if (actionId === 'plugins.install') {
+        return await buildPluginInstallApprovalPreview({
+          input,
+          defaultPreview,
+          workspaceRoot: await resolveCurrentSessionValue('path') ?? undefined,
+        });
+      }
+      return defaultPreview;
     },
 
     resetGlobalVoiceAgent: () => {},

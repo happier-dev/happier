@@ -1,14 +1,10 @@
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { delay } from '@/utils/time';
 
-import { setSessionArchivedStateById } from './setSessionArchivedState';
+import { isSessionActiveArchiveError, setSessionArchivedStateById } from './sessionArchivedStateById';
 
 const DEFAULT_ARCHIVE_TIMEOUT_MS = 10_000;
 const DEFAULT_ARCHIVE_POLL_INTERVAL_MS = 200;
-
-export function isSessionActiveArchiveError(error: unknown): error is Error & { code: 'session_active' } {
-  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === 'session_active';
-}
 
 export async function archiveSessionOnceInactive(params: Readonly<{
   token: string;

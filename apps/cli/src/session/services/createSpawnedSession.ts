@@ -1,13 +1,16 @@
 import {
   SPAWN_SESSION_ERROR_CODES,
   type BackendTargetRefV2,
-  type ConnectedServiceBindingsV1,
+  type SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 
+import { createAuthenticationHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
+import { validateStoredAuthTokenAgainstActiveServer } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
 import { resolveDaemonSpawnSessionByNonce, spawnDaemonSession } from '@/daemon/controlClient';
 import type { Credentials } from '@/persistence';
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
+import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { summarizeSessionRecord, type SessionSummary } from '@/cli/output/session/sessionSummary';
@@ -19,20 +22,39 @@ type CreateSpawnedSessionParams = Readonly<{
   directory: string;
   machineId?: string;
   backendTarget: BackendTargetRefV2;
-  modelId?: string;
+  modelSelection?: SessionModelSelectionV1;
   title?: string;
   tag?: string;
   initialMessage?: string;
-  connectedServices?: ConnectedServiceBindingsV1;
-  connectedServicesUpdatedAt?: number;
-}>;
+} & Partial<Pick<
+  SpawnSessionOptions,
+  | 'permissionMode'
+  | 'permissionModeUpdatedAt'
+  | 'agentModeId'
+  | 'agentModeUpdatedAt'
+  | 'accountSettingsVersionHint'
+  | 'initialTranscriptAfterSeq'
+  | 'sessionConfigOptionOverrides'
+  | 'profileId'
+  | 'environmentVariables'
+  | 'connectedServices'
+  | 'connectedServicesUpdatedAt'
+  | 'mcpSelection'
+  | 'transcriptStorage'
+  | 'terminal'
+  | 'windowsRemoteSessionLaunchMode'
+  | 'windowsRemoteSessionConsole'
+  | 'windowsTerminalWindowName'
+  | 'runtimeDescriptorV1'
+  | 'backendMode'
+  | 'codexBackendMode'
+>>>;
 
 const DEFAULT_SPAWNED_SESSION_FETCH_TIMEOUT_MS = 10_000;
 const DEFAULT_SPAWNED_SESSION_FETCH_POLL_INTERVAL_MS = 200;
 const DEFAULT_SPAWNED_SESSION_NONCE_RESOLUTION_TIMEOUT_MS = 3_000;
 const SPAWN_TRANSIENT_ERROR_MARKERS = [
   'Request failed: /spawn-session, The socket connection was closed unexpectedly',
-  'Child process exited before session webhook',
 ] as const;
 
 function resolvePositiveIntFromEnv(key: string, fallback: number): number {
@@ -64,6 +86,12 @@ async function waitForSpawnedSessionVisibility(params: Readonly<{
 function isTransientSpawnFailure(spawnResponse: unknown): boolean {
   if (!spawnResponse || typeof spawnResponse !== 'object') return false;
   if (
+    (spawnResponse as { errorCode?: unknown }).errorCode
+    === SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK
+  ) {
+    return false;
+  }
+  if (
     (spawnResponse as { status?: unknown }).status === 'pending'
     && (spawnResponse as { errorCode?: unknown }).errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
   ) {
@@ -74,6 +102,14 @@ function isTransientSpawnFailure(spawnResponse: unknown): boolean {
     : '';
   if (!message) return false;
   return SPAWN_TRANSIENT_ERROR_MARKERS.some((marker) => message.includes(marker));
+}
+
+async function assertStoredAuthTokenValidForSpawn(token: string): Promise<void> {
+  const validation = await validateStoredAuthTokenAgainstActiveServer(token);
+  if (validation.state !== 'invalid') return;
+
+  const status = isAuthenticationStatus(validation.httpStatus) ? validation.httpStatus : 401;
+  throw createAuthenticationHttpStatusError(status, `Authentication failed before spawning session (${status})`);
 }
 
 async function recoverSpawnedSessionFromNonce(params: Readonly<{
@@ -114,15 +150,42 @@ export async function createSpawnedSession(
     spawnNonce,
     ...(params.machineId ? { machineId: params.machineId } : {}),
     backendTarget: params.backendTarget,
-    ...(params.modelId ? { modelId: params.modelId, modelUpdatedAt: Date.now() } : {}),
+    ...(params.modelSelection ? { modelSelection: params.modelSelection } : {}),
     ...(typeof params.initialMessage === 'string' && params.initialMessage.trim().length > 0
       ? { initialPrompt: params.initialMessage }
       : {}),
+    ...(params.permissionMode ? { permissionMode: params.permissionMode } : {}),
+    ...(typeof params.permissionModeUpdatedAt === 'number' && Number.isFinite(params.permissionModeUpdatedAt)
+      ? { permissionModeUpdatedAt: params.permissionModeUpdatedAt }
+      : {}),
+    ...(params.agentModeId ? { agentModeId: params.agentModeId } : {}),
+    ...(typeof params.agentModeUpdatedAt === 'number' && Number.isFinite(params.agentModeUpdatedAt)
+      ? { agentModeUpdatedAt: params.agentModeUpdatedAt }
+      : {}),
+    ...(typeof params.accountSettingsVersionHint === 'number' && Number.isFinite(params.accountSettingsVersionHint)
+      ? { accountSettingsVersionHint: params.accountSettingsVersionHint }
+      : {}),
+    ...(typeof params.initialTranscriptAfterSeq === 'number' && Number.isFinite(params.initialTranscriptAfterSeq)
+      ? { initialTranscriptAfterSeq: params.initialTranscriptAfterSeq }
+      : {}),
+    ...(params.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: params.sessionConfigOptionOverrides } : {}),
+    ...(typeof params.profileId === 'string' ? { profileId: params.profileId } : {}),
+    ...(params.environmentVariables ? { environmentVariables: params.environmentVariables } : {}),
     ...(params.connectedServices ? { connectedServices: params.connectedServices } : {}),
     ...(typeof params.connectedServicesUpdatedAt === 'number' && Number.isFinite(params.connectedServicesUpdatedAt)
       ? { connectedServicesUpdatedAt: params.connectedServicesUpdatedAt }
       : {}),
+    ...(params.mcpSelection ? { mcpSelection: params.mcpSelection } : {}),
+    ...(params.transcriptStorage ? { transcriptStorage: params.transcriptStorage } : {}),
+    ...(params.terminal ? { terminal: params.terminal } : {}),
+    ...(params.windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode: params.windowsRemoteSessionLaunchMode } : {}),
+    ...(params.windowsRemoteSessionConsole ? { windowsRemoteSessionConsole: params.windowsRemoteSessionConsole } : {}),
+    ...(params.windowsTerminalWindowName ? { windowsTerminalWindowName: params.windowsTerminalWindowName } : {}),
+    ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
+    ...(params.backendMode ? { backendMode: params.backendMode } : {}),
+    ...(params.codexBackendMode ? { codexBackendMode: params.codexBackendMode } : {}),
   });
+  await assertStoredAuthTokenValidForSpawn(params.credentials.token);
   const spawnResponse = await spawnDaemonSession(spawnRequest);
   let sessionId = '';
   if (spawnResponse?.success === true && typeof spawnResponse.sessionId === 'string') {

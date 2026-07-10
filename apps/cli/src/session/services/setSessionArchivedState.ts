@@ -1,33 +1,10 @@
-import { releaseExternalSessionFollowLeasesForArchivedSession } from '@/api/session/external/leases/externalSessionFollowLeaseArchiveRegistry';
 import type { Credentials } from '@/persistence';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
-import { archiveSession, unarchiveSession } from '@/session/transport/http/sessionsHttp';
-import { archiveSessionOnceInactive, isSessionActiveArchiveError } from './archiveSessionOnceInactive';
+import { archiveSessionOnceInactive } from './archiveSessionOnceInactive';
 import { requestSessionStop } from './requestSessionStop';
+import { isSessionActiveArchiveError, setSessionArchivedStateById } from './sessionArchivedStateById';
 
-export async function setSessionArchivedStateById(params: Readonly<{
-  token: string;
-  sessionId: string;
-  archived: boolean;
-}>): Promise<Readonly<{ archivedAt: number | null }>> {
-  const result = params.archived
-    ? await archiveSession({
-        token: params.token,
-        sessionId: params.sessionId,
-      })
-    : await unarchiveSession({
-        token: params.token,
-        sessionId: params.sessionId,
-      });
-
-  if (params.archived) {
-    await releaseExternalSessionFollowLeasesForArchivedSession(params.sessionId);
-  }
-
-  return {
-    archivedAt: result.archivedAt,
-  };
-}
+export { setSessionArchivedStateById } from './sessionArchivedStateById';
 
 export async function archiveSessionByIdBestEffort(params: Readonly<{ token: string; sessionId: string }>): Promise<void> {
   try {

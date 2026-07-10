@@ -34,7 +34,7 @@ export async function executeExternalSessionTranscriptPageAction(
     let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
     try {
         validatedSource = await validateDirectMachineSource({
-            providerId: parsed.data.providerId,
+            agentId: parsed.data.agentId,
             source: parsed.data.source,
             env: process.env,
         });
@@ -48,15 +48,15 @@ export async function executeExternalSessionTranscriptPageAction(
     if (!validatedSource.ok) {
         return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionTranscriptPageResponse;
     }
-    const { providerId, remoteSessionId, direction, cursor } = parsed.data;
+    const { agentId, remoteSessionId, direction, cursor } = parsed.data;
     const source = validatedSource.source;
     const maxBytes = parsed.data.maxBytes ?? resolveDefaultMaxBytes();
     const maxItems = parsed.data.maxItems ?? resolveDefaultMaxItems();
 
     try {
-        const providerOps = await resolveExternalSessionSurfaceOps(providerId);
+        const providerOps = await resolveExternalSessionSurfaceOps(agentId);
         if (!providerOps.pageTranscript) {
-            return externalSessionsError('provider_unavailable', 'transcript_page_not_supported') satisfies ExternalSessionTranscriptPageResponse;
+            return externalSessionsError('agent_unavailable', 'transcript_page_not_supported') satisfies ExternalSessionTranscriptPageResponse;
         }
         const res = await providerOps.pageTranscript({
             source,
@@ -98,7 +98,7 @@ export async function executeExternalSessionTranscriptReadAfterAction(
     let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
     try {
         validatedSource = await validateDirectMachineSource({
-            providerId: parsed.data.providerId,
+            agentId: parsed.data.agentId,
             source: parsed.data.source,
             env: process.env,
         });
@@ -112,16 +112,16 @@ export async function executeExternalSessionTranscriptReadAfterAction(
     if (!validatedSource.ok) {
         return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionTranscriptReadAfterResponse;
     }
-    const { providerId, remoteSessionId, cursor } = parsed.data;
+    const { agentId, remoteSessionId, cursor } = parsed.data;
     const source = validatedSource.source;
 
     const maxBytes = parsed.data.maxBytes ?? resolveDefaultMaxBytes();
     const maxItems = parsed.data.maxItems ?? resolveDefaultMaxItems();
 
     try {
-        const providerOps = await resolveExternalSessionSurfaceOps(providerId);
+        const providerOps = await resolveExternalSessionSurfaceOps(agentId);
         if (!providerOps.readAfterTranscript) {
-            return externalSessionsError('provider_unavailable', 'transcript_read_after_not_supported') satisfies ExternalSessionTranscriptReadAfterResponse;
+            return externalSessionsError('agent_unavailable', 'transcript_read_after_not_supported') satisfies ExternalSessionTranscriptReadAfterResponse;
         }
         const res = await providerOps.readAfterTranscript({
             source,

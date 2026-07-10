@@ -4,13 +4,9 @@ import type { ForkBackendResolution, ForkSpawnSession } from './forkLifecycleTyp
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import type { ForkSurfaceV1 } from '@happier-dev/agents';
 
-const getForkSurfaceMock = vi.fn();
 const createReplaySeededSessionMock = vi.fn();
 const resolveReplaySeedDraftMock = vi.fn();
-
-vi.mock('@/backends/catalog', () => ({
-  getForkSurface: (...args: unknown[]) => getForkSurfaceMock(...args),
-}));
+const archiveSessionBestEffortMock = vi.fn();
 
 vi.mock('@/session/replay/createReplaySeededSession', () => ({
   createReplaySeededSession: (...args: unknown[]) => createReplaySeededSessionMock(...args),
@@ -18,6 +14,10 @@ vi.mock('@/session/replay/createReplaySeededSession', () => ({
 
 vi.mock('@/session/replay/resolveReplaySeedDraft', () => ({
   resolveReplaySeedDraft: (...args: unknown[]) => resolveReplaySeedDraftMock(...args),
+}));
+
+vi.mock('./forkChildSessionRecovery', () => ({
+  archiveSessionBestEffort: (...args: unknown[]) => archiveSessionBestEffortMock(...args),
 }));
 
 import { createReplayForkSession } from './createReplayForkSession';
@@ -43,8 +43,8 @@ const PARENT_MATERIALIZATION_IDENTITY = {
 function createBuiltInForkResolution(): ForkBackendResolution {
   return {
     ok: true,
-    providerAgentId: 'codex',
-    providerHintProviderId: 'codex',
+    catalogAgentId: 'codex',
+    agentHintAgentId: 'codex',
     backendTargetV2: {
       kind: 'backend',
       backendId: 'codex',
@@ -75,7 +75,6 @@ describe('createReplayForkSession', () => {
         directory: '/tmp/provider-child-worktree',
         environmentVariables: { PROVIDER_CHILD: '1' },
     });
-    getForkSurfaceMock.mockResolvedValue(null);
     createReplaySeededSessionMock.mockResolvedValueOnce({ sessionId: 'child-session' });
     const spawnSession = vi.fn<ForkSpawnSession>()
       .mockResolvedValue({ type: 'success', sessionId: 'child-session' });
@@ -102,7 +101,6 @@ describe('createReplayForkSession', () => {
     const result = await createReplayForkSession(input);
 
     expect(result).toEqual({ ok: true, childSessionId: 'child-session' });
-    expect(getForkSurfaceMock).not.toHaveBeenCalled();
     expect(resolveReplayChildLaunch).toHaveBeenCalledWith({
       parentSessionId: 'parent-session',
       parentMetadata: {},
@@ -116,6 +114,74 @@ describe('createReplayForkSession', () => {
     expect(createReplaySeededSessionMock).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/tmp/provider-child-worktree',
     }));
+  });
+
+  it('uses the caller spawn nonce as the replay child tag', async () => {
+    const spawnSession = vi.fn<ForkSpawnSession>()
+      .mockResolvedValue({ type: 'success', sessionId: 'child-session' });
+
+    const result = await createReplayForkSession({
+      credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentMetadata: {},
+      directory: '/tmp/parent-worktree',
+      effectiveCutoffSeqInclusive: 3,
+      spawnNonce: 'fork:stable-nonce',
+      forkPointType: 'latest',
+      replaySummaryRunner: null,
+      replayMaxSeedChars: undefined,
+      maxTextChars: undefined,
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: {
+        metadata: {},
+        spawn: {},
+      },
+      forkSurface: null,
+      spawnSession,
+    });
+
+    expect(result).toEqual({ ok: true, childSessionId: 'child-session' });
+    expect(createReplaySeededSessionMock).toHaveBeenCalledWith(expect.objectContaining({
+      tag: 'fork:stable-nonce',
+    }));
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      spawnNonce: 'fork:stable-nonce',
+    }));
+  });
+
+  it('does not archive the replay child when spawn times out waiting for webhook', async () => {
+    const spawnSession = vi.fn<ForkSpawnSession>()
+      .mockResolvedValue({
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+        errorMessage: 'Timed out waiting for session webhook',
+      });
+
+    const result = await createReplayForkSession({
+      credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentMetadata: {},
+      directory: '/tmp/parent-worktree',
+      effectiveCutoffSeqInclusive: 3,
+      spawnNonce: 'fork:timeout-nonce',
+      forkPointType: 'latest',
+      replaySummaryRunner: null,
+      replayMaxSeedChars: undefined,
+      maxTextChars: undefined,
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: {
+        metadata: {},
+        spawn: {},
+      },
+      forkSurface: null,
+      spawnSession,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+    });
+    expect(archiveSessionBestEffortMock).not.toHaveBeenCalled();
   });
 
   it('creates replay child metadata and spawn options with a fresh connected-service identity', async () => {

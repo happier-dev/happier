@@ -11,6 +11,7 @@ import { resolveSessionEncryptionContextFromCredentials } from '@/session/transp
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 import { createCliActionExecutor } from './createCliActionExecutor';
+import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 
 export function createCliActionExecutorFromCredentials(params: Readonly<{
   credentials: Credentials;
@@ -22,7 +23,7 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
 }>): ReturnType<typeof createCliActionExecutor> {
   const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials);
 
-  return createCliActionExecutor({
+  const executor = createCliActionExecutor({
     token: params.credentials.token,
     credentials: params.credentials,
     sessionId: 'cli-global',
@@ -61,4 +62,11 @@ export function createCliActionExecutorFromCredentials(params: Readonly<{
     },
     ...(params.sessionLogAccess ? { sessionLogAccess: params.sessionLogAccess } : {}),
   });
+
+  return {
+    execute: async (...args) => {
+      await ensureCliActionPolicySettings(params.credentials);
+      return await executor.execute(...args);
+    },
+  };
 }

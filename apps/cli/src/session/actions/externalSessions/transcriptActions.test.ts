@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const validateDirectMachineSourceMock = vi.fn();
 const resolveExternalSessionSurfaceOpsMock = vi.fn();
@@ -15,7 +15,19 @@ vi.mock('./providerOpsResolution', () => ({
   resolveExternalSessionSurfaceOps: (...args: unknown[]) => resolveExternalSessionSurfaceOpsMock(...args),
 }));
 
+vi.mock('sharp', () => ({
+  default: () => ({
+    metadata: async () => ({ width: 1, height: 1 }),
+  }),
+}));
+
+let transcriptActionsModule: typeof import('./transcriptActions');
+
 describe('external session transcript actions', () => {
+  beforeAll(async () => {
+    transcriptActionsModule = await import('./transcriptActions');
+  }, 60_000);
+
   afterEach(() => {
     vi.clearAllMocks();
   });
@@ -95,10 +107,10 @@ describe('external session transcript actions', () => {
     });
 
     try {
-      const { executeExternalSessionTranscriptPageAction } = await import('./transcriptActions');
+      const { executeExternalSessionTranscriptPageAction } = transcriptActionsModule;
       const response = await executeExternalSessionTranscriptPageAction({
         machineId: 'machine-1',
-        providerId: 'opencode',
+        agentId: 'opencode',
         remoteSessionId: 'provider-session-1',
         source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096', directory: sourceDirectory },
         direction: 'older',

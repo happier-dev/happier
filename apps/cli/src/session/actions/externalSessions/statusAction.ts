@@ -25,7 +25,7 @@ export async function executeExternalSessionStatusGetAction(
     let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
     try {
         validatedSource = await validateDirectMachineSource({
-            providerId: parsed.data.providerId,
+            agentId: parsed.data.agentId,
             source: parsed.data.source,
             env: process.env,
         });
@@ -55,7 +55,7 @@ export async function executeExternalSessionStatusGetAction(
     if (!runnerActive) {
         const owner = findTrustedExternalSessionOwner({
             markers: liveMarkers,
-            providerId: parsed.data.providerId,
+            agentId: parsed.data.agentId,
             remoteSessionId: parsed.data.remoteSessionId,
             isPidAlive,
         });
@@ -66,7 +66,7 @@ export async function executeExternalSessionStatusGetAction(
     }
 
     try {
-        const providerOps = await resolveExternalSessionSurfaceOps(parsed.data.providerId);
+        const providerOps = await resolveExternalSessionSurfaceOps(parsed.data.agentId);
         const res = providerOps.getActivity
             ? await providerOps.getActivity({
             source: validatedSource.source,

@@ -3,15 +3,13 @@ import {
     SPAWN_SESSION_ERROR_CODES,
     type SpawnSessionOptions,
 } from '@/rpc/handlers/registerSessionHandlers';
+import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import { dispatchProviderNativeFork } from '@/session/fork/providerNativeForkDispatch';
 import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
-import { normalizeCodexBackendMode } from '@happier-dev/agents';
+import { isAmbiguousSpawnSessionFailure } from '@/session/shared/spawnNonce';
 import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
-import {
-    readCanonicalRuntimeDescriptorV1ForProvider,
-    readRuntimeDescriptorV1FromMetadata,
-} from '@happier-dev/protocol';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
 
 import {
     archiveSessionBestEffort,
@@ -55,7 +53,7 @@ export async function attemptProviderNativeFork(params: Readonly<{
     if (
         !shouldAttemptProviderNative
         || params.forkBackendResolution.configuredAcp !== null
-        || !params.forkBackendResolution.providerAgentId
+        || !params.forkBackendResolution.catalogAgentId
     ) {
         return null;
     }
@@ -85,11 +83,12 @@ export async function attemptProviderNativeFork(params: Readonly<{
             nativeFork.launch.sessionStateUpdates ?? [],
         );
         const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(launchMetadata) ?? undefined;
-        const codexRuntimeDescriptor = readCanonicalRuntimeDescriptorV1ForProvider(runtimeDescriptorV1, 'codex');
-        const codexBackendMode = normalizeCodexBackendMode(codexRuntimeDescriptor?.backendMode);
-        const providerHint = {
-            providerId: params.forkBackendResolution.providerHintProviderId,
-            ...(codexBackendMode ? { backendMode: codexBackendMode } : {}),
+        const runtimeSelection = readCanonicalSpawnRuntimeSelection({ runtimeDescriptorV1 });
+        const providerBackendMode = runtimeSelection.providerBackendMode;
+        const codexBackendMode = runtimeSelection.codexBackendMode;
+        const agentHint = {
+            agentId: params.forkBackendResolution.agentHintAgentId,
+            ...(providerBackendMode ? { backendMode: providerBackendMode } : {}),
             providerSessionId: nativeForkProviderSessionId,
         };
         const inheritedForkOverrides = createConnectedServiceForkLaunchContext({
@@ -107,6 +106,14 @@ export async function attemptProviderNativeFork(params: Readonly<{
             ...(nativeFork.launch.environmentVariables ? { environmentVariables: { ...nativeFork.launch.environmentVariables } } : {}),
             ...inheritedForkOverrides.spawn,
         } satisfies SpawnSessionOptions);
+
+        if (isAmbiguousSpawnSessionFailure(result)) {
+            return {
+                ok: false,
+                errorCode: result.errorCode,
+                errorMessage: result.errorMessage,
+            };
+        }
 
         if (params.requestedStrategy === 'provider_native' && result.type !== 'success') {
             return {
@@ -140,7 +147,7 @@ export async function attemptProviderNativeFork(params: Readonly<{
                         parentCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
                         createdAtMs: Date.now(),
                         strategy: 'provider_native',
-                        providerHint,
+                        agentHint,
                     },
                 }),
                 maxAttempts: 6,

@@ -10,8 +10,8 @@ function createApprovalRequest(overrides: Partial<ApprovalRequestV1> = {}): Appr
     status: 'open',
     createdAtMs: 1,
     updatedAtMs: 1,
-    createdBy: { surface: 'session_agent', sessionId: 'sess_1' },
-    requestedSurface: 'session_agent',
+    createdBy: { surface: 'agent', sessionId: 'sess_1' },
+    requestedSurface: 'agent',
     actionId: 'session.list',
     actionArgs: { limit: 10 },
     summary: 'Approve listing sessions',
@@ -44,14 +44,14 @@ describe('createCliActionExecutorHarness', () => {
       {
         approvalsCreate,
         sessionTitleSet,
-        isActionApprovalRequired: (id, ctx) => id === 'session.title.set' && ctx.surface === 'session_agent',
+        isActionApprovalRequired: (id, ctx) => id === 'session.title.set' && ctx.surface === 'agent',
       },
     );
 
     const result = await harness.executor.execute(
       'session.title.set',
       { sessionId: 'sess_1', title: 'Updated' },
-      { surface: 'session_agent', defaultSessionId: 'sess_1' },
+      { surface: 'agent', defaultSessionId: 'sess_1' },
     );
 
     expect(result).toMatchObject({
@@ -64,6 +64,28 @@ describe('createCliActionExecutorHarness', () => {
     });
     expect(approvalsCreate).toHaveBeenCalledTimes(1);
     expect(sessionTitleSet).not.toHaveBeenCalled();
+  });
+
+  it('installs a fail-closed runtime action executor bridge', async () => {
+    const harness = createCliActionExecutorHarness({
+      token: 'token',
+      sessionId: 'sess_1',
+      ctx: {
+        encryptionKey: new Uint8Array(32).fill(1),
+        encryptionVariant: 'legacy',
+      },
+    });
+
+    expect(harness.deps.runtimeActionExecute).toBeDefined();
+    await expect(harness.deps.runtimeActionExecute?.({
+      actionId: 'devices.simulator.input.tap',
+      input: {},
+      context: {},
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'runtime_action_disabled',
+      error: 'runtime_action_disabled:devices.simulator:runtime_family_unimplemented',
+    });
   });
 
   it('wires blocking approval waiters to rejection artifact updates', async () => {

@@ -20,8 +20,7 @@ import {
   getRandomBytes,
   libsodiumPublicKeyFromSecretKey,
 } from '@/api/encryption';
-import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
-import { configuration } from '@/configuration';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { deriveKey } from '@/utils/deriveKey';
 
 type ArtifactFullRecord = Readonly<{
@@ -51,10 +50,6 @@ type ArtifactUpdateRequest = Readonly<{
   body: string;
   expectedBodyVersion: number;
 }>;
-
-function resolveServerHttpBaseUrl(): string {
-  return resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
-}
 
 async function resolveRecipientSecretKeyOrSeed(credentials: Credentials): Promise<Uint8Array> {
   if (credentials.encryption.type === 'dataKey') return credentials.encryption.machineKey;

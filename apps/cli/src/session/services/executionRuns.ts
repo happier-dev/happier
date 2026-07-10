@@ -77,6 +77,36 @@ function isFallbackSafeExecutionRunServiceError(result: Readonly<{ code: string;
     return result.message === 'RPC method not available' || result.message === 'Method not found';
 }
 
+function executionRunNotFound(): ExecutionRunServiceResult<unknown> {
+    return {
+        ok: false,
+        code: 'execution_run_not_found',
+        message: 'Execution run not found',
+    };
+}
+
+function executionRunControlUnavailable(): ExecutionRunServiceResult<unknown> {
+    return {
+        ok: false,
+        code: 'execution_run_not_allowed',
+        message: 'Execution run control unavailable',
+    };
+}
+
+function executionRunStartUnavailable(): ExecutionRunServiceResult<unknown> {
+    return {
+        ok: false,
+        code: 'execution_run_not_allowed',
+        message: 'Execution run start unavailable',
+    };
+}
+
+function readExecutionRunRequestRunId(request: unknown): string | null {
+    if (!isRecord(request)) return null;
+    const runId = typeof request.runId === 'string' ? request.runId.trim() : '';
+    return runId.length > 0 ? runId : null;
+}
+
 function toExecutionRunPublicState(marker: ExecutionRunMarkerRecord): ExecutionRunPublicState | null {
     const permissionMode =
         typeof marker.permissionMode === 'string' && marker.permissionMode.trim().length > 0
@@ -242,6 +272,34 @@ async function buildExecutionRunGetFallbackRun(
     });
 }
 
+async function tryBuildExecutionRunGetFallbackRun(
+    params: ExecutionRunRpcContext & Readonly<{ runId: string }>,
+): Promise<Readonly<{ ok: true; run: ExecutionRunPublicState | null }> | Readonly<{ ok: false }>> {
+    let transcriptLookupOk = true;
+    try {
+        const transcriptRun = await getTranscriptBackedExecutionRun(params);
+        if (transcriptRun) {
+            return { ok: true, run: transcriptRun };
+        }
+    } catch {
+        transcriptLookupOk = false;
+    }
+
+    try {
+        const markerRun = await getMarkerBackedExecutionRun({
+            sessionId: params.sessionId,
+            runId: params.runId,
+        });
+        if (markerRun) {
+            return { ok: true, run: markerRun };
+        }
+
+        return transcriptLookupOk ? { ok: true, run: null } : { ok: false };
+    } catch {
+        return { ok: false };
+    }
+}
+
 export function normalizeExecutionRunRpcPayload<T>(payload: unknown): ExecutionRunServiceResult<T> {
     if (!isRecord(payload)) {
         return {
@@ -323,6 +381,41 @@ async function callExecutionRunRpc(
     return normalizeExecutionRunRpcPayload(payload);
 }
 
+async function fallbackForUnavailableExecutionRunControl(
+    params: ExecutionRunRpcContext & Readonly<{ request: unknown }>,
+): Promise<ExecutionRunServiceResult<unknown>> {
+    const runId = readExecutionRunRequestRunId(params.request);
+    if (!runId) {
+        return executionRunControlUnavailable();
+    }
+
+    const fallback = await tryBuildExecutionRunGetFallbackRun({
+        ...params,
+        runId,
+    });
+    if (!fallback.ok) {
+        return executionRunControlUnavailable();
+    }
+    return fallback.run ? executionRunControlUnavailable() : executionRunNotFound();
+}
+
+async function callExecutionRunControlRpc(
+    params: ExecutionRunRpcContext & Readonly<{ methodSuffix: string; request: unknown }>,
+): Promise<ExecutionRunServiceResult<unknown>> {
+    try {
+        const result = await callExecutionRunRpc(params);
+        if (result.ok || !isFallbackSafeExecutionRunServiceError(result)) {
+            return result;
+        }
+        return await fallbackForUnavailableExecutionRunControl(params);
+    } catch (error) {
+        if (!isFallbackSafeExecutionRunRpcError(error)) {
+            throw error;
+        }
+        return await fallbackForUnavailableExecutionRunControl(params);
+    }
+}
+
 export function isExecutionRunTerminalStatus(status: unknown): status is ExecutionRunTerminalStatus {
     return status === 'succeeded' || status === 'failed' || status === 'cancelled' || status === 'timeout';
 }
@@ -330,16 +423,42 @@ export function isExecutionRunTerminalStatus(status: unknown): status is Executi
 export async function startExecutionRun(
     params: ExecutionRunRpcContext & Readonly<{ request: unknown }>,
 ): Promise<ExecutionRunServiceResult<unknown>> {
-    return await callExecutionRunRpc({
-        ...params,
-        methodSuffix: SESSION_RPC_METHODS.EXECUTION_RUN_START,
-    });
+    try {
+        const result = await callExecutionRunRpc({
+            ...params,
+            methodSuffix: SESSION_RPC_METHODS.EXECUTION_RUN_START,
+        });
+        return result.ok || !isFallbackSafeExecutionRunServiceError(result)
+            ? result
+            : executionRunStartUnavailable();
+    } catch (error) {
+        if (!isFallbackSafeExecutionRunRpcError(error)) {
+            throw error;
+        }
+        return executionRunStartUnavailable();
+    }
 }
 
 export async function listExecutionRuns(
-    params: ExecutionRunRpcContext & Readonly<{ request: unknown }>,
+    params: ExecutionRunRpcContext & Readonly<{ request: unknown; skipLiveRpc?: boolean }>,
 ): Promise<ExecutionRunServiceResult<unknown>> {
     const request = ExecutionRunListRequestSchema.parse(params.request);
+
+    if (params.skipLiveRpc === true) {
+        const fallback = await buildExecutionRunListFallbackRuns({ ...params, request });
+        if (fallback.runs.length > 0 || fallback.transcriptFallbackOk) {
+            return {
+                ok: true,
+                data: { runs: fallback.runs },
+            };
+        }
+
+        return {
+            ok: false,
+            code: 'execution_run_read_unavailable',
+            message: 'Execution run list unavailable',
+        };
+    }
 
     try {
         const result = await callExecutionRunRpc({
@@ -435,34 +554,40 @@ export async function getExecutionRun(
             return result;
         }
 
-        const fallbackRun = await buildExecutionRunGetFallbackRun({
+        const fallback = await tryBuildExecutionRunGetFallbackRun({
             ...params,
             runId,
         });
-        if (!fallbackRun) {
+        if (!fallback.ok) {
             return result;
+        }
+        if (!fallback.run) {
+            return isFallbackSafeExecutionRunServiceError(result) ? executionRunNotFound() : result;
         }
 
         return {
             ok: true,
-            data: ExecutionRunGetResponseSchema.parse({ run: fallbackRun }),
+            data: ExecutionRunGetResponseSchema.parse({ run: fallback.run }),
         };
     } catch (error) {
         if (!isFallbackSafeExecutionRunRpcError(error)) {
             throw error;
         }
 
-        const fallbackRun = await buildExecutionRunGetFallbackRun({
+        const fallback = await tryBuildExecutionRunGetFallbackRun({
             ...params,
             runId,
         });
-        if (!fallbackRun) {
+        if (!fallback.ok) {
             return toExecutionRunUnknownError(error);
+        }
+        if (!fallback.run) {
+            return executionRunNotFound();
         }
 
         return {
             ok: true,
-            data: ExecutionRunGetResponseSchema.parse({ run: fallbackRun }),
+            data: ExecutionRunGetResponseSchema.parse({ run: fallback.run }),
         };
     }
 }
@@ -470,7 +595,7 @@ export async function getExecutionRun(
 export async function sendExecutionRunMessage(
     params: ExecutionRunRpcContext & Readonly<{ request: unknown }>,
 ): Promise<ExecutionRunServiceResult<unknown>> {
-    return await callExecutionRunRpc({
+    return await callExecutionRunControlRpc({
         ...params,
         methodSuffix: SESSION_RPC_METHODS.EXECUTION_RUN_SEND,
     });
@@ -479,7 +604,7 @@ export async function sendExecutionRunMessage(
 export async function stopExecutionRun(
     params: ExecutionRunRpcContext & Readonly<{ request: unknown }>,
 ): Promise<ExecutionRunServiceResult<unknown>> {
-    return await callExecutionRunRpc({
+    return await callExecutionRunControlRpc({
         ...params,
         methodSuffix: SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
     });
@@ -488,7 +613,7 @@ export async function stopExecutionRun(
 export async function executeExecutionRunAction(
     params: ExecutionRunRpcContext & Readonly<{ request: unknown }>,
 ): Promise<ExecutionRunServiceResult<unknown>> {
-    return await callExecutionRunRpc({
+    return await callExecutionRunControlRpc({
         ...params,
         methodSuffix: SESSION_RPC_METHODS.EXECUTION_RUN_ACTION,
     });
@@ -497,7 +622,7 @@ export async function executeExecutionRunAction(
 export async function startExecutionRunStream(
     params: ExecutionRunRpcContext & Readonly<{ request: unknown }>,
 ): Promise<ExecutionRunServiceResult<unknown>> {
-    return await callExecutionRunRpc({
+    return await callExecutionRunControlRpc({
         ...params,
         methodSuffix: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START,
     });
@@ -506,7 +631,7 @@ export async function startExecutionRunStream(
 export async function readExecutionRunStream(
     params: ExecutionRunRpcContext & Readonly<{ request: unknown }>,
 ): Promise<ExecutionRunServiceResult<unknown>> {
-    return await callExecutionRunRpc({
+    return await callExecutionRunControlRpc({
         ...params,
         methodSuffix: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ,
     });
@@ -515,7 +640,7 @@ export async function readExecutionRunStream(
 export async function cancelExecutionRunStream(
     params: ExecutionRunRpcContext & Readonly<{ request: unknown }>,
 ): Promise<ExecutionRunServiceResult<unknown>> {
-    return await callExecutionRunRpc({
+    return await callExecutionRunControlRpc({
         ...params,
         methodSuffix: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL,
     });

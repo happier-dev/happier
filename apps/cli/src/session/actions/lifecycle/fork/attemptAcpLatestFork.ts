@@ -3,14 +3,13 @@ import {
     SPAWN_SESSION_ERROR_CODES,
     type SpawnSessionOptions,
 } from '@/rpc/handlers/registerSessionHandlers';
+import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
-import { normalizeCodexBackendMode, resolveVendorResumeIdFromSessionMetadata, type ForkResultV1 } from '@happier-dev/agents';
+import { isAmbiguousSpawnSessionFailure } from '@/session/shared/spawnNonce';
+import type { ForkResultV1 } from '@happier-dev/agents';
 import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
-import {
-    readCanonicalRuntimeDescriptorV1ForProvider,
-    readRuntimeDescriptorV1FromMetadata,
-} from '@happier-dev/protocol';
+import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
 
 import {
     archiveSessionBestEffort,
@@ -37,7 +36,7 @@ export async function attemptAcpLatestFork(params: Readonly<{
     directory: string;
     effectiveCutoffSeqInclusive: number;
     forkIsConfiguredAcp: boolean;
-    forkProviderAgentId: ForkBackendResolution['providerAgentId'];
+    spawnNonce: string;
     forkBackendResolution: ForkBackendResolution;
     inheritedForkOverrides: ForkInheritedOverrides;
     forkSurface: ForkBridgeSurface;
@@ -45,15 +44,6 @@ export async function attemptAcpLatestFork(params: Readonly<{
     stopSession: ForkStopSession;
 }>): Promise<ForkStrategyAttemptResult> {
     try {
-        const forkProviderAgentId = params.forkProviderAgentId;
-        const providerSessionIdRaw = params.forkIsConfiguredAcp
-            ? (params.forkBackendResolution.configuredAcp?.providerSessionId ?? '')
-            : (forkProviderAgentId
-                ? (resolveVendorResumeIdFromSessionMetadata(forkProviderAgentId, params.parentMetadata) ?? '')
-                : '');
-
-        if (!providerSessionIdRaw) return null;
-
         const spawnFinalForkResult = async (forked: ForkResultV1): Promise<ForkStrategyAttemptResult> => {
             const forkedProviderSessionId = normalizeForkProviderSessionId(forked.providerSessionId);
             if (!forkedProviderSessionId) {
@@ -68,8 +58,9 @@ export async function attemptAcpLatestFork(params: Readonly<{
                 forked.launch.sessionStateUpdates ?? [],
             );
             const runtimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(launchMetadata) ?? undefined;
-            const codexRuntimeDescriptor = readCanonicalRuntimeDescriptorV1ForProvider(runtimeDescriptorV1, 'codex');
-            const codexBackendMode = normalizeCodexBackendMode(codexRuntimeDescriptor?.backendMode);
+            const runtimeSelection = readCanonicalSpawnRuntimeSelection({ runtimeDescriptorV1 });
+            const providerBackendMode = runtimeSelection.providerBackendMode;
+            const codexBackendMode = runtimeSelection.codexBackendMode;
             const inheritedForkOverrides = createConnectedServiceForkLaunchContext({
                 inherited: params.inheritedForkOverrides,
             }).inherited;
@@ -77,12 +68,21 @@ export async function attemptAcpLatestFork(params: Readonly<{
                 directory: forked.launch.directory ?? params.directory,
                 backendTarget: params.forkBackendResolution.backendTargetV2,
                 approvedNewDirectoryCreation: true,
+                spawnNonce: params.spawnNonce,
                 resume: forkedProviderSessionId,
                 ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
                 ...(codexBackendMode ? { codexBackendMode } : {}),
                 ...(forked.launch.environmentVariables ? { environmentVariables: { ...forked.launch.environmentVariables } } : {}),
                 ...inheritedForkOverrides.spawn,
             } satisfies SpawnSessionOptions);
+
+            if (isAmbiguousSpawnSessionFailure(result)) {
+                return {
+                    ok: false,
+                    errorCode: result.errorCode,
+                    errorMessage: result.errorMessage,
+                };
+            }
 
             if (params.requestedStrategy === 'acp_fork_latest' && result.type !== 'success') {
                 return {
@@ -117,9 +117,9 @@ export async function attemptAcpLatestFork(params: Readonly<{
                             parentCutoffSeqInclusive: params.effectiveCutoffSeqInclusive,
                             createdAtMs: Date.now(),
                             strategy: 'acp_fork_latest',
-                            providerHint: {
-                                providerId: params.forkBackendResolution.providerHintProviderId,
-                                ...(codexBackendMode ? { backendMode: codexBackendMode } : {}),
+                            agentHint: {
+                                agentId: params.forkBackendResolution.agentHintAgentId,
+                                ...(providerBackendMode ? { backendMode: providerBackendMode } : {}),
                                 providerSessionId: forkedProviderSessionId,
                             },
                         },

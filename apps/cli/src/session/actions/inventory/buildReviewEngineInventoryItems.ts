@@ -1,7 +1,10 @@
 import { buildBackendTargetKey, buildBackendTargetKeyV2, type AccountSettings } from '@happier-dev/protocol';
 
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import type { ResolvedBackendContribution } from '@/plugins/projection/registry/types';
+import type {
+  ResolvedAgentContribution,
+  ResolvedAgentRuntimeContribution,
+} from '@/plugins/projection/registry/types';
 
 import { isBackendEnabled } from './backendAvailability';
 
@@ -28,19 +31,39 @@ function readTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function readReviewEngineLabel(backend: ResolvedBackendContribution): string {
-  const richDefinition: unknown = backend.richDefinition?.definition;
-  const title = isRecord(richDefinition) ? readTrimmedString(richDefinition.title) : '';
-  return title || backend.id;
+function readReviewEngineDefinitionField(
+  backend: ResolvedAgentRuntimeContribution,
+  agent: ResolvedAgentContribution | undefined,
+  field: 'title' | 'subtitle',
+): string {
+  const definitions: readonly unknown[] = [
+    backend.richDefinition?.definition,
+    backend.definition,
+    agent?.richDefinition?.definition,
+    agent?.definition,
+  ];
+  for (const definition of definitions) {
+    const value = isRecord(definition) ? readTrimmedString(definition[field]) : '';
+    if (value) return value;
+  }
+  return '';
 }
 
-function readReviewEngineDescription(backend: ResolvedBackendContribution): string | undefined {
-  const richDefinition: unknown = backend.richDefinition?.definition;
-  const subtitle = isRecord(richDefinition) ? readTrimmedString(richDefinition.subtitle) : '';
-  return subtitle || undefined;
+function readReviewEngineLabel(
+  backend: ResolvedAgentRuntimeContribution,
+  agent: ResolvedAgentContribution | undefined,
+): string {
+  return readReviewEngineDefinitionField(backend, agent, 'title') || backend.id;
 }
 
-function isReviewExecutionRunBackend(backend: ResolvedBackendContribution): boolean {
+function readReviewEngineDescription(
+  backend: ResolvedAgentRuntimeContribution,
+  agent: ResolvedAgentContribution | undefined,
+): string | undefined {
+  return readReviewEngineDefinitionField(backend, agent, 'subtitle') || undefined;
+}
+
+function isReviewExecutionRunBackend(backend: ResolvedAgentRuntimeContribution): boolean {
   const session = backend.capabilities?.session;
   const executionRun = backend.capabilities?.executionRun;
   const review = isRecord(executionRun) ? executionRun.review : null;
@@ -61,9 +84,12 @@ export function buildReviewEngineInventoryItems(params: Readonly<{
   const accountSettings = params.accountSettings ?? null;
   const includeDisabled = params.includeDisabled === true;
   const limit = normalizeLimit(params.limit);
-  const items = getResolvedContributionRegistry().backends
+  const registry = getResolvedContributionRegistry();
+  const items = registry.agentRuntimes
     .filter(isReviewExecutionRunBackend)
     .map((backend) => {
+      const agent = registry.agentDefinitionsById.get(backend.agentId);
+      const description = readReviewEngineDescription(backend, agent);
       const targetKey = buildBackendTargetKeyV2({
         kind: 'backend',
         backendId: backend.id,
@@ -73,8 +99,8 @@ export function buildReviewEngineInventoryItems(params: Readonly<{
       return {
         engineId: backend.id,
         value: backend.id,
-        label: readReviewEngineLabel(backend),
-        ...(readReviewEngineDescription(backend) ? { description: readReviewEngineDescription(backend) } : {}),
+        label: readReviewEngineLabel(backend, agent),
+        ...(description ? { description } : {}),
         enabled: isBackendEnabled(accountSettings, [targetKey, legacyTargetKey]),
         backendId: backend.id,
       };
