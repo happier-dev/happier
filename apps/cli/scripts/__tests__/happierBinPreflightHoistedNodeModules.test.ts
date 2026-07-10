@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   copyCliBinRuntimeFiles,
@@ -9,7 +9,6 @@ import {
   writeCliProjectFixture,
   writeNodeModuleStub,
   writeProtocolBundleStub,
-  writeSandboxPackage,
 } from './testkit/cliBinPreflightSandbox';
 
 describe('apps/cli bin/happier.mjs preflight', () => {
@@ -95,6 +94,60 @@ describe('apps/cli bin/happier.mjs preflight', () => {
     }
   });
 
+  it('exits after the delegated runtime succeeds even when wrapper preflight leaves active handles', () => {
+    const { rootDir: tmp, cleanup } = createCliBinPreflightSandbox('happier-bin-preflight-');
+    try {
+      const projectRoot = join(tmp, 'apps', 'cli');
+      const { binDir } = writeCliProjectFixture({
+        projectRoot,
+        entrypointDir: 'dist',
+        entrypointContent: 'process.exit(0);\n',
+      });
+
+      copyCliBinRuntimeFiles({ binDir });
+      writeProtocolBundleStub({
+        packageDir: join(tmp, 'node_modules', '@happier-dev', 'protocol'),
+      });
+      writeNodeModuleStub({
+        packageDir: join(tmp, 'node_modules', 'tweetnacl'),
+        files: { 'index.js': 'module.exports = {};\n' },
+      });
+      writeNodeModuleStub({
+        packageDir: join(tmp, 'node_modules', 'base64-js'),
+        files: { 'index.js': 'module.exports = {};\n' },
+      });
+      writeNodeModuleStub({
+        packageDir: join(tmp, 'node_modules', '@noble', 'hashes'),
+        manifest: { name: '@noble/hashes' },
+        files: {
+          'hmac.js': 'module.exports = {};\n',
+          'sha512.js': 'module.exports = {};\n',
+        },
+      });
+
+      const wrapperOnlyActiveHandleProbe = [
+        "if (String(process.argv[1] ?? '').endsWith('/happier.mjs')) {",
+        '  setInterval(() => {}, 1000);',
+        '}',
+      ].join('\n');
+      const res = runHappierBin({
+        binDir,
+        cwd: projectRoot,
+        args: ['--help'],
+        env: {
+          ...process.env,
+          NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(wrapperOnlyActiveHandleProbe)}`,
+        },
+        timeout: 2000,
+      });
+
+      expect(res.status).toBe(0);
+      expect(res.signal).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
   it('prints a helpful error if @happier-dev/protocol cannot be resolved', () => {
     const { rootDir: tmp, cleanup } = createCliBinPreflightSandbox('happier-bin-preflight-');
     try {
@@ -117,7 +170,7 @@ describe('apps/cli bin/happier.mjs preflight', () => {
     }
   });
 
-  it('refreshes stale local bundled workspace packages before launching from a monorepo checkout', () => {
+  it('launches a manifest-backed local snapshot without refreshing bundled workspaces', () => {
     const { rootDir: tmp, cleanup } = createCliBinPreflightSandbox('happier-bin-preflight-');
     try {
       const projectRoot = join(tmp, 'apps', 'cli');
@@ -135,6 +188,11 @@ describe('apps/cli bin/happier.mjs preflight', () => {
         entrypointContent: "import '@happier-dev/protocol/changes'; console.log('ok');\n",
       });
       writeFileSync(
+        join(projectRoot, 'dist', '.build-manifest.json'),
+        `${JSON.stringify({ fingerprint: '0123456789abcdef', builtAt: '2026-07-09T00:00:00.000Z', fileCount: 1, toolVersion: '1' })}\n`,
+        'utf8',
+      );
+      writeFileSync(
         join(projectRoot, 'package.json'),
         `${JSON.stringify({ name: '@happier-dev/cli', bundledDependencies: ['@happier-dev/protocol'] }, null, 2)}\n`,
         'utf8',
@@ -148,23 +206,19 @@ describe('apps/cli bin/happier.mjs preflight', () => {
         packageDir: workspaceProtocolDir,
         exportsMap: {
           '.': './dist/index.js',
-          './changes': './dist/changes.js',
+          './changes': './dist/changes/index.js',
         },
         distFiles: {
-          'dist/changes.js': 'export const change = true;\n',
+          'dist/changes/index.js': 'export const change = true;\n',
         },
       });
-      writeSandboxPackage({
+      writeProtocolBundleStub({
         packageDir: bundledProtocolDir,
-        manifest: {
-          name: '@happier-dev/protocol',
-          version: '0.0.0',
-          type: 'module',
-          main: './dist/index.js',
-          exports: {
-            '.': './dist/index.js',
-          },
+        exportsMap: {
+          '.': './dist/index.js',
+          './changes': './dist/changes/index.js',
         },
+        distFiles: { 'dist/changes/index.js': 'export const change = true;\n' },
       });
 
       writeNodeModuleStub({
@@ -197,7 +251,7 @@ describe('apps/cli bin/happier.mjs preflight', () => {
       expect(res.status).toBe(0);
       expect(res.stdout).toContain('ok');
       expect(existsSync(join(bundledProtocolDir, 'dist', 'index.js'))).toBe(true);
-      expect(existsSync(join(bundledProtocolDir, 'dist', 'changes.js'))).toBe(true);
+      expect(existsSync(join(bundledProtocolDir, 'dist', 'changes', 'index.js'))).toBe(true);
       const bundledPackageJson = JSON.parse(readFileSync(join(bundledProtocolDir, 'package.json'), 'utf8')) as {
         exports?: Record<string, string>;
         main?: string;
@@ -205,7 +259,7 @@ describe('apps/cli bin/happier.mjs preflight', () => {
       expect(bundledPackageJson.main).toBe('./dist/index.js');
       expect(bundledPackageJson.exports).toEqual({
         '.': './dist/index.js',
-        './changes': './dist/changes.js',
+        './changes': './dist/changes/index.js',
       });
     } finally {
       cleanup();
@@ -256,7 +310,7 @@ describe('apps/cli bin/happier.mjs preflight', () => {
       const parsed = JSON.parse(res.stdout.trim()) as { invokedPath: string | null; invokerName: string | null; argv1: string | null };
       expect(parsed.invokedPath).toBe(join(binDir, 'happier.mjs'));
       expect(parsed.invokerName).toBe('happier');
-      expect(parsed.argv1).toContain(join(projectRoot, 'dist', 'index.mjs'));
+      expect(realpathSync(parsed.argv1!)).toBe(realpathSync(join(binDir, 'happier.mjs')));
     } finally {
       cleanup();
     }

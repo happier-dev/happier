@@ -1,6 +1,7 @@
 import { rmDirSafeSync } from './rmDirSafe.mjs';
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { withOptionalCliSharedDepsBuildLock } from './optionalWorkspaceBundleLock.mjs';
 
 export function resolveDistDir(argv = process.argv) {
   const candidate = String(argv?.[2] ?? '').trim();
@@ -12,19 +13,24 @@ export function resolveDistDir(argv = process.argv) {
   return candidate;
 }
 
-export function main(argv = process.argv) {
+export async function main(argv = process.argv, options = {}) {
   const dir = resolveDistDir(argv);
-  rmDirSafeSync(dir, {
-    // Local dev can run with other watchers rebuilding dist; give ourselves a bit of headroom.
-    retries: 25,
-    delayMs: 20,
-  });
-  if (dir === 'dist') {
-    rmDirSafeSync('package-dist', {
+  await withOptionalCliSharedDepsBuildLock(() => {
+    rmDirSafeSync(dir, {
+      // Local dev can run with other watchers rebuilding dist; give ourselves a bit of headroom.
       retries: 25,
       delayMs: 20,
     });
-  }
+  }, {
+    startDir: process.cwd(),
+    repoRoot: options.repoRoot,
+    lockPath: options.lockPath,
+    lockModulePath: options.lockModulePath,
+    lockTimeoutMs: options.lockTimeoutMs,
+    lockPollIntervalMs: options.lockPollIntervalMs,
+    lockStaleAfterMs: options.lockStaleAfterMs,
+    skipLock: options.skipLock,
+  });
 }
 
 const isEntrypoint = (() => {
@@ -34,5 +40,10 @@ const isEntrypoint = (() => {
 })();
 
 if (isEntrypoint) {
-  main(process.argv);
+  try {
+    await main(process.argv);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 }

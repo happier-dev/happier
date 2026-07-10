@@ -30,21 +30,48 @@ describe('Vitest lane separation', () => {
         expect(integrationConfig.test?.passWithNoTests).toBe(true);
     });
 
+    it('caps parallel CLI test workers at six', () => {
+        expect(unitConfig.test?.maxWorkers).toBe(6);
+        expect(slowConfig.test?.maxWorkers).toBe(6);
+    });
+
     it('does not force full dist builds in the fast CLI test scripts', () => {
         const packageJson = JSON.parse(
             readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
         ) as { scripts?: Record<string, string> };
 
-        expect(packageJson.scripts?.['test:unit']).toBe(
-            'node scripts/withNodeHeapLimit.mjs vitest run --config vitest.config.ts',
+        const fastScripts = [
+            packageJson.scripts?.['test:unit'],
+            packageJson.scripts?.['test:integration'],
+        ].join('\n');
+
+        expect(packageJson.scripts?.['test:unit']).toContain(
+            'vitest run --config vitest.config.ts',
         );
+        expect(packageJson.scripts?.['test:unit']).toContain('test:import-cycles');
         expect(packageJson.scripts?.['test:integration']).toBe(
             'node scripts/runVitestShards.mjs --config vitest.integration.config.ts',
         );
+        expect(fastScripts).not.toContain('runPkgrollBuild');
+        expect(fastScripts).not.toContain('syncPackageDist');
 
-        // `yarn vitest ...` (without going through `yarn test:unit`) should still build internal
-        // workspaces first so protocol/agents dist artifacts are never stale/missing.
-        expect(packageJson.scripts?.vitest).toBe('$npm_execpath run -s build:shared && vitest');
+        // `yarn vitest ...` (without going through `yarn test:unit`) should still refresh internal
+        // workspace artifacts, but use the source-dev incremental sync path instead of a full rebuild.
+        expect(packageJson.scripts?.vitest).toBe('node scripts/syncSharedDepsForDev.mjs && vitest');
+    });
+
+    it('wires the CLI runtime import-cycle guard into root and CLI unit lanes', () => {
+        const cliPackageJson = JSON.parse(
+            readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
+        ) as { scripts?: Record<string, string> };
+        const rootPackageJson = JSON.parse(
+            readFileSync(new URL('../../../../package.json', import.meta.url), 'utf8'),
+        ) as { scripts?: Record<string, string> };
+
+        expect(rootPackageJson.scripts?.['test:import-cycles']).toBe(
+            'yarn workspace @happier-dev/cli test:import-cycles',
+        );
+        expect(cliPackageJson.scripts?.['test:unit']).toContain('test:import-cycles');
     });
 
     it('keeps build-output dist verification out of the unit lane', () => {
@@ -94,6 +121,10 @@ describe('Vitest lane separation', () => {
                     find: '@happier-dev/plugins-codex',
                     replacement: expect.stringContaining('/packages/plugins/codex/src'),
                 }),
+                expect.objectContaining({
+                    find: '@happier-dev/plugins-ohmypi',
+                    replacement: expect.stringContaining('/packages/plugins/ohmypi/src'),
+                }),
             ]),
         );
     });
@@ -119,6 +150,10 @@ describe('Vitest lane separation', () => {
                 expect.objectContaining({
                     find: '@happier-dev/plugins-codex',
                     replacement: expect.stringContaining('/packages/plugins/codex/src'),
+                }),
+                expect.objectContaining({
+                    find: '@happier-dev/plugins-ohmypi',
+                    replacement: expect.stringContaining('/packages/plugins/ohmypi/src'),
                 }),
             ]),
         );

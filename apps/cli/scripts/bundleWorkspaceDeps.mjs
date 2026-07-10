@@ -6,7 +6,10 @@ import { pathToFileURL } from 'node:url';
 
 import { execYarn } from '../../../scripts/workspaces/execYarnCommand.mjs';
 import { resolveWorkspaceDependencyBuildOrder } from '../../../scripts/workspaces/resolveWorkspaceDependencyBuildOrder.mjs';
-import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
+import {
+  resolveCliSharedDepsBuildLockPath,
+  withOptionalCliSharedDepsBuildLock,
+} from './optionalWorkspaceBundleLock.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPT_REPO_ROOT = findRepoRoot(__dirname);
@@ -121,9 +124,9 @@ export async function bundleWorkspaceDeps(opts = {}) {
   // must still be loaded from the *script* repo (this monorepo checkout), not from the sandbox.
   const targetRepoRoot = opts.repoRoot ?? SCRIPT_REPO_ROOT;
   const happyCliDir = opts.happyCliDir ?? resolve(targetRepoRoot, 'apps', 'cli');
-  const lockPath = opts.lockPath ?? resolve(targetRepoRoot, '.project', 'tmp', 'cli-shared-deps-build.lock');
+  const lockPath = opts.lockPath ?? resolveCliSharedDepsBuildLockPath(targetRepoRoot);
 
-  return withWorkspaceBundleLock(async () => {
+  return withOptionalCliSharedDepsBuildLock(async () => {
     const {
       bundleWorkspacePackages,
       readBundledWorkspacePackageNames,
@@ -168,7 +171,14 @@ export async function bundleWorkspaceDeps(opts = {}) {
         destPackageDir: b.destDir,
       });
     }
-  }, { lockPath, timeoutMs: 240_000, pollIntervalMs: 250, staleAfterMs: 240_000 });
+  }, {
+    repoRoot: targetRepoRoot,
+    lockPath,
+    env: opts.env ?? process.env,
+    lockTimeoutMs: 240_000,
+    lockPollIntervalMs: 250,
+    lockStaleAfterMs: 240_000,
+  });
 }
 
 const invokedAsMain = (() => {

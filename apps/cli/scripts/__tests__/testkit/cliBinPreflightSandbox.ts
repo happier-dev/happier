@@ -5,7 +5,12 @@ import { join, resolve } from 'node:path';
 import { createTempDirSync, removeTempDirSync } from '../../../src/testkit/fs/tempDir';
 import { ensureDirectorySync, writeTextFileSync } from '../../../src/testkit/fs/fileHelpers';
 
-const runtimeBinFiles = ['happier.mjs', '_resolveRuntimeEntrypoint.mjs', '_prepareRuntimeEntrypoint.mjs'];
+const runtimeBinFiles = [
+  'happier.mjs',
+  '_resolveRuntimeEntrypoint.mjs',
+  '_prepareRuntimeEntrypoint.mjs',
+  '_importRuntimeEntrypoint.mjs',
+];
 
 function resolveRepoRootForWorkspaceScripts(startDir: string): string {
   let dir = startDir;
@@ -41,6 +46,7 @@ export function copyCliBinRuntimeFiles(options: {
   cliRoot?: string;
 }): void {
   const cliRoot = options.cliRoot ?? (options.repoRoot ? resolve(options.repoRoot, 'apps', 'cli') : process.cwd());
+  const repoRoot = options.repoRoot ?? resolve(cliRoot, '..', '..');
   const runtimeBinDir = resolve(cliRoot, 'bin');
 
   ensureDirectorySync(options.binDir);
@@ -48,6 +54,32 @@ export function copyCliBinRuntimeFiles(options: {
   for (const file of runtimeBinFiles) {
     cpSync(resolve(runtimeBinDir, file), join(options.binDir, file));
   }
+
+  copyCliCommonBuildLockRuntimeFile({
+    packageDir: resolve(options.binDir, '..', 'node_modules', '@happier-dev', 'cli-common'),
+    repoRoot,
+  });
+}
+
+function copyCliCommonBuildLockRuntimeFile(options: {
+  packageDir: string;
+  repoRoot: string;
+}): void {
+  writeSandboxPackage({
+    packageDir: options.packageDir,
+    manifest: {
+      name: '@happier-dev/cli-common',
+      version: '0.0.0',
+      type: 'module',
+      exports: {
+        './jsonOwnerBuildLockState': './jsonOwnerBuildLockState.cjs',
+      },
+    },
+  });
+  cpSync(
+    resolve(options.repoRoot, 'packages', 'cli-common', 'jsonOwnerBuildLockState.cjs'),
+    join(options.packageDir, 'jsonOwnerBuildLockState.cjs'),
+  );
 }
 
 export function copyCliWorkspaceSyncRuntimeFiles(options: {
@@ -69,11 +101,13 @@ export function runHappierBin(options: {
   cwd: string;
   args?: readonly string[];
   env?: NodeJS.ProcessEnv;
+  timeout?: number;
 }): SpawnSyncReturns<string> {
   return spawnSync(process.execPath, [join(options.binDir, 'happier.mjs'), ...(options.args ?? [])], {
     cwd: options.cwd,
     encoding: 'utf8',
     env: options.env,
+    timeout: options.timeout,
   });
 }
 

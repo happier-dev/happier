@@ -16,10 +16,12 @@ describe('apps/cli package scripts', () => {
     expect(String(packageJson.scripts?.typecheck ?? '')).not.toMatch(/\btsc\b/);
   });
 
-  it('routes the build typecheck pass through the shared Node-safe TypeScript wrapper', () => {
-    expect(String(packageJson.scripts?.build ?? '')).toMatch(
-      /scripts\/workspaces\/runTypeScriptCli\.mjs --noEmit\b/,
-    );
+  it('delegates build orchestration to the atomic CLI dist build owner', () => {
+    expect(String(packageJson.scripts?.build ?? '')).toBe('node scripts/build.mjs');
     expect(String(packageJson.scripts?.build ?? '')).not.toMatch(/\btsc\b/);
+  });
+
+  it('syncs bundled workspace deps before the source dev entrypoint', () => {
+    expect(String(packageJson.scripts?.dev ?? '')).toBe('node scripts/syncSharedDepsForDev.mjs && tsx --tsconfig tsconfig.json src/index.ts');
   });
 });

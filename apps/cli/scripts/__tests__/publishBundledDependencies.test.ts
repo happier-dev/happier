@@ -108,4 +108,17 @@ describe('apps/cli package publish contract', () => {
     expect(cliNpmIgnore).toContain('!dist/');
     expect(cliNpmIgnore).toContain('!dist/**');
   });
+
+  it('does not publish build-only .mjs scripts that depend on repo-root workspace helpers', () => {
+    const cliPackageJsonPath = resolve(cliRoot, 'package.json');
+    const cliPackageJson = JSON.parse(readFileSync(cliPackageJsonPath, 'utf8')) as {
+      files?: unknown;
+    };
+
+    const publishedFiles = Array.isArray(cliPackageJson.files) ? cliPackageJson.files.map((value) => String(value)) : [];
+
+    expect(publishedFiles).not.toContain('scripts/**/*.mjs');
+    expect(publishedFiles).toContain('scripts/**/*.cjs');
+    expect(publishedFiles).toContain('scripts/shims/**');
+  });
 });

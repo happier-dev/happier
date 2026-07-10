@@ -5,6 +5,7 @@ import path, { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
+import { bundleWorkspaceDeps as runCanonicalBundleWorkspaceDeps } from './bundleWorkspaceDeps.mjs';
 import { resolveCliPackageRoot, syncPackageDist } from './syncPackageDist.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -138,23 +139,42 @@ function resolveNpmCacheDir({ destDir, env }) {
   return path.join(os.tmpdir(), `happier-npm-cache-${process.pid}`);
 }
 
-export function packTarball(options = {}) {
+function setFunctionOption(target, key, value) {
+  if (typeof value === 'function') {
+    target[key] = value;
+  }
+}
+
+async function bundleWorkspaceDepsForPack({ packageRoot }) {
+  const repoRoot = resolve(packageRoot, '..', '..');
+  await runCanonicalBundleWorkspaceDeps({
+    repoRoot,
+    happyCliDir: packageRoot,
+  });
+}
+
+export async function packTarball(options = {}) {
   const packageRoot = resolve(String(options.packageRoot ?? resolveCliPackageRoot()));
   const spawn = options.spawnSync ?? spawnSync;
   const exists = options.existsSync ?? fs.existsSync;
+  const bundleWorkspaceDeps = options.bundleWorkspaceDeps ?? bundleWorkspaceDepsForPack;
   const npmInvocation = options.npmInvocation ??
     resolveNpmInvocation(options.npmExecpath, options.platform, options.processExecPath, exists);
   const destDirRaw = String(options.destDir ?? '').trim();
   const destDir = destDirRaw ? resolve(destDirRaw) : packageRoot;
 
-  syncPackageDist({
+  const syncPackageDistOptions = {
     packageRoot,
     distDir: options.distDir,
     packageDistDir: options.packageDistDir,
     existsSync: exists,
-    cpSync: options.cpSync,
-    rmSync: options.rmSync,
-  });
+  };
+  setFunctionOption(syncPackageDistOptions, 'cpSync', options.cpSync);
+  setFunctionOption(syncPackageDistOptions, 'mkdirSync', options.mkdirSync);
+  setFunctionOption(syncPackageDistOptions, 'renameSync', options.renameSync);
+  setFunctionOption(syncPackageDistOptions, 'rmSync', options.rmSync);
+  syncPackageDist(syncPackageDistOptions);
+  await bundleWorkspaceDeps({ packageRoot });
 
   const env = { ...process.env, ...(options.env ?? {}) };
   const timeoutMs = resolvePackTarballTimeoutMs(env, options.timeoutMs);
@@ -225,7 +245,7 @@ const invokedAsMain = (() => {
 if (invokedAsMain) {
   try {
     const { destDir, npmCacheDir } = parseCliOptions(process.argv.slice(2));
-    const result = packTarball({ destDir, npmCacheDir });
+    const result = await packTarball({ destDir, npmCacheDir });
     console.log(result.tarballPath);
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

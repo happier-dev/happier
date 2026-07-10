@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { join, dirname } from 'path';
 import { createRequire } from 'module';
 
-import { prepareRuntimeEntrypoint } from './_prepareRuntimeEntrypoint.mjs';
+import { importPreparedRuntimeEntrypoint } from './_importRuntimeEntrypoint.mjs';
 
 function buildRuntimeInvocationEnv() {
   const invokedPath = String(process.argv[1] ?? '').trim();
@@ -68,24 +68,26 @@ function preflightRequiredDependencies(projectRoot) {
 // Check if we're already running with the flags
 const hasNoWarnings = process.execArgv.includes('--no-warnings');
 const hasNoDeprecation = process.execArgv.includes('--no-deprecation');
+const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const wrapperPath = fileURLToPath(import.meta.url);
+preflightRequiredDependencies(projectRoot);
 
 if (!hasNoWarnings || !hasNoDeprecation) {
-  // Get path to the actual CLI entrypoint
-  const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-  const entrypoint = await prepareRuntimeEntrypoint(projectRoot, 'index.mjs');
-  preflightRequiredDependencies(projectRoot);
-  
-  // Execute the actual CLI directly with the correct flags
+  // Re-run through the stable importer so wrapper-only handles cannot leak into the runtime process.
   try {
     execFileSync(process.execPath, [
       '--no-warnings',
       '--no-deprecation',
-      entrypoint,
+      fileURLToPath(new URL('./_importRuntimeEntrypoint.mjs', import.meta.url)),
+      wrapperPath,
+      projectRoot,
+      'index.mjs',
       ...process.argv.slice(2)
     ], {
       stdio: 'inherit',
       env: buildRuntimeInvocationEnv(),
     });
+    process.exit(0);
   } catch (error) {
     // execFileSync throws if the process exits with non-zero
     process.exit(error.status || 1);
@@ -93,9 +95,6 @@ if (!hasNoWarnings || !hasNoDeprecation) {
 } else {
   // We're running Node with the flags we wanted, import the CLI entrypoint
   // module to avoid creating a new process.
-  const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-  const entrypoint = await prepareRuntimeEntrypoint(projectRoot, 'index.mjs');
-  preflightRequiredDependencies(projectRoot);
   Object.assign(process.env, buildRuntimeInvocationEnv());
-  import(entrypoint);
+  await importPreparedRuntimeEntrypoint(projectRoot, 'index.mjs');
 }

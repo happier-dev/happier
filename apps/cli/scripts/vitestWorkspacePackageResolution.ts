@@ -4,12 +4,21 @@ import { resolve } from 'node:path';
 type WorkspacePackageSpec = Readonly<{
     packageName: string;
     packageSourceRoot: string;
+    sourceSubpathAliases?: Readonly<Record<string, string>>;
 }>;
 
 const workspacePackages: readonly WorkspacePackageSpec[] = [
     {
         packageName: '@happier-dev/protocol',
         packageSourceRoot: resolve('../../packages/protocol/src'),
+        sourceSubpathAliases: {
+            installablesPolicy: 'installables/policy',
+            rpcErrors: 'rpc/errors',
+            socketRpc: 'rpc/socket',
+            spawnSession: 'sessions/spawnSession',
+            transferRelayV2: 'transfers/relay/v2',
+            transferSessions: 'transfers/sessions',
+        },
     },
     {
         packageName: '@happier-dev/agents',
@@ -39,13 +48,17 @@ const workspacePackages: readonly WorkspacePackageSpec[] = [
         packageName: '@happier-dev/plugins-codex',
         packageSourceRoot: resolve('../../packages/plugins/codex/src'),
     },
+    {
+        packageName: '@happier-dev/plugins-ohmypi',
+        packageSourceRoot: resolve('../../packages/plugins/ohmypi/src'),
+    },
 ] as const;
 
 function resolveWorkspacePackageSource(
     id: string,
-    packageName: string,
-    packageSourceRoot: string,
+    workspacePackage: WorkspacePackageSpec,
 ): string | null {
+    const { packageName, packageSourceRoot } = workspacePackage;
     if (id === packageName) {
         return resolve(packageSourceRoot, 'index.ts');
     }
@@ -55,20 +68,27 @@ function resolveWorkspacePackageSource(
     }
 
     const subpath = id.slice(packageName.length + 1);
+    const sourceSubpath = workspacePackage.sourceSubpathAliases?.[subpath] ?? subpath;
     const candidates = [
-        resolve(packageSourceRoot, `${subpath}.ts`),
-        resolve(packageSourceRoot, `${subpath}.tsx`),
-        resolve(packageSourceRoot, subpath, 'index.ts'),
-        resolve(packageSourceRoot, subpath, 'index.tsx'),
+        resolve(packageSourceRoot, `${sourceSubpath}.ts`),
+        resolve(packageSourceRoot, `${sourceSubpath}.tsx`),
+        resolve(packageSourceRoot, sourceSubpath, 'index.ts'),
+        resolve(packageSourceRoot, sourceSubpath, 'index.tsx'),
     ];
 
     return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
-export const workspacePackageAliases = workspacePackages.map((workspacePackage) => ({
-    find: workspacePackage.packageName,
-    replacement: workspacePackage.packageSourceRoot,
-}));
+export const workspacePackageAliases = workspacePackages.flatMap((workspacePackage) => [
+    ...Object.entries(workspacePackage.sourceSubpathAliases ?? {}).map(([publicSubpath, sourceSubpath]) => ({
+        find: `${workspacePackage.packageName}/${publicSubpath}`,
+        replacement: resolve(workspacePackage.packageSourceRoot, sourceSubpath),
+    })),
+    {
+        find: workspacePackage.packageName,
+        replacement: workspacePackage.packageSourceRoot,
+    },
+]);
 
 export const workspacePackageOptimizationExcludes = workspacePackages.map((workspacePackage) => workspacePackage.packageName);
 
@@ -79,8 +99,7 @@ export const workspacePackageSourcesPlugin = {
         for (const workspacePackage of workspacePackages) {
             const resolved = resolveWorkspacePackageSource(
                 id,
-                workspacePackage.packageName,
-                workspacePackage.packageSourceRoot,
+                workspacePackage,
             );
 
             if (resolved !== null) {

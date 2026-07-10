@@ -1,10 +1,13 @@
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const DEFAULT_PKGROLL_PACKAGE_JSON_FILTER = 'dist/**';
+const DEFAULT_BUILD_OUTPUT_DIR = 'dist';
 const DEFAULT_PKGROLL_TIMEOUT_MS = 600_000;
+const FIRST_PARTY_STATIC_ASSETS_SOURCE_RELATIVE_PATH = 'src/plugins/projection/registry/static-assets';
+const FIRST_PARTY_STATIC_ASSETS_DIST_RELATIVE_PATH = 'dist/plugins/projection/registry/static-assets';
 
 function resolvePkgrollTimeoutMs(env, explicitTimeoutMs) {
   if (typeof explicitTimeoutMs === 'number' && Number.isFinite(explicitTimeoutMs)) {
@@ -19,6 +22,54 @@ function resolvePkgrollTimeoutMs(env, explicitTimeoutMs) {
 
 export function resolvePkgrollCliPath() {
   return require.resolve('pkgroll/dist/cli.mjs');
+}
+
+function rebasePackageEntrypointOutputPath(value, outputDir = DEFAULT_BUILD_OUTPUT_DIR) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.replace(/\\/g, '/').replace(/^\.\/+/, '');
+  for (const sourceRoot of ['dist', 'package-dist']) {
+    if (normalized === sourceRoot) return outputDir;
+    const prefix = `${sourceRoot}/`;
+    if (normalized.startsWith(prefix)) return `${outputDir}/${normalized.slice(prefix.length)}`;
+  }
+  return null;
+}
+
+function collectEntrypointOutputPaths(value, outputDir, out) {
+  const outputPath = rebasePackageEntrypointOutputPath(value, outputDir);
+  if (outputPath) {
+    out.add(outputPath);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectEntrypointOutputPaths(item, outputDir, out);
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const entryValue of Object.values(value)) {
+    collectEntrypointOutputPaths(entryValue, outputDir, out);
+  }
+}
+
+export function collectPkgrollInputPaths(manifest, options = {}) {
+  const outputDir = resolveBuildOutputDir({}, options.outputDir);
+  const paths = new Set();
+  for (const key of ['main', 'module', 'types', 'exports', 'imports']) {
+    if (Object.prototype.hasOwnProperty.call(manifest, key)) {
+      collectEntrypointOutputPaths(manifest[key], outputDir, paths);
+    }
+  }
+  return [...paths].sort();
+}
+
+export function resolveBuildOutputDir(env = process.env, explicitOutputDir) {
+  const candidate = String(explicitOutputDir ?? env?.HAPPIER_CLI_BUILD_OUTPUT_DIR ?? '').trim();
+  if (!candidate || candidate.startsWith('-')) return DEFAULT_BUILD_OUTPUT_DIR;
+  if (isAbsolute(candidate)) return DEFAULT_BUILD_OUTPUT_DIR;
+  const segments = candidate.split(/[\\/]+/g).filter(Boolean);
+  if (segments.length === 0) return DEFAULT_BUILD_OUTPUT_DIR;
+  if (segments.includes('.') || segments.includes('..')) return DEFAULT_BUILD_OUTPUT_DIR;
+  return segments.join('/');
 }
 
 function readPkgrollCliKind(pkgrollCliPath, read = readFileSync) {
@@ -36,17 +87,29 @@ export function runPkgrollBuild(options = {}) {
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
   const timeoutMs = resolvePkgrollTimeoutMs(env, options.timeoutMs);
-  const packageJsonFilter = options.packageJsonFilter ?? DEFAULT_PKGROLL_PACKAGE_JSON_FILTER;
+  const packageJsonPath = resolve(String(options.packageJsonPath ?? join(cwd, 'package.json')));
+  const packageRoot = dirname(packageJsonPath);
+  const outputDir = resolveBuildOutputDir(env, options.outputDir);
   const read = options.readFileSync ?? readFileSync;
   const pkgrollCliPath = options.pkgrollCliPath ?? resolvePkgrollCliPath();
+  const manifest = JSON.parse(read(packageJsonPath, 'utf8'));
+  const inputPaths = collectPkgrollInputPaths(manifest, { outputDir });
+  if (inputPaths.length === 0) {
+    throw new Error('No package entrypoints found for pkgroll build');
+  }
 
   if (readPkgrollCliKind(pkgrollCliPath, read) !== 'node-module') {
     throw new Error(
       `Local pkgroll install is invalid at ${pkgrollCliPath}: expected a JavaScript entrypoint but found a shell wrapper. Reinstall dependencies before building apps/cli.`,
     );
   }
-  const result = spawn(nodeExecutable, [pkgrollCliPath, '--packagejson', packageJsonFilter], {
-    cwd,
+  const pkgrollArgs = [pkgrollCliPath, '--packagejson=false', '--srcdist', `src:${outputDir}`];
+  for (const inputPath of inputPaths) {
+    pkgrollArgs.push('--input', inputPath);
+  }
+
+  const result = spawn(nodeExecutable, pkgrollArgs, {
+    cwd: packageRoot,
     stdio: ['ignore', 'inherit', 'inherit'],
     timeout: timeoutMs,
   });
@@ -60,6 +123,16 @@ export function runPkgrollBuild(options = {}) {
     }
     throw result.error;
   }
+  copyFirstPartyStaticAssets(packageRoot, outputDir);
+}
+
+function copyFirstPartyStaticAssets(cwd, outputDir) {
+  const sourceDir = join(cwd, FIRST_PARTY_STATIC_ASSETS_SOURCE_RELATIVE_PATH);
+  if (!existsSync(sourceDir)) return;
+
+  const distDir = join(cwd, outputDir, FIRST_PARTY_STATIC_ASSETS_DIST_RELATIVE_PATH.slice('dist/'.length));
+  rmSync(distDir, { recursive: true, force: true });
+  cpSync(sourceDir, distDir, { recursive: true });
 }
 
 const isEntrypoint = (() => {
