@@ -143,6 +143,29 @@ export function createScmDiffSummaryCacheStore(
   };
 }
 
-export const scmDiffSummaryCacheStore = createScmDiffSummaryCacheStore({
-  filePath: resolveDefaultCacheFilePath(),
+let defaultScmDiffSummaryCacheStore: ScmDiffSummaryCacheStore | null = null;
+
+function getDefaultScmDiffSummaryCacheStore(): ScmDiffSummaryCacheStore {
+  defaultScmDiffSummaryCacheStore ??= createScmDiffSummaryCacheStore({
+    filePath: resolveDefaultCacheFilePath(),
+  });
+  return defaultScmDiffSummaryCacheStore;
+}
+
+// Keep configuration and filesystem access out of module initialization. This
+// cache sits on broad SCM/checkpoint import paths, so constructing it eagerly
+// made unrelated consumers depend on a fully initialized runtime configuration.
+export const scmDiffSummaryCacheStore: ScmDiffSummaryCacheStore = Object.freeze({
+  set(input) {
+    getDefaultScmDiffSummaryCacheStore().set(input);
+  },
+  get(input) {
+    return getDefaultScmDiffSummaryCacheStore().get(input);
+  },
+  applyCheckpointCleanupReceipt(receipt) {
+    return getDefaultScmDiffSummaryCacheStore().applyCheckpointCleanupReceipt(receipt);
+  },
+  clear() {
+    getDefaultScmDiffSummaryCacheStore().clear();
+  },
 });

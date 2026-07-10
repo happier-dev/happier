@@ -6,6 +6,7 @@ import type {
   ExecutionRunIntentProfile,
   ExecutionRunProfileBoundedCompleteResult,
   ExecutionRunStructuredMeta,
+  ExecutionRunStructuredOutputRecovery,
 } from '../ExecutionRunIntentProfile';
 import { parseTrailingJsonObject } from '../shared/parseTrailingJsonObject';
 import { deriveLoosePlanSections } from '../shared/deriveLoosePlanSections';
@@ -39,6 +40,7 @@ function normalizePlanBoundedCompletion(params: Readonly<{
   startedAtMs: number;
   finishedAtMs: number;
   rawText: string;
+  structuredOutputRecovery?: ExecutionRunStructuredOutputRecovery;
 }>): ExecutionRunProfileBoundedCompleteResult {
   const trimmed = params.rawText.trim();
   const parsedJson: any = parseTrailingJsonObject(trimmed);
@@ -57,7 +59,10 @@ function normalizePlanBoundedCompletion(params: Readonly<{
   }).passthrough();
   const parsedModel = ModelOutputSchema.safeParse(parsedJson);
   if (!parsedModel.success) {
-    const loose = params.backendId === 'pi' ? deriveLoosePlanSections(trimmed) : null;
+    const loose =
+      params.structuredOutputRecovery?.plan === 'loose-sections'
+        ? deriveLoosePlanSections(trimmed)
+        : null;
     if (loose) {
       const payload = PlanOutputV1Schema.parse({
         runRef: {
@@ -181,13 +186,13 @@ export const PlanProfile: ExecutionRunIntentProfile = {
     '  "sections": [{ "title": "Steps", "items": ["Step 1"] }],',
     '  "risks": [],',
     '  "milestones": [],',
-    '  "recommendedBackendId": "claude"',
+    '  "recommendedBackendId": "backend-id"',
     '}',
     '',
     'Content to convert:',
     rawText,
   ].join('\n'),
-  onBoundedComplete: ({ start, rawText, finishedAtMs }) =>
+  onBoundedComplete: ({ start, rawText, finishedAtMs, structuredOutputRecovery }) =>
     normalizePlanBoundedCompletion({
       runId: start.runId,
       callId: start.callId,
@@ -197,5 +202,6 @@ export const PlanProfile: ExecutionRunIntentProfile = {
       startedAtMs: start.startedAtMs,
       finishedAtMs,
       rawText,
+      structuredOutputRecovery,
     }),
 };

@@ -22,14 +22,43 @@ export type ExecutionRunProfileStartParams = Readonly<{
   runClass: ExecutionRunClass;
   ioMode: ExecutionRunIoMode;
   startedAtMs: number;
+  structuredOutputRecovery?: ExecutionRunStructuredOutputRecovery;
 }>;
 
 export type ExecutionRunStructuredMeta = Readonly<{ kind: string; payload: unknown }>;
+
+export type ExecutionRunStructuredOutputRecovery = Readonly<{
+  plan?: 'loose-sections' | 'none';
+  delegate?: 'loose-deliverables' | 'loose-deliverables-with-single-fallback' | 'none';
+}>;
+
+export function resolveExecutionRunStructuredOutputRecovery(value: unknown): ExecutionRunStructuredOutputRecovery | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as Readonly<Record<string, unknown>>;
+  const plan = record.plan === 'loose-sections' || record.plan === 'none' ? record.plan : undefined;
+  const delegate =
+    record.delegate === 'loose-deliverables'
+      || record.delegate === 'loose-deliverables-with-single-fallback'
+      || record.delegate === 'none'
+      ? record.delegate
+      : undefined;
+
+  return plan || delegate
+    ? {
+      ...(plan ? { plan } : {}),
+      ...(delegate ? { delegate } : {}),
+    }
+    : undefined;
+}
 
 export type ExecutionRunProfileBoundedCompleteParams = Readonly<{
   start: ExecutionRunProfileStartParams;
   rawText: string;
   finishedAtMs: number;
+  structuredOutputRecovery?: ExecutionRunStructuredOutputRecovery;
 }>;
 
 export type ExecutionRunProfileBoundedCompleteResult = Readonly<{

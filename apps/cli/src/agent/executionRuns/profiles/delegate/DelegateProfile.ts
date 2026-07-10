@@ -6,6 +6,7 @@ import type {
   ExecutionRunIntentProfile,
   ExecutionRunProfileBoundedCompleteResult,
   ExecutionRunStructuredMeta,
+  ExecutionRunStructuredOutputRecovery,
 } from '../ExecutionRunIntentProfile';
 import { parseTrailingJsonObject } from '../shared/parseTrailingJsonObject';
 import { deriveLooseDelegateDeliverables } from '../shared/deriveLooseDelegateDeliverables';
@@ -36,6 +37,7 @@ function normalizeDelegateBoundedCompletion(params: Readonly<{
   startedAtMs: number;
   finishedAtMs: number;
   rawText: string;
+  structuredOutputRecovery?: ExecutionRunStructuredOutputRecovery;
 }>): ExecutionRunProfileBoundedCompleteResult {
   const clampString = (value: string, maxLength: number): string => {
     if (value.length <= maxLength) return value;
@@ -68,12 +70,12 @@ function normalizeDelegateBoundedCompletion(params: Readonly<{
   }).passthrough();
   const parsedModel = ModelOutputSchema.safeParse(parsedJson);
   if (!parsedModel.success) {
-    const canRecoverLoosely = params.backendId === 'pi' || params.backendId === 'codex';
+    const delegateRecovery = params.structuredOutputRecovery?.delegate;
     const loose =
-      canRecoverLoosely ?
-        deriveLooseDelegateDeliverables(trimmed) ??
-          (params.backendId === 'codex' ? deriveSingleDeliverableFallback(trimmed) : null)
-      : null;
+      delegateRecovery === 'loose-deliverables' || delegateRecovery === 'loose-deliverables-with-single-fallback'
+        ? deriveLooseDelegateDeliverables(trimmed)
+          ?? (delegateRecovery === 'loose-deliverables-with-single-fallback' ? deriveSingleDeliverableFallback(trimmed) : null)
+        : null;
     if (loose) {
       const payload = DelegateOutputV1Schema.parse({
         runRef: {
@@ -194,7 +196,7 @@ export const DelegateProfile: ExecutionRunIntentProfile = {
     'Content to convert:',
     rawText,
   ].join('\n'),
-  onBoundedComplete: ({ start, rawText, finishedAtMs }) =>
+  onBoundedComplete: ({ start, rawText, finishedAtMs, structuredOutputRecovery }) =>
     normalizeDelegateBoundedCompletion({
       runId: start.runId,
       callId: start.callId,
@@ -204,5 +206,6 @@ export const DelegateProfile: ExecutionRunIntentProfile = {
       startedAtMs: start.startedAtMs,
       finishedAtMs,
       rawText,
+      structuredOutputRecovery,
     }),
 };

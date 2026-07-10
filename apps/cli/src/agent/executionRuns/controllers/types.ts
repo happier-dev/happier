@@ -1,4 +1,4 @@
-import type { SessionId } from '@/agent/core/AgentBackend';
+import type { SessionId } from '@/agent/core/AgentMessage';
 import type { ExecutionRunControllerFailureSignal } from './failureSignal';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';

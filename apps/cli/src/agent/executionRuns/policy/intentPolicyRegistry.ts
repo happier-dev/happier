@@ -3,6 +3,7 @@ import type {
   ExecutionRunIntent,
   ExecutionRunIoMode,
   ExecutionRunRetentionPolicy,
+  FeatureId,
 } from '@happier-dev/protocol';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
@@ -22,7 +23,7 @@ export type ExecutionRunIntentPolicy = Readonly<{
   allowedRunClasses: readonly ExecutionRunClass[];
   allowedIoModes: readonly ExecutionRunIoMode[];
   usesReviewBoundedTimeoutOverride: boolean;
-  requiredFeatureId?: 'voice';
+  requiredFeatureId?: FeatureId;
   startPreflight?: (params: ExecutionRunIntentStartPreflightParams) => Promise<ExecutionRunStartIntentPolicyResult>;
 }>;
 
@@ -51,7 +52,7 @@ export const EXECUTION_RUN_INTENT_POLICY_REGISTRY: Readonly<Record<ExecutionRunI
         allowedRunClasses: matrix.allowedRunClasses,
         allowedIoModes: matrix.allowedIoModes,
         usesReviewBoundedTimeoutOverride: intent === 'review',
-        ...(intent === 'voice_agent' ? { requiredFeatureId: 'voice' as const } : {}),
+        ...(intent === 'voice_agent' ? { requiredFeatureId: 'voice.agent' as const } : {}),
       };
       return [intent, policy];
     }),

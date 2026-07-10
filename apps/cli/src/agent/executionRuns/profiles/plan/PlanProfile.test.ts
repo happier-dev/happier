@@ -106,7 +106,41 @@ describe('PlanProfile', () => {
     expect((res.toolResultOutput as any)?.error?.code).toBe('invalid_output');
   });
 
-  it('recovers loose prose output for pi by extracting plan items (best-effort)', () => {
+  it('recovers loose prose output when structured recovery declares loose plan sections', () => {
+    const start = {
+      sessionId: 'sess_1',
+      runId: 'run_1',
+      callId: 'call_1',
+      sidechainId: 'call_1',
+      intent: 'plan',
+      backendId: 'acme',
+      backendTarget: { kind: 'builtInAgent', agentId: 'acme' },
+      instructions: 'plan this',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      startedAtMs: 1,
+    } as const;
+
+    const res = PlanProfile.onBoundedComplete({
+      start,
+      rawText: [
+        'Plan:',
+        '- Step 1: Do the thing',
+        '- Step 2: Verify it works',
+      ].join('\n'),
+      finishedAtMs: 2,
+      structuredOutputRecovery: { plan: 'loose-sections' },
+    });
+
+    expect(res.status).toBe('succeeded');
+    expect(res.structuredMeta?.kind).toBe('plan_output.v1');
+    const payload = (res.structuredMeta as any)?.payload;
+    expect(payload?.sections?.[0]?.items?.length).toBeGreaterThan(0);
+  });
+
+  it('does not recover loose plan prose from backend id alone', () => {
     const start = {
       sessionId: 'sess_1',
       runId: 'run_1',
@@ -133,10 +167,8 @@ describe('PlanProfile', () => {
       finishedAtMs: 2,
     });
 
-    expect(res.status).toBe('succeeded');
-    expect(res.structuredMeta?.kind).toBe('plan_output.v1');
-    const payload = (res.structuredMeta as any)?.payload;
-    expect(payload?.sections?.[0]?.items?.length).toBeGreaterThan(0);
+    expect(res.status).toBe('failed');
+    expect((res.toolResultOutput as any)?.error?.code).toBe('invalid_output');
   });
 
   it('builds a plan repair prompt and normalizes plan sidechain text', () => {
@@ -161,6 +193,8 @@ describe('PlanProfile', () => {
 
     expect(prompt).toContain('Do not run any tools. Return ONLY valid JSON');
     expect(prompt).toContain('"sections": [{ "title": "Steps", "items": ["Step 1"] }]');
+    expect(prompt).toContain('"recommendedBackendId": "backend-id"');
+    expect(prompt).not.toContain('"recommendedBackendId": "claude"');
     expect(prompt).toContain('not json');
 
     expect(PlanProfile.computeSidechainStreamText?.({ fullText: 'Plan prose\n{"summary":"Ok","sections":[]}' })).toBe('Plan prose');

@@ -40,6 +40,10 @@ describe('executionRun intent policy registry', () => {
     expect(isSafePermissionModeForIntent('scm_diff_summary', 'workspace_write')).toBe(false);
   });
 
+  it('gates voice-agent execution through the canonical voice.agent feature decision', () => {
+    expect(EXECUTION_RUN_INTENT_POLICY_REGISTRY.voice_agent.requiredFeatureId).toBe('voice.agent');
+  });
+
   it('uses the review bounded timeout override only for review runs', () => {
     expect(resolveExecutionRunStartBoundedTimeoutMs({
       policy: { boundedTimeoutMs: 30, reviewBoundedTimeoutMs: 60 },

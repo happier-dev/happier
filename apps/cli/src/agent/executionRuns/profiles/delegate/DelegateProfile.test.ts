@@ -104,15 +104,15 @@ describe('DelegateProfile', () => {
     expect((res.toolResultOutput as any)?.error?.code).toBe('invalid_output');
   });
 
-  it('recovers loose prose output for pi by extracting deliverables (best-effort)', () => {
+  it('recovers loose prose output when structured recovery declares loose deliverables', () => {
     const start = {
       sessionId: 'sess_1',
       runId: 'run_1',
       callId: 'call_1',
       sidechainId: 'call_1',
       intent: 'delegate',
-      backendId: 'pi',
-      backendTarget: { kind: 'builtInAgent', agentId: 'pi' },
+      backendId: 'acme',
+      backendTarget: { kind: 'builtInAgent', agentId: 'acme' },
       instructions: 'delegate this',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -129,6 +129,7 @@ describe('DelegateProfile', () => {
         '- pi-2: Add trailing comma tolerant JSON parsing',
       ].join('\n'),
       finishedAtMs: 2,
+      structuredOutputRecovery: { delegate: 'loose-deliverables' },
     });
 
     expect(res.status).toBe('succeeded');
@@ -141,15 +142,15 @@ describe('DelegateProfile', () => {
     ]);
   });
 
-  it('recovers loose numbered-list output for pi by extracting deliverables (best-effort)', () => {
+  it('recovers loose numbered-list output when structured recovery declares loose deliverables', () => {
     const start = {
       sessionId: 'sess_1',
       runId: 'run_1',
       callId: 'call_1',
       sidechainId: 'call_1',
       intent: 'delegate',
-      backendId: 'pi',
-      backendTarget: { kind: 'builtInAgent', agentId: 'pi' },
+      backendId: 'acme',
+      backendTarget: { kind: 'builtInAgent', agentId: 'acme' },
       instructions: 'delegate this',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -167,6 +168,7 @@ describe('DelegateProfile', () => {
         '3) pi-3: Add tests for pi loose parsing',
       ].join('\n'),
       finishedAtMs: 2,
+      structuredOutputRecovery: { delegate: 'loose-deliverables' },
     });
 
     expect(res.status).toBe('succeeded');
@@ -180,15 +182,15 @@ describe('DelegateProfile', () => {
     ]);
   });
 
-  it('recovers tight numbered-list output for pi when the marker is not followed by whitespace', () => {
+  it('recovers tight numbered-list output when structured recovery declares loose deliverables', () => {
     const start = {
       sessionId: 'sess_1',
       runId: 'run_1',
       callId: 'call_1',
       sidechainId: 'call_1',
       intent: 'delegate',
-      backendId: 'pi',
-      backendTarget: { kind: 'builtInAgent', agentId: 'pi' },
+      backendId: 'acme',
+      backendTarget: { kind: 'builtInAgent', agentId: 'acme' },
       instructions: 'delegate this',
       permissionMode: 'read_only',
       retentionPolicy: 'ephemeral',
@@ -205,6 +207,7 @@ describe('DelegateProfile', () => {
         '2)pi-2: Keep parsing stable',
       ].join('\n'),
       finishedAtMs: 2,
+      structuredOutputRecovery: { delegate: 'loose-deliverables' },
     });
 
     expect(res.status).toBe('succeeded');
@@ -213,7 +216,82 @@ describe('DelegateProfile', () => {
     expect(payload?.deliverables?.map((d: any) => d.id)).toEqual(['pi-1', 'pi-2']);
   });
 
-  it('recovers loose prose output for codex by extracting deliverables (best-effort)', () => {
+  it('recovers loose prose output when structured recovery declares loose deliverables with single fallback', () => {
+    const start = {
+      sessionId: 'sess_1',
+      runId: 'run_1',
+      callId: 'call_1',
+      sidechainId: 'call_1',
+      intent: 'delegate',
+      backendId: 'acme',
+      backendTarget: { kind: 'builtInAgent', agentId: 'acme' },
+      instructions: 'delegate this',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      startedAtMs: 1,
+    } as const;
+
+    const res = DelegateProfile.onBoundedComplete({
+      start,
+      rawText: [
+        'Deliverables:',
+        '- codex-1: Ensure delegate outputs strict JSON',
+        '- codex-2: Add a loose fallback for non-JSON outputs',
+      ].join('\n'),
+      finishedAtMs: 2,
+      structuredOutputRecovery: { delegate: 'loose-deliverables-with-single-fallback' },
+    });
+
+    expect(res.status).toBe('succeeded');
+    expect(res.structuredMeta?.kind).toBe('delegate_output.v1');
+    const payload = (res.structuredMeta as any)?.payload;
+    expect(payload?.deliverables?.map((d: any) => d.id)).toEqual(['codex-1', 'codex-2']);
+    expect(payload?.deliverables?.map((d: any) => d.title)).toEqual([
+      'Ensure delegate outputs strict JSON',
+      'Add a loose fallback for non-JSON outputs',
+    ]);
+  });
+
+  it('recovers non-bulleted prose as a single deliverable when structured recovery declares single fallback', () => {
+    const start = {
+      sessionId: 'sess_1',
+      runId: 'run_1',
+      callId: 'call_1',
+      sidechainId: 'call_1',
+      intent: 'delegate',
+      backendId: 'acme',
+      backendTarget: { kind: 'builtInAgent', agentId: 'acme' },
+      instructions: 'delegate this',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      startedAtMs: 1,
+    } as const;
+
+    const res = DelegateProfile.onBoundedComplete({
+      start,
+      rawText: [
+        'I completed the delegation successfully.',
+        'No further action is required.',
+      ].join('\n'),
+      finishedAtMs: 2,
+      structuredOutputRecovery: { delegate: 'loose-deliverables-with-single-fallback' },
+    });
+
+    expect(res.status).toBe('succeeded');
+    expect(res.structuredMeta?.kind).toBe('delegate_output.v1');
+    const payload = (res.structuredMeta as any)?.payload;
+    expect(payload?.summary).toBe('I completed the delegation successfully.');
+    expect(payload?.deliverables?.map((d: any) => d.id)).toEqual(['d1']);
+    expect(payload?.deliverables?.map((d: any) => d.title)).toEqual([
+      'I completed the delegation successfully.',
+    ]);
+  });
+
+  it('does not recover loose delegate prose from backend id alone', () => {
     const start = {
       sessionId: 'sess_1',
       runId: 'run_1',
@@ -240,50 +318,8 @@ describe('DelegateProfile', () => {
       finishedAtMs: 2,
     });
 
-    expect(res.status).toBe('succeeded');
-    expect(res.structuredMeta?.kind).toBe('delegate_output.v1');
-    const payload = (res.structuredMeta as any)?.payload;
-    expect(payload?.deliverables?.map((d: any) => d.id)).toEqual(['codex-1', 'codex-2']);
-    expect(payload?.deliverables?.map((d: any) => d.title)).toEqual([
-      'Ensure delegate outputs strict JSON',
-      'Add a loose fallback for non-JSON outputs',
-    ]);
-  });
-
-  it('recovers non-bulleted codex prose output as a single deliverable (best-effort)', () => {
-    const start = {
-      sessionId: 'sess_1',
-      runId: 'run_1',
-      callId: 'call_1',
-      sidechainId: 'call_1',
-      intent: 'delegate',
-      backendId: 'codex',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-      instructions: 'delegate this',
-      permissionMode: 'read_only',
-      retentionPolicy: 'ephemeral',
-      runClass: 'bounded',
-      ioMode: 'request_response',
-      startedAtMs: 1,
-    } as const;
-
-    const res = DelegateProfile.onBoundedComplete({
-      start,
-      rawText: [
-        'I completed the delegation successfully.',
-        'No further action is required.',
-      ].join('\n'),
-      finishedAtMs: 2,
-    });
-
-    expect(res.status).toBe('succeeded');
-    expect(res.structuredMeta?.kind).toBe('delegate_output.v1');
-    const payload = (res.structuredMeta as any)?.payload;
-    expect(payload?.summary).toBe('I completed the delegation successfully.');
-    expect(payload?.deliverables?.map((d: any) => d.id)).toEqual(['d1']);
-    expect(payload?.deliverables?.map((d: any) => d.title)).toEqual([
-      'I completed the delegation successfully.',
-    ]);
+    expect(res.status).toBe('failed');
+    expect((res.toolResultOutput as any)?.error?.code).toBe('invalid_output');
   });
 
   it('builds a delegate repair prompt and normalizes delegate sidechain text', () => {
