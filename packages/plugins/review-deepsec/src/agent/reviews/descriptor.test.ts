@@ -15,7 +15,7 @@ describe('DeepSec review descriptor', () => {
     ]);
     expect(deepsecReviewDescriptor.capabilities.executionRun.review.costClass).toBe('expensive');
 
-    const backend = PLUGIN_MANIFEST.contributes.backends[0];
+    const backend = PLUGIN_MANIFEST.contributes.agents[0];
     expect(backend?.id).toBe('deepsec');
     expect(backend?.capabilities.session.supported).toBe(false);
     expect(backend?.capabilities.executionRun.review.requiredPrerequisites).toContain('node>=22');
@@ -45,7 +45,7 @@ describe('DeepSec review descriptor', () => {
   });
 
   it('declares the gateway key environment permission consumed by readiness checks', () => {
-    expect(PLUGIN_MANIFEST.capabilities.permissions).toContainEqual(expect.objectContaining({
+    expect(PLUGIN_MANIFEST.permissions.required).toContainEqual(expect.objectContaining({
       capability: 'env',
       scope: 'AI_GATEWAY_API_KEY',
     }));

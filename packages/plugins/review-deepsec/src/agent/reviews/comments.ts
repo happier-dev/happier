@@ -1,19 +1,10 @@
-import { createHash } from 'node:crypto';
-
 import type {
   PluginReviewCommentsServiceV1,
   ReviewCommentV1,
 } from '@happier-dev/plugin-sdk';
+import { createReviewCommentFingerprintV1 } from '@happier-dev/plugin-sdk/reviews';
 
 import type { ParsedDeepSecCommentOutEntry } from './commentOut.js';
-
-function stableHash(input: string): string {
-  return createHash('sha256').update(input).digest('hex');
-}
-
-function filePathForEntry(entry: ParsedDeepSecCommentOutEntry): string {
-  return 'filePath' in entry.anchor ? entry.anchor.filePath : 'workspace';
-}
 
 export async function mapDeepSecReviewComments(params: Readonly<{
   projectId: string;
@@ -29,7 +20,6 @@ export async function mapDeepSecReviewComments(params: Readonly<{
     if (!entry) continue;
     const body = entry.body.trim();
     if (!body) continue;
-    const filePath = filePathForEntry(entry);
     const snapshot = await params.comments.resolveSnapshot({
       projectId: params.projectId,
       ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
@@ -40,11 +30,12 @@ export async function mapDeepSecReviewComments(params: Readonly<{
     });
     if (!snapshot) continue;
     const ruleId = entry.ruleId?.trim() || entry.category?.trim() || 'deepsec';
-    const lineRange = entry.anchor.kind === 'line'
-      ? { startLine: entry.anchor.line, endLine: entry.anchor.line }
-      : entry.anchor.kind === 'range'
-        ? { startLine: entry.anchor.startLine, endLine: entry.anchor.endLine }
-        : undefined;
+    const fingerprint = createReviewCommentFingerprintV1({
+      ruleId,
+      anchor: entry.anchor,
+      message: body,
+      engineId: 'deepsec',
+    });
     const result = await params.comments.create({
       projectId: params.projectId,
       ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
@@ -55,14 +46,9 @@ export async function mapDeepSecReviewComments(params: Readonly<{
       anchor: entry.anchor,
       snapshot,
       evidence: [{ kind: 'reasoning', message: `DeepSec finding ${index + 1}` }],
-      fingerprint: {
-        ruleId,
-        normalizedMessageHash: stableHash(`${ruleId}:${filePath}:${body.toLowerCase()}`),
-        ...(lineRange ? { lineRange } : {}),
-        engineId: 'deepsec',
-      },
+      fingerprint,
       authorIntent: 'propose',
-      clientMutationId: `deepsec:${params.runId}:${index + 1}:${stableHash(`${filePath}:${body}`).slice(0, 12)}`,
+      clientMutationId: `deepsec:${params.runId}:${index + 1}:${fingerprint.normalizedMessageHash.slice(0, 12)}`,
       metadata: {
         severity: mapCommentSeverity(entry.severity),
         taxonomyIds: [entry.ruleId, entry.category].filter((value): value is string => Boolean(value)),

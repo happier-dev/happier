@@ -17,26 +17,26 @@ export const PLUGIN_MANIFEST = definePluginManifest({
     resolvedVersion: '0.0.0',
   },
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['backends', 'executionRunProfiles'] },
-  targets: {},
-  capabilities: {
-    permissions: [{
+  activationEvents: ['onReviewProvider:deepsec'],
+  uses: ['agents', 'executionRunProfiles'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: {
+    required: [{
       capability: 'env',
       reason: 'Read AI_GATEWAY_API_KEY for DeepSec readiness checks and AI Gateway-backed review execution.',
       scope: 'AI_GATEWAY_API_KEY',
     }],
-    optionalPermissions: [{
+    optional: [{
       capability: 'reviews.comments.write.direct',
       reason: 'Write approved DeepSec review comments directly when the user grants direct-write authority.',
     }],
   },
   contributes: {
-    backends: [{
+    agents: [{
       kindVersion: 1,
       id: deepsecReviewDescriptor.id,
-      agentId: deepsecReviewDescriptor.id,
       title: 'DeepSec',
-      engine: { kind: 'custom' },
+      runtime: { kind: 'custom' },
       capabilities: deepsecReviewDescriptor.capabilities,
       surfaceHandlers: [],
     }],

@@ -39,7 +39,7 @@ describe('checkDeepSecReadiness', () => {
         majorVersion: 20,
         diagnostics: [],
       },
-      installUrl: 'https://github.com/relari-ai/deepsec',
+      installUrl: 'https://github.com/vercel-labs/deepsec',
       commandPreview: ['deepsec', '--help'],
       messageKey: 'plugins.deepsec.readiness.missing',
     });

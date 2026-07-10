@@ -223,6 +223,71 @@ Validate the full redirect block.
     });
   });
 
+  it('uses the canonical review fingerprint without embedding the raw comment body', async () => {
+    const entries = parseDeepSecCommentOutMarkdown(`
+### src/auth.ts:42
+
+**Rule:** security
+
+Validate redirect destinations before use.
+`);
+    const requests: unknown[] = [];
+    const comments: Pick<PluginReviewCommentsServiceV1, 'create' | 'resolveSnapshot'> = {
+      resolveSnapshot: vi.fn(async () => snapshot),
+      async create(request) {
+        requests.push(request);
+        const now = 123;
+        const comment: ReviewCommentV1 = {
+          v: 1,
+          id: 'comment-fingerprint',
+          accountId: 'account-1',
+          projectId: request.projectId,
+          runId: request.runId,
+          engineId: request.engineId,
+          state: 'proposed',
+          body: request.body,
+          bodyVersion: 1,
+          anchor: request.anchor,
+          snapshot: request.snapshot,
+          author: { kind: 'plugin', pluginId: 'review-deepsec', engineRunId: request.runId },
+          flags: {},
+          dispositions: {},
+          threadId: 'comment-fingerprint',
+          evidence: request.evidence,
+          transitions: [],
+          fingerprint: request.fingerprint,
+          createdAt: now,
+          updatedAt: now,
+          serverRevision: 1,
+          edits: [],
+          metadata: request.metadata,
+        };
+        return { comment };
+      },
+    };
+
+    await mapDeepSecReviewComments({
+      projectId: 'project-1',
+      runId: 'run-1',
+      entries,
+      comments,
+    });
+
+    const fingerprint = (requests[0] as {
+      fingerprint?: { normalizedMessageHash?: string };
+    }).fingerprint;
+
+    expect(requests[0]).toMatchObject({
+      fingerprint: {
+        ruleId: 'security',
+        lineRange: { startLine: 42, endLine: 42 },
+        engineId: 'deepsec',
+      },
+    });
+    expect(fingerprint?.normalizedMessageHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(fingerprint)).not.toContain('Validate redirect destinations before use.');
+  });
+
   it('skips proposed comments when the host R.0 snapshot resolver cannot capture the anchor', async () => {
     const entries = parseDeepSecCommentOutMarkdown(`
 ### src/missing.ts:7

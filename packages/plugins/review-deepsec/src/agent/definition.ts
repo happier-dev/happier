@@ -1,0 +1,61 @@
+const DEEPSEC_AGENT_ID = 'deepsec';
+
+// IMPORTANT: this must stay JSON-serializable (data-only).
+export const AGENT_DEFINITION = Object.freeze({
+  id: DEEPSEC_AGENT_ID,
+  core: {
+    id: DEEPSEC_AGENT_ID,
+    cliSubcommand: 'deepsec',
+    detectKey: 'deepsec',
+    flavorAliases: [],
+    cloudConnect: null,
+    connectedServices: null,
+    resume: { vendorResume: 'unsupported' },
+    sessionStorage: { direct: false, persisted: false },
+    sessionCapabilities: {
+      sessionListing: 'unsupported',
+      sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
+      sessionRollback: { conversation: 'unsupported' },
+    },
+    handoff: { vendorStateTransfer: 'unsupported' },
+    tools: { delivery: 'unsupported', support: 'unsupported' },
+  },
+  sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },
+  sessionModesKind: 'none',
+  modelConfig: {
+    supportsSelection: false,
+    nonAcpApplyScope: 'next_prompt',
+    dynamicProbe: 'static-only',
+    defaultMode: 'review',
+    allowedModes: ['review', 'repository_security_audit'],
+  },
+  authProbeConfig: {
+    agentId: DEEPSEC_AGENT_ID,
+    binaryNames: ['deepsec'],
+    statusCommand: null,
+    parser: 'unknown',
+    backgroundChecks: 'safe',
+    envVars: ['AI_GATEWAY_API_KEY'],
+  },
+  localCli: {
+    agentId: DEEPSEC_AGENT_ID,
+    detectKey: 'deepsec',
+    machineLoginKey: 'deepsec',
+    supportKind: 'status_only',
+    loginLaunch: null,
+  },
+  agentCliRuntime: {
+    id: DEEPSEC_AGENT_ID,
+    title: 'DeepSec',
+    binaryName: 'deepsec',
+    knownUserBinDirSuffixes: null,
+    sourcePreferenceDefault: 'system-first',
+    managedInstall: null,
+    manualInstallKind: 'command',
+    manualInstallRecipes: null,
+    acceptsJavaScriptFileOverride: false,
+    installGuideUrl: null,
+    docsUrl: null,
+  },
+  agentSettings: null,
+});

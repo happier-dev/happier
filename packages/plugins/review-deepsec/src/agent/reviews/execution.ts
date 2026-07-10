@@ -17,7 +17,7 @@ import {
 import {
   ReviewStartInputSchema,
   type ReviewFindingsV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/plugin-sdk/reviews';
 
 import {
   mapDeepSecReviewComments,
@@ -283,7 +283,7 @@ async function resolveAgentCliReadiness(params: Readonly<{
   projectId?: string;
   workspaceId?: string;
 }>): Promise<DeepSecAgentCli | null> {
-  const readiness = await params.ctx.agents.cli.checkReadiness({
+  const readiness = await params.ctx.agentRuntime.agents.cli.checkReadiness({
     candidates: resolveAgentCliCandidates(params.configuredAgentCli),
     requirement: 'any',
     cwd: params.cwd,
@@ -328,7 +328,7 @@ export function createDeepSecExecutionRunBackend(params: Readonly<{
         confirmedCostWarning: startInput.confirmedCostWarning,
         cost: startInput.cost,
         preferredExecutablePath: startInput.preferredExecutablePath,
-        exec: params.ctx.exec,
+        exec: params.ctx.agentRuntime.exec,
         tempFiles: await createDeepSecTempFiles(params.ctx.fs),
         readiness: {
           agentCli,

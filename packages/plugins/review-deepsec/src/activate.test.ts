@@ -11,23 +11,23 @@ import type {
   PluginContextV1,
   PluginReviewCommentCreateRequestV1,
   PluginReviewCommentCreateResultV1,
-  RegisterBackendEngineV1,
+  RegisterAgentRuntimeV1,
   ReviewCommentSnapshotV1,
   ReviewCommentV1,
   SystemToolLaunchGrantV1,
   SystemToolResolveRequestV1,
 } from '@happier-dev/plugin-sdk';
-import { ReviewFindingsV2Schema } from '@happier-dev/protocol';
+import { ReviewFindingsV2Schema } from '@happier-dev/plugin-sdk/reviews';
 import { describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
 
-function readRegisteredBackend(registerBackendEngine: ReturnType<typeof vi.fn>): RegisterBackendEngineV1 {
-  const registration = registerBackendEngine.mock.calls[0]?.[0];
+function readRegisteredBackend(registerAgentRuntime: ReturnType<typeof vi.fn>): RegisterAgentRuntimeV1 {
+  const registration = registerAgentRuntime.mock.calls[0]?.[0];
   if (!registration || typeof registration !== 'object') {
     throw new Error('Expected DeepSec activation to register a backend engine');
   }
-  return registration as RegisterBackendEngineV1;
+  return registration as RegisterAgentRuntimeV1;
 }
 
 function createDeepSecComment(
@@ -175,13 +175,15 @@ function createContextFixture(params?: Readonly<{
 
   // Boundary fixture: the activation path uses only these PluginContext services.
   const ctx = {
-    exec: {
-      systemTools: { resolve },
-      run,
-    },
-    agents: {
-      cli: {
-        checkReadiness: checkAgentCliReadiness,
+    agentRuntime: {
+      exec: {
+        systemTools: { resolve },
+        run,
+      },
+      agents: {
+        cli: {
+          checkReadiness: checkAgentCliReadiness,
+        },
       },
     },
     reviews: {
@@ -238,12 +240,12 @@ function createSupportedScmReviewScope(paths: readonly string[] = ['src/auth.ts'
 
 describe('activate', () => {
   it('registers DeepSec as a review-only backend engine', async () => {
-    const registerBackendEngine = vi.fn();
+    const registerAgentRuntime = vi.fn();
 
-    activate({ registerBackendEngine });
+    activate({ registerAgentRuntime });
 
-    const registration = readRegisteredBackend(registerBackendEngine);
-    expect(registration.backendId).toBe('deepsec');
+    const registration = readRegisteredBackend(registerAgentRuntime);
+    expect(registration.agentId).toBe('deepsec');
 
     const { ctx } = createContextFixture();
     const engine = await registration.create(ctx);
@@ -285,9 +287,9 @@ Validate redirect destinations before use.
         };
       },
     });
-    const registerBackendEngine = vi.fn();
-    activate({ registerBackendEngine });
-    const registration = readRegisteredBackend(registerBackendEngine);
+    const registerAgentRuntime = vi.fn();
+    activate({ registerAgentRuntime });
+    const registration = readRegisteredBackend(registerAgentRuntime);
     const engine = await registration.create(ctx);
     const executionRunParams = {
       cwd: '/repo',
@@ -364,7 +366,6 @@ Validate redirect destinations before use.
       runRef: {
         runId: 'run-1',
         callId: 'deepsec:run-1',
-        backendId: 'deepsec',
       },
       summary: expect.stringContaining('1'),
       findings: [
@@ -398,9 +399,9 @@ Validate redirect destinations before use.
         };
       },
     });
-    const registerBackendEngine = vi.fn();
-    activate({ registerBackendEngine });
-    const registration = readRegisteredBackend(registerBackendEngine);
+    const registerAgentRuntime = vi.fn();
+    activate({ registerAgentRuntime });
+    const registration = readRegisteredBackend(registerAgentRuntime);
     const engine = await registration.create(ctx);
     const backend = engine.runtimeCore?.createExecutionRunBackend({
       cwd: '/repo',
@@ -439,9 +440,9 @@ Validate redirect destinations before use.
 
   it('rejects unsupported host SCM scope before resolving the DeepSec executable', async () => {
     const { ctx, resolve, run } = createContextFixture();
-    const registerBackendEngine = vi.fn();
-    activate({ registerBackendEngine });
-    const registration = readRegisteredBackend(registerBackendEngine);
+    const registerAgentRuntime = vi.fn();
+    activate({ registerAgentRuntime });
+    const registration = readRegisteredBackend(registerAgentRuntime);
     const engine = await registration.create(ctx);
     const backend = engine.runtimeCore?.createExecutionRunBackend({
       cwd: '/repo',
@@ -496,9 +497,9 @@ Validate redirect destinations before use.
 
   it('uses host agent CLI readiness for default Claude-or-Codex support without undeclared system-tool probes', async () => {
     const { ctx, resolve, run, checkAgentCliReadiness, createComment } = createContextFixture();
-    const registerBackendEngine = vi.fn();
-    activate({ registerBackendEngine });
-    const registration = readRegisteredBackend(registerBackendEngine);
+    const registerAgentRuntime = vi.fn();
+    activate({ registerAgentRuntime });
+    const registration = readRegisteredBackend(registerAgentRuntime);
     const engine = await registration.create(ctx);
     const backend = engine.runtimeCore?.createExecutionRunBackend({
       cwd: '/repo',
@@ -550,7 +551,6 @@ Validate redirect destinations before use.
       runRef: {
         runId: 'run-1',
         callId: 'deepsec:run-1',
-        backendId: 'deepsec',
       },
       findings: [],
     });

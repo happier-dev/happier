@@ -80,19 +80,21 @@ function createPluginContextFixture() {
     diagnostics: [],
   }));
   const ctx = {
-    agents: {
-      cli: {
-        checkReadiness,
-      },
-    },
     env: {
       get: (key: string) => key === 'AI_GATEWAY_API_KEY' ? 'gateway-key' : undefined,
     },
-    exec: {
-      systemTools: {
-        resolve: vi.fn(async () => grant),
+    agentRuntime: {
+      agents: {
+        cli: {
+          checkReadiness,
+        },
       },
-      run,
+      exec: {
+        systemTools: {
+          resolve: vi.fn(async () => grant),
+        },
+        run,
+      },
     },
     fs: {
       createTempDirectory,
