@@ -222,9 +222,13 @@ const RawAgentOutputDataUnknownSchema = z
   .object({ type: z.string() })
   .extend(OutputExtrasShape)
   .passthrough()
-  .refine((value) => !KNOWN_OUTPUT_DATA_TYPES.has(value.type as any), {
-    message: 'Unknown output type must not collide with known output types',
-  })
+  // NOTE: We intentionally do NOT reject known `type` values here.
+  // `RawAgentOutputDataSchema` is `union([Known, Unknown])` with Known tried first,
+  // so well-formed known-type rows still match their rich Known variant. A known-type
+  // row whose body does NOT match (e.g. a Claude `assistant` row missing `message`,
+  // or with `content: null`) falls through to this catch-all instead of failing the
+  // entire record — which would otherwise render as "[Unparsed agent message]" in the
+  // UI. This matches the package's forward-compatibility philosophy.
   .transform((value) => ({ ...value, type: value.type as UnknownOutputDataType }));
 
 const RawAgentOutputDataSchema = z.union([RawAgentOutputDataKnownSchema, RawAgentOutputDataUnknownSchema]);

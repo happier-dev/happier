@@ -62,6 +62,57 @@ describe('TranscriptRawRecordV1Schema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  // Fail-soft: a known output `type` whose body does not match its known variant must NOT
+  // hard-fail the whole record (which renders as "[Unparsed agent message]" in the UI).
+  // It should fall through to the unknown-output catch-all instead. These shapes occur in
+  // real Claude transcripts for synthetic / API-error / interrupted rows.
+  describe('fail-soft malformed assistant/user output payloads', () => {
+    const wrap = (data: Record<string, unknown>) => ({
+      role: 'agent',
+      content: { type: 'output', data },
+    });
+
+    it('accepts assistant row without a `message` field (synthetic/API-error row)', () => {
+      const parsed = TranscriptRawRecordV1Schema.safeParse(wrap({
+        type: 'assistant',
+        uuid: 'u1',
+        isApiErrorMessage: true,
+      }));
+      expect(parsed.success).toBe(true);
+    });
+
+    it('accepts assistant row whose `message` is present but `role` is missing', () => {
+      const parsed = TranscriptRawRecordV1Schema.safeParse(wrap({
+        type: 'assistant',
+        uuid: 'u2',
+        message: { content: [{ type: 'text', text: 'hi' }] },
+      }));
+      expect(parsed.success).toBe(true);
+    });
+
+    it('accepts assistant row with null `content`', () => {
+      const parsed = TranscriptRawRecordV1Schema.safeParse(wrap({
+        type: 'assistant',
+        uuid: 'u3',
+        message: { role: 'assistant', content: null },
+      }));
+      expect(parsed.success).toBe(true);
+    });
+
+    it('still accepts well-formed assistant rows as the rich known variant (no regression)', () => {
+      const parsed = TranscriptRawRecordV1Schema.safeParse(wrap({
+        type: 'assistant',
+        uuid: 'u4',
+        message: {
+          role: 'assistant',
+          model: 'claude-sonnet-4',
+          content: [{ type: 'text', text: 'hello' }],
+        },
+      }));
+      expect(parsed.success).toBe(true);
+    });
+  });
+
   it('parses acp records with unknown data types (forward compatibility)', () => {
     const parsed = TranscriptRawRecordV1Schema.safeParse({
       role: 'agent',
