@@ -161,6 +161,7 @@ describe('createTailscaleEnsureReadyHandler', () => {
         const { createTailscaleEnsureReadyHandler } = await import('./tailscaleEnsureReady.js');
 
         let inspectCalls = 0;
+        let nowMs = 0;
         const inspectState = vi.fn(async () => {
             inspectCalls += 1;
             return {
@@ -185,7 +186,10 @@ describe('createTailscaleEnsureReadyHandler', () => {
                         stderr: '',
                     },
                 })),
-                sleep: async () => undefined,
+                sleep: async (ms) => {
+                    nowMs += ms;
+                },
+                now: () => nowMs,
             }),
             input: {
                 loginPolicy: 'interactive',

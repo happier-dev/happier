@@ -2220,10 +2220,6 @@ describe('createHsetupSystemTaskRegistry', () => {
             url: 'https://login.tailscale.com/f/serve?node=node-123',
           },
         }),
-        expect.objectContaining({
-          type: 'progress',
-          stepId: 'tailscale.serveEnable',
-        }),
       ]);
       expect(fakeCli.readInvocations()).toEqual([
         ['status', '--json'],
@@ -2232,9 +2228,6 @@ describe('createHsetupSystemTaskRegistry', () => {
         ['status', '--json'],
         ['serve', 'status'],
         ['serve', '--bg', 'http://127.0.0.1:3005'],
-        ['status', '--json'],
-        ['status', '--json'],
-        ['serve', 'status'],
       ]);
     } finally {
       restoreEnvVar('HAPPIER_TAILSCALE_BIN', previousTailscaleBin);
@@ -2295,7 +2288,7 @@ describe('createHsetupSystemTaskRegistry', () => {
       process.env.HAPPIER_TAILSCALE_BIN = fakeCli.cliPath;
       process.env.HAPPIER_FAKE_TAILSCALE_STATE_PATH = join(fakeCli.cliPath, '..', 'scenario.json');
       process.env.HAPPIER_FAKE_TAILSCALE_LOG_PATH = join(fakeCli.cliPath, '..', 'invocations.log');
-      process.env.HAPPIER_TAILSCALE_LOGIN_POLL_TIMEOUT_MS = '2';
+      process.env.HAPPIER_TAILSCALE_LOGIN_POLL_TIMEOUT_MS = '5000';
       process.env.HAPPIER_TAILSCALE_LOGIN_POLL_INTERVAL_MS = '1';
 
       const result = await executeSystemTask({

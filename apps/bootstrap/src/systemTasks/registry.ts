@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { relayAccess, systemTasks } from '@happier-dev/cli-common';
 import { parseSetupRepairThisComputerParams } from '@happier-dev/cli-common/systemTasks';
 import { TailscaleCommandError } from '@happier-dev/cli-common/tailscale';
-import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/providers';
+import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/agents';
 import type { RelayAccessExecutionContext } from '@happier-dev/cli-common/relayAccess';
 import type { SystemTaskJsonObject, SystemTaskJsonValue } from '@happier-dev/protocol';
 

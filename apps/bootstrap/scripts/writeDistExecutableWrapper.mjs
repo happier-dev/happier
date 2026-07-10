@@ -1,9 +1,7 @@
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-export async function writeDistExecutableWrapper(params: Readonly<{
-  targetPath: string;
-}>): Promise<void> {
+export async function writeDistExecutableWrapper(params) {
   await mkdir(dirname(params.targetPath), { recursive: true });
   await writeFile(params.targetPath, [
     '#!/usr/bin/env node',

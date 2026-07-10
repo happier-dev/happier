@@ -1,14 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 
-import { resolveBootstrapRepoRoot } from './resolveBootstrapRepoRoot.mjs';
-import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
-
-const scriptDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolveBootstrapRepoRoot({ startDir: scriptDir });
 const invocation = resolveTypeScriptCliInvocation({
-  repoRoot,
   processExecPath: process.execPath,
 });
 
