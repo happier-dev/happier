@@ -1,6 +1,11 @@
 import { basename, dirname, join, resolve } from 'node:path';
 
 import {
+  createTerminalBreadcrumbResolver,
+  type TerminalBreadcrumbResolver,
+} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+
+import {
   canonicalizeOhMyPiExternalSessionsPath,
   resolveConfiguredOhMyPiAgentDir,
 } from '../surfaces/sessions/external/source.js';
@@ -30,9 +35,13 @@ export type ProjectOhMyPiTerminalRuntimeBreadcrumbParams = Readonly<{
   remoteSessionId: string;
 }>;
 
+export type CreateOhMyPiTerminalRuntimeBreadcrumbResolverOptions = Readonly<{
+  readTextFile?: (path: string) => string;
+}>;
+
 export function parseOhMyPiTerminalRuntimeSessionId(sessionFilePath: string): string | null {
   const fileName = basename(sessionFilePath);
-  if (!fileName.endsWith('.jsonl')) {
+  if (!fileName.toLowerCase().endsWith('.jsonl')) {
     return null;
   }
 
@@ -79,3 +88,28 @@ export function projectOhMyPiTerminalRuntimeBreadcrumb(
     env: params.input.env ?? process.env,
   };
 }
+
+export function createOhMyPiTerminalRuntimeBreadcrumbResolver(
+  options?: CreateOhMyPiTerminalRuntimeBreadcrumbResolverOptions,
+): TerminalBreadcrumbResolver<ResolveOhMyPiTerminalRuntimeBreadcrumbParams, OhMyPiTerminalRuntimeBreadcrumb> {
+  return createTerminalBreadcrumbResolver({
+    agentDir: resolveOhMyPiTerminalRuntimeAgentDir,
+    resolveTerminalId: (input) => input.terminalId?.trim() || null,
+    breadcrumbSubdir: OH_MY_PI_TERMINAL_BREADCRUMB_SUBDIR,
+    sessionsSubdir: OH_MY_PI_TERMINAL_SESSIONS_SUBDIR,
+    parseSessionId: parseOhMyPiTerminalRuntimeSessionId,
+    validateCwd: isOhMyPiTerminalRuntimeCwdMatch,
+    validateSessionFile: () => true,
+    projectSource: (context) => projectOhMyPiTerminalRuntimeBreadcrumb({
+      input: context.input,
+      agentDir: context.agentDir,
+      breadcrumbCwd: context.breadcrumbCwd,
+      sessionFilePath: context.sessionFilePath,
+      remoteSessionId: context.remoteSessionId,
+    }),
+    readTextFile: options?.readTextFile,
+    canonicalizePath: canonicalizeOhMyPiTerminalRuntimePath,
+  });
+}
+
+export const resolveOhMyPiTerminalRuntimeBreadcrumb = createOhMyPiTerminalRuntimeBreadcrumbResolver();

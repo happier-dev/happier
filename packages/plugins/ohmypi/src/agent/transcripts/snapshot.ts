@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 
-import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/plugin-sdk/sessions';
 
 type SessionHeader = Readonly<{
   type: 'session';
@@ -133,7 +133,7 @@ function projectAssistantMessage(params: Readonly<{
         role: 'agent',
         content: {
           type: 'acp',
-          provider: 'ohMyPi',
+          agentId: 'ohMyPi',
           data: { type: 'message', message: content, ...(usage ? { usage } : {}) },
         },
       },
@@ -159,7 +159,7 @@ function projectAssistantMessage(params: Readonly<{
           role: 'agent',
           content: {
             type: 'acp',
-            provider: 'ohMyPi',
+            agentId: 'ohMyPi',
             data: { type: 'message', message: block.text, ...(usage ? { usage } : {}) },
           },
         },
@@ -174,7 +174,7 @@ function projectAssistantMessage(params: Readonly<{
         createdAtMs: params.createdAtMs,
         raw: {
           role: 'agent',
-          content: { type: 'acp', provider: 'ohMyPi', data: { type: 'thinking', text: block.thinking } },
+          content: { type: 'acp', agentId: 'ohMyPi', data: { type: 'thinking', text: block.thinking } },
         },
       });
       continue;
@@ -189,7 +189,7 @@ function projectAssistantMessage(params: Readonly<{
           role: 'agent',
           content: {
             type: 'acp',
-            provider: 'ohMyPi',
+            agentId: 'ohMyPi',
             data: { type: 'tool-call', callId: block.id, id: stableId, name: block.name, input: block.input ?? {} },
           },
         },
@@ -206,7 +206,7 @@ function projectAssistantMessage(params: Readonly<{
           role: 'agent',
           content: {
             type: 'acp',
-            provider: 'ohMyPi',
+            agentId: 'ohMyPi',
             data: {
               type: 'tool-result',
               callId: block.tool_use_id,

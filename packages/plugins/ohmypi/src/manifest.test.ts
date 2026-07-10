@@ -16,7 +16,7 @@ function readPackageJson(): Readonly<{
 }
 
 function requireOhMyPiBackend() {
-  const backend = PLUGIN_MANIFEST.contributes?.backends?.find((entry) => entry.id === 'ohMyPi');
+  const backend = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'ohMyPi');
   if (!backend) {
     throw new Error('Expected OhMyPi plugin manifest to declare ohMyPi backend contribution');
   }
@@ -36,8 +36,7 @@ describe('OhMyPi plugin manifest', () => {
     expect(backend).toMatchObject({
       kindVersion: 1,
       id: 'ohMyPi',
-      agentId: 'ohMyPi',
-      engine: { kind: 'custom' },
+      runtime: { kind: 'custom' },
       capabilities: {
         session: {
           media: {
@@ -49,6 +48,7 @@ describe('OhMyPi plugin manifest', () => {
       },
     });
     expect(backend.surfaceHandlers?.map((handler) => [handler.kind, handler.operation])).toEqual([
+      ['terminalRuntime', 'resolveTranscriptBinding'],
       ['externalSession', 'resolveSource'],
       ['externalSession', 'listCandidates'],
       ['externalSession', 'getActivity'],
@@ -60,5 +60,43 @@ describe('OhMyPi plugin manifest', () => {
       ['externalSession', 'resolveLinkedIdentity'],
       ['externalSession', 'resolveTakeoverLaunch'],
     ]);
+  });
+
+  it('declares the OhMyPi external-session source schema and source-key rules in the backend manifest surface', () => {
+    expect(requireOhMyPiBackend().surfaces?.externalSession?.sources).toEqual([
+      {
+        sourceKind: 'ohMyPiAgentDir',
+        schema: {
+          passthrough: true,
+          fields: [
+            { name: 'kind', kind: 'literal', value: 'ohMyPiAgentDir' },
+            { name: 'agentDir', kind: 'string', min: 1, max: 10_000, nullish: true },
+          ],
+        },
+        key: {
+          segments: [
+            { kind: 'literal', value: 'ohMyPiAgentDir' },
+            { kind: 'field', field: 'agentDir' },
+          ],
+        },
+      },
+    ]);
+  });
+
+  it('declares a provider-owned daemon spawn prerequisite hook', () => {
+    expect(PLUGIN_MANIFEST.contributes?.hooks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'agent.resolvePrerequisites',
+        hookApiVersion: 1,
+        category: 'decision',
+        scope: 'agent',
+        filters: { agentId: 'ohMyPi' },
+        executionKind: 'decide',
+        handler: {
+          target: 'plugin',
+          exportName: 'resolveOhMyPiDaemonSpawnPrerequisites',
+        },
+      }),
+    ]));
   });
 });

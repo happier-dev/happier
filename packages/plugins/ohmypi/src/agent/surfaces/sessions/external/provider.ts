@@ -6,9 +6,12 @@ import type {
   ExternalSessionSurfaceV1,
   ExternalSessionTranscriptPageV1,
   SessionStateUpdateV1,
-} from '@happier-dev/agents';
-import type { ExternalSessionsSource, RuntimeDescriptorV1 } from '@happier-dev/protocol';
+  ExternalSessionsSource,
+  RuntimeDescriptorV1,
+} from '@happier-dev/plugin-sdk/sessions';
 
+import { OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../../sessionFileStoreDescriptor.js';
+import { readOhMyPiSessionSnapshot } from '../../../transcripts/snapshot.js';
 import { listOhMyPiSessionCandidates as listOhMyPiJsonlSessionCandidates } from './candidates.js';
 import { resolveOhMyPiSessionFile } from './files.js';
 import {
@@ -21,7 +24,6 @@ import {
   resolveOhMyPiAgentDir,
   validateOhMyPiExternalSessionSource,
 } from './source.js';
-import { readOhMyPiSessionSnapshot } from '../../../transcripts/snapshot.js';
 
 function ok<T>(value: T) {
   return { ok: true as const, value };
@@ -37,7 +39,7 @@ function failed(code: ExternalSessionFailureCodeV1, message: string, retryable?:
 }
 
 function providerUnavailable(message: string) {
-  return failed('provider_unavailable', message, true);
+  return failed('agent_unavailable', message, true);
 }
 
 function buildProviderSessionIdUpdate(providerSessionId: string): SessionStateUpdateV1<'identity.providerSessionId'> {
@@ -97,8 +99,12 @@ async function safeTranscriptPage(operation: () => Promise<ExternalSessionTransc
 export function createOhMyPiExternalSessionSurface(params: Readonly<{
   env?: NodeJS.ProcessEnv;
 }> = {}): ExternalSessionSurfaceV1 {
-  const env = params.env ?? process.env;
-  const validateSourceForOperation = (source: ExternalSessionsSource) => {
+  const readEnv = () => params.env ?? process.env;
+  const validateSourceForOperation = (
+    source: ExternalSessionsSource,
+    operationEnv: NodeJS.ProcessEnv = readEnv(),
+  ) => {
+    const env = operationEnv;
     const validation = validateOhMyPiExternalSessionSource({ source, env });
     return validation.ok
       ? { ok: true as const, source: validation.source }
@@ -106,11 +112,13 @@ export function createOhMyPiExternalSessionSurface(params: Readonly<{
   };
 
   const surface: ExternalSessionSurfaceV1 = {
-    resolveSource: ({ source }) => {
+    resolveSource: ({ source, env: requestEnv }) => {
+      const env = requestEnv ?? readEnv();
       const validation = validateOhMyPiExternalSessionSource({ source, env });
       return validation.ok ? ok({ source: validation.source }) : failed('source_invalid', validation.error);
     },
     listCandidates: async ({ source, cursor, limit, searchTerm }) => {
+      const env = readEnv();
       const validation = validateSourceForOperation(source);
       if (!validation.ok) return validation;
       try {
@@ -126,6 +134,7 @@ export function createOhMyPiExternalSessionSurface(params: Readonly<{
       }
     },
     getActivity: async ({ source, providerSessionId }) => {
+      const env = readEnv();
       const validation = validateSourceForOperation(source);
       if (!validation.ok) return validation;
       const resolved = await resolveOhMyPiSessionFile({
@@ -145,6 +154,7 @@ export function createOhMyPiExternalSessionSurface(params: Readonly<{
       }
     },
     pageTranscript: async ({ source, providerSessionId, direction, cursor, maxBytes, maxItems }) => {
+      const env = readEnv();
       const validation = validateSourceForOperation(source);
       if (!validation.ok) return validation;
       return await safeTranscriptPage(async () => await pageOhMyPiSessionTranscript({
@@ -158,6 +168,7 @@ export function createOhMyPiExternalSessionSurface(params: Readonly<{
       }));
     },
     readAfterTranscript: async ({ source, providerSessionId, cursor, maxBytes, maxItems }) => {
+      const env = readEnv();
       const validation = validateSourceForOperation(source);
       if (!validation.ok) return validation;
       return await safeTranscriptPage(async () => await readAfterOhMyPiSessionTranscript({
@@ -170,6 +181,7 @@ export function createOhMyPiExternalSessionSurface(params: Readonly<{
       }));
     },
     resolveFollowTranscriptPath: async ({ source, providerSessionId }) => {
+      const env = readEnv();
       const validation = validateSourceForOperation(source);
       if (!validation.ok) return validation;
       const resolved = await resolveOhMyPiSessionFile({
@@ -182,6 +194,7 @@ export function createOhMyPiExternalSessionSurface(params: Readonly<{
         : failed('follow_not_supported', 'OhMyPi external-session transcript file is unavailable.');
     },
     acquireFollowLease: async ({ source, providerSessionId, runtime }) => {
+      const env = readEnv();
       const validation = validateSourceForOperation(source);
       if (!validation.ok) return validation;
       try {
@@ -199,6 +212,7 @@ export function createOhMyPiExternalSessionSurface(params: Readonly<{
       }
     },
     resolveLinkIdentity: ({ providerSessionId, source, runtimeDescriptor, metadata }) => {
+      const env = readEnv();
       const validation = validateSourceForOperation(source);
       if (!validation.ok) return validation;
       const metadataRuntimeDescriptor = metadata?.runtimeDescriptorV1 as RuntimeDescriptorV1 | undefined;
@@ -209,6 +223,7 @@ export function createOhMyPiExternalSessionSurface(params: Readonly<{
       }));
     },
     resolveLinkedIdentity: ({ metadata, providerSessionId, source }) => {
+      const env = readEnv();
       if (source.kind !== 'ohMyPiAgentDir') {
         return failed('source_invalid', 'provider/source mismatch');
       }
@@ -229,6 +244,7 @@ export function createOhMyPiExternalSessionSurface(params: Readonly<{
       });
     },
     resolveTakeoverLaunch: async ({ providerSessionId, source, metadata }) => {
+      const env = readEnv();
       const validation = validateSourceForOperation(source);
       if (!validation.ok) return validation;
       const agentDir = resolveOhMyPiAgentDir({ source: validation.source, env });
@@ -254,7 +270,7 @@ export function createOhMyPiExternalSessionSurface(params: Readonly<{
         launch: {
           directory,
           environmentVariables: mergeExternalSessionEnvironmentVariables([
-            { PI_CODING_AGENT_DIR: agentDir },
+            { [OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1.agentDirEnvVar]: agentDir },
           ]),
           sessionStateUpdates: [buildProviderSessionIdUpdate(providerSessionId)],
         },

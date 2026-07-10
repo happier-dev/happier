@@ -1,37 +1,32 @@
-import { realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import {
+  resolveSessionFileStoreDirsSync,
+} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
+
+import { OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../../sessionFileStoreDescriptor.js';
 
 export type OhMyPiSourceValidationResult =
   | Readonly<{ ok: true; source: ExternalSessionsSource }>
   | Readonly<{ ok: false; error: string }>;
 
-function expandHomeDir(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed === '~') return homedir();
-  if (trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
-    return resolve(homedir(), trimmed.slice(2));
-  }
-  return trimmed;
-}
-
 export function canonicalizeOhMyPiExternalSessionsPath(raw: string): string {
-  const resolved = resolve(expandHomeDir(raw));
-  try {
-    return realpathSync(resolved);
-  } catch {
-    return resolved;
-  }
+  return resolveSessionFileStoreDirsSync({
+    product: OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1,
+    grantedRoot: {
+      v: 1,
+      productId: OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1.productId,
+      agentDir: raw,
+      grantedBy: 'host-config',
+    },
+  }).agentDir;
 }
 
 export function resolveConfiguredOhMyPiAgentDir(env: NodeJS.ProcessEnv): string {
-  const configured =
-    typeof env.PI_CODING_AGENT_DIR === 'string' && env.PI_CODING_AGENT_DIR.trim().length > 0
-      ? env.PI_CODING_AGENT_DIR
-      : join(homedir(), '.omp', 'agent');
-  return canonicalizeOhMyPiExternalSessionsPath(configured);
+  return resolveSessionFileStoreDirsSync({
+    product: OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1,
+    env,
+  }).agentDir;
 }
 
 export function resolveOhMyPiAgentDir(params: Readonly<{

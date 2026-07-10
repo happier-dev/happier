@@ -21,7 +21,7 @@ export const AGENT_DEFINITION = Object.freeze({
         openai: ['token'],
         'claude-subscription': ['token'],
         anthropic: ['token'],
-        gemini: ['oauth', 'token'],
+        gemini: ['token'],
       },
     },
     resume: { vendorResume: 'supported', vendorResumeIdField: 'ohMyPiSessionId' },
@@ -88,13 +88,23 @@ export const AGENT_DEFINITION = Object.freeze({
     installGuideUrl: 'https://github.com/can1357/oh-my-pi#via-bun-recommended',
     docsUrl: 'https://github.com/can1357/oh-my-pi',
   },
-  providerSettings: null,
+  builtInAcpConfig: {
+    agentId: OH_MY_PI_AGENT_ID,
+    launcher: {
+      command: 'omp',
+      args: ['--mode', 'acp'],
+    },
+    transportProfile: 'generic',
+    supportsLoadSession: true,
+    supportsModes: 'yes',
+    supportsModels: 'yes',
+    promptImageSupport: 'yes',
+  },
   runtimeContributions: {
-    protocolExternalSessionSource: {
-      kind: 'providerExternalSessionSourceV1',
-      providerId: OH_MY_PI_AGENT_ID,
-      source: './protocol/externalSession',
-      exportName: 'OH_MY_PI_EXTERNAL_SESSION_SOURCE',
+    agentCatalogEntry: {
+      importName: 'OH_MY_PI_AGENT_RUNTIME_CONTRIBUTION',
+      source: './agent/contributions/runtime',
     },
   },
+  agentSettings: null,
 });

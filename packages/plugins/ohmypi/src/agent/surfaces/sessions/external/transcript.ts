@@ -1,9 +1,17 @@
+import { stat } from 'node:fs/promises';
+
 import type {
   ExternalSessionFollowLeaseV1,
   ExternalSessionRuntimeContextV1,
   ExternalSessionTranscriptPageV1,
-} from '@happier-dev/agents';
-import type { ExternalSessionTranscriptRawMessageV1, ExternalSessionsSource } from '@happier-dev/protocol';
+  ExternalSessionTranscriptRawMessageV1,
+  ExternalSessionsSource,
+} from '@happier-dev/plugin-sdk/sessions';
+import {
+  decodeJsonlByteCursor,
+  encodeJsonlByteCursor,
+  readJsonlAfterCursor,
+} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
 
 import {
   buildOhMyPiSessionSnapshot,
@@ -107,7 +115,20 @@ export async function pageOhMyPiSessionTranscript(params: Readonly<{
     sessionFilePath: resolved.filePath,
     sessionId: params.providerSessionId,
   });
-  return pageOhMyPiTranscriptItems(snapshot.items, params);
+  const page = pageOhMyPiTranscriptItems(snapshot.items, params);
+  try {
+    const file = await stat(resolved.filePath);
+    return {
+      ...page,
+      tailCursor: encodeJsonlByteCursor({
+        v: 1,
+        kind: 'byteOffset',
+        offset: Math.max(0, Math.trunc(file.size)),
+      }),
+    };
+  } catch {
+    return page;
+  }
 }
 
 export async function readAfterOhMyPiSessionTranscript(params: Readonly<{
@@ -126,15 +147,53 @@ export async function readAfterOhMyPiSessionTranscript(params: Readonly<{
   if (!resolved) {
     return {
       items: [],
-      nextCursor: encodeOhMyPiTranscriptCursor(0),
+      nextCursor: encodeJsonlByteCursor({ v: 1, kind: 'byteOffset', offset: 0 }),
       truncated: false,
     };
   }
-  const snapshot = await readOhMyPiSessionSnapshot({
+  const cursor = decodeJsonlByteCursor(params.cursor);
+  if (!cursor) {
+    try {
+      const file = await stat(resolved.filePath);
+      return {
+        items: [],
+        nextCursor: encodeJsonlByteCursor({
+          v: 1,
+          kind: 'byteOffset',
+          offset: Math.max(0, Math.trunc(file.size)),
+        }),
+        truncated: false,
+      };
+    } catch {
+      return {
+        items: [],
+        nextCursor: encodeJsonlByteCursor({ v: 1, kind: 'byteOffset', offset: 0 }),
+        truncated: false,
+      };
+    }
+  }
+  const read = await readJsonlAfterCursor({
+    filePath: resolved.filePath,
+    cursor,
+    maxBytes: params.maxBytes,
+    maxItems: params.maxItems,
+  });
+  const lines = read.lines
+    .map(parseOhMyPiJsonlLine)
+    .filter((line): line is unknown => line !== null);
+  const projected = projectOhMyPiSessionSnapshotToDirectMessages({
     sessionFilePath: resolved.filePath,
     sessionId: params.providerSessionId,
+    lines: [
+      { type: 'session', id: params.providerSessionId },
+      ...lines,
+    ],
   });
-  return readAfterOhMyPiTranscriptItems(snapshot.items, params);
+  return {
+    items: projected.items,
+    nextCursor: encodeJsonlByteCursor(read.nextCursor),
+    truncated: read.truncated,
+  };
 }
 
 function findCommonPrefixLength(
@@ -192,6 +251,7 @@ export async function acquireOhMyPiSessionFollowLease(params: Readonly<{
         sessionId: params.providerSessionId,
         lines,
       });
+      const fromCursor = tailCursor;
       const changedFrom = findCommonPrefixLength(projected.items, nextProjected.items);
       const changedItems = nextProjected.items.slice(changedFrom);
       projected = {
@@ -200,7 +260,7 @@ export async function acquireOhMyPiSessionFollowLease(params: Readonly<{
       };
       tailCursor = projected.tailCursor;
       if (!initialDrainComplete || changedItems.length === 0) return;
-      const update = { items: changedItems, nextCursor: tailCursor, truncated: false };
+      const update = { items: changedItems, fromCursor, nextCursor: tailCursor, truncated: false };
       await Promise.all([...listeners].map((listener) => listener(update)));
     },
     onError: async (error) => {

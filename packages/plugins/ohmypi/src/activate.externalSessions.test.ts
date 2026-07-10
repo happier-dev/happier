@@ -2,9 +2,8 @@ import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { ExternalSessionFileFollowInputV1 } from '@happier-dev/agents';
-import type { PluginContextV1, PluginDisposable } from '@happier-dev/plugin-sdk';
-import type { BundledRegisterBackendEngineV1 } from '@happier-dev/plugin-sdk/internal/runtime/session';
+import type { PluginContextV1, PluginDisposable, RegisterAgentRuntimeV1 } from '@happier-dev/plugin-sdk';
+import type { ExternalSessionFileFollowInputV1 } from '@happier-dev/plugin-sdk/sessions';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
@@ -42,17 +41,19 @@ function createPluginContext(fileFollow: Readonly<{
       warn: vi.fn(),
       error: vi.fn(),
     },
-    transcripts: {
-      append: vi.fn(async () => undefined),
-      defineSource: vi.fn(),
-      fileFollow,
+    agentRuntime: {
+      transcripts: {
+        append: vi.fn(async () => undefined),
+        defineSource: vi.fn(),
+        fileFollow,
+      },
     },
   } as unknown as PluginContextV1;
   // Test fixture supplies only the plugin services consumed by the OhMyPi engine.
 }
 
 describe('OhMyPi plugin activation external sessions', () => {
-  it('registers a backend engine whose external-session follow lease uses ctx.transcripts.fileFollow', async () => {
+  it('registers a backend engine whose external-session follow lease uses ctx.agentRuntime.transcripts.fileFollow', async () => {
     const agentDir = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-ohmypi-plugin-follow-')));
     vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
     const sessionRoot = join(agentDir, 'sessions', '-repo');
@@ -76,15 +77,16 @@ describe('OhMyPi plugin activation external sessions', () => {
     await writeFile(filePath, [jsonlLine(sessionHeader), jsonlLine(firstMessage)].join(''), 'utf8');
     const realFilePath = await realpath(filePath);
 
-    const registrations: BundledRegisterBackendEngineV1[] = [];
+    const registrations: RegisterAgentRuntimeV1[] = [];
     activate({
-      registerBackendEngine: (registration) => {
+      registerAgentRuntime: (registration) => {
         registrations.push(registration);
         return { dispose: vi.fn() } satisfies PluginDisposable;
       },
+      registerHook: vi.fn(),
     });
 
-    expect(registrations.map((registration) => registration.backendId)).toEqual(['ohMyPi']);
+    expect(registrations.map((registration) => registration.agentId)).toEqual(['ohMyPi']);
 
     let followInput: ExternalSessionFileFollowInputV1 | null = null;
     const ctx = createPluginContext({
@@ -107,7 +109,7 @@ describe('OhMyPi plugin activation external sessions', () => {
     }
     const runtime = {
       signal: new AbortController().signal,
-      transcripts: { fileFollow: ctx.transcripts.fileFollow },
+      transcripts: { fileFollow: ctx.agentRuntime.transcripts.fileFollow },
       diagnostics: { issue: vi.fn() },
     };
     const resolveFollowTranscriptPath = Reflect.get(surface, 'resolveFollowTranscriptPath');
@@ -166,7 +168,7 @@ describe('OhMyPi plugin activation external sessions', () => {
     await leaseResult.value.release();
   });
 
-  it('does not read a transcript path before delegating authorization to ctx.transcripts.fileFollow', async () => {
+  it('does not read a transcript path before delegating authorization to ctx.agentRuntime.transcripts.fileFollow', async () => {
     const agentDir = rememberTempDir(await mkdtemp(join(tmpdir(), 'happier-ohmypi-plugin-follow-denied-')));
     vi.stubEnv('PI_CODING_AGENT_DIR', agentDir);
     const sessionRoot = join(agentDir, 'sessions', '-repo');
@@ -180,12 +182,13 @@ describe('OhMyPi plugin activation external sessions', () => {
     }), 'utf8');
     await chmod(unreadableTranscript, 0o000);
 
-    const registrations: BundledRegisterBackendEngineV1[] = [];
+    const registrations: RegisterAgentRuntimeV1[] = [];
     activate({
-      registerBackendEngine: (registration) => {
+      registerAgentRuntime: (registration) => {
         registrations.push(registration);
         return { dispose: vi.fn() } satisfies PluginDisposable;
       },
+      registerHook: vi.fn(),
     });
 
     const follow = vi.fn(async () => {
@@ -204,7 +207,7 @@ describe('OhMyPi plugin activation external sessions', () => {
       reason: 'attached_view',
       runtime: {
         signal: new AbortController().signal,
-        transcripts: { fileFollow: ctx.transcripts.fileFollow },
+        transcripts: { fileFollow: ctx.agentRuntime.transcripts.fileFollow },
         diagnostics: { issue: vi.fn() },
       },
     });
@@ -228,12 +231,13 @@ describe('OhMyPi plugin activation external sessions', () => {
     }), 'utf8');
     await symlink(externalFile, join(sessionRoot, `2026-04-10T10-00-00-000Z_${remoteSessionId}.jsonl`));
 
-    const registrations: BundledRegisterBackendEngineV1[] = [];
+    const registrations: RegisterAgentRuntimeV1[] = [];
     activate({
-      registerBackendEngine: (registration) => {
+      registerAgentRuntime: (registration) => {
         registrations.push(registration);
         return { dispose: vi.fn() } satisfies PluginDisposable;
       },
+      registerHook: vi.fn(),
     });
 
     const follow = vi.fn(async () => ({
@@ -254,7 +258,7 @@ describe('OhMyPi plugin activation external sessions', () => {
       reason: 'attached_view',
       runtime: {
         signal: new AbortController().signal,
-        transcripts: { fileFollow: ctx.transcripts.fileFollow },
+        transcripts: { fileFollow: ctx.agentRuntime.transcripts.fileFollow },
         diagnostics: { issue: vi.fn() },
       },
     });

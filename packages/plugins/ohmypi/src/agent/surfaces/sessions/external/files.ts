@@ -1,31 +1,29 @@
-import { readdir } from 'node:fs/promises';
-import type { Dirent } from 'node:fs';
-import { join } from 'node:path';
+import {
+  findNewestSessionFileInDir,
+  listSessionFileStoreRoots,
+  resolveSessionFileStoreDirs,
+} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+import type { ExternalSessionsSource } from '@happier-dev/plugin-sdk/sessions';
 
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
-
+import { OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../../sessionFileStoreDescriptor.js';
 import { resolveOhMyPiAgentDir } from './source.js';
-
-export function readOhMyPiSessionIdFromFilename(filename: string): string | null {
-  const match = filename.match(/_(.+)\.jsonl$/);
-  const remoteSessionId = match?.[1]?.trim();
-  return remoteSessionId || null;
-}
 
 export async function listOhMyPiSessionRoots(params: Readonly<{
   source: ExternalSessionsSource;
   env?: NodeJS.ProcessEnv;
 }>): Promise<string[]> {
   const agentDir = resolveOhMyPiAgentDir({ source: params.source, env: params.env });
-  const sessionsDir = join(agentDir, 'sessions');
-  try {
-    const entries = await readdir(sessionsDir, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
-      .map((entry) => join(sessionsDir, entry.name));
-  } catch {
-    return [];
-  }
+  const resolution = await resolveSessionFileStoreDirs({
+    product: OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1,
+    env: params.env,
+    grantedRoot: {
+      v: 1,
+      productId: OH_MY_PI_SESSION_FILE_STORE_DESCRIPTOR_V1.productId,
+      agentDir,
+      grantedBy: 'host-config',
+    },
+  });
+  return [...await listSessionFileStoreRoots(resolution)];
 }
 
 export async function resolveOhMyPiSessionFile(params: Readonly<{
@@ -37,18 +35,9 @@ export async function resolveOhMyPiSessionFile(params: Readonly<{
     source: params.source,
     env: params.env,
   });
-  const suffix = `_${params.remoteSessionId}.jsonl`;
   for (const sessionRoot of sessionRoots) {
-    let entries: Dirent[] = [];
-    try {
-      entries = await readdir(sessionRoot, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    const match = entries.find((entry) => entry.isFile() && !entry.isSymbolicLink() && entry.name.endsWith(suffix));
-    if (match) {
-      return { filePath: join(sessionRoot, match.name) };
-    }
+    const found = await findNewestSessionFileInDir({ sessionId: params.remoteSessionId, dir: sessionRoot });
+    if (found) return { filePath: found };
   }
   return null;
 }

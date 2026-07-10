@@ -35,7 +35,33 @@ export const OH_MY_PI_UI_DESCRIPTOR = Object.freeze({
     icon: { assetId: 'ohMyPi' },
   },
   settings: {},
-  behavior: {},
+  behavior: {
+    mcpServers: { supportsDetectedConfigScan: true },
+    externalSessions: {
+      supportsBackgroundFollow: true,
+      browse: {
+        order: 25,
+        sourceOptions: [
+          {
+            key: 'ohMyPi:default-agent-dir',
+            labelKey: 'agentInput.agent.ohMyPi',
+            detail: '~/.omp/agent',
+            source: { kind: 'ohMyPiAgentDir' },
+          },
+        ],
+        compatibleSource: {
+          sourceKind: 'ohMyPiAgentDir',
+          optionalFields: ['agentDir'],
+        },
+        linkEnsureRequestExtras: {
+          sourceFromCandidate: {
+            sourceKind: 'ohMyPiAgentDir',
+            optionalFields: ['agentDir'],
+          },
+        },
+      },
+    },
+  },
   session: {},
   message: {},
   components: { slots: [] },

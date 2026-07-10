@@ -2,13 +2,19 @@ import { readdir, stat } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import { basename, join } from 'node:path';
 
-import type { ExternalSessionActivityV1, ExternalSessionCandidateV1, ExternalSessionsSource } from '@happier-dev/protocol';
+import {
+  decodeIndexCursor,
+  encodeIndexCursor,
+  scanJsonlSessionFile,
+} from '@happier-dev/plugin-sdk/experimental/sessions/fileStores';
+import type {
+  ExternalSessionActivityV1,
+  ExternalSessionCandidateV1,
+  ExternalSessionsSource,
+} from '@happier-dev/plugin-sdk/sessions';
 
-import { readOhMyPiSessionSnapshot } from '../../../transcripts/snapshot.js';
-import { listOhMyPiSessionRoots, readOhMyPiSessionIdFromFilename } from './files.js';
+import { listOhMyPiSessionRoots } from './files.js';
 import { resolveOhMyPiAgentDir } from './source.js';
-
-type IndexCursorV1 = Readonly<{ v: 1; kind: 'index'; offset: number }>;
 
 type DiscoveredSession = Readonly<{
   remoteSessionId: string;
@@ -17,22 +23,6 @@ type DiscoveredSession = Readonly<{
   title: string | null;
   workingDirectory: string | null;
 }>;
-
-function encodeIndexCursor(offset: number): string {
-  const cursor: IndexCursorV1 = { v: 1, kind: 'index', offset: Math.max(0, Math.trunc(offset)) };
-  return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
-}
-
-function decodeIndexCursor(raw: string | undefined): number {
-  if (typeof raw !== 'string' || raw.trim().length === 0) return 0;
-  try {
-    const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as IndexCursorV1;
-    if (parsed.v !== 1 || parsed.kind !== 'index') return 0;
-    return Math.max(0, Math.trunc(parsed.offset));
-  } catch {
-    return 0;
-  }
-}
 
 function resolveRecentActivityWindowMs(env: NodeJS.ProcessEnv): number {
   const raw = Number.parseInt(String(env.HAPPIER_EXTERNAL_SESSIONS_RECENT_ACTIVITY_WINDOW_MS ?? ''), 10);
@@ -65,21 +55,20 @@ async function discoverSessionsInRoot(params: Readonly<{
 
   const discovered: DiscoveredSession[] = [];
   for (const entry of entries.filter((value) => value.isFile() && !value.isSymbolicLink() && value.name.endsWith('.jsonl'))) {
-    const remoteSessionId = readOhMyPiSessionIdFromFilename(entry.name);
-    if (!remoteSessionId) continue;
     const filePath = join(params.sessionRoot, entry.name);
     try {
       const fileStat = await stat(filePath);
       if (!fileStat.isFile()) continue;
-      const snapshot = await readOhMyPiSessionSnapshot({ sessionFilePath: filePath, sessionId: remoteSessionId });
-      const haystack = `${remoteSessionId} ${snapshot.title ?? ''} ${snapshot.workingDirectory ?? ''} ${basename(params.sessionRoot)}`.toLowerCase();
+      const scanned = await scanJsonlSessionFile(filePath);
+      if (!scanned) continue;
+      const haystack = `${scanned.sessionId} ${scanned.title ?? ''} ${scanned.cwd ?? ''} ${basename(params.sessionRoot)}`.toLowerCase();
       if (params.searchTerm && !haystack.includes(params.searchTerm)) continue;
       discovered.push({
-        remoteSessionId,
-        updatedAtMs: Math.trunc(fileStat.mtimeMs),
-        createdAtMs: snapshot.createdAtMs,
-        title: snapshot.title,
-        workingDirectory: snapshot.workingDirectory,
+        remoteSessionId: scanned.sessionId,
+        updatedAtMs: scanned.lastActivityAtMs || Math.trunc(fileStat.mtimeMs),
+        createdAtMs: scanned.createdAtMs,
+        title: scanned.title,
+        workingDirectory: scanned.cwd,
       });
     } catch {
       continue;
@@ -105,7 +94,7 @@ export async function listOhMyPiSessionCandidates(params: Readonly<{
   )).flat();
 
   const limit = Math.max(1, Math.trunc(params.limit));
-  const offset = decodeIndexCursor(params.cursor);
+  const offset = decodeIndexCursor(params.cursor) ?? 0;
   const sorted = discovered.sort((a, b) => b.updatedAtMs - a.updatedAtMs || a.remoteSessionId.localeCompare(b.remoteSessionId));
   const page = sorted.slice(offset, offset + limit);
   const candidates = page.map((session) => ({
