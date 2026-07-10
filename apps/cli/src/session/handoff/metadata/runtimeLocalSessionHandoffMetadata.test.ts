@@ -8,7 +8,7 @@ describe('resolveSessionHandoffExportMetadata', () => {
             v: 1,
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
-            providerId: 'claude',
+            agentId: 'claude',
             sessionStorageBefore: 'direct',
             sessionStorageAfter: 'direct',
             transportStrategy: 'direct_peer',
@@ -68,7 +68,7 @@ describe('resolveSessionHandoffExportMetadata', () => {
                     claudeSessionId: 'sess-handoff-direct',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
                         machineId: 'machine_target',
                         remoteSessionId: 'sess-handoff-direct',
                         source: {
@@ -90,7 +90,7 @@ describe('resolveSessionHandoffExportMetadata', () => {
             claudeSessionId: 'sess-handoff-direct',
             externalSessionV1: {
                 v: 1,
-                providerId: 'claude',
+                agentId: 'claude',
                 machineId: 'machine_target',
                 remoteSessionId: 'sess-handoff-direct',
                 source: {
@@ -152,7 +152,7 @@ describe('resolveSessionHandoffExportMetadata', () => {
                     claudeSessionId: 'sess-handoff-direct',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'claude',
+                        agentId: 'claude',
                         machineId: 'machine_target',
                         remoteSessionId: 'sess-handoff-direct',
                         source: {
@@ -176,7 +176,7 @@ describe('resolveSessionHandoffExportMetadata', () => {
             claudeSessionId: 'sess-handoff-direct',
             externalSessionV1: {
                 v: 1,
-                providerId: 'claude',
+                agentId: 'claude',
                 machineId: 'machine_target',
                 remoteSessionId: 'sess-handoff-direct',
                 source: {
@@ -194,7 +194,7 @@ describe('resolveSessionHandoffExportMetadata', () => {
             v: 1,
             sourceMachineId: 'machine_source',
             targetMachineId: 'machine_target',
-            providerId: 'claude',
+            agentId: 'claude',
             sessionStorageBefore: 'direct',
             sessionStorageAfter: 'direct',
             transportStrategy: 'server_routed_stream',

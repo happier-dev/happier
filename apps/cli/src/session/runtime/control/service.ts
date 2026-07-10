@@ -1,6 +1,8 @@
 import type {
   HostRuntimeControlAppServerDelegateV1,
   HostRuntimeControlAppServerRequestV1,
+  HostRuntimeControlConnectedServiceAuthApplyGenerationInputV1,
+  HostRuntimeControlConnectedServiceRuntimeIdentityInputV1,
   HostRuntimeControlConnectedServiceRefreshInputV1,
   HostRuntimeControlConnectedServicesDelegateV1,
   HostRuntimeControlContextV1,
@@ -144,6 +146,24 @@ export function createHostRuntimeControlService(
           const invalidate = params.session?.invalidateConnectedServiceAuthTransports;
           if (!invalidate) return failure('session_transport_unavailable');
           return await invalidate(options);
+        }),
+      applyConnectedServiceAuthGeneration: async (
+        input: HostRuntimeControlConnectedServiceAuthApplyGenerationInputV1,
+        options: HostRuntimeControlRequestOptionsV1 | undefined,
+      ) =>
+        await guarded(options, 'connected_service_auth_apply_failed', async () => {
+          const apply = params.session?.applyConnectedServiceAuthGeneration;
+          if (!apply) return failure('connected_service_auth_apply_unavailable');
+          return await apply(input, options);
+        }),
+      readConnectedServiceRuntimeIdentity: async (
+        input: HostRuntimeControlConnectedServiceRuntimeIdentityInputV1,
+        options: HostRuntimeControlRequestOptionsV1 | undefined,
+      ) =>
+        await guarded(options, 'connected_service_runtime_identity_failed', async () => {
+          const read = params.session?.readConnectedServiceRuntimeIdentity;
+          if (!read) return failure('connected_service_runtime_identity_unavailable');
+          return await read(input, options);
         }),
     }),
     connectedServices: Object.freeze({

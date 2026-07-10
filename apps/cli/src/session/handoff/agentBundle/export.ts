@@ -1,4 +1,4 @@
-import type { SessionHandoffProviderBundle } from '../types';
+import type { SessionHandoffAgentBundle } from '../types';
 
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 
@@ -7,11 +7,11 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-export async function exportSessionHandoffProviderBundle(params: Readonly<{
+export async function exportSessionHandoffAgentBundle(params: Readonly<{
   metadata: unknown;
   activeServerDir: string;
 }>): Promise<Readonly<{
-  providerBundle: SessionHandoffProviderBundle;
+  agentBundle: SessionHandoffAgentBundle;
   targetPath: string;
 }>> {
   const metadata = asRecord(params.metadata);
@@ -35,16 +35,16 @@ export async function exportSessionHandoffProviderBundle(params: Readonly<{
     throw new Error(`Unsupported handoff provider: ${eligibility.agentId}`);
   }
 
-	  const providerBundle = await providerOps.exportBundle({
+	  const agentBundle = await providerOps.exportBundle({
 	    sessionId: eligibility.vendorHandoffId,
 	    metadata,
 	    directory: params.activeServerDir,
 	  });
-	  if (!providerBundle.ok) {
-	    throw new Error(providerBundle.message ?? `Session handoff export failed: ${providerBundle.code}`);
+	  if (!agentBundle.ok) {
+	    throw new Error(agentBundle.message ?? `Session handoff export failed: ${agentBundle.code}`);
 	  }
 	  return {
-	    providerBundle: providerBundle.value.bundle as SessionHandoffProviderBundle,
+	    agentBundle: agentBundle.value.bundle as SessionHandoffAgentBundle,
 	    targetPath,
 	  };
 }

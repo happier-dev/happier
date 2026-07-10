@@ -25,7 +25,7 @@ describe('sessionHandoffSourceExportStore path safety', () => {
       await expect(store.save({
         handoffId: 'handoff-path-safety-1',
         exportedAtMs: 1,
-        providerBundle: {
+        agentBundle: {
           transferId: 'session-handoff:handoff-path-safety-1:provider-bundle-file',
           filePath: `${activeServerDir}/provider-bundle.json`,
           sizeBytes: 1,

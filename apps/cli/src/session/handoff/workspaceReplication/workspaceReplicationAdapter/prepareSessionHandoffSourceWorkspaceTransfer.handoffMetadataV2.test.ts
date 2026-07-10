@@ -183,7 +183,7 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
         negotiatedTransportStrategy: 'direct_peer',
         workspaceTransfer,
         sourceRootPath,
-        providerBundleTransferPublication: {
+        agentBundleTransferPublication: {
           transferId: 'provider_bundle_1',
           sizeBytes: 123,
           manifestHash: 'sha256:provider_bundle_1',

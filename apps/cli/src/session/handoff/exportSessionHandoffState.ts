@@ -1,15 +1,15 @@
-import type { SessionHandoffProviderBundle } from './types';
+import type { SessionHandoffAgentBundle } from './types';
 
-import { exportSessionHandoffProviderBundle } from './providerBundle/export';
+import { exportSessionHandoffAgentBundle } from './agentBundle/export';
 
 export async function exportSessionHandoffState(params: Readonly<{
   metadata: Record<string, unknown>;
   activeServerDir: string;
 }>): Promise<Readonly<{
-  providerBundle: SessionHandoffProviderBundle;
+  agentBundle: SessionHandoffAgentBundle;
   targetPath: string;
 }>> {
-  return await exportSessionHandoffProviderBundle({
+  return await exportSessionHandoffAgentBundle({
     metadata: params.metadata,
     activeServerDir: params.activeServerDir,
   });

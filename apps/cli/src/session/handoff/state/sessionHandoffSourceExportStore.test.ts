@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { readWorkspaceReplicationManifestFromFile } from '@/session/handoff/workspaceReplication/workspaceReplicationAdapter/manifestFile';
-import type { SessionHandoffProviderBundle } from '../types';
+import type { SessionHandoffAgentBundle } from '../types';
 import { createSessionHandoffSourceExportStore } from './sessionHandoffSourceExportStore';
 
 describe('sessionHandoffSourceExportStore', () => {
@@ -19,7 +19,7 @@ describe('sessionHandoffSourceExportStore', () => {
         workspaceSourceRootPath: '/repo',
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
-        providerBundle: {
+        agentBundle: {
           transferId: 'session-handoff:handoff-123:provider-bundle-file',
           filePath: join(activeServerDir, 'dummy-provider.json'),
           sizeBytes: 2,
@@ -56,10 +56,10 @@ describe('sessionHandoffSourceExportStore', () => {
       const store = createSessionHandoffSourceExportStore({ activeServerDir });
       const handoffId = 'handoff-files-1';
 
-      const provider = await store.writeProviderBundleFile({
+      const provider = await store.writeAgentBundleFile({
         handoffId,
-        providerBundle: {
-          providerId: 'codex',
+        agentBundle: {
+          agentId: 'codex',
           remoteSessionId: 'remote-session-1',
           files: [],
         },
@@ -69,7 +69,7 @@ describe('sessionHandoffSourceExportStore', () => {
       expect(provider.sizeBytes).toBe(providerStats.size);
       expect(provider.manifestHash.startsWith('sha256:')).toBe(true);
       const parsedProvider = JSON.parse(await readFile(provider.filePath, 'utf8'));
-      expect(parsedProvider).toMatchObject({ providerId: 'codex' });
+      expect(parsedProvider).toMatchObject({ agentId: 'codex' });
 
       const manifest = await store.writeWorkspaceReplicationManifestFile({
         handoffId,
@@ -97,14 +97,14 @@ describe('sessionHandoffSourceExportStore', () => {
     }
   });
 
-  it('fails closed with a canonical payload error when provider bundles include unknown legacy fields', async () => {
+  it('persists provider-owned bundle fields through the open handoff bundle ABI', async () => {
     const activeServerDir = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-store-bundle-shape-'));
     try {
       const store = createSessionHandoffSourceExportStore({ activeServerDir });
-      await expect(store.writeProviderBundleFile({
+      const written = await store.writeAgentBundleFile({
         handoffId: 'handoff-bundle-shape-1',
-        providerBundle: {
-          providerId: 'opencode',
+        agentBundle: {
+          agentId: 'opencode',
           remoteSessionId: 'remote-session-1',
           exportJsonBase64: Buffer.from('{}', 'utf8').toString('base64'),
           affinity: {
@@ -112,10 +112,19 @@ describe('sessionHandoffSourceExportStore', () => {
             serverBaseUrl: null,
             serverBaseUrlExplicit: false,
           },
-          // Simulate a stale/legacy field that should be rejected by canonical bundle parsing.
-          legacyField: true,
-        } as unknown as SessionHandoffProviderBundle,
-      })).rejects.toThrow('Invalid session handoff transfer payload');
+          providerOwnedField: {
+            nested: true,
+          },
+        } as unknown as SessionHandoffAgentBundle,
+      });
+
+      await expect(readFile(written.filePath, 'utf8').then((raw) => JSON.parse(raw) as unknown)).resolves.toMatchObject({
+        agentId: 'opencode',
+        remoteSessionId: 'remote-session-1',
+        providerOwnedField: {
+          nested: true,
+        },
+      });
     } finally {
       await rm(activeServerDir, { recursive: true, force: true });
     }
@@ -148,7 +157,7 @@ describe('sessionHandoffSourceExportStore', () => {
         schemaVersion: 1,
         handoffId,
         exportedAtMs: 1,
-        providerBundle: {
+        agentBundle: {
           transferId: 'session-handoff:handoff-escape-1:provider-bundle-file',
           filePath: '../../outside-provider.json',
           sizeBytes: 1,

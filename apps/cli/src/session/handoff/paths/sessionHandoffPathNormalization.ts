@@ -19,7 +19,15 @@ function normalizePathForComparison(path: string): string {
         : normalizedPath;
 }
 
-function getPathRemainderWithinBase(path: string, basePath: string): string | null {
+/**
+ * Returns the remainder of `path` relative to `basePath` when `path` is `basePath`
+ * itself (`''`) or nested within it, otherwise `null`. Windows-safe: drive-letter /
+ * absolute Windows paths are case-folded, trailing separators trimmed, mixed `\`/`/`
+ * normalized, and sibling-prefix collisions (`C:\Users\alice` vs `C:\Users\alice2`)
+ * are rejected. This is the canonical containment owner — do not hand-roll a second
+ * normalizer for path containment.
+ */
+export function getPathRemainderWithinBase(path: string, basePath: string): string | null {
     const normalizedBasePath = normalizePathForComparison(basePath);
     const normalizedPath = normalizePathForComparison(path);
 

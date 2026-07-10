@@ -221,7 +221,7 @@ describe('sessionHandoffPrepareTargetJobStore', () => {
           targetPath: '/repo',
           endpointCandidates: [],
           handoffMetadataV2: {
-            providerBundleTransferPublication: {
+            agentBundleTransferPublication: {
               transferId: `session-handoff:${handoffId}:provider-bundle`,
               sizeBytes: 123,
               manifestHash: 'hash',

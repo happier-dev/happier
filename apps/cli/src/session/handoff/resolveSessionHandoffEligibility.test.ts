@@ -129,7 +129,7 @@ describe('resolveSessionHandoffEligibility', () => {
           piSessionId: 'sess_pi',
           externalSessionV1: {
             v: 1,
-            providerId: 'claude',
+            providerId: 'pi',
           },
         },
       }),

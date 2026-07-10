@@ -17,7 +17,7 @@ import type { ScmWorkspaceIntegrationWorkspaceExportArtifacts } from '@/scm/work
 import { buildWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/workspace/workspaceTransferResolution';
 import {
   collectReferencedSessionMediaWorkspacePaths,
-  collectReferencedSessionMediaWorkspacePathsFromProviderBundle,
+  collectReferencedSessionMediaWorkspacePathsFromAgentBundle,
   collectReferencedSessionMediaWorkspacePathsFromSessionMetadata,
 } from '@/session/media/referencedPaths';
 import { createWorkspaceReplicationEngine } from '@/workspaces/replication/engine';
@@ -45,8 +45,8 @@ import {
   buildSessionHandoffWorkspaceManifestTransferId,
   parseSessionHandoffWorkspaceBlobPackTransferId,
 } from './serverRouted';
-import type { SessionHandoffProviderBundleTransferPublication } from '@/session/handoff/providerBundle/transferPublication';
-import type { SessionHandoffProviderBundle } from '@/session/handoff/types';
+import type { SessionHandoffAgentBundleTransferPublication } from '@/session/handoff/agentBundle/transferPublication';
+import type { SessionHandoffAgentBundle } from '@/session/handoff/types';
 
 type DirectPeerTransferPublisher = Readonly<{
   publishTransfer: (input: Readonly<{
@@ -173,16 +173,16 @@ export async function createSessionHandoffWorkspaceReplicationState(input: Reado
   workspaceTransfer: SessionHandoffWorkspaceTransfer;
   sessionMetadata?: Record<string, unknown>;
   sessionTranscriptRecords?: readonly unknown[];
-  providerBundle?: SessionHandoffProviderBundle;
+  agentBundle?: SessionHandoffAgentBundle;
 }>): Promise<Readonly<{
   workspaceReplicationMetadata?: SessionHandoffWorkspaceReplicationMetadata;
 }>> {
-  const providerBundleReferencedMediaPaths = await collectReferencedSessionMediaWorkspacePathsFromProviderBundle(
-    input.providerBundle,
+  const agentBundleReferencedMediaPaths = await collectReferencedSessionMediaWorkspacePathsFromAgentBundle(
+    input.agentBundle,
   );
   const referencedMediaPaths = [
     ...collectReferencedSessionMediaWorkspacePaths(input.sessionTranscriptRecords ?? []),
-    ...providerBundleReferencedMediaPaths,
+    ...agentBundleReferencedMediaPaths,
     ...collectReferencedSessionMediaWorkspacePathsFromSessionMetadata(input.sessionMetadata),
   ];
   const workspaceTransfer = mergeReferencedMediaWorkspaceTransfer({
@@ -513,10 +513,10 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
   workspaceTransfer?: SessionHandoffWorkspaceTransfer;
   directPeerTransfer?: DirectPeerTransferPublisher;
   sourceRootPath: string;
-  providerBundleTransferPublication?: SessionHandoffProviderBundleTransferPublication;
+  agentBundleTransferPublication?: SessionHandoffAgentBundleTransferPublication;
   sessionMetadata?: Record<string, unknown>;
   sessionTranscriptRecords?: readonly unknown[];
-  providerBundle?: SessionHandoffProviderBundle;
+  agentBundle?: SessionHandoffAgentBundle;
 }>): Promise<Readonly<{
   workspaceReplicationMetadata?: SessionHandoffWorkspaceReplicationMetadata;
   handoffMetadataV2?: SessionHandoffMetadataV2;
@@ -530,18 +530,18 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
       workspaceTransfer: input.workspaceTransfer,
       sessionMetadata: input.sessionMetadata,
       sessionTranscriptRecords: input.sessionTranscriptRecords,
-      providerBundle: input.providerBundle,
+      agentBundle: input.agentBundle,
     })
     : null;
   const workspaceReplicationMetadata = workspaceReplicationState?.workspaceReplicationMetadata;
 
-  const providerBundleTransferPublication = input.providerBundleTransferPublication
+  const agentBundleTransferPublication = input.agentBundleTransferPublication
     ? {
-        transferId: input.providerBundleTransferPublication.transferId,
-        sizeBytes: input.providerBundleTransferPublication.sizeBytes,
-        manifestHash: input.providerBundleTransferPublication.manifestHash,
-        ...(input.providerBundleTransferPublication.endpointCandidates
-          ? { endpointCandidates: [...input.providerBundleTransferPublication.endpointCandidates] }
+        transferId: input.agentBundleTransferPublication.transferId,
+        sizeBytes: input.agentBundleTransferPublication.sizeBytes,
+        manifestHash: input.agentBundleTransferPublication.manifestHash,
+        ...(input.agentBundleTransferPublication.endpointCandidates
+          ? { endpointCandidates: [...input.agentBundleTransferPublication.endpointCandidates] }
           : {}),
       }
     : undefined;
@@ -552,7 +552,7 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
           const transferId = buildSessionHandoffWorkspaceManifestTransferId({
             handoffId: input.handoffId,
           });
-          const carrierCandidates = providerBundleTransferPublication?.endpointCandidates;
+          const carrierCandidates = agentBundleTransferPublication?.endpointCandidates;
           const endpointCandidates =
             input.negotiatedTransportStrategy === 'direct_peer' && carrierCandidates?.length
               ? rewriteDirectPeerEndpointCandidatesForTransferId({
@@ -578,12 +578,12 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
     : undefined;
 
   const handoffMetadataV2: SessionHandoffMetadataV2 | undefined =
-    providerBundleTransferPublication
+    agentBundleTransferPublication
     || workspaceReplicationMetadata
     || workspaceReplicationManifestTransferPublicationNormalized
       ? {
-          ...(providerBundleTransferPublication
-            ? { providerBundleTransferPublication: providerBundleTransferPublication }
+          ...(agentBundleTransferPublication
+            ? { agentBundleTransferPublication: agentBundleTransferPublication }
             : {}),
           ...(workspaceReplicationMetadata
             ? { workspaceReplicationSourceRootPath: workspaceReplicationMetadata.sourceRootPath }
