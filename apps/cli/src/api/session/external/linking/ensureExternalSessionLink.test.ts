@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildCodexAgentRuntimeDescriptorV1 } from '@happier-dev/protocol/providers/runtimeDescriptorContributionsV1';
+import { buildCodexAgentRuntimeDescriptorV1 } from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
 import type { CodexBackendMode } from '@happier-dev/protocol';
 import { buildOpenCodeAgentRuntimeDescriptorV1 } from '@happier-dev/plugins-opencode/agent/identity/runtimeDescriptor';
 
@@ -69,7 +69,7 @@ describe('ensureExternalSessionLink', () => {
     await ensureExternalSessionLink({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
-      providerId: 'codex',
+      agentId: 'codex',
       remoteSessionId: 'thread_legacy',
       codexBackendMode: 'mcp',
       runtimeDescriptor: buildCodexAgentRuntimeDescriptorV1({
@@ -96,8 +96,8 @@ describe('ensureExternalSessionLink', () => {
       },
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'appServer',
           providerSessionId: 'thread_runtime',
           home: 'connectedService',
@@ -111,8 +111,8 @@ describe('ensureExternalSessionLink', () => {
         source: { kind: 'codexHome', home: 'connectedService', connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work', homePath: '/tmp/connected-codex-home' },
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
-          provider: {
+          agentId: 'codex',
+          agent: {
             backendMode: 'appServer',
             providerSessionId: 'thread_runtime',
             home: 'connectedService',
@@ -163,7 +163,7 @@ describe('ensureExternalSessionLink', () => {
     await ensureExternalSessionLink({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
-      providerId: 'codex',
+      agentId: 'codex',
       remoteSessionId: 'thread_runtime',
       source: { kind: 'codexHome', home: 'user' },
       titleHint: 'Codex linked session',
@@ -215,7 +215,7 @@ describe('ensureExternalSessionLink', () => {
     await ensureExternalSessionLink({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
-      providerId: 'ohMyPi',
+      agentId: 'ohMyPi',
       remoteSessionId: 'omp_thread_runtime',
       source: { kind: 'ohMyPiAgentDir', agentDir: null },
       titleHint: 'OhMyPi linked session',
@@ -246,7 +246,7 @@ describe('ensureExternalSessionLink', () => {
     const linkInput = {
       credentials,
       machineId: 'machine_1',
-      providerId: 'codex' as const,
+      agentId: 'codex' as const,
       remoteSessionId: 'thread_legacy',
       codexBackendMode: 'mcp',
       runtimeDescriptor,
@@ -302,8 +302,8 @@ describe('ensureExternalSessionLink', () => {
       codexBackendMode: 'appServer',
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'appServer',
           providerSessionId: 'thread_runtime',
           home: 'connectedService',
@@ -316,8 +316,8 @@ describe('ensureExternalSessionLink', () => {
         remoteSessionId: 'thread_runtime',
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
-          provider: {
+          agentId: 'codex',
+          agent: {
             backendMode: 'appServer',
             providerSessionId: 'thread_runtime',
             home: 'connectedService',
@@ -341,13 +341,13 @@ describe('ensureExternalSessionLink', () => {
     await ensureExternalSessionLink({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
-      providerId: 'codex',
+      agentId: 'codex',
       remoteSessionId: 'thread_legacy',
       codexBackendMode: 'mcp',
       runtimeDescriptor: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'mcp',
           providerSessionId: 'thread_top_level',
           home: 'user',
@@ -375,7 +375,7 @@ describe('ensureExternalSessionLink', () => {
       codexSessionId: 'thread_runtime',
       codexBackendMode: 'appServer',
       runtimeDescriptorV1: {
-        provider: {
+        agent: {
           backendMode: 'appServer',
           providerSessionId: 'thread_runtime',
           home: 'connectedService',
@@ -403,7 +403,7 @@ describe('ensureExternalSessionLink', () => {
     await ensureExternalSessionLink({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
-      providerId: 'codex',
+      agentId: 'codex',
       remoteSessionId: 'thread_legacy',
       runtimeDescriptor: buildCodexAgentRuntimeDescriptorV1({
         backendMode: 'appServer',
@@ -443,7 +443,7 @@ describe('ensureExternalSessionLink', () => {
     await ensureExternalSessionLink({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
-      providerId: 'codex',
+      agentId: 'codex',
       remoteSessionId: 'thread_alias',
       codexBackendMode: legacyCodexBackendMode,
       source: { kind: 'codexHome', home: 'user' },
@@ -457,8 +457,8 @@ describe('ensureExternalSessionLink', () => {
       codexSessionId: 'thread_alias',
       codexBackendMode: 'acp',
       runtimeDescriptorV1: {
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'acp',
           providerSessionId: 'thread_alias',
         },
@@ -477,7 +477,7 @@ describe('ensureExternalSessionLink', () => {
     await ensureExternalSessionLink({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
-      providerId: 'opencode',
+      agentId: 'opencode',
       remoteSessionId: 'oc_legacy',
       runtimeDescriptor: buildOpenCodeAgentRuntimeDescriptorV1({
         backendMode: 'server',
@@ -499,8 +499,8 @@ describe('ensureExternalSessionLink', () => {
       opencodeServerBaseUrlExplicit: true,
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'opencode',
-        provider: {
+        agentId: 'opencode',
+        agent: {
           backendMode: 'server',
           providerSessionId: 'oc_runtime',
           serverBaseUrl: 'http://127.0.0.1:4096/',
@@ -511,8 +511,8 @@ describe('ensureExternalSessionLink', () => {
         remoteSessionId: 'oc_runtime',
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'opencode',
-          provider: {
+          agentId: 'opencode',
+          agent: {
             backendMode: 'server',
             providerSessionId: 'oc_runtime',
             serverBaseUrl: 'http://127.0.0.1:4096/',
@@ -536,12 +536,12 @@ describe('ensureExternalSessionLink', () => {
     await ensureExternalSessionLink({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
-      providerId: 'opencode',
+      agentId: 'opencode',
       remoteSessionId: 'oc_legacy',
       runtimeDescriptor: {
         v: 1,
-        providerId: 'opencode',
-        provider: {
+        agentId: 'opencode',
+        agent: {
           backendMode: 'acp',
           providerSessionId: 'oc_runtime',
           serverBaseUrl: 'http://127.0.0.1:4096/',
@@ -562,8 +562,8 @@ describe('ensureExternalSessionLink', () => {
       opencodeServerBaseUrlExplicit: true,
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'opencode',
-        provider: {
+        agentId: 'opencode',
+        agent: {
           backendMode: 'server',
           providerSessionId: 'oc_runtime',
         },
@@ -582,12 +582,12 @@ describe('ensureExternalSessionLink', () => {
     await ensureExternalSessionLink({
       credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
       machineId: 'machine_1',
-      providerId: 'opencode',
+      agentId: 'opencode',
       remoteSessionId: 'oc_legacy',
       runtimeDescriptor: {
         v: 1,
-        providerId: 'opencode',
-        provider: {
+        agentId: 'opencode',
+        agent: {
           backendMode: 'acp',
           providerSessionId: 'oc_top_level',
           serverBaseUrl: 'http://legacy.example/',

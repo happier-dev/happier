@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 import { logger } from '@/ui/logger';
+import { isActiveLatestTurnStatus } from '../../sessionTurnStatusSnapshot';
 import { deriveVoiceAgentTurnLocalId, readVoiceAgentTurnPayloadFromMeta, validatePluginHookPayloadV1 } from '@happier-dev/protocol';
+import type { PrimaryTurnStatusV1 } from '@happier-dev/protocol';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 
@@ -86,6 +88,8 @@ type SessionAlivePayload = Readonly<{
     time: number;
     thinking: boolean;
     mode: SessionAliveMode;
+    latestTurnStatus?: PrimaryTurnStatusV1;
+    latestTurnStatusObservedAt?: number;
 }>;
 type SessionPresenceSnapshot = Readonly<{
     thinking: boolean;
@@ -107,6 +111,11 @@ export type SessionClientTranscriptApiDeps = Readonly<{
         };
     };
     getSessionConnectionSupervisor: () => ManagedConnectionSupervisor | null;
+    getLatestTurnSnapshot: () => Readonly<{
+        status: PrimaryTurnStatusV1;
+        observedAt: number;
+    }> | null;
+    getActiveLocalTurnProgressAt: () => number | null;
     getMetadataSnapshot: () => Metadata | null;
     updateAgentState: (handler: (metadata: AgentState) => AgentState) => Promise<void>;
     updateMetadata: (handler: (metadata: Metadata) => Metadata) => Promise<void>;
@@ -208,13 +217,51 @@ export function createSessionClientTranscriptApi(
     deps: SessionClientTranscriptApiDeps,
 ): SessionClientTranscriptApi {
     let latestSessionPresence: SessionPresenceSnapshot | null = null;
+    let terminalThinkingSinceMs: number | null = null;
+    let reportedTerminalThinkingSelfHeal = false;
 
-    const createSessionAlivePayload = (presence: SessionPresenceSnapshot): SessionAlivePayload => ({
-        sid: deps.sessionId,
-        time: Date.now(),
-        thinking: presence.thinking,
-        mode: presence.mode,
-    });
+    const resolveKeepAliveThinkingWithTerminalGuard = (thinking: boolean, nowMs: number): boolean => {
+        if (!thinking) {
+            terminalThinkingSinceMs = null;
+            reportedTerminalThinkingSelfHeal = false;
+            return false;
+        }
+        const turn = deps.getLatestTurnSnapshot();
+        const progressAt = deps.getActiveLocalTurnProgressAt();
+        const hasFreshLocalProgress = progressAt !== null && nowMs - progressAt < 15_000;
+        if (!turn || isActiveLatestTurnStatus(turn.status) || hasFreshLocalProgress) {
+            terminalThinkingSinceMs = null;
+            return true;
+        }
+        terminalThinkingSinceMs ??= nowMs;
+        if (nowMs - terminalThinkingSinceMs < 15_000) return true;
+        if (!reportedTerminalThinkingSelfHeal) {
+            reportedTerminalThinkingSelfHeal = true;
+            logger.info('[API] Self-healing stuck thinking keepalive against terminal turn status', {
+                sessionId: deps.sessionId,
+                latestTurnStatus: turn.status,
+                latchedForMs: nowMs - terminalThinkingSinceMs,
+            });
+        }
+        return false;
+    };
+
+    const createSessionAlivePayload = (presence: SessionPresenceSnapshot): SessionAlivePayload => {
+        const payload: SessionAlivePayload = {
+            sid: deps.sessionId,
+            time: Date.now(),
+            thinking: presence.thinking,
+            mode: presence.mode,
+        };
+        const turn = deps.getLatestTurnSnapshot();
+        return turn
+            ? {
+                ...payload,
+                latestTurnStatus: turn.status,
+                latestTurnStatusObservedAt: turn.observedAt,
+            }
+            : payload;
+    };
 
     const emitSessionAlive = (
         payload: SessionAlivePayload,
@@ -652,7 +699,7 @@ export function createSessionClientTranscriptApi(
             if (process.env.DEBUG) {
                 logger.debug(`[API] Sending keep alive message: ${thinking}`);
             }
-            latestSessionPresence = { thinking, mode };
+            latestSessionPresence = { thinking: resolveKeepAliveThinkingWithTerminalGuard(thinking, Date.now()), mode };
             emitSessionAlive(createSessionAlivePayload(latestSessionPresence), { volatileWhenIdle: true });
         },
 

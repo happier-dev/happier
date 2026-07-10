@@ -10,9 +10,9 @@ type ConnectedServiceRuntimeAuthRecoverySessionEventMessage = Extract<
 >;
 type ContextCompactionPhase = 'started' | 'progress' | 'completed' | 'failed' | 'cancelled';
 type ContextCompactionSource =
-  | 'provider-event'
-  | 'provider-status'
-  | 'provider-hook'
+  | 'agent-event'
+  | 'agent-status'
+  | 'agent-hook'
   | 'transcript-inference'
   | 'user-command'
   | 'runtime';
@@ -23,8 +23,8 @@ type ContextCompactionEventFields = {
   agentId?: string;
   trigger?: 'manual' | 'auto' | 'threshold' | 'overflow' | 'unknown';
   source?: ContextCompactionSource;
-  providerEventId?: string;
-  providerSessionId?: string;
+  agentEventId?: string;
+  agentSessionId?: string;
   turnId?: string;
   tokenCountBefore?: number;
   tokenCountAfter?: number;

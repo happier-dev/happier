@@ -187,7 +187,7 @@ describe('ApiSessionClient usage transport', () => {
                     scope: 'turn_delta',
                     key: 'usage-key',
                     modelId: null,
-                    tokens: { total: 9, input: 4, output: 5 },
+                    tokens: { total: 9, input: 4, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
                     cost: null,
                     contextUsedTokens: null,
                     contextWindowTokens: null,

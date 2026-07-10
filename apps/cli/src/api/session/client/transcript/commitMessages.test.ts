@@ -53,7 +53,7 @@ describe('commitMessages', () => {
         role: 'agent',
         content: {
           type: 'acp',
-          provider: 'codex',
+          agentId: 'codex',
           data: {
             type: 'message',
             message: 'hello',

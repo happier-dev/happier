@@ -68,7 +68,7 @@ describe('transcriptDispatch', () => {
     expect(readRuntimeOutboundTranscriptDispatchBackendId({
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: {
           backendMode: 'appServer',
           providerExtra: {
@@ -89,7 +89,7 @@ describe('transcriptDispatch', () => {
     expect(readRuntimeOutboundTranscriptDispatchBackendId({
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: {
           backendMode: 'appServer',
           providerExtra: {
@@ -113,7 +113,7 @@ describe('transcriptDispatch', () => {
       metadata: createTestMetadata({
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: {
             backendMode: 'appServer',
             providerExtra: {
@@ -164,7 +164,7 @@ describe('transcriptDispatch', () => {
       role: 'agent',
       content: {
         type: 'acp',
-        provider: codexProvider,
+        agentId: codexProvider,
         data: {
           type: 'message',
           message: 'hello',

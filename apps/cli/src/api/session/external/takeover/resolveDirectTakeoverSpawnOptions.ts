@@ -14,14 +14,14 @@ export async function resolveDirectTakeoverSpawnOptions(params: Readonly<{
   linked: LoadedLinkedExternalSession;
   sessionId: string;
 }>): Promise<SpawnSessionOptions | null> {
-  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(params.linked.providerId)).externalSession;
+  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(params.linked.agentId)).externalSession;
   if (!providerOps?.resolveTakeoverSpawnOptions) return null;
   const spawnOptions = await providerOps.resolveTakeoverSpawnOptions(params);
   if (!spawnOptions) return null;
   const snapshot = mergeConnectedServiceRuntimeSnapshots(
     readConnectedServiceRuntimeSnapshot(params.linked.metadata),
     await resolveConnectedServiceRuntimeSnapshotForExternalSession({
-      providerId: params.linked.providerId,
+      agentId: params.linked.agentId,
       remoteSessionId: params.linked.remoteSessionId,
     }),
   );

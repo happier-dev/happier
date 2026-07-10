@@ -67,7 +67,7 @@ class TestStore implements FileBackedTranscriptSessionStore {
 
 function buildKey(overrides?: Partial<FileBackedTranscriptSessionStoreKey>): FileBackedTranscriptSessionStoreKey {
     return {
-        providerId: overrides?.providerId ?? 'codex',
+        agentId: overrides?.agentId ?? 'codex',
         source: overrides?.source ?? { kind: 'codexHome', home: 'user' },
         remoteSessionId: overrides?.remoteSessionId ?? 'session-1',
     };

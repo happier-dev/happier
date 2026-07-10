@@ -53,8 +53,8 @@ export function resolveSessionClientParentProvider(metadata: unknown): ACPProvid
         return configuredAcpBackendId;
     }
 
-    const runtimeDescriptorProviderId = typeof readRuntimeDescriptorV1FromMetadata(metadata)?.providerId === 'string'
-        ? String(readRuntimeDescriptorV1FromMetadata(metadata)?.providerId).trim()
+    const runtimeDescriptorProviderId = typeof readRuntimeDescriptorV1FromMetadata(metadata)?.agentId === 'string'
+        ? String(readRuntimeDescriptorV1FromMetadata(metadata)?.agentId).trim()
         : '';
     if ((CATALOG_AGENT_IDS as readonly string[]).includes(runtimeDescriptorProviderId)) {
         return runtimeDescriptorProviderId;

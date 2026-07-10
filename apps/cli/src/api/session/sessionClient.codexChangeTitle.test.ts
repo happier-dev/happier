@@ -53,7 +53,7 @@ function createRuntimeDescriptorMetadata(backendId: string) {
   return createTestMetadata({
     runtimeDescriptorV1: {
       v: 1,
-      providerId: backendId,
+      agentId: backendId,
       provider: {
         backendMode: 'plugin',
         providerExtra: {

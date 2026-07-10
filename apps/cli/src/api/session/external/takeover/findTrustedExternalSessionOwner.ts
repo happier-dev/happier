@@ -1,22 +1,22 @@
 import { resolveVendorResumeIdFromSessionMetadata } from '@happier-dev/agents';
-import type { ExternalSessionsProviderId } from '@happier-dev/protocol';
+import type { ExternalSessionsAgentId } from '@happier-dev/protocol';
 
 import type { DaemonSessionMarker } from '@/daemon/sessionRegistry';
 
 function extractProviderSessionIdFromMarkerMetadata(params: Readonly<{
-  providerId: ExternalSessionsProviderId;
+  agentId: ExternalSessionsAgentId;
   metadata: unknown;
 }>): string | null {
   if (!params.metadata || typeof params.metadata !== 'object' || Array.isArray(params.metadata)) return null;
   const rec = params.metadata as Record<string, unknown>;
   const expectedFlavor = typeof rec.flavor === 'string' ? rec.flavor.trim() : '';
-  if (expectedFlavor && expectedFlavor !== params.providerId) return null;
-  return resolveVendorResumeIdFromSessionMetadata(params.providerId, rec);
+  if (expectedFlavor && expectedFlavor !== params.agentId) return null;
+  return resolveVendorResumeIdFromSessionMetadata(params.agentId, rec);
 }
 
 export function findTrustedExternalSessionOwner(params: Readonly<{
   markers: readonly DaemonSessionMarker[];
-  providerId: ExternalSessionsProviderId;
+  agentId: ExternalSessionsAgentId;
   remoteSessionId: string;
   isPidAlive?: (pid: number) => boolean;
 }>): DaemonSessionMarker | null {
@@ -26,11 +26,11 @@ export function findTrustedExternalSessionOwner(params: Readonly<{
 
   const candidates = params.markers
     .filter((marker) => Number.isFinite(marker.pid) && marker.pid > 0 && isPidAlive(marker.pid))
-    .filter((marker) => marker.flavor === params.providerId)
+    .filter((marker) => marker.flavor === params.agentId)
     .filter(
       (marker) =>
         extractProviderSessionIdFromMarkerMetadata({
-          providerId: params.providerId,
+          agentId: params.agentId,
           metadata: marker.metadata,
         }) === remoteSessionId,
     )

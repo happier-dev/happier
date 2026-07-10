@@ -17,7 +17,7 @@ describe('findTrustedExternalSessionOwner', () => {
                     ohMyPiSessionId: 'omp-session-1',
                 },
             }],
-            providerId: 'ohMyPi',
+            agentId: 'ohMyPi',
             remoteSessionId: 'omp-session-1',
         });
 
@@ -38,7 +38,7 @@ describe('findTrustedExternalSessionOwner', () => {
                     ohMyPiSessionId: 'omp-session-2',
                 },
             }],
-            providerId: 'ohMyPi',
+            agentId: 'ohMyPi',
             remoteSessionId: 'omp-session-1',
         });
 

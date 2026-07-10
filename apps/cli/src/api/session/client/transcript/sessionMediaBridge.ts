@@ -95,7 +95,7 @@ const UNSAFE_META_KEYS = new Set([
     'provider',
     'providerId',
     'providerFileId',
-    'providerEventId',
+    'agentEventId',
     'agentId',
     'summary',
     'summaryPreview',
@@ -150,14 +150,14 @@ function sanitizeOrigin(origin: SessionMediaOrigin): SessionMediaOrigin {
     const agentId = sanitizeSessionMediaIdentifier(origin.agentId);
     const toolCallId = sanitizeSessionMediaIdentifier(origin.toolCallId);
     const generationId = sanitizeSessionMediaIdentifier(origin.generationId);
-    const providerEventId = sanitizeSessionMediaIdentifier(origin.providerEventId);
+    const agentEventId = sanitizeSessionMediaIdentifier(origin.agentEventId);
     const providerFileId = sanitizeSessionMediaIdentifier(origin.providerFileId);
     return {
         source: origin.source,
         ...(agentId ? { agentId } : {}),
         ...(toolCallId ? { toolCallId } : {}),
         ...(generationId ? { generationId } : {}),
-        ...(providerEventId ? { providerEventId } : {}),
+        ...(agentEventId ? { agentEventId } : {}),
         ...(providerFileId ? { providerFileId } : {}),
     };
 }

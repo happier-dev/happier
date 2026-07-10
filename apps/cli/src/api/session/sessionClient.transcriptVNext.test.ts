@@ -244,7 +244,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
               role: 'agent',
               content: {
                 type: 'acp',
-                provider: 'codex',
+                agentId: 'codex',
                 data: { type: 'message', message: 'Hello', sidechainId: 'sc-1' },
               },
             }),
@@ -330,7 +330,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
               role: 'agent',
               content: {
                 type: 'acp',
-                provider: 'codex',
+                agentId: 'codex',
                 data: { type: 'message', message: ' world', sidechainId: 'sc-1' },
               },
             }),
@@ -475,7 +475,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
             role: 'agent',
             content: {
               type: 'acp',
-              provider: 'codex',
+              agentId: 'codex',
               data: { type: 'message', message: 'Generated image:' },
             },
             meta: {
@@ -545,7 +545,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
             origin: {
               source: 'provider-generated',
               agentId: 'codex',
-              providerEventId: 'event-123',
+              agentEventId: 'event-123',
               providerFileId: 'file-123',
             },
           },
@@ -578,7 +578,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
             origin: {
               source: 'provider-generated',
               agentId: 'codex',
-              providerEventId: 'event-123',
+              agentEventId: 'event-123',
               providerFileId: 'file-123',
             },
           })],
@@ -655,7 +655,7 @@ describe('ApiSessionClient transcript vNext transport', () => {
             role: 'agent',
             content: {
               type: 'acp',
-              provider: 'codex',
+              agentId: 'codex',
               data: { type: 'message', message: '' },
             },
             meta: {

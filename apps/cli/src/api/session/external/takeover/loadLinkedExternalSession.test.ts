@@ -28,7 +28,7 @@ describe('loadLinkedExternalSession', () => {
       path: '/repo',
       directSessionV1: {
         v: 1,
-        providerId: 'claude',
+        agentId: 'claude',
         machineId: 'machine_1',
         remoteSessionId: 'claude-session',
         source: {
@@ -47,7 +47,7 @@ describe('loadLinkedExternalSession', () => {
     expect(result).toEqual({
       ok: true,
       session: expect.objectContaining({
-        providerId: 'claude',
+        agentId: 'claude',
         machineId: 'machine_1',
         remoteSessionId: 'claude-session',
         metadata: expect.objectContaining({
@@ -68,14 +68,14 @@ describe('loadLinkedExternalSession', () => {
       opencodeBackendMode: 'acp',
       externalSessionV1: {
         v: 1,
-        providerId: 'opencode',
+        agentId: 'opencode',
         machineId: 'machine_1',
         remoteSessionId: 'legacy-session',
         source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
         linkedAtMs: 1,
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'opencode',
+          agentId: 'opencode',
           provider: {
             backendMode: 'server',
             providerSessionId: 'runtime-session',
@@ -105,7 +105,7 @@ describe('loadLinkedExternalSession', () => {
     expect(result).toEqual({
       ok: true,
       session: expect.objectContaining({
-        providerId: 'opencode',
+        agentId: 'opencode',
         remoteSessionId: 'runtime-session',
       }),
     });
@@ -118,14 +118,14 @@ describe('loadLinkedExternalSession', () => {
       flavor: 'opencode',
       externalSessionV1: {
         v: 1,
-        providerId: 'opencode',
+        agentId: 'opencode',
         machineId: 'machine_1',
         remoteSessionId: 'legacy-session',
         source: { kind: 'opencodeServer', directory: '/repo/opencode' },
         linkedAtMs: 1,
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'opencode',
+          agentId: 'opencode',
           provider: {
             backendMode: 'server',
             providerSessionId: 'runtime-session',
@@ -142,7 +142,7 @@ describe('loadLinkedExternalSession', () => {
     expect(result).toEqual({
       ok: true,
       session: expect.objectContaining({
-        providerId: 'opencode',
+        agentId: 'opencode',
         remoteSessionId: 'runtime-session',
         source: {
           kind: 'opencodeServer',
@@ -161,14 +161,14 @@ describe('loadLinkedExternalSession', () => {
       codexBackendMode: 'appServer',
       externalSessionV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         machineId: 'machine_1',
         remoteSessionId: 'legacy-thread',
         source: { kind: 'codexHome', home: 'user', homePath: '/tmp/stale-home' },
         linkedAtMs: 1,
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: {
             backendMode: 'appServer',
             providerSessionId: 'runtime-thread',
@@ -202,7 +202,7 @@ describe('loadLinkedExternalSession', () => {
     expect(result).toEqual({
       ok: true,
       session: expect.objectContaining({
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'runtime-thread',
         source: {
           kind: 'codexHome',
@@ -224,7 +224,7 @@ describe('loadLinkedExternalSession', () => {
       codexBackendMode: 'appServer',
       externalSessionV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         machineId: 'machine_1',
         remoteSessionId: 'legacy-thread',
         source: {
@@ -237,7 +237,7 @@ describe('loadLinkedExternalSession', () => {
         linkedAtMs: 1,
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: {
             backendMode: 'appServer',
             providerSessionId: 'runtime-thread',
@@ -255,7 +255,7 @@ describe('loadLinkedExternalSession', () => {
     expect(result).toEqual({
       ok: true,
       session: expect.objectContaining({
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'runtime-thread',
         source: {
           kind: 'codexHome',
@@ -276,7 +276,7 @@ describe('loadLinkedExternalSession', () => {
       flavor: 'claude',
       externalSessionV1: {
         v: 1,
-        providerId: 'claude',
+        agentId: 'claude',
         machineId: 'machine_1',
         remoteSessionId: 'claude-session',
         source: {
@@ -296,7 +296,7 @@ describe('loadLinkedExternalSession', () => {
     expect(result).toEqual({
       ok: true,
       session: expect.objectContaining({
-        providerId: 'claude',
+        agentId: 'claude',
         remoteSessionId: 'claude-session',
         source: {
           kind: 'claudeConfig',
@@ -315,7 +315,7 @@ describe('loadLinkedExternalSession', () => {
       flavor: 'ohMyPi',
       externalSessionV1: {
         v: 1,
-        providerId: 'ohMyPi',
+        agentId: 'ohMyPi',
         machineId: 'machine_1',
         remoteSessionId: 'omp-session',
         source: {
@@ -334,7 +334,7 @@ describe('loadLinkedExternalSession', () => {
     expect(result).toEqual({
       ok: true,
       session: expect.objectContaining({
-        providerId: 'ohMyPi',
+        agentId: 'ohMyPi',
         remoteSessionId: 'omp-session',
         source: {
           kind: 'ohMyPiAgentDir',

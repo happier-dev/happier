@@ -7,7 +7,7 @@ describe('createFileBackedTranscriptSessionStore', () => {
     it('delegates warm, lifecycle, metadata, and transcript operations through one resolved context', async () => {
         const resolveSession = vi.fn(async () => ({
             key: {
-                providerId: 'codex' as const,
+                agentId: 'codex' as const,
                 source: { kind: 'codexHome' as const, home: 'user' as const },
                 remoteSessionId: 'session-1',
             },
@@ -46,7 +46,7 @@ describe('createFileBackedTranscriptSessionStore', () => {
 
         const store = createFileBackedTranscriptSessionStore({
             key: {
-                providerId: 'codex',
+                agentId: 'codex',
                 source: { kind: 'codexHome', home: 'user' },
                 remoteSessionId: 'session-1',
             },
@@ -85,7 +85,7 @@ describe('createFileBackedTranscriptSessionStore', () => {
             .mockRejectedValueOnce(new Error('transient resolve failure'))
             .mockResolvedValue({
                 key: {
-                    providerId: 'codex' as const,
+                    agentId: 'codex' as const,
                     source: { kind: 'codexHome' as const, home: 'user' as const },
                     remoteSessionId: 'session-1',
                 },
@@ -106,7 +106,7 @@ describe('createFileBackedTranscriptSessionStore', () => {
 
         const store = createFileBackedTranscriptSessionStore({
             key: {
-                providerId: 'codex',
+                agentId: 'codex',
                 source: { kind: 'codexHome', home: 'user' },
                 remoteSessionId: 'session-1',
             },
@@ -121,7 +121,7 @@ describe('createFileBackedTranscriptSessionStore', () => {
     it('does not leak a late subscription when unsubscribe happens before context resolution completes', async () => {
         let resolveSession!: (value: {
             key: {
-                providerId: 'codex';
+                agentId: 'codex';
                 source: { kind: 'codexHome'; home: 'user' };
                 remoteSessionId: 'session-1';
             };
@@ -129,7 +129,7 @@ describe('createFileBackedTranscriptSessionStore', () => {
         }) => void;
         const resolveSessionPromise = new Promise<{
             key: {
-                providerId: 'codex';
+                agentId: 'codex';
                 source: { kind: 'codexHome'; home: 'user' };
                 remoteSessionId: 'session-1';
             };
@@ -151,7 +151,7 @@ describe('createFileBackedTranscriptSessionStore', () => {
 
         const store = createFileBackedTranscriptSessionStore({
             key: {
-                providerId: 'codex',
+                agentId: 'codex',
                 source: { kind: 'codexHome', home: 'user' },
                 remoteSessionId: 'session-1',
             },
@@ -163,7 +163,7 @@ describe('createFileBackedTranscriptSessionStore', () => {
 
         resolveSession({
             key: {
-                providerId: 'codex',
+                agentId: 'codex',
                 source: { kind: 'codexHome', home: 'user' },
                 remoteSessionId: 'session-1',
             },

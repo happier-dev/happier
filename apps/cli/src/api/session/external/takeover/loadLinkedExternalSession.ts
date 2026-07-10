@@ -1,5 +1,5 @@
 import {
-  ExternalSessionsProviderIdSchema,
+  ExternalSessionsAgentIdSchema,
   ExternalSessionsSourceSchema,
   normalizeLinkedExternalSessionMetadataV1,
   normalizeCodexBackendMode,
@@ -85,7 +85,7 @@ const ExternalSessionMetadataSchema = z
     externalSessionV1: z
       .object({
         v: z.literal(1),
-        providerId: ExternalSessionsProviderIdSchema,
+        agentId: ExternalSessionsAgentIdSchema,
         machineId: z.string().min(1),
         remoteSessionId: z.string().min(1),
         source: ExternalSessionsSourceSchema,
@@ -102,7 +102,7 @@ export type LoadedLinkedExternalSession = Readonly<{
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown>;
   sessionPath: string | null;
-  providerId: z.infer<typeof ExternalSessionsProviderIdSchema>;
+  agentId: z.infer<typeof ExternalSessionsAgentIdSchema>;
   machineId: string;
   remoteSessionId: string;
   source: z.infer<typeof ExternalSessionsSourceSchema>;
@@ -115,7 +115,7 @@ export async function loadLinkedExternalSession(params: Readonly<{
   machineId?: string;
 }>): Promise<
   | Readonly<{ ok: true; session: LoadedLinkedExternalSession }>
-  | Readonly<{ ok: false; errorCode: 'invalid_request' | 'provider_unavailable'; error: string }>
+  | Readonly<{ ok: false; errorCode: 'invalid_request' | 'agent_unavailable'; error: string }>
 > {
   const rawSession = await fetchSessionById({ token: params.credentials.token, sessionId: params.sessionId }).catch(() => null);
   if (!rawSession) {
@@ -124,7 +124,7 @@ export async function loadLinkedExternalSession(params: Readonly<{
 
   const metadata = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession });
   if (!metadata) {
-    return { ok: false, errorCode: 'provider_unavailable', error: 'session_metadata_unavailable' };
+    return { ok: false, errorCode: 'agent_unavailable', error: 'session_metadata_unavailable' };
   }
 
   const parsed = ExternalSessionMetadataSchema.safeParse(metadata);
@@ -142,14 +142,14 @@ export async function loadLinkedExternalSession(params: Readonly<{
   const sessionPath = typeof parsed.data.path === 'string' && parsed.data.path.trim().length > 0 ? parsed.data.path.trim() : null;
   const canonicalized = directRuntimeDescriptor
     ? await resolveExternalSessionLinkIdentity({
-        providerId: direct.providerId,
+        agentId: direct.agentId,
         metadata: normalizedMetadata,
         remoteSessionId: direct.remoteSessionId,
         source: direct.source,
         runtimeDescriptor: directRuntimeDescriptor,
       })
     : await canonicalizeLinkedExternalSessionSource({
-        providerId: direct.providerId,
+        agentId: direct.agentId,
         metadata: normalizedMetadata,
         remoteSessionId: direct.remoteSessionId,
         source: direct.source,
@@ -163,7 +163,7 @@ export async function loadLinkedExternalSession(params: Readonly<{
       rawSession,
       metadata: normalizedMetadata,
       sessionPath,
-      providerId: direct.providerId,
+      agentId: direct.agentId,
       machineId: direct.machineId,
       remoteSessionId: canonicalized.remoteSessionId,
       source: canonicalized.source,

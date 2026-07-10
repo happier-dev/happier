@@ -8,7 +8,7 @@ describe('validateDirectMachineSource', () => {
   it('rejects Codex connectedService source ids with path traversal segments', async () => {
     await expect(
       validateDirectMachineSource({
-        providerId: 'codex',
+        agentId: 'codex',
         source: {
           kind: 'codexHome',
           home: 'connectedService',
@@ -22,7 +22,7 @@ describe('validateDirectMachineSource', () => {
   it('accepts safe Codex connectedService source ids', async () => {
     await expect(
       validateDirectMachineSource({
-        providerId: 'codex',
+        agentId: 'codex',
         source: {
           kind: 'codexHome',
           home: 'connectedService',
@@ -43,7 +43,7 @@ describe('validateDirectMachineSource', () => {
   it('fills the configured Codex home path when the user source omits it', async () => {
     await expect(
       validateDirectMachineSource({
-        providerId: 'codex',
+        agentId: 'codex',
         source: {
           kind: 'codexHome',
           home: 'user',
@@ -65,7 +65,7 @@ describe('validateDirectMachineSource', () => {
   it('rejects Codex user homePath overrides that do not match the configured home', async () => {
     await expect(
       validateDirectMachineSource({
-        providerId: 'codex',
+        agentId: 'codex',
         source: {
           kind: 'codexHome',
           home: 'user',
@@ -81,7 +81,7 @@ describe('validateDirectMachineSource', () => {
   it('fills the configured ohMyPi agent dir when the source omits it', async () => {
     await expect(
       validateDirectMachineSource({
-        providerId: 'ohMyPi',
+        agentId: 'ohMyPi',
         source: {
           kind: 'ohMyPiAgentDir',
         },
@@ -101,7 +101,7 @@ describe('validateDirectMachineSource', () => {
   it('rejects ohMyPi agentDir overrides that do not match the configured agent dir', async () => {
     await expect(
       validateDirectMachineSource({
-        providerId: 'ohMyPi',
+        agentId: 'ohMyPi',
         source: {
           kind: 'ohMyPiAgentDir',
           agentDir: '/tmp/other-omp-agent',
@@ -116,7 +116,7 @@ describe('validateDirectMachineSource', () => {
   it('rejects malformed OpenCode baseUrl values instead of throwing', async () => {
     await expect(
       validateDirectMachineSource({
-        providerId: 'opencode',
+        agentId: 'opencode',
         source: {
           kind: 'opencodeServer',
           baseUrl: 'not a url',

@@ -33,12 +33,12 @@ function resolvePageMaxItems(): number {
 }
 
 function makeImportLocalId(params: Readonly<{
-  providerId: string;
+  agentId: string;
   remoteSessionId: string;
   directItemId: string;
 }>): string {
-  const digest = sha256(`${params.providerId}:${params.remoteSessionId}:${params.directItemId}`).slice(0, 24);
-  return `direct-import:v1:${params.providerId}:${digest}`;
+  const digest = sha256(`${params.agentId}:${params.remoteSessionId}:${params.directItemId}`).slice(0, 24);
+  return `direct-import:v1:${params.agentId}:${digest}`;
 }
 
 type ExternalSessionTranscriptPage = Readonly<{
@@ -68,9 +68,9 @@ async function loadExternalSessionTranscriptPage(params: Readonly<{
 }
 
 async function resolveExternalSessionProviderOps(linked: LoadedLinkedExternalSession): Promise<ExternalSessionExecutionSurface> {
-  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(linked.providerId)).externalSession;
+  const providerOps = (await getSessionHostBridge().resolveExecutionSurfaces(linked.agentId)).externalSession;
   if (!providerOps) {
-    throw new Error(`Unsupported direct-session provider: ${linked.providerId}`);
+    throw new Error(`Unsupported direct-session provider: ${linked.agentId}`);
   }
   return providerOps;
 }
@@ -137,7 +137,7 @@ export async function importExternalSessionTranscript(params: Readonly<{
 }>): Promise<Readonly<{ importedCount: number }>> {
   const providerOps = await resolveExternalSessionProviderOps(params.linked);
   if (!providerOps.pageTranscript) {
-    throw new Error(`Direct-session provider '${params.linked.providerId}' does not support transcript paging`);
+    throw new Error(`Direct-session provider '${params.linked.agentId}' does not support transcript paging`);
   }
   const [items, sourceReadRoots] = await Promise.all([
     loadAllDirectTranscriptItems({ linked: params.linked, providerOps: { pageTranscript: providerOps.pageTranscript } }),
@@ -150,7 +150,7 @@ export async function importExternalSessionTranscript(params: Readonly<{
 
   for (const item of items) {
     const localId = makeImportLocalId({
-      providerId: params.linked.providerId,
+      agentId: params.linked.agentId,
       remoteSessionId: params.linked.remoteSessionId,
       directItemId: item.id,
     });

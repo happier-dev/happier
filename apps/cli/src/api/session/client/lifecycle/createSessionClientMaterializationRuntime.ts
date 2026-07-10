@@ -26,15 +26,24 @@ export type SessionClientMaterializationRuntime = Readonly<{
     readonly agentQueueDeliveredLocalIds: ReadonlySet<string>;
     getPendingQueueState: () => PendingQueueState;
     getLatestTurnStatus: () => LatestTurnStatusSnapshot | undefined;
+    getLatestTurnStatusObservedAt: () => number | null;
+    getLatestTurnSnapshot: () => Readonly<{
+        status: Exclude<LatestTurnStatusSnapshot, null>;
+        observedAt: number;
+    }> | null;
     shouldAttemptPendingMaterialization: (opts?: {
         activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
     }) => boolean;
     shouldRefreshTurnStatusBeforePendingMaterialization: () => boolean;
     markTurnStatusRefreshPendingVersion: () => void;
     applyPendingQueueState: (state: KnownPendingQueueState) => boolean;
-    applyLatestTurnStatus: (status: LatestTurnStatusSnapshot) => void;
-    observeSessionTurnMutationAction: (action: SessionTurnMutationActionInput) => Readonly<{ isTerminal: boolean }>;
+    applyLatestTurnStatus: (status: LatestTurnStatusSnapshot, observedAt?: number | null) => void;
+    observeSessionTurnMutationAction: (
+        action: SessionTurnMutationActionInput,
+        observedAt?: number,
+    ) => Readonly<{ isTerminal: boolean }>;
     hasActiveLocalTurn: () => boolean;
+    getActiveLocalTurnProgressAt: () => number | null;
     shouldForceRefreshStaleBlockedTurnStatus: () => boolean;
     observeMaterializeResult: (params: Readonly<{ didMaterialize: boolean; pendingQueueState?: KnownPendingQueueState | null }>) => boolean;
     hasMaterializedLocalId: (localId: string) => boolean;
@@ -65,6 +74,7 @@ export function createSessionClientMaterializationRuntime(
         onKeepAliveStateMayHaveChanged: () => void;
         initialPendingQueueState?: PendingQueueState | null;
         initialLatestTurnStatus?: LatestTurnStatusSnapshot | undefined;
+        initialLatestTurnStatusObservedAt?: number | null;
         isPendingQueueMaterializationBlocked?: () => boolean;
     }>,
 ): SessionClientMaterializationRuntime {
@@ -76,8 +86,10 @@ export function createSessionClientMaterializationRuntime(
     const committedLocalIdCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
     let pendingQueueState: PendingQueueState = deps.initialPendingQueueState ?? UNKNOWN_PENDING_QUEUE_STATE;
     let latestTurnStatus = deps.initialLatestTurnStatus;
+    let latestTurnStatusObservedAt = deps.initialLatestTurnStatusObservedAt ?? null;
     let lastTurnStatusRefreshPendingVersion: number | null = null;
     let hasActiveLocalTurn = false;
+    let activeLocalTurnProgressAt: number | null = null;
     let lastStaleBlockedTurnStatusRefreshAt = 0;
 
     const hasMaterializedLocalId = (localId: string): boolean =>
@@ -120,6 +132,24 @@ export function createSessionClientMaterializationRuntime(
             return latestTurnStatus;
         },
 
+        getLatestTurnStatusObservedAt() {
+            return latestTurnStatusObservedAt;
+        },
+
+        getLatestTurnSnapshot() {
+            if (
+                latestTurnStatus === undefined
+                || latestTurnStatus === null
+                || latestTurnStatusObservedAt === null
+            ) {
+                return null;
+            }
+            return {
+                status: latestTurnStatus,
+                observedAt: latestTurnStatusObservedAt,
+            };
+        },
+
         shouldAttemptPendingMaterialization(opts = {}) {
             if (deps.isPendingQueueMaterializationBlocked?.() === true) {
                 return false;
@@ -160,25 +190,42 @@ export function createSessionClientMaterializationRuntime(
             return result.changed;
         },
 
-        applyLatestTurnStatus(status) {
+        applyLatestTurnStatus(status, observedAt) {
+            const previousStatus = latestTurnStatus;
             latestTurnStatus = status;
+            if (typeof observedAt === 'number' && Number.isFinite(observedAt) && observedAt >= 0) {
+                latestTurnStatusObservedAt = Math.trunc(observedAt);
+            } else if (previousStatus !== status) {
+                latestTurnStatusObservedAt = null;
+            }
         },
 
-        observeSessionTurnMutationAction(action) {
+        observeSessionTurnMutationAction(action, observedAt) {
             const mapped = latestTurnStatusForSessionTurnMutationAction(action);
             if (mapped !== undefined) {
                 latestTurnStatus = mapped;
+                if (typeof observedAt === 'number' && Number.isFinite(observedAt) && observedAt >= 0) {
+                    latestTurnStatusObservedAt = Math.trunc(observedAt);
+                }
             }
             if (action === 'begin') {
                 hasActiveLocalTurn = true;
+                activeLocalTurnProgressAt = typeof observedAt === 'number' && Number.isFinite(observedAt)
+                    ? Math.trunc(observedAt)
+                    : Date.now();
             } else if (isTerminalSessionTurnMutationAction(action)) {
                 hasActiveLocalTurn = false;
+                activeLocalTurnProgressAt = null;
             }
             return { isTerminal: isTerminalSessionTurnMutationAction(action) };
         },
 
         hasActiveLocalTurn() {
             return hasActiveLocalTurn;
+        },
+
+        getActiveLocalTurnProgressAt() {
+            return activeLocalTurnProgressAt;
         },
 
         /**

@@ -42,7 +42,7 @@ describe('createProjectedJsonlSessionStore', () => {
         const { createProjectedJsonlSessionStore } = await import('./createProjectedJsonlSessionStore');
         const store = createProjectedJsonlSessionStore<string, null, undefined, { cursor: string; maxBytes: number; maxItems: number }, string | null>({
             key: {
-                providerId: 'codex',
+                agentId: 'codex',
                 source: { kind: 'codexHome', home: 'user' },
                 remoteSessionId: 'session-1',
             },
@@ -93,7 +93,7 @@ describe('createProjectedJsonlSessionStore', () => {
         const { createProjectedJsonlSessionStore } = await import('./createProjectedJsonlSessionStore');
         const store = createProjectedJsonlSessionStore<string, null, undefined, { cursor: string; maxBytes: number; maxItems: number }, string | null>({
             key: {
-                providerId: 'codex',
+                agentId: 'codex',
                 source: { kind: 'codexHome', home: 'user' },
                 remoteSessionId: 'session-2',
             },

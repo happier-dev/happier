@@ -15,7 +15,7 @@ import {
   resolveExternalSessionsSourceKey,
   normalizeCodexBackendMode,
   type CodexBackendMode,
-  type ExternalSessionsProviderId,
+  type ExternalSessionsAgentId,
   type ExternalSessionsSource,
   type RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
@@ -106,7 +106,7 @@ function resolveRefreshedExternalSessionMetadata(params: Readonly<{
   currentMetadata: Readonly<Record<string, unknown>>;
   tag: string;
   machineId: string;
-  providerId: ExternalSessionsProviderId;
+  agentId: ExternalSessionsAgentId;
   remoteSessionId: string;
   source: ExternalSessionsSource;
   codexBackendMode?: CodexBackendMode | null;
@@ -150,7 +150,7 @@ function resolveRefreshedExternalSessionMetadata(params: Readonly<{
   const canonicalMetadata = buildExternalSessionMetadata({
     tag: params.tag,
     machineId: params.machineId,
-    providerId: params.providerId,
+    agentId: params.agentId,
     remoteSessionId: params.remoteSessionId,
     source: params.source,
     codexBackendMode: params.codexBackendMode,
@@ -214,7 +214,7 @@ async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
   sessionId: string;
   tag: string;
   machineId: string;
-  providerId: ExternalSessionsProviderId;
+  agentId: ExternalSessionsAgentId;
   remoteSessionId: string;
   source: ExternalSessionsSource;
   codexBackendMode?: CodexBackendMode | null;
@@ -256,7 +256,7 @@ async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
     currentMetadata: initialMetadataRecord,
     tag: params.tag,
     machineId: params.machineId,
-    providerId: params.providerId,
+    agentId: params.agentId,
     remoteSessionId: params.remoteSessionId,
     source: params.source,
     codexBackendMode: params.codexBackendMode,
@@ -280,7 +280,7 @@ async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
         currentMetadata,
         tag: params.tag,
         machineId: params.machineId,
-        providerId: params.providerId,
+        agentId: params.agentId,
         remoteSessionId: params.remoteSessionId,
         source: params.source,
         codexBackendMode: params.codexBackendMode,
@@ -297,12 +297,12 @@ async function refreshExistingExternalSessionMetadataIfNeeded(params: Readonly<{
 
 function computeExternalSessionTag(params: Readonly<{
   machineId: string;
-  providerId: ExternalSessionsProviderId;
+  agentId: ExternalSessionsAgentId;
   remoteSessionId: string;
   source: ExternalSessionsSource;
 }>): string {
   const sourceKey = resolveExternalSessionsSourceKey(params.source);
-  const fingerprint = `${params.machineId}|${params.providerId}|${params.remoteSessionId}|${sourceKey}`;
+  const fingerprint = `${params.machineId}|${params.agentId}|${params.remoteSessionId}|${sourceKey}`;
   return `direct:v1:${sha256Hex(fingerprint)}`;
 }
 
@@ -342,7 +342,7 @@ async function findExistingSessionIdByTag(params: Readonly<{ credentials: Creden
 function buildExternalSessionMetadata(params: Readonly<{
   tag: string;
   machineId: string;
-  providerId: ExternalSessionsProviderId;
+  agentId: ExternalSessionsAgentId;
   remoteSessionId: string;
   source: ExternalSessionsSource;
   codexBackendMode?: CodexBackendMode | null;
@@ -357,7 +357,7 @@ function buildExternalSessionMetadata(params: Readonly<{
 }>): Record<string, unknown> {
   const titleHint = normalizeNullableString(params.titleHint);
   const directoryHint = normalizeNullableString(params.directoryHint) ?? '';
-  const resume = getAgentResumeConfig(params.providerId);
+  const resume = getAgentResumeConfig(params.agentId);
   const vendorResumeIdField = 'vendorResumeIdField' in resume ? resume.vendorResumeIdField ?? null : null;
   const sessionStateRuntimeDescriptor = params.sessionStateUpdates?.find((update) =>
     update.fieldId === 'identity.runtimeDescriptor'
@@ -376,10 +376,10 @@ function buildExternalSessionMetadata(params: Readonly<{
     path: directoryHint,
     host: os.hostname(),
     machineId: params.machineId,
-    flavor: params.providerId,
+    flavor: params.agentId,
     externalSessionV1: {
       v: 1,
-      providerId: params.providerId,
+      agentId: params.agentId,
       machineId: params.machineId,
       remoteSessionId: params.remoteSessionId,
       source: params.source,
@@ -431,7 +431,7 @@ function buildExternalSessionMetadata(params: Readonly<{
 export async function ensureExternalSessionLink(params: Readonly<{
   credentials: Credentials;
   machineId: string;
-  providerId: ExternalSessionsProviderId;
+  agentId: ExternalSessionsAgentId;
   remoteSessionId: string;
   source: ExternalSessionsSource;
   codexBackendMode?: unknown;
@@ -442,7 +442,7 @@ export async function ensureExternalSessionLink(params: Readonly<{
 }>): Promise<{ sessionId: string; created: boolean; tag: string }> {
   const nowMs = params.nowMs ?? (() => Date.now());
   const linkIdentity = await resolveExternalSessionLinkIdentity({
-    providerId: params.providerId,
+    agentId: params.agentId,
     remoteSessionId: params.remoteSessionId,
     source: params.source,
     runtimeDescriptor: params.runtimeDescriptor,
@@ -457,12 +457,12 @@ export async function ensureExternalSessionLink(params: Readonly<{
 
   const tag = computeExternalSessionTag({
     machineId: params.machineId,
-    providerId: params.providerId,
+    agentId: params.agentId,
     remoteSessionId,
     source,
   });
   const connectedServiceRuntimeSnapshot = await resolveConnectedServiceRuntimeSnapshotForExternalSession({
-    providerId: params.providerId,
+    agentId: params.agentId,
     remoteSessionId,
     directoryHint: params.directoryHint,
   });
@@ -473,7 +473,7 @@ export async function ensureExternalSessionLink(params: Readonly<{
       sessionId: existingSessionId,
       tag,
       machineId: params.machineId,
-      providerId: params.providerId,
+      agentId: params.agentId,
       remoteSessionId,
       source,
       codexBackendMode,
@@ -491,7 +491,7 @@ export async function ensureExternalSessionLink(params: Readonly<{
   const metadata = buildExternalSessionMetadata({
     tag,
     machineId: params.machineId,
-    providerId: params.providerId,
+    agentId: params.agentId,
     remoteSessionId,
     source,
     codexBackendMode,

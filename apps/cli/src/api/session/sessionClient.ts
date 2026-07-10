@@ -142,6 +142,7 @@ import { readLatestTurnStatusSnapshot } from './sessionTurnStatusSnapshot';
 import {
     blockPendingQueueV2ProviderDeliveriesOnAttach,
     blockPendingQueueV2Delivery,
+    listPendingQueueV2DeliveryStatusesFromServer,
     listPendingQueueV2LocalIdsFromServer,
     listPendingQueueV2ProviderDeliveryLocalIdsFromServer,
     reconcileAcceptedPendingQueueV2DeliveriesThroughSeq,
@@ -153,7 +154,7 @@ import {
 } from './pendingQueueV2Transport';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
 import {
-    shouldDeferPendingQueueDrainForRuntimeActivity,
+    resolvePendingQueueRuntimeActivityDeferral,
     type PendingQueueRuntimeActivityProjection,
 } from '@/agent/runtime/session/input/pendingQueueDrainPolicy';
 
@@ -327,6 +328,7 @@ export type ApiSessionClientOptions = Readonly<{
 
 export class ApiSessionClient extends EventEmitter {
     private static readonly STARTUP_MESSAGE_CATCH_UP_RETRY_DELAYS_MS = [250, 1_000, 2_500] as const;
+    private static readonly MAX_OWED_USER_MESSAGE_REPLAY_ATTEMPTS = 5;
 
     private readonly token: string;
     readonly sessionId: string;
@@ -395,6 +397,7 @@ export class ApiSessionClient extends EventEmitter {
     private providerDeliveryAttachRecoveryCompleted = false;
     private providerDeliveryAttachRecoveryInFlight: Promise<void> | null = null;
     private pendingMaterializeRetryWakeTimer: ReturnType<typeof setTimeout> | null = null;
+    private runtimeActivityPendingWakeTimer: ReturnType<typeof setTimeout> | null = null;
     private pendingMaterializeRetryAttempt = 0;
     private providerAcceptancePendingMaterializationPolicy: ProviderAcceptancePendingMaterializationPolicy = 'claimUntilProviderAccept';
     private runtimeActivityProjection: RuntimeActivityProjectionForPendingDrain = {};
@@ -413,6 +416,8 @@ export class ApiSessionClient extends EventEmitter {
     private readonly acceptedCanonicalPendingDeliveryRetryLocalIds = new Set<string>();
     private owedUserMessageCatchUpInFlight = false;
     private lastOwedUserMessageCatchUpAt = 0;
+    private lastOwedUserMessageCatchUpAfterSeq: number | null = null;
+    private owedUserMessageReplayStuckAttempts = 0;
     private readonly pendingSessionTurnMutationUpdates = new Set<Promise<void>>();
     private readonly pendingSessionEndMutationUpdates = new Set<Promise<void>>();
     private readonly pendingTranscriptMessageUpdates = new Set<Promise<unknown>>();
@@ -848,6 +853,10 @@ export class ApiSessionClient extends EventEmitter {
             onKeepAliveStateMayHaveChanged: () => this.maybeScheduleUserSocketDisconnect(),
             initialPendingQueueState: readKnownPendingQueueState(session) ?? UNKNOWN_PENDING_QUEUE_STATE,
             initialLatestTurnStatus: readLatestTurnStatusSnapshot((session as { latestTurnStatus?: unknown }).latestTurnStatus),
+            initialLatestTurnStatusObservedAt: (() => {
+                const value = (session as { latestTurnStatusObservedAt?: unknown }).latestTurnStatusObservedAt;
+                return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
+            })(),
             isPendingQueueMaterializationBlocked: () =>
                 isSessionContinuationRecoveryBlockingPendingDrain(this.metadata),
         });
@@ -1023,6 +1032,8 @@ export class ApiSessionClient extends EventEmitter {
                     : undefined,
             }),
             getSessionConnectionSupervisor: () => this.sessionConnectionSupervisor,
+            getLatestTurnSnapshot: () => this.materializationRuntime.getLatestTurnSnapshot(),
+            getActiveLocalTurnProgressAt: () => this.materializationRuntime.getActiveLocalTurnProgressAt(),
             getMetadataSnapshot: () => this.getMetadataSnapshot(),
             updateAgentState: (handler) => this.updateAgentState(handler),
             updateMetadata: (handler) => this.updateMetadata(handler),
@@ -1234,12 +1245,15 @@ export class ApiSessionClient extends EventEmitter {
             markPendingQueueMaterializedLocalId: (localId) =>
                 this.materializationRuntime.markPendingQueueMaterializedLocalId(localId),
             shouldAttemptPendingMaterialization: (opts) => this.materializationRuntime.shouldAttemptPendingMaterialization(opts),
-            shouldDeferPendingQueueDrainForRuntimeActivity: ({ deliveryTiming }) =>
-                shouldDeferPendingQueueDrainForRuntimeActivity({
+            shouldDeferPendingQueueDrainForRuntimeActivity: ({ deliveryTiming }) => {
+                const deferral = resolvePendingQueueRuntimeActivityDeferral({
                     settings: { sessionPendingQueueDeliveryTiming: deliveryTiming },
                     activity: this.runtimeActivityProjection,
                     nowMs: Date.now(),
-                }),
+                });
+                this.scheduleRuntimeActivityPendingWake(deferral.runtimeActivityExpiresAt);
+                return deferral.defer;
+            },
             getPendingQueueState: () => this.materializationRuntime.getPendingQueueState(),
             applyPendingQueueState: (state) => this.materializationRuntime.applyPendingQueueState(state),
             observePendingMaterializeResult: (params) => this.materializationRuntime.observeMaterializeResult(params),
@@ -1250,6 +1264,8 @@ export class ApiSessionClient extends EventEmitter {
                 this.reconcileAcceptedPendingDeliveriesThroughSeq(maxAcceptedSeq),
             retryAcceptedCanonicalPendingDeliveryResolutions: () =>
                 this.retryAcceptedCanonicalPendingDeliveryResolutions(),
+            reconcileTerminalCanonicalPendingDeliveries: () =>
+                this.reconcileTerminalCanonicalPendingDeliveries(),
             getUnresolvedCanonicalPendingDeliveryCount: () => this.canonicalPendingDeliveryByLocalId.size,
             recoverInheritedProviderDeliveryClaimsBeforeMaterialization: () =>
                 this.recoverInheritedProviderDeliveryClaimsBeforeMaterialization(),
@@ -1360,8 +1376,8 @@ export class ApiSessionClient extends EventEmitter {
                             this.emit('metadata-updated');
                         }
                     },
-                    applyLatestTurnStatus: (status) => {
-                        this.materializationRuntime.applyLatestTurnStatus(status);
+                    applyLatestTurnStatus: (status, observedAt) => {
+                        this.materializationRuntime.applyLatestTurnStatus(status, observedAt);
                     },
                     reason: opts.reason,
                 });
@@ -1390,7 +1406,7 @@ export class ApiSessionClient extends EventEmitter {
      * only after the matching turn mutation is durable.
      */
     private observeSessionTurnMutationForCachedTurnStatus(mutation: SessionTurnMutationV1): Readonly<{ isTerminal: boolean }> {
-        return this.materializationRuntime.observeSessionTurnMutationAction(mutation.action);
+        return this.materializationRuntime.observeSessionTurnMutationAction(mutation.action, mutation.observedAt);
     }
 
     private clearPendingMaterializeRetryWake(): void {
@@ -1399,6 +1415,20 @@ export class ApiSessionClient extends EventEmitter {
             this.pendingMaterializeRetryWakeTimer = null;
         }
         this.pendingMaterializeRetryAttempt = 0;
+    }
+
+    private scheduleRuntimeActivityPendingWake(expiresAt: number | null): void {
+        if (this.runtimeActivityPendingWakeTimer) {
+            clearTimeout(this.runtimeActivityPendingWakeTimer);
+            this.runtimeActivityPendingWakeTimer = null;
+        }
+        if (expiresAt === null || this.closed) return;
+        this.runtimeActivityPendingWakeTimer = setTimeout(() => {
+            this.runtimeActivityPendingWakeTimer = null;
+            if (this.closed) return;
+            this.emit('metadata-updated');
+        }, Math.max(0, expiresAt - Date.now()));
+        this.runtimeActivityPendingWakeTimer.unref?.();
     }
 
     private resetPendingMaterializeRetryWakeIfDrained(): void {
@@ -1455,7 +1485,7 @@ export class ApiSessionClient extends EventEmitter {
      */
     private observeDurableTerminalSessionTurnMutationForPendingDrain(mutation: SessionTurnMutationV1): void {
         if (this.closed) return;
-        const observed = this.materializationRuntime.observeSessionTurnMutationAction(mutation.action);
+        const observed = this.materializationRuntime.observeSessionTurnMutationAction(mutation.action, mutation.observedAt);
         if (!observed.isTerminal) return;
         const pendingQueueState = this.materializationRuntime.getPendingQueueState();
         logger.debug('[pendingQueue] turn-end drain trigger', {
@@ -1480,6 +1510,7 @@ export class ApiSessionClient extends EventEmitter {
         if (this.acceptedCanonicalPendingDeliveryRetryLocalIds.size > 0) {
             await this.retryAcceptedCanonicalPendingDeliveryResolutions();
         }
+        await this.reconcileTerminalCanonicalPendingDeliveries();
         if (this.canonicalPendingDeliveryByLocalId.size > 0) {
             logger.debug('[pendingQueue] owed user-message turn-end catch-up skipped while canonical pending delivery is unresolved', {
                 sessionId: this.sessionId,
@@ -1496,10 +1527,29 @@ export class ApiSessionClient extends EventEmitter {
         }
         this.lastOwedUserMessageCatchUpAt = now;
         const watermarkState = this.readDeliveredUserMessageWatermarkState();
-        const afterSeq = Math.max(0, Math.min(
+        let afterSeq = Math.max(0, Math.min(
             watermarkState.effective ?? Number.MAX_SAFE_INTEGER,
             this.lastObservedUserMessageSeq,
         ));
+        if (afterSeq < this.lastObservedUserMessageSeq) {
+            if (this.lastOwedUserMessageCatchUpAfterSeq === afterSeq) {
+                this.owedUserMessageReplayStuckAttempts += 1;
+            } else {
+                this.lastOwedUserMessageCatchUpAfterSeq = afterSeq;
+                this.owedUserMessageReplayStuckAttempts = 1;
+            }
+            if (this.owedUserMessageReplayStuckAttempts >= ApiSessionClient.MAX_OWED_USER_MESSAGE_REPLAY_ATTEMPTS) {
+                await this.escalateStuckOwedUserMessageReplay(afterSeq);
+                afterSeq = Math.max(0, Math.min(
+                    this.readDeliveredUserMessageWatermarkState().effective ?? Number.MAX_SAFE_INTEGER,
+                    this.lastObservedUserMessageSeq,
+                ));
+                if (afterSeq >= this.lastObservedUserMessageSeq) return;
+            }
+        } else {
+            this.lastOwedUserMessageCatchUpAfterSeq = null;
+            this.owedUserMessageReplayStuckAttempts = 0;
+        }
         this.owedUserMessageCatchUpInFlight = true;
         logger.debug('[pendingQueue] owed user-message turn-end catch-up', {
             sessionId: this.sessionId,
@@ -1524,6 +1574,30 @@ export class ApiSessionClient extends EventEmitter {
             });
         } finally {
             this.owedUserMessageCatchUpInFlight = false;
+        }
+    }
+
+    private async escalateStuckOwedUserMessageReplay(afterSeq: number): Promise<void> {
+        this.persistDeliveredUserMessageWatermarkSeq(this.lastObservedUserMessageSeq);
+        this.lastOwedUserMessageCatchUpAfterSeq = null;
+        this.owedUserMessageReplayStuckAttempts = 0;
+        logger.debug('[pendingQueue] owed user-message replay escalated', {
+            sessionId: this.sessionId,
+            afterSeq,
+            advancedWatermarkTo: this.lastObservedUserMessageSeq,
+            attempts: ApiSessionClient.MAX_OWED_USER_MESSAGE_REPLAY_ATTEMPTS,
+        });
+        try {
+            const statuses = await listPendingQueueV2DeliveryStatusesFromServer({ token: this.token, sessionId: this.sessionId });
+            for (const entry of statuses) {
+                if (entry.status !== 'delivering') continue;
+                await this.blockPendingQueueDeliveryLocalId(entry.localId, 'provider_acceptance_timeout', { canonicalOnly: false });
+            }
+        } catch (error) {
+            logger.debug('[pendingQueue] owed user-message replay escalation failed', {
+                sessionId: this.sessionId,
+                error: serializeAxiosErrorForLog(error),
+            });
         }
     }
 
@@ -2044,6 +2118,62 @@ export class ApiSessionClient extends EventEmitter {
         await this.resolveAcceptedCanonicalPendingDeliveries(localIds);
     }
 
+    /**
+     * Retires local provider-delivery claims whose server-owned pending row is terminal or gone.
+     * The server projection is the single delivery truth; a stale local claim must never keep
+     * newer pending rows or owed transcript replay blocked indefinitely.
+     */
+    private async reconcileTerminalCanonicalPendingDeliveries(): Promise<boolean> {
+        if (this.closed || this.canonicalPendingDeliveryByLocalId.size === 0) return false;
+
+        let statuses: Awaited<ReturnType<typeof listPendingQueueV2DeliveryStatusesFromServer>>;
+        try {
+            const request = async () => await listPendingQueueV2DeliveryStatusesFromServer({
+                token: this.token,
+                sessionId: this.sessionId,
+            });
+            const supervisor = this.sessionConnectionSupervisor;
+            statuses = supervisor
+                ? await runSupervisedRequest({
+                    supervisor,
+                    requireAuth: true,
+                    requireOnline: false,
+                    request,
+                })
+                : await request();
+        } catch (error) {
+            logger.debug('[pendingQueue] terminal canonical pending delivery reconcile failed (non-fatal)', {
+                sessionId: this.sessionId,
+                error: serializeAxiosErrorForLog(error),
+            });
+            return false;
+        }
+
+        const nonTerminalLocalIds = new Set(
+            statuses
+                .filter((entry) => entry.status === 'delivering' || entry.status === 'blocked')
+                .map((entry) => entry.localId),
+        );
+        let didClear = false;
+        for (const localId of [...this.canonicalPendingDeliveryByLocalId.keys()]) {
+            if (nonTerminalLocalIds.has(localId)) continue;
+            const committedSeq = this.committedUserMessageSeqTracker.get(localId);
+            if (committedSeq !== null) {
+                this.persistDeliveredUserMessageWatermarkSeq(committedSeq);
+            }
+            didClear = this.clearCanonicalPendingDeliveryLocalState(localId) || didClear;
+            logger.debug('[pendingQueue] retired terminal canonical pending delivery claim', {
+                sessionId: this.sessionId,
+                localId,
+                committedSeq,
+            });
+        }
+        if (didClear) {
+            this.emit('metadata-updated');
+        }
+        return didClear;
+    }
+
     async blockPendingMessageDelivery(params: Readonly<{
         localIds?: readonly string[] | null;
         reason: PendingQueueDeliveryBlockedReason;
@@ -2494,11 +2624,21 @@ export class ApiSessionClient extends EventEmitter {
             runtimeActivitySourceClass: projection.runtimeActivitySourceClass,
         });
         this.runtimeActivityProjection = projection;
+        if (projection.runtimeActivityActiveCount <= 0 || projection.runtimeActivityExpiresAt === null) {
+            this.scheduleRuntimeActivityPendingWake(null);
+        }
     }
 
     private applyRuntimeActivityProjectionFromServer(projectionLike: unknown): void {
         const projection = readRuntimeActivityProjectionForPendingDrain(projectionLike);
         this.runtimeActivityProjection = projection;
+        if (
+            projection.runtimeActivityActiveCount === 0
+            || projection.runtimeActivityExpiresAt === null
+            || projection.runtimeActivityExpiresAt === undefined
+        ) {
+            this.scheduleRuntimeActivityPendingWake(null);
+        }
     }
 
     async upsertSessionSystemRecord(request: SessionSystemRecordUpsertRequest): Promise<void> {
@@ -2693,6 +2833,7 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     async close() {
+        this.scheduleRuntimeActivityPendingWake(null);
         this.clearPendingMaterializeRetryWake();
         await this.interactionApi.close();
         this.clearPendingMaterializeRetryWake();

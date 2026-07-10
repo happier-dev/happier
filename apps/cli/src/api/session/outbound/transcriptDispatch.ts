@@ -20,7 +20,7 @@ import {
 } from '@happier-dev/protocol';
 
 import type { Metadata } from '../../types';
-import type { UsageObservation } from '../../../usage/usageObservation';
+import { normalizeUsageObservation } from '../../../usage/usageObservation';
 import { buildLegacyUsageReportFromUsageObservation } from '../../../usage/legacy/legacyUsageTransport';
 import { buildAcpAgentMessageEnvelope } from '../acpMessageEnvelope';
 import type {
@@ -72,8 +72,8 @@ function readNonEmptyString(value: unknown): string | null {
 
 export function readRuntimeOutboundTranscriptDispatchBackendId(metadata: unknown): string | null {
   const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
-  const providerExtra = asRecord(descriptor?.provider.providerExtra);
-  const runtimeHandle = asRecord(providerExtra?.runtimeHandle);
+  const agentExtra = asRecord(descriptor?.agent.agentExtra);
+  const runtimeHandle = asRecord(agentExtra?.runtimeHandle);
   return readNonEmptyString(runtimeHandle?.backendId);
 }
 
@@ -198,13 +198,15 @@ function applyUsageObservationEffect(
   effect: Extract<RuntimeOutboundTranscriptPostSendEffectV1, { type: 'usageObservation' }>,
 ): void {
   try {
+    const observation = normalizeUsageObservation(effect.observation);
+    if (!observation) return;
     logger.debugLargeJson('[SOCKET] Sending usage data:', buildLegacyUsageReportFromUsageObservation({
       sessionId: port.sessionId,
-      observation: effect.observation as UsageObservation,
+      observation,
     }));
     void port.usageObservationPublisher.publish({
       sessionId: port.sessionId,
-      observation: effect.observation as UsageObservation,
+      observation,
       backendMode: effect.backendMode ?? null,
       externalKey: effect.externalKey ?? null,
     }).catch((error) => {

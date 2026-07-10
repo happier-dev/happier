@@ -26,7 +26,7 @@ export function extractAssistantTextSnapshotFromAcpMessage(
     role: 'agent',
     content: {
       type: 'acp',
-      provider,
+      agentId: provider,
       data: body,
     },
   });

@@ -390,8 +390,8 @@ describe('ApiSessionClient message commit queue', () => {
         mutationId: 'mutation-complete',
         action: 'complete',
         turnId: 'turn-1',
-        provider: 'codex',
-        providerTurnId: 'turn-1',
+        agentId: 'codex',
+        agentTurnId: 'turn-1',
         observedAt: 123,
       });
 
@@ -408,7 +408,7 @@ describe('ApiSessionClient message commit queue', () => {
         action: 'complete',
         turnId: 'turn-1',
         provider: 'codex',
-        providerTurnId: 'turn-1',
+        agentTurnId: 'turn-1',
       }));
       expect(didFlush).toBe(false);
 

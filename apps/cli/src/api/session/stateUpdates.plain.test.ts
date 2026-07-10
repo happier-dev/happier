@@ -152,7 +152,7 @@ describe('stateUpdates (plaintext sessions)', () => {
         ...current,
         sessionModesV1: {
           v: 1,
-          provider: 'codex',
+          agentId: 'codex',
           updatedAt: 1,
           currentModeId: 'plan',
           availableModes: [{ id: 'plan', name: 'Plan' }],

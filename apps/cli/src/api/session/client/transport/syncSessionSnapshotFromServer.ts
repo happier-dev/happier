@@ -22,7 +22,7 @@ export async function syncSessionSnapshotFromServer(
         setMetadataSnapshot: (metadata: Metadata, version: number) => void;
         setAgentStateSnapshot: (agentState: AgentState | null, version: number) => void;
         applyPendingQueueState: (state: KnownPendingQueueState) => void;
-        applyLatestTurnStatus: (status: LatestTurnStatusSnapshot) => void;
+        applyLatestTurnStatus: (status: LatestTurnStatusSnapshot, observedAt?: number) => void;
         reason: SessionSnapshotRefreshReason;
     }>,
 ): Promise<boolean> {
@@ -62,7 +62,7 @@ export async function syncSessionSnapshotFromServer(
 
     const latestTurnStatus = update.latestTurnStatus;
     if (latestTurnStatus !== undefined) {
-        params.applyLatestTurnStatus(latestTurnStatus);
+        params.applyLatestTurnStatus(latestTurnStatus, update.latestTurnStatusObservedAt);
     }
 
     return true;

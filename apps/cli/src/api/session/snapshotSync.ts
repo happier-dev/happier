@@ -55,6 +55,7 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
     agentState?: { agentState: AgentState | null; agentStateVersion: number };
     pendingQueueState?: KnownPendingQueueState;
     latestTurnStatus?: LatestTurnStatusSnapshot;
+    latestTurnStatusObservedAt?: number;
 }> {
     const raw = await fetchRawSessionSnapshotOnce({ token: opts.token, sessionId: opts.sessionId, reason: opts.reason });
     if (!raw) return {};
@@ -67,6 +68,7 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
         agentState?: { agentState: AgentState | null; agentStateVersion: number };
         pendingQueueState?: KnownPendingQueueState;
         latestTurnStatus?: LatestTurnStatusSnapshot;
+        latestTurnStatusObservedAt?: number;
     } = {};
 
     const pendingQueueState = readKnownPendingQueueState(raw);
@@ -77,6 +79,10 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
     const latestTurnStatus = readLatestTurnStatusSnapshot((raw as { latestTurnStatus?: unknown } | null)?.latestTurnStatus);
     if (latestTurnStatus !== undefined) {
         out.latestTurnStatus = latestTurnStatus;
+        const observedAt = (raw as { latestTurnStatusObservedAt?: unknown }).latestTurnStatusObservedAt;
+        if (typeof observedAt === 'number' && Number.isFinite(observedAt) && observedAt >= 0) {
+            out.latestTurnStatusObservedAt = Math.trunc(observedAt);
+        }
     }
 
     // Sync metadata if it is newer than our local view.

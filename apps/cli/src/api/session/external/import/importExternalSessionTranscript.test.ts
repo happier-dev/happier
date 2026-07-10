@@ -49,7 +49,7 @@ function createLinkedSession(workingDirectory: string): LoadedLinkedExternalSess
     rawSession: { id: 'sess-managed', encryptionMode: 'plain' } as LoadedLinkedExternalSession['rawSession'],
     metadata: { path: workingDirectory },
     sessionPath: workingDirectory,
-    providerId: 'opencode',
+    agentId: 'opencode',
     machineId: 'machine-1',
     remoteSessionId: 'provider-session-1',
     source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096', directory: workingDirectory },
@@ -474,7 +474,7 @@ describe('importExternalSessionTranscript', () => {
                     origin: {
                       source: 'provider-generated',
                       agentId: 'opencode',
-                      providerEventId: 'https://example.test/event-secret',
+                      agentEventId: 'https://example.test/event-secret',
                       providerFileId: 'QUJDREVGR0hJSktM',
                       generationId: '/tmp/provider/generated.png',
                     },
@@ -512,7 +512,7 @@ describe('importExternalSessionTranscript', () => {
                 failures: [
                   {
                     index: 7,
-                    code: 'provider_unavailable',
+                    code: 'agent_unavailable',
                     role: 'output',
                     category: 'generated',
                     mediaKind: 'image',
@@ -597,7 +597,7 @@ describe('importExternalSessionTranscript', () => {
         },
         {
           index: 7,
-          code: 'provider_unavailable',
+          code: 'agent_unavailable',
           name: 'image-8',
           origin: { source: 'provider-generated', providerFileId: 'safe-provider-file' },
         },
@@ -628,7 +628,7 @@ describe('importExternalSessionTranscript', () => {
                 failures: [
                   {
                     index: 0,
-                    code: 'provider_unavailable',
+                    code: 'agent_unavailable',
                     role: 'output',
                     category: 'generated',
                     mediaKind: 'image',
@@ -678,7 +678,7 @@ describe('importExternalSessionTranscript', () => {
       expect(committedPayload.failures).toEqual([
         {
           index: 0,
-          code: 'provider_unavailable',
+          code: 'agent_unavailable',
           role: 'output',
           category: 'generated',
           mediaKind: 'image',

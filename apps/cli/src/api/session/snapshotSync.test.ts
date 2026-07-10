@@ -94,7 +94,7 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
 
     expect(res.metadata).toBeUndefined();
     expect(res.agentState).toBeUndefined();
-    expect(res.pendingQueueState).toEqual({ known: true, pendingCount: 0, pendingVersion: 0 });
+    expect(res.pendingQueueState).toEqual({ known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 0 });
   });
 
   it('returns pending queue state from the authoritative session snapshot', async () => {
@@ -119,7 +119,35 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
       currentAgentStateVersion: 999,
     });
 
-    expect(res.pendingQueueState).toEqual({ known: true, pendingCount: 0, pendingVersion: 9 });
+    expect(res.pendingQueueState).toEqual({ known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 9 });
+  });
+
+  it('returns the authoritative turn status observation time with the status', async () => {
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: createSessionRecordFixture({
+          id: 's1',
+          latestTurnStatus: 'completed',
+          latestTurnStatusObservedAt: 1234,
+        }),
+      },
+    } as any);
+
+    const res = await fetchSessionSnapshotUpdateFromServer({
+      token: 't',
+      sessionId: 's1',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      currentMetadataVersion: 999,
+      currentAgentStateVersion: 999,
+    });
+
+    expect(res).toMatchObject({
+      latestTurnStatus: 'completed',
+      latestTurnStatusObservedAt: 1234,
+    });
   });
 
   it('coalesces concurrent reads of the same raw session snapshot', async () => {
@@ -199,7 +227,7 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
 
         expect(res.metadata).toBeUndefined();
         expect(res.agentState).toBeUndefined();
-        expect(res.pendingQueueState).toEqual({ known: true, pendingCount: 0, pendingVersion: 0 });
+        expect(res.pendingQueueState).toEqual({ known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 0 });
         expect(getSpy).toHaveBeenCalledTimes(2);
         expect(String(getSpy.mock.calls[0]?.[0])).toContain('/v2/sessions/s1');
         expect(String(getSpy.mock.calls[1]?.[0])).toContain('/v2/sessions');

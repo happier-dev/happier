@@ -40,7 +40,7 @@ function createLinkedCodexSessionFixture(params: Readonly<{
     ? {
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: {
             backendMode: params.codexBackendMode,
           },
@@ -51,7 +51,7 @@ function createLinkedCodexSessionFixture(params: Readonly<{
     rawSession: {} as RawSessionRecord,
     metadata,
     sessionPath: params.sessionPath ?? null,
-    providerId: 'codex',
+    agentId: 'codex',
     machineId: 'machine-1',
     remoteSessionId: params.remoteSessionId,
     source: params.source,
@@ -68,7 +68,7 @@ function createLinkedOpenCodeSessionFixture(params: Readonly<{
     rawSession: {} as RawSessionRecord,
     metadata: {},
     sessionPath: params.sessionPath ?? null,
-    providerId: 'opencode',
+    agentId: 'opencode',
     machineId: 'machine-1',
     remoteSessionId: params.remoteSessionId,
     source: params.source,
@@ -86,7 +86,7 @@ function createLinkedOhMyPiSessionFixture(params: Readonly<{
     rawSession: {} as RawSessionRecord,
     metadata: params.metadata ?? {},
     sessionPath: params.sessionPath ?? null,
-    providerId: 'ohMyPi',
+    agentId: 'ohMyPi',
     machineId: 'machine-1',
     remoteSessionId: params.remoteSessionId,
     source: params.source,
@@ -216,7 +216,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
           connectedServiceMaterializationIdentityV1: materializationIdentity,
           runtimeDescriptorV1: {
             v: 1,
-            providerId: 'codex',
+            agentId: 'codex',
             provider: {
               backendMode: 'appServer',
             },
@@ -248,7 +248,7 @@ describe('resolveDirectTakeoverSpawnOptions', () => {
         metadata: {
           externalSessionV1: {
             v: 1,
-            providerId: 'ohMyPi',
+            agentId: 'ohMyPi',
             machineId: 'machine-1',
             remoteSessionId: 'omp-thread-connected-services',
             source: { kind: 'ohMyPiAgentDir', agentDir: null },

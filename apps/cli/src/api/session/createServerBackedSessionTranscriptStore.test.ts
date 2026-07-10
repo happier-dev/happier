@@ -73,7 +73,7 @@ describe('createServerBackedSessionTranscriptStore', () => {
             role: 'agent',
             content: {
               type: 'acp',
-              provider: 'codex',
+              agentId: 'codex',
               data: {
                 type: 'tool-call',
                 callId: 'diff-empty-1',
@@ -93,7 +93,7 @@ describe('createServerBackedSessionTranscriptStore', () => {
             role: 'agent',
             content: {
               type: 'acp',
-              provider: 'codex',
+              agentId: 'codex',
               data: {
                 type: 'tool-result',
                 callId: 'diff-empty-1',

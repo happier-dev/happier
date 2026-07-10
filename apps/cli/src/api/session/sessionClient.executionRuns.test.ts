@@ -301,7 +301,7 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       flavor: undefined,
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: {
           backendMode: 'appServer',
         },

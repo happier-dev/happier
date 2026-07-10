@@ -168,6 +168,7 @@ export function createSessionClientInteractionApi(
         getAcceptedUserMessageDeliverySeqForPendingReconciliation?: () => number | null;
         reconcileAcceptedPendingDeliveriesThroughSeq?: (maxAcceptedSeq: number) => Promise<Readonly<{ pendingQueueState?: KnownPendingQueueState | null; resolvedLocalIds?: readonly string[] }>>;
         retryAcceptedCanonicalPendingDeliveryResolutions?: () => Promise<void>;
+        reconcileTerminalCanonicalPendingDeliveries?: () => Promise<boolean>;
         getUnresolvedCanonicalPendingDeliveryCount?: () => number;
         recoverInheritedProviderDeliveryClaimsBeforeMaterialization?: () => Promise<void>;
         blockMalformedPendingDelivery?: (params: Readonly<{
@@ -877,6 +878,7 @@ export function createSessionClientInteractionApi(
             }
             await deps.recoverInheritedProviderDeliveryClaimsBeforeMaterialization?.();
             await deps.retryAcceptedCanonicalPendingDeliveryResolutions?.();
+            await deps.reconcileTerminalCanonicalPendingDeliveries?.();
             if (hasUnresolvedCanonicalPendingDelivery('materialize_safely_provider_delivery')) {
                 return { type: 'no_pending' };
             }
@@ -917,6 +919,7 @@ export function createSessionClientInteractionApi(
         async popPendingMessage() {
             await reconcileAcceptedDeliveriesBeforeMaterialization();
             await deps.retryAcceptedCanonicalPendingDeliveryResolutions?.();
+            await deps.reconcileTerminalCanonicalPendingDeliveries?.();
             if (hasUnresolvedCanonicalPendingDelivery('pop_pending_provider_delivery')) {
                 return false;
             }

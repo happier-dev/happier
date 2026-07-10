@@ -4,14 +4,14 @@ export function buildAcpAgentMessageEnvelope(opts: {
   meta?: Record<string, unknown>;
 }): {
   role: 'agent';
-  content: { type: 'acp'; provider: string; data: unknown };
+  content: { type: 'acp'; agentId: string; data: unknown };
   meta: Record<string, unknown>;
 } {
   return {
     role: 'agent',
     content: {
       type: 'acp',
-      provider: opts.provider,
+      agentId: opts.provider,
       data: opts.body,
     },
     meta: {

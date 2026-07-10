@@ -1,4 +1,4 @@
-import type { ExternalSessionsProviderId, ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol';
 
 export type FileBackedTranscriptSessionStoreLifecycleState =
     | 'hot_attached'
@@ -7,7 +7,7 @@ export type FileBackedTranscriptSessionStoreLifecycleState =
     | 'disposed';
 
 export type FileBackedTranscriptSessionStoreKey = Readonly<{
-    providerId: ExternalSessionsProviderId;
+    agentId: ExternalSessionsAgentId;
     source: ExternalSessionsSource;
     remoteSessionId: string;
 }>;

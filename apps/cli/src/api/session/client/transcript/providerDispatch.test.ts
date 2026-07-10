@@ -21,7 +21,7 @@ function createMetadata(backendId = 'selected.backend'): Metadata {
   return createTestMetadata({
     runtimeDescriptorV1: {
       v: 1,
-      providerId: 'selected-provider',
+      agentId: 'selected-provider',
       provider: {
         backendMode: 'plugin',
         providerExtra: {

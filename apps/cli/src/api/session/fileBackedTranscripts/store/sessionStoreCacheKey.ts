@@ -14,7 +14,7 @@ function stableStringify(value: unknown): string {
 
 export function buildSessionStoreCacheKey(key: FileBackedTranscriptSessionStoreKey): string {
     return [
-        key.providerId,
+        key.agentId,
         stableStringify(key.source),
         key.remoteSessionId.trim(),
     ].join('::');

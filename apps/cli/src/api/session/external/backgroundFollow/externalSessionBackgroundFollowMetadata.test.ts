@@ -12,7 +12,7 @@ describe('externalSessionBackgroundFollowMetadata', () => {
 
         const metadata = {
             externalSessionV1: {
-                providerId: 'claude',
+                agentId: 'claude',
             },
         } as const;
         const params = {

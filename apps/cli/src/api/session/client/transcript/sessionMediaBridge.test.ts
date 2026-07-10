@@ -176,7 +176,7 @@ describe('session media bridge', () => {
                         mimeType: 'image/png',
                         fileNameHint: 'generated-file.png',
                     },
-                    origin: { source: 'provider-generated', providerEventId: 'event-file' },
+                    origin: { source: 'provider-generated', agentEventId: 'event-file' },
                     sourceAccessPolicy,
                 },
                 {
@@ -186,7 +186,7 @@ describe('session media bridge', () => {
                         mimeType: 'image/png',
                         fileNameHint: 'generated-uri.png',
                     },
-                    origin: { source: 'provider-generated', providerEventId: 'event-uri' },
+                    origin: { source: 'provider-generated', agentEventId: 'event-uri' },
                     sourceAccessPolicy,
                 },
             ];
@@ -247,7 +247,7 @@ describe('session media bridge', () => {
                                 mimeType: 'image/png',
                                 fileNameHint: 'generated-file.png',
                             },
-                            origin: { source: 'provider-generated', providerEventId: 'event-file' },
+                            origin: { source: 'provider-generated', agentEventId: 'event-file' },
                             sourceAccessPolicy,
                         } satisfies BridgeInputWithPolicy,
                     ],
@@ -464,7 +464,7 @@ describe('session media bridge', () => {
                                 mimeType: 'image/png',
                                 fileNameHint: 'generated-file.png',
                             },
-                            origin: { source: 'provider-generated', providerEventId: 'event-file' },
+                            origin: { source: 'provider-generated', agentEventId: 'event-file' },
                             sourceAccessPolicy,
                         } satisfies BridgeInputWithPolicy,
                     ],
@@ -476,7 +476,7 @@ describe('session media bridge', () => {
             expect(result.failures[0]).toMatchObject({
                 code: 'unauthorized_source_path',
                 name: 'generated-file.png',
-                origin: { source: 'provider-generated', providerEventId: 'event-file' },
+                origin: { source: 'provider-generated', agentEventId: 'event-file' },
             });
             expect(JSON.stringify(result.meta)).not.toContain(outsideRoot);
         } finally {
@@ -643,7 +643,7 @@ describe('session media bridge', () => {
                         origin: {
                             source: 'acp-content',
                             agentId: 'agent-safe',
-                            providerEventId: 'https://provider.example/events/secret-token',
+                            agentEventId: 'https://provider.example/events/secret-token',
                             providerFileId: 'aW1hZ2VCeXRlcw==',
                             generationId: '/tmp/provider/generated.png',
                         },

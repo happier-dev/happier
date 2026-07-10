@@ -416,6 +416,34 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
     expect(client.getProviderAcceptedUserMessageSeq()).toBe(43);
   });
 
+  it('retires a canonical provider-delivery claim when the server row is externally resolved', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const axiosGet = await getAxiosGetMock();
+    axiosGet.mockResolvedValue({ data: { pending: [] } });
+
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    (client as any).sessionConnectionSupervisor = null;
+    const catchUpSessionMessages = vi.spyOn(client as any, 'catchUpSessionMessages')
+      .mockResolvedValue(undefined);
+
+    (client as any).observeMaterializedPendingDeliveryState({
+      localId: 'externally-resolved-local',
+      deliveryState: { mode: 'provider', unresolved: true },
+    });
+    (client as any).recordCommittedUserMessageSeq('externally-resolved-local', 44);
+
+    await (client as any).catchUpOwedUserMessagesAfterTurnEnd();
+
+    expect(axiosGet).toHaveBeenCalledWith(
+      expect.stringContaining('/v2/sessions/s1/pending'),
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer tok' }) }),
+    );
+    expect(client.hasCanonicalPendingDeliveryLocalId('externally-resolved-local')).toBe(false);
+    expect(client.getDeliveredUserMessageSeq()).toBe(44);
+    expect(catchUpSessionMessages).toHaveBeenCalled();
+  });
+
   it('blocks inherited provider-delivery claims when provider-acceptance mode attaches', async () => {
     sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
     userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });

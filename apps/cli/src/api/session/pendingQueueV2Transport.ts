@@ -11,6 +11,7 @@ import {
     parsePendingDeliveryStatusV1,
     SessionMessageRoleSchema,
     type PendingDeliveryBlockedReason,
+    type PendingDeliveryStatusV1,
     type SessionMessageRole,
 } from '@happier-dev/protocol';
 import { SessionMessageContentSchema, type SessionMessageContent } from '../types';
@@ -323,6 +324,39 @@ export async function listPendingQueueV2LocalIdsFromServer(params: {
         }
         throw error;
     }
+}
+
+export type PendingQueueV2DeliveryStatusEntry = Readonly<{
+    localId: string;
+    status: PendingDeliveryStatusV1['status'];
+}>;
+
+/**
+ * Projects the server-owned delivery status for each current pending row. A canonical local claim
+ * whose id is absent from this projection has reached a terminal outcome and must be retired.
+ */
+export async function listPendingQueueV2DeliveryStatusesFromServer(params: {
+    token: string;
+    sessionId: string;
+}): Promise<PendingQueueV2DeliveryStatusEntry[]> {
+    const serverUrl = resolveServerHttpBaseUrl();
+    const response = await axios.get(`${serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending`, {
+        headers: { Authorization: `Bearer ${params.token}` },
+        timeout: 10_000,
+    });
+    const data = response?.data as { pending?: unknown } | null | undefined;
+    const pending = Array.isArray(data?.pending) ? data.pending : [];
+    const seen = new Set<string>();
+    const entries: PendingQueueV2DeliveryStatusEntry[] = [];
+    for (const row of pending) {
+        if (!row || typeof row !== 'object') continue;
+        const record = row as Record<string, unknown>;
+        const localId = typeof record.localId === 'string' ? record.localId.trim() : '';
+        if (!localId || seen.has(localId)) continue;
+        seen.add(localId);
+        entries.push({ localId, status: readPendingDeliveryStatusFromRecord(record).status });
+    }
+    return entries;
 }
 
 export async function listPendingQueueV2ProviderDeliveryLocalIdsFromServer(params: {

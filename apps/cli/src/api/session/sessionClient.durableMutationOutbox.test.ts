@@ -1595,8 +1595,8 @@ describe('ApiSessionClient durable mutation outbox', () => {
       mutationId: 'mutation-begin',
       action: 'begin',
       turnId: 'turn-1',
-      provider: 'codex',
-      providerTurnId: 'turn-1',
+      agentId: 'codex',
+      agentTurnId: 'turn-1',
       observedAt: 100,
     });
     await drainAsyncWork();
@@ -1608,8 +1608,8 @@ describe('ApiSessionClient durable mutation outbox', () => {
       mutationId: 'mutation-complete',
       action: 'complete',
       turnId: 'turn-1',
-      provider: 'codex',
-      providerTurnId: 'turn-1',
+      agentId: 'codex',
+      agentTurnId: 'turn-1',
       observedAt: 200,
     });
     await expect(readPersistedOutboxMutations('s1')).resolves.toEqual([
@@ -1720,8 +1720,8 @@ describe('ApiSessionClient durable mutation outbox', () => {
       mutationId: 'mutation-touch-active',
       action: 'touch_active',
       turnId: 'turn-1',
-      provider: 'codex',
-      providerTurnId: 'turn-1',
+      agentId: 'codex',
+      agentTurnId: 'turn-1',
       observedAt: 100,
     };
     const complete: SessionTurnMutationV1 = {
@@ -1730,8 +1730,8 @@ describe('ApiSessionClient durable mutation outbox', () => {
       mutationId: 'mutation-complete',
       action: 'complete',
       turnId: 'turn-1',
-      provider: 'codex',
-      providerTurnId: 'turn-1',
+      agentId: 'codex',
+      agentTurnId: 'turn-1',
       observedAt: 200,
     };
     const { saveSessionClientDurableMutationOutbox } = await import('./client/transport/mutations/sessionClientDurableMutationPersistence');
@@ -1799,8 +1799,8 @@ describe('ApiSessionClient durable mutation outbox', () => {
         mutationId: 'mutation-cancel',
         action: 'cancel',
         turnId: 'turn-1',
-        provider: 'codex',
-        providerTurnId: 'turn-1',
+        agentId: 'codex',
+        agentTurnId: 'turn-1',
         observedAt: 100,
       });
       client.sendSessionDeath();
@@ -1868,8 +1868,8 @@ describe('ApiSessionClient durable mutation outbox', () => {
         mutationId: 'mutation-cancel',
         action: 'cancel',
         turnId: 'turn-1',
-        provider: 'codex',
-        providerTurnId: 'turn-1',
+        agentId: 'codex',
+        agentTurnId: 'turn-1',
         observedAt: 100,
       });
       await expect(Promise.race([
@@ -1987,8 +1987,8 @@ describe('ApiSessionClient durable mutation outbox', () => {
         mutationId: 'mutation-cancel',
         action: 'cancel',
         turnId: 'turn-1',
-        provider: 'codex',
-        providerTurnId: 'turn-1',
+        agentId: 'codex',
+        agentTurnId: 'turn-1',
         observedAt: 100,
       });
 
@@ -2067,7 +2067,7 @@ describe('ApiSessionClient durable mutation outbox', () => {
       mutationId: 'begin-new',
       action: 'begin',
       turnId: 'session-turn:new',
-      provider: 'codex',
+      agentId: 'codex',
       observedAt: 2_000,
     };
     await saveSessionClientDurableMutationOutbox('s1', [

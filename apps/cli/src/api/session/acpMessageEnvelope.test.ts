@@ -14,7 +14,7 @@ describe('buildAcpAgentMessageEnvelope', () => {
       role: 'agent',
       content: {
         type: 'acp',
-        provider: 'codex',
+        agentId: 'codex',
         data: { type: 'message', message: 'hi' },
       },
       meta: {
