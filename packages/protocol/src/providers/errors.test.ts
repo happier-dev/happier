@@ -1,0 +1,47 @@
+import { describe, expect, it } from 'vitest';
+
+import { ProviderBindingCompatibilityV1Schema } from './compatibility/v1.js';
+import { createProviderErrorV1, ProviderErrorV1Schema } from './errors.js';
+
+describe('provider stable errors and compatibility envelopes', () => {
+  it('requires evidence for verified compatibility', () => {
+    expect(ProviderBindingCompatibilityV1Schema.safeParse({ status: 'verified', selectedProtocol: 'anthropic' }).success).toBe(false);
+  });
+
+  it('offers load only when a verified load action exists', () => {
+    expect(createProviderErrorV1('provider_model_unloaded').action).toBe('review_connection');
+    expect(createProviderErrorV1('provider_model_unloaded', { modelLoadAvailable: true }).action).toBe('load_model');
+  });
+
+  it('rejects wire envelopes whose retryability or recovery action contradicts their code', () => {
+    expect(ProviderErrorV1Schema.safeParse({
+      v: 1, code: 'provider_connection_not_found', retryable: true, action: 'retry',
+    }).success).toBe(false);
+    expect(ProviderErrorV1Schema.safeParse({
+      v: 1, code: 'provider_secret_missing', retryable: false, action: 'replace_secret',
+    }).success).toBe(false);
+    expect(ProviderErrorV1Schema.safeParse({
+      v: 1, code: 'provider_endpoint_rate_limited', retryable: true, action: 'retry', retryAfterMs: 86_400_001,
+    }).success).toBe(false);
+    expect(ProviderErrorV1Schema.safeParse({
+      v: 1, code: 'provider_endpoint_unreachable', retryable: true, action: 'retry', retryAfterMs: 10,
+    }).success).toBe(false);
+  });
+
+  it('accepts exactly the two model-unloaded recovery branches and optional bounded rate-limit delay', () => {
+    for (const action of ['review_connection', 'load_model']) {
+      expect(ProviderErrorV1Schema.safeParse({
+        v: 1, code: 'provider_model_unloaded', retryable: false, action,
+      }).success).toBe(true);
+    }
+    expect(ProviderErrorV1Schema.safeParse({
+      v: 1, code: 'provider_model_unloaded', retryable: false, action: 'choose_model',
+    }).success).toBe(false);
+    expect(ProviderErrorV1Schema.safeParse({
+      v: 1, code: 'provider_endpoint_rate_limited', retryable: true, action: 'retry',
+    }).success).toBe(true);
+    expect(ProviderErrorV1Schema.safeParse({
+      v: 1, code: 'provider_endpoint_rate_limited', retryable: true, action: 'retry', retryAfterMs: 1,
+    }).success).toBe(true);
+  });
+});
