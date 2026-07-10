@@ -7,27 +7,29 @@ import {
   SessionTurnRollbackStateV1Schema,
   SessionTurnTranscriptAnchorsV1Schema,
 } from './sessionTurnMutationV1.js';
+import { normalizeLegacySessionTurnAgentIdentity } from './compat/agentIdentity.js';
 
 const SessionTurnIdentifierV1Schema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
-const SessionTurnProviderV1Schema = z.string().trim().min(1).max(128);
+const SessionTurnAgentIdV1Schema = z.string().trim().min(1).max(128);
 const SessionTurnTimestampV1Schema = z.number().int().nonnegative();
 
 export const SessionTurnRollbackV1Schema = z
   .object({
     state: SessionTurnRollbackStateV1Schema,
     reason: z.string().trim().min(1).optional(),
-    providerRollbackOrdinal: z.number().int().nonnegative().optional(),
+    agentRollbackOrdinal: z.number().int().nonnegative().optional(),
     updatedAt: SessionTurnTimestampV1Schema,
   })
   .passthrough()
   .readonly();
 export type SessionTurnRollbackV1 = z.infer<typeof SessionTurnRollbackV1Schema>;
 
-export const SessionTurnV1Schema = z
-  .object({
+export const SessionTurnV1Schema = z.preprocess(
+  normalizeLegacySessionTurnAgentIdentity,
+  z.object({
     turnId: SessionTurnIdentifierV1Schema,
-    provider: SessionTurnProviderV1Schema.optional(),
-    providerTurnId: SessionTurnIdentifierV1Schema.optional(),
+    agentId: SessionTurnAgentIdV1Schema.optional(),
+    agentTurnId: SessionTurnIdentifierV1Schema.optional(),
     status: SessionTurnLifecycleStatusV1Schema,
     startedAt: SessionTurnTimestampV1Schema,
     updatedAt: SessionTurnTimestampV1Schema,
@@ -36,9 +38,8 @@ export const SessionTurnV1Schema = z
     transcriptAnchors: SessionTurnTranscriptAnchorsV1Schema.optional(),
     rollback: SessionTurnRollbackV1Schema.optional(),
     lastMutationId: SessionTurnIdentifierV1Schema.optional(),
-  })
-  .passthrough()
-  .readonly();
+  }).passthrough().readonly(),
+);
 export type SessionTurnV1 = z.infer<typeof SessionTurnV1Schema>;
 
 export const SessionTurnsProjectionV1Schema = z

@@ -2,10 +2,11 @@ import { z } from 'zod';
 
 import { SessionIdSchema, SessionIndexedIdentifierMaxLengthV1, TurnIdSchema } from '../idsV1.js';
 import { SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
+import { normalizeLegacySessionTurnAgentIdentity } from './compat/agentIdentity.js';
 
 const SessionTurnMutationIdV1Schema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
-const SessionTurnProviderV1Schema = z.string().trim().min(1).max(128);
-const SessionTurnProviderTurnIdV1Schema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
+const SessionTurnAgentIdV1Schema = z.string().trim().min(1).max(128);
+const SessionTurnAgentTurnIdV1Schema = z.string().trim().min(1).max(SessionIndexedIdentifierMaxLengthV1);
 const SessionTurnObservedAtV1Schema = z.number().int().nonnegative();
 const SessionTurnReasonV1Schema = z.string().trim().min(1).max(256);
 
@@ -37,7 +38,8 @@ export type SessionTurnTranscriptAnchorsV1 = z.infer<typeof SessionTurnTranscrip
 
 export const SessionTurnMutationActionV1Schema = z.enum([
   'begin',
-  'attach_provider_turn_id',
+  'touch_active',
+  'attach_agent_turn_id',
   'append_transcript_anchors',
   'complete',
   'fail',
@@ -54,13 +56,13 @@ const SessionTurnMutationBaseV1Schema = z
     sessionId: SessionIdSchema,
     mutationId: SessionTurnMutationIdV1Schema,
     observedAt: SessionTurnObservedAtV1Schema,
-    provider: SessionTurnProviderV1Schema.optional(),
+    agentId: SessionTurnAgentIdV1Schema.optional(),
   })
   .strict();
 
 const TurnScopedMutationBaseV1Schema = SessionTurnMutationBaseV1Schema.extend({
   turnId: TurnIdSchema,
-  providerTurnId: SessionTurnProviderTurnIdV1Schema.optional(),
+  agentTurnId: SessionTurnAgentTurnIdV1Schema.optional(),
 });
 
 const CanonicalSessionTurnMutationV1Schema = z.discriminatedUnion('action', [
@@ -69,8 +71,11 @@ const CanonicalSessionTurnMutationV1Schema = z.discriminatedUnion('action', [
     transcriptAnchors: SessionTurnTranscriptAnchorsV1Schema.optional(),
   }).strict(),
   TurnScopedMutationBaseV1Schema.extend({
-    action: z.literal('attach_provider_turn_id'),
-    providerTurnId: SessionTurnProviderTurnIdV1Schema,
+    action: z.literal('touch_active'),
+  }).strict(),
+  TurnScopedMutationBaseV1Schema.extend({
+    action: z.literal('attach_agent_turn_id'),
+    agentTurnId: SessionTurnAgentTurnIdV1Schema,
   }).strict(),
   TurnScopedMutationBaseV1Schema.extend({
     action: z.literal('append_transcript_anchors'),
@@ -90,23 +95,26 @@ const CanonicalSessionTurnMutationV1Schema = z.discriminatedUnion('action', [
   SessionTurnMutationBaseV1Schema.extend({
     action: z.literal('end_session'),
     turnId: TurnIdSchema.optional(),
-    providerTurnId: SessionTurnProviderTurnIdV1Schema.optional(),
+    agentTurnId: SessionTurnAgentTurnIdV1Schema.optional(),
   }).strict(),
   TurnScopedMutationBaseV1Schema.extend({
     action: z.literal('mark_rollback_eligible'),
     transcriptAnchors: SessionTurnTranscriptAnchorsV1Schema.optional(),
-    providerRollbackOrdinal: z.number().int().nonnegative().optional(),
+    agentRollbackOrdinal: z.number().int().nonnegative().optional(),
     reason: SessionTurnReasonV1Schema.optional(),
   }).strict(),
   TurnScopedMutationBaseV1Schema.extend({
     action: z.literal('mark_rolled_back'),
     restoredToTurnId: TurnIdSchema.optional(),
-    providerRollbackOrdinal: z.number().int().nonnegative().optional(),
+    agentRollbackOrdinal: z.number().int().nonnegative().optional(),
     reason: SessionTurnReasonV1Schema.optional(),
   }).strict(),
 ]);
 
-export const SessionTurnMutationV1Schema = CanonicalSessionTurnMutationV1Schema;
+export const SessionTurnMutationV1Schema = z.preprocess(
+  normalizeLegacySessionTurnAgentIdentity,
+  CanonicalSessionTurnMutationV1Schema,
+);
 export type SessionTurnMutationV1 = z.infer<typeof SessionTurnMutationV1Schema>;
 
 export const SessionTurnMutationDecisionV1Schema = z.enum([

@@ -21,11 +21,11 @@ describe('A.14 session protocol contracts', () => {
     const parsed = subagentRef.parse({
       id: 'subagent-1',
       parentSessionId: 'session-1',
-      origin: 'provider',
+      origin: 'agent',
       kind: 'native',
-      providerRef: {
-        providerId: 'claude',
-        providerKind: 'claude-task',
+      agentRef: {
+        agentId: 'claude',
+        agentKind: 'claude-task',
         providerExtra: 'kept',
       },
       status: 'running',
@@ -39,11 +39,11 @@ describe('A.14 session protocol contracts', () => {
 
     expect(parsed).toMatchObject({
       id: 'subagent-1',
-      origin: 'provider',
+      origin: 'agent',
       kind: 'native',
-      providerRef: {
-        providerId: 'claude',
-        providerKind: 'claude-task',
+      agentRef: {
+        agentId: 'claude',
+        agentKind: 'claude-task',
         providerExtra: 'kept',
       },
       transcript: {

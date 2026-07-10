@@ -1,0 +1,53 @@
+import { describe, expect, it } from 'vitest';
+import * as protocol from '../../index.js';
+
+describe('sessionMetadata overrides v1', () => {
+  it('keeps modelOverrideV1 as read-only deployed compatibility', () => {
+    expect((protocol as any).buildModelOverrideV1).toBeUndefined();
+    const parsed = (protocol as any).ModelOverrideV1Schema.parse({
+      v: 1,
+      updatedAt: 1,
+      modelId: 'gpt-x',
+      extra: 'x',
+    });
+    expect((parsed as any).extra).toBe('x');
+  });
+
+  it('builds and parses acpSessionModeOverrideV1', () => {
+    const built = (protocol as any).buildAcpSessionModeOverrideV1({ updatedAt: 2, modeId: 'plan' });
+    expect(built).toMatchObject({ v: 1, updatedAt: 2, modeId: 'plan' });
+    const parsed = (protocol as any).AcpSessionModeOverrideV1Schema.parse({ ...built, extra: 'x' });
+    expect((parsed as any).extra).toBe('x');
+  });
+
+  it('accepts cleared override values (null) for forward/backward compatibility', () => {
+    const modelParsed = (protocol as any).ModelOverrideV1Schema.parse({ v: 1, updatedAt: 10, modelId: null });
+    expect(modelParsed.modelId).toBe(null);
+
+    const modeParsed = (protocol as any).AcpSessionModeOverrideV1Schema.parse({ v: 1, updatedAt: 11, modeId: null });
+    expect(modeParsed.modeId).toBe(null);
+  });
+
+  it('builds and parses acpConfigOptionOverridesV1', () => {
+    const built = (protocol as any).buildAcpConfigOptionOverridesV1({
+      updatedAt: 3,
+      overrides: {
+        opt_a: { updatedAt: 10, value: 'x' },
+        opt_b: { updatedAt: 11, value: null },
+        opt_c: { updatedAt: 12, value: 1 },
+        opt_d: { updatedAt: 13, value: false },
+      },
+    });
+    expect(built).toMatchObject({ v: 1, updatedAt: 3 });
+    const parsed = (protocol as any).AcpConfigOptionOverridesV1Schema.parse({ ...built, extra: 'x' });
+    expect((parsed as any).extra).toBe('x');
+    expect(Object.keys((parsed as any).overrides ?? {})).toEqual(['opt_a', 'opt_b', 'opt_c', 'opt_d']);
+  });
+
+  it('builds and parses codexRuntimeDescriptorV1', () => {
+    const built = (protocol as any).buildCodexRuntimeDescriptorV1({ backendMode: 'appServer' });
+    expect(built).toMatchObject({ v: 1, backendMode: 'appServer' });
+    const parsed = (protocol as any).CodexRuntimeDescriptorV1Schema.parse({ ...built, extra: 'x' });
+    expect((parsed as any).extra).toBe('x');
+  });
+});

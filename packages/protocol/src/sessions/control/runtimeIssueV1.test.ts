@@ -4,6 +4,7 @@ import {
   SessionRuntimeIssueV1Schema,
   SessionRuntimeTemporaryThrottleDetailsV1Schema,
   SessionRuntimeUsageLimitDetailsV1Schema,
+  sanitizeSessionRuntimeIssueV1,
 } from './runtimeIssueV1.js';
 
 describe('SessionRuntimeUsageLimitDetailsV1Schema', () => {
@@ -127,13 +128,13 @@ describe('SessionRuntimeUsageLimitDetailsV1Schema', () => {
       scope: 'primary_session',
       status: 'failed',
       code: 'provider_temporary_throttle',
-      source: 'provider_status_error',
+      source: 'agent_status_error',
       occurredAt: 1_000,
       provider: 'codex',
       sanitizedPreview: 'Provider is temporarily limiting requests',
       temporaryThrottle: throttle,
     })).toMatchObject({
-      source: 'provider_status_error',
+      source: 'agent_status_error',
       temporaryThrottle: throttle,
     });
   });
@@ -160,7 +161,7 @@ describe('SessionRuntimeIssueV1Schema', () => {
       scope: 'primary_session',
       status: 'failed',
       code: 'provider_temporary_throttle',
-      source: 'provider_status_error',
+      source: 'agent_status_error',
       occurredAt: 1,
       sanitizedPreview: 'Provider is temporarily limiting requests',
       temporaryThrottle: {
@@ -186,7 +187,7 @@ describe('SessionRuntimeIssueV1Schema', () => {
         scope: 'primary_session',
         status: 'failed',
         code: 'provider_temporary_throttle',
-        source: 'provider_status_error',
+        source: 'agent_status_error',
         occurredAt: 1,
         temporaryThrottle: {
           v: 1,
@@ -206,12 +207,12 @@ describe('SessionRuntimeIssueV1Schema', () => {
       v: 1,
       scope: 'primary_session',
       status: 'failed',
-      code: 'provider_process_exit_after_switch',
-      source: 'provider_process_exit_after_switch',
+      code: 'agent_process_exit_after_switch',
+      source: 'agent_process_exit_after_switch',
       occurredAt: 1_000,
       provider: 'pi',
       sanitizedPreview: 'Provider process exited after connected-service switch',
-      providerProcessExitAfterSwitch: {
+      agentProcessExitAfterSwitch: {
         exitCode: 1,
         signal: null,
         lastStderrLine: 'session file missing',
@@ -224,7 +225,28 @@ describe('SessionRuntimeIssueV1Schema', () => {
     expect(parsed.success).toBe(true);
     if (!parsed.success) throw new Error('Expected provider process-exit-after-switch issue to parse');
     expect(parsed.data).toMatchObject({
+      source: 'agent_process_exit_after_switch',
+      agentProcessExitAfterSwitch: {
+        exitCode: 1,
+        signal: null,
+        lastStderrLine: 'session file missing',
+        vendorResumeId: 'resume_123',
+        materializationRoot: '/tmp/happier/pi-home',
+        effectiveStateMode: 'isolated',
+      },
+    });
+  });
+
+  it('normalizes deployed provider-vocabulary runtime issues', () => {
+    const parsed = SessionRuntimeIssueV1Schema.parse({
+      v: 1,
+      scope: 'primary_session',
+      status: 'failed',
+      code: 'provider_process_exit_after_switch',
       source: 'provider_process_exit_after_switch',
+      occurredAt: 1_000,
+      provider: 'pi',
+      providerTurnId: 'turn-1',
       providerProcessExitAfterSwitch: {
         exitCode: 1,
         signal: null,
@@ -232,6 +254,94 @@ describe('SessionRuntimeIssueV1Schema', () => {
         vendorResumeId: 'resume_123',
         materializationRoot: '/tmp/happier/pi-home',
         effectiveStateMode: 'isolated',
+      },
+    });
+
+    expect(parsed).toMatchObject({
+      code: 'agent_process_exit_after_switch',
+      source: 'agent_process_exit_after_switch',
+      agentId: 'pi',
+      agentTurnId: 'turn-1',
+      agentProcessExitAfterSwitch: {
+        exitCode: 1,
+        vendorResumeId: 'resume_123',
+      },
+    });
+    expect(parsed).not.toHaveProperty('provider');
+    expect(parsed).not.toHaveProperty('providerTurnId');
+    expect(parsed).not.toHaveProperty('providerProcessExitAfterSwitch');
+  });
+});
+
+describe('sanitizeSessionRuntimeIssueV1', () => {
+  it('drops unsafe usage-limit provider strings and action URLs', () => {
+    const sanitized = sanitizeSessionRuntimeIssueV1({
+      v: 1,
+      scope: 'primary_session',
+      status: 'failed',
+      code: 'usage_limit',
+      source: 'usage_limit',
+      occurredAt: 1_000,
+      provider: 'codex',
+      sanitizedPreview: 'Usage limit reached',
+      usageLimit: {
+        v: 1,
+        resetAtMs: null,
+        retryAfterMs: null,
+        quotaScope: 'account',
+        recoverability: 'wait',
+        providerLimitId: 'Bearer secret-provider-limit-token',
+        planType: 'enterprise secret plan',
+        action: {
+          kind: 'open_url',
+          url: 'https://provider.example/usage?access_token=secret#fragment',
+        },
+      },
+    });
+
+    expect(sanitized?.usageLimit).toMatchObject({
+      v: 1,
+      resetAtMs: null,
+      retryAfterMs: null,
+      quotaScope: 'account',
+      recoverability: 'wait',
+    });
+    expect(sanitized?.usageLimit).not.toHaveProperty('providerLimitId');
+    expect(sanitized?.usageLimit?.planType).toBeNull();
+    expect(sanitized?.usageLimit).not.toHaveProperty('action');
+  });
+
+  it('preserves safe usage-limit provider strings and action URLs', () => {
+    const sanitized = sanitizeSessionRuntimeIssueV1({
+      v: 1,
+      scope: 'primary_session',
+      status: 'failed',
+      code: 'usage_limit',
+      source: 'usage_limit',
+      occurredAt: 1_000,
+      provider: 'codex',
+      sanitizedPreview: 'Usage limit reached',
+      usageLimit: {
+        v: 1,
+        resetAtMs: null,
+        retryAfterMs: null,
+        quotaScope: 'account',
+        recoverability: 'wait',
+        providerLimitId: 'weekly',
+        planType: 'team',
+        action: {
+          kind: 'open_url',
+          url: 'https://provider.example/usage',
+        },
+      },
+    });
+
+    expect(sanitized?.usageLimit).toMatchObject({
+      providerLimitId: 'weekly',
+      planType: 'team',
+      action: {
+        kind: 'open_url',
+        url: 'https://provider.example/usage',
       },
     });
   });

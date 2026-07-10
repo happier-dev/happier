@@ -11,23 +11,23 @@ import { SubagentGroupRefV1Schema } from './subagentGroupRefV1.js';
 export const SubagentKindV1Schema = z.enum(['execution-run', 'native', 'custom']);
 export type SubagentKindV1 = z.infer<typeof SubagentKindV1Schema>;
 
-export const SubagentOriginV1Schema = z.enum(['happier', 'provider', 'plugin']);
+export const SubagentOriginV1Schema = z.enum(['happier', 'agent', 'plugin']);
 export type SubagentOriginV1 = z.infer<typeof SubagentOriginV1Schema>;
 
 export const SubagentStatusV1Schema = z.enum(['pending', 'running', 'completed', 'failed', 'aborted']);
 export type SubagentStatusV1 = z.infer<typeof SubagentStatusV1Schema>;
 
 export const SubagentLifecycleDetailV1Schema = z.object({
-  providerState: z.string().optional(),
+  agentState: z.string().optional(),
   reason: z.string().optional(),
 }).passthrough();
 export type SubagentLifecycleDetailV1 = z.infer<typeof SubagentLifecycleDetailV1Schema>;
 
-export const SubagentProviderRefV1Schema = z.object({
-  providerId: z.string().trim().min(1),
-  providerKind: z.string().trim().min(1).optional(),
+export const SubagentAgentRefV1Schema = z.object({
+  agentId: z.string().trim().min(1),
+  agentKind: z.string().trim().min(1).optional(),
 }).passthrough();
-export type SubagentProviderRefV1 = z.infer<typeof SubagentProviderRefV1Schema>;
+export type SubagentAgentRefV1 = z.infer<typeof SubagentAgentRefV1Schema>;
 
 export const SubagentTranscriptBindingV1Schema = z.object({
   parentSessionId: SessionIdSchema,
@@ -48,7 +48,7 @@ export const SubagentDisplayV1Schema = z.object({
 export type SubagentDisplayV1 = z.infer<typeof SubagentDisplayV1Schema>;
 
 export const VendorSessionRefV1Schema = z.object({
-  providerSessionId: z.string().trim().min(1),
+  agentSessionId: z.string().trim().min(1),
   vendorSource: z.string().trim().min(1).optional(),
   resumeMetadata: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();
@@ -63,7 +63,7 @@ const SubagentRefV1BaseSchema = z.object({
   parentSessionId: SessionIdSchema,
   origin: SubagentOriginV1Schema,
   kind: SubagentKindV1Schema,
-  providerRef: SubagentProviderRefV1Schema.optional(),
+  agentRef: SubagentAgentRefV1Schema.optional(),
   status: SubagentStatusV1Schema,
   lifecycleDetail: SubagentLifecycleDetailV1Schema.optional(),
   createdAt: z.number().int().nonnegative(),
@@ -75,7 +75,7 @@ const SubagentRefV1BaseSchema = z.object({
   vendorRef: VendorSessionRefV1Schema.optional(),
   label: z.string().optional(),
   display: SubagentDisplayV1Schema.optional(),
-  providerMetadata: z.record(z.string(), z.unknown()).optional(),
+  agentMetadata: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();
 
 function refineSubagentRefRunInvariant(

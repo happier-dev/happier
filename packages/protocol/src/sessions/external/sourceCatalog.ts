@@ -2,7 +2,8 @@ import { z, type core, type ZodRawShape, type ZodType, type ZodTypeAny } from 'z
 
 import {
   GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS,
-} from '../../providers/generated/externalSession/sources.js';
+} from '../../agents/generated/externalSession/sources.js';
+import { assertBackendExternalSessionSourceReferences } from '../../plugins/backendExternalSessionSourceReferences.js';
 
 type ExternalSessionWhenDeclaration = Readonly<{ field: string; equals: string }>;
 type ExternalSessionSchemaFieldDeclaration = Readonly<{
@@ -38,7 +39,7 @@ type ExternalSessionKeySegmentDeclaration =
     when: ExternalSessionWhenDeclaration;
   }>;
 type ExternalSessionSourceDeclaration = Readonly<{
-  providerId: string;
+  agentId: string;
   sourceKind: string;
   schema: Readonly<{
     passthrough?: boolean;
@@ -53,11 +54,11 @@ type ExternalSessionSourceDeclaration = Readonly<{
 const EXTERNAL_SESSIONS_SOURCE_DECLARATIONS = GENERATED_EXTERNAL_SESSIONS_SOURCE_DECLARATIONS satisfies readonly ExternalSessionSourceDeclaration[];
 
 type GeneratedExternalSessionsSourceDeclaration = typeof EXTERNAL_SESSIONS_SOURCE_DECLARATIONS[number];
-type GeneratedExternalSessionsProviderId = GeneratedExternalSessionsSourceDeclaration['providerId'];
+type GeneratedExternalSessionsAgentId = GeneratedExternalSessionsSourceDeclaration['agentId'];
 type GeneratedExternalSessionsSourceKind = GeneratedExternalSessionsSourceDeclaration['sourceKind'];
 type ExternalSessionSourceSchemaOption = core.$ZodTypeDiscriminable;
-type ExternalSessionsProviderDefinition = Readonly<{
-  providerId: GeneratedExternalSessionsProviderId;
+type ExternalSessionsAgentDefinition = Readonly<{
+  agentId: GeneratedExternalSessionsAgentId;
   sourceKind: GeneratedExternalSessionsSourceKind;
   sourceSchema: ExternalSessionSourceSchemaOption;
   resolveSourceKey: (source: Record<string, unknown>) => string;
@@ -172,40 +173,43 @@ function resolveExternalSessionDeclarationSourceKey(
   return declaration.key.segments.map((segment) => resolveExternalSessionKeySegment(segment, source)).join(':');
 }
 
-const EXTERNAL_SESSIONS_PROVIDER_DEFINITIONS = EXTERNAL_SESSIONS_SOURCE_DECLARATIONS.map((declaration) => ({
-  providerId: declaration.providerId,
-  sourceKind: declaration.sourceKind,
-  sourceSchema: buildExternalSessionSourceSchema(declaration),
-  resolveSourceKey: (source: Record<string, unknown>) => resolveExternalSessionDeclarationSourceKey(declaration, source),
-})) as readonly ExternalSessionsProviderDefinition[];
+const EXTERNAL_SESSIONS_AGENT_DEFINITIONS = EXTERNAL_SESSIONS_SOURCE_DECLARATIONS.map((declaration) => {
+  assertBackendExternalSessionSourceReferences(declaration);
+  return {
+    agentId: declaration.agentId,
+    sourceKind: declaration.sourceKind,
+    sourceSchema: buildExternalSessionSourceSchema(declaration),
+    resolveSourceKey: (source: Record<string, unknown>) => resolveExternalSessionDeclarationSourceKey(declaration, source),
+  };
+}) as readonly ExternalSessionsAgentDefinition[];
 
-const EXTERNAL_SESSIONS_SOURCE_SCHEMAS = EXTERNAL_SESSIONS_PROVIDER_DEFINITIONS.map((definition) => definition.sourceSchema) as [
+const EXTERNAL_SESSIONS_SOURCE_SCHEMAS = EXTERNAL_SESSIONS_AGENT_DEFINITIONS.map((definition) => definition.sourceSchema) as [
   ExternalSessionSourceSchemaOption,
   ...ExternalSessionSourceSchemaOption[],
 ];
 
-const EXTERNAL_SESSIONS_PROVIDER_DEFINITION_BY_SOURCE_KIND = Object.freeze(
+const EXTERNAL_SESSIONS_AGENT_DEFINITION_BY_SOURCE_KIND = Object.freeze(
   Object.fromEntries(
-    EXTERNAL_SESSIONS_PROVIDER_DEFINITIONS.map((definition) => [definition.sourceKind, definition] as const),
-  ) as Record<ExternalSessionsProviderDefinition['sourceKind'], ExternalSessionsProviderDefinition>,
+    EXTERNAL_SESSIONS_AGENT_DEFINITIONS.map((definition) => [definition.sourceKind, definition] as const),
+  ) as Record<ExternalSessionsAgentDefinition['sourceKind'], ExternalSessionsAgentDefinition>,
 );
 
-export const EXTERNAL_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1 = Object.freeze(
+export const EXTERNAL_SESSIONS_AGENT_IDS_BY_SOURCE_KIND_V1 = Object.freeze(
   Object.fromEntries(
-    EXTERNAL_SESSIONS_PROVIDER_DEFINITIONS.map((definition) => [definition.sourceKind, [definition.providerId]] as const),
-  ) as Record<GeneratedExternalSessionsSourceKind, readonly [GeneratedExternalSessionsProviderId]>,
+    EXTERNAL_SESSIONS_AGENT_DEFINITIONS.map((definition) => [definition.sourceKind, [definition.agentId]] as const),
+  ) as Record<GeneratedExternalSessionsSourceKind, readonly [GeneratedExternalSessionsAgentId]>,
 );
 
-export const EXTERNAL_SESSIONS_PROVIDER_IDS = Object.freeze(
-  Object.values(EXTERNAL_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1).flat(),
+export const EXTERNAL_SESSIONS_AGENT_IDS = Object.freeze(
+  Object.values(EXTERNAL_SESSIONS_AGENT_IDS_BY_SOURCE_KIND_V1).flat(),
 ) as [
-  GeneratedExternalSessionsProviderId,
-  ...GeneratedExternalSessionsProviderId[],
+  GeneratedExternalSessionsAgentId,
+  ...GeneratedExternalSessionsAgentId[],
 ];
 
-export const ExternalSessionsProviderIdSchema = z.enum(EXTERNAL_SESSIONS_PROVIDER_IDS);
-export type ExternalSessionsProviderId = z.infer<typeof ExternalSessionsProviderIdSchema>;
-export type ExternalSessionsSourceKindV1 = keyof typeof EXTERNAL_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1;
+export const ExternalSessionsAgentIdSchema = z.enum(EXTERNAL_SESSIONS_AGENT_IDS);
+export type ExternalSessionsAgentId = z.infer<typeof ExternalSessionsAgentIdSchema>;
+export type ExternalSessionsSourceKindV1 = keyof typeof EXTERNAL_SESSIONS_AGENT_IDS_BY_SOURCE_KIND_V1;
 
 export type ExternalSessionsSource = {
   [Declaration in GeneratedExternalSessionsSourceDeclaration as Declaration['sourceKind']]:
@@ -215,6 +219,6 @@ export type ExternalSessionsSource = {
 export const ExternalSessionsSourceSchema = z.discriminatedUnion('kind', EXTERNAL_SESSIONS_SOURCE_SCHEMAS) as ZodType<ExternalSessionsSource>;
 
 export function resolveExternalSessionsSourceKey(source: ExternalSessionsSource): string {
-  const definition = EXTERNAL_SESSIONS_PROVIDER_DEFINITION_BY_SOURCE_KIND[source.kind];
+  const definition = EXTERNAL_SESSIONS_AGENT_DEFINITION_BY_SOURCE_KIND[source.kind];
   return definition.resolveSourceKey(source);
 }

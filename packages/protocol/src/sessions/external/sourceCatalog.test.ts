@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  EXTERNAL_SESSIONS_PROVIDER_IDS,
-  EXTERNAL_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1,
+  EXTERNAL_SESSIONS_AGENT_IDS,
+  EXTERNAL_SESSIONS_AGENT_IDS_BY_SOURCE_KIND_V1,
   resolveExternalSessionsSourceKey,
 } from './sourceCatalog.js';
 
@@ -12,13 +12,13 @@ describe('sourceCatalog', () => {
   it('uses generated protocol-local source projections instead of provider source leaves', () => {
     const source = readFileSync(join(process.cwd(), 'src/sessions/external/sourceCatalog.ts'), 'utf8');
 
-    expect(existsSync(join(process.cwd(), 'src/providers/generated/externalSession/sources.ts'))).toBe(true);
-    expect(source).toContain('../../providers/generated/externalSession/sources.js');
+    expect(existsSync(join(process.cwd(), 'src/agents/generated/externalSession/sources.ts'))).toBe(true);
+    expect(source).toContain('../../agents/generated/externalSession/sources.js');
     expect(source).not.toMatch(/\.\.\/\.\.\/providers\/(?:claude|codex|ohMyPi|opencode)\/externalSessions\.js/);
   });
 
   it('exposes the canonical direct-session provider ids grouped by source kind', () => {
-    expect(EXTERNAL_SESSIONS_PROVIDER_IDS_BY_SOURCE_KIND_V1).toEqual({
+    expect(EXTERNAL_SESSIONS_AGENT_IDS_BY_SOURCE_KIND_V1).toEqual({
       claudeConfig: ['claude'],
       codexHome: ['codex'],
       opencodeServer: ['opencode'],
@@ -27,7 +27,7 @@ describe('sourceCatalog', () => {
   });
 
   it('flattens the source-kind groups into the canonical direct-session provider id list', () => {
-    expect(EXTERNAL_SESSIONS_PROVIDER_IDS).toEqual([
+    expect(EXTERNAL_SESSIONS_AGENT_IDS).toEqual([
       'claude',
       'codex',
       'opencode',

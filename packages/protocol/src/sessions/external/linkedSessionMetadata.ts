@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
-import { RuntimeDescriptorV1Schema } from '../../sessionMetadata/runtimeDescriptorV1.js';
-import { CODEX_BACKEND_MODES } from '../../providers/codex/backendMode.js';
+import { RuntimeDescriptorV1Schema } from '../metadata/runtimeDescriptorV1.js';
+import { CODEX_BACKEND_MODES } from '../../agents/generated/runtime/descriptors/codex.js';
 import {
-  ExternalSessionsProviderIdSchema,
+  ExternalSessionsAgentIdSchema,
   ExternalSessionsSourceSchema,
 } from './sourceCatalog.js';
 import type { ExternalSessionTranscriptRawMessageV1 } from './daemonRpcV1.js';
@@ -28,19 +28,43 @@ export type ExternalSessionObservedProgress = Readonly<{
   atMs: number;
 }>;
 
-const LinkedExternalSessionV1Schema = z
-  .object({
-    v: z.literal(1),
-    providerId: ExternalSessionsProviderIdSchema,
-    machineId: z.string().min(1),
-    remoteSessionId: z.string().min(1),
-    source: ExternalSessionsSourceSchema,
-    linkedAtMs: z.number().int().min(0).optional(),
-    lastKnownActivityAtMs: z.number().int().min(0).optional(),
-    codexBackendMode: z.enum(CODEX_BACKEND_MODES).optional(),
-    runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
-  })
-  .passthrough();
+// Read-compat: pre-rename persisted external-session links carry `providerId`
+// (providers-first-class R.17; same pattern as compat/runtimeDescriptorMetadata).
+// Writes always use `agentId`.
+function normalizeLegacyLinkedExternalSessionIdentity(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  if (!Object.hasOwn(record, 'providerId')) return value;
+  const hasAgentId = Object.hasOwn(record, 'agentId');
+  const legacyAgentId = typeof record.providerId === 'string' && record.providerId.trim()
+    ? record.providerId.trim()
+    : null;
+  const canonicalAgentId = typeof record.agentId === 'string' && record.agentId.trim()
+    ? record.agentId.trim()
+    : null;
+  if (!legacyAgentId || (hasAgentId && (!canonicalAgentId || canonicalAgentId !== legacyAgentId))) {
+    return undefined;
+  }
+  const { providerId: _legacyProviderId, ...rest } = record;
+  return { ...rest, agentId: canonicalAgentId ?? legacyAgentId };
+}
+
+const LinkedExternalSessionV1Schema = z.preprocess(
+  normalizeLegacyLinkedExternalSessionIdentity,
+  z
+    .object({
+      v: z.literal(1),
+      agentId: ExternalSessionsAgentIdSchema,
+      machineId: z.string().min(1),
+      remoteSessionId: z.string().min(1),
+      source: ExternalSessionsSourceSchema,
+      linkedAtMs: z.number().int().min(0).optional(),
+      lastKnownActivityAtMs: z.number().int().min(0).optional(),
+      codexBackendMode: z.enum(CODEX_BACKEND_MODES).optional(),
+      runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
+    })
+    .passthrough(),
+);
 
 export type LinkedExternalSessionV1 = z.infer<typeof LinkedExternalSessionV1Schema>;
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  ExternalSessionsProviderIdSchema,
+  ExternalSessionsAgentIdSchema,
   ExternalSessionAttachRequestSchema,
   ExternalSessionDetachRequestSchema,
   ExternalSessionFollowPolicySetRequestSchema,
@@ -9,16 +9,18 @@ import {
   ExternalSessionsSourceSchema,
 } from './daemonRpcV1';
 import * as daemonRpcV1 from './daemonRpcV1';
-import { AgentProviderIdV1Schema } from '../../providers/agentProviderIdsV1';
+import { AgentProviderIdV1Schema } from '../../generated/providers/agentProviderIdsV1';
 import { resolveExternalSessionsSourceKey } from './sourceCatalog';
 
-describe('ExternalSessionsProviderIdSchema', () => {
+describe('ExternalSessionsAgentIdSchema', () => {
   it('stays scoped to direct-session browsing providers even when daemon-facing provider ids grow', () => {
+    expect(AgentProviderIdV1Schema.parse('antigravity')).toBe('antigravity');
     expect(AgentProviderIdV1Schema.parse('pi')).toBe('pi');
     expect(AgentProviderIdV1Schema.parse('ohMyPi')).toBe('ohMyPi');
-    expect(ExternalSessionsProviderIdSchema.parse('codex')).toBe('codex');
-    expect(ExternalSessionsProviderIdSchema.parse('ohMyPi')).toBe('ohMyPi');
-    expect(() => ExternalSessionsProviderIdSchema.parse('pi')).toThrow();
+    expect(ExternalSessionsAgentIdSchema.parse('codex')).toBe('codex');
+    expect(ExternalSessionsAgentIdSchema.parse('ohMyPi')).toBe('ohMyPi');
+    expect(() => ExternalSessionsAgentIdSchema.parse('antigravity')).toThrow();
+    expect(() => ExternalSessionsAgentIdSchema.parse('pi')).toThrow();
   });
 });
 
@@ -83,7 +85,7 @@ describe('ExternalSessionsSourceSchema', () => {
   it('validates runtimeDescriptor as a schema-owned direct-session link field', () => {
     const parsed = ExternalSessionLinkEnsureRequestSchema.parse({
       machineId: 'machine-1',
-      providerId: 'codex',
+      agentId: 'codex',
       remoteSessionId: 'remote-1',
       source: {
         kind: 'codexHome',
@@ -91,7 +93,7 @@ describe('ExternalSessionsSourceSchema', () => {
       },
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: {
           backendMode: 'appServer',
           providerSessionId: 'thread_1',
@@ -102,8 +104,8 @@ describe('ExternalSessionsSourceSchema', () => {
 
     expect((parsed as any).runtimeDescriptorV1).toMatchObject({
       v: 1,
-      providerId: 'codex',
-      provider: {
+      agentId: 'codex',
+      agent: {
         backendMode: 'appServer',
         providerSessionId: 'thread_1',
       },
@@ -114,7 +116,7 @@ describe('ExternalSessionsSourceSchema', () => {
   it('rejects invalid runtimeDescriptorV1 shapes', () => {
     expect(() => ExternalSessionLinkEnsureRequestSchema.parse({
       machineId: 'machine-1',
-      providerId: 'codex',
+      agentId: 'codex',
       remoteSessionId: 'remote-1',
       source: {
         kind: 'codexHome',
@@ -122,7 +124,7 @@ describe('ExternalSessionsSourceSchema', () => {
       },
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 42,
+        agentId: 42,
         provider: {
           backendMode: 'appServer',
           providerSessionId: 'thread_1',
@@ -135,7 +137,7 @@ describe('ExternalSessionsSourceSchema', () => {
     const parsed = ExternalSessionAttachRequestSchema.parse({
       machineId: 'machine-1',
       sessionId: 'session-1',
-      providerId: 'codex',
+      agentId: 'codex',
       remoteSessionId: 'remote-1',
       source: {
         kind: 'codexHome',
@@ -149,7 +151,7 @@ describe('ExternalSessionsSourceSchema', () => {
     expect(parsed).toMatchObject({
       machineId: 'machine-1',
       sessionId: 'session-1',
-      providerId: 'codex',
+      agentId: 'codex',
       remoteSessionId: 'remote-1',
       source: {
         kind: 'codexHome',
@@ -177,7 +179,7 @@ describe('ExternalSessionsSourceSchema', () => {
     expect(ExternalSessionFollowPolicySetRequestSchema.parse({
       machineId: 'machine-1',
       sessionId: 'session-1',
-      providerId: 'claude',
+      agentId: 'claude',
       remoteSessionId: 'remote-1',
       source: {
         kind: 'claudeConfig',
@@ -188,7 +190,7 @@ describe('ExternalSessionsSourceSchema', () => {
     })).toEqual({
       machineId: 'machine-1',
       sessionId: 'session-1',
-      providerId: 'claude',
+      agentId: 'claude',
       remoteSessionId: 'remote-1',
       source: {
         kind: 'claudeConfig',

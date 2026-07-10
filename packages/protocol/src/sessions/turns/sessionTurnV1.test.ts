@@ -12,8 +12,8 @@ describe('SessionTurnV1 protocol', () => {
     v: 1,
     scope: 'primary_session',
     status: 'failed',
-    code: 'provider_status_error',
-    source: 'provider_status_error',
+    code: 'agent_status_error',
+    source: 'agent_status_error',
     occurredAt: 30,
     sanitizedPreview: 'Provider reported an error',
   } as const;
@@ -31,9 +31,9 @@ describe('SessionTurnV1 protocol', () => {
       sessionId: 'session-1',
       mutationId: 'mutation-1',
       turnId: 'happier-turn-1',
-      action: 'attach_provider_turn_id',
+      action: 'attach_agent_turn_id',
       provider: 'codex',
-      providerTurnId: 'provider-turn-1',
+      agentTurnId: 'provider-turn-1',
       observedAt: 20,
     });
 
@@ -48,7 +48,7 @@ describe('SessionTurnV1 protocol', () => {
       turnId: 'happier-turn-1',
       action: 'begin',
       provider: 'codex',
-      providerTurnId: 'provider-turn-1',
+      agentTurnId: 'provider-turn-1',
       observedAt: 20,
       transcriptAnchors: {
         startUserMessageSeq: 10,
@@ -61,6 +61,21 @@ describe('SessionTurnV1 protocol', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('accepts active turn touch mutations', () => {
+    const parsed = SessionTurnMutationV1Schema.safeParse({
+      v: 1,
+      sessionId: 'session-1',
+      mutationId: 'mutation-touch-1',
+      turnId: 'happier-turn-1',
+      action: 'touch_active',
+      provider: 'claude',
+      agentTurnId: 'provider-turn-1',
+      observedAt: 250,
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
   it('rejects ids that exceed indexed storage width', () => {
     const oversized = 'x'.repeat(192);
     const parsed = SessionTurnMutationV1Schema.safeParse({
@@ -68,9 +83,9 @@ describe('SessionTurnV1 protocol', () => {
       sessionId: 'session-1',
       mutationId: oversized,
       turnId: oversized,
-      action: 'attach_provider_turn_id',
+      action: 'attach_agent_turn_id',
       provider: 'codex',
-      providerTurnId: oversized,
+      agentTurnId: oversized,
       observedAt: 20,
     });
 
@@ -131,8 +146,8 @@ describe('SessionTurnV1 protocol', () => {
       sessionId: 'session-1',
       mutationId: 'mutation-1',
       turnId: 'happier-turn-1',
-      action: 'attach_provider_turn_id',
-      providerTurnId: null,
+      action: 'attach_agent_turn_id',
+      agentTurnId: null,
       observedAt: 20,
     });
 
@@ -148,7 +163,7 @@ describe('SessionTurnV1 protocol', () => {
       turnId: 'happier-turn-1',
       action: 'fail',
       provider: 'codex',
-      providerTurnId: 'provider-turn-1',
+      agentTurnId: 'provider-turn-1',
       lastRuntimeIssue: issue,
       observedAt: 20,
     });
@@ -167,7 +182,7 @@ describe('SessionTurnV1 protocol', () => {
       rollback: {
         state: 'eligible',
         reason: 'provider checkpoint',
-        providerRollbackOrdinal: 2,
+        agentRollbackOrdinal: 2,
       },
       transcriptAnchors: {
         startUserMessageSeq: 10,
@@ -200,7 +215,7 @@ describe('SessionTurnV1 protocol', () => {
     const parsed = SessionTurnV1Schema.safeParse({
       turnId: 'happier-turn-1',
       provider: 'codex',
-      providerTurnId: 'provider-turn-1',
+      agentTurnId: 'provider-turn-1',
       status: 'failed',
       startedAt: 10,
       updatedAt: 30,
@@ -209,7 +224,7 @@ describe('SessionTurnV1 protocol', () => {
       rollback: {
         state: 'eligible',
         reason: 'provider checkpoint',
-        providerRollbackOrdinal: 2,
+        agentRollbackOrdinal: 2,
         updatedAt: 31,
       },
       lastMutationId: 'mutation-2',

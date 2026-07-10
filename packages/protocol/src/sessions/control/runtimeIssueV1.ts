@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { isUnsafeTelemetryDataKey } from '../../common/sensitiveKeys.js';
 import {
   ConnectedServiceAuthGroupIdSchema,
   ConnectedServiceIdSchema,
@@ -17,10 +18,10 @@ export const PrimaryTurnStatusV1Schema = z.union([
 export type PrimaryTurnStatusV1 = z.infer<typeof PrimaryTurnStatusV1Schema>;
 
 export const SessionRuntimeIssueSourceV1Schema = z.enum([
-  'provider_status_error',
-  'provider_process_exit',
-  'provider_process_exit_after_switch',
-  'provider_session_error',
+  'agent_status_error',
+  'agent_process_exit',
+  'agent_process_exit_after_switch',
+  'agent_session_error',
   'usage_limit',
   'auth_error',
   'dependency_failure',
@@ -30,7 +31,7 @@ export const SessionRuntimeIssueSourceV1Schema = z.enum([
 ]);
 export type SessionRuntimeIssueSourceV1 = z.infer<typeof SessionRuntimeIssueSourceV1Schema>;
 
-const SessionRuntimeProviderProcessExitAfterSwitchDetailsV1Schema = z
+const SessionRuntimeAgentProcessExitAfterSwitchDetailsV1Schema = z
   .object({
     exitCode: z.number().int().nullable(),
     signal: z.string().trim().min(1).max(128).nullable(),
@@ -40,6 +41,59 @@ const SessionRuntimeProviderProcessExitAfterSwitchDetailsV1Schema = z
     effectiveStateMode: z.enum(['shared', 'isolated']).nullable(),
   })
   .strict();
+
+const LEGACY_RUNTIME_ISSUE_SOURCE_BY_VALUE = {
+  provider_status_error: 'agent_status_error',
+  provider_process_exit: 'agent_process_exit',
+  provider_process_exit_after_switch: 'agent_process_exit_after_switch',
+  provider_session_error: 'agent_session_error',
+} as const satisfies Readonly<Record<string, SessionRuntimeIssueSourceV1>>;
+
+function normalizeLegacyRuntimeIssueStringField(
+  record: Record<string, unknown>,
+  legacyKey: string,
+  canonicalKey: string,
+): Record<string, unknown> | null {
+  if (!Object.hasOwn(record, legacyKey)) return record;
+  const legacyValue = typeof record[legacyKey] === 'string' ? record[legacyKey].trim() : '';
+  const hasCanonicalValue = Object.hasOwn(record, canonicalKey);
+  const canonicalValue = typeof record[canonicalKey] === 'string' ? record[canonicalKey].trim() : '';
+  if (!legacyValue || (hasCanonicalValue && (!canonicalValue || canonicalValue !== legacyValue))) return null;
+  const { [legacyKey]: _legacyValue, ...rest } = record;
+  return hasCanonicalValue ? rest : { ...rest, [canonicalKey]: legacyValue };
+}
+
+function normalizeLegacyRuntimeIssueV1(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  let record = value as Record<string, unknown>;
+
+  for (const [legacyKey, canonicalKey] of [
+    ['provider', 'agentId'],
+    ['providerTurnId', 'agentTurnId'],
+  ] as const) {
+    const normalized = normalizeLegacyRuntimeIssueStringField(record, legacyKey, canonicalKey);
+    if (!normalized) return undefined;
+    record = normalized;
+  }
+
+  if (Object.hasOwn(record, 'providerProcessExitAfterSwitch')) {
+    if (Object.hasOwn(record, 'agentProcessExitAfterSwitch')) return undefined;
+    const { providerProcessExitAfterSwitch, ...rest } = record;
+    record = { ...rest, agentProcessExitAfterSwitch: providerProcessExitAfterSwitch };
+  }
+
+  const legacySource = typeof record.source === 'string'
+    ? LEGACY_RUNTIME_ISSUE_SOURCE_BY_VALUE[record.source as keyof typeof LEGACY_RUNTIME_ISSUE_SOURCE_BY_VALUE]
+    : undefined;
+  if (legacySource) record = { ...record, source: legacySource };
+
+  const legacyCode = typeof record.code === 'string'
+    ? LEGACY_RUNTIME_ISSUE_SOURCE_BY_VALUE[record.code as keyof typeof LEGACY_RUNTIME_ISSUE_SOURCE_BY_VALUE]
+    : undefined;
+  if (legacyCode) record = { ...record, code: legacyCode };
+
+  return record;
+}
 
 const SessionRuntimeUsageLimitActionV1Schema = z.discriminatedUnion('kind', [
   z.object({
@@ -128,8 +182,9 @@ export const SessionRuntimeTemporaryThrottleDetailsV1Schema = z
 export type SessionRuntimeTemporaryThrottleDetailsV1 =
   z.infer<typeof SessionRuntimeTemporaryThrottleDetailsV1Schema>;
 
-export const SessionRuntimeIssueV1Schema = z
-  .object({
+export const SessionRuntimeIssueV1Schema = z.preprocess(
+  normalizeLegacyRuntimeIssueV1,
+  z.object({
     v: z.literal(1),
     scope: z.literal('primary_session'),
     status: z.literal('failed'),
@@ -137,12 +192,92 @@ export const SessionRuntimeIssueV1Schema = z
     source: SessionRuntimeIssueSourceV1Schema,
     occurredAt: z.number().int().nonnegative(),
     sessionSeq: z.number().int().nonnegative().optional(),
-    provider: z.string().trim().min(1).max(128).optional(),
-    providerTurnId: z.string().trim().min(1).max(256).optional(),
+    agentId: z.string().trim().min(1).max(128).optional(),
+    agentTurnId: z.string().trim().min(1).max(256).optional(),
     sanitizedPreview: z.string().trim().min(1).max(2_000).optional(),
     usageLimit: SessionRuntimeUsageLimitDetailsV1Schema.optional(),
     temporaryThrottle: SessionRuntimeTemporaryThrottleDetailsV1Schema.optional(),
-    providerProcessExitAfterSwitch: SessionRuntimeProviderProcessExitAfterSwitchDetailsV1Schema.optional(),
-  })
-  .readonly();
+    agentProcessExitAfterSwitch: SessionRuntimeAgentProcessExitAfterSwitchDetailsV1Schema.optional(),
+  }).readonly(),
+);
 export type SessionRuntimeIssueV1 = z.infer<typeof SessionRuntimeIssueV1Schema>;
+
+const SAFE_USAGE_LIMIT_STRING_MAX_LENGTH = 512;
+const SAFE_USAGE_LIMIT_ACTION_URL_MAX_LENGTH = 2_048;
+const SECRETISH_DIAGNOSTIC_VALUE_PATTERN =
+  /\b(access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|authorization|bearer|secret|password|credential)\b/i;
+
+function isUnsafeUsageLimitDiagnosticValue(value: string): boolean {
+  if (SECRETISH_DIAGNOSTIC_VALUE_PATTERN.test(value)) return true;
+  if (isUnsafeTelemetryDataKey(value)) return true;
+  return value
+    .split(/[^a-zA-Z0-9_-]+/u)
+    .filter(Boolean)
+    .some((part) => isUnsafeTelemetryDataKey(part));
+}
+
+function sanitizeProviderDiagnosticString(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const normalized = value.trim();
+  if (normalized.length === 0 || normalized.length > SAFE_USAGE_LIMIT_STRING_MAX_LENGTH) return null;
+  return isUnsafeUsageLimitDiagnosticValue(normalized) ? null : normalized;
+}
+
+function sanitizeUsageLimitAction(
+  action: SessionRuntimeUsageLimitDetailsV1['action'],
+): SessionRuntimeUsageLimitDetailsV1['action'] {
+  if (!action) return action;
+  if (action.kind !== 'open_url') return action;
+  if (action.url.length > SAFE_USAGE_LIMIT_ACTION_URL_MAX_LENGTH) return undefined;
+  if (isUnsafeUsageLimitDiagnosticValue(action.url)) return undefined;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(action.url);
+  } catch {
+    return undefined;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined;
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) return undefined;
+
+  return {
+    kind: 'open_url',
+    ...(action.labelKey ? { labelKey: action.labelKey } : {}),
+    url: parsed.toString(),
+  };
+}
+
+function sanitizeUsageLimitDetails(
+  details: SessionRuntimeUsageLimitDetailsV1,
+): SessionRuntimeUsageLimitDetailsV1 {
+  const {
+    providerLimitId: _providerLimitId,
+    planType: _planType,
+    action: _action,
+    ...rest
+  } = details;
+  const providerLimitId = sanitizeProviderDiagnosticString(details.providerLimitId);
+  const planType = details.planType === undefined
+    ? undefined
+    : details.planType === null
+      ? null
+      : sanitizeProviderDiagnosticString(details.planType);
+  const action = sanitizeUsageLimitAction(details.action);
+
+  return {
+    ...rest,
+    ...(details.providerLimitId === undefined ? {} : providerLimitId ? { providerLimitId } : {}),
+    ...(details.planType === undefined ? {} : { planType }),
+    ...(details.action === undefined ? {} : action ? { action } : {}),
+  };
+}
+
+export function sanitizeSessionRuntimeIssueV1(value: unknown): SessionRuntimeIssueV1 | null {
+  const parsed = SessionRuntimeIssueV1Schema.safeParse(value);
+  if (!parsed.success) return null;
+  const issue = parsed.data;
+  return {
+    ...issue,
+    ...(issue.usageLimit ? { usageLimit: sanitizeUsageLimitDetails(issue.usageLimit) } : {}),
+  };
+}

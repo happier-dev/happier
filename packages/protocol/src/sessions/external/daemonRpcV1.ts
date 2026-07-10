@@ -1,20 +1,20 @@
 import { z } from 'zod';
 
-import { RuntimeDescriptorV1Schema } from '../../sessionMetadata/runtimeDescriptorV1.js';
-import { CODEX_BACKEND_MODES } from '../../providers/codex/backendMode.js';
+import { RuntimeDescriptorV1Schema } from '../metadata/runtimeDescriptorV1.js';
+import { CODEX_BACKEND_MODES } from '../../agents/generated/runtime/descriptors/codex.js';
 import {
-  ExternalSessionsProviderIdSchema,
+  ExternalSessionsAgentIdSchema,
   ExternalSessionsSourceSchema,
-  type ExternalSessionsProviderId,
+  type ExternalSessionsAgentId,
   type ExternalSessionsSource,
 } from './sourceCatalog.js';
 
 export {
-  ExternalSessionsProviderIdSchema,
+  ExternalSessionsAgentIdSchema,
   ExternalSessionsSourceSchema,
 };
 export type {
-  ExternalSessionsProviderId,
+  ExternalSessionsAgentId,
   ExternalSessionsSource,
 };
 
@@ -24,7 +24,7 @@ export type ExternalSessionsSearchMode = z.infer<typeof ExternalSessionsSearchMo
 export const ExternalSessionsCandidatesListRequestSchema = z
   .object({
     machineId: z.string().min(1),
-    providerId: ExternalSessionsProviderIdSchema,
+    agentId: ExternalSessionsAgentIdSchema,
     source: ExternalSessionsSourceSchema,
     cursor: z.string().min(1).optional(),
     limit: z.number().int().min(1).max(500).optional(),
@@ -46,7 +46,7 @@ export const ExternalSessionsCandidatesListResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
+      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
       error: z.string().min(1),
     })
     .passthrough(),
@@ -56,7 +56,7 @@ export type ExternalSessionsCandidatesListResponse = z.infer<typeof ExternalSess
 export const ExternalSessionLinkEnsureRequestSchema = z
   .object({
     machineId: z.string().min(1),
-    providerId: ExternalSessionsProviderIdSchema,
+    agentId: ExternalSessionsAgentIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
     titleHint: z.string().min(1).max(10_000).optional(),
     directoryHint: z.string().min(1).max(10_000).optional(),
@@ -79,7 +79,7 @@ export const ExternalSessionLinkEnsureResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
+      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
       error: z.string().min(1),
     })
     .passthrough(),
@@ -106,7 +106,7 @@ export const ExternalSessionStatusGetRequestSchema = z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
-    providerId: ExternalSessionsProviderIdSchema,
+    agentId: ExternalSessionsAgentIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
     source: ExternalSessionsSourceSchema,
   })
@@ -117,7 +117,7 @@ export const ExternalSessionAttachRequestSchema = z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
-    providerId: ExternalSessionsProviderIdSchema,
+    agentId: ExternalSessionsAgentIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
     source: ExternalSessionsSourceSchema,
     leaseId: z.string().min(1).max(2000).optional(),
@@ -138,7 +138,7 @@ export const ExternalSessionAttachResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
+      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
       error: z.string().min(1),
     })
     .passthrough(),
@@ -164,7 +164,7 @@ export const ExternalSessionDetachResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
+      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
       error: z.string().min(1),
     })
     .passthrough(),
@@ -175,7 +175,7 @@ export const ExternalSessionFollowPolicySetRequestSchema = z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
-    providerId: ExternalSessionsProviderIdSchema,
+    agentId: ExternalSessionsAgentIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
     source: ExternalSessionsSourceSchema,
     enabled: z.boolean(),
@@ -195,7 +195,7 @@ export const ExternalSessionFollowPolicySetResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
+      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
       error: z.string().min(1),
     })
     .passthrough(),
@@ -219,7 +219,7 @@ export const ExternalSessionStatusGetResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
+      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
       error: z.string().min(1),
     })
     .passthrough(),
@@ -239,7 +239,7 @@ export type ExternalSessionTranscriptRawMessageV1 = z.infer<typeof ExternalSessi
 export const ExternalSessionTranscriptPageRequestSchema = z
   .object({
     machineId: z.string().min(1),
-    providerId: ExternalSessionsProviderIdSchema,
+    agentId: ExternalSessionsAgentIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
     source: ExternalSessionsSourceSchema,
     direction: z.enum(['older', 'newer']),
@@ -264,7 +264,7 @@ export const ExternalSessionTranscriptPageResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
+      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
       error: z.string().min(1),
     })
     .passthrough(),
@@ -274,7 +274,7 @@ export type ExternalSessionTranscriptPageResponse = z.infer<typeof ExternalSessi
 export const ExternalSessionTranscriptReadAfterRequestSchema = z
   .object({
     machineId: z.string().min(1),
-    providerId: ExternalSessionsProviderIdSchema,
+    agentId: ExternalSessionsAgentIdSchema,
     remoteSessionId: z.string().min(1).max(2000),
     source: ExternalSessionsSourceSchema,
     cursor: z.string().min(1),
@@ -296,7 +296,7 @@ export const ExternalSessionTranscriptReadAfterResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
+      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
       error: z.string().min(1),
     })
     .passthrough(),
@@ -317,7 +317,7 @@ export const ExternalSessionTakeoverResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
+      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
       error: z.string().min(1),
     })
     .passthrough(),
@@ -338,7 +338,7 @@ export const ExternalSessionTakeoverPersistResponseSchema = z.union([
   z
     .object({
       ok: z.literal(false),
-      errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
+      errorCode: z.enum(['invalid_request', 'machine_offline', 'agent_unavailable', 'internal_error']),
       error: z.string().min(1),
     })
     .passthrough(),

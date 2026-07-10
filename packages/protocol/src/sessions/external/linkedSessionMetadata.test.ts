@@ -24,7 +24,7 @@ describe('direct session linked metadata helpers', () => {
 
     expect((protocol as any).readLinkedExternalSessionV1FromMetadata(metadata)).toEqual({
       v: 1,
-      providerId: 'claude',
+      agentId: 'claude',
       machineId: 'machine-legacy',
       remoteSessionId: 'remote-legacy',
       source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
@@ -32,7 +32,14 @@ describe('direct session linked metadata helpers', () => {
     });
     expect((protocol as any).normalizeLinkedExternalSessionMetadataV1(metadata)).toEqual({
       directSessionV1: metadata.directSessionV1,
-      externalSessionV1: metadata.directSessionV1,
+      externalSessionV1: {
+        v: 1,
+        agentId: 'claude',
+        machineId: 'machine-legacy',
+        remoteSessionId: 'remote-legacy',
+        source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
+        linkedAtMs: 42,
+      },
     });
   });
 
@@ -40,14 +47,14 @@ describe('direct session linked metadata helpers', () => {
     const metadata = {
       externalSessionV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         machineId: 'machine-canonical',
         remoteSessionId: 'remote-canonical',
         source: { kind: 'codexHome', home: 'user' },
       },
       directSessionV1: {
         v: 1,
-        providerId: 'claude',
+        agentId: 'claude',
         machineId: 'machine-legacy',
         remoteSessionId: 'remote-legacy',
         source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
@@ -58,6 +65,21 @@ describe('direct session linked metadata helpers', () => {
     expect((protocol as any).normalizeLinkedExternalSessionMetadataV1(metadata)).toBe(metadata);
   });
 
+  it('fails closed when canonical and deployed linked-session identities conflict', () => {
+    const metadata = {
+      externalSessionV1: {
+        v: 1,
+        agentId: 'codex',
+        providerId: 'claude',
+        machineId: 'machine-conflict',
+        remoteSessionId: 'remote-conflict',
+        source: { kind: 'codexHome', home: 'user' },
+      },
+    };
+
+    expect((protocol as any).readLinkedExternalSessionV1FromMetadata(metadata)).toBeNull();
+  });
+
   it('removes canonical and legacy linked external session metadata', () => {
     expect(typeof (protocol as any).removeLinkedExternalSessionMetadataV1).toBe('function');
 
@@ -65,14 +87,14 @@ describe('direct session linked metadata helpers', () => {
       path: '/tmp/project',
       externalSessionV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         machineId: 'machine-canonical',
         remoteSessionId: 'remote-canonical',
         source: { kind: 'codexHome', home: 'user' },
       },
       directSessionV1: {
         v: 1,
-        providerId: 'claude',
+        agentId: 'claude',
         machineId: 'machine-legacy',
         remoteSessionId: 'remote-legacy',
         source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
