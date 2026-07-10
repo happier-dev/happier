@@ -65,5 +65,5 @@ export const AGENT_DEFINITION = Object.freeze({
     installGuideUrl: 'https://qwenlm.github.io/qwen-code-docs/',
     docsUrl: null,
   },
-  providerSettings: null,
+  agentSettings: null,
 });

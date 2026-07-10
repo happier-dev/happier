@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { PLUGIN_MANIFEST } from './manifest.js';
 
 function requireQwenBackend() {
-  const backend = PLUGIN_MANIFEST.contributes?.backends?.find((entry) => entry.id === 'qwen');
+  const backend = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'qwen');
   if (!backend) {
     throw new Error('Expected Qwen plugin manifest to declare qwen backend contribution');
   }
@@ -15,12 +15,11 @@ describe('Qwen plugin manifest', () => {
     const backend = requireQwenBackend();
 
     expect(PLUGIN_MANIFEST.id).toBe('happier.agent.qwen');
-    expect(PLUGIN_MANIFEST.runtime.capabilities).toContain('backends');
+    expect(PLUGIN_MANIFEST.uses).toContain('agents');
     expect(backend).toMatchObject({
       kindVersion: 1,
       id: 'qwen',
-      agentId: 'qwen',
-      engine: {
+      runtime: {
         kind: 'acp',
         transport: {
           kind: 'stdio',
@@ -44,13 +43,13 @@ describe('Qwen plugin manifest', () => {
         },
       },
     });
-    expect(backend.engine).not.toHaveProperty('callbacks');
+    expect(backend.runtime).not.toHaveProperty('callbacks');
   });
 
   it('preserves Qwen approval-mode omission for default permission modes', () => {
     const backend = requireQwenBackend();
 
-    expect(backend.engine).toMatchObject({
+    expect(backend.runtime).toMatchObject({
       permissionModeArgv: {
         flag: '--approval-mode',
         map: {

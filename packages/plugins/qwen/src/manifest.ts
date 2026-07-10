@@ -1,6 +1,6 @@
 import {
   definePluginManifest,
-  type PluginBackendContributionV2,
+  type PluginAgentContributionV2,
   type PluginManifestV2,
 } from '@happier-dev/plugin-sdk';
 
@@ -8,7 +8,7 @@ import { QWEN_ACP_BACKEND_SPEC } from './agent/acp/definition.js';
 
 type QwenPluginManifestV2 = Omit<PluginManifestV2, 'contributes'> & Readonly<{
   contributes: Readonly<{
-    backends: ReadonlyArray<PluginBackendContributionV2>;
+    agents: ReadonlyArray<PluginAgentContributionV2>;
   }>;
 }>;
 
@@ -19,16 +19,16 @@ export const PLUGIN_MANIFEST = definePluginManifest({
   displayName: 'qwen',
   description: undefined,
   engines: { happier: '^0.0.0' },
-  runtime: { apiVersion: 1, capabilities: ['backends'] },
-  targets: {},
-  capabilities: { permissions: [] },
+  activationEvents: ['onAgent:qwen'],
+  uses: ['agents'],
+  entrypoints: { main: './dist/index.js' },
+  permissions: { required: [], optional: [] },
   contributes: {
-    backends: [
+    agents: [
       {
         kindVersion: 1,
         id: 'qwen',
-        agentId: 'qwen',
-        engine: {
+        runtime: {
           kind: 'acp',
           transport: QWEN_ACP_BACKEND_SPEC.transport,
           ux: QWEN_ACP_BACKEND_SPEC.ux,
